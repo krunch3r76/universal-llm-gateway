@@ -236,6 +236,124 @@ def _live_holder_registration_ids(
     return found
 
 
+# Watch rows use these when no generate is bound. They are not dispatch links.
+_SKIP_PREVIOUS_EXECUTIONS = frozenset(
+    {
+        "__none:no_incumbent_execution__",
+        "__none:seated_no_stream__",
+    }
+)
+
+
+def _agent_bus_db_path() -> str | None:
+    """Bus DB the seating process can read. Missing file means no stamp."""
+    import os
+
+    path = os.environ.get("AGENT_BUS_DB_PATH", "/data/messages.db")
+    if not path or not os.path.isfile(path):
+        return None
+    return path
+
+
+def _nonterminal_cdp_generate_link(lane: str, execution_id: str) -> bool:
+    """True when *lane* has a null-terminal ``cdp-generate`` link for *execution_id*."""
+    path = _agent_bus_db_path()
+    thread_id = (lane or "").strip()
+    exec_id = (execution_id or "").strip()
+    if path is None or not thread_id or not exec_id:
+        return False
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM thread_dispatch_links "
+                "WHERE thread_id=? AND execution_id=? "
+                "AND pipeline_id='cdp-generate' AND terminal_status IS NULL "
+                "LIMIT 1",
+                (thread_id, exec_id),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — seating must not crash the hop
+        logger.warning(
+            "cse_seating_hook link read failed lane=%s exec=%s: %s",
+            thread_id,
+            exec_id,
+            exc,
+        )
+        return False
+    return row is not None
+
+
+def post_retired_operator_link(*, lane: str, execution_id: str) -> bool:
+    """POST ``dispatch-terminate`` for one predecessor generate.
+
+    Same payload as ``CursorBusClient.terminate_dispatch``. A transport or
+    HTTP failure is logged and returned; the caller still finishes seating.
+    """
+    import os
+
+    from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+    payload = {
+        "execution_id": execution_id,
+        "terminal_status": "completed",
+        "bus_lifecycle": "persistent",
+    }
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = client.post(
+                f"/threads/{lane}/dispatch-terminate",
+                json=payload,
+                headers=headers,
+            )
+    except Exception as exc:  # noqa: BLE001 — stamp must not crash the hop
+        logger.warning(
+            "cse_seating_hook dispatch-terminate failed lane=%s exec=%s: %s",
+            lane,
+            execution_id,
+            exc,
+        )
+        return False
+    if resp.status_code >= 400:
+        logger.warning(
+            "cse_seating_hook dispatch-terminate status=%s lane=%s exec=%s body=%s",
+            resp.status_code,
+            lane,
+            execution_id,
+            resp.text[:200],
+        )
+        return False
+    return True
+
+
+def _stamp_predecessor_dispatch_link(
+    *,
+    lane: str,
+    previous: str,
+    successor: str,
+) -> None:
+    """Stamp *previous* after the watch save, only when *successor* is already open."""
+    prev = (previous or "").strip()
+    succ = (successor or "").strip()
+    if not prev or prev == succ or prev in _SKIP_PREVIOUS_EXECUTIONS:
+        return
+    if not _nonterminal_cdp_generate_link(lane, prev):
+        return
+    if not _nonterminal_cdp_generate_link(lane, succ):
+        return
+    if post_retired_operator_link(lane=lane, execution_id=prev):
+        logger.info(
+            "cse_seating_hook stamped predecessor lane=%s execution_id=%s",
+            lane,
+            prev,
+        )
+
+
 def _persist_successor_watch(
     *,
     lane: str,
@@ -244,8 +362,12 @@ def _persist_successor_watch(
     successor_birth_id: str | None,
     retired_registration_ids: list[str],
     chat_url: str | None = None,
-) -> None:
-    """Point the lane watch at the hop successor and drop stale census ids."""
+) -> str:
+    """Point the lane watch at the hop successor and drop stale census ids.
+
+    Returns the ``execution_id`` that was on the watch before this write.
+    The caller stamps that id only after every ``save_watches`` has returned.
+    """
     from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
         load_watches,
         save_watches,
@@ -263,12 +385,28 @@ def _persist_successor_watch(
     birth = (successor_birth_id or "").strip()
     if birth:
         updates["successor_birth_id"] = birth
+    previous = ""
+    diverged: list[str] = []
     for path in _watch_targets():
         watches = load_watches(path)
         row = dict(watches.get(lane) or {"thread_id": lane})
+        candidate = str(row.get("execution_id") or "").strip()
+        if candidate:
+            if not previous:
+                previous = candidate
+            elif candidate != previous and candidate not in diverged:
+                diverged.append(candidate)
         row.update(updates)
         watches[lane] = row
         save_watches(watches, path)
+    if diverged:
+        logger.warning(
+            "cse_seating_hook watch execution_id diverged lane=%s kept=%s also=%s",
+            lane,
+            previous,
+            diverged,
+        )
+    return previous
 
 
 def _seat_successor_without_occupy(
@@ -386,13 +524,18 @@ def _seat_successor_without_occupy(
         for reg in holder_regs:
             if reg not in retired:
                 retired.append(reg)
-    _persist_successor_watch(
+    previous_execution_id = _persist_successor_watch(
         lane=lane,
         successor=successor,
         execution_id=execution_id,
         successor_birth_id=birth or None,
         retired_registration_ids=retired,
         chat_url=chat or None,
+    )
+    _stamp_predecessor_dispatch_link(
+        lane=lane,
+        previous=previous_execution_id,
+        successor=execution_id,
     )
     outcome = {
         "ok": True,

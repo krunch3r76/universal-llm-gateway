@@ -42,7 +42,6 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLed
     return CursorDispatchLedger.instance()
 
 
-
 _OCCUPY_URL = "https://claude.ai/cowork/cse_occupyhop1"
 _PREDECESSOR_URL = "https://claude.ai/cowork/cse_predecessor1"
 _LANE = "99001"
@@ -1366,3 +1365,265 @@ def test_harvest_dispatch_link_url_follows_mint_execution_not_retired(
     )
     assert _chat_url_from_dispatch_link(live_exec) == mint_url
     assert _chat_url_from_dispatch_link(retired_exec) == retired_url
+
+
+_PRED = "662daf5d-c192-46fa-bec3-066aa4284f1a"
+_SUCC = "8dcc0993-8464-46a8-b31c-2e95c8f3c13a"
+_CHAT_DISPATCH = "a2e67ddc-5d11-4c71-aa4a-cc0350150114"
+_STAMP_LANE = "12286"
+
+
+class _TerminateCapture:
+    def __init__(self) -> None:
+        self.posts: list[dict[str, object]] = []
+
+    def post(
+        self, path: str, json: dict[str, object] | None = None, headers: object = None
+    ) -> object:
+        del headers
+        self.posts.append({"path": path, "json": json or {}})
+
+        class _Resp:
+            status_code = 200
+            text = ""
+
+        return _Resp()
+
+    def __enter__(self) -> _TerminateCapture:
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
+def _install_terminate_capture(monkeypatch: pytest.MonkeyPatch) -> _TerminateCapture:
+    client = _TerminateCapture()
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_args, **_kwargs: client,
+    )
+    return client
+
+
+def _stamp_job(lane: str) -> AutoJob:
+    birth = "ab" * 16
+    body = build_continuity_handoff_body(
+        thread_id=lane,
+        trigger="stamp-predecessor",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=f"cortex://notes/system/threads/{lane}-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=1.0,
+        ),
+        occupy_target=None,
+        successor_birth_id=birth,
+    )
+    return AutoJob(
+        job_id="job-stamp-predecessor",
+        thread_id=lane,
+        turn_number=1021,
+        subject="continuity hop",
+        body=body,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cdp/opus-5.5",
+        desired_effort="auto",
+        contract="answer",
+        continuity_hop=True,
+        cse_chat_url="",
+        cse_registration_id="",
+    )
+
+
+def _prepare_stamp_lane(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    watch_execution_id: str,
+    links: list[tuple[str, str]],
+) -> _TerminateCapture:
+    """Temp watch + bus DB. HTTP terminate is captured and never leaves the test."""
+    import json
+
+    from agent_bus_store.db import admit_dispatch, create_thread, init_db
+
+    assert ledger is CursorDispatchLedger.instance()
+    watch_file = tmp_path / "hop_cadence_watches.json"
+    watch_file.write_text(
+        json.dumps(
+            {
+                _STAMP_LANE: {
+                    "thread_id": _STAMP_LANE,
+                    "execution_id": watch_execution_id,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(watch_file))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    create_thread(thread_id=_STAMP_LANE, slug="stamp-lane", lifecycle_state="active")
+    for execution_id, pipeline_id in links:
+        admit_dispatch(
+            thread_id=_STAMP_LANE,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent="cursor-auto",
+        )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._load_identity_snap",
+        lambda: {"rows": [], "seated_rows": []},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
+        lambda _job, _execution_id: (None, None),
+    )
+    return _install_terminate_capture(monkeypatch)
+
+
+def _link_terminal(execution_id: str) -> str | None:
+    import os
+    import sqlite3
+
+    conn = sqlite3.connect(os.environ["AGENT_BUS_DB_PATH"])
+    try:
+        row = conn.execute(
+            "SELECT terminal_status FROM thread_dispatch_links WHERE execution_id=?",
+            (execution_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return row[0]
+
+
+def test_hook_stamps_predecessor_when_successor_link_is_open(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _prepare_stamp_lane(
+        ledger,
+        tmp_path,
+        monkeypatch,
+        watch_execution_id=_PRED,
+        links=[(_PRED, "cdp-generate"), (_SUCC, "cdp-generate")],
+    )
+    outcome = run_cse_seating_hook(_stamp_job(_STAMP_LANE), execution_id=_SUCC)
+    assert outcome["path"] == "seated_without_occupy_target"
+    assert outcome["execution_id"] == _SUCC
+    assert len(client.posts) == 1
+    assert client.posts[0]["path"] == f"/threads/{_STAMP_LANE}/dispatch-terminate"
+    assert client.posts[0]["json"] == {
+        "execution_id": _PRED,
+        "terminal_status": "completed",
+        "bus_lifecycle": "persistent",
+    }
+    assert _link_terminal(_SUCC) is None
+    from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+        load_watches,
+    )
+
+    assert load_watches()[_STAMP_LANE]["execution_id"] == _SUCC
+
+
+def test_hook_does_not_stamp_when_successor_link_is_absent(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _prepare_stamp_lane(
+        ledger,
+        tmp_path,
+        monkeypatch,
+        watch_execution_id=_PRED,
+        links=[(_PRED, "cdp-generate")],
+    )
+    run_cse_seating_hook(_stamp_job(_STAMP_LANE), execution_id=_SUCC)
+    assert client.posts == []
+    assert _link_terminal(_PRED) is None
+
+
+def test_hook_does_not_stamp_the_id_just_written(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _prepare_stamp_lane(
+        ledger,
+        tmp_path,
+        monkeypatch,
+        watch_execution_id=_SUCC,
+        links=[(_SUCC, "cdp-generate")],
+    )
+    run_cse_seating_hook(_stamp_job(_STAMP_LANE), execution_id=_SUCC)
+    assert client.posts == []
+
+
+def test_hook_does_not_stamp_sentinel_previous(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _prepare_stamp_lane(
+        ledger,
+        tmp_path,
+        monkeypatch,
+        watch_execution_id="__none:no_incumbent_execution__",
+        links=[(_SUCC, "cdp-generate")],
+    )
+    run_cse_seating_hook(_stamp_job(_STAMP_LANE), execution_id=_SUCC)
+    assert client.posts == []
+
+
+def test_hook_does_not_stamp_non_cdp_previous(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _prepare_stamp_lane(
+        ledger,
+        tmp_path,
+        monkeypatch,
+        watch_execution_id=_CHAT_DISPATCH,
+        links=[
+            (_CHAT_DISPATCH, "chat-dispatch"),
+            (_SUCC, "cdp-generate"),
+        ],
+    )
+    run_cse_seating_hook(_stamp_job(_STAMP_LANE), execution_id=_SUCC)
+    assert client.posts == []
+    assert _link_terminal(_CHAT_DISPATCH) is None
+
+
+def test_hook_seating_survives_terminate_transport_failure(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_stamp_lane(
+        ledger,
+        tmp_path,
+        monkeypatch,
+        watch_execution_id=_PRED,
+        links=[(_PRED, "cdp-generate"), (_SUCC, "cdp-generate")],
+    )
+
+    class _Down:
+        def __enter__(self) -> _Down:
+            raise RuntimeError("bus down")
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_args, **_kwargs: _Down(),
+    )
+    outcome = run_cse_seating_hook(_stamp_job(_STAMP_LANE), execution_id=_SUCC)
+    assert outcome["path"] == "seated_without_occupy_target"
+    assert outcome["ok"] is True
