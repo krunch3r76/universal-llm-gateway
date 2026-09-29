@@ -11,11 +11,16 @@ from services.git_integration_worker.cursor_auto.queue import reset_queue_for_te
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
     discharge_discard,
+    discharge_landed,
     resolve_completing_dispatch_id,
 )
 from services.git_integration_worker.cursor_sdk_orphan import BridgeOccupancy
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     reset_occupancy_cache,
+)
+from services.git_integration_worker.cursor_sdk_worktree_lock import (
+    list_locked_worktrees,
+    lock_lane_worktree,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     register_lane_worktree,
@@ -289,3 +294,157 @@ def test_harness_env_supplies_completing_dispatch_id(
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "disp-from-env")
     assert resolve_completing_dispatch_id(None) == "disp-from-env"
     assert resolve_completing_dispatch_id("disp-body") == "disp-body"
+
+
+def _landed_on_master(repo: Path, branch: str, filename: str) -> None:
+    """Commit ``filename`` on ``branch`` and put the same blob on master."""
+    _git("checkout", "-b", branch, cwd=repo)
+    (repo / filename).write_text(branch + "\n", encoding="utf-8")
+    _git("add", filename, cwd=repo)
+    _git("commit", "-m", branch, cwd=repo)
+    _git("checkout", "master", cwd=repo)
+    _git("cherry-pick", branch, cwd=repo)
+
+
+def _lock_reason(repo: Path, tree: Path) -> str | None:
+    target = tree.resolve()
+    for entry in list_locked_worktrees(repo):
+        if entry.path == target:
+            return entry.reason
+    return None
+
+
+def _show(repo: Path, rev: str, path: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "show", f"{rev}:{path}"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _head(tree: Path) -> str:
+    proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(tree),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _two_locked_trees(
+    repo: Path,
+    tmp_path: Path,
+    *,
+    debt_lock: str,
+) -> tuple[str, Path, Path]:
+    """Debt content is on master. Caller dispatch resolves to the other tree.
+
+    ``debt_lock`` is ``ulg`` (parseable, debt thread) or ``foreign`` (unparsed).
+    """
+    debt_branch = "cursor-sdk/lane-debt"
+    caller_branch = "cursor-sdk/lane-caller-other"
+    _landed_on_master(repo, debt_branch, "landed.txt")
+    _branch(repo, caller_branch)
+    debt_tree = tmp_path / "lane-debt"
+    caller_tree = tmp_path / "lane-caller-other"
+    _git("worktree", "add", str(debt_tree), debt_branch, cwd=repo)
+    _git("worktree", "add", str(caller_tree), caller_branch, cwd=repo)
+    register_lane_worktree(
+        source_repo=repo,
+        thread_id="thr-debt",
+        worktree_path=debt_tree,
+        branch_name=debt_branch,
+        branch_point="master",
+        last_dispatch_id="disp-debt",
+    )
+    register_lane_worktree(
+        source_repo=repo,
+        thread_id="thr-caller",
+        worktree_path=caller_tree,
+        branch_name=caller_branch,
+        branch_point="master",
+        last_dispatch_id="disp-caller",
+    )
+    if debt_lock == "ulg":
+        lock_lane_worktree(
+            repo, debt_tree, dispatch_id="disp-debt", thread_id="thr-debt"
+        )
+    elif debt_lock == "foreign":
+        _git("worktree", "lock", "--reason", "foreign", str(debt_tree), cwd=repo)
+    else:
+        raise AssertionError(debt_lock)
+    lock_lane_worktree(
+        repo, caller_tree, dispatch_id="disp-caller", thread_id="thr-caller"
+    )
+    _running("disp-caller", "thr-caller", repo=repo, tree=caller_tree)
+    return debt_branch, debt_tree, caller_tree
+
+
+def test_completing_dispatch_does_not_unlock_its_own_tree(
+    repo: Path, tmp_path: Path
+) -> None:
+    debt_branch, _debt_tree, caller_tree = _two_locked_trees(
+        repo, tmp_path, debt_lock="ulg"
+    )
+    caller_reason = _lock_reason(repo, caller_tree)
+    assert caller_reason is not None
+    result = discharge_landed(
+        repo=repo,
+        branch_name=debt_branch,
+        completing_dispatch_id="disp-caller",
+    )
+    assert result.discharged is True
+    assert result.refused_reason is None
+    assert not _branch_ref_exists(repo, debt_branch)
+    assert caller_tree.exists()
+    assert _lock_reason(repo, caller_tree) == caller_reason
+
+
+def test_debt_tree_unparsed_lock_still_foreign(repo: Path, tmp_path: Path) -> None:
+    debt_branch, _debt_tree, caller_tree = _two_locked_trees(
+        repo, tmp_path, debt_lock="foreign"
+    )
+    caller_reason = _lock_reason(repo, caller_tree)
+    assert caller_reason is not None
+    result = discharge_landed(
+        repo=repo,
+        branch_name=debt_branch,
+        completing_dispatch_id="disp-caller",
+    )
+    assert result.discharged is False
+    assert result.refused_reason == "foreign_lock"
+    assert _branch_ref_exists(repo, debt_branch)
+    assert caller_tree.exists()
+    assert _lock_reason(repo, caller_tree) == caller_reason
+
+
+def test_dirty_debt_tree_salvage_does_not_touch_caller(
+    repo: Path, tmp_path: Path
+) -> None:
+    debt_branch, debt_tree, caller_tree = _two_locked_trees(
+        repo, tmp_path, debt_lock="ulg"
+    )
+    only_copy = debt_tree / "only-copy.txt"
+    only_copy.write_text("only copy\n", encoding="utf-8")
+    caller_head = _head(caller_tree)
+    result = discharge_landed(
+        repo=repo,
+        branch_name=debt_branch,
+        completing_dispatch_id="disp-caller",
+    )
+    assert caller_tree.exists()
+    assert _head(caller_tree) == caller_head
+    assert not (caller_tree / "only-copy.txt").exists()
+    if _branch_ref_exists(repo, debt_branch):
+        assert result.discharged is False
+        assert only_copy.read_text(encoding="utf-8") == "only copy\n"
+        return
+    assert result.discharged is True
+    assert result.archive_tag
+    shown = _show(repo, result.archive_tag, "only-copy.txt")
+    assert shown.returncode == 0
+    assert shown.stdout == "only copy\n"

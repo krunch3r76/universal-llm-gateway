@@ -222,6 +222,30 @@ def _emit_release_refused(
     )
 
 
+def _record_for_worktree_path(
+    *,
+    source_repo: Path,
+    worktree_path: Path,
+) -> DispatchWorktreeRecord | None:
+    with ledger_connection() as conn:
+        row = conn.execute(
+            "SELECT source_repo, thread_id, worktree_path, branch_name, "
+            "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+            "WHERE source_repo=? AND worktree_path=?",
+            (str(source_repo.resolve()), str(worktree_path.resolve())),
+        ).fetchone()
+    if row is None:
+        return None
+    return DispatchWorktreeRecord(
+        worktree_path=Path(row["worktree_path"]),
+        branch_name=row["branch_name"],
+        branch_point=row["branch_point"],
+        thread_id=str(row["thread_id"] or ""),
+        last_dispatch_id=row["last_dispatch_id"],
+        source_repo=str(row["source_repo"] or ""),
+    )
+
+
 def _resolve_record(
     *,
     source_repo: Path,
@@ -229,6 +253,13 @@ def _resolve_record(
     thread_id: str | None,
     worktree_path: Path | None,
 ) -> DispatchWorktreeRecord | None:
+    if worktree_path is not None:
+        by_path = _record_for_worktree_path(
+            source_repo=source_repo,
+            worktree_path=worktree_path,
+        )
+        if by_path is not None:
+            return by_path
     if dispatch_id:
         record = lookup_dispatch_worktree(
             dispatch_id=dispatch_id,
@@ -242,23 +273,6 @@ def _resolve_record(
         )
 
         return lookup_lane_worktree(thread_id=thread_id, source_repo=source_repo)
-    if worktree_path is not None:
-        with ledger_connection() as conn:
-            row = conn.execute(
-                "SELECT source_repo, thread_id, worktree_path, branch_name, "
-                "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
-                "WHERE source_repo=? AND worktree_path=?",
-                (str(source_repo.resolve()), str(worktree_path.resolve())),
-            ).fetchone()
-        if row is not None:
-            return DispatchWorktreeRecord(
-                worktree_path=Path(row["worktree_path"]),
-                branch_name=row["branch_name"],
-                branch_point=row["branch_point"],
-                thread_id=str(row["thread_id"] or ""),
-                last_dispatch_id=row["last_dispatch_id"],
-                source_repo=str(row["source_repo"] or ""),
-            )
     return None
 
 

@@ -250,6 +250,7 @@ def _finish(
         thread_has_inheritor,
     )
     from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        active_pin,
         release_pin,
     )
     from services.git_integration_worker.cursor_sdk_worktree_release import (
@@ -280,32 +281,40 @@ def _finish(
         )
 
     if record is not None and record.thread_id:
-        dispatch_id = (
-            completing_dispatch_id or record.last_dispatch_id or record.thread_id
+        pin = active_pin(source_repo=root, thread_id=record.thread_id)
+        pin_dispatch_id = (
+            pin.dispatch_id if pin is not None else record.last_dispatch_id
         )
-        release_pin(
-            source_repo=root,
-            thread_id=record.thread_id,
-            dispatch_id=dispatch_id,
-            release_reason=f"disposition:{verb}",
-        )
+        if pin_dispatch_id:
+            release_pin(
+                source_repo=root,
+                thread_id=record.thread_id,
+                dispatch_id=pin_dispatch_id,
+                release_reason=f"disposition:{verb}",
+            )
         release = release_lane_worktree(
             source_repo=root,
             thread_id=record.thread_id,
-            dispatch_id=dispatch_id,
+            worktree_path=record.worktree_path,
+            dispatch_id=record.last_dispatch_id,
             reason="discharge",
             allow_unharvested=True,
             ignore_dispatch_id=completing_dispatch_id,
         )
         if release.deferred_to_caller:
             worktree_release = "deferred_to_caller"
-        if not release.released and release.refusal is not None:
+        elif not release.released:
+            refused = release.refusal.value if release.refusal is not None else None
+            if refused is None and release.salvage_refused:
+                refused = "salvage_refused"
+            elif refused is None and release.branch_retained:
+                refused = "branch_retained"
             return DischargeResult(
                 discharged=False,
                 branch=branch_name,
                 verb=verb,
                 tip_sha=tip_sha,
-                refused_reason=release.refusal.value,
+                refused_reason=refused,
             )
 
     archive_tag = archive_branch(repo=root, branch_name=branch_name)

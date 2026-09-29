@@ -37,6 +37,7 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 )
 from services.git_integration_worker.cursor_sdk_branch_debt_escalation import (
     debt_admit_refusal,
+    discharge_hint,
     escalate_aged_debts,
 )
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
@@ -146,6 +147,12 @@ def _age_debt(branch: str, *, days: float) -> None:
 
 
 # --- obligation stated at the front -----------------------------------------
+
+
+def test_discharge_hint_uses_mounted_route() -> None:
+    hint = discharge_hint("cursor-sdk/lane-1")
+    assert "/api/v1/cursor/branch-discharge" in hint
+    assert "/cursor-sdk/branch-discharge" not in hint
 
 
 def test_lane_b_preamble_states_the_branch_contract() -> None:

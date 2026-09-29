@@ -53,7 +53,7 @@ def refusal_horizon_s() -> float:
 def discharge_hint(branch: str) -> str:
     """The exact call that clears a debt, quoted wherever one is reported."""
     return (
-        f"discharge it: POST /cursor-sdk/branch-discharge "
+        f"discharge it: POST /api/v1/cursor/branch-discharge "
         f'{{"branch": "{branch}", "verb": "landed"}} — or '
         f'{{"branch": "{branch}", "verb": "discard", "reason": "<why>"}}'
     )
