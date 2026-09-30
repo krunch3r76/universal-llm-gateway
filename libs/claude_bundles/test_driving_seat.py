@@ -244,3 +244,134 @@ def test_hop_bind_retires_stale_registry_rows(
 def test_ensure_rejects_hop_as_driving_kind(isolated_registry: Path) -> None:
     with pytest.raises(RegistryError, match="cannot be mission_kind=hop"):
         _ensure(mission_kind="hop")
+
+
+def test_ensure_recensus_second_seat_contended_propagates(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_registry.models import SeatContended
+
+    attempts = {"n": 0}
+
+    def always_contended(*_args: object, **_kwargs: object) -> object:
+        attempts["n"] += 1
+        raise SeatContended(
+            "still contended",
+            retryable=True,
+            data={
+                "depth": "pre_lock_status_check",
+                "observed_status": "allocating",
+                "registration_id": "rid",
+            },
+        )
+
+    monkeypatch.setattr(reg, "relaunch_dormant", always_contended)
+    first = _ensure()
+    active = reg._store.load_active()
+    active[first.registration_id]["status"] = "dormant"
+    active[first.registration_id]["seat_lane"] = "9497"
+    active[first.registration_id]["seat_bound_at"] = 1.0
+    active[first.registration_id]["seat_closed_at"] = None
+    reg._store.write_active(active)
+    with pytest.raises(SeatContended, match="still contended"):
+        _ensure()
+    assert attempts["n"] == 2
+
+
+def test_ensure_recensus_r1_allocating_open_seat_bind_without_relaunch(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Winner reserve between census and bind: retry binds open seat, no relaunch."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    first = _ensure()
+    active = reg._store.load_active()
+    active[first.registration_id]["status"] = "dormant"
+    active[first.registration_id]["seat_lane"] = None
+    active[first.registration_id]["seat_bound_at"] = None
+    active[first.registration_id]["seat_closed_at"] = None
+    reg._store.write_active(active)
+    reg._release_driver_lock(first.registration_id)
+
+    real_bind = reg.bind_driving_seat
+    bind_pass = {"n": 0}
+    relaunch_calls: list[str] = []
+    real_relaunch = reg.relaunch_dormant
+
+    def bind_then_allocate(rid: str) -> None:
+        bind_pass["n"] += 1
+        if bind_pass["n"] == 1:
+            row = dict(reg._store.load_active()[rid])
+            row["status"] = "allocating"
+            for key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
+                row.pop(key, None)
+            active_now = reg._store.load_active()
+            active_now[rid] = row
+            reg._store.write_active(active_now)
+        real_bind(rid)
+
+    def track_relaunch(registration_id: str, **kwargs: object) -> object:
+        outcome = real_relaunch(registration_id, **kwargs)  # type: ignore[arg-type]
+        relaunch_calls.append(registration_id)
+        return outcome
+
+    monkeypatch.setattr(reg, "bind_driving_seat", bind_then_allocate)
+    monkeypatch.setattr(reg, "relaunch_dormant", track_relaunch)
+
+    again = _ensure()
+    assert again.registration_id == first.registration_id
+    row = reg._store.load_active()[again.registration_id]
+    assert row.get("status") == "allocating"
+    assert seat_open(row, "9497")
+    assert relaunch_calls == []
+
+
+def test_ensure_emits_recensus_joined_only_on_recovered_retry(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles import cdp_registry_events as ev
+
+    emitted: list[str] = []
+    real_emit = ev.emit
+
+    def capture_emit(event: object) -> None:
+        sig = getattr(event, "signal", None)
+        if sig:
+            emitted.append(str(sig))
+        real_emit(event)
+
+    monkeypatch.setattr(ev, "emit", capture_emit)
+
+    first = _ensure()
+    assert "cdp.seat.recensus_joined" not in emitted
+
+    active = reg._store.load_active()
+    active[first.registration_id]["status"] = "dormant"
+    active[first.registration_id]["seat_lane"] = "9497"
+    active[first.registration_id]["seat_bound_at"] = 10.0
+    active[first.registration_id]["seat_closed_at"] = None
+    reg._store.write_active(active)
+
+    real_relaunch = reg.relaunch_dormant
+    calls = {"n": 0}
+
+    def fail_once_then_relaunch(registration_id: str, **kwargs: object) -> object:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise reg.SeatContended(
+                f"registration {registration_id!r} is 'allocating', not dormant",
+                retryable=True,
+                data={
+                    "depth": "pre_lock_status_check",
+                    "observed_status": "allocating",
+                    "registration_id": registration_id,
+                },
+            )
+        return real_relaunch(registration_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(reg, "relaunch_dormant", fail_once_then_relaunch)
+    _ensure()
+    assert emitted.count("cdp.seat.recensus_joined") == 1

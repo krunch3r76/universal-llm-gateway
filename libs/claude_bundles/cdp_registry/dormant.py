@@ -31,6 +31,7 @@ from .models import (
     DormantSeat,
     Registration,
     RegistryError,
+    SeatContended,
     _LaunchFn,
     _ListenFn,
     _row_to_dormant_seat,
@@ -205,8 +206,15 @@ def relaunch_dormant(
     if row is None:
         raise RegistryError(f"unknown registration_id: {registration_id!r}")
     if row.get("status") != STATUS_DORMANT:
-        raise RegistryError(
-            f"registration {registration_id!r} is {row.get('status')!r}, not dormant"
+        observed = row.get("status")
+        raise SeatContended(
+            f"registration {registration_id!r} is {observed!r}, not dormant",
+            retryable=True,
+            data={
+                "depth": "pre_lock_status_check",
+                "observed_status": observed,
+                "registration_id": registration_id,
+            },
         )
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome

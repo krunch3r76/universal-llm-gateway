@@ -539,6 +539,32 @@ def cdp_seat_lane_reconciled(
 
 
 @event_factory
+def cdp_seat_recensus_joined(
+    *,
+    parent_thread: str,
+    depth: str,
+    contended_registration_id: str,
+    observed_status: str | None,
+    registration_id: str,
+    branch: str,
+) -> Event:
+    """Advisory: ensure_driving_operator_seat recovered after SeatContended."""
+    return Event(
+        signal="cdp.seat.recensus_joined",
+        role="observation",
+        scope="node",
+        payload={
+            "parent_thread": parent_thread,
+            "depth": depth,
+            "contended_registration_id": contended_registration_id,
+            "observed_status": observed_status,
+            "registration_id": registration_id,
+            "branch": branch,
+        },
+    )
+
+
+@event_factory
 def cdp_attachment_observed(
     *,
     registration_id: str,
