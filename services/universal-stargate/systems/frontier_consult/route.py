@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, Self
 
 import httpx
 from agent_seat.profiles import get_profile
+from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from implement_admission.preflight import (
@@ -646,6 +647,31 @@ async def team_dispatch(
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
+    # job=wrap on an explicit non-sdk role must refuse before check-review
+    # coercion rewrites reviewer/skeptic into seat=cursor-sdk. role=cursor-sdk
+    # stays on the later role_is_not_a_seat teaching path.
+    if (
+        body.op == "generate"
+        and getattr(body, "job", None) == "wrap"
+        and isinstance(role, str)
+        and role.strip()
+        and normalize_agent_slug(role) != "cursor-sdk"
+        and not is_cursor_sdk_generate_admission(
+            role=role, seat=seat, model=model, request_id=request_id
+        )
+    ):
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="role",
+                reason=(
+                    "contract=wrap is only admitted on the cursor-sdk generate branch"
+                ),
+                status_code=422,
+                code="wrap_role_not_admitted",
+            ).to_dict(),
+        )
     if body.op == "generate":
         from implement_admission.check_review_substrate import (
             coerce_check_review_omit_to_cursor_seat,
@@ -708,27 +734,6 @@ async def team_dispatch(
             body=body,
             seat=sdk_seat,
             response=response,
-        )
-
-    if (
-        body.op == "generate"
-        and getattr(body, "job", None) == "wrap"
-        and role is not None
-        and not is_cursor_sdk_generate_admission(
-            role=role, seat=seat, model=model, request_id=request_id
-        )
-    ):
-        return JSONResponse(
-            status_code=422,
-            content=FrontierEndpointError(
-                request_id=request_id,
-                field="role",
-                reason=(
-                    "contract=wrap is only admitted on the cursor-sdk generate branch"
-                ),
-                status_code=422,
-                code="wrap_role_not_admitted",
-            ).to_dict(),
         )
 
     if body.op == "generate" and role is not None:

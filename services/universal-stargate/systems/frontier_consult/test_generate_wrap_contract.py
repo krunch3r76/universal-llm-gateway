@@ -93,7 +93,7 @@ async def test_wrap_happy_path_returns_200_without_sdk(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
+        seat="cursor-sdk",
         job="wrap",
         source_ref="todo:generate-wrap-contract",
     )
@@ -101,7 +101,7 @@ async def test_wrap_happy_path_returns_200_without_sdk(
     result = await team_dispatch(body, response)
 
     assert response.status_code == 200
-    assert result["contract"] == "wrap"
+    assert result["job"] == "wrap"
     assert result["status"] == "materialized"
     assert result["materialized"] is True
     assert result["materialization_mode"] == "auto"
@@ -133,7 +133,7 @@ async def test_wrap_does_not_spawn_composer(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
+        seat="cursor-sdk",
         job="wrap",
         source_ref="todo:slug",
     )
@@ -166,7 +166,7 @@ async def test_wrap_gated_source_ref_returns_422(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
+        seat="cursor-sdk",
         job="wrap",
         source_ref="todo:not-ready",
     )
@@ -199,7 +199,7 @@ async def test_wrap_decision_not_asserted_returns_422(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
+        seat="cursor-sdk",
         job="wrap",
         source_ref="todo:unratified",
     )
@@ -246,7 +246,7 @@ async def test_wrap_packet_scheme_source_ref_allowed(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
+        seat="cursor-sdk",
         job="wrap",
         source_ref="packet:tmp/reviews/existing-packet.md",
     )
@@ -262,7 +262,7 @@ async def test_wrap_packet_scheme_source_ref_allowed(
 async def test_wrap_route_defensive_packet_path_rejection() -> None:
     body = TeamDispatchGenerateBody.model_construct(
         op="generate",
-        role="cursor-sdk",
+        seat="cursor-sdk",
         job="wrap",
         source_ref="todo:slug",
         packet_path="tmp/reviews/packet.md",
@@ -270,7 +270,7 @@ async def test_wrap_route_defensive_packet_path_rejection() -> None:
     result = await dispatch_cursor_sdk_generate_route(
         request_id="req-wrap",
         body=body,
-        role="cursor-sdk",
+        seat="cursor-sdk",
         response=Response(),
     )
 
