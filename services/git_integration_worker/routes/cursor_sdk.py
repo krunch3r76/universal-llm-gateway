@@ -1426,12 +1426,12 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        conductor_has_live_nested,
+    )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _is_conductor_row,
         maybe_fire_conductor_hop_reactor,
-    )
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
-        conductor_has_live_nested,
     )
 
     parked_parent = await asyncio.to_thread(
