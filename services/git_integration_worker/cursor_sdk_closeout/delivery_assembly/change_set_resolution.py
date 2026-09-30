@@ -33,7 +33,11 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
     write_repo_sidecar,
 )
-from services.git_integration_worker.cursor_sdk_git_head import resolve_git_head
+from services.git_integration_worker.cursor_sdk_git_head import (
+    RangePythonCorroboration,
+    range_python_corroboration,
+    resolve_git_head,
+)
 from services.git_integration_worker.cursor_sdk_manifest import (
     manifest_offgit_deliverable_uris,
     merge_wrapper_manifest,
@@ -134,6 +138,7 @@ def resolve_closeout_change_set(
     bool | str | None,
     list | tuple,
     ChangeSet,
+    RangePythonCorroboration,
 ]:
     write_tree, receipt_tree, mount = _capture_trees(source_repo, binding)
     repo_roots = list(binding.repo_roots) if binding is not None else None
@@ -192,6 +197,12 @@ def resolve_closeout_change_set(
     )
     if manifest_cs is None:
         manifest_cs = ChangeSet(created=(), modified=(), deleted=())
+    admit_head = (
+        baseline.get("admit_head")
+        if isinstance(baseline, dict) and isinstance(baseline.get("admit_head"), str)
+        else None
+    )
+    closeout_head = resolve_git_head(write_tree)
     (
         repo_change_set,
         manifest_extra_untracked,
@@ -205,14 +216,14 @@ def resolve_closeout_change_set(
         baseline=baseline,
         files_expected=files_expected,
         current_porcelain=worktree_baseline.capture_wt_baseline(write_tree),
-        admit_head=(
-            baseline.get("admit_head")
-            if isinstance(baseline, dict)
-            and isinstance(baseline.get("admit_head"), str)
-            else None
-        ),
-        closeout_head=resolve_git_head(write_tree),
+        admit_head=admit_head,
+        closeout_head=closeout_head,
         dispatch_id=dispatch_id,
+    )
+    range_corroboration = range_python_corroboration(
+        write_tree,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
     )
     repo_change_set, files_untracked_or_ignored = partition_gitignored_from_change_set(
         repo_change_set,
@@ -256,4 +267,5 @@ def resolve_closeout_change_set(
         manifest_git_divergence,
         ambient_movements,
         verification_cs,
+        range_corroboration,
     )

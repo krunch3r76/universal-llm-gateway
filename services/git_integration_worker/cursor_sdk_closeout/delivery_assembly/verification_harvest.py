@@ -15,6 +15,7 @@ from typing import Any
 from implement_admission.closeout_models import Verification
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+from services.git_integration_worker.cursor_sdk_git_head import RangePythonCorroboration
 from services.git_integration_worker.cursor_sdk_test_observation import (
     annotate_test_observation_discrepancy,
     append_harvest_demotion_deviations,
@@ -38,6 +39,7 @@ def harvest_closeout_verification(
     repo_change_set: ChangeSet,
     baseline_deviations: list[str],
     text: str,
+    range_corroboration: RangePythonCorroboration,
 ) -> tuple[list[Verification], list[str]]:
     """Return (verification, baseline_deviations) after lint + pytest harvest.
 
@@ -57,7 +59,9 @@ def harvest_closeout_verification(
             source_repo=write_tree,
         )
         lint_row, lint_deviation = lint_verification_mod.run_touched_files_lint(
-            write_tree, repo_change_set
+            write_tree,
+            repo_change_set,
+            range_corroboration=range_corroboration,
         )
         verification = [*verification, lint_row]
         if lint_deviation:

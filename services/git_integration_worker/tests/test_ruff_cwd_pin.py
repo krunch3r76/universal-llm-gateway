@@ -86,9 +86,11 @@ def test_run_touched_files_lint_pins_cwd_to_source_repo(
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+        range_corroboration="unresolved",
     )
     assert note is None
     assert verification.exit_code == 0
+    assert captured["cmd"] == ["ruff", "check", str(_REPO / _CLEAN_REL)]
     assert captured["kwargs"].get("cwd") == str(_REPO)
     assert verification.stdout is None
     assert verification.stderr is None
@@ -120,6 +122,7 @@ def test_run_touched_files_lint_retains_streams_on_nonzero(
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+        range_corroboration="resolved_no_python",
     )
     assert note is None
     assert verification.exit_code == 1
@@ -154,6 +157,7 @@ def test_run_touched_files_lint_retains_stdout_tail_on_zero(
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+        range_corroboration="resolved_has_python",
     )
     assert note is None
     assert verification.exit_code == 0
@@ -191,6 +195,7 @@ def test_run_touched_files_lint_truncates_oversized_streams(
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+        range_corroboration="resolved_no_python",
     )
     assert note is None
     assert verification.exit_code == 1

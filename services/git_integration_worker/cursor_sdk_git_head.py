@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Literal
+
+RangePythonCorroboration = Literal[
+    "resolved_no_python",
+    "resolved_has_python",
+    "unresolved",
+]
 
 
 def resolve_git_head(source_repo: Path) -> str | None:
@@ -51,6 +58,46 @@ def git_diff_paths_between(
         for chunk in proc.stdout.splitlines()
         if chunk
     )
+
+
+def range_python_corroboration(
+    source_repo: Path,
+    *,
+    admit_head: str | None,
+    closeout_head: str | None,
+) -> RangePythonCorroboration:
+    """Return whether ``admit_head..closeout_head`` names a ``.py`` path.
+
+    Paths are not returned. A missing head or a failed command is
+    ``unresolved``. A successful diff with no ``.py`` name, including an
+    empty diff and including equal heads, is ``resolved_no_python``. A name
+    ending in ``.py``, including a deletion, is ``resolved_has_python``.
+    """
+    if not admit_head or not closeout_head:
+        return "unresolved"
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "diff",
+                "--name-only",
+                f"{admit_head}..{closeout_head}",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return "unresolved"
+    for chunk in proc.stdout.splitlines():
+        if not chunk:
+            continue
+        name = chunk.decode("utf-8", errors="replace")
+        if name.endswith(".py"):
+            return "resolved_has_python"
+    return "resolved_no_python"
 
 
 def commits_between(
