@@ -1,4 +1,4 @@
-"""Offline tests for contract=wrap on cursor-sdk generate (todo:generate-wrap-contract)."""
+"""Offline tests for contract=wrap on cursor-sdk generate."""
 
 from __future__ import annotations
 
@@ -251,7 +251,7 @@ async def test_wrap_packet_scheme_source_ref_allowed(
         source_ref="packet:tmp/reviews/existing-packet.md",
     )
     response = Response()
-    result = await team_dispatch(body, response)
+    await team_dispatch(body, response)
 
     assert response.status_code == 200
     assert seen_refs == ["packet:tmp/reviews/existing-packet.md"]
