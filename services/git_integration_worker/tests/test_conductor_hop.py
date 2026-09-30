@@ -14,8 +14,8 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons 
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     SKIP_GATE_NEXT_ADMIT_BLOCKED,
-    _utc_closeout_instant,
     _hop_skip_gate,
+    _utc_closeout_instant,
     build_conductor_hop_idempotency_key,
     build_hop_team_dispatch_body,
     hop_owed,
