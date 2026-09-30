@@ -253,7 +253,9 @@ async def resume_execution(
     finally:
         with contextlib.suppress(Exception):
             await _teardown_opened(outcome)
-        await asyncio.to_thread(_dispose_host, record)
+        if not store.shutting_down:
+            # Teardown mid-resume keeps the host; the next process resumes again.
+            await asyncio.to_thread(_dispose_host, record)
 
 
 async def _transfer_row(

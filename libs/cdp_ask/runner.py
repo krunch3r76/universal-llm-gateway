@@ -586,8 +586,13 @@ async def run_execution(
     abort_check: Callable[[], Awaitable[bool]],
     on_registered: Callable[[str], None] | None = None,
     ladder: LadderCallbacks | None = None,
+    teardown_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    """Run one registry-backed project-ask and return a terminal-shaped result dict."""
+    """Run one registry-backed project-ask and return a terminal-shaped result dict.
+
+    *teardown_check* reports whether the owning process is shutting down; a
+    cancellation under teardown keeps the Chrome host for the successor.
+    """
     holder = req.holder.strip() or "cdp-ask-satellite"
     prompts = await asyncio.to_thread(resolve_prompt, req)
     # Stay on the event-loop thread: bind serializes the Chrome headroom
@@ -832,7 +837,9 @@ async def run_execution(
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         return payload
     finally:
-        if retain_host:
+        if retain_host or (teardown_check is not None and teardown_check()):
+            # Process teardown: Chrome stays up with the row still in flight,
+            # so the successor process re-attaches by chat_url (a:36948 req 1).
             pass
         elif not await abort_check():
             if not registration_has_wake_debt(reg.registration_id):

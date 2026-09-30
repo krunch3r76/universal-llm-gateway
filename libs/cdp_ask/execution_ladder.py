@@ -101,6 +101,11 @@ async def finish_execution(
     )
 
 
+async def _abort_requested(store: ExecutionStore, execution_id: str) -> bool:
+    record = await store.get(execution_id)
+    return bool(record and record.abort_requested)
+
+
 async def guard_execution(
     store: ExecutionStore,
     execution_id: str,
@@ -110,6 +115,14 @@ async def guard_execution(
     try:
         await body()
     except asyncio.CancelledError:
+        if store.shutting_down and not await _abort_requested(store, execution_id):
+            # Process teardown, not an operator abort: the row keeps its in-flight
+            # execution_state and its Chrome so the successor hydrates and resumes.
+            logger.info(
+                "execution %s parked in flight for successor (process draining)",
+                execution_id,
+            )
+            raise
         with contextlib.suppress(Exception):
             await store.mark_terminal(
                 execution_id,

@@ -570,6 +570,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 abort_check=_abort_check,
                 on_registered=_sync_registered,
                 ladder=ladder,
+                teardown_check=lambda: execution_store.shutting_down,
             )
             await finish_execution(execution_store, record.execution_id, payload)
 

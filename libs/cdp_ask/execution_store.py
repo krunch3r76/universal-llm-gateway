@@ -94,6 +94,10 @@ class ExecutionStore:
         self._stop_ack_task: asyncio.Task[None] | None = None
         self._deregister: DeregisterFn | None = None
         self._occupancy: Any | None = None
+        # Set once by ``stop()``: task cancellations after this point are the
+        # process going down, not an operator abort — rows stay in flight for
+        # the successor to hydrate (a:36948 requirement 1).
+        self.shutting_down = False
 
     def bind_deregister(self, fn: DeregisterFn) -> None:
         self._deregister = fn
@@ -116,6 +120,7 @@ class ExecutionStore:
             await self._occupancy.start()
 
     async def stop(self) -> None:
+        self.shutting_down = True
         if self._occupancy is not None:
             await self._occupancy.stop()
         if self._stop_ack_task is not None:
