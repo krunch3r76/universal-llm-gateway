@@ -410,6 +410,94 @@ def launch_new_chat_with_message(
     }
 
 
+def _pick_agents_window(repo: str) -> dict:
+    """The Glass/agents toplevel. A title containing Glass wins; otherwise the unique Cursor Agents window.
+
+    On jupiter the compositor reports that window as ``Cursor Agents`` (see
+    ``ide_hop_landing``). Zero or several matches abort before any key.
+    ``repo`` is unused; the agents window title does not carry the repo name.
+    """
+    del repo
+    rows = _list_cursor_toplevels()
+    glass = [r for r in rows if _is_glass_title(str(r.get("title") or ""))]
+    if len(glass) == 1:
+        return glass[0]
+    if len(glass) > 1:
+        raise SystemExit(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "focus",
+                    "role": "glass",
+                    "reason": "window_not_unique",
+                    "titles": [r.get("title") for r in glass],
+                }
+            )
+        )
+    agents = [r for r in rows if str(r.get("title") or "") == "Cursor Agents"]
+    if len(agents) == 1:
+        return agents[0]
+    raise SystemExit(
+        json.dumps(
+            {
+                "ok": False,
+                "phase": "focus",
+                "role": "glass",
+                "reason": "window_not_unique",
+                "titles": [r.get("title") for r in rows if "cursor" in str(r.get("app_id") or "").lower()],
+            }
+        )
+    )
+
+
+def launch_glass_chat_with_message(
+    message: str,
+    *,
+    repo: str,
+    dry_run: bool = False,
+    model_query: str = _IDE_MODEL,
+) -> dict[str, object]:
+    """Focus Glass, Ctrl+/ New Agent, Ctrl+/ model, paste, Ctrl+Enter. No Ctrl+T."""
+    _require_display()
+    steps = ["focus_glass", "ctrl+/:New Agent"]
+    if model_query:
+        steps.append(f"ctrl+/:{model_query}")
+    steps += ["paste", "ctrl_enter"]
+    chosen = _pick_agents_window(repo)
+    if dry_run:
+        return {
+            "dry_run": True,
+            "repo": repo,
+            "steps": steps,
+            "window_title": chosen.get("title"),
+            "model_query": model_query,
+            "message_preview": message[:120],
+        }
+    focused = _focus_window(str(chosen["title"]), "cursor")
+    clip: subprocess.Popen[bytes] | None = None
+    ui = _ui()
+    try:
+        _quick_command(ui, "New Agent", opener="ctrl_slash")
+        time.sleep(1.5)
+        if model_query:
+            _quick_command(ui, model_query, opener="ctrl_slash")
+        clip = _wl_copy(message)
+        _paste(ui)
+        time.sleep(0.4)
+        _submit_composer(ui)
+    finally:
+        ui.close()
+        _release_clipboard(clip)
+    return {
+        "ok": True,
+        "steps": steps,
+        "window_title": chosen.get("title"),
+        "focused": focused.get("activated"),
+        "model_query": model_query,
+        "message_len": len(message),
+    }
+
+
 def glass_quick_command(
     query: str,
     *,
@@ -535,6 +623,21 @@ def main() -> int:
         default="cursor",
         help="app_id substring the focused toplevel must carry (default: cursor)",
     )
+    gl = sub.add_parser(
+        "glass-launch",
+        help="Focus Glass (or the unique Cursor Agents window), Ctrl+/ New Agent, paste, Ctrl+Enter",
+    )
+    gl.add_argument("--message", help="First user message")
+    gl.add_argument("--message-file", help="Read message from file (preferred for multiline)")
+    gl.add_argument(
+        "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
+    )
+    gl.add_argument("--dry-run", action="store_true")
+    gl.add_argument(
+        "--model-query",
+        default=_IDE_MODEL,
+        help="Ctrl+/ filter after New Agent. Empty skips. Default grok-4.7.",
+    )
     gq = sub.add_parser(
         "glass-cmd",
         help="Focus the Glass window (title contains Glass, not the IDE title), then ctrl-/",
@@ -621,6 +724,23 @@ def main() -> int:
         )
         import json
 
+        print(json.dumps(out, indent=2))
+        return 0
+    if args.cmd == "glass-launch":
+        import json
+
+        if args.message_file:
+            message = Path(args.message_file).read_text(encoding="utf-8").strip()
+        elif args.message:
+            message = args.message.strip()
+        else:
+            raise SystemExit("glass-launch requires --message or --message-file")
+        out = launch_glass_chat_with_message(
+            message,
+            repo=args.repo,
+            dry_run=args.dry_run,
+            model_query=args.model_query,
+        )
         print(json.dumps(out, indent=2))
         return 0
     if args.cmd == "glass-cmd":
