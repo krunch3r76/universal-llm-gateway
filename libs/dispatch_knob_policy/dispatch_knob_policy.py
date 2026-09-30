@@ -23,7 +23,7 @@ __all__ = [
     "validate_knobs",
 ]
 
-MECHANICAL_CONTRACTS: Final[frozenset[str]] = frozenset({"mechanical"})
+MECHANICAL_CONTRACTS: Final[frozenset[str]] = frozenset({"pure-mechanical", "none"})
 
 # Low-cost ALTERNATIVE executor recommended for mechanical/determinate work.
 _MECHANICAL_MODEL: Final[str] = "composer-2.5"

@@ -7,7 +7,7 @@ from pathlib import Path
 from contract_vocab import (
     CANONICAL_CONTRACTS,
     DEFAULT_CONTRACT,
-    DEPRECATED_ALIASES,
+    REMOVED_JOB_ALIASES,
     closeout_table,
     code_work_contracts,
     nested_scope_contracts,
@@ -40,7 +40,7 @@ def test_canonical_names_stable() -> None:
         "recon",
     )
     assert DEFAULT_CONTRACT == "answer"
-    assert DEPRECATED_ALIASES == {"consult": "confer"}
+    assert REMOVED_JOB_ALIASES == {"consult": "confer"}
     assert "hop" not in CANONICAL_CONTRACTS
 
 
