@@ -1,7 +1,7 @@
 """Boot-time cursor-sdk ledger reconcile after worker restart.
 
-Isolates restart-survivor handling (orphan snapshot, bridge reap, terminal
-marking, queued promotion) so slice edits do not touch the full dispatch route.
+Isolates restart-survivor handling (orphan snapshot, bridge reap, boot rewire,
+queued promotion) so slice edits do not touch the full dispatch route.
 Monkeypatched names resolve through ``routes.cursor_sdk`` at call time.
 """
 
@@ -18,13 +18,31 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 logger = get_logger(__name__)
 
 
-async def startup_ledger_reconcile(app: FastAPI) -> None:
-    """Reconcile restart survivors: OS-reap bridges before lease release.
+def _lease_key_for(ledger: CursorDispatchLedger, dispatch_id: str) -> str | None:
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT lease_key, source_repo FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return row["lease_key"] or row["source_repo"]
 
-    For each ledger ``running`` orphan, reap via env∧bridge identity, emit
-    honest ``bridge_aborted``, then release/restore and mark terminal; finally
-    promote queued heads.
+
+async def startup_ledger_reconcile(app: FastAPI) -> None:
+    """Reconcile restart survivors: OS-reap bridges, then rewire unparked running.
+
+    ``running`` rows with no live local task are restart orphans (``_tasks`` is
+    empty after process start). Default matches cdp-ask boot rehydrate: stamp a
+    park and re-admit a ``resume_of`` child that inherits ``execution_id`` /
+    ``thread_id`` — do not require a prior park, do not mark-failed. Terminal
+    rows are never in ``running_orphans`` and are left alone.
     """
+    from services.git_integration_worker.cursor_sdk_park_ledger import mark_parked
+    from services.git_integration_worker.cursor_sdk_park_resume import (
+        BOOT_REWIRE_REASON,
+    )
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     removed = await asyncio.to_thread(route_mod.prune_stale_dispatch_homes)
@@ -52,14 +70,12 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
         logger.info("startup cross-lane phantom gate holders reclaimed=%s", reclaimed)
     ledger = CursorDispatchLedger.instance()
     controller = app.state.admission_controller
-    # Snapshot before startup_reconcile mutates status — survivors it marks
-    # failed would otherwise never reach running_orphans() and skip ES terminal.
+    # Park-rewire before startup_reconcile so unparked running are cancelled
+    # (not failed) when the orphan scan runs; resume_parked_dispatches then
+    # admits the resume_of child (BOOT_REWIRE_REASON skips same-process refuse).
     survivors = {orphan.dispatch_id: orphan for orphan in ledger.running_orphans()}
-    repos = await asyncio.to_thread(
-        ledger.startup_reconcile, worker_instance=controller.worker_id
-    )
-    for orphan in ledger.running_orphans():
-        survivors.setdefault(orphan.dispatch_id, orphan)
+    repos: list[str] = []
+    started_at = controller.worker_started_at or ""
     for orphan in survivors.values():
         reap = await asyncio.to_thread(
             route_mod.reap_orphan_bridge_os, orphan.dispatch_id
@@ -85,18 +101,49 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
                 survivor_prune.salvaged,
                 survivor_prune.branch_retained,
             )
-        lease_key = await asyncio.to_thread(
-            ledger.mark_terminal,
+        parked = await asyncio.to_thread(
+            mark_parked,
             dispatch_id=orphan.dispatch_id,
-            terminal_status="failed",
+            intent_id=None,
+            drain_epoch=None,
+            actor="giw_startup",
+            reason=BOOT_REWIRE_REASON,
+            requested_at=started_at or orphan.started_at or "",
+            method="boot_rewire",
+            tool_call_count=0,
+            last_tool_calls=[],
+            sidecar_uri=None,
         )
-        route_mod.emit_restart_survivor_terminal(
-            orphan, bridge_aborted=reap.bridge_aborted
-        )
+        if parked is None:
+            # Row vanished mid-boot; last-resort fail so the lease frees.
+            lease_key = await asyncio.to_thread(
+                ledger.mark_terminal,
+                dispatch_id=orphan.dispatch_id,
+                terminal_status="failed",
+            )
+            route_mod.emit_restart_survivor_terminal(
+                orphan, bridge_aborted=reap.bridge_aborted
+            )
+            if lease_key:
+                repos.append(lease_key)
+            continue
+        lease_key = await asyncio.to_thread(_lease_key_for, ledger, orphan.dispatch_id)
         if lease_key:
             repos.append(lease_key)
-    # Parked rows re-enter before queued heads: they held their write lease
-    # when the restart began, so lineage continuity outranks FIFO newcomers.
+        logger.info(
+            "startup boot-rewire parked dispatch_id=%s thread_id=%s "
+            "execution_id=%s",
+            orphan.dispatch_id,
+            orphan.thread_id,
+            orphan.execution_id or orphan.dispatch_id,
+        )
+    repos.extend(
+        await asyncio.to_thread(
+            ledger.startup_reconcile, worker_instance=controller.worker_id
+        )
+    )
+    # Parked rows (prior park_for_restart + boot-rewire) re-enter before queued
+    # heads: lineage continuity outranks FIFO newcomers.
     await route_mod._resume_parked_rows(
         controller=controller,
         cfg=cfg,

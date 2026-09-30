@@ -12,8 +12,10 @@ plus park columns (``cursor_sdk_closeout.park_finalize``). GIW startup
 re-admits it as a ``resume_of`` child (``cursor_sdk_park_resume``).
 
 The park mark is process-local like the supersede mark; a crash between mark
-and finalize degrades to the existing ``running_orphans`` path (row failed with
-partial harvest) — never silent. Refusal ladder: ``cursor_sdk_park_preflight``.
+and finalize leaves an unparked ``running`` orphan that boot rewires via the
+same ``resume_of`` path (``startup_ledger_reconcile`` + ``giw_boot_rewire``) —
+never silent, never mark-failed by default. Refusal ladder:
+``cursor_sdk_park_preflight``.
 Sweep for a restart intent: ``cursor_sdk_park_sweep``. Bridge-close
 convergence: ``cursor_sdk_park_converge``.
 """

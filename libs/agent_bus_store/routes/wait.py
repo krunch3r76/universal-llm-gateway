@@ -26,7 +26,7 @@ from ..db import (
     normalize_thread_id,
 )
 from ..producer_projection import project_thread_producers
-from ..sdk_liveness import reader_liveness_witness
+from ..sdk_liveness import reader_liveness_witness_async
 from ..wait_status import (
     DEAD_WAIT_DETAIL,
     DEAD_WAIT_ERROR,
@@ -53,7 +53,7 @@ MAX_WAIT_SECONDS = 60.0
 _POLL_INTERVAL_SECONDS = 1.0
 
 
-def _pinned_reader_witness(
+async def _pinned_reader_witness(
     *,
     thread_id: str,
     execution_id: str | None,
@@ -67,7 +67,8 @@ def _pinned_reader_witness(
 
     Unpinned ``producers[]`` rows stay on the admit-grace path. Probing every
     past-grace link made ``wait`` cost grow with N, one GIW call each, using
-    the probe's existing timeout. Does not write ``terminal_status``.
+    the probe's existing timeout. Awaits the async GIW probe so a hung peer
+    cannot pin the uvicorn thread. Does not write ``terminal_status``.
     """
     if not execution_id:
         return None, None
@@ -77,7 +78,7 @@ def _pinned_reader_witness(
     )
     if row is None or row.get("terminal_status"):
         return None, None
-    witness = reader_liveness_witness(
+    witness = await reader_liveness_witness_async(
         thread_id=thread_id,
         execution_id=execution_id,
         linked_at=row.get("linked_at"),
@@ -86,7 +87,7 @@ def _pinned_reader_witness(
     return witness, {execution_id: witness}
 
 
-def _snapshot(
+async def _snapshot(
     thread_id: str,
     *,
     after_turn: int,
@@ -142,7 +143,7 @@ def _snapshot(
         turns=turns,
     )
     clock = datetime.now(UTC)
-    pinned_witness, witness_map = _pinned_reader_witness(
+    pinned_witness, witness_map = await _pinned_reader_witness(
         thread_id=thread_id,
         execution_id=execution_id,
         dispatch_links=dispatch_links,
@@ -247,7 +248,7 @@ async def wait_thread_route(
     deadline = loop.time() + wait_clamped
 
     while True:
-        snap = _snapshot(
+        snap = await _snapshot(
             thread_id,
             after_turn=after_turn,
             completion=comp,

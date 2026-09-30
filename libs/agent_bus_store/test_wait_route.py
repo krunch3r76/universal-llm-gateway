@@ -493,12 +493,12 @@ def test_wait_probes_only_pinned_past_grace_link(tmp_path, monkeypatch) -> None:
 
     calls: list[str | None] = []
 
-    def _probe(**kwargs):
+    async def _probe(**kwargs):
         calls.append(kwargs.get("link_execution_id"))
         return LivenessVerdict.SKIP_LIVE, "worker_live", None
 
     monkeypatch.setattr(
-        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness_async",
         _probe,
     )
     n_links = 8
