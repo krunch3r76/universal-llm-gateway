@@ -2035,7 +2035,7 @@ tools:
           — composer-2.5: no effort axis; grok-4.7: low|medium|high|xhigh (default high);
           opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
           universal rung — models without max degrade to their ceiling. Omitted/auto resolves
-          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate/seed xhigh; implement/recon medium)."
+          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate high; seed low; conductor low; freeform low; implement/recon medium)."
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
@@ -2140,7 +2140,7 @@ tools:
           — composer-2.5: no effort axis; grok-4.7: low|medium|high|xhigh (default high);
           opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
           universal rung — models without max degrade to their ceiling. Omitted/auto resolves
-          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate/seed xhigh; implement/recon medium)."
+          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate high; seed low; conductor low; freeform low; implement/recon medium)."
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
@@ -2312,7 +2312,7 @@ tools:
           — composer-2.5: no effort axis; grok-4.7: low|medium|high|xhigh (default high);
           opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
           universal rung — models without max degrade to their ceiling. Omitted/auto resolves
-          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate/seed xhigh; implement/recon medium)."
+          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate high; seed low; conductor low; freeform low; implement/recon medium)."
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 

@@ -11,6 +11,7 @@ from typing import Any
 from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, canonical_cursor_bare_id
 from effort_vocabulary import WIRE_LADDER
+from job_vocab import CURSOR_AUTO_ADMITTED_JOBS, GENERATE_ADMITTED_JOBS
 from model_id import ModelId
 
 from implement_admission.routing import default_policy_path, load_route_policy
@@ -72,6 +73,13 @@ class WorkflowRegistry:
         """Omit/auto effort default for *contract*; fallback ``medium``."""
         key = (contract or "").strip().lower()
         return self.contract_effort.get(key, "medium")
+
+    def configured_effort_for_job(self, job: str) -> str | None:
+        """Table row for *job*, or ``None`` when the table has no row."""
+        key = (job or "").strip().lower()
+        if key not in self.contract_effort:
+            return None
+        return self.contract_effort[key]
 
 
 def _valid_models_block_key(bare_id: str) -> bool:
@@ -287,8 +295,15 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
                 errors.append("contract_effort keys must be non-empty strings")
                 continue
             ckey = contract.strip().lower()
-            if ckey not in CANONICAL_CONTRACTS:
-                errors.append(f"contract_effort.{ckey!r} is not a canonical contract")
+            accepted_keys = (
+                frozenset(CANONICAL_CONTRACTS)
+                | CURSOR_AUTO_ADMITTED_JOBS
+                | GENERATE_ADMITTED_JOBS
+            )
+            if ckey not in accepted_keys:
+                errors.append(
+                    f"contract_effort.{ckey!r} is not a canonical contract or admitted job"
+                )
             if not isinstance(effort, str) or not effort.strip():
                 errors.append(f"contract_effort.{ckey} must be a non-empty string")
                 continue

@@ -159,3 +159,42 @@ def test_wire_shapes_match_fork_c(captured_events: dict[str, list[Any]]) -> None
     assert all("code" in warning and "message" in warning for warning in warnings)
     for entry in knob_resolution.values():
         assert set(entry) == {"status", "requested", "forwarded", "supported"}
+
+
+def test_conductor_omit_effort_fills_policy_low(
+    captured_events: dict[str, list[Any]],
+) -> None:
+    result = align_cursor_knobs(
+        resolved_model="cursor/grok-4.7",
+        contract="conductor",
+        model_knobs={"fast": "true"},
+    )
+    assert result.aligned_knobs["effort"] == "low"
+    assert result.aligned_knobs["fast"] == "true"
+    assert result.knob_resolution["effort"].status == "policy_default"
+    assert result.knob_resolution["fast"].status == "accepted"
+
+
+def test_explicit_effort_wins_over_policy(
+    captured_events: dict[str, list[Any]],
+) -> None:
+    result = align_cursor_knobs(
+        resolved_model="cursor/grok-4.7",
+        contract="conductor",
+        model_knobs={"effort": "xhigh", "fast": "true"},
+    )
+    assert result.aligned_knobs["effort"] == "xhigh"
+    assert result.knob_resolution["effort"].status == "accepted"
+
+
+def test_composer_omit_fast_fills_policy_true(
+    captured_events: dict[str, list[Any]],
+) -> None:
+    result = align_cursor_knobs(
+        resolved_model="cursor/composer-2.5",
+        contract="implement",
+        model_knobs=None,
+    )
+    assert result.aligned_knobs == {"fast": "true"}
+    assert result.knob_resolution["fast"].status == "policy_default"
+    assert "effort" not in result.knob_resolution

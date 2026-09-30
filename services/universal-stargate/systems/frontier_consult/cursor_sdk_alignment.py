@@ -39,7 +39,9 @@ _MECHANICAL_CONTRACTS = frozenset({"mechanical"})
 
 @dataclass(frozen=True, slots=True)
 class KnobOutcome:
-    status: Literal["accepted", "dropped_unsupported", "invalid_value"]
+    status: Literal[
+        "accepted", "dropped_unsupported", "invalid_value", "policy_default"
+    ]
     requested: str
     forwarded: str | None
     supported: tuple[str, ...]
@@ -173,6 +175,26 @@ def _resolve_knob(
     aligned_knobs[name] = value
 
 
+def _fill_policy_knob(
+    *,
+    model_id: str,
+    name: str,
+    value: str,
+    knob_resolution: dict[str, KnobOutcome],
+    aligned_knobs: dict[str, str],
+) -> None:
+    spec = supported_knobs(model_id).get(name)
+    if spec is None or value not in spec.accepted:
+        return
+    knob_resolution[name] = KnobOutcome(
+        status="policy_default",
+        requested="",
+        forwarded=value,
+        supported=tuple(spec.accepted),
+    )
+    aligned_knobs[name] = value
+
+
 def align_cursor_knobs(
     *,
     resolved_model: str,
@@ -197,6 +219,29 @@ def align_cursor_knobs(
             name=name,
             value=value,
             warnings=warnings,
+            knob_resolution=knob_resolution,
+            aligned_knobs=aligned_knobs,
+        )
+
+    wire = model_knobs or {}
+    card = supported_knobs(model_id)
+    if "effort" not in wire and "effort" in card:
+        from implement_admission.workflow_registry import load_workflow_registry
+
+        configured = load_workflow_registry().configured_effort_for_job(contract)
+        if configured is not None:
+            _fill_policy_knob(
+                model_id=model_id,
+                name="effort",
+                value=configured,
+                knob_resolution=knob_resolution,
+                aligned_knobs=aligned_knobs,
+            )
+    if model_id == "composer-2.5" and "fast" not in wire and "fast" in card:
+        _fill_policy_knob(
+            model_id=model_id,
+            name="fast",
+            value="true",
             knob_resolution=knob_resolution,
             aligned_knobs=aligned_knobs,
         )

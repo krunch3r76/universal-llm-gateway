@@ -85,7 +85,7 @@ denylist `xhigh` on the card.
 | Need | Route while outage open | Do not |
 |---|---|---|
 | Judgment / width | `cdp/fable-5.1` (Cowork transport) | Rebind to another Fable SDK rung |
-| Bind / sketch on SDK | `cursor/grok-4.7` `{high\|xhigh}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
+| Bind / sketch on SDK | `cursor/grok-4.7` `{high}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
 | Mechanical | `cursor/composer-2.5` | Third retry at a different Fable effort |
 
 **Recovery probe:** one trivial Fable SDK run — body non-empty and duration >15s ⇒
@@ -209,7 +209,7 @@ When the operator orders a review of this session's changes and auto-apply of ev
 <!-- workflow-registry:v1:start -->
 ### Workflow registry (generated from config/routing/route_policy.yaml)
 
-- **policy_version:** `2026-09-27`
+- **policy_version:** `2026-09-30`
 
 **Stargate omit-model default:** `workflows.auto_judgment.model` (same SOT as
 GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
@@ -229,13 +229,15 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 |---|---|
 | answer | high |
 | ask | high |
+| conductor | low |
 | confer | high |
 | execute | high |
+| freeform | low |
 | implement | medium |
-| investigate | xhigh |
+| investigate | high |
 | propagate | high |
 | recon | medium |
-| seed | xhigh |
+| seed | low |
 | verify | high |
 <!-- workflow-registry:v1:end -->
 

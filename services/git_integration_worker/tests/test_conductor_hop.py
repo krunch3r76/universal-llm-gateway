@@ -384,6 +384,71 @@ def test_hop_wire_body_is_a_legal_stargate_generate() -> None:
     assert "resume_of" not in body
 
 
+def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
+    ledger = CursorDispatchLedger.instance()
+    knobs = {"effort": "low", "fast": "true"}
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(dispatch_id="pred-hop-1", patch={"model_knobs": knobs})
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    assert body["model_knobs"] == knobs
+
+
+def test_admit_record_json_stores_policy_filled_effort() -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = _req(model_knobs={"effort": "low", "fast": "true"})
+    _admit_conductor(ledger, req)
+    with ledger._connect() as conn:
+        raw = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()[0]
+    assert json.loads(raw)["model_knobs"] == {"effort": "low", "fast": "true"}
+
+
+def test_park_resume_request_carries_model_knobs() -> None:
+    from services.git_integration_worker.cursor_sdk_park_ledger import ParkRow
+    from services.git_integration_worker.cursor_sdk_park_resume import (
+        build_park_resume_request,
+    )
+
+    knobs = {"effort": "low", "fast": "true"}
+    row = ParkRow(
+        dispatch_id="park-1",
+        thread_id="9964",
+        execution_id="exec-park-1",
+        caller_agent="cursor",
+        resolved_model="cursor/grok-4.7",
+        status="parked",
+        terminal_status=None,
+        sdk_agent_id=None,
+        state_root=None,
+        source_ref="todo:park",
+        work_key="todo:park",
+        contract="conductor",
+        packet_path=None,
+        park_kind="restart",
+        park_intent_id="intent-1",
+        parked_at="2026-09-30T00:00:00+00:00",
+        park_resumed_by=None,
+        park_expires_at=None,
+        record_json=json.dumps(
+            {
+                "model_knobs": knobs,
+                "model": "cursor/grok-4.7",
+                "message": "continue",
+                "park": {},
+            }
+        ),
+    )
+    child = build_park_resume_request(row, attempt=1, code_version="test")
+    assert child.model_knobs == knobs
+
+
 def test_build_hop_team_dispatch_body_routing_model_from_record_json() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])

@@ -317,8 +317,8 @@ Rates: `config/model_rates.yaml`.
 
 | Seat | Model / contract | Use when |
 |---|---|---|
-| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — card default `effort=high`, `fast=true` | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
-| **Composer (nested implement)** | **`cursor/composer-2.5`** — pin `model=` on `job=implement`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. Omit `model=` resolves grok, not Composer. |
+| **House driver (cursor_sdk)** | **`cursor/grok-4.7`**, effort **low** by policy default (`route_policy.yaml` `contract_effort.conductor`), `fast=true` | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
+| **Composer (nested implement)** | **`cursor/composer-2.5`**, `fast=true` | Mechanical G-rows and `implement` \| `pure-mechanical`. Omitting `model=` on `job=implement` resolves Composer. |
 | **CDP width** | **`cdp/opus-5`** `reasoning_effort=max` | G1 architecture, G2 frame, G4 skeptic, and G3→G5 score-ratify read ACTIVE (model + reasoning_effort; effort_when_bind_gates_wave=max only when a bind gates a wave). G2 follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`job=delivery-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
 | **Live checkout** | **`cursor/grok-4.7`** `job=freeform` | File:line depth on the cursor-sdk checkout. |
@@ -327,8 +327,10 @@ Rates: `config/model_rates.yaml`.
 While ACTIVE.model is cdp/opus-5, G4 is the same usage channel as an Opus binder; restoring cdp/fable-5.1 returns the cross-family skeptic.
 
 **Nested legs (always split by cost class):**
-- Mechanical implement → `cursor/composer-2.5` (`job=implement`, pin `model=`)
-- Investigate densify → `cursor/grok-4.7` `job=investigate` returning `OPEN FORK:` lines
+- Judgment nests (forks, G3/G6 reviews, open-cause diagnosis, architecture) go to the CDP seat named for that row. G-rows stay as they are. Forks, open-cause diagnosis, and architecture binds go to `cdp/opus-5.5`.
+- Routine nests (relays, harvests, re-reads, seeds with anchors, bounded confers) go to `cursor/grok-4.7` effort low.
+- Mechanical and implement nests go to `cursor/composer-2.5`, `fast=true`. Omitting `model=` on `job=implement` resolves Composer.
+- Investigate densify → `cursor/grok-4.7` effort high, `job=investigate`, returning `OPEN FORK:` lines
 - Independent binder when conductor unsure → `cdp/opus-5.5` (`cdp/fable` only when Kaywan asks)
 
 **Anti-patterns (cost):**

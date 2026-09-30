@@ -1,6 +1,6 @@
 # Machine-readable routing policy — single source for resolver + consult-routing drift check.
 policy_source: consult-routing
-policy_version: "2026-09-27"
+policy_version: "2026-09-30"
 lead_claim_authority: server_contract_overrides_packet_prose
 
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
@@ -89,14 +89,15 @@ workflows:
     model: cursor/composer-2.5
     jobs: [implement]
   investigate:
-    # investigate and seed omit-effort are xhigh; recon stays medium.
+    # investigate omit-effort is high; seed is low; recon stays medium.
     # fast=true is the grok-4.7 card default when the knob is omitted.
     seat: cursor-sdk
     model: cursor/grok-4.7
     jobs: [investigate, recon, seed]
   auto_judgment:
-    # Judgment omit-model. Never Composer. Effort for these contracts is
-    # contract_effort high. fast=true is the grok-4.7 card default, filled
+    # Judgment omit-model. Never Composer. Effort for these jobs is
+    # contract_effort (conductor low; answer/ask/confer/verify/execute/propagate high).
+    # fast=true is the grok-4.7 card default, filled
     # when the knob is omitted (compose_model_knobs / build_model_selection).
     seat: cursor-sdk
     model: cursor/grok-4.7
@@ -123,12 +124,14 @@ models:
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
 # Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed
 # (workflows.* aggregate contracts with differing effort tiers, e.g. recon=medium vs
-# investigate=xhigh within workflows.investigate). implement whose handoff
+# investigate=high within workflows.investigate). implement whose handoff
 # contract is none (body declares judgment) is high in wire_map, not this table.
 contract_effort:
-  investigate: xhigh
+  investigate: high
   confer: high
-  seed: xhigh
+  seed: low
+  conductor: low
+  freeform: low
   verify: high
   execute: high
   propagate: high
