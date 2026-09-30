@@ -7,29 +7,11 @@ from typing import Any
 from claude_bundles.cse_provenance import (
     ProvenanceEpisode,
     append_episode,
-    read_episodes,
+    latest_episode,
 )
 from claude_bundles.cse_url import normalize_cse_url
 
 from .cse_lineage_reader import LaneLineageUnreachable, read_lane_lineage
-
-
-def _latest_episode(
-    *,
-    chat_url: str | None = None,
-    registration_id: str | None = None,
-) -> ProvenanceEpisode | None:
-    target = normalize_cse_url(chat_url or "")
-    episodes = read_episodes()
-    if target:
-        matched = [episode for episode in episodes if episode.chat_url == target]
-    elif registration_id:
-        matched = [
-            episode for episode in episodes if episode.registration_id == registration_id
-        ]
-    else:
-        matched = []
-    return matched[-1] if matched else None
 
 
 def _append_unresolved_overlay(
@@ -79,7 +61,7 @@ def enrich_request_provenance(
     if not normalized or "/cowork/cse_" not in normalized:
         return {"ok": False, "reason": "insufficient_identity"}
 
-    prior = _latest_episode(chat_url=chat_url, registration_id=registration_id)
+    prior = latest_episode(chat_url=chat_url, registration_id=registration_id)
     if prior is None:
         return {"ok": False, "reason": "no_episode"}
 

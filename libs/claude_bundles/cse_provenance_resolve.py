@@ -11,7 +11,8 @@ from claude_bundles.cse_provenance import (
     HostListablePredicate,
     LaneLineageReader,
     ProvenanceEpisode,
-    read_episodes,
+    episodes_for_chat_url,
+    episodes_for_registration,
 )
 from claude_bundles.cse_provenance_projection import (
     _claim_episode,
@@ -205,15 +206,16 @@ def resolve(
     lineage_reader: LaneLineageReader | None = None,
     host_listable: HostListablePredicate | None = None,
 ) -> dict[str, Any]:
-    """Resolve the latest evidence-bearing episode or return a typed binding state."""
+    """Resolve the latest evidence-bearing episode or return a typed binding state.
+
+    Reads only the episodes keyed to the requested URL (or, without a URL, the
+    requested registration) — never the whole episode history (a:36941).
+    """
     target = normalize_cse_url(chat_url or "")
-    all_episodes = read_episodes()
     if target:
-        episodes = [episode for episode in all_episodes if episode.chat_url == target]
+        episodes = episodes_for_chat_url(target)
     elif registration_id:
-        episodes = [
-            episode for episode in all_episodes if episode.registration_id == registration_id
-        ]
+        episodes = episodes_for_registration(registration_id)
     else:
         episodes = []
 

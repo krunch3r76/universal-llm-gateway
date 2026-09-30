@@ -3,11 +3,16 @@
 The CDP registry owns the durable episode log while callers provide a
 read-only lane-lineage lookup.  Episodes are append-only so rebinding a URL
 cannot erase the evidence for an earlier host or mission.
+
+Reads go through ``cse_provenance_index`` — a keyed index of the episode rows
+in ``registry.jsonl`` — so request paths (``episodes_for_chat_url``,
+``episodes_for_registration``, ``latest_episode``) parse only the rows for one
+``chat_url`` / ``registration_id`` / ``correlation_id``. ``read_episodes`` is
+the history-wide reader and is not for request paths (a:36941).
 """
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import Callable
@@ -15,6 +20,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from claude_bundles import cdp_registry_store as store
+from claude_bundles import cse_provenance_index as _index
 from claude_bundles.cse_url import normalize_cse_url
 
 HostListablePredicate = Callable[[str], bool]
@@ -58,11 +64,6 @@ _EPISODE_FIELDS = frozenset(ProvenanceEpisode.__dataclass_fields__)
 
 def _episode_record(episode: ProvenanceEpisode) -> dict[str, Any]:
     return {"event": "cse.provenance.episode", **asdict(episode)}
-
-
-def _episodes_for_chat_url(chat_url: str) -> list[ProvenanceEpisode]:
-    """Return every episode bound to one normalized CSE URL in append order."""
-    return [episode for episode in read_episodes() if episode.chat_url == chat_url]
 
 
 def _legacy_episode_fields(record: dict[str, Any]) -> dict[str, Any]:
@@ -127,8 +128,7 @@ def append_episode(
             raise ValueError("proven episodes require association_id")
     elif association_id is not None:
         raise ValueError("association_id requires lineage_state=proven")
-    prior = _episodes_for_chat_url(normalized)
-    superseded = prior[-1] if prior else None
+    superseded = latest_episode(chat_url=normalized)
     episode = ProvenanceEpisode(
         episode_id=uuid.uuid4().hex,
         chat_url=normalized,
@@ -180,20 +180,61 @@ def append_episode(
     return episode
 
 
+def _episode(record: dict[str, Any]) -> ProvenanceEpisode:
+    return ProvenanceEpisode(**_legacy_episode_fields(record))
+
+
+def episodes_for_chat_url(chat_url: str) -> list[ProvenanceEpisode]:
+    """Return every episode bound to one normalized CSE URL in append order.
+
+    Reads only that URL's rows through the keyed index; earlier hosts for a
+    rebound URL stay in the list because episodes are never erased.
+    """
+    return [_episode(row) for row in _index.episode_rows("chat_url", chat_url)]
+
+
+def episodes_for_registration(registration_id: str) -> list[ProvenanceEpisode]:
+    """Return every episode recorded for one registry host in append order.
+
+    Reads only that registration's rows through the keyed index.
+    """
+    return [
+        _episode(row) for row in _index.episode_rows("registration_id", registration_id)
+    ]
+
+
+def latest_episode(
+    *,
+    chat_url: str | None = None,
+    registration_id: str | None = None,
+    correlation_id: str | None = None,
+) -> ProvenanceEpisode | None:
+    """Return the newest episode for the first identity given, or ``None`` when none exists.
+
+    Precedence is ``chat_url`` (normalized; ignored when not a CSE URL), then
+    ``registration_id``, then ``correlation_id`` — the same order the resolve
+    and enrich callers apply. Parses at most one journal row.
+    """
+    target = normalize_cse_url(chat_url or "")
+    if target:
+        row = _index.latest_episode_row("chat_url", target)
+    elif registration_id:
+        row = _index.latest_episode_row("registration_id", registration_id)
+    elif correlation_id:
+        row = _index.latest_episode_row("correlation_id", correlation_id)
+    else:
+        return None
+    return _episode(row) if row is not None else None
+
+
 def read_episodes() -> list[ProvenanceEpisode]:
-    """Read durable episodes from the registry journal and ignore other records."""
-    rows: list[ProvenanceEpisode] = []
-    if not store.REGISTRY_LOG.exists():
-        return rows
-    for raw in store.REGISTRY_LOG.read_text(encoding="utf-8").splitlines():
-        if not raw.strip():
-            continue
-        record = json.loads(raw)
-        if record.get("event") != "cse.provenance.episode":
-            continue
-        fields = _legacy_episode_fields(record)
-        rows.append(ProvenanceEpisode(**fields))
-    return rows
+    """Return every durable episode in the registry journal, in append order.
+
+    History-wide reader for tests and audits: it materializes a
+    ``ProvenanceEpisode`` for every episode ever written. Request paths must use
+    ``episodes_for_chat_url`` / ``episodes_for_registration`` / ``latest_episode``.
+    """
+    return [_episode(row) for row in _index.all_episode_rows()]
 
 
 def resolve(
