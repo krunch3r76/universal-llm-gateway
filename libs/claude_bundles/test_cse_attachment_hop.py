@@ -366,7 +366,11 @@ def test_ac15_followup_single_pair(isolated_registry: Path) -> None:
 def test_dead_orphaned_claim_does_not_block_rebind(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A dead orphaned_alive row is not an attachment for the Cowork URL."""
+    """A dead orphaned_alive row is not an attachment for the Cowork URL.
+
+    The next ``register_lane`` runs hygiene, which reaps the dead orphan and
+    reclaims its port — the row does not linger as ``released`` (a:36906).
+    """
     monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: False)
     dead = _mint(holder="dead")
     assert reg.bind_session_address(dead.registration_id, chat_url=_CSE)
@@ -380,7 +384,7 @@ def test_dead_orphaned_claim_does_not_block_rebind(
     from cdp_ask.followup_reattach import _bind_chat_url
 
     assert _bind_chat_url(live.registration_id, _CSE) is None
-    assert reg._load_active()[dead.registration_id]["status"] == "released"
+    assert dead.registration_id not in reg._load_active()
     assert reg._load_active()[live.registration_id]["chat_url"] == _CSE
 
 

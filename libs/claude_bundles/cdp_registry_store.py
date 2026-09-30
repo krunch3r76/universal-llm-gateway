@@ -381,13 +381,16 @@ def _apply_attachment_observed(
     *,
     skip_chat_url: bool = False,
 ) -> None:
-    """Replay one ``attachment_observed`` line onto *active* (chat_url only)."""
+    """Replay one ``attachment_observed`` line onto *active* (chat_url only).
+
+    Ids hygiene has already dropped are skipped: replaying the full journal used
+    to mint 1782 status-less skeleton rows into ``active.json`` (a:36906).
+    """
     reg_id = str(record.get("registration_id") or "").strip()
     url = str(record.get("chat_url") or "").strip()
-    if not reg_id or not url:
+    if not reg_id or not url or reg_id not in active:
         return
-    row = dict(active.get(reg_id) or {})
-    row["registration_id"] = reg_id
+    row = dict(active[reg_id])
     if not skip_chat_url:
         row["chat_url"] = url
     if record.get("execution_id"):
@@ -401,10 +404,9 @@ def _apply_session_address_bound(
     """Replay one ``session_address_bound`` journal line (authoritative chat_url)."""
     reg_id = str(record.get("registration_id") or "").strip()
     url = str(record.get("chat_url") or "").strip()
-    if not reg_id or not url:
+    if not reg_id or not url or reg_id not in active:
         return
-    row = dict(active.get(reg_id) or {})
-    row["registration_id"] = reg_id
+    row = dict(active[reg_id])
     row["chat_url"] = url
     if record.get("execution_id"):
         row["execution_id"] = record.get("execution_id")

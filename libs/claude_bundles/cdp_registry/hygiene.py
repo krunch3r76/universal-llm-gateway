@@ -18,6 +18,7 @@ from .models import (
     STALE_ACTIVE_TTL_S,
     HygieneReclaimResult,
     _ListenFn,
+    seat_open,
 )
 from .registry_module import registry_package
 
@@ -177,6 +178,62 @@ def _reclaim_row_profile(
     return outcome, profile
 
 
+def _orphan_row_attached(
+    rid: str, active: dict[str, dict[str, Any]], listen: _ListenFn
+) -> bool:
+    """Attachment predicate for the orphaned_alive reaper.
+
+    Only a driver lock or a probed live CSE page counts. ``cdp_port_unreachable``
+    is the reaper's own dead trigger; counting it as an attachment left every
+    dead orphan reserved indefinitely (86 rows up to 40 days old — a:36906).
+    """
+    from .dormant_drain import _streaming_protection_reason
+
+    if registry_package().is_driver_lock_held(rid):
+        return True
+    row = active.get(rid)
+    if row is None:
+        return False
+    reason = _streaming_protection_reason(row, is_listening=listen)
+    return reason is not None and reason != "cdp_port_unreachable"
+
+
+def _close_seats_on_dropped_rows(
+    active: dict[str, dict[str, Any]],
+    keep: dict[str, dict[str, Any]],
+    *,
+    now: float | None = None,
+) -> list[str]:
+    """Persist ``seat_closed_at`` on rows hygiene drops so I6 cannot restore them.
+
+    ``write_active`` restores any omitted row whose seat is still open. A reclaimed
+    row has no Chrome and no port, so it cannot be a driving seat; without this
+    close the same released row was reclaimed and resurrected on every pass while
+    its port stayed reserved (a:36906: 31 passes in 2 h on one row).
+    """
+    ts = time.time() if now is None else now
+    closing: dict[str, dict[str, Any]] = {}
+    for rid, row in active.items():
+        if rid in keep or not seat_open(row):
+            continue
+        closed = dict(row)
+        closed["seat_closed_at"] = ts
+        closed["seat_close_reason"] = "hygiene_reclaim"
+        closing[rid] = closed
+        _store.append_log(
+            "hygiene_seat_closed",
+            {
+                "registration_id": rid,
+                "seat_lane": row.get("seat_lane"),
+                "port": row.get("port"),
+                "prior_status": row.get("status"),
+            },
+        )
+    if closing:
+        _store.write_active({**keep, **closing})
+    return sorted(closing)
+
+
 def hygiene_reclaim_extended(
     *,
     include_stale_active: bool = True,
@@ -186,8 +243,6 @@ def hygiene_reclaim_extended(
     chrome_port_for_profile: Callable[[Path], int | None] | None = None,
 ) -> HygieneReclaimResult:
     """Reclaim released/orphaned rows and optionally sweep stale active or orphan profiles."""
-    from .dormant_drain import _streaming_protection_reason
-
     listen = is_listening or cdp_lane.is_listening
     reclaimed: list[int] = []
     removed: list[str] = []
@@ -199,14 +254,7 @@ def hygiene_reclaim_extended(
             active,
             listen,
             kill_listener=registry_package()._kill_listener,
-            is_attached=lambda rid: (
-                registry_package().is_driver_lock_held(rid)
-                or (
-                    rid in active
-                    and _streaming_protection_reason(active[rid], is_listening=listen)
-                    is not None
-                )
-            ),
+            is_attached=lambda rid: _orphan_row_attached(rid, active, listen),
             include_ttl_reap=include_stale_active,
         )
         keep: dict[str, dict[str, Any]] = {}
@@ -291,6 +339,7 @@ def hygiene_reclaim_extended(
                     keep, chrome_port_for_profile=chrome_port_for_profile
                 )
             )
+        _close_seats_on_dropped_rows(active, keep)
         _store.write_active(keep)
     if empty_trash:
         _empty_reclaim_trash()
