@@ -304,3 +304,51 @@ def test_post_admit_generate_failure_never_successor_produced(tmp_path: Path) ->
         assert payload.get("disposition") != "dispatched-and-relayed"
     watches = load_watches(watch_path)
     assert watches[_THREAD]["succession_status"] == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_hop_task_death_after_admit_report_drops_claim(monkeypatch):
+    """A claimed hop whose worker task ends after the admit report is not
+    left in claimed_occupancy_ops (a:37026 TypeError class)."""
+    from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    queued = q.enqueue(
+        thread_id=_THREAD,
+        turn_number=1,
+        subject=f"cursor-auto hop cadence — continuity hop thread={_THREAD}",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="none",
+        continuity_hop=True,
+        continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
+    )
+
+    async def _admit_then_die(*_a, **_k):
+        raise TypeError(
+            "commission_cdp_escalation() got an unexpected keyword argument 'session'"
+        )
+
+    monkeypatch.setattr(
+        hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True})
+    )
+    monkeypatch.setattr(hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None))
+    monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+    monkeypatch.setattr(
+        hop_mod,
+        "build_hop_orientation",
+        AsyncMock(return_value={"generated": False, "block": "env"}),
+    )
+    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _admit_then_die)
+
+    result = await hop_mod.run_continuity_hop_concurrent(queued, queue=q)
+    assert result["ok"] is False
+    assert result["failed"] is True
+    stored = q.get(queued.job_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert queued.job_id not in {row["op_id"] for row in q.claimed_occupancy_ops()}

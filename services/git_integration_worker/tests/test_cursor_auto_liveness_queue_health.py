@@ -211,3 +211,43 @@ def test_queue_not_serving_emits_on_rising_edge_only(
     second = queue_admission_health()
     assert second["red"] is True
     assert len(calls) == 1
+
+
+def test_hop_serial_occupant_null_does_not_hide_fresh_claim_from_drain() -> None:
+    """queue_admission_health skips continuity hops for serial_occupant.
+
+    That projection must not hide a fresh hop from drain active_ops.
+    """
+    from services.git_integration_worker.admission import WorkAdmissionController
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    CursorDispatchLedger._instance = None
+    queue = get_queue()
+    job = queue.enqueue(
+        thread_id="12286",
+        turn_number=1418,
+        subject="continuity hop",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="high",
+        contract="none",
+        continuity_hop=True,
+        continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
+    )
+    claimed = queue.claim_job(job.job_id)
+    assert claimed is not None
+    health = queue_admission_health()
+    assert health["serial_occupant_job_id"] is None
+    assert health["projection_only"] is True
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="w",
+        pid=1,
+        worker_started_at="2026-01-01T00:00:00+00:00",
+    )
+    assert any(op.get("op_id") == claimed.job_id for op in controller.active_ops())
+    assert controller.active_count() == 1

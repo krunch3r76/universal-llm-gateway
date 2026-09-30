@@ -276,6 +276,12 @@ class WorkAdmissionController:
                 job_id=op_id, intent_id=drain_intent
             ):
                 continue
+            # Claimed cursor-auto rows stay occupancy for the life of the
+            # claim. Heartbeat age is stall telemetry only — concurrent and
+            # hop rows are not bumped after mark_claimed, so age is time
+            # since claim and must not drop the row. Fail-on-death and the
+            # release verb are the exits. Do not skip continuity hops here;
+            # queue health's serial_occupant skip is projection only.
             ops.append(auto_op)
             seen.add(op_id)
         return ops
@@ -404,6 +410,20 @@ class WorkAdmissionController:
 
         task.add_done_callback(_on_done)
         return task
+
+    def cancel_tracked_task(self, op_id: str) -> bool:
+        """Cancel one fire-and-forget task by the op_id it was spawned with.
+
+        Does not signal the process. A finished task is left alone.
+        """
+        name = f"tracked-{op_id}"
+        cancelled = False
+        for task in list(self._tracked_tasks):
+            if task.get_name() != name or task.done():
+                continue
+            task.cancel()
+            cancelled = True
+        return cancelled
 
     def drain_state(self) -> dict[str, Any]:
         """One-shot snapshot for Phase-2's final epoch-check before SIGTERM."""
