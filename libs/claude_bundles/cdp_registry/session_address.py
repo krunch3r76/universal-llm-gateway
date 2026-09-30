@@ -25,6 +25,7 @@ from .attachment_journal import (
     has_attachment_observed,
     host_listable_ids_for_norm_url,
 )
+from .execution_state import row_execution_in_flight
 from .models import (
     _CAPACITY_STATUSES,
     _HOST_LISTABLE_STATUSES,
@@ -151,6 +152,21 @@ def bind_session_address(
                 execution_id=execution_id,
             )
             return True
+        if prior and row_execution_in_flight(row):
+            # A seat driving a live execution is addressed by that execution's
+            # session; an observed foreign CSE URL (a restored tab, a redirect)
+            # must not re-point the row — the resume path follows chat_url
+            # (a:36948 acceptance: probe row rebound to the operator seat).
+            _store.append_log(
+                "session_address_rebind_refused",
+                {
+                    "registration_id": registration_id,
+                    "chat_url": prior,
+                    "refused_chat_url": url,
+                    "execution_id": execution_id,
+                },
+            )
+            return False
         assert_attachment_unique(active, url, registration_id=registration_id)
         updated["chat_url"] = url
         if execution_id:

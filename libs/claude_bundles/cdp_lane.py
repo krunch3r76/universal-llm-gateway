@@ -32,6 +32,7 @@ import contextlib
 import fcntl
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -211,6 +212,29 @@ def chrome_launch_argv(port: int, profile: Path) -> list[str]:
         "--disable-features=OptimizationGuideOnDeviceModel",
         "--disk-cache-size=134217728",
         "--media-cache-size=134217728",
+    ]
+
+
+def scoped_launch_argv(argv: list[str], port: int) -> list[str]:
+    """Wrap *argv* in a transient user scope so the host outlives its launcher's unit.
+
+    Chrome's browser process re-parents itself into ``app-com.google.Chrome-*``
+    but its renderer/gpu children stay in the launcher's cgroup; a
+    ``systemctl kill`` of cdp-ask.service then takes every open CSE down with
+    the service (a:36948 acceptance, 2026-09-30). ``systemd-run --scope`` execs
+    Chrome in place (the Popen pid is still Chrome's) inside its own scope. No
+    ``systemd-run`` on PATH ⇒ plain argv.
+    """
+    if shutil.which("systemd-run") is None:
+        return argv
+    return [
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        f"--unit=cdp-host-{port}-{int(time.time())}",
+        *argv,
     ]
 
 
@@ -420,7 +444,7 @@ def _launch_chrome(port: int, profile: Path) -> int:
     pre_size = Path(log).stat().st_size if Path(log).is_file() else 0
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
-            chrome_launch_argv(port, profile),
+            scoped_launch_argv(chrome_launch_argv(port, profile), port),
             stdout=logf,
             stderr=logf,
             stdin=subprocess.DEVNULL,

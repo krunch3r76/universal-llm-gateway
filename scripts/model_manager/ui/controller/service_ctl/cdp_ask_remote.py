@@ -44,6 +44,32 @@ _LOCAL_FILES_FALLBACK = "/tmp/cdp-ask-files"
 _SSH_TIMEOUT_S = 30.0
 _NFS_PROBE_S = 2
 _DEFAULT_INGEST_TCP_PORT = 7101
+# Graceful-exit window for the teardown park (rows stay in flight, Chrome kept).
+_STOP_GRACE_S = 20
+
+
+def _graceful_stop_snippet(port: int) -> str:
+    """Shell that ends the cdp-ask *main process only*, SIGTERM first.
+
+    SIGKILL and ``systemctl kill`` of the unit are what a:36948 forbids: the
+    former skips the shutdown hook that parks in-flight executions, the latter
+    sweeps the Chrome renderer children still in ``cdp-ask.service``'s cgroup
+    and takes every open CSE down with the service. SIGKILL of the main pid is
+    kept as the bounded fallback for a hung process.
+    """
+    return (
+        "if test -f ~/.gateway/cdp-ask.pid; then "
+        "P=$(cat ~/.gateway/cdp-ask.pid); "
+        "kill -TERM $P 2>/dev/null || true; "
+        f"for i in $(seq 1 {_STOP_GRACE_S}); do "
+        "kill -0 $P 2>/dev/null || break; sleep 1; done; "
+        "kill -9 $P 2>/dev/null || true; "
+        "rm -f ~/.gateway/cdp-ask.pid; "
+        "fi; "
+        f"L=$(ss -tlnp 'sport = :{port}' 2>/dev/null "
+        "| sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -1); "
+        'if test -n "$L"; then kill -9 $L 2>/dev/null || true; fi; '
+    )
 
 
 def _hub_ingest_tcp_port() -> int:
@@ -236,9 +262,7 @@ async def start_cdp_ask_remote(root: Path) -> str:
     cmd = (
         "mkdir -p /tmp/logs/cdp-ask /tmp/cdp-ask-files ~/.gateway; "
         f"REPO={repo}; "
-        "if test -f ~/.gateway/cdp-ask.pid; then "
-        "kill -9 $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; fi; "
-        f"fuser -k -9 {port}/tcp 2>/dev/null || true; "
+        f"{_graceful_stop_snippet(port)}"
         f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
         f"EVENTS_INGEST_TCP={ingest_tcp}\n"
         f"CORTEX_FILES_ROOT={files_root}\n"
@@ -256,9 +280,7 @@ async def start_cdp_ask_remote(root: Path) -> str:
     fallback_cmd = (
         "mkdir -p /tmp/logs/cdp-ask /tmp/cdp-ask-files ~/.gateway; "
         f"REPO={_HOME_REPO}; "
-        "if test -f ~/.gateway/cdp-ask.pid; then "
-        "kill -9 $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; fi; "
-        f"fuser -k -9 {port}/tcp 2>/dev/null || true; "
+        f"{_graceful_stop_snippet(port)}"
         f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
         f"EVENTS_INGEST_TCP={ingest_tcp}\n"
         f"CORTEX_FILES_ROOT={_LOCAL_FILES_FALLBACK}\n"
@@ -283,16 +305,10 @@ async def start_cdp_ask_remote(root: Path) -> str:
 
 
 async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    """Stop remote cdp-ask: pidfile/port first so a hung unit cannot pin SSH."""
+    """Stop remote cdp-ask: SIGTERM the main pid (teardown park), never the unit's cgroup."""
     port = _port()
     cmd = (
-        "if test -f ~/.gateway/cdp-ask.pid; then "
-        "kill -9 $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; "
-        "rm -f ~/.gateway/cdp-ask.pid; "
-        "fi; "
-        f"fuser -k -9 {port}/tcp 2>/dev/null || true; "
-        "timeout 3 systemctl --user kill -s SIGKILL cdp-ask.service "
-        "2>/dev/null || true; "
+        f"{_graceful_stop_snippet(port)}"
         "timeout 3 systemctl --user reset-failed cdp-ask.service "
         "2>/dev/null || true; "
         "echo stopped"
