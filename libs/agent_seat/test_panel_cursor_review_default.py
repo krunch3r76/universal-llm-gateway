@@ -16,7 +16,7 @@ from agent_seat.panel_dispatch import (
 pytestmark = pytest.mark.offline
 
 
-def test_default_panel_reviewer_is_cdp_opus() -> None:
+def test_default_panel_reviewer_is_cursor_grok() -> None:
     assert ("reviewer", "cursor/grok-4.7") in DEFAULT_PANEL_MEMBERS
 
 
