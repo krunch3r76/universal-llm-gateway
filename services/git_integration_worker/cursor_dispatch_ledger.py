@@ -2048,6 +2048,30 @@ class CursorDispatchLedger:
             conn.commit()
             return claimed
 
+    def release_stop_service(self, stop_id: str, admit_dispatch_id: str) -> bool:
+        """Give the admit slot back when the claimed admit was refused upstream.
+
+        Only the holder of ``admit_dispatch_id`` can release; a slot already
+        rebound to another admit is left alone. Without this, one refused POST
+        pins the slot to an id that never becomes a row and every later retry
+        fails ``claim_stop_service``.
+        """
+        sid = str(stop_id or "").strip()
+        admit = str(admit_dispatch_id or "").strip()
+        if not sid or not admit:
+            return False
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "UPDATE cursor_dispatch_stop_service "
+                "SET serviced_admit = NULL "
+                "WHERE stop_id = ? AND serviced_admit = ?",
+                (sid, admit),
+            )
+            released = cur.rowcount == 1
+            conn.commit()
+            return released
+
     def unstarted_claims(self) -> list[dict[str, str]]:
         """Stop rows with a won admit claim but no matching dispatch row yet."""
         with self._connect() as conn:

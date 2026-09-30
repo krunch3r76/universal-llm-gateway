@@ -23,8 +23,14 @@ import pytest
 from cursor_sdk import Client
 from cursor_sdk.types import AgentOptions, LocalAgentOptions, LocalAgentStoreConfig
 
+from services.git_integration_worker import cursor_home
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_home import dispatch_home_path
-from services.git_integration_worker.cursor_sdk_resume import resolve_sdk_store_dir
+from services.git_integration_worker.cursor_sdk_store_locus import (
+    resolve_sdk_store_dir,
+    resolve_store_bearing_dispatch_id,
+)
+from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 STORE_LOCUS_VERDICT = "store-A"
 _SECRETS_ENV = Path.home() / ".gateway" / "secrets.env"
@@ -69,11 +75,72 @@ def test_resolve_sdk_store_dir_prefers_nonempty_state_root(tmp_path: Path) -> No
     assert found == store
 
 
+@pytest.fixture(autouse=True)
+def _isolated_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "ledger-data"))
+    CursorDispatchLedger._instance = None
+    yield
+    CursorDispatchLedger._instance = None
+
+
+def _pin_homes(monkeypatch: pytest.MonkeyPatch, homes_root: Path) -> None:
+    monkeypatch.setattr(cursor_home, "_DISPATCH_HOME_ROOT", homes_root)
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+
+
+def _insert_dispatch(
+    *,
+    dispatch_id: str,
+    state_root: str | None,
+    resume_of: str | None = None,
+    sdk_agent_id: str = "agent",
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="thread-owner",
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message=f"msg-{dispatch_id}",
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, state_root, sdk_agent_id, resume_of) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            (
+                dispatch_id,
+                ledger.fingerprint(req),
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                "completed",
+                state_root,
+                sdk_agent_id,
+                resume_of,
+            ),
+        )
+
+
+def _home_store(dispatch_id: str) -> Path:
+    store = (
+        dispatch_home_path(dispatch_id)
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "agents.db").write_text("x")
+    return store
+
+
 def test_resolve_sdk_store_dir_falls_back_to_parent_home_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     homes_root = tmp_path / "homes"
-    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    _pin_homes(monkeypatch, homes_root)
     parent_id = "parent-home-bound-test"
     parent_home = dispatch_home_path(parent_id)
     cwd_slug = "mnt-torus-projects-repo"
@@ -88,6 +155,108 @@ def test_resolve_sdk_store_dir_falls_back_to_parent_home_store(
     )
     assert found == store
     assert STORE_LOCUS_VERDICT == "store-A"
+
+
+def test_store_owner_is_ancestor_when_state_root_was_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rewritten state_root on the child names the ancestor store; owner is the ancestor."""
+    _pin_homes(monkeypatch, tmp_path / "homes")
+    store = _home_store("dispatch-a")
+    _insert_dispatch(
+        dispatch_id="dispatch-a", state_root=str(store), sdk_agent_id="agent-a"
+    )
+    _insert_dispatch(
+        dispatch_id="dispatch-b",
+        state_root=str(store),
+        resume_of="dispatch-a",
+        sdk_agent_id="agent-b",
+    )
+    assert resolve_store_bearing_dispatch_id(parent_id="dispatch-b") == "dispatch-a"
+
+
+def test_store_owner_ignores_stray_store_in_intermediate_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stray sdk-agent-store under the intermediate HOME does not become the owner."""
+    _pin_homes(monkeypatch, tmp_path / "homes")
+    store = _home_store("dispatch-a")
+    stray = (
+        dispatch_home_path("dispatch-b")
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    stray.mkdir(parents=True, exist_ok=True)
+    (stray / "agents.db").write_text("stray")
+    _insert_dispatch(
+        dispatch_id="dispatch-a", state_root=str(store), sdk_agent_id="agent-a"
+    )
+    _insert_dispatch(
+        dispatch_id="dispatch-b",
+        state_root=str(store),
+        resume_of="dispatch-a",
+        sdk_agent_id="agent-b",
+    )
+    assert resolve_store_bearing_dispatch_id(parent_id="dispatch-b") == "dispatch-a"
+
+
+def test_store_owner_falls_back_to_parent_when_store_outside_every_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store outside every lineage HOME returns parent_id and emits mode=external."""
+    _pin_homes(monkeypatch, tmp_path / "homes")
+    outside = tmp_path / "outside-store"
+    outside.mkdir()
+    (outside / "agents.db").write_text("x")
+    parent_id = "parent-external"
+    _insert_dispatch(dispatch_id=parent_id, state_root=str(outside))
+    emitted: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_resume_store_events.emit_frontier_event",
+        lambda event: emitted.append(event),
+    )
+    assert resolve_store_bearing_dispatch_id(parent_id=parent_id) == parent_id
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event.signal == "giw.resume.store.owner.resolved"
+    assert event.payload["mode"] == "external"
+    assert event.payload["parent_id"] == parent_id
+    assert event.payload["owner_dispatch_id"] == parent_id
+    assert event.payload["store_path"] == str(outside)
+
+
+def test_store_owner_home_scan_without_ledger_row_is_rescanned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A HOME scan with no parent ledger row emits mode=rescanned, not external."""
+    _pin_homes(monkeypatch, tmp_path / "homes")
+    parent_id = "parent-no-ledger-row"
+    _home_store(parent_id)
+    emitted: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_resume_store_events.emit_frontier_event",
+        lambda event: emitted.append(event),
+    )
+    assert resolve_store_bearing_dispatch_id(parent_id=parent_id) == parent_id
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event.signal == "giw.resume.store.owner.resolved"
+    assert event.payload["mode"] == "rescanned"
+    assert event.payload["owner_dispatch_id"] == parent_id
+    assert event.payload["parent_id"] == parent_id
+
+
+def test_first_generation_owner_selection_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single dispatch whose HOME contains its store remains the owner."""
+    _pin_homes(monkeypatch, tmp_path / "homes")
+    parent_id = "dispatch-root"
+    store = _home_store(parent_id)
+    _insert_dispatch(dispatch_id=parent_id, state_root=str(store))
+    assert resolve_store_bearing_dispatch_id(parent_id=parent_id) == parent_id
 
 
 @pytest.mark.skipif(

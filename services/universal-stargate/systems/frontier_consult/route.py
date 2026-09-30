@@ -244,6 +244,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # The external-gate check excludes that seat's live generate and still
     # refuses any other live gate on the lane. Ignored unless mission_kind=hop.
     predecessor_registration_id: str | None = None
+    # Caller-reserved worker dispatch_id (seat=cursor-sdk). GIW hop and bus-watch
+    # play callers claim a stop's one admit slot under this id before POSTing, so
+    # the admitted ledger row must carry the same id. Omit to let the server mint.
+    dispatch_id: str | None = None
     # Conductor hop successor wire (bind §2.6.4): triplet admitted together on GIW.
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
@@ -684,6 +688,19 @@ async def team_dispatch(
             body.role = role
             body.seat = seat
             body.model = model
+    if body.op == "generate" and getattr(body, "dispatch_id", None):
+        from ._frontier_intake import reject_dispatch_id_off_sdk
+
+        try:
+            reject_dispatch_id_off_sdk(
+                request_id=request_id,
+                dispatch_id=body.dispatch_id,
+                sdk_admission=is_cursor_sdk_generate_admission(
+                    role=role, seat=seat, model=model, request_id=request_id
+                ),
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     if body.op == "generate" and is_cdp_model(model):
         try:
             reject_cursor_sdk_seat_with_cdp(

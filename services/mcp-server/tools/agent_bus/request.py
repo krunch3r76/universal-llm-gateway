@@ -131,6 +131,7 @@ def _request_impl(
     advisor_brief: str | None = None,
     census_mismatch: bool = False,
     work_key: str | None = None,
+    allow_long_body: bool = False,
     enqueue_body: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
@@ -176,6 +177,7 @@ def _request_impl(
         after_turn=after_turn,
         sidecar_content=sidecar_content,
         sidecar_slug=sidecar_slug,
+        allow_long_body=allow_long_body,
         parent_thread=parent_thread,
         lane_role=lane_role,
     )
@@ -407,9 +409,7 @@ def _request_impl(
             thread_id=thread_id,
             after_turn=turn_number,
             from_agent=from_agent,
-            job_id=str(enqueue_body["job_id"])
-            if enqueue_body.get("job_id")
-            else None,
+            job_id=str(enqueue_body["job_id"]) if enqueue_body.get("job_id") else None,
         ),
         "enqueue": enq,
         "tags": merged_tags,

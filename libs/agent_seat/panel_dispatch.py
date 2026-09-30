@@ -25,7 +25,9 @@ from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 
 DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
     ("skeptic", None),
-    ("reviewer", "cursor/claude-fable-5-1"),
+    # Out-of-roster cursor/claude-fable-5-1 and cursor/gpt-5.6-terra are not
+    # spent. cursor/grok-4.7 is the in-use cursor reviewer on the role allowlist.
+    ("reviewer", "cursor/grok-4.7"),
 )
 
 TIEBREAKER_ROLE = "synthesizer"

@@ -511,6 +511,7 @@ async def dispatch_cursor_sdk_generate_route(
             workspace=getattr(body, "workspace", None),
             read_only=getattr(body, "read_only", False),
             refuse_if_lease_held=getattr(body, "refuse_if_lease_held", False),
+            dispatch_id=getattr(body, "dispatch_id", None),
             hop_from=getattr(body, "hop_from", None),
             hop_seq=getattr(body, "hop_seq", None),
             hop_reason=getattr(body, "hop_reason", None),

@@ -8,6 +8,8 @@ from implement_admission.check_review_substrate import (
     CHECK_REVIEW_DECISION_CITATION,
     CURSOR_CHECK_REVIEW_MODELS,
     coerce_check_review_omit_to_cursor_seat,
+    evaluate_check_review_admission,
+    is_cursor_check_review_model,
     load_check_review_default_model,
     resolve_check_review_model,
 )
@@ -33,12 +35,25 @@ def test_standing_default_is_judgment_grok() -> None:
     assert "cursor/gpt-5.6-terra" not in entry["model"]
 
 
-def test_cursor_check_review_allowlist_includes_fable_and_keeps_terra() -> None:
-    assert "cursor/muse-spark-1.3" in CURSOR_CHECK_REVIEW_MODELS
-    assert "cursor/claude-fable-5-1" in CURSOR_CHECK_REVIEW_MODELS
-    assert "cursor/gpt-5.6-terra" in CURSOR_CHECK_REVIEW_MODELS
-    assert "cursor/gpt-5.6-sol" in CURSOR_CHECK_REVIEW_MODELS
-    assert "cursor/gpt-5.6-luna" in CURSOR_CHECK_REVIEW_MODELS
+def test_cursor_check_review_allowlist_is_grok_only() -> None:
+    assert CURSOR_CHECK_REVIEW_MODELS == frozenset({"cursor/grok-4.7"})
+    for retired in (
+        "cursor/muse-spark-1.3",
+        "cursor/claude-fable-5-1",
+        "cursor/gpt-5.6-terra",
+        "cursor/gpt-5.6-sol",
+        "cursor/gpt-5.6-luna",
+    ):
+        assert retired not in CURSOR_CHECK_REVIEW_MODELS
+        assert is_cursor_check_review_model(retired) is False
+        assert (
+            evaluate_check_review_admission(
+                "cursor-sdk",
+                retired,
+                api_role_with_cursor_on_api_profile=False,
+            )
+            is None
+        )
 
 
 def test_route_policy_conformance() -> None:

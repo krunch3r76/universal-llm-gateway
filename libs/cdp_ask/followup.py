@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import uuid
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
@@ -80,6 +81,27 @@ def lane_in_flight(registration_id: str) -> bool:
     """
     lock = _lane_locks.get(registration_id)
     return bool(lock and lock.locked())
+
+
+def _stamp_followup_in_flight(registration_id: str, resolution_path: str) -> None:
+    """Record the pasted turn on the seat row so the drain and restart witness see it.
+
+    A followup creates no execution record — the seven live CSEs the drain
+    called idle in a:36948 point (3) were followup-driven. The synthetic
+    ``followup:<id>`` entry (kind ``followup``) reads as in flight for
+    ``FOLLOWUP_IN_FLIGHT_TTL_S``; nobody harvests it through the store, so the
+    TTL is its settlement. A later paste on the same seat replaces it.
+    """
+    from claude_bundles.cdp_registry.execution_state import set_execution_state
+
+    with contextlib.suppress(Exception):
+        set_execution_state(
+            registration_id,
+            execution_id=f"followup:{uuid.uuid4().hex[:12]}",
+            state="streaming",
+            kind="followup",
+            reason=f"paste:{resolution_path}",
+        )
 
 
 def _release_lane(registration_id: str) -> None:
@@ -322,6 +344,9 @@ async def execute_followup(
             )
         )
         if send_verified:
+            await asyncio.to_thread(
+                _stamp_followup_in_flight, target.registration_id, resolution_path
+            )
             emit_followup_event(
                 cdp_ask_fresh_run_inheritance(
                     registration_id=target.registration_id,

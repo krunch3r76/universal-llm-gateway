@@ -6,9 +6,14 @@ import inspect
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.body_briefing_advisory import INLINE_CONTRACT_PREFIXES
+from agent_bus_store.turns_models import (
+    MAX_LONG_TURN_BODY_CHARS,
+    MAX_TURN_BODY_CHARS,
+)
 from contract_vocab import CANONICAL_CONTRACTS
 from fastapi.testclient import TestClient
 from hop_handoff import (
@@ -77,6 +82,9 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     assert captured["contract"] == "answer"
     assert captured["new_slug"] is None
     assert captured["thread"] == "77"
+    assert captured["sidecar_content"] is None
+    assert captured["allow_long_body"] is True
+    assert captured["enqueue_body"] == captured["body"]
     body = str(captured["body"])
     first = next(line for line in body.splitlines() if line.strip())
     assert first == "TYPE: CONTINUITY_HANDOFF"
@@ -210,12 +218,17 @@ def _relay_via_test_client(client: TestClient, sent: list[dict[str, Any]]):
     return relay
 
 
-def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) -> None:
-    """Lane 12286 specimen, observed 2026-09-29 00:0xZ.
+@pytest.mark.parametrize(
+    "reason",
+    ["r" * 38, "r" * 3000, "r" * (MAX_TURN_BODY_CHARS + 1)],
+)
+def test_hop_split_stores_header_under_briefing_shield(
+    reason: str, tmp_path, monkeypatch
+) -> None:
+    """Full handoff is stored inline. Line 1 is the handoff type; no sidecar.
 
-    Unsplit hop body is 3045 characters; the store auto-spills bare overshoots,
-    but the hop verb still stores the structural header and writes doctrine tail
-    to the sidecar.
+    The third reason pushes the authored body past the 8k soft limit and
+    under the 64k hard cap, so ``allow_long_body`` is what keeps it inline.
     """
     handoff = StandingHandoffFreshness(
         status="current",
@@ -225,13 +238,19 @@ def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) ->
     )
     specimen = build_continuity_handoff_body(
         thread_id="12286",
-        trigger="r" * 38,
+        trigger=reason,
         source="agent-bus-hop-verb",
         handoff=handoff,
     )
-    assert len(specimen) == 3045, len(specimen)
+    assert len(specimen) > 2000, len(specimen)
+    if reason == "r" * 38:
+        assert len(specimen) == 3045, len(specimen)
+    if len(reason) > MAX_TURN_BODY_CHARS:
+        assert MAX_TURN_BODY_CHARS < len(specimen) <= MAX_LONG_TURN_BODY_CHARS, len(
+            specimen
+        )
 
-    app, cortex_root = _hop_store_app(tmp_path, monkeypatch)
+    app, _cortex_root = _hop_store_app(tmp_path, monkeypatch)
     sent: list[dict[str, Any]] = []
     captured_enqueue: dict[str, Any] = {}
 
@@ -272,30 +291,93 @@ def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) ->
         ):
             result = _hop_dispatch(
                 thread=thread_id,
-                reason="r" * 38,
+                reason=reason,
                 from_agent="web-anthropic",
             )
 
         assert result.get("continuity_hop") is True, result
         stored = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         stored_body = stored["body"]
-        assert len(stored_body) <= 2000
         assert stored_body.splitlines()[0] == "TYPE: CONTINUITY_HANDOFF"
+        assert "Sidecar:" not in stored_body
         assert "successor_birth_id:" in stored_body
-        assert "Sidecar:" in stored_body
-        assert "KEEP-ALIVE" not in stored_body
-
-        sidecar_uri = result["sidecar_uri"]
-        sidecar_text = (cortex_root / sidecar_uri.removeprefix("cortex://")).read_text(
-            encoding="utf-8"
-        )
-        assert "KEEP-ALIVE" in sidecar_text
+        assert result.get("sidecar_uri") is None
 
         enqueue_body = str(captured_enqueue["body"])
-        assert "KEEP-ALIVE" in enqueue_body
         assert parse_successor_birth_id(enqueue_body) == parse_successor_birth_id(
             stored_body
         )
         assert sent, "hop did not POST /threads/send"
-        assert sent[-1].get("allow_long_body") is not True
+        assert sent[-1].get("allow_long_body") is True
         assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
+
+
+def test_hop_over_hard_limit_returns_body_too_large(tmp_path, monkeypatch) -> None:
+    """A hop past 64k is a 413 on the allow_long lane. No sidecar fallback."""
+    reason = "r" * (MAX_LONG_TURN_BODY_CHARS + 1)
+    handoff = StandingHandoffFreshness(
+        status="current",
+        uri="cortex://notes/system/threads/12286-standing-handoff.md",
+        mtime_epoch=1.0,
+        age_s=10.0,
+    )
+    specimen = build_continuity_handoff_body(
+        thread_id="12286",
+        trigger=reason,
+        source="agent-bus-hop-verb",
+        handoff=handoff,
+    )
+    assert len(specimen) > MAX_LONG_TURN_BODY_CHARS, len(specimen)
+
+    app, _cortex_root = _hop_store_app(tmp_path, monkeypatch)
+    sent: list[dict[str, Any]] = []
+    captured_enqueue: dict[str, Any] = {}
+
+    def fake_enqueue(**kwargs: Any) -> dict[str, Any]:
+        captured_enqueue.update(kwargs)
+        return {"ok": True, "auto_handler_status": "auto-handler-live"}
+
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "hop-hard-limit-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+
+        relay = _relay_via_test_client(client, sent)
+        with (
+            patch(
+                "tools.agent_bus.hop.assess_standing_handoff",
+                return_value=handoff,
+            ),
+            patch("tools.agent_bus.send.relay", side_effect=relay),
+            patch("tools.agent_bus._shared.relay", side_effect=relay),
+            patch(
+                "tools.agent_bus.request.probe_auto_liveness",
+                return_value={"live": True},
+            ),
+            patch(
+                "tools.agent_bus.request.enqueue_auto_job",
+                side_effect=fake_enqueue,
+            ),
+        ):
+            result = _hop_dispatch(
+                thread=thread_id,
+                reason=reason,
+                from_agent="web-anthropic",
+            )
+
+        assert result.get("reason") == "body_too_large", result
+        assert result.get("continuity_hop") is not True
+        assert not captured_enqueue
+        assert sent, "hop did not POST /threads/send"
+        assert sent[-1].get("allow_long_body") is True
+        missing = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2")
+        assert missing.status_code == 404, missing.text

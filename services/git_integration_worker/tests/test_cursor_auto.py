@@ -55,7 +55,11 @@ def test_wire_map_auto_by_contract():
         == "cursor/grok-4.7"
     )
     assert (
-        resolve_desired_model("opus-5")["resolved_model_id"] == "cursor/claude-opus-5"
+        resolve_desired_model("opus-5")["rejected"] is True
+    )
+    assert resolve_desired_model("opus-5")["resolved_model_id"] is None
+    assert (
+        resolve_desired_model("cursor/claude-opus-5")["rejected"] is True
     )
     effort = resolve_desired_effort("bogus")
     assert effort["clamped"] and effort["resolved_effort"] == "medium"

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from services.git_integration_worker import cursor_home
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -24,12 +25,16 @@ from services.git_integration_worker.cursor_sdk_resume import (
     load_resume_run_context,
     persist_resume_retain,
     persist_timeout_retain,
-    record_resolved_store_roots,
     reject_resume_if_ineligible,
     resume_eligibility_reason,
     resume_retain_active,
     start_or_resume_agent,
     timeout_retain_active,
+)
+from services.git_integration_worker.cursor_sdk_store_locus import (
+    _iter_resume_lineage,
+    record_resolved_store_roots,
+    resolve_store_bearing_dispatch_id,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     prune_dispatch_worktree,
@@ -71,6 +76,7 @@ def _insert_parent_row(
     sdk_agent_id: str | None = "agent-parent",
     record_json: dict | None = None,
     terminal_at: str | None = None,
+    resume_of: str | None = None,
 ) -> None:
     if state_root:
         store = Path(state_root)
@@ -84,8 +90,8 @@ def _insert_parent_row(
             "INSERT INTO cursor_sdk_dispatches "
             "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
             "message_present, status, record_json, state_root, sdk_agent_id, "
-            "terminal_status, terminal_at) "
-            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+            "terminal_status, terminal_at, resume_of) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
             (
                 dispatch_id,
                 fp,
@@ -98,6 +104,7 @@ def _insert_parent_row(
                 sdk_agent_id,
                 status if status in {"completed", "failed", "cancelled"} else None,
                 terminal_at,
+                resume_of,
             ),
         )
 
@@ -633,6 +640,7 @@ def test_multi_hop_resume_of_finds_ancestor_home_store(
     """A→B→C chain: B has empty bridge-state; C resolves store via A HOME."""
     homes_root = tmp_path / "homes"
     monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    monkeypatch.setattr(cursor_home, "_DISPATCH_HOME_ROOT", homes_root)
     empty_bridge = tmp_path / "empty-bridge"
     empty_bridge.mkdir()
 
@@ -720,6 +728,83 @@ def test_multi_hop_resume_of_finds_ancestor_home_store(
         ).fetchone()
     assert b_row["state_root"] == str(store)
     assert c_row["state_root"] == str(store)
+
+    stray = (
+        dispatch_home_path(dispatch_b)
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    stray.mkdir(parents=True, exist_ok=True)
+    assert resolve_store_bearing_dispatch_id(parent_id=dispatch_b) == dispatch_a
+    assert resolve_store_bearing_dispatch_id(parent_id=dispatch_c) == dispatch_a
+
+
+def test_lineage_past_hop_cap_resolves_owning_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 13-link resume_of chain still resolves the ancestor HOME that holds the store."""
+    homes_root = tmp_path / "homes"
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    monkeypatch.setattr(cursor_home, "_DISPATCH_HOME_ROOT", homes_root)
+    store = (
+        dispatch_home_path("dispatch-a")
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    store.mkdir(parents=True)
+    (store / "agents.db").write_text("x")
+
+    chain = ["dispatch-a", *[f"hop-{i:02d}" for i in range(12, -1, -1)]]
+    _insert_parent_row(
+        dispatch_id="dispatch-a",
+        status="completed",
+        state_root=str(store),
+        sdk_agent_id="agent-dispatch-a",
+    )
+    for child_id, ancestor_id in zip(chain[1:], chain[:-1], strict=True):
+        _insert_parent_row(
+            dispatch_id=child_id,
+            status="completed",
+            state_root=str(store),
+            sdk_agent_id=f"agent-{child_id}",
+            resume_of=ancestor_id,
+        )
+
+    parent_id = "hop-00"
+    emitted: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_resume_store_events.emit_frontier_event",
+        lambda event: emitted.append(event),
+    )
+    assert resolve_store_bearing_dispatch_id(parent_id=parent_id) == "dispatch-a"
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event.signal == "giw.resume.store.owner.resolved"
+    assert event.payload["mode"] == "home_contained"
+    assert event.payload["owner_dispatch_id"] == "dispatch-a"
+    assert event.payload["parent_id"] == parent_id
+
+
+def test_resume_lineage_cycle_and_self_link_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A two-cycle and a self-link stop on the seen guard and still return."""
+    homes_root = tmp_path / "homes"
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    monkeypatch.setattr(cursor_home, "_DISPATCH_HOME_ROOT", homes_root)
+    _insert_parent_row(dispatch_id="X", state_root=None, resume_of="Y")
+    _insert_parent_row(dispatch_id="Y", state_root=None, resume_of="X")
+    ledger = CursorDispatchLedger.instance()
+    assert [d for d, _ in _iter_resume_lineage(ledger, start_id="X")] == ["X", "Y"]
+    assert resolve_store_bearing_dispatch_id(parent_id="X") == "X"
+    _insert_parent_row(dispatch_id="S", state_root=None, resume_of="S")
+    assert [d for d, _ in _iter_resume_lineage(ledger, start_id="S")] == ["S"]
 
 
 def test_resume_retain_blocks_prune_for_completed_conductor(

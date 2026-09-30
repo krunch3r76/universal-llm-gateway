@@ -193,6 +193,7 @@ def test_reap_orphan_bridge_os_skips_non_bridge_env_match(
 async def test_startup_ledger_reconcile_emits_restart_survivor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Boot rewires unparked running orphans (park + resume), not mark-failed."""
     emitted: list[str] = []
 
     def _capture(signal: str, payload: dict[str, object]) -> None:
@@ -245,15 +246,23 @@ async def test_startup_ledger_reconcile_emits_restart_survivor(
         "_promote_queued_for_lease",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr(
+        route_mod,
+        "_resume_parked_rows",
+        AsyncMock(return_value=None),
+    )
 
     await route_mod.startup_ledger_reconcile(app)
 
-    assert "frontier.sdk.worker.orphaned" in emitted
+    # Rewire path: park stamp, not worker.orphaned terminal close.
+    assert "frontier.sdk.worker.orphaned" not in emitted
     with _connect() as conn:
         row = conn.execute(
-            "SELECT status, terminal_status FROM cursor_sdk_dispatches "
+            "SELECT status, terminal_status, park_kind FROM cursor_sdk_dispatches "
             "WHERE dispatch_id=?",
             ("e599802b607b-246da3fe",),
         ).fetchone()
-    assert row["status"] == "failed"
-    assert row["terminal_status"] == "failed"
+    assert row["status"] == "cancelled"
+    assert row["terminal_status"] == "cancelled"
+    assert row["park_kind"] == "park_for_restart"
+    route_mod._resume_parked_rows.assert_awaited_once()

@@ -135,10 +135,9 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — commissions with ulg-code `team_dispatch` to `cursor-sdk` on lane B. DISPOSITION and CLOSEOUT go by `send` on the private lane. Cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Architecture-bind hop 5 independent check and review fallback stay, under that condition |
-| **cursor-sdk `cursor/composer-2.5`** | **Executor / sub-PM conductor** — the seat *closest to the code* (live checkout, live probes). `{{fast:true}}` standing default; **`contract`** carries judgment vs implement — substrate *facts* via `contract=investigate`; hypotheses at **`cdp/fable`**. Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
-| **`cursor/claude-opus-5` (premium)** | **Architecture bind** — the rung past Fable when a fork needs live-checkout verification at file:line depth no CDP seat can perform. Normally fired by the sub-PM from `work-item-seed-path` S3, ¬ recited as hops from here. Fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`) — that trigger picks this **seat**, not a second effort gate; once picked, knobs follow the card through `max`. A **mandatory** independent check follows — **`cdp/fable`** when Opus authored (model-identity, a:31944). 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Other-Models ids (`cursor/gpt-5.6-terra`, Sonnet, …) require an explicit `model=` pin on cursor-sdk dispatch — omit path stays on Cursor Models (`model_pin_refused` / `other_models_pool_denied`; default bindable set is `composer-2.5` / `claude-opus-5`). An Opus-authored architecture is not self-ratifiable. |
+| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Card default `effort=high`, `fast=true`. **`contract`** splits the leg: `investigate`, `none`, and `conductor` stay on this model; mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
+| **`cdp/opus-5.5`** | **Architecture bind / independent check** — the in-use bind rung. Live-checkout file:line depth this seat cannot perform is `cursor/grok-4.7` `contract=none` on cursor-sdk, fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`). That trigger picks the **seat**. Independent check uses a different seat than the author. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. An architecture is not self-ratifiable. |
 | **cursor-sdk lane B** | **Executor** — ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). This seat directs. The cursor-sdk seat executes repo writes |
-| **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
 **One operator CSE per lane (BINDING):** this Cowork session is the operator seat. Identity is this CSE's `chat_url`. Extras on this lane are predecessors, not peers. Never touch operator CSEs on other lanes.
 
@@ -148,11 +147,11 @@ Toys (`/mcp/life`), the legal life set (hand-maintained mirror of `surface_prima
 
 ulg-code primaries (this seat): {_ulg_code_tools_line()}.
 
-Commissions go through ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Charter enroll (`enroll_charter_runner=true`) stays a legal enroll path.
+Commissions go through ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`).
 
 `cursor-auto`, `cursor_request`, and `operator_request` are deprecated. Toys still exposes `cursor_request` and `operator_request`. They are not a commission path, including when `team_dispatch` is refused. A refuse comes back verbatim. No fallback procedure. `cursor-auto` is not a bus address.
 
-Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls included; do not query `suggestion_orientation` while a:36837 stands), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
+Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls including off-topic yields), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
 
 Poll a ulg-code `team_dispatch` with that response's `poll_hint` `tool=wait`: `arguments_json` unchanged, worker thread not the parent. `completion` and `from_agent` stay what the hint says (`first_reply_from`, `cursor-sdk` for this seat). `wait_seconds` stays what the hint says, including 0. Do not rewrite it into `job_state`. Do not promote 0 to 60. `job_state` is the poll_hint of deprecated `agent_bus.request`. Point: `agent-bus-discipline` § cursor-sdk closeout polling.
 
@@ -218,12 +217,12 @@ loop burns the mission. `mechanical(q) ⇒ ¬mentor_loop(q)`.
 
 **Idea commissioning (BINDING — operator bind 2026-08-02):** the mentor loop handles a
 *question*; this handles an **idea**. The reasoner seat is under-asked when it receives
-micro-tasks. **`cursor/composer-2.5`** executes on ideas in the same register **this** seat
-receives them — commission the idea, ¬ its decomposition, and let Composer drive
+micro-tasks. **`cursor/grok-4.7`** executes on ideas in the same register **this** seat
+receives them — commission the idea, ¬ its decomposition, and let that seat drive
 `work-item-seed-path` S1–S6 (classify → recon → architecture fork → mint todo → attach →
-layer handoff) including its **own** fan-out: Explore for breadth recon, Composer for the
-mechanical leg once judgment closes, this seat or Fable on an architecture fork it cannot
-rank, cursor-sdk again for parallel seeds.
+layer handoff) including its **own** fan-out: Explore for breadth recon, `cursor/composer-2.5`
+for the mechanical leg once judgment closes, `cdp/opus-5.5` on an architecture fork it cannot
+rank (`cdp/fable` only when Kaywan asks), cursor-sdk again for parallel seeds.
 
 **Peer disclosure when fanning a second advisor (BINDING — inv 36):** Before you (or
 the reasoner under your commission) fan one fork to a **second** advisor, tell **each**

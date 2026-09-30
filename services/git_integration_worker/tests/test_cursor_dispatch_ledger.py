@@ -1517,3 +1517,53 @@ async def test_lost_stop_claim_does_not_post_team_dispatch(monkeypatch) -> None:
     assert ok is False
     assert detail.get("reason") == "stop_not_claimed"
     post_mock.assert_not_called()
+
+
+def test_release_stop_service_only_holder_reopens_slot() -> None:
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="stop-release-1", terminal_status="completed")
+    assert ledger.claim_stop_service("stop-release-1", "admit-a") is True
+    assert ledger.release_stop_service("stop-release-1", "admit-other") is False
+    assert ledger.claim_stop_service("stop-release-1", "admit-b") is False
+    assert ledger.release_stop_service("stop-release-1", "admit-a") is True
+    assert ledger.claim_stop_service("stop-release-1", "admit-b") is True
+
+
+@pytest.mark.asyncio
+async def test_refused_hop_admit_releases_stop_claim(monkeypatch) -> None:
+    """A 4xx from Stargate must hand the slot back so a retry can claim it."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        post_conductor_hop_team_dispatch,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-stop-refused", terminal_status="completed")
+
+    resp = MagicMock()
+    resp.status_code = 400
+    resp.json.return_value = {"error": {"code": "validation_failed"}}
+    client = MagicMock()
+    client.post = AsyncMock(return_value=resp)
+
+    async def _enter(*_a, **_k):
+        return client
+
+    async def _exit(*_a, **_k):
+        return None
+
+    holder = MagicMock()
+    holder.__aenter__ = _enter
+    holder.__aexit__ = _exit
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.make_async_client",
+        lambda *_a, **_k: holder,
+    )
+
+    ok, detail = await post_conductor_hop_team_dispatch(
+        {"op": "generate", "hop_from": "pred-stop-refused", "seat": "cursor-sdk"},
+    )
+    assert ok is False
+    assert detail.get("status_code") == 400
+    assert ledger.claim_stop_service("pred-stop-refused", "retry-admit") is True

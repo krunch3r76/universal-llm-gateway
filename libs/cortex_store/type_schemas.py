@@ -118,7 +118,9 @@ def validate_required_attributes(
         )
 
 
-_SURFACE_KEYS = frozenset({"boot", "retrieval", "dispatch", "advice", "session_close", "logs"})
+_SURFACE_KEYS = frozenset(
+    {"boot", "retrieval", "dispatch", "advice", "session_close", "logs"}
+)
 _SURFACE_VISIBILITY_VALUES = frozenset({"full", "sanitized", "hidden"})
 
 
@@ -176,6 +178,28 @@ _DEPRECATED_IMPLEMENT_ALIASES = {
     "acceptance": "acceptance_criteria",
 }
 
+# One contract, two renderings (skill prose + this payload) — a seat that hits
+# the 422 must be able to repair the write without reading this module
+# (friction a:36905 item 3: seed contract surfaced only via 422).
+_IMPLEMENT_LANE_EXPECTED_SHAPE = "non-empty list[str] of non-empty strings"
+_IMPLEMENT_LANE_CONTRACT_HINT = (
+    "Implement-lane keys: files_expected, acceptance_criteria, required_skills — "
+    f"each a {_IMPLEMENT_LANE_EXPECTED_SHAPE}. required_skills entries must be "
+    "catalog-registered slugs (config/skills.yaml) with mirrored `requires` edges. "
+    "Readiness is the implement_ready assertion stamped at Gate-2, never a seeded "
+    "attribute. SoT: agent_skill:conductor § Admit from an existing plan."
+)
+
+
+def _implement_lane_contract_detail(**fields: object) -> dict[str, object]:
+    """422 detail carrying the canonical contract beside the specific failure."""
+    return {
+        **fields,
+        "canonical_keys": list(_IMPLEMENT_LANE_KEYS),
+        "expected_shape": _IMPLEMENT_LANE_EXPECTED_SHAPE,
+        "message": _IMPLEMENT_LANE_CONTRACT_HINT,
+    }
+
 
 def _implement_lane_shape_invalid(key: str, value: object) -> bool:
     if not isinstance(value, list) or not value:
@@ -198,19 +222,21 @@ def validate_distilled_attributes(
     """
     attrs = attributes or {}
     present_lane_keys = [key for key in _IMPLEMENT_LANE_KEYS if key in attrs]
-    if not present_lane_keys and not any(k in attrs for k in _DEPRECATED_IMPLEMENT_ALIASES):
+    if not present_lane_keys and not any(
+        k in attrs for k in _DEPRECATED_IMPLEMENT_ALIASES
+    ):
         return
 
     for alias, canonical in _DEPRECATED_IMPLEMENT_ALIASES.items():
         if alias in attrs:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "implement_attr_alias_rejected",
-                    "entity_type": entity_type,
-                    "alias": alias,
-                    "canonical": canonical,
-                },
+                detail=_implement_lane_contract_detail(
+                    error="implement_attr_alias_rejected",
+                    entity_type=entity_type,
+                    alias=alias,
+                    canonical=canonical,
+                ),
             )
 
     schema = type_attribute_schema(conn, entity_type)
@@ -223,20 +249,21 @@ def validate_distilled_attributes(
         if registered is not None and key not in registered:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "implement_attr_not_registered",
-                    "entity_type": entity_type,
-                    "attribute": key,
-                },
+                detail=_implement_lane_contract_detail(
+                    error="implement_attr_not_registered",
+                    entity_type=entity_type,
+                    attribute=key,
+                ),
             )
         if _implement_lane_shape_invalid(key, attrs[key]):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "implement_attr_shape_invalid",
-                    "entity_type": entity_type,
-                    "attribute": key,
-                },
+                detail=_implement_lane_contract_detail(
+                    error="implement_attr_shape_invalid",
+                    entity_type=entity_type,
+                    attribute=key,
+                    received_type=type(attrs[key]).__name__,
+                ),
             )
 
     # a:27431 — path-sim is a choke-point cue, not a required_skills leaf entry.

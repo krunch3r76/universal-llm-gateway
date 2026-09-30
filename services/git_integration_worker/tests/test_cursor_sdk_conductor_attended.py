@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from implement_admission.conductor_width_seat import ACTIVE
+
 from services.git_integration_worker.cursor_sdk_packet import (
     _CONDUCTOR_HOP_TEMPLATE,
     extract_summon_mode_from_packet,
@@ -66,7 +68,9 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     )
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
     assert "SCORE_RESURFACE" in preamble
-    assert "cdp/fable-5.1" in preamble
+    assert ACTIVE.model in preamble
+    assert f"reasoning_effort={ACTIVE.reasoning_effort}" in preamble
+    assert "cdp/fable-5.1" not in preamble
     assert "summoning bus thread 9638" in preamble
     assert "never this leftover worker thread" in preamble
     assert "summoning lead" in preamble

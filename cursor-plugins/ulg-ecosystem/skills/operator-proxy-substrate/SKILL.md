@@ -162,9 +162,10 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 
 | Element | Value |
 |---|---|
-| Default reviewer | **`cdp/opus-5`** · `job=delivery-review` · `reasoning_effort="high"` — delivery critique over staged diff/closeout. Terra / Other Models only if named |
-| Escalation | local `cursor/claude-opus-5` only when CDP review lane unavailable; Fable only for frame/doctrine meta — ¬ local Fable for this lane |
+| Default reviewer | **`cdp/opus-5`** · `job=delivery-review` · `reasoning_effort="high"` — delivery critique over staged diff/closeout |
+| Escalation | CDP review refused or failed: do not wait and do not retry the CDP pool. Conductor records `cdp_fail_route` on the scoreboard. `nested-grok`: `cursor/grok-4.7` `job=freeform` `model_knobs={"effort":"xhigh"}`. `operator`: question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread (`CONSULT_PENDING` watches it). `cdp/fable` only when Kaywan asks |
 | Fire | `team_dispatch(model=cdp/opus-5, job=delivery-review, reasoning_effort="high")` — queues behind the live holder, ¬ contend |
+
 | Deliver | `cse_session(op=followup)` into the attached CSE |
 | Log | NOTE on the **MONITOR sibling** — silence on the watched lane |
 

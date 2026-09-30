@@ -478,9 +478,11 @@ _SUCCESSOR_WAKE_GOLDEN = (
     "agent_bus_read(thread_get, thread=10479); agent-bus:10479 (echo)\n"
     "Use the liaison skill. LOAD the liaison skill body; do not skim.\n"
     "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).\n"
+    "ARM house finish pollers as house-10479-<dispatch_id> (both --label "
+    "occurrences); <dispatch_id> is the auto id you mint at dispatch.\n"
     "frame: spawned by liaison-ticker gear 3-wake-on-attention; seat cursor-sdk; "
     "predecessor = prior lease holder on agent-bus:10479. "
-    "§ Peer-house: keep both; cdp/opus-5.5 → 2nd pool → cursor/claude-opus-5-5; "
+    "§ Peer-house: keep both; cdp/opus-5.5 → cdp/opus-5; "
     "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled.\n"
     'echo: agent_bus(send, thread=10479, subject="ORIENTED 10479", '
     'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: cursor-sdk") '
@@ -515,7 +517,7 @@ def test_successor_wake_fitting_input_byte_identical() -> None:
     first = _default_successor_render()
     second = _default_successor_render()
     assert first == second
-    assert len(first.encode("utf-8")) == 1369
+    assert len(first.encode("utf-8")) == 1483
 
 
 @pytest.mark.offline

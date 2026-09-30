@@ -898,3 +898,38 @@ def test_backfill_orphaned_retry_chat_urls_verdict(
     assert wet["counts"]["scrape_bound"] == 1
     assert wet["counts"]["irreversible_no_url"] == 1
     assert reg.chat_url_for_registration("or-scrape") == scrape_url
+
+
+def test_allocating_row_strips_seat_fields_and_rollback_drops_it(
+    isolated_registry: Path,
+) -> None:
+    from claude_bundles.cdp_registry.lifecycle import (
+        _rollback_allocating,
+        reserve_allocating_row,
+    )
+
+    def boom(port: int, profile: Path) -> int:
+        raise RuntimeError("chrome fail")
+
+    row, minted = reserve_allocating_row(
+        holder="a",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="p-seat",
+        listen=lambda _port: False,
+        carry={
+            "seat_lane": "p-seat",
+            "seat_bound_at": 1.0,
+            "seat_closed_at": None,
+        },
+    )
+    assert minted is True
+    stored = reg._load_active()[row["registration_id"]]
+    assert "seat_lane" not in stored
+    assert "seat_bound_at" not in stored
+    assert "seat_closed_at" not in stored
+    with pytest.raises(RuntimeError, match="chrome fail"):
+        boom(int(row["port"]), Path(str(row["profile"])))
+    _rollback_allocating(str(row["registration_id"]))
+    active = json.loads((isolated_registry / "active.json").read_text(encoding="utf-8"))
+    assert row["registration_id"] not in active

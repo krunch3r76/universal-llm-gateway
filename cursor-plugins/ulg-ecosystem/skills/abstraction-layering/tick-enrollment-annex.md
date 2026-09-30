@@ -5,9 +5,8 @@ the binding rules; this file holds the byte-identical template and status tables
 
 ## Initial CHECKPOINT template (BINDING)
 
-**When:** hanging a layering work item on the charter runner — mint a `charter-runner`
-root (`agent_bus send` with `enroll_charter_runner=true`; tag alone is `422
-reserved_enrollment_tag`).
+**When:** recording layering progress on the work item. Commission the arc with
+ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`).
 
 **Order:** (1) mint scoreboard at
 `cortex://notes/system/threads/{slug}-scoreboard.md`; (2) stamp todo attrs (skill
@@ -45,7 +44,7 @@ cite that document's `source_uri` in the `[x]` line; do not mark G1 closed from 
 TYPE: CHECKPOINT
 
 ## Profile
-`tick_charter` (charter-runner enrolled)
+`orchestrator_continuity`
 
 ## Anchor
 - Thread: agent-bus:{ROOT_ID}
@@ -56,7 +55,8 @@ TYPE: CHECKPOINT
 ## State
 **Primary OPEN:** G{ENTRY}–G7 (abstraction layering).
 **WIP:** none.
-**G6 (binding):** pre-land `cdp/opus-5` `job=delivery-review` `reasoning_effort="high"` on lane branch diff — R1 sidecar; HARD STOP before G7 land if harvest missing. ¬ background overlay · ¬ defer-and-proceed.
+**G6 (binding):** pre-land `cdp/opus-5` `job=delivery-review` `reasoning_effort="high"` on lane branch diff — R1 sidecar. If that consult is refused or fails, escalate at once (`cdp_fail_route` `nested-grok` or `operator`). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest. ¬ background overlay · ¬ defer-and-proceed.
+
 
 ## Steps
 1. [ ] G1 — architecture verdict + target shape · [consult:judgment_gap]

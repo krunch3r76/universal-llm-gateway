@@ -81,6 +81,10 @@ def classify_artifact_path(
         return "shared"
     if base.endswith("-standing-handoff.md"):
         return "shared"
+    # `-consult-` marks thread consult artifacts. Runbook commands such as
+    # bus-consult-watcher.md live under notes/runbooks/ and stay editable.
+    if rel.startswith("notes/runbooks/"):
+        return "unclassified"
     if any(marker in base or marker in rel for marker in _CONSULT_NAME_MARKERS):
         return "consult"
     return "unclassified"

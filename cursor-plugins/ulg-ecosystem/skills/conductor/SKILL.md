@@ -40,11 +40,12 @@ gates. This is how models finish together on one graph after the lid closes
 
 | Term | Means |
 |---|---|
-| **conductor score** | packet + scoreboard — Mission Composer product; what this seat plays |
-| **conductor packet** | six-block admit file (`packet_path=`) |
-| **scoreboard** | G-row table the packet binds |
+| **conductor score** | the **densified todo** (dense spec + implement-lane attrs + pins) — Mission Composer product; what this seat plays. Packet + scoreboard are **derived** from it at admit |
+| **conductor packet** | six-block file Stargate **materializes** from `source_ref=todo:` at `job=conductor` admit. Hand-authored `packet_path=` is refused on that contract (`conductor_with_packet_path`) |
+| **scoreboard** | G-row table the materializer births from the todo (`birth_scoreboard`); re-admit never rewinds it |
 
 ¬ admit package. ¬ shorten conductor score to **score**. Mission Composer ≠ `cursor/composer-2.5`.
+Hop → wire → product map: § Admit from an existing plan.
 
 **Default is run, don't ask.** Once admitted, the conductor drives every open
 G-row through to the scoreboard's own completion criterion in one continuous
@@ -238,8 +239,10 @@ per-G-row one. Default posture once running:
   crash's loss to the in-flight row (`a:31786`). A mission that ends inside
   one dispatch simply stops `DONE`. Owed stops win at a boundary:
   `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
-  `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify (`cdp/fable-5.1`)
-  then continues — a live summoning chat is not a human stop; named
+  `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify on ACTIVE
+  (`cdp/opus-5`, reasoning_effort=max, and effort_when_bind_gates_wave=max
+  when a bind gates a wave) then continues — a live summoning chat is not a
+  human stop; named
   hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
   then hop. If you end with the mission open and **no** token, the substrate
   still re-admits you (budgeted) — that is the safety net, not the default.
@@ -250,7 +253,7 @@ per-G-row one. Default posture once running:
   *completion*; do not round-trip for a separate "ok to merge?"
 - **Stop only for a true operator-only gate** — credentials, an irreversible
   non-revertible act, or a genuine unranked fork. Forks go to the judgment
-  ladder (independent binder — Fable / Opus / terra) first; `needs-attended`
+  ladder (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks) first; `needs-attended`
   is for the human-only remainder, not for "should I proceed" or "should I
   merge."
 - **Named exception overrides the default.** If a mission genuinely needs the
@@ -275,21 +278,14 @@ per-G-row one. Default posture once running:
   (`op=generate`, `job=delivery-review`, `model` in `cdp/opus-5` | `cdp/opus-5.5` |
   `cdp/fable`, `job=freeform`, no other keys). That bound is the bridge
   process for the filtered seat; it is not a server-side identity check on
-  `/mcp/code`. When Opus returns `stall_stage=completed_without_proof`, the
-  CDP worker retries `cdp/fable` once, resets the inflight clock, and posts
-  that verdict on the original execution id only when the fable body is
-  non-empty — the retry is not a second operator or conductor step. Latency while CDP is
-  healthy is not a skip — poll / hop+watcher / `PARKED_TRANSPORT` until harvest.
-  CDP down or stall (`Chrome on :9225 did not reach CDP`, empty body,
-  `stall_stage=mark_terminal`) ≡ **no harvest** ≡ **HARD STOP** — restore the
-  ask lane or explicit operator rebind; ¬ label DEFERRED/transport-debt and
-  continue; ¬ Composer/self substitute. **Exception:** `body_len=0` with
-  `stall_stage=mark_terminal` and an undelivered skill chip is a delivery
-  failure, not a review verdict, and it does not consume the second-strike
-  stop. Retry that review once, naming the missing slugs in the prompt. If
-  the body is still empty, `git_land` the lane that holds the commits and
-  close `land_disposition: landed`. Do not `PARKED_TRANSPORT`. Do not discard
-  that lane. Optional Sidecar overlays that the
+  `/mcp/code`.   A consult already admitted and still healthy is not a skip — poll until harvest.
+  CDP consult refused or failed (including `X display exhausted`, `Chrome on :9225 did not reach CDP`, empty body,
+  `stall_stage=mark_terminal`, `stall_stage=completed_without_proof`): do not wait and do not retry the CDP pool.
+  Choose at once by the question and record `cdp_fail_route` on the scoreboard row.
+  `nested-grok`: nested `team_dispatch` `seat=cursor-sdk` `model=cursor/grok-4.7` `job=freeform` `model_knobs={"effort":"xhigh"}`.
+  `operator`: post the question and its context on this worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply.
+  Do not label DEFERRED and continue. Do not substitute Composer. Do not `PARKED_TRANSPORT` on this failure. Do not discard the lane.
+  Optional Sidecar overlays that the
   scoreboard marks non-blocking remain commentary only — they do not replace
   the gated after-ship picker. Does not replace path-sim R-after (Grok).
   **Reader (BINDING):** `fired(gate) ⇒ reader = summoning-thread lead at harvest`.
@@ -313,46 +309,37 @@ of a conductor dispatch).
 
 ## Model / effort tier (cost-aware — binding)
 
-`cursor/claude-opus-5-5` is **expensive**. Prefer the **cheapest tier that can
-honestly hold the conductor remit**. Re-check when pricing or fleet defaults
-move (`observability` dispatch-economics when spend matters). Compose with
-`lean-context-dispatch-first` + `consult-routing` — non-primary models stay
-operator-gated unless a standing rule names them.
-
-**Pool first, then rate.** Composer draws Cursor Models (generous).
-Sonnet / Opus / Terra draw the capped Other Models (second) pool.
-Do not cite total-dollar-by-model spend as the justification when call
-volumes differ — reprice the **same token mix** at both rate cards first.
-Cache-read-heavy workloads can shift relative cost by model (`cache_read`
-rates and input/output $/M differ across pools — see rate card).
+Prefer the **cheapest in-use tier that can honestly hold the conductor remit**.
+Re-check when pricing or fleet defaults move (`observability` dispatch-economics
+when spend matters). Compose with `lean-context-dispatch-first` + `consult-routing`.
+Cursor seats in use: `cursor/grok-4.7` and `cursor/composer-2.5`.
 Rates: `config/model_rates.yaml`.
 
 | Seat | Model / contract | Use when |
 |---|---|---|
-| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
-| **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
-| **CDP width** | **`cdp/fable-5.1`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. Stronger Fable is explicit `cdp/fable-5`. |
+| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — card default `effort=high`, `fast=true` | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
+| **Composer (nested implement)** | **`cursor/composer-2.5`** — pin `model=` on `job=implement`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. Omit `model=` resolves grok, not Composer. |
+| **CDP width** | **`cdp/opus-5`** `reasoning_effort=max` | G1 architecture, G2 frame, G4 skeptic, and G3→G5 score-ratify read ACTIVE (model + reasoning_effort; effort_when_bind_gates_wave=max only when a bind gates a wave). G2 follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`job=delivery-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
-| **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
+| **Live checkout** | **`cursor/grok-4.7`** `job=freeform` | File:line depth on the cursor-sdk checkout. |
 
-> `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
 
-Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-family binder stays on `judgment-escalation-ladder` 2c, not the default conductor seat.
+While ACTIVE.model is cdp/opus-5, G4 is the same usage channel as an Opus binder; restoring cdp/fable-5.1 returns the cross-family skeptic.
 
 **Nested legs (always split by cost class):**
-- Mechanical implement → Composer (`omit model=`, `contract=implement`)
-- Investigate densify → Composer `contract=investigate` returning `OPEN FORK:` lines
-- Independent binder when conductor unsure → CDP per trigger list
+- Mechanical implement → `cursor/composer-2.5` (`job=implement`, pin `model=`)
+- Investigate densify → `cursor/grok-4.7` `job=investigate` returning `OPEN FORK:` lines
+- Independent binder when conductor unsure → `cdp/opus-5.5` (`cdp/fable` only when Kaywan asks)
 
 **Anti-patterns (cost):**
 | Bad | Good |
 |---|---|
-| Default every conductor to Opus or Sonnet `max`/`1m` | Composer standing; CDP or explicit pins only on a named trigger |
+| Default every conductor off `cursor/grok-4.7` | Grok standing; `cdp/opus-5.5` only on a named bind trigger |
 | Premium model at default effort | Cheaper model at high effort **on the same pool** |
 | Composer conductor that also hand-codes a mechanical remainder after a pick | Nest Composer |
 | Re-spend Opus to amend a densified packet | Composer amend |
 | Ignore `sdk_cost_risk` warning | Downgrade model or split bind/compose |
-| Pin Terra/Sonnet because the skill used to | Composer standing unless the remit needs an Other Models explicit pin |
+| Pin a cursor seat other than grok or composer | `cursor/grok-4.7` standing; `cursor/composer-2.5` for mechanical implement |
 | Cite total-dollar-by-model when call volumes differ by an order of magnitude | Reprice the same token mix at both rate cards |
 
 `/conductor` asks standing seat / pin (Q7) when unbound; operator may pin a slug.
@@ -361,20 +348,18 @@ Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-
 
 **Selector precedence:** packet profile line (`conductor_profile: fable-scarce` in
 packet frontmatter) ≻ todo attr `conductor_profile=fable-scarce` ≻ house default.
-Absent the selector ⇒ house G-row pickers below, not this table. Scoreboard rows
-**G2 / G4 / G6** annotate `profile=fable-scarce` and track **`cdp_fable_legs_arc`**
-(harvested G4/M2 `cdp/fable-5.1` legs only — G1 Fable and cursor-sdk `check_review`
-Fable-5.1 are not counted).
+Absent the selector ⇒ house G-row pickers below, not this table. This profile
+does not name a different width model: G1, G2, G4, and G3→G5 read ACTIVE, and
+the ≤1 `cdp/fable-5.1` leg-per-arc allowance is removed. Scoreboard rows **G2 / G4 / G6** may still
+annotate `profile=fable-scarce`.
 
 | G-row | Picker | Effort pin | Transport | `purpose` |
 |---|---|---|---|---|
-| **G2 Frame** | `cdp/opus-5.5` **fresh** | **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`) — one rung, two spellings | Fresh `team_dispatch(model=cdp/opus-5.5)`. **¬** Fable followup into G1 CSE (`fable-scarce`) | **`ask`** |
-| **G4 Skeptic** | **≤1 `cdp/fable-5.1` leg per arc** (incl. `panel_dispatch` members) | `high`; **`max` only when bind gates a wave** — not the G4 default | Fresh. **No automatic Opus re-pass** when Fable bound; second CDP needs M2 invariant attr or operator/packet pin on the scoreboard row | `ask` \| `review` |
+| **G2 Frame** | ACTIVE (`cdp/opus-5`) | `reasoning_effort=max`; `effort_when_bind_gates_wave=max` when a bind gates a wave. | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. | **`ask`** |
+| **G4 Skeptic** | ACTIVE (`cdp/opus-5`). | `reasoning_effort=max`; `effort_when_bind_gates_wave=max` when a bind gates a wave. | Same seat as G1. The ≤1 `cdp/fable-5.1` leg allowance is removed. | `ask` \| `review` |
 | **G6 Pre-land review** | `cdp/opus-5.5` | **`extra`/`xhigh` floor**; **`max` when invariant-touching** | Lane branch diff; **`review harvest ≺ land ≺ DONE`** unchanged | **`review`** |
 
-Fresh Opus G2 under this profile is the **house G2 falsifier discharging**
-(assertion:36248), not a standing exception to followup-first. **Refused effort
-pin** on admit ⇒ report and halt — never silent substitute to another rung or seat
+**Refused effort pin** on admit ⇒ report and halt — never silent substitute to another rung or seat
 (S7-I).
 
 ## Role split
@@ -389,8 +374,13 @@ pin** on admit ⇒ report and halt — never silent substitute to another rung o
 
 ## Packet
 
-Six-block handoff packet (`architecture-handoff-protocol`). Front-matter SHOULD
-set `packet_kind: conductor` and `role_name: conductor`.
+Six-block handoff packet (`architecture-handoff-protocol`), **materialized by
+Stargate from the todo** on `job=conductor` + `source_ref` (front-matter
+`role_name: conductor`, the Use-line, entry gate, `summon_mode`, pins). The lead
+shapes the **todo**, not the file; `packet_kind` is retired on the wire (the
+contract carries it). The list below is what the materialized packet must end up
+saying — audit the materialized file against it, and put anything missing on the
+todo (`scope`, `problem`, attrs), not in a hand-edited copy.
 
 **Optional frontmatter `sdk_mode:` (conductor admit vs nested legs):**
 
@@ -573,12 +563,11 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
   without the owed stronger-model **harvest**. Two pickers, not one:
-  **G4 Skeptic** (pre-implement, on the G3 **spec**) = `cdp/fable-5.1` (high/max).
-  **Under `conductor_profile=fable-scarce`:** ≤1 `cdp/fable-5.1` leg in the G4/M2
-  skeptic slot per arc, `panel_dispatch` members count as legs, effort `high`
-  (`max` only when the bind gates a wave — not the default); no automatic Opus
-  re-pass when Fable bound — a second CDP needs an M2 invariant attr or an
-  operator/packet pin written on the scoreboard row. **After-ship code review**
+  **G4 Skeptic** (pre-implement, on the G3 **spec**) = ACTIVE (`cdp/opus-5`,
+  reasoning_effort=max; effort_when_bind_gates_wave=max when a bind gates a
+  wave). **Under `conductor_profile=fable-scarce`:**
+  G4 still reads ACTIVE, and the ≤1 `cdp/fable-5.1` leg-per-arc allowance is
+  removed. **After-ship code review**
   (post-implement, on the **lane branch**, before land) = `cdp/opus-5.5`
   (xhigh/Extra). Skeptic ≠ code review. Composer cannot self-certify either.
   Same-family effort bumps are **not** the gate.
@@ -593,7 +582,8 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   rebinds that gate’s seat (e.g. Cursor skeptic) — inform-then-proceed, never
   silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
 - Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
-  (`cdp/fable-5.1`) as an away summon, and post `SCORE_RESURFACE` on the
+  on ACTIVE (`cdp/opus-5`, reasoning_effort=max; effort_when_bind_gates_wave=max
+  when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
   summoning thread as a report. The report is not a stop. A human gate is
   only an explicit see-score or `OPERATOR_GATE`.
 - `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
@@ -618,11 +608,9 @@ sidecar write ≺ bus tip ≺ closeout.
 
 Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` ·
 `Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
-field under profile **`cdp_fable_legs_arc`**: counts **harvested** G4/M2
-`cdp/fable-5.1` legs only (G1 Fable and cursor-sdk `check_review` Fable-5.1 are not
-counted). Empty / `FAILED body_len=0` leg ⇒ record `attempt=<execution_id>` on
-the row; does not consume the cap; one retry allowed; second empty ⇒ HARD STOP or
-operator pin — never silent Opus substitute. Field-level
+field under profile **`cdp_fable_legs_arc`** no longer caps legs: the ≤1
+`cdp/fable-5.1` leg-per-arc allowance is removed, and G4 reads ACTIVE.
+Empty / `FAILED body_len=0` leg ⇒ record `cdp_fail_route` on the scoreboard row and escalate at once. Do not retry the CDP pool. `nested-grok` or `operator` as in the after-ship gate above. Field-level
 content and the why-a-cold-successor-needs-it column:
 `cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the
@@ -743,16 +731,87 @@ Pager only when `summon_mode` is absent/away or the packet names see-score-page 
 not on every attended `ROW_PINNED` (attended floor = bus `SCORE_RESURFACE` on the
 summoning thread + summoning lead relay).
 
+## Admit from an existing plan (substitute sketch)
+
+**Trigger:** a written plan already exists (Plan-mode doc, consult note, operator
+paste) and the operator says *densify + implement* / *admit the conductor*.
+Select and follow this map; do not rebuild the path from source reading and 422s
+(specimen `todo:cdp-ask-harvest-prompt-anchor` · a:36905).
+
+### Hop → wire → product (the wire is `contract`; `packet_kind` is retired)
+
+| Hop | Wire | Product | Written by |
+|---|---|---|---|
+| **Sketch** | `contract=sketch` + `source_ref=todo:` (materializer reads todo `problem` / `scope`) | **shape bind** — R1 four blocks (`scope_pin` · `negative_space` · `output_envelope` · `transfer_predicate`) at `cortex://notes/system/consults/{slug}-sketch.md` | dispatched Sketch, or a **substitute** (below) |
+| **Mission Composer** | `runbook:score-composer-author` — `job=freeform` + `prompt=` (¬ a materializer contract) | **conductor score** = the **densified todo**: dense spec at `source_uri`, implement-lane attrs, `stop_after` / `conductor_profile` pins, S5 attach when architecture is closed. ¬ a hand-written six-block file | dispatched Composer worker |
+| **Conductor** | `job=conductor` + `source_ref=todo:` · `packet_path` **refused** (`conductor_with_packet_path`) · `prompt` refused | Stargate **materializes** the packet and **births the scoreboard** from the todo at admit | substrate |
+
+`job=freeform` + `source_ref` is refused (`none_with_source_ref`) — it is not a
+lighter conductor. Sweep `19ab1566a` rewrote `light-bounded` → `none` and dropped
+`packet_kind=conductor` mechanically; any recipe still showing that pair is stale.
+
+### What stands in for the Sketch
+
+A plan is a valid Sketch substitute when it carries the four R1 blocks (prepend
+them as a header when missing) and is registered as a sidecar the todo points at
+(`scope:` / description / `density_triage_evidence_uri`). Frontmatter:
+`consult_kind: sketch` · `substitute_for:` · `as_of:` HEAD sha · `status:` naming
+that its decisions are **not independently checked** — the Mission Composer read
+is that check. A substitute sketch closes the **Sketch hop**; it does **not**
+close **G1**.
+
+### Entry gate (`conductor_materialize.resolve_entry_gate`)
+
+| Todo state at admit | Entry gate |
+|---|---|
+| scoreboard already born (re-admit / hop) | fold `entry_gate` = first non-DONE row — **wins** over every row below |
+| attribute `derived_from` set | **G2** — packet says `G1 CLOSED by derived_from:…` |
+| `density_triage=mechanical` | **G5** |
+| else | **G1** |
+
+### Skipping G1 legitimately — stamp **both**, or neither
+
+| Stamp | Reader | Missing ⇒ |
+|---|---|---|
+| todo **attribute** `derived_from=document:{slug}-architecture-consult` | materializer → entry gate G2 | entry gate G1; conductor re-derives architecture |
+| **structural edge** `todo --derived_from--> document:*` whose document carries `consult_kind=architecture` | witness fold (`_witness_g1`) → G1 renders DONE | G1 has no witness — fold leaves it OPEN while the seat is already driving G2 |
+
+A `consult_kind: sketch` document never witnesses G1. Rival shapes still open ⇒
+stamp neither; let G1 fire. Attach recipe: `work-item-seed-path` § S3 / S5.
+
+### Todo seed contract (what the materializer and validators read)
+
+| Key | Rule | 422 |
+|---|---|---|
+| `files_expected` · `acceptance_criteria` · `required_skills` | non-empty `list[str]`, no blank items. Optional at seed; owed before `implement_ready` | `implement_attr_shape_invalid` — payload carries `canonical_keys` + `expected_shape` |
+| `files_modified` · `acceptance` | aliases — refused | `implement_attr_alias_rejected` — payload names `canonical` |
+| `required_skills[i]` | slug ∈ `config/skills.yaml`; mirror each with a `requires` edge todo → `agent_skill:` | `required_skills_uncatalogued` |
+| `implement_ready` | **never seeded** — an assertion the conductor stamps at Gate-2 (`implement_ready_assertion_id` mirrors it) | — |
+| `problem` · `scope` · `source_uri` | prose the Sketch materializer and spec hash read | — |
+| `density_triage` · `kind` · `spawned_by_friction=<int>` · `stop_after` · `conductor_profile` · `summon_mode` · `derived_from` | attrs folded into the packet header | — |
+
+### `dispatch_thread_id` shapes
+
+§ First-utterance spawn. The 422 `conductor_coord_split_refused` repeats the
+three legal shapes in `details.hint` — read the payload before probing threads.
+
+### Preflight gate (dispatch-kernel "agent_bus + stargate + GIW up")
+
+`manage(action="status")` answers up/down compactly. `busy_status` is the
+lane-**holder** read (§ Admit post-admit check); it is large and does not scope
+by `service=` — do not spend it on up/down (a:36905 item 5).
+
 ## Admit
 
 ```text
-# Default conductor (Composer omit model=)
-# Precondition: packet <invariants> already carries "Use the conductor skill — …"
+# Default conductor (omit model= → cursor/grok-4.7)
+# Precondition: todo shaped per § Admit from an existing plan; the materializer
+# writes the "Use the conductor skill — …" line into <invariants> itself.
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=conductor,
-  packet_path=tmp/reviews/{slug}-conductor-packet.md,
+  source_ref="todo:{slug}",       # packet_path is REFUSED on this contract
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
   model_knobs={"fast":"true"},
@@ -764,9 +823,11 @@ team_dispatch(
 )
 ```
 
-Preflight: packet Use-line present ∧ `manage(busy_status)` — if the chosen lane's
-write lease is held by another dispatch, expect **queued**; record holder on the
-root CHECKPOINT. ¬ nest_under an unrelated mission's lease.
+Preflight: `manage(action="status")` shows agent_bus + stargate + GIW up ∧
+`busy_status` — if the chosen lane's write lease is held by another dispatch,
+expect **queued**; record holder on the root CHECKPOINT. ¬ nest_under an
+unrelated mission's lease. Receipt: quote `packet_path` (materialized),
+`packet_sha256`, `scoreboard_uri`, `dispatch_id`, admitted thread.
 
 **Post-admit check (binding — default regime is Lane B):** quote `active_by_lane` /
 `holder_source_repo` from `busy_status`. Expected: `B≥1`, worktree under
@@ -776,9 +837,6 @@ instead of silently admitting on shared master. If you see `A=1` and
 `holder_source_repo=…/universal-llm-gateway` without a named Lane-A reason, the
 admit selected Lane A (omitted/`lane="A"`) — stop nesting mechanical work onto
 a B branch that isn't this checkout.
-
-When admitting **explicit `cursor/claude-opus-5-5` pin**: one announce line (`Conductor Opus pin: <trigger> — <why>`),
-then proceed (`lean-context-dispatch-first` inform-then-proceed).
 
 ## Gotchas
 
@@ -870,10 +928,11 @@ Command `/conductor` (plugin): orient → ask establishing questions (incl. **mo
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
 when the operator already bound the answers in chat. Scoreboard mint includes
-stronger-model gates (a:32146 · a:32226): G4 Skeptic = `cdp/fable-5.1`; after-ship
-code review = `cdp/opus-5.5` — hard, ¬ optional, ¬ Composer self-cert; CDP
-transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
-`fable-scarce` ⇒ see § Profile fable-scarce.
+stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE (`cdp/opus-5`,
+reasoning_effort=max); after-ship code review = `cdp/opus-5.5` — hard, ¬
+optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
+(¬ DEFERRED-and-proceed). Profile
+`fable-scarce` ⇒ see § Profile fable-scarce (width rows stay on ACTIVE).
 
 ## Composes with
 
@@ -898,6 +957,11 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
 | Bad | Good |
 |---|---|
 | Admit conductor packet without `Use the conductor skill` in `<invariants>` | Continuity-lead required-skill gate (Audience) |
+| Hand-author `tmp/reviews/{slug}-conductor-packet.md` and pass `packet_path=` on `job=conductor` | Shape the **todo**; `source_ref=todo:` — the materializer writes the packet and the scoreboard (§ Admit from an existing plan) |
+| Spawn with `job="freeform"` + `source_ref=todo:` (post-`19ab1566a` residue) | `job="conductor"` — `none_with_source_ref` is a 422, not a lighter admit |
+| Stamp `derived_from` attribute only (or edge only) to skip G1 | Both attribute and `consult_kind=architecture` edge, or neither — a `consult_kind: sketch` doc is not a G1 witness |
+| Seed `implement_ready` / `files_modified` / `acceptance` on the todo | Readiness is a Gate-2 assertion; canonical keys are `files_expected` / `acceptance_criteria` / `required_skills` (non-empty `list[str]`) |
+| Reconstruct the admit path from source + 422s because the plan “isn't a sketch” | Register the plan as the substitute sketch (`consult_kind: sketch`), then follow § Admit from an existing plan |
 | Drop the packet Use-line because `skills=["conductor"]` now mounts | Both — the Use-line is what survives a replayed or `skills=`-less admit |
 | One flat `implement` "does the whole mission" | Conductor + nested contracts per G-row |
 | Page human "which remedy?" | Nest binder; `needs-attended` only for operator-only |
@@ -921,9 +985,9 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
 | Nest 422 then in-seat G5 absorb | `PARKED_TRANSPORT` + persist; fix wire and re-nest under live `dispatch_id` |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire Opus after-ship / Fable Skeptic and never read it | Summoning-thread lead quotes the harvest; unread ⇒ ¬ DONE |
-| Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | **HARD STOP** — restore CDP + harvest, or operator-explicit seat rebind; ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Cursor/Composer silent substitute (a:32146 · a:32226 · 9638 hop3 · 10013) |
+| Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | Escalate at once. Record `cdp_fail_route` on the scoreboard: `nested-grok` or `operator`. Do not wait and do not retry the CDP pool. ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Composer substitute |
 | Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
-| Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = Fable on spec; code review = Opus on the lane branch diff, before land (G6) |
+| Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = ACTIVE on the spec; code review stays `cdp/opus-5.5` on the lane branch diff, before land (G6) |
 | Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Path-explicit commit of session paths, then prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |

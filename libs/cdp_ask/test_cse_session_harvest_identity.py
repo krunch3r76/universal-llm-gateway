@@ -201,8 +201,10 @@ def test_chat_url_from_provenance_matches_correlation() -> None:
     episode.correlation_id = "sat-abc"
     episode.chat_url = "https://claude.ai/cowork/cse_provHarvest1"
     with patch(
-        "claude_bundles.cse_provenance.read_episodes",
-        return_value=[episode],
+        "cdp_ask.cse_session_harvest_identity.latest_episode",
+        side_effect=lambda **keys: episode
+        if keys.get("correlation_id") == "sat-abc"
+        else None,
     ):
         assert chat_url_from_provenance("sat-abc") == (
             "https://claude.ai/cowork/cse_provHarvest1"

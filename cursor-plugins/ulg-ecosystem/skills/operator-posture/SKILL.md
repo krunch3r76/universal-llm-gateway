@@ -43,7 +43,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    Watcher: Use `runbook:bus-consult-watcher` (arm with --execution-id from the admit; tail; relay) — never restate here.
 
-   Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on liaison. **Liaison HARD STOP (a:32226):** stronger-model gate stall / empty FAILED / no harvest ⇒ stop past that gate; resume only after CDP harvest or operator rebind (`conductor` skill).
+   Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on liaison. **Liaison CDP failure:** stronger-model gate refused or failed / empty FAILED ⇒ escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool (`conductor` skill).
 
    **Pickup / boot:** before new work, scan `tmp/watchers/*.state.json` — any `status=complete` not yet relayed ⇒ leg 3 immediately (do not re-arm).
 

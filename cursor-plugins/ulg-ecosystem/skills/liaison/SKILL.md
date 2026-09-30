@@ -248,7 +248,7 @@ touch the same files. `¬ discard(peer_work)` — a blocked merge is reconcile, 
 | Conflict | Action |
 |---|---|
 | Keepable overlap (both hunks valid) | `git merge`; keep both; verify ACs; ¬ hop while unreconciled |
-| Judgment (which hunk is right) | `cdp/opus-5.5` → 2nd pool (other CDP identity ∨ `cursor/claude-opus-5-5`) → opus-class bind. ¬ `cursor/claude-fable-5-1` |
+| Judgment (which hunk is right) | `cdp/opus-5.5` → `cdp/opus-5`. ¬ `cursor/claude-*` |
 | Sensitive (`OPERATOR_GATE` class · discard-risk · identity) | only after that ladder fails: page human |
 
 `¬ page(human)` for an ordinary merge conflict. `cdp/fable-5.1` only when the operator names it.
@@ -320,7 +320,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Design / judgment fork on a played row | the conductor's nest | one round inside the conductor; disagreement ⇒ CONSULT_PENDING |
 | Judgment fork (independent check) | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5.5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
-| Long-context reasoning inside a work tab | `cursor/claude-opus-5-5` (Cursor Fable credit window closed) | **`cdp/fable-5.1`** only when the operator names it — never `cursor/claude-fable-5{,-1}` |
+| Long-context reasoning inside a work tab | `cursor/grok-4.7` (card context `256k`, knob `500k`) | **`cdp/fable`** only when Kaywan asks — never `cursor/claude-*` |
 | Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <this tab uuid>` (seals `channel=hop` then keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
@@ -342,7 +342,6 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 | Gear | Successor | Cadence | When |
 |---|---|---|---|
 | `1-fable-mvp` | `cursor/grok-4.7` (`effort=high`, `fast=false`; judgment hop, CDP for design forks) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3; Cursor Fable credit window closed (2026-09-12) |
-| `2-opus-hops` | `cursor/claude-opus-5-5` (no cost intent); CDP checks stay `cdp/opus-5.5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
 | `3-wake-on-attention` | **`cursor/grok-4.7`** (`effort=high`, `fast=false`) from the gear preset. The first play admit passes this same `successor_model` and knobs; it does not omit `model=`. Preset/default spawn allowlists that model only — premium presets still blocked (10534); Composer is not allowlisted until a mechanical hop exists. Override anytime with **`--set successor_model=<slug>`**. Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live

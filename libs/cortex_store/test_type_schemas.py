@@ -203,3 +203,12 @@ def test_distilled_attributes_rejects_bad_shape_or_alias(
         validate_distilled_attributes(c, "todo", attrs)
     assert exc.value.status_code == 422
     assert exc.value.detail["error"] == error
+    # a:36905 — the 422 carries the canonical contract so the seat can repair
+    # the write without reading this module.
+    assert exc.value.detail["canonical_keys"] == [
+        "files_expected",
+        "acceptance_criteria",
+        "required_skills",
+    ]
+    assert "list[str]" in exc.value.detail["expected_shape"]
+    assert "implement_ready" in exc.value.detail["message"]

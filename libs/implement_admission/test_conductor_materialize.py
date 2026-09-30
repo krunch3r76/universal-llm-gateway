@@ -28,6 +28,7 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_width_seat import ACTIVE, g3_g5_score_ratify_clause
 from implement_admission.conductor_witness import FoldDeps
 
 
@@ -135,8 +136,8 @@ def test_materialize_acceptance_criteria_rows_when_derived_from(
         files_root=files_root,
     )
     assert "Entry gate: R1" in mp.text
-    assert "| R1 | F1/F2 | OPEN |" in mp.text
-    assert "| R3 | pytest | OPEN |" in mp.text
+    assert "| R1 | F1/F2 | — | OPEN |" in mp.text
+    assert "| R3 | pytest | — | OPEN |" in mp.text
     assert "| R1-BIND | (pending) |" in mp.text
     assert "| R1-LAND | (pending) |" in mp.text
     assert "| G1 |" not in mp.text
@@ -174,8 +175,8 @@ def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) ->
     assert "cost tier" not in mp.text.lower()
     assert "tier table" not in mp.text.lower()
     assert "cursor-model-economics" not in mp.text
-    assert "`cdp/opus-5`" in mp.text
-    assert "`cdp/fable`" in mp.text
+    assert ACTIVE.model in mp.text
+    assert "cdp/fable" not in mp.text
     assert "`cursor/grok-4.7`" in mp.text
     assert "`OPEN FORK:`" in mp.text
     assert "score-play" in mp.text
@@ -343,7 +344,9 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     assert "summon_mode: attended" in mp.text
     assert "SCORE_RESURFACE on summoning_thread_id=" in mp.text
     assert "never this worker thread" in mp.text
-    assert "cdp/fable-5.1" in mp.text
+    assert ACTIVE.model in mp.text
+    assert "score-ratify (" + ACTIVE.model in mp.text
+    assert "cdp/fable-5.1" not in mp.text
     assert "A live summoning chat is not a gate." in mp.text
 
 
@@ -414,11 +417,13 @@ def test_materialize_conductor_default_confer_and_finish_strings(
         cortex=_StubCortex(),
         out_dir=out_dir,
     )
-    assert "summon_mode: confer_and_finish" in mp.text
-    assert (
-        "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal)."
-        in mp.text
+    confer_sentence = (
+        "G3→G5 default: in-process CDP score-ratify "
+        f"({g3_g5_score_ratify_clause()}) "
+        "(do-not-fight / likely-optimal)."
     )
+    assert "summon_mode: confer_and_finish" in mp.text
+    assert confer_sentence in mp.text
     assert "Explicit see-score: ROW_PINNED at G3 + ping." in mp.text
 
     auto_mp = materialize_conductor(
@@ -427,10 +432,7 @@ def test_materialize_conductor_default_confer_and_finish_strings(
         out_dir=tmp_path / "packets-auto",
         caller_agent="cursor-auto",
     )
-    assert (
-        "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal)."
-        in auto_mp.text
-    )
+    assert confer_sentence in auto_mp.text
     assert "Explicit see-score: ROW_PINNED at G3 + ping." in auto_mp.text
 
 

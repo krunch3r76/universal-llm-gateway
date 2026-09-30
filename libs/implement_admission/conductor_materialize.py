@@ -26,6 +26,11 @@ from implement_admission.conductor_score_journal import (
     scoreboard_tip_uri,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_width_seat import (
+    ACTIVE,
+    ConductorWidthSeat,
+    g3_g5_score_ratify_clause,
+)
 from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
 from implement_admission.materialize import MaterializedPacket, _extract_block
 from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
@@ -33,16 +38,55 @@ from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
 _CONDUCTOR_USE_LINE = (
     "Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows."
 )
-_SCORE_PLAY_SEAT_LINES = (
-    "- Enumerate · implement · drive: `cursor/grok-4.7` — `effort=high`, "
-    "`fast=false`; same slug as the ticker successor.",
-    "- Intelligence (architecture, ranking, fork resolution): CDP "
-    "`cdp/opus-5`, `cdp/fable`.",
-    "- The house driver enumerates and does not rank rival designs — write "
-    "`OPEN FORK:` and stop.",
-    "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
-    "was underspecified.",
-)
+
+
+def score_play_seat_lines() -> tuple[str, ...]:
+    """Seat lines for packet invariants, filled from ACTIVE at render time.
+
+    Width rows follow the one assignment. Bind and review stay on Opus 5.5,
+    so a packet cannot keep offering Fable after ACTIVE moves.
+    """
+    return (
+        "- Enumerate · implement · drive: `cursor/grok-4.7` — `effort=high`, "
+        "`fast=false`; same slug as the ticker successor.",
+        "- Intelligence (architecture, ranking, fork resolution): CDP "
+        f"`{ACTIVE.model}` at reasoning_effort={ACTIVE.reasoning_effort} "
+        "for G1, G2, G4, and G3→G5. Bind/review stays `cdp/opus-5.5`.",
+        "- The house driver enumerates and does not rank rival designs — write "
+        "`OPEN FORK:` and stop.",
+        "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
+        "was underspecified.",
+    )
+
+
+def hop_invariant_g3_g5_fragment(
+    seat: ConductorWidthSeat | None = None,
+) -> str:
+    """G3→G5 fragment of the hop invariant, filled at call time.
+
+    Production omits ``seat`` and reads ACTIVE. Tests pass RESTORE so the
+    Fable wire renders without editing that assignment.
+    """
+    return (
+        "G3→G5 fires in-process CDP score-ratify "
+        f"({g3_g5_score_ratify_clause(seat)}) then continues — a live "
+        "summoning chat is not a human stop"
+    )
+
+
+def attended_g3_g5_task_sentence(
+    seat: ConductorWidthSeat | None = None,
+) -> str:
+    """Attended G3→G5 task-guidance sentence, filled at call time.
+
+    Uses the same clause as the hop invariant and the GIW preamble so one
+    assignment names the seat in every rendered packet.
+    """
+    return (
+        "G3→G5 attended: fire in-process CDP score-ratify "
+        f"({g3_g5_score_ratify_clause(seat)}, do-not-fight / likely-optimal), "
+        "then continue."
+    )
 
 
 def _default_entry_gate(
@@ -284,7 +328,7 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
 def _render_invariants(ctx: ConductorMaterializeContext) -> str:
     lines = [
         _CONDUCTOR_USE_LINE,
-        *list(_SCORE_PLAY_SEAT_LINES),
+        *list(score_play_seat_lines()),
         "- DONE is rendered from witnesses; you hang witnesses, you do not write DONE.",
         (
             "- The continuity card ## Skills lists slugs. After resume, read that section "
@@ -292,6 +336,14 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         ),
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
+        (
+            "- Before you author any `prompt=` or packet body a nested seat will act "
+            "on (investigate/confer legs, CDP ask/review gates), Use the "
+            "retrieval-before-authoring skill — one `rag` search per scope, yields "
+            "and nulls in the leg's report. prompt-expand does not run on this "
+            "contract; materialized `source_ref` legs carry no authored prose and "
+            "are exempt."
+        ),
         "- Forward-only score mutation; journal every tip write.",
         '- lane="B" — pass explicitly on nested mechanical legs.',
         (
@@ -305,9 +357,8 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "admits your successor on this same thread and Lane-B checkout after your "
             "row goes terminal. ROW_HOP is not a pause and not a page; the mission "
             "continues under this admit. Owed stops win: stop_after ⇒ ROW_PINNED; "
-            "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; G3→G5 fires "
-            "in-process CDP score-ratify (cdp/fable-5.1) then continues — a live "
-            "summoning chat is not a human stop; a live nested child "
+            "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; "
+            f"{hop_invariant_g3_g5_fragment()}; a live nested child "
             "forbids the hop — harvest first."
         ),
         (
@@ -330,8 +381,7 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
     if ctx.summon_mode == "attended":
         g3_g5_lines = [
             (
-                "G3→G5 attended: fire in-process CDP score-ratify "
-                "(cdp/fable-5.1, do-not-fight / likely-optimal), then continue. "
+                f"{attended_g3_g5_task_sentence()} "
                 "Post SCORE_RESURFACE on "
                 f"summoning_thread_id={ctx.summoning_thread_id or '<parent/root>'} "
                 "(never this worker thread) as a report. The report is not a stop."
@@ -343,7 +393,9 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
         ]
     else:
         g3_g5_lines = [
-            "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).",
+            "G3→G5 default: in-process CDP score-ratify "
+            f"({g3_g5_score_ratify_clause()}) "
+            "(do-not-fight / likely-optimal).",
             "Explicit see-score: ROW_PINNED at G3 + ping.",
         ]
     ac = [
@@ -379,6 +431,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `work-item-seed-path` skill",
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
+            "Use the `retrieval-before-authoring` skill (before authoring a nested prompt)",
             f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
             f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]

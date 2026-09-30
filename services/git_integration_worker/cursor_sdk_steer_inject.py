@@ -157,6 +157,7 @@ def _deposit_authority_turn(
         "subject": _STEER_SUBJECT,
         "body": body,
         "status": "open",
+        "allow_long_body": True,
     }
     with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
         resp = client.post("/turns", json=payload, headers=_bus_headers())

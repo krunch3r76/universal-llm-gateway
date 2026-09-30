@@ -175,3 +175,119 @@ def test_wire_fields_qualify_numerics() -> None:
     assert fields["x_exhausted"] is True
     assert fields["x_max_clients_authority"] == "recorded"
     assert fields["x_display"] == ":2"
+
+
+def test_reserved_chromes_consumes_one_chrome_budget(tmp_path: Path) -> None:
+    snap = probe_x_display(display=":2", count=52, max_clients=64, chrome_budget=8)
+    with pytest.raises(XDisplayCapacityError, match="X display") as caught:
+        require_chrome_headroom(
+            display=":2",
+            count=52,
+            max_clients=64,
+            chrome_budget=8,
+            reserved_chromes=1,
+        )
+    assert str(caught.value) == exhausted_message(snap)
+    allowed = require_chrome_headroom(
+        display=":2",
+        count=52,
+        max_clients=64,
+        chrome_budget=8,
+        reserved_chromes=0,
+    )
+    assert allowed["x_exhausted"] is False
+    unobserved = require_chrome_headroom(
+        display=":2",
+        proc_net_unix=tmp_path / "missing",
+        reserved_chromes=1,
+    )
+    assert unobserved["x_exhausted"] is None
+
+
+def test_launch_chrome_keeps_log_timeout_without_prelaunch_headroom(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_lane
+    from claude_bundles.cdp_lane import LaneError
+
+    log = tmp_path / "chrome.log"
+    log.write_bytes(b"")
+    monkeypatch.setattr(cdp_lane, "_LAUNCH_WAIT_S", 0.05)
+    monkeypatch.setattr(cdp_lane, "_seed_profile", lambda _profile: None)
+    monkeypatch.setattr(cdp_lane, "is_listening", lambda _port: False)
+    monkeypatch.setattr(cdp_lane, "_kill_lane_chrome", lambda _pid: None)
+    monkeypatch.setattr(
+        cdp_lane, "chrome_display_env", lambda _display: {"DISPLAY": ":2"}
+    )
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.chrome_cdp_log_path", lambda _port: str(log)
+    )
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_cdp_display_reachable",
+        lambda **_kwargs: ":2",
+    )
+
+    def refuse_headroom(**_kwargs: object) -> None:
+        raise AssertionError("pre-launch headroom must not run inside _launch_chrome")
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom", refuse_headroom
+    )
+
+    class _Proc:
+        pid = 42
+
+    def popen_with(payload: bytes):
+        def _popen(*_args: object, **kwargs: object) -> _Proc:
+            stdout = kwargs.get("stdout")
+            if hasattr(stdout, "write"):
+                stdout.write(payload)
+                stdout.flush()
+            return _Proc()
+
+        return _popen
+
+    monkeypatch.setattr(
+        cdp_lane.subprocess, "Popen", popen_with(b"Maximum number of clients reached\n")
+    )
+    with pytest.raises(
+        XDisplayCapacityError, match="Maximum number of clients reached"
+    ):
+        cdp_lane._launch_chrome(9223, tmp_path / "profile")
+
+    monkeypatch.setattr(
+        cdp_lane.subprocess, "Popen", popen_with(b"browser still starting\n")
+    )
+    with pytest.raises(LaneError, match="0.05"):
+        cdp_lane._launch_chrome(9224, tmp_path / "profile")
+
+
+def test_allocate_port_for_profile_still_calls_headroom(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_lane
+
+    called: list[dict[str, object]] = []
+
+    def spy(**kwargs: object) -> dict[str, bool]:
+        called.append(dict(kwargs))
+        return {"x_exhausted": False}
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom", spy
+    )
+    monkeypatch.setattr(cdp_lane, "chrome_port_for_profile", lambda _profile: None)
+    monkeypatch.setattr(cdp_lane, "held_ports", lambda: [])
+    monkeypatch.setattr(cdp_lane, "select_free_port", lambda *_args, **_kwargs: 9333)
+    monkeypatch.setattr(cdp_lane, "_launch_chrome", lambda _port, _profile: 7)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.used_ports_snapshot",
+        lambda: set(),
+        raising=False,
+    )
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    port, reused = cdp_lane._allocate_port_for_profile("suf", profile, launch=True)
+    assert called
+    assert port == 9333
+    assert reused is False

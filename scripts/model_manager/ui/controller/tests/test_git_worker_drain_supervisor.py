@@ -821,18 +821,56 @@ def test_claim_kill_one_winner_per_generation(tmp_path: Any) -> None:
     assert store.get(b.intent_id).status == STATUS_PENDING_DRAIN
 
 
+class _Unreachable:
+    """GIW whose HTTP surface never answers (begin-drain and drain-state)."""
+
+    def __init__(self) -> None:
+        self.requests = 0
+
+    async def drain_state(self) -> dict[str, Any]:
+        self.requests += 1
+        raise TimeoutError("GIW HTTP timeout")
+
+    async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.requests += 1
+        raise TimeoutError("GIW HTTP timeout")
+
+
+class _StalledThenLive:
+    """GIW whose HTTP stalls for ``stall_calls`` requests, then answers busy."""
+
+    def __init__(self, *, stall_calls: int, snap: dict[str, Any]) -> None:
+        self._stall = stall_calls
+        self._snap = snap
+        self.requests = 0
+
+    async def drain_state(self) -> dict[str, Any]:
+        self.requests += 1
+        if self._stall > 0:
+            self._stall -= 1
+            raise TimeoutError("GIW HTTP timeout")
+        return self._snap
+
+    async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.requests += 1
+        if self._stall > 0:
+            self._stall -= 1
+            raise TimeoutError("GIW HTTP timeout")
+        return self._snap
+
+
+async def _process_absent() -> bool:
+    return True
+
+
+async def _process_present() -> bool:
+    return False
+
+
 def test_begin_drain_unreachable_kills_without_recycle(
     tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:
-    """Fleet stop (no idle_escalate_s) must SIGTERM when begin-drain never lands."""
-
-    class _Unreachable:
-        async def drain_state(self) -> dict[str, Any]:
-            raise TimeoutError("GIW HTTP timeout")
-
-        async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
-            raise TimeoutError("GIW HTTP timeout")
-
+    """Fleet stop must SIGTERM when begin-drain never lands and no process exists."""
     store = _store(tmp_path)
     intent = store.create_intent(
         service=_SERVICE, action="stop", deadline_at="d", reason="fleet stop"
@@ -848,9 +886,12 @@ def test_begin_drain_unreachable_kills_without_recycle(
         deadline_s=5.0,
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
+        process_absent=_process_absent,
     )
     _run(sup.supervise(intent))
     assert kill.calls == 1
+    # One failed begin-drain pre-read + the _on_idle snapshot read: no retry.
+    assert worker.requests == 2
     signals = [s for s, _ in events_log]
     assert "manage.recycle.escalated" not in signals
     got = store.get(intent.intent_id)
@@ -860,15 +901,7 @@ def test_begin_drain_unreachable_kills_without_recycle(
 def test_begin_drain_unreachable_idle_escalates(
     tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:
-    """Health-dead GIW (begin-drain HTTP timeout) must kill in recycle mode."""
-
-    class _Unreachable:
-        async def drain_state(self) -> dict[str, Any]:
-            raise TimeoutError("GIW HTTP timeout")
-
-        async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
-            raise TimeoutError("GIW HTTP timeout")
-
+    """a:36019: recycle must still kill a pid-alive GIW whose HTTP stays wedged."""
     store = _store(tmp_path)
     intent = store.create_intent(
         service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
@@ -885,13 +918,119 @@ def test_begin_drain_unreachable_idle_escalates(
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
         idle_escalate_s=0.05,
+        process_absent=_process_present,
     )
     _run(sup.supervise(intent))
     assert kill.calls == 1
+    assert worker.requests > 1
     signals = [s for s, _ in events_log]
     assert "manage.recycle.escalated" in signals
     got = store.get(intent.intent_id)
     assert got is not None and got.status != "failed"
+
+
+def test_begin_drain_stall_pid_alive_park_live_parks_without_kill(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """a:36911 falsifier: begin-drain times out on a live pid → retry, then park.
+
+    sync_restart with park_live: the HTTP stall clears after a few windows,
+    begin-drain lands, step 1b parks the live occupant. No SIGTERM.
+    """
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE,
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+        park_live=True,
+    )
+    busy = _snap(draining=True, epoch=1, active=1, ops=[{"op_id": "conductor-1"}])
+    worker = _StalledThenLive(stall_calls=4, snap=busy)
+    park_calls: list[tuple[str, int | None, str]] = []
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return {
+            "requested": ["conductor-1"],
+            "refused": [],
+            "already_parked": [],
+            "live_after": 0,
+        }
+
+    kill = _Kill()
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed([]),
+        kill=kill,
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        park_for_restart=_park,
+        park_live_grace_s=0.0,
+        process_absent=_process_present,
+    )
+    _run(_supervise_until(sup, intent, done=lambda: bool(park_calls), hold_s=2.0))
+    assert kill.calls == 0
+    assert worker.requests > 1
+    assert park_calls[0][0] == intent.intent_id
+    assert park_calls[0][1] == 1
+    signals = [s for s, _ in events_log]
+    assert "manage.restart.park_live_requested" in signals
+    assert "manage.recycle.escalated" not in signals
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == STATUS_PENDING_DRAIN
+    assert got.drain_epoch == 1
+
+
+def test_begin_drain_stall_pid_alive_drain_waits_without_kill(
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:36911 falsifier: pid alive, HTTP never answers, not recycle → keep waiting.
+
+    The supervisor retries begin-drain, alerts ``probe_unreachable`` once after
+    the confirm window, and never SIGTERMs; the intent stays pending_drain.
+    """
+    from scripts.model_manager.ui.controller import git_worker_liveness as live_mod
+
+    monkeypatch.setattr(live_mod, "PROBE_UNREACHABLE_WINDOW_S", 0.03)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE,
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+        park_live=True,
+    )
+    kill = _Kill()
+    worker = _Unreachable()
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed([]),
+        kill=kill,
+        deadline_s=0.05,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        process_absent=_process_present,
+    )
+    _run(_supervise_until(sup, intent, hold_s=0.3))
+    assert kill.calls == 0
+    assert worker.requests > 1
+    signals = [s for s, _ in events_log]
+    assert signals.count("manage.restart.probe_unreachable") == 1
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == STATUS_PENDING_DRAIN
+    assert got.drain_epoch is None
 
 
 def test_idle_escalate_kills_without_drain_idle(
@@ -991,7 +1130,9 @@ def test_park_live_runs_step_1b_and_persists_summary(
         "live_after": 0,
     }
 
-    async def _park(intent_id: str, drain_epoch: int | None, reason: str) -> dict[str, Any]:
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
         park_calls.append((intent_id, drain_epoch, reason))
         return summary
 
@@ -1034,7 +1175,9 @@ def test_recycle_park_first_before_idle_kill(
     )
     park_calls = 0
 
-    async def _park(_intent_id: str, _epoch: int | None, _reason: str) -> dict[str, Any]:
+    async def _park(
+        _intent_id: str, _epoch: int | None, _reason: str
+    ) -> dict[str, Any]:
         nonlocal park_calls
         park_calls += 1
         return {
@@ -1045,7 +1188,12 @@ def test_recycle_park_first_before_idle_kill(
 
     kill = _Kill()
     sup = _supervisor(
-        store, worker, _Feed([]), kill, deadline_s=5.0, idle_escalate_s=0.05,
+        store,
+        worker,
+        _Feed([]),
+        kill,
+        deadline_s=5.0,
+        idle_escalate_s=0.05,
         park_for_restart=_park,
     )
     _run(sup.supervise(intent))
@@ -1160,9 +1308,7 @@ def test_generation_gone_in_await_exits_via_non_kill_resolver(
     intent = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
-    gone = _snap(
-        draining=False, epoch=2, worker_id="w2", started="t2", active=0
-    )
+    gone = _snap(draining=False, epoch=2, worker_id="w2", started="t2", active=0)
     worker = _Worker(
         drain_states=[_snap(draining=False, epoch=0, active=1), gone],
         begin_snap=_snap(draining=True, epoch=1, active=1),
@@ -1208,7 +1354,9 @@ def test_reconcile_rebuilds_recycle_supervisor_with_idle_and_deadline(
         captured.append(kwargs)
         return object()
 
-    async def _resume(_gate: Any, _service: str, *, supervisor: Any, intent: Any) -> None:
+    async def _resume(
+        _gate: Any, _service: str, *, supervisor: Any, intent: Any
+    ) -> None:
         assert supervisor is not None
 
     monkeypatch.setattr(
@@ -1307,7 +1455,9 @@ def test_reconcile_repairs_timeout_then_resumes_recycle(
     def _build(**_kwargs: Any) -> object:
         return object()
 
-    async def _resume(_gate: Any, _service: str, *, supervisor: Any, intent: Any) -> None:
+    async def _resume(
+        _gate: Any, _service: str, *, supervisor: Any, intent: Any
+    ) -> None:
         resumed.append(intent.intent_id)
 
     monkeypatch.setattr(

@@ -41,7 +41,6 @@ Disposition = Literal[
 _MODEL_TABLE: dict[str, str] = {
     "composer-2.5": "cursor/composer-2.5",
     "grok-4.7": "cursor/grok-4.7",
-    "opus-5": "cursor/claude-opus-5",
     "sonnet-5": "cursor/claude-sonnet-5",
     "sonnet-5-5": "cursor/claude-sonnet-5-5",
 }
@@ -230,8 +229,6 @@ def resolve_desired_model(
             ),
         }
     knobs: dict[str, str] = {}
-    if model_id == "cursor/claude-opus-5":
-        knobs = {"thinking": "true"}
     return {
         "requested": raw,
         "resolved_model_id": model_id,

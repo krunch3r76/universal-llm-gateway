@@ -265,11 +265,15 @@ def require_chrome_headroom(
     max_clients: int | None = None,
     chrome_budget: int | None = None,
     proc_net_unix: Path | None = None,
+    reserved_chromes: int = 0,
 ) -> dict[str, Any]:
-    """Refuse mint when observed X headroom cannot host one multiprocess Chrome.
+    """Refuse mint when observed X headroom cannot host one more Chrome.
 
-    Unobserved (procfs unreadable) does not refuse — the listen-timeout log
-    scrape is the fallback for that miss.
+    *reserved_chromes* counts rows already ``allocating`` so two concurrent
+    mints cannot both pass a check that only saw the current process table.
+    Values below 0 are treated as 0. ``reserved_chromes == 0`` keeps today's
+    ``headroom < budget`` refusal. Unobserved procfs (``x_exhausted is None``)
+    does not refuse, including when *reserved_chromes* is non-zero.
     """
     snap = probe_x_display(
         display=display,
@@ -278,7 +282,13 @@ def require_chrome_headroom(
         chrome_budget=chrome_budget,
         proc_net_unix=proc_net_unix,
     )
-    if snap["x_exhausted"] is True:
+    if snap["x_exhausted"] is None:
+        return snap
+    reserved = reserved_chromes if reserved_chromes > 0 else 0
+    headroom = snap["x_headroom"]
+    budget = int(snap["x_chrome_client_budget"])
+    short = isinstance(headroom, int) and headroom - reserved * budget < budget
+    if snap["x_exhausted"] is True or short:
         with contextlib.suppress(Exception):
             from claude_bundles import cdp_registry_events as _events
 
@@ -288,7 +298,8 @@ def require_chrome_headroom(
                     x_clients=snap["x_clients"],
                     x_max_clients=int(snap["x_max_clients"]),
                     x_headroom=snap["x_headroom"],
-                    x_chrome_client_budget=int(snap["x_chrome_client_budget"]),
+                    x_chrome_client_budget=budget,
+                    x_reserved_chromes=reserved,
                 )
             )
         raise XDisplayCapacityError(exhausted_message(snap))

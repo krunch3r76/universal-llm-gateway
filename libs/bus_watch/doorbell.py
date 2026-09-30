@@ -445,7 +445,7 @@ def _peer_house_line(policy: dict | None, successor_model: str | None) -> str:
             "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled."
         )
     return (
-        "§ Peer-house: keep both; cdp/opus-5.5 → 2nd pool → cursor/claude-opus-5-5; "
+        "§ Peer-house: keep both; cdp/opus-5.5 → cdp/opus-5; "
         "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled."
     )
 

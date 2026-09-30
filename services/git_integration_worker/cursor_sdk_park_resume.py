@@ -61,6 +61,9 @@ logger = get_logger(__name__)
 PARK_RESUME_PREAMBLE_VERSION = 1
 ADMITTED_VIA_PARK_RESUME = "giw_park_resume"
 RESUME_REFUSAL_SAME_PROCESS = "same_process"
+# Boot stamps this reason when rewiring unparked running orphans; same-process
+# refuse must not apply — park and worker start share this boot (cdp-ask parity).
+BOOT_REWIRE_REASON = "giw_boot_rewire"
 _SAME_PROCESS_SKIPPED: set[str] = set()
 
 _PREAMBLE_TEMPLATE = (
@@ -325,17 +328,20 @@ async def resume_parked_dispatches(
                 summary.expired.append(row.dispatch_id)
             continue
         if not process_started_after_park(controller.worker_started_at, row.parked_at):
-            if row.dispatch_id not in _SAME_PROCESS_SKIPPED:
-                _SAME_PROCESS_SKIPPED.add(row.dispatch_id)
-                logger.info(
-                    "cursor-sdk park resume skipped same-process parent=%s "
-                    "worker_started_at=%s parked_at=%s",
-                    row.dispatch_id,
-                    controller.worker_started_at,
-                    row.parked_at,
-                )
-            summary.refused.append((row.dispatch_id, RESUME_REFUSAL_SAME_PROCESS))
-            continue
+            # Boot-rewire parks are stamped on this process start; refuse would
+            # strand the lineage that startup_ledger_reconcile just prepared.
+            if row.park.get("reason") != BOOT_REWIRE_REASON:
+                if row.dispatch_id not in _SAME_PROCESS_SKIPPED:
+                    _SAME_PROCESS_SKIPPED.add(row.dispatch_id)
+                    logger.info(
+                        "cursor-sdk park resume skipped same-process parent=%s "
+                        "worker_started_at=%s parked_at=%s",
+                        row.dispatch_id,
+                        controller.worker_started_at,
+                        row.parked_at,
+                    )
+                summary.refused.append((row.dispatch_id, RESUME_REFUSAL_SAME_PROCESS))
+                continue
         existing = _existing_child(row.dispatch_id)
         if existing is not None:
             mark_park_resumed(parent_id=row.dispatch_id, child_id=existing)
@@ -395,6 +401,7 @@ async def resume_parked_dispatches(
 
 __all__ = [
     "ADMITTED_VIA_PARK_RESUME",
+    "BOOT_REWIRE_REASON",
     "PARK_RESUME_PREAMBLE_VERSION",
     "RESUME_REFUSAL_SAME_PROCESS",
     "ParkResumeSummary",

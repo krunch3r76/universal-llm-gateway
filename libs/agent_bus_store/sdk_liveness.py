@@ -9,13 +9,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
+
+import httpx
+from transport_utils import make_async_client, make_sync_client
 
 from .producer_projection import producer_liveness_grace
 
@@ -181,56 +182,90 @@ def classify_probe(
     return LivenessVerdict.SKIP_LIVE, "worker_live", None
 
 
-def probe_dispatch_status(thread_id: str) -> ProbeResult:
-    """HTTP GET dispatch-status for ``thread_id``."""
-    query = urllib.parse.urlencode({"thread_id": thread_id})
-    url = f"{_worker_base_url()}/api/v1/git/admin/dispatch-status?{query}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:
-            raw = resp.read().decode("utf-8")
-            http_status = resp.status
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return ProbeResult(payload=None, http_status=404, error=None)
+def _probe_result_from_response(resp: httpx.Response) -> ProbeResult:
+    """Map an httpx response to ``ProbeResult`` (same decisions as the former urllib path)."""
+    if resp.status_code == 404:
+        return ProbeResult(payload=None, http_status=404, error=None)
+    if resp.status_code >= 400:
         return ProbeResult(
             payload=None,
-            http_status=exc.code,
-            error=f"http_error_{exc.code}",
+            http_status=resp.status_code,
+            error=f"http_error_{resp.status_code}",
         )
-    except (TimeoutError, urllib.error.URLError, OSError) as exc:
-        return ProbeResult(
-            payload=None, http_status=None, error=f"probe_unreachable:{exc}"
-        )
-
     try:
-        payload = json.loads(raw)
+        payload = json.loads(resp.text)
     except json.JSONDecodeError:
         return ProbeResult(
-            payload=None, http_status=http_status, error="malformed_json"
+            payload=None, http_status=resp.status_code, error="malformed_json"
         )
-
     if not isinstance(payload, dict):
         return ProbeResult(
-            payload=None, http_status=http_status, error="malformed_json"
+            payload=None, http_status=resp.status_code, error="malformed_json"
         )
-    return ProbeResult(payload=payload, http_status=http_status, error=None)
+    return ProbeResult(payload=payload, http_status=resp.status_code, error=None)
 
 
-def evaluate_link_liveness(
+def _probe_unreachable(exc: BaseException) -> ProbeResult:
+    return ProbeResult(
+        payload=None, http_status=None, error=f"probe_unreachable:{exc}"
+    )
+
+
+_DISPATCH_STATUS_PATH = "/api/v1/git/admin/dispatch-status"
+
+
+def probe_dispatch_status(thread_id: str) -> ProbeResult:
+    """Sync HTTP GET dispatch-status for reconcile/watchdog (not the uvicorn wait path).
+
+    Uses ``make_sync_client`` with ``_PROBE_TIMEOUT_S``
+    (``AGENT_BUS_SDK_PROBE_TIMEOUT_S``, default 2) so connect/read stay bounded.
+    """
+    try:
+        with make_sync_client(_worker_base_url(), timeout=_PROBE_TIMEOUT_S) as client:
+            resp = client.get(
+                _DISPATCH_STATUS_PATH,
+                params={"thread_id": thread_id},
+                headers={"Accept": "application/json"},
+            )
+    except httpx.TimeoutException as exc:
+        return _probe_unreachable(exc)
+    except httpx.HTTPError as exc:
+        return _probe_unreachable(exc)
+    return _probe_result_from_response(resp)
+
+
+async def probe_dispatch_status_async(thread_id: str) -> ProbeResult:
+    """Async HTTP GET dispatch-status for the uvicorn wait path.
+
+    Sync urllib/httpx on the asyncio thread pinned health (create_connection →
+    urlopen → probe_dispatch_status). ``make_async_client`` yields the loop while
+    waiting; timeout is the existing ``_PROBE_TIMEOUT_S`` so one hung GIW peer
+    cannot pin the loop indefinitely.
+    """
+    try:
+        async with make_async_client(
+            _worker_base_url(), timeout=_PROBE_TIMEOUT_S
+        ) as client:
+            resp = await client.get(
+                _DISPATCH_STATUS_PATH,
+                params={"thread_id": thread_id},
+                headers={"Accept": "application/json"},
+            )
+    except httpx.TimeoutException as exc:
+        return _probe_unreachable(exc)
+    except httpx.HTTPError as exc:
+        return _probe_unreachable(exc)
+    return _probe_result_from_response(resp)
+
+
+def _finish_evaluate(
+    probe: ProbeResult,
     *,
     thread_id: str,
     link_execution_id: str | None,
-    sole_link: bool = True,
-    probe_fn=probe_dispatch_status,
-    probe_capture: dict[str, Any] | None = None,
+    sole_link: bool,
+    probe_capture: dict[str, Any] | None,
 ) -> tuple[LivenessVerdict, str, str | None]:
-    """Probe GIW and classify whether orphan-reconcile or admitted-TTL reap may proceed.
-
-    When ``probe_capture`` is set, it receives the probe ``execution_id`` so a
-    terminal backfill can fan out only when that id is the link's id.
-    """
-    probe = probe_fn(thread_id)
     if probe_capture is not None:
         payload = probe.payload if isinstance(probe.payload, dict) else None
         probe_capture["execution_id"] = (
@@ -251,6 +286,46 @@ def evaluate_link_liveness(
     return verdict, reason, terminal_status
 
 
+def evaluate_link_liveness(
+    *,
+    thread_id: str,
+    link_execution_id: str | None,
+    sole_link: bool = True,
+    probe_fn: Callable[[str], ProbeResult] = probe_dispatch_status,
+    probe_capture: dict[str, Any] | None = None,
+) -> tuple[LivenessVerdict, str, str | None]:
+    """Probe GIW and classify whether orphan-reconcile or admitted-TTL reap may proceed.
+
+    When ``probe_capture`` is set, it receives the probe ``execution_id`` so a
+    terminal backfill can fan out only when that id is the link's id.
+    """
+    return _finish_evaluate(
+        probe_fn(thread_id),
+        thread_id=thread_id,
+        link_execution_id=link_execution_id,
+        sole_link=sole_link,
+        probe_capture=probe_capture,
+    )
+
+
+async def evaluate_link_liveness_async(
+    *,
+    thread_id: str,
+    link_execution_id: str | None,
+    sole_link: bool = True,
+    probe_fn: Callable[[str], Awaitable[ProbeResult]] = probe_dispatch_status_async,
+    probe_capture: dict[str, Any] | None = None,
+) -> tuple[LivenessVerdict, str, str | None]:
+    """Async counterpart of ``evaluate_link_liveness`` for the wait route."""
+    return _finish_evaluate(
+        await probe_fn(thread_id),
+        thread_id=thread_id,
+        link_execution_id=link_execution_id,
+        sole_link=sole_link,
+        probe_capture=probe_capture,
+    )
+
+
 def _linked_at_within_grace(linked_at: object, now: datetime) -> bool:
     """True when ``linked_at`` parses and its age is inside the admit grace."""
     if linked_at is None or linked_at == "":
@@ -263,6 +338,16 @@ def _linked_at_within_grace(linked_at: object, now: datetime) -> bool:
         parsed = parsed.replace(tzinfo=UTC)
     clock = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     return clock - parsed <= producer_liveness_grace()
+
+
+def _witness_from_verdict(
+    verdict: LivenessVerdict, reason: str
+) -> Literal["live", "dead"] | None:
+    if verdict is LivenessVerdict.SKIP_LIVE:
+        return "live"
+    if verdict is LivenessVerdict.ALLOW_ORPHAN and reason == "heartbeat_stale":
+        return "dead"
+    return None
 
 
 def reader_liveness_witness(
@@ -286,8 +371,21 @@ def reader_liveness_witness(
         thread_id=thread_id,
         link_execution_id=execution_id,
     )
-    if verdict is LivenessVerdict.SKIP_LIVE:
-        return "live"
-    if verdict is LivenessVerdict.ALLOW_ORPHAN and reason == "heartbeat_stale":
-        return "dead"
-    return None
+    return _witness_from_verdict(verdict, reason)
+
+
+async def reader_liveness_witness_async(
+    *,
+    thread_id: str,
+    execution_id: str,
+    linked_at: object,
+    now: datetime,
+) -> Literal["live", "dead"] | None:
+    """Async witness for wait — awaits ``probe_dispatch_status_async`` off the sync path."""
+    if _linked_at_within_grace(linked_at, now):
+        return None
+    verdict, reason, _terminal = await evaluate_link_liveness_async(
+        thread_id=thread_id,
+        link_execution_id=execution_id,
+    )
+    return _witness_from_verdict(verdict, reason)

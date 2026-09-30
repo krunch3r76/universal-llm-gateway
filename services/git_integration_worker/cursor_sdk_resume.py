@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Literal
 
 from claude_bundles.conductor_stop import parse_stop_tokens
@@ -24,7 +22,11 @@ from universal_protocol import error_envelope
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
-    LedgerRow,
+)
+from services.git_integration_worker.cursor_sdk_store_locus import (
+    load_parent_row,
+    load_row_columns,
+    resolve_sdk_store_dir,
 )
 from services.git_integration_worker.git_worker_lifecycle_events import (
     build_dispatch_error_envelope,
@@ -61,7 +63,6 @@ _DESIGNED_STOP_RETAIN_TOKENS = frozenset(
 )
 
 _DEFAULT_HOME_RETENTION_DAYS = 14
-MAX_RESUME_LINEAGE_HOPS = 11
 
 
 def cursor_sdk_timeout_retain_s() -> int:
@@ -84,118 +85,6 @@ def _parse_iso(ts: str | None) -> datetime | None:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         return None
-
-
-def _load_row_columns(
-    ledger: CursorDispatchLedger, *, dispatch_id: str, columns: str
-) -> dict[str, Any] | None:
-    with ledger._connect() as conn:
-        row = conn.execute(
-            f"SELECT {columns} FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (dispatch_id,),
-        ).fetchone()
-    if row is None:
-        return None
-    return {k: row[k] for k in row.keys()}
-
-
-def load_parent_row(
-    ledger: CursorDispatchLedger, *, parent_id: str
-) -> LedgerRow | None:
-    """Load parent ledger projection for resume eligibility and child binding."""
-    data = _load_row_columns(
-        ledger,
-        dispatch_id=parent_id,
-        columns=(
-            "dispatch_id, thread_id, execution_id, caller_agent, resolved_model, "
-            "state_root, sdk_agent_id, sdk_run_id, status, started_at, "
-            "last_heartbeat_at, source_repo, contract, read_only, record_json, "
-            "terminal_status"
-        ),
-    )
-    if data is None:
-        return None
-    return LedgerRow(**data)
-
-
-def _find_sdk_store_under_home(home: Path) -> Path | None:
-    """Return the sdk-agent-store directory under a dispatch HOME, if present."""
-    projects = home / ".cursor" / "projects"
-    if not projects.is_dir():
-        return None
-    for candidate in projects.rglob("sdk-agent-store"):
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def _store_at_dispatch(*, dispatch_id: str, state_root: str | None) -> Path | None:
-    """Return SDK store path for one dispatch row, or None."""
-    if state_root:
-        root_path = Path(state_root)
-        if root_path.is_dir():
-            if any(root_path.iterdir()):
-                return root_path
-            store_in_root = root_path / "sdk-agent-store"
-            if store_in_root.is_dir():
-                return store_in_root
-    from services.git_integration_worker.cursor_home import dispatch_home_path
-
-    dispatch_home = dispatch_home_path(dispatch_id)
-    return _find_sdk_store_under_home(dispatch_home)
-
-
-def _iter_resume_lineage(
-    ledger: CursorDispatchLedger, *, start_id: str
-) -> Iterator[tuple[str, str | None]]:
-    """Yield ``(dispatch_id, state_root)`` walking ``resume_of`` toward ancestors."""
-    current = start_id
-    seen: set[str] = set()
-    for _ in range(MAX_RESUME_LINEAGE_HOPS):
-        if current in seen:
-            break
-        seen.add(current)
-        row = load_parent_row(ledger, parent_id=current)
-        if row is None:
-            break
-        yield current, row.state_root
-        link = _load_row_columns(ledger, dispatch_id=current, columns="resume_of")
-        if link is None or not link.get("resume_of"):
-            break
-        current = str(link["resume_of"])
-
-
-def resolve_sdk_store_dir(
-    *,
-    parent_id: str,
-    state_root: str | None,
-) -> Path | None:
-    """Locate the on-disk SDK sqlite store for a resume parent.
-
-    Prefers a non-empty ``state_root`` directory; falls back to the store under
-    each dispatch HOME while walking ``resume_of`` lineage (store-A — multi-hop
-    resume_of may leave intermediate rows with empty bridge-state).
-    """
-    ledger = CursorDispatchLedger.instance()
-    if load_parent_row(ledger, parent_id=parent_id) is None:
-        return _store_at_dispatch(dispatch_id=parent_id, state_root=state_root)
-    first = True
-    for dispatch_id, row_state_root in _iter_resume_lineage(ledger, start_id=parent_id):
-        sr = state_root if first else row_state_root
-        first = False
-        found = _store_at_dispatch(dispatch_id=dispatch_id, state_root=sr)
-        if found is not None:
-            return found
-    return None
-
-
-def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
-    """Return the lineage dispatch whose HOME holds the SDK store."""
-    ledger = CursorDispatchLedger.instance()
-    for dispatch_id, row_state_root in _iter_resume_lineage(ledger, start_id=parent_id):
-        if _store_at_dispatch(dispatch_id=dispatch_id, state_root=row_state_root):
-            return dispatch_id
-    return parent_id
 
 
 def _record_data(record_json: str | None) -> dict[str, Any]:
@@ -223,7 +112,7 @@ def _bridge_death_resume_eligible(record_json: str | None) -> bool:
 
 
 def _parked_for_restart(ledger: CursorDispatchLedger, *, parent_id: str) -> bool:
-    data = _load_row_columns(ledger, dispatch_id=parent_id, columns="park_kind")
+    data = load_row_columns(ledger, dispatch_id=parent_id, columns="park_kind")
     return bool(data and data.get("park_kind"))
 
 
@@ -370,7 +259,7 @@ def _retain_ttl_elapsed(*, terminal_at: datetime | None, retain_s: int) -> bool:
 def resume_retain_active(*, dispatch_id: str) -> bool:
     """True while a resume-retained dispatch is inside the retain TTL window."""
     ledger = CursorDispatchLedger.instance()
-    data = _load_row_columns(
+    data = load_row_columns(
         ledger,
         dispatch_id=dispatch_id,
         columns="record_json, terminal_at, terminal_status, sdk_agent_id, status",
@@ -414,7 +303,7 @@ def closeout_qualifies_for_resume_retain(
 def timeout_retain_active(*, dispatch_id: str) -> bool:
     """True while a timeout-failed dispatch is inside the retain TTL window."""
     ledger = CursorDispatchLedger.instance()
-    data = _load_row_columns(
+    data = load_row_columns(
         ledger,
         dispatch_id=dispatch_id,
         columns="record_json, terminal_at, terminal_status",
@@ -451,35 +340,10 @@ class ResumeRunContext:
     sdk_agent_id: str
 
 
-def record_resolved_store_roots(
-    *,
-    parent_id: str,
-    child_id: str,
-    parent_state_root: str | None = None,
-) -> str | None:
-    """Persist the real SDK store path on parent and child ledger rows.
-
-    Replaces a lying ``state_root`` (empty ``bridge-state``) with the path
-    ``resolve_sdk_store_dir`` finds — typically the HOME-bound
-    ``sdk-agent-store`` (store-A).
-    """
-    store_dir = resolve_sdk_store_dir(
-        parent_id=parent_id,
-        state_root=parent_state_root,
-    )
-    if store_dir is None:
-        return None
-    store_path = str(store_dir)
-    ledger = CursorDispatchLedger.instance()
-    ledger.record_state_root(dispatch_id=parent_id, state_root=store_path)
-    ledger.record_state_root(dispatch_id=child_id, state_root=store_path)
-    return store_path
-
-
 def load_resume_run_context(*, dispatch_id: str) -> ResumeRunContext | None:
     """Return parent resume context when ``dispatch_id`` is a resume child row."""
     ledger = CursorDispatchLedger.instance()
-    child = _load_row_columns(
+    child = load_row_columns(
         ledger,
         dispatch_id=dispatch_id,
         columns="resume_of",

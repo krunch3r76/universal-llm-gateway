@@ -13,6 +13,10 @@ from bus_watch.state import write_state
 DEFAULT_WAIT_SLICE_S = 20.0
 DEFAULT_MAX_HOURS = 6.0
 DEFAULT_TRANSPORT_RETRY_S = 3.0
+# ``on_incomplete`` sets this field to end the watch: the producer is gone and no
+# reply can arrive, so polling to expiry only repeats the same pop (a:36907).
+TERMINAL_REASON_FIELD = "terminal_reason"
+EXIT_PRODUCER_TERMINAL = 3
 
 
 def sliced_wait_loop(
@@ -81,7 +85,8 @@ def sliced_wait_loop(
             return on_complete(snap)
 
         status = str(snap.get("status") or "")
-        incomplete_fields = on_incomplete(snap)
+        incomplete_fields = on_incomplete(snap) or {}
+        terminal_reason = str(incomplete_fields.get(TERMINAL_REASON_FIELD) or "")
         if state_file is not None:
             fields: dict[str, Any] = {
                 "status": (
@@ -91,7 +96,15 @@ def sliced_wait_loop(
                 "turn_count": snap.get("turn_count"),
                 "thread_status": snap.get("thread_status"),
             }
-            if incomplete_fields:
-                fields.update(incomplete_fields)
+            fields.update(incomplete_fields)
+            if terminal_reason:
+                fields["status"] = "terminal"
             write_state(state_file, **fields)
+        if terminal_reason:
+            print(
+                f"watcher terminal label={heartbeat_label} thread={thread_id} "
+                f"after_turn={after_turn} reason={terminal_reason}",
+                flush=True,
+            )
+            return EXIT_PRODUCER_TERMINAL
         time.sleep(poll_sleep_s)

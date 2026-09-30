@@ -35,10 +35,15 @@ import httpx
 import yaml
 from bus_watch.arm_contract import NO_PRODUCER_HELP, require_producer_declaration
 from bus_watch.harvest_closeout import closeout_after_turn, fetch_turn_body
-from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S, sliced_wait_loop
+from bus_watch.poll import (
+    DEFAULT_MAX_HOURS,
+    DEFAULT_WAIT_SLICE_S,
+    TERMINAL_REASON_FIELD,
+    sliced_wait_loop,
+)
 from bus_watch.producer_grace import ProducerGrace
 from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
-from bus_watch.stall_predicate import stall_predicate
+from bus_watch.stall_predicate import is_terminal_stall_reason, stall_predicate
 from bus_watch.state import write_state
 from bus_watch.verdict import (
     derive_verdict,
@@ -414,7 +419,7 @@ def main() -> int:
             )
             last_verdict = next_verdict
 
-        return {
+        fields = {
             "execution_id": execution_id,
             "producer": producer,
             "predicate_unmet_slices": predicate_unmet_slices,
@@ -422,6 +427,9 @@ def main() -> int:
             "stall_reason": stall_reason,
             "verdict": verdict,
         }
+        if stall_reason and is_terminal_stall_reason(stall_reason):
+            fields[TERMINAL_REASON_FIELD] = stall_reason
+        return fields
 
     def on_complete(snap: dict[str, Any]) -> int:
         reply_turn = int(snap.get("qualifying_reply_turn") or 0)

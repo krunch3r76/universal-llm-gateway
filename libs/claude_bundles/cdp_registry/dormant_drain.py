@@ -164,10 +164,19 @@ def row_drain_protection(
     Public probe surface — does not mutate the registry. Same predicate
     ``drain_live_hosts_to_dormant`` applies before ``make_dormant``.
 
-    ``process_driver_lock`` is a driver lock held by this process. That hold
-    is invisible to ``host_protection_reason`` (``driver_attached`` is only a
-    flock held by another process), so it is decided here before park or release.
+    ``execution_in_flight`` is read from the row's durable ``execution_state``
+    before any probe or lock: it is the only protection that survives the
+    process that admitted the execution, so the hygiene pass of a freshly
+    recycled cdp_ask cannot park a host the previous process was still
+    driving (a:36948). ``process_driver_lock`` is a driver lock held by this
+    process. That hold is invisible to ``host_protection_reason``
+    (``driver_attached`` is only a flock held by another process), so it is
+    decided here before park or release.
     """
+    from .execution_state import row_execution_in_flight
+
+    if row_execution_in_flight(row, now=now) is not None:
+        return "execution_in_flight"
     if process_holds_driver_lock(registration_id):
         return "process_driver_lock"
     listen = is_listening or cdp_lane.is_listening

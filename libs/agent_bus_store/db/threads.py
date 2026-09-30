@@ -484,11 +484,22 @@ def create_thread(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     enroll_charter_runner: bool = False,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any] | None:
-    """Returns thread detail with dispatch_links, or None if thread_id already exists."""
+    """Returns thread detail with dispatch_links, or None if thread_id already exists.
+
+    ``idempotency_key``: when the caller supplies one, a retry carrying the same
+    key returns the thread the first call created (``idempotent_replay=True`` on
+    the detail) instead of minting a sibling. Keyless creates are unchanged —
+    they never collide (a:36915, specimen thread 13512).
+    """
     from agent_bus_store.thread_classification import gate_thread_tags
 
     from .lifecycle import _transition_lifecycle_state
+    from .thread_idempotency import (
+        replayed_thread_detail,
+        thread_id_for_idempotency_key,
+    )
 
     gated_tags = gate_thread_tags(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
@@ -496,21 +507,30 @@ def create_thread(
     if thread_id is None:
         thread_id = next_thread_id()
     ts = now()
+    replay_id: str | None = None
     with write_connect() as conn:
-        existing = conn.execute(
-            "SELECT id FROM threads WHERE id = ?", (thread_id,)
-        ).fetchone()
-        if existing is not None:
-            return None
-        conn.execute(
-            "INSERT INTO threads (id, slug, summary, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (thread_id, slug, summary, ts, ts),
-        )
-        if gated_tags:
-            set_thread_tags(conn, thread_id, gated_tags)
-        if lifecycle_state is not None:
-            _transition_lifecycle_state(conn, thread_id, lifecycle_state, "create")
+        # BEGIN IMMEDIATE serializes this lookup against every other writer, so
+        # the key check and the insert cannot interleave with a racing retry.
+        if idempotency_key is not None:
+            replay_id = thread_id_for_idempotency_key(conn, idempotency_key)
+        if replay_id is None:
+            existing = conn.execute(
+                "SELECT id FROM threads WHERE id = ?", (thread_id,)
+            ).fetchone()
+            if existing is not None:
+                return None
+            conn.execute(
+                "INSERT INTO threads "
+                "(id, slug, summary, created_at, updated_at, idempotency_key) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (thread_id, slug, summary, ts, ts, idempotency_key),
+            )
+            if gated_tags:
+                set_thread_tags(conn, thread_id, gated_tags)
+            if lifecycle_state is not None:
+                _transition_lifecycle_state(conn, thread_id, lifecycle_state, "create")
+    if replay_id is not None:
+        return replayed_thread_detail(replay_id)
     thread_detail = get_thread_with_links(thread_id)
     if thread_detail is None:
         raise RuntimeError(f"Failed to fetch newly created thread {thread_id}")

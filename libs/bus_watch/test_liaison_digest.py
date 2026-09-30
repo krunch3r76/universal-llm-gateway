@@ -298,7 +298,12 @@ def test_hop_cap_tracks_policy_override() -> None:
     assert digest["hop_cap"]["max_hops_per_night"] == 16
     assert digest["hop_cap"]["lock_hops_scope"] == "root"
     assert "lock_hops" in digest["hop_cap"]
-    assert GEAR_PRESETS["2-opus-hops"]["successor_model"] == "cursor/claude-opus-5-5"
+    assert "2-opus-hops" not in GEAR_PRESETS
+
+
+def test_opus_hops_gear_is_refused() -> None:
+    with pytest.raises(ValueError, match="cursor/claude-opus-5-5 is not in use"):
+        effective_policy({"policy": {"gear": "2-opus-hops"}})
 
 
 def test_budget_block_estimate_source() -> None:

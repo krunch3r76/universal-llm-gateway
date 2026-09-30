@@ -25,7 +25,7 @@ Triggered by `/orchestrate` only. The `checkpoint` verb is `checkpoint-disciplin
 2. Create the root thread (`create_thread` may precede the card mint so the card is `{id}`-named).
 3. Mint a continuity document or charter pointer. Include an empty `## Windows` table on that charter surface (scoreboard if chartered, continuity-doc if not). Schema §3.5.
 4. Post a birth CHECKPOINT indexing the document and a concrete `Next-pickup`.
-5. Stamp `role:root`; enroll `charter-runner` only on explicit operator ask — a conversation birth has no gated pickup and would state-close on first tick.
+5. Stamp `role:root`. A conversation birth commissions with `team_dispatch` (`seat=cursor-sdk`, `lane=B`).
 
 The order that must not invert is **card ≺ birth CHECKPOINT**, not card ≺ thread. Use `checkpoint-discipline` for the CHECKPOINT schema.
 Session close still records transcript, journal, and edges; the root replaces

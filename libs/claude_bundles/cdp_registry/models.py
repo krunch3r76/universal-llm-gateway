@@ -6,7 +6,9 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from universal_protocol.errors import error_envelope
 
 # A dormant row owns no Chrome process and no port: the CSE URL and the seeded
 # profile are the durable identity, so relaunch picks whatever port is free.
@@ -47,8 +49,41 @@ class RegistryError(RuntimeError):
     """Base exception for failures while allocating, attaching, or managing CDP registry hosts and persistent rows."""
 
 
+class JoinedReentryExhausted(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix
+    """Raised when a nested join wait would reserve or wait a second time."""
+
+
 class RegistryBusyError(RegistryError):
     """Raised when a second driver attempts to attach a registration already held by another driver."""
+
+
+class SeatContended(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix
+    """Raised when a row's status changed before this caller could claim it."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "seat.contended",
+        source: Literal[
+            "rpc", "stream", "engine", "gateway", "edge", "master"
+        ] = "rpc",
+        retryable: bool = False,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        envelope = error_envelope(
+            code=code,
+            message=message,
+            source=source,
+            retryable=retryable,
+            data=data,
+        )
+        self.code = str(envelope["code"])
+        self.message = str(envelope["message"])
+        self.source = envelope["source"]
+        self.retryable = bool(envelope["retryable"])
+        self.data = dict(envelope.get("data") or {})
+        super().__init__(message)
 
 
 class RegistryExhaustedError(RegistryError):

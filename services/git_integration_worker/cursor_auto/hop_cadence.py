@@ -50,6 +50,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile imp
     reconcile_succession_confirmations,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_standdown import (
+    fetch_thread_turns,
     lane_standdown_ack_open,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_waiting import (
@@ -412,19 +413,32 @@ async def scan_and_fire(
     snapshot_reader: Callable[[], dict[str, Any]] | None = None,
     now: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Evaluate all watches and fire at most one due hop per scan pass."""
+    """Evaluate all watches and fire at most one due hop per scan pass.
+
+    Standdown and parked-waiting truth are awaited once via
+    ``fetch_thread_turns`` (async ``make_async_client`` GET /turns, last
+    omitted) then injected into ``evaluate_watch`` and
+    ``cadence_skip_reason`` — sync httpx on the uvicorn loop wedges
+    ``/health``; ``asyncio.to_thread`` around that sync GET is the
+    rejected shape.
+    """
     ts = time.time() if now is None else now
     watches = load_watches(path)
     results: list[dict[str, Any]] = []
     fired = False
     for thread_id, row in sorted(watches.items()):
+        # Await async agent-bus turns; classify sync with injected fetch.
+        turns = await fetch_thread_turns(thread_id)
+        inject = lambda _tid, t=turns: t
         decision = evaluate_watch(
             row,
             now=ts,
             in_flight_probe=lambda tid, q=queue: lane_in_flight_commission(
                 tid, queue=q
             ),
-            standdown_probe=lambda tid: lane_standdown_ack_open(tid),
+            standdown_probe=lambda tid, fn=inject: lane_standdown_ack_open(
+                tid, fetch_turns_fn=fn
+            ),
         )
         if decision.action != "fire":
             results.append(
@@ -436,7 +450,9 @@ async def scan_and_fire(
                 }
             )
             continue
-        skip = cadence_skip_reason(thread_id, row=row, queue=queue)
+        skip = cadence_skip_reason(
+            thread_id, row=row, queue=queue, fetch_turns_fn=inject
+        )
         if skip:
             logger.info(
                 "hop_cadence skip thread=%s reason=%s age_s=%s",

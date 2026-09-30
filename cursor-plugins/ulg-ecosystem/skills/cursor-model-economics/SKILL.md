@@ -1,6 +1,6 @@
 ---
 name: cursor-model-economics
-description: "Cursor model economics — $/M rates, conductor seat table, Sonnet 5 vs Opus/GPT context billing, Grok effort card, Auto/Router entitlement. CDP + Cursor shared_sync annex."
+description: "Cursor model economics — $/M rates, conductor seat table, grok-4.7 and composer-2.5, Grok effort card, Auto/Router entitlement. CDP + Cursor shared_sync annex."
 ---
 
 # Cursor model economics
@@ -34,46 +34,28 @@ Rates (both Fable ids): `$10 / $50 / $0.25 / $12.50` input/output/cache-read/cac
 
 ## Conductor seat table
 
-Cheaper model at higher effort beats premium at default effort. **Pool first:**
-Composer draws Cursor Models; Sonnet/Opus/Terra draw the capped Other
-Models (second) pool. Rate-relative "Sonnet is 40% of Opus" does not matter
-once the second pool is empty.
+Cheaper model at higher effort beats a wider seat at default effort.
+Cursor seats in use: `cursor/grok-4.7` (omit-model) and `cursor/composer-2.5` (mechanical implement).
 
 | Seat | Model / contract | Use when |
 |---|---|---|
 | **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
-| **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
-| **CDP width** | **`cdp/fable-5.1`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. Stronger Fable is explicit `cdp/fable-5`. |
-| **CDP bind / review** | **`cdp/opus-5.5`** (`job=code-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
-| **Check/review** | **`cursor/grok-4.7`** via `workflows.check_review.model` | Same model as judgment omit. Second-pool pins (`terra`/`sol`/`luna`/`muse`/`fable`) only when the operator names them |
-| **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a standing default, never a tier row. |
+| **Composer (nested implement)** | **`cursor/composer-2.5`** — pin `model=` on mechanical `job=implement`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. Omit `model=` resolves `cursor/grok-4.7`, not Composer. |
+| **CDP width** | **`cdp/opus-5`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. `cdp/fable-5.1` only when Kaywan asks. |
+| **CDP bind / review** | **`cdp/opus-5.5`** (`job=code-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → `cursor/composer-2.5` `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
+| **Check/review** | **`cursor/grok-4.7`** via `workflows.check_review.model` | Same model as judgment omit. |
+| **Live checkout** | **`cursor/grok-4.7`** `job=freeform` | File:line depth on a cursor-sdk checkout. |
 
-> `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
 
-Nested legs: mechanical → Composer · investigate densify → Composer `contract=investigate` returning `OPEN FORK:` lines
-· Other Models (Sonnet / Opus-in-cursor / Terra / Sol / Luna / Muse / Fable) only on an **explicit
-pin** · `cursor/claude-fable-5{,-1}` **blocked on judgment/implement** (cost) —
-use `cdp/fable-5.1` for width/bind · binder when
-unsure → CDP per trigger list (2c Terra is explicit-only).
+Nested legs: mechanical → `cursor/composer-2.5` · investigate → `cursor/grok-4.7` `job=investigate` returning `OPEN FORK:` lines
+· `cursor/claude-fable-5{,-1}` **blocked on judgment/implement** (cost) —
+`cdp/fable` only when Kaywan asks · binder when unsure → `cdp/opus-5.5`.
 
 Detail + admit shapes: Use the `conductor` skill.
 
-## Context / long-window billing
-
-| Model | Long context |
-|---|---|
-| **Sonnet 5** `1m` | No long-context surcharge vs 300k — still Other Models; Sonnet is a last-resort pin; 1m is its card default |
-| **GPT-5.6** `1m` | **2× input** vs `272k` — prefer `272k` on Terra unless 1m required |
-| **Opus** | Standard pool table rates |
-
-## GPT-5.6 family knobs
-
-Live `reasoning` enum: `none|low|medium|high|xhigh|max` — **`extra-high` is not
-accepted** (use `xhigh`).
-
 ## Grok effort
 
-Gate = model card (`libs/cursor_capabilities`): `low|medium|high|xhigh`. `fast` is a separate knob: ULG omit-path / card default is **`false`** (Standard $/M). Fast (`true`) is **2×** those rates and requires `model_knobs={"fast":"true"}` — silence is Standard, not Fast. ¬ a policy ladder below the card.
+Gate = model card (`libs/cursor_capabilities` `grok-4.7`): `effort` `low|medium|high|xhigh`, card default `high`. `fast` card default is **`true`**. Silence on `model_knobs` follows that card. ¬ a policy ladder below the card.
 
 ## Auto / Cursor Router
 

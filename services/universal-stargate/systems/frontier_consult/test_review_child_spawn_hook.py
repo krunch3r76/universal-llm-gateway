@@ -84,11 +84,12 @@ def test_d7_admission_context_round_trip() -> None:
     assert ctx.role == "cursor-sdk"
 
 
-def test_d3_cross_family_openai_executor_gets_cursor_opus() -> None:
+def test_d3_cross_family_openai_executor_gets_cursor_grok() -> None:
     sel = select_independent_reviewer("openai/gpt-5.5")
     assert sel is not None
-    assert sel.model == "cursor/claude-opus-5"
-    assert sel.identity.model_identity == "claude-opus-5"
+    assert sel.model == "cursor/grok-4.7"
+    assert sel.identity.model_identity == "grok-4.7"
+    assert sel.model != "cursor/claude-opus-5"
 
 
 def test_d3_cursor_executor_gets_check_review_default() -> None:

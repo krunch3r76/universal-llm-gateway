@@ -31,8 +31,8 @@ pre-selected ∧ ¬ architecture-suitability in scope. Escalate to the bundled a
 self-verifiable.
 
 **Carve-out vs default Q seating (operator 2026-07-28):** this closed-detent recipe
-is **Fable-only by design** — it is **not** the bundled arc and does **¬** force CDP
-Fable Q on the full arc. Bundled / full-arc default Q = CDP Fable (§ Dispatch bindings).
+is **Fable-only by design** — it is **not** the bundled arc and does **¬** force the
+width seat on this recipe. Bundled / full-arc default Q = ACTIVE (§ Dispatch bindings).
 
 ## Friction conveyor mint triage (fleet — automatic)
 
@@ -69,31 +69,34 @@ token. Mid-window escalate: CHECKPOINT with raised detent + STOP.
 
 ## Dispatch bindings (Cursor default)
 
-**Lead seat (Cursor Auto / current lead model):** orchestrates the whole arc — pick recon executor, fire **Q (CDP Fable)** then dispatch A/implement, fire R-admit **and** R-after, adjudicate sidecars, auto-advance. Lead **≠** the default recon *worker* and **≠** the A/implement worker. **¬** in-seat L0/L1/L2 reasoning or hand-implement on `judgment_required` arcs unless operator explicitly overrides (`authority_fork`, attended consult).
+**Lead seat (Cursor Auto / current lead model):** orchestrates the whole arc — pick recon executor, fire **Q (ACTIVE)** then dispatch A/implement, fire R-admit **and** R-after, adjudicate sidecars, auto-advance. Lead **≠** the default recon *worker* and **≠** the A/implement worker. **¬** in-seat L0/L1/L2 reasoning or hand-implement on `judgment_required` arcs unless operator explicitly overrides (`authority_fork`, attended consult).
 
 **Default cascade** (friction-minted todos carry `dispatch_lane=path-sim-admit-gate` on **cursor-sdk** admits and todo attrs only — operator bind 2026-07-28; **¬** on `team_dispatch(model=cdp/…)` — CDP legs use `(model, contract, dispatch_thread_id)`):
 
 ```
-recon → Q (lead CDP Fable L0) → A (Composer enumerate → cdp/fable bind + Gate-2) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
+recon → Q (lead CDP ACTIVE L0) → A (Composer enumerate → cdp/fable bind + Gate-2) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
   →[ADMIT] implement (Composer) → R-after (/work-item-review · cdp/opus-5 job=delivery-review, default-on) → closeout
+
 ```
 
 Order is binding: **recon then Q** (soft gate — ¬ invent a hard RAG/Tier-1 blocker; see § Recon). Closed-detent quick recipe (§ above) stays Fable-only and is **not** this cascade.
 
-R-admit and R-after are the **same R posture** at two timeline pins (§ R positions) with **split substrates** (operator bind 2026-07-21; **A → Composer enumerate + `cdp/fable` bind**; **Q→CDP Fable 2026-07-28**):
+R-admit and R-after are the **same R posture** at two timeline pins (§ R positions) with **split substrates** (operator bind 2026-07-21; **A → Composer enumerate + `cdp/fable` bind**; **Q→ACTIVE (`conductor_width_seat.py`)**):
 
 | Pin | Substrate | Why |
 |---|---|---|
-| **R-admit** | web-anthropic CDP · **Opus 5** | Cross-weight-class pin vs Q (Fable) and vs A (Fable bind); staged corpus is enough for bind critique — Q and R must **not** be the same seat |
+| **R-admit** | web-anthropic CDP · **Opus 5** | Bind critique before implement. While ACTIVE.model is `cdp/opus-5`, Q shares that wire; A stays a Fable bind. `ACTIVE = RESTORE` returns the cross-family Q pin. |
 | **R-after** | **`cdp/opus-5`** · `job=delivery-review` · `reasoning_effort="high"` | Delivery critique over staged diff/closeout + `workspaces://` when exploration is named. Model-identity independence trade: A bind seat ≠ R-after review seat — document; R-admit remains the cross-weight pin |
+
 
 Both pins **default-on** for bundled `judgment_required` arcs — skip only the closed set (`check_requested=false` / operator no-check, or transport unavailable: CDP down for R-admit / cursor-sdk unavailable for R-after). R-admit cannot see the ship; R-after is the delivery half (acceptance ledger, drift, docstring scan, event-instrumentation challenge).
 
 | Phase | Executor | Model (post-Fable window) | Sidecar |
 |---|---|---|---|
 | 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, job=investigate)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** `job=investigate` → `cursor/grok-4.7` xhigh fast (facts + `OPEN FORK:` — never binds); pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
-| 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, job=freeform, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: CLI `claude-ai-sync-jupiter project-ask` with `model=fable-5.1`. MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → A — ¬ escalate to human (§ L0 / Q pairing). **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
+| 1 Q (L0) | **Lead fires the conductor width seat** — default bundled/full arc. Primary: `team_dispatch(model=cdp/opus-5, reasoning_effort=max, job=freeform, …)` while that is ACTIVE (`libs/implement_admission/conductor_width_seat.py`). Escape: CLI `claude-ai-sync-jupiter project-ask` with `--model` equal to ACTIVE.model without the `cdp/` prefix (shipped `opus-5`). MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **width-seat Q** → A — ¬ escalate to human (§ L0 / Q pairing). While ACTIVE.model is `cdp/opus-5`, Q shares R-admit's wire; `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`. | ACTIVE reasoning_effort (shipped max) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
 | 2 A (L1+L2) | **Stage-A three-leg:** Composer enumerate (`omit model=`, `{fast:true}`, `job=freeform`) → **`team_dispatch(model=cdp/fable, job=freeform, …)` bind** → Composer Gate-2 closeout — **halts at admit-gate, ¬ implement** | Fable Max (CDP bind) | `…/path-sim-{slug}-fable-a-l1l2.md` |
+
 | 3 R-admit | **LEAD fires `team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
 | 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
 | 5 R-after | **LEAD fires `/work-item-review todo:{slug}`** via **`cdp/opus-5` `job=delivery-review` `reasoning_effort="high"`** — after Stage-B ship | **Opus 5 (CDP review)** | **default-on, lead-owned** — same closed skip set; entry SOT = `.cursor/commands/work-item-review.md`. Delivery critique (≠ R-admit web seat). |
@@ -179,13 +182,13 @@ Same R semantics live in the parent skill. `/work-item-review` owns after-ship t
 
 **Pairing invariant (P1):** path-sim always runs **Q∧A as a coupled unit** — never A without a Q sidecar/verdict, never Q without a following A. The operator frame is **input to Q**, never a substitute for Q (P2 rejected — destroys the falsifier).
 
-**Default executor for path-sim Q is CDP Fable** (`team_dispatch(model=cdp/fable)` / CLI `claude-ai-sync-jupiter project-ask --model fable-5.1` escape — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). MCP `project_ask` is removed. Rationale (operator 2026-07-28): Fable owns explore / L0 width; **R-admit stays Opus CDP** so Q and R are not the same seat; **A = Composer enumerate → `cdp/fable` bind** (¬ Composer ranks). Do **¬** default Q to Opus CDP. Do **¬** default Q to a non-Fable seat on the bundled arc — closed-detent / explicit-skip carve-outs only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
+**Default executor for path-sim Q is the conductor width seat** (`team_dispatch(model=cdp/opus-5, reasoning_effort=max)` while that is ACTIVE in `libs/implement_admission/conductor_width_seat.py`; CLI `--model` is that id without the `cdp/` prefix — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). MCP `project_ask` is removed. **A = Composer enumerate → `cdp/fable` bind** (¬ Composer ranks). R-admit stays its own Opus CDP pin. While ACTIVE.model is `cdp/opus-5`, Q and R-admit share that wire; `ACTIVE = RESTORE` returns the cross-family split. Do **¬** default Q to a seat other than ACTIVE on the bundled arc — closed-detent / explicit-skip carve-outs only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
 
 Vision / architecture-suitability framing belongs on the **operator seat**, which must engage `reasoning-posture` (pin Question · Out-of-scope · detent ≺ widen; then steelman / calibrate) so it sees further and wider — Use the `cdp-operator-proxy` skill § Invariants. Path-sim then **tests** that frame when attested (falsifiable feedback), ¬ rubber-stamps it.
 
 #### Detecting operator-framed (positive attestation only)
 
-**Absence is not a signal.** Isolated path-sim (friction pickup, IDE-led todo, no tick/DIRECTIVE trail) looks the same as "operator never framed" — do **¬** infer a missing frame from empty fields, and do **¬** escalate to the human operator to supply one. Unattested ⇒ treat as **unframed** and continue the cascade (**Fable Q** → A).
+**Absence is not a signal.** Isolated path-sim (friction pickup, IDE-led todo, no tick/DIRECTIVE trail) looks the same as "operator never framed" — do **¬** infer a missing frame from empty fields, and do **¬** escalate to the human operator to supply one. Unattested ⇒ treat as **unframed** and continue the cascade (**width-seat Q** → A).
 
 Operator-framed is true only when **all** joint stamps exist on the work item (Opus bind 5966 — neither alone sufficient):
 
@@ -200,23 +203,24 @@ Operator duty when seeding ticks / DIRECTIVEs that path-sim will consume: **stam
 
 | Attestation | Path-sim Q → A |
 |---|---|
-| Operator-framed (joint stamps above) | **Bounded adopt-or-contradict Q on CDP Fable** — fetch `frame_uri`, test against recon, emit `frame_verdict` ∈ {adopted, contradicted, sharpened} + `frame_delta`, hand A the pinned Question — **¬** `q_skipped`, **¬** thin-confirm-as-skip, **¬** re-buy Opus CDP Q (R-admit owns Opus) |
-| Unframed / isolated (no positive stamp) | **Normal CDP Fable Q → A** (Composer enumerate → **`cdp/fable` bind**) — ¬ escalate to human; ¬ block on missing operator frame |
-| Routine / lead-pre-pinned (non-operator) | Thin Fable Q → A |
+| Operator-framed (joint stamps above) | **Bounded adopt-or-contradict Q on ACTIVE** — fetch `frame_uri`, test against recon, emit `frame_verdict` ∈ {adopted, contradicted, sharpened} + `frame_delta`, hand A the pinned Question — **¬** `q_skipped`, **¬** thin-confirm-as-skip |
+| Unframed / isolated (no positive stamp) | **Normal ACTIVE Q → A** (Composer enumerate → **`cdp/fable` bind**) — ¬ escalate to human; ¬ block on missing operator frame |
+| Routine / lead-pre-pinned (non-operator) | Thin ACTIVE Q → A |
 
 Default when Question is pre-pinned by a non-operator lead: still **dispatch thin Q** (§ Q-only) — confirm / kill / sharpen sub-Qs; write the Q sidecar.
 
 | Allowed | Forbidden |
 |---|---|
 | Stamp `operator_framed=true` + `pinned_question` + `frame_uri` (obliges a Q verdict) | Inferring "operator framed" from absence of isolation markers |
-| Framed ⇒ adopt-or-contradict Fable Q then A | `q_skipped=true` / thin-confirm that **skips** Q / treating frame as Q |
-| Unframed ⇒ Fable Q → A without paging the human | Defaulting bundled Q away from CDP Fable without closed-detent or explicit skip |
+| Framed ⇒ adopt-or-contradict ACTIVE Q then A | `q_skipped=true` / thin-confirm that **skips** Q / treating frame as Q |
+| Unframed ⇒ ACTIVE Q → A without paging the human | Defaulting bundled Q away from ACTIVE without closed-detent or explicit skip |
 | Closed-detent / explicit operator skip ⇒ Fable-only light consult | Collapsing Q and R-admit onto the same Opus CDP seat |
 | Positive `satellites: none` or explicit `repos[]` | Halting unframed arcs to "escalate to operator" / wait for a frame |
 
 **¬ skip A dispatch.** Unframed never means "skip A" or "wait for the operator." Framed never means "skip Q."
 
-**Two-stage, not one worker:** `/path-sim` on fresh `judgment_required` pickup = **lead-orchestrated** bundled arc: **recon → lead CDP Fable Q** → worker Stage-A (A + Gate-2 → **halt**) → **lead CDP R-admit** (web-anthropic Opus) → worker Stage-B (implement) → **lead fires R-after** (`/work-item-review` · `cdp/opus-5` `job=delivery-review`) → lead closeout. "Bundled" = the lead auto-advances the stages without operator "go" — **not** one cursor-sdk dispatch spanning Q or R-admit. Mid-cascade may run Q-only then A/implement separately — still off-seat.
+**Two-stage, not one worker:** `/path-sim` on fresh `judgment_required` pickup = **lead-orchestrated** bundled arc: **recon → lead CDP width-seat Q** → worker Stage-A (A + Gate-2 → **halt**) → **lead CDP R-admit** (web-anthropic Opus) → worker Stage-B (implement) → **lead fires R-after** (`/work-item-review` · `cdp/opus-5` `job=delivery-review`) → lead closeout. "Bundled" = the lead auto-advances the stages without operator "go" — **not** one cursor-sdk dispatch spanning Q or R-admit. Mid-cascade may run Q-only then A/implement separately — still off-seat.
+
 
 ### Q-only dispatch (phase 1)
 
@@ -226,7 +230,8 @@ Six-block packet at `tmp/prompts/path-sim-{slug}-fable-q-packet.md` (or staging 
 
 ```
 team_dispatch(
-  op=generate, model=cdp/fable, job=freeform,
+  op=generate, model=cdp/opus-5, reasoning_effort=max, job=freeform,
+
   sidecar_ref=cortex://notes/system/threads/path-sim-{slug}-q-prompt.md,
   # or prompt=… when short
   dispatch_thread_id=<bus thread id>,
@@ -240,7 +245,7 @@ team_dispatch(
 scripts/cortex/claude-ai-sync-jupiter project-ask \
   --register --purpose ask \
   --converse --no-uuid \
-  --model fable-5.1 \
+  --model opus-5 \
   --prompt-file tmp/reviews/path-sim-{slug}-q-prompt.md \
   --out-dir <mcp-data>/notes/system/threads/path-sim-{slug}-q-harvest
 ```
@@ -249,8 +254,9 @@ scripts/cortex/claude-ai-sync-jupiter project-ask \
 
 ```
 team_dispatch(
-  op=generate, model=cdp/fable,
+  op=generate, model=cdp/opus-5, reasoning_effort=max,
   job=freeform,
+
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-fable-q-packet.md,
   skills=[path-sim, reasoning-posture, cursor-sdk-instruction-standard]
@@ -259,11 +265,11 @@ team_dispatch(
 
 Write sidecar to `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md`; log path-sim conformance checklist **and the `Q-CASCADE` footer** (§ Q-cascade) in sidecar footer.
 
-### Q-cascade — default Fable Q; optional recovery sharpen
+### Q-cascade — default width-seat Q; optional recovery sharpen
 
-**Default Q is already CDP Fable** (operator 2026-07-28). The old `escalate-fable` opt-in is **retired as the default path** — Fable Q is on by default for the bundled arc.
+**Default Q is ACTIVE** (`libs/implement_admission/conductor_width_seat.py`). The footer token `escalate-fable` stays the recovery-sharpen name. It is not a second model switch.
 
-When the L0 worker self-assesses that the question space still warrants a wider Fable sharpen, emit a **`Q-CASCADE`** verdict in the sidecar footer — the lead honors it by firing CDP Fable as a **recovery sharpen** (same transport as § Q-only). There is **no opus/fable choice** on that hop (Fable is the sole sharpen target while the window holds; Opus Max only when Fable is unavailable — same substrate row as § Per-family parameters).
+When the L0 worker self-assesses that the question space still warrants a wider sharpen, emit a **`Q-CASCADE`** verdict in the sidecar footer — the lead honors it by firing ACTIVE again as a **recovery sharpen** (same transport as § Q-only). There is no separate Fable hop on that recovery.
 
 ```
 Q-CASCADE
@@ -276,32 +282,32 @@ reason: <one line>
 - ≥1 ask-now row is a **meta-fork the L0 could not rank** (two hypotheses left co-primary), OR
 - **recurrence class** — the friction is a sibling of a previously path-sim'd + closed arc (completion/handoff class).
 
-On the default Fable-Q path, footer may still emit `Q-CASCADE: sufficient` (already on Fable — no further escalate).
+On the default width-seat path, footer may still emit `Q-CASCADE: sufficient` (already on ACTIVE — no further escalate).
 
 **Cascade shape when recovering (greater sharpens, ¬ re-debate):**
 
 ```
-L0 draft (ranked table) → [escalate-fable] → lead CDP (Fable Max, same pin)
-  ⇒ Fable inherits the draft table as INPUT; revises ask-now / kills rows / tightens ONE Question set
+L0 draft (ranked table) → [escalate-fable] → lead CDP (ACTIVE, same pin)
+  ⇒ ACTIVE inherits the draft table as INPUT; revises ask-now / kills rows / tightens ONE Question set
      under a NARROWER declared detent — ¬ re-enumerate from zero, ¬ MAD
 ```
 
 | Rule | Detail |
 |---|---|
-| Default | Lead CDP Fable Q — already on; no escalate needed |
+| Default | Lead CDP ACTIVE Q — already on; no escalate needed |
 | Recovery trigger | Worker `Q-CASCADE: escalate-fable` (self-decided) — lead honors; lead may also force on explicit operator ask |
-| Transport | Fable ⇒ **web-anthropic-cdp** `team_dispatch(model=cdp/fable)` / CLI `claude-ai-sync-jupiter project-ask` (Use the `claude-ai-cdp-navigation` skill); ¬ `anthropic/*` API; MCP `project_ask` is removed. Opus Max only if Fable unavailable on **this Q hop** (rare Q-CASCADE fallback — ¬ R-admit Opus, which is the usual `cdp/opus-5` event on the coordination thread) |
-| Input (recovery) | Prior sidecar = ranked tables (not discarded); Fable output = revised ask-now + killed rows + one tightened Question set |
-| Sidecar | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` (default) or `…-fable-l0-qsharpen.md` (recovery); A consumes the Fable Question set |
-| Skip escalate | Default Fable Q, or `sufficient` ⇒ A dispatch consumes that Question set |
+| Transport | ACTIVE ⇒ **web-anthropic-cdp** `team_dispatch` of `conductor_width_seat.ACTIVE` / CLI `claude-ai-sync-jupiter project-ask` (Use the `claude-ai-cdp-navigation` skill); ¬ `anthropic/*` API; MCP `project_ask` is removed |
+| Input (recovery) | Prior sidecar = ranked tables (not discarded); width-seat output = revised ask-now + killed rows + one tightened Question set |
+| Sidecar | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` (default) or `…-fable-l0-qsharpen.md` (recovery); A consumes that Question set |
+| Skip escalate | Default ACTIVE Q, or `sufficient` ⇒ A dispatch consumes that Question set |
 
-Production shape is **default Fable Q**, with optional serial recovery sharpen.
+Production shape is **default ACTIVE Q**, with optional serial recovery sharpen.
 
 ### Bundled dispatch (two stages — default `/path-sim` on `judgment_required`)
 
-Lead auto-advances legs without operator "go": **recon → lead CDP Fable Q** → Stage-A worker (A+Gate-2) → **lead CDP R-admit** → Stage-B implement → R-after → closeout. Q and R-admit sit **on the lead** (CDP); A/implement are worker dispatches.
+Lead auto-advances legs without operator "go": **recon → lead CDP width-seat Q** → Stage-A worker (A+Gate-2) → **lead CDP R-admit** → Stage-B implement → R-after → closeout. Q and R-admit sit **on the lead** (CDP); A/implement are worker dispatches.
 
-**Stage-A worker** — A + Gate-2 densify closeout → **halt at admit-gate; ¬ implement, ¬ R, ¬ Q inside the packet** (Q already completed on CDP Fable). Packet `<task_guidance>` phase 2–2.5; explicit `STOP after Gate-2 closeout — lead runs R`. Template: `tmp/prompts/path-sim-{slug}-dispatch-packet.md`. **Precondition:** Q sidecar present (§ Auto-advance → A).
+**Stage-A worker** — A + Gate-2 densify closeout → **halt at admit-gate; ¬ implement, ¬ R, ¬ Q inside the packet** (Q already completed on ACTIVE). Packet `<task_guidance>` phase 2–2.5; explicit `STOP after Gate-2 closeout — lead runs R`. Template: `tmp/prompts/path-sim-{slug}-dispatch-packet.md`. **Precondition:** Q sidecar present (§ Auto-advance → A).
 
 ```
 # Stage-A three-leg (single worker packet orchestrates all three):
@@ -464,10 +470,10 @@ team_dispatch(
 | Lead self-writes `…-web-anthropic-review.md` ADMIT without CDP | Real `project-ask` harvest URI on the R sidecar |
 | Stamp `recon_waived` / `skeptic_ratified` as if path-sim R ran | Path-sim R is CDP; skeptic is `job=freeform` — keep separate |
 | R-admit `--uuid` from falsifier / endeavor chrome map | `--converse --no-uuid` on `/new` (§ R-admit CDP recipe) |
-| Pre-pinned / operator-framed Question ⇒ skip Q (`q_skipped`) | Framed ⇒ adopt-or-contradict Fable Q (`frame_verdict`); lead-pre-pinned ⇒ thin off-seat Q; then A |
+| Pre-pinned / operator-framed Question ⇒ skip Q (`q_skipped`) | Framed ⇒ adopt-or-contradict ACTIVE Q (`frame_verdict`); lead-pre-pinned ⇒ thin off-seat Q; then A |
 | Dispatch path-sim **A** with `xai/grok-*` | Composer enumerate → `cdp/fable` bind (coding lane) |
-| Default bundled Q away from CDP Fable without closed-detent or operator skip | Default Q = CDP Fable; closed-detent / explicit skip carve-outs only |
-| Default Q to Opus CDP (same seat as R-admit) | Q = Fable CDP; R-admit = Opus CDP — keep seats distinct |
+| Default bundled Q away from ACTIVE without closed-detent or operator skip | Default Q = ACTIVE (`conductor_width_seat.py`); closed-detent / explicit skip carve-outs only |
+| Treat the shared Opus wire as a reason to skip Q | Q = ACTIVE even while it shares `cdp/opus-5` with R-admit; `ACTIVE = RESTORE` returns the cross-family split |
 | Stage-B before R sidecar / allowed-skip evidence | Auto-advance checklist above |
 | Stage-B / closeout without docstring-quality (criticals uncleared) | `skills=` includes `docstring-quality`; lead + R-after scan criticals=0; CDP enhance if warnings starve feedstock |
 | R-admit skips AC docstring challenge on public-surface bind | Amend/return until dense-spec AC names docstring conformance |

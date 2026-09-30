@@ -1,5 +1,5 @@
 ---
-description: Dispatch kernel — dispatch-first, Explore-first recon, escalation ladder + binder order, anthropic/* prohibited, non-primary model gate, bind-then-compose split, recon before implement, request front door. Always-on; procedure lives in consult-routing / subagent-strategy / conductor / cdp-operator-proxy.
+description: Dispatch kernel — dispatch-first ladder, binder order, front door. Procedure lives in consult-routing / conductor / cdp-operator-proxy.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
@@ -8,7 +8,7 @@ apply_tier: required_gate
 
 **Invariant:** `lean_context ⇒ dispatch(heavy read | author | implement) off-seat; lead orchestrates`.
 Before non-trivial implement or breadth investigation ask "can this be a dispatch?" — default **yes**;
-stay in-seat only for trivial/local touches or latency-sensitive tight-loop debugging.
+stay in-seat only for trivial/local touches or tight-loop debugging.
 
 ## Read side — Explore-first
 
@@ -22,13 +22,13 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 
 | Need | Path | Autonomy |
 |---|---|---|
-| Mechanical implement | `team_dispatch(..., lane="B")` → Composer (omit `model=`). Throwaway worktree (lane B) for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
-| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh fast; conductor → grok high fast. `OPEN FORK:` only | autonomous |
-| Greater reasoning / independent check | **`cdp/fable-5.1`** width · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
-| Premium live checkout | `cursor/claude-opus-5-5` — inform-then-proceed (wait only if premium spend paused) | announce |
+| Mechanical implement | `team_dispatch(..., lane="B", job=implement, model=cursor/composer-2.5)`. Omit `model=` resolves `cursor/grok-4.7`. Throwaway worktree for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
+| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh fast; conductor → `cursor/grok-4.7` high fast. `OPEN FORK:` only | autonomous |
+| Greater reasoning / independent check | **ACTIVE** width (`cdp/opus-5`, reasoning_effort=max, not top rung; `libs/implement_admission/conductor_width_seat.py`) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
+| Live checkout | `cursor/grok-4.7` `job=freeform` on cursor-sdk | autonomous |
 
-Binder order is reasoning strength, low → high: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` → `cursor/gpt-5.6-terra|sol` **explicit pin only**. `seat_unsure ⇒ consult(independent_binder)`;
-`binder_unsure ⇒ human`. CDP operator stuck ⇒ `cursor-auto` → nested `cursor-sdk`, never Cowork Ask.
+Binder order (reasoning strength): `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`;
+`binder_unsure ⇒ human`. CDP fail ⇒ no wait, no pool retry. `cdp_fail_route`: `nested-grok` (`cursor/grok-4.7` xhigh) or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask. Steps: cdp-operator-proxy 2b.
 
 ## Hard walls
 
