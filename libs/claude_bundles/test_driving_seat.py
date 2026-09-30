@@ -376,3 +376,105 @@ def test_ensure_emits_recensus_joined_only_on_recovered_retry(
     monkeypatch.setattr(reg, "relaunch_dormant", fail_once_then_relaunch)
     _ensure()
     assert emitted.count("cdp.seat.recensus_joined") == 1
+
+
+def test_ensure_recensus_register_lane_join_when_no_bound_seat(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contended retry with no bound seat joins the allocating row."""
+    from claude_bundles import cdp_registry_events as ev
+    from claude_bundles.cdp_registry import driving_seat as seat_mod
+    from claude_bundles.cdp_registry import lifecycle as life
+
+    seeded_id = "alloc-join-9497"
+    reg._store.write_active(
+        {
+            seeded_id: {
+                "registration_id": seeded_id,
+                "port": 9223,
+                "profile_suffix": "reg-allocjoin",
+                "profile": str(isolated_registry / "profile"),
+                "holder": "operator-seat",
+                "purpose": "operator-proxy",
+                "mission_kind": "root",
+                "parent_thread": "9497",
+                "status": "allocating",
+                "chrome_pid": None,
+                "holder_pid": None,
+                "started_at": 1.0,
+            }
+        }
+    )
+    reg._claim_driver_lock(seeded_id)
+
+    real_census = seat_mod.driving_lane_census
+    census_calls = {"n": 0}
+    retry_snaps: list[dict[str, list]] = []
+
+    def fail_first_census(active_map: object, parent: str) -> object:
+        census_calls["n"] += 1
+        if census_calls["n"] == 1:
+            raise reg.SeatContended(
+                "pre-lock status check contended",
+                retryable=True,
+                data={
+                    "depth": "pre_lock_status_check",
+                    "observed_status": "allocating",
+                    "registration_id": seeded_id,
+                },
+            )
+        snap = real_census(active_map, parent)  # type: ignore[arg-type]
+        retry_snaps.append(snap)
+        return snap
+
+    monkeypatch.setattr(seat_mod, "driving_lane_census", fail_first_census)
+
+    emitted: list[str] = []
+    joined_events: list[object] = []
+    real_emit = ev.emit
+
+    def capture_emit(event: object) -> None:
+        sig = getattr(event, "signal", None)
+        if sig:
+            emitted.append(str(sig))
+        if sig == "cdp.seat.recensus_joined":
+            joined_events.append(event)
+        real_emit(event)
+
+    monkeypatch.setattr(ev, "emit", capture_emit)
+
+    reserve_calls: list[dict[str, object]] = []
+    real_reserve = life.reserve_allocating_row
+
+    def spy_reserve(**kwargs: object) -> object:
+        reserve_calls.append(dict(kwargs))
+        return real_reserve(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(life, "reserve_allocating_row", spy_reserve)
+
+    def promote_joined(registration_id: str) -> None:
+        current = reg._store.load_active()
+        row = dict(current[registration_id])
+        row["status"] = "active"
+        current[registration_id] = row
+        reg._store.write_active(current)
+
+    monkeypatch.setattr(life, "_between_wait_observations", promote_joined)
+
+    joined: list[str] = []
+    result = _ensure(joined=joined)
+
+    assert census_calls["n"] >= 2
+    assert retry_snaps
+    assert all(len(snap["open_seats"]) == 0 for snap in retry_snaps)
+    assert all(len(snap["dormant_unbound"]) == 0 for snap in retry_snaps)
+    assert all(len(snap["live"]) == 0 for snap in retry_snaps)
+    assert result.registration_id == seeded_id
+    assert joined == [seeded_id]
+    assert emitted.count("cdp.seat.recensus_joined") == 1
+    payload = getattr(joined_events[0], "payload")
+    assert payload["branch"] == "register_lane_join"
+    assert reserve_calls
+    assert reserve_calls[0]["join"] is True
+    assert reserve_calls[0].get("registration_id") is None
