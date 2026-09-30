@@ -85,8 +85,8 @@ async def life_dispatch(
         body_kwargs: dict[str, Any] = {
             "op": "generate",
             "model": model,
-            "contract": "none",
-            "purpose": "operator-proxy",
+            "job": "freeform",
+            "session": "operator-proxy",
             "caller_agent": _LIFE_CALLER,
             "prompt": prompt,
             "sidecar_ref": sidecar_ref,

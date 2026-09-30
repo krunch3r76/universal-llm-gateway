@@ -113,7 +113,7 @@ async def resolve_model(
          matched via ``/v1/models/select``).
       4. ``agent``'s registered ``default_model`` — mirrors the
          admission-path fallback in ``build_dispatch_body`` so virtual-model
-         agent-seat pipelines (``role: gatherer`` step-field, no
+         agent-seat pipelines (``job: freeform`` step-field, no
          ``pipeline_options``) need not hard-code a model.
     """
     candidate: str | None = None

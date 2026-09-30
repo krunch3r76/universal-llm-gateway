@@ -32,9 +32,9 @@ consult/none handoff) auto-invokes `reasoning-posture`. Mechanical
 | Model answer/reasoning | `team_dispatch(op="generate", role=<api_role>, contract=…, dispatch_thread_id=…, model?="provider/model")` |
 | ≥2-provider material-decision panel | `panel_dispatch`; see `consensus-steelman-posture` |
 | Code changes (settled, unattended) | `team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id=…)` — in-repo implement uses lane B; attended `cursor-implement`/`web-implement` handoff is fallback |
-| Sparse recon / bind before implement | `team_dispatch(…, contract=none\|recon\|seed\|consult, sdk_mode=plan)` — artifact URIs only; follow with separate `contract=implement` after `implement_ready` — see `consult-routing` § cursor-sdk `sdk_mode` |
-| Packet heavy reasoning / web research | `team_dispatch(op="handoff", role="web-consult", …)` or `panel_dispatch` |
-| Manual web handoff / self-handoff | `team_dispatch(op="handoff", role="web-consult", packet_path=…)` |
+| Sparse recon / bind before implement | `team_dispatch(…, job=freeform\|recon\|seed\|consult, sdk_mode=plan)` — artifact URIs only; follow with separate `job=implement` after `implement_ready` — see `consult-routing` § cursor-sdk `sdk_mode` |
+| Packet heavy reasoning / web research | `team_dispatch(op="handoff", seat="web-anthropic", job="confer", …)` or `panel_dispatch` |
+| Manual web handoff / self-handoff | `team_dispatch(op="handoff", seat="web-anthropic", job="confer", packet_path=…)` |
 | Cursor IDE consult / implement | `handoff` roles `cursor-consult` / `cursor-implement` |
 | Work this session can do with MCP | Do locally; do not generate to own seat |
 
@@ -75,7 +75,7 @@ Self-handoff is supported via matching handoff roster role to open a new bus thr
 Handoff submit/wait (**code surface only** — see Surface gate):
 
 ```text
-team_dispatch(handoff, role=web-consult|cursor-consult|cursor-implement, packet_path, subject)
+team_dispatch(handoff, seat=web-anthropic, job=confer|cursor-consult|cursor-implement, packet_path, subject)
 read result_handle + poll_hint; surface push_reminder
 agent_bus(wait, poll_hint.arguments_json) until complete=true
 ```

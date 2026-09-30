@@ -26,7 +26,7 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 AUTHOR_MODEL = "cursor/grok-4.7"
-# Author generate uses contract=none so should_expand does not re-enter expand.
+# Author generate uses job=freeform so should_expand does not re-enter expand.
 # Recurse-prevention only — not “do not expand unspecified operator tasks”.
 AUTHOR_CONTRACT = "none"
 # GIW's admit schema only accepts cursor-auto, stargate, or giw_park_resume.

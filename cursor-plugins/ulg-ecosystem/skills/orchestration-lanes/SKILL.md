@@ -57,7 +57,7 @@ Use `mission-operator` for every subsequent turn.
 ## Boundaries
 
 The CDP mission CSE is a Chrome host, not a bus thread. Executor children are
-work lanes under a mission, not a third kind. `purpose=mission` configures the
+work lanes under a mission, not a third kind. `session=mission, job=freeform` configures the
 CDP episode; it does not replace lane birth or parentage.
 
 ## Related skills

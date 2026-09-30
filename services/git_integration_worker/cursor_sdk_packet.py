@@ -13,8 +13,8 @@ import re
 from collections.abc import Sequence
 
 from reasoning_posture_contracts import (
-    HYPOTHESIZE_SIMULATE_CONTRACTS,
-    REASONING_POSTURE_SKIP_CONTRACTS,
+    HYPOTHESIZE_ON_JOBS,
+    POSTURE_SKIP_JOBS,
     contract_is_freeform,
     reasoning_posture_invoke_parts,
     reasoning_posture_warrants_injection,
@@ -284,9 +284,9 @@ _ULG_FOR_LLMS_PREAMBLE = (
     "reconstruction for a human."
 )
 
-# Shared with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
-_REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
-_HYPOTHESIZE_SIMULATE_CONTRACTS = HYPOTHESIZE_SIMULATE_CONTRACTS
+# Shared with Stargate handoff posture skip set.
+_POSTURE_SKIP_JOBS = POSTURE_SKIP_JOBS
+_HYPOTHESIZE_ON_JOBS = HYPOTHESIZE_ON_JOBS
 _HYPOTHESIZE_SIMULATE_INVOKE_RE = re.compile(
     r"Use the `?hypothesize-simulate`? skill",
     re.IGNORECASE,
@@ -748,7 +748,7 @@ def resolve_prompt_preamble(
     ) and not _already_invokes_ulg_for_llms(prompt_preamble, existing_text):
         parts.append(_ULG_FOR_LLMS_PREAMBLE)
     if (
-        contract in _HYPOTHESIZE_SIMULATE_CONTRACTS
+        contract in _HYPOTHESIZE_ON_JOBS
         and not _already_invokes_hypothesize_simulate(prompt_preamble, existing_text)
     ):
         parts.append(_HYPOTHESIZE_SIMULATE_PREAMBLE)

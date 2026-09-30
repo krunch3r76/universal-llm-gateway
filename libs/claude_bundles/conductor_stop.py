@@ -514,6 +514,6 @@ def score_ratify_packet_template(*, scoreboard_uri: str, todo_ref: str) -> str:
             "",
             "Posture: do-not-fight the mission; judge likely-optimal completion only.",
             "This is score-ratify, not CONFIRM_PENDING (confirmation kernel).",
-            "purpose=review · default web-anthropic / CDP.",
+            "job=delivery-review · default web-anthropic / CDP.",
         ]
     )

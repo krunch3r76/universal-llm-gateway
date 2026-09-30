@@ -489,7 +489,7 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
     if raw not in _CONTRACTS:
         return {
             "requested": raw,
-            "contract": "answer",
+            "job": "answer",
             "disposition_hint": "answered",
             "notes": f"unknown contract={raw!r}; treated as answer",
         }

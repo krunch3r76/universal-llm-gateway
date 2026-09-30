@@ -59,7 +59,7 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | Job | Picker | Effort | Transport | `purpose` |
 |---|---|---|---|---|
 | G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable-5.1` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
-| G2 frame | `cdp/fable-5.1` followup in the G1 CSE; else `cdp/opus-5.5` fresh. **When `conductor_profile=fable-scarce`** (or packet profile line): `cdp/opus-5.5` **fresh**, effort **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`), `purpose=ask`, **¬** Fable followup in G1 CSE | high (profile G2: **`extra`/`xhigh`**, ¬ followup) | followup ≻ fresh (profile: fresh Opus only) | inherit `ask` (profile G2: **`ask`**) |
+| G2 frame | `cdp/fable-5.1` followup in the G1 CSE; else `cdp/opus-5.5` fresh. **When `conductor_profile=fable-scarce`** (or packet profile line): `cdp/opus-5.5` **fresh**, effort **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`), `session=ask, job=freeform`, **¬** Fable followup in G1 CSE | high (profile G2: **`extra`/`xhigh`**, ¬ followup) | followup ≻ fresh (profile: fresh Opus only) | inherit `ask` (profile G2: **`ask`**) |
 | BIND (score-play M1) | `cdp/fable-5.1` if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5.5` | high (Fable max when bind gates a wave) | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
 | SKEPTIC@BIND (score-play M2) | `cdp/fable-5.1` high when Opus bound; **`cdp/opus-5.5` xhigh/max when Fable bound** (house default). **Under `conductor_profile=fable-scarce`:** no automatic Opus re-pass when Fable bound — a second CDP only on M2 invariant attr or explicit operator/packet pin **written on the scoreboard row** | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch (`panel_dispatch` members count as legs under profile cap) | `ask` or `review` |
 | GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5.5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
@@ -187,7 +187,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 When the operator orders a review of this session's changes and auto-apply of every suggestion:
 
-1. Review is `cdp/opus-5.5`, `purpose=review`, `contract=none`. That call does not edit.
+1. Review is `cdp/opus-5.5`, `job=code-review`, ``. That call does not edit.
 2. On `AMEND`, the compose packet lists every suggestion. It does not say "do not commit" or "do not land".
 3. After the implement closeout, the parent lands the lane (`git merge` of `cursor-sdk/lane-<thread>`, never a path copy) and recycles every serving process that loaded a touched path.
 4. `landed: false` is not the end of this path. Quote the merge SHA and the recycle payload before calling the suggestions live.
@@ -290,7 +290,7 @@ Rationale for the independence axis (weight class vs family, self-review definit
 | `anthropic/*` on `team_dispatch` | **PROHIBITED** |
 | `cursor/*` on `cursor-sdk` | OK except **Fable** |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
-| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy)`. Warm paste: `cse_session(op=followup)` |
+| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, session=operator-proxy, job=freeform)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/claude-opus-*` |
 
 Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.1` / picker — ¬ `cursor/*` Fable).
@@ -304,7 +304,7 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
 | Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
-| Non-code adversarial (life/analysis) | `role=skeptic` + `xai/grok-4.7` — life/analysis lane only |
+| Non-code adversarial (life/analysis) | `job=freeform` + `xai/grok-4.7` — life/analysis lane only |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
 
 ### Skeptic / reviewer substrate matrix (codework, R2)
@@ -338,7 +338,7 @@ Standing first-utterance (`agent_skill:conductor`):
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    contract="none",
+    job="freeform",
     lane="B",
     source_ref="todo:{slug}",
     dispatch_thread_id="{root}",
@@ -353,7 +353,7 @@ forbids `packet_path`; materializer owns the six-block packet.
 
 Write-class / Lane-B `team_dispatch(seat=cursor-sdk)` admits require a declared
 `work_key` (D4 grammar: `todo:`, `plan:`, `plan_phase:`, `packet:`,
-`agent-bus:`, `friction:`, `decision:`). A read-only `contract=none` that is
+`agent-bus:`, `friction:`, `decision:`). A read-only `job=freeform` that is
 already on Lane A may omit — GIW derives `adhoc:{fingerprint}` and excludes
 from dedupe. That omit rule is not a reason to choose Lane A.
 

@@ -265,9 +265,9 @@ def summon(seq: int) -> str | None:
     body = {
         "op": "generate",
         "dispatch_thread_id": THREAD,
-        "contract": "none",
+        "job": "freeform",
         "model": "cdp/opus-5",
-        "purpose": "operator-proxy",
+        "session": "operator-proxy",
         "sidecar_ref": COMMISSION_URI,
         "caller_agent": "cursor-summons-watchdog",
     }

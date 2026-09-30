@@ -15,8 +15,8 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 | Work | Fire |
 |---|---|
 | Recon, loci unknown | `Task(subagent_type="explore")` in this tab |
-| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane=B, source_ref=todo:…, dispatch_thread_id=<root>)` then end. Sketch, Compose, and `contract=implement` are that conductor's nest |
-| Script or upload, no repo edit | same cursor-sdk generate, `lane=B`, `contract=none` |
+| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, job=conductor, lane=B, source_ref=todo:…, dispatch_thread_id=<root>)` then end. Sketch, Compose, and `job=implement` are that conductor's nest |
+| Script or upload, no repo edit | same cursor-sdk generate, `lane=B`, `job=freeform` |
 | Independent check of a harvested closeout | `team_dispatch(model=cdp/opus-5.5)` |
 | Land on green | in-seat `git merge` of `cursor-sdk/lane-<thread>`. Conflict ⇒ keep both |
 

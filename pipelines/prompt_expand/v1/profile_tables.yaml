@@ -1,6 +1,6 @@
 table_version: 1
 profiles:
-  - contract: consult
+  - job: confer
     stage: g1
     executor_tier: frontier
     retrieve_scopes:

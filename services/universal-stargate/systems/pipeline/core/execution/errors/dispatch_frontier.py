@@ -40,7 +40,7 @@ class UnknownPipelineOptionsError(PipelineError):
             "For team role consults (skeptic/gatherer/synthesizer/reviewer/artisan "
             "or cursor-* seats) use `team_dispatch` — it validates options "
             "against the role contract from Cortex. xAI multi-agent roles get "
-            "mcp=False auto-derived. Inline-only passes: `role=synthesizer`."
+            "mcp=False auto-derived. Inline-only passes: `job=freeform`."
         )
 
     def to_dict(self) -> dict:

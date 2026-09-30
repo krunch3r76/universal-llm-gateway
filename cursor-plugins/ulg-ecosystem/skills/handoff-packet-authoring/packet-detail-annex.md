@@ -17,9 +17,9 @@ Load on demand for templates, web priming checklists, and block-by-block primers
 
 1. **Verify lane** — `dispatch_lane ∈ {web-spec, web-implement-packet}`; wrong lane ⇒ stop.
 2. **Seed stub spec** — `doc_template(implement_dense_spec)`; layer verdict + forks; `entity_update(source_uri)`.
-3. **Author consult brief** — `tmp/reviews/{slug}-harden-web-consult-packet.md`; `contract: consult`; scaffold
+3. **Author consult brief** — `tmp/reviews/{slug}-harden-web-consult-packet.md`; `job: confer`; scaffold
    non-authoritative.
-4. **Dispatch** — `team_dispatch(op=handoff, role=web-consult, packet_path=…)`; ¬ `contract=consult` param (422).
+4. **Dispatch** — `team_dispatch(op=handoff, seat=web-anthropic, job=confer, packet_path=…)`; ¬ `job=confer` param (422).
 5. **Hand back** thread + `push_reminder`.
 6. **Gate-2 close distillation** — `files_expected`, `acceptance_criteria`, `required_skills` (catalog-registered only).
 7. **Entity hygiene** — implement-ready assertion + `spec_sha256`.
@@ -84,8 +84,8 @@ Blocked until N≥5 runs.
 
 ```text
 # top-level generate, including implement, recon, bind-only, and read-only
-team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, contract=pure-mechanical)
-team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, contract=none)
+team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, job=mechanical)
+team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, job=freeform)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `contract=investigate`**; implement → Composer.
@@ -104,7 +104,7 @@ See `friction-review` § Friction ID preflight.
 
 ## Web-receiver priming checklist
 
-For `team_dispatch(op=handoff, role=web-consult|web-implement)`: web attaches **life only** — no workspaces fs,
+For `team_dispatch(op=handoff, seat=web-anthropic, job=confer|web-implement)`: web attaches **life only** — no workspaces fs,
 no IDE rules/skills/terminals.
 
 ### Web-anthropic skill-inline gate (binding)
@@ -193,7 +193,7 @@ Skeptic packets: `<output_format>` MUST demand `FILE_EVIDENCE_PATHS:` in bus rep
 
 ```markdown
 ---
-contract: consult   # required on consult/none; implement uses implement
+job: confer   # required on consult/none; implement uses implement
 ---
 <scope>
 Goal: <one-line>. Selection mode: <targeted|branch|path>.

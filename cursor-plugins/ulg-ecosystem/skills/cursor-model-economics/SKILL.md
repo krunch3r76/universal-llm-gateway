@@ -44,7 +44,7 @@ once the second pool is empty.
 | **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
 | **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
 | **CDP width** | **`cdp/fable-5.1`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. Stronger Fable is explicit `cdp/fable-5`. |
-| **CDP bind / review** | **`cdp/opus-5.5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
+| **CDP bind / review** | **`cdp/opus-5.5`** (`job=code-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
 | **Check/review** | **`cursor/grok-4.7`** via `workflows.check_review.model` | Same model as judgment omit. Second-pool pins (`terra`/`sol`/`luna`/`muse`/`fable`) only when the operator names them |
 | **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a standing default, never a tier row. |
 

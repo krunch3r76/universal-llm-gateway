@@ -39,12 +39,12 @@ Probes measure tool-loop FIRE+CONSUME. They are **not** reviews. Fat `team_dispa
 |---|---|---|
 | **Preferred — chat `-mcp` proxy** | Default L0–L3 reliability ladder | Minimal prompt; hundreds of tokens for golden L0 |
 | **Alternate — frontier/team_dispatch** | Explicitly validating production `client_side_injection` surface (tag it) | Hydration tax — use artisan/skeptic, never reviewer |
-| **Forbidden** | `role=reviewer` + `caller_agent` matching `mcp-l*-probe` / `mcp-trace-matrix` | Admission reject (optional hard guard) |
+| **Forbidden** | `job=freeform` + `caller_agent` matching `mcp-l*-probe` / `mcp-trace-matrix` | Admission reject (optional hard guard) |
 
 Rules:
 
 1. Default probe surface = `/v1/chat/completions` with model ending `-mcp` (e.g. `openai/gpt-5.5-mcp`, `xai/grok-4.7-mcp`), only the tool under test exposed, `max_tool_turns≤3` for L0 (raise only as ladder needs).
-2. If you must use `team_dispatch(op=generate, mcp=true)` to tag the production native Responses loop: use `role=artisan` or `role=skeptic` (or bare frontier dispatch) — **never** `role=reviewer`.
+2. If you must use `team_dispatch(op=generate, mcp=true)` to tag the production native Responses loop: use `job=freeform` or `job=freeform` (or bare frontier dispatch) — **never** `job=freeform`.
 3. Set `caller_agent` to `mcp-l0-probe` / `mcp-l1-probe` / `mcp-l3-probe` / `mcp-trace-matrix` so traces and the admission guard can identify probes.
 4. Still tag the surface column — chat `-mcp` ≠ frontier client loop; do not compare across surfaces without noting it.
 
@@ -113,7 +113,7 @@ POST http://localhost:9999/api/v1/frontier/dispatch
 ```
 
 Poll frontier: `GET /api/v1/pipelines/executions/{execution_id}?wait=55`  
-If using `team_dispatch` instead of raw frontier: `role=artisan|skeptic`, never `reviewer`.
+If using `team_dispatch` instead of raw frontier: `job=freeform|skeptic`, never `reviewer`.
 
 ### L1 — two read-only tools (replay fidelity)
 
@@ -208,7 +208,7 @@ Harness mirror (ephemeral): `tmp/mcp-trace-matrix/run_traces.py`
 - Comparing Grok web connected-tool failures to `team_dispatch(op=generate, mcp=True)` results without tagging surface
 - Changing GPT-5.5 default tool-result shape without A/B flag
 - Storing only `tmp/` results — sidecar + execution IDs required for revisit
-- Running probes via `role=reviewer` / fat team_dispatch hydration when chat `-mcp` would answer the reliability question
+- Running probes via `job=freeform` / fat team_dispatch hydration when chat `-mcp` would answer the reliability question
 - Omitting `caller_agent=mcp-l*-probe` so cost forensics cannot separate probes from real reviews
 
 ## Minimal operating summary

@@ -9,7 +9,7 @@ from __future__ import annotations
 from contract_vocab.records import (
     CANONICAL_CONTRACTS,
     DEFAULT_CONTRACT,
-    DEPRECATED_ALIASES,
+    REMOVED_JOB_ALIASES,
     RECORDS,
     ContractRecord,
     closeout_table,
@@ -26,7 +26,7 @@ CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp')
 __all__ = [
     "CANONICAL_CONTRACTS",
     "DEFAULT_CONTRACT",
-    "DEPRECATED_ALIASES",
+    "REMOVED_JOB_ALIASES",
     "RECORDS",
     "ContractRecord",
     "closeout_table",

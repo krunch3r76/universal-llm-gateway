@@ -151,7 +151,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
 **Deploy/live:** landed≠live = process ¬restarted, never ¬committed; live@<sha> needs commit-before-restart + code_ref_satisfied + dirty disclosure. SOT: decision:checkout-disk-is-executable.
 
-**CLOSEOUT shape (by contract):** answer→disposition:answered + inline relay; confer→codebase-grounded recommendation; ask→how-it-works in ≤12 lines + file:line anchors; investigate→findings / nested dispatch summary; implement→file changes + AC evidence (codework: ``abstraction-layering`` lane); verify→verification verdict + evidence (codework: ``abstraction-layering`` G6); execute→one tier-M op raw payload (body: tool_op + effects_expected); propagate→propagation ledger + drain-gated restart status; seed→todo slug + consult URI (if any) + ``abstraction-layering`` entry gate; recon→recon_core findings (+ optional recon_extra).
+**CLOSEOUT shape (by job):** answer→disposition:answered + inline relay; confer→codebase-grounded recommendation; ask→how-it-works in ≤12 lines + file:line anchors; investigate→findings / nested dispatch summary; implement→file changes + AC evidence (codework: ``abstraction-layering`` lane); verify→verification verdict + evidence (codework: ``abstraction-layering`` G6); execute→one tier-M op raw payload (body: tool_op + effects_expected); propagate→propagation ledger + drain-gated restart status; seed→todo slug + consult URI (if any) + ``abstraction-layering`` entry gate; recon→recon_core findings (+ optional recon_extra).
 
 **Second read (advisory):** `implement`|`investigate`|`verify` may append `## SECOND READ` by `cursor/claude-opus-5`. Observation only, not a gate. Knobs: `CURSOR_AUTO_REFLEX_ENABLED`, `_BUDGET`, `_SAMPLE_EVERY`, `_MODEL`, `_EFFORT`, `_TIMEOUT_S`.
 

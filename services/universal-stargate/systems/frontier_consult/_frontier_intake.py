@@ -53,7 +53,7 @@ def reject_unsupported_packet_inputs(
         raise FrontierEndpointError(
             request_id=request_id,
             field="stop_after",
-            reason="stop_after is forbidden with contract='none'",
+            reason="stop_after is forbidden with job='freeform'",
             status_code=422,
             code="none_with_stop_after",
         )

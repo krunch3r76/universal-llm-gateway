@@ -267,13 +267,13 @@ per-G-row one. Default posture once running:
 - **After-ship `cdp/opus-5.5` code review (a:32146) is a stronger-model gate, not
   a background nicety.** On codework that claims land / cert / terminal `DONE`:
   **review harvest ≺ land ≺ DONE** (dogfood 10013 / a:32221–32222; 9638 hop3 /
-  a:32226). Fire `team_dispatch(model=cdp/opus-5.5, purpose=review, contract=none, …)`
+  a:32226). Fire `team_dispatch(model=cdp/opus-5.5, job=delivery-review, …)`
   and **harvest a real verdict body** before those claims. Filtered nested
   seats (`implement` / `pure-mechanical`) see that same call on `tools/list`. The
   stdio bridge refuses a `tools/call` outside the contract primary list, and
   refuses `team_dispatch` unless the arguments are the review shape
-  (`op=generate`, `purpose=review`, `model` in `cdp/opus-5` | `cdp/opus-5.5` |
-  `cdp/fable`, `contract=none`, no other keys). That bound is the bridge
+  (`op=generate`, `job=delivery-review`, `model` in `cdp/opus-5` | `cdp/opus-5.5` |
+  `cdp/fable`, `job=freeform`, no other keys). That bound is the bridge
   process for the filtered seat; it is not a server-side identity check on
   `/mcp/code`. When Opus returns `stall_stage=completed_without_proof`, the
   CDP worker retries `cdp/fable` once, resets the inflight clock, and posts
@@ -332,7 +332,7 @@ Rates: `config/model_rates.yaml`.
 | **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
 | **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
 | **CDP width** | **`cdp/fable-5.1`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. Stronger Fable is explicit `cdp/fable-5`. |
-| **CDP bind / review** | **`cdp/opus-5.5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
+| **CDP bind / review** | **`cdp/opus-5.5`** (`job=delivery-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
 | **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
 
 > `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
@@ -423,7 +423,7 @@ Required in `<scope>` / `<invariants>`:
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`contract=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `liaison`) and does not author G-rows, Sketch, or `contract=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
-  implement, **G6** = `cdp/opus-5.5` `purpose=review` `reasoning_effort="high"`
+  implement, **G6** = `cdp/opus-5.5` `job=delivery-review` `reasoning_effort="high"`
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
   `conductor_profile=fable-scarce`**) on the **lane branch diff** (sidecar **R1**).
   **G7** = merge/land (sidecar **L1**).
@@ -917,7 +917,7 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
 | Closes `status: partial`/`checks_failed` with zero files touched because it wanted to flag the plan first | Flag the concern on the CHECKPOINT while still driving — flagging is commentary, not a hold |
-| Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
+| Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `job=implement` — independent dispatch is judgment/spec-only |
 | Nest 422 then in-seat G5 absorb | `PARKED_TRANSPORT` + persist; fix wire and re-nest under live `dispatch_id` |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire Opus after-ship / Fable Skeptic and never read it | Summoning-thread lead quotes the harvest; unread ⇒ ¬ DONE |

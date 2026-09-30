@@ -72,7 +72,7 @@ def build_reflex_packet(
     return "\n".join(
         [
             "Nested cursor-sdk SECOND READ commissioned by cursor-auto.",
-            f"contract=none reading={contract} "
+            f"job=freeform reading={contract} "
             f"executor={executor_model} executor_dispatch={executor_dispatch_id}",
             "",
             "## Boundary (binding)",

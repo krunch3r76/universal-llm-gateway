@@ -75,7 +75,7 @@ Models options; we **block** both for cost — do not pin either. Use `cdp/fable
 
 G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh; **when
 `conductor_profile=fable-scarce`:** `cdp/opus-5` fresh, `extra`/`xhigh`,
-`purpose=ask`, **¬** Fable followup in G1 CSE), not the Other Models pool.
+`session=ask, job=freeform`, **¬** Fable followup in G1 CSE), not the Other Models pool.
 Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a
 Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named**
 trigger — they are not silent defaults.
@@ -129,7 +129,7 @@ fire Mode B Fable; spawn after S4a and let the conductor own admit-proof.
 **Mode B transport (BINDING — conductor fires; live CSE ≻ fresh generate; friction a:27616 / bus 6737):**
 when an **attached live operator-proxy CSE** exists (identity ladder
 `chat_url ≻ registration_id ≻ execution_id`), Mode B / CDP architecture consult MUST use
-`cse_session(op=followup, purpose=operator-proxy, …)` into that CSE —
+`cse_session(op=followup, session=operator-proxy, job=freeform, …)` into that CSE —
 **¬** fresh `team_dispatch(model=cdp/fable|cdp/opus-5)`. Fresh `team_dispatch(model=cdp/…)`
 only when no live attached CSE (continuity hop / new window / Customize refresh).
 Compose `cdp-operator-proxy` inv 23.
@@ -215,7 +215,7 @@ unaffected — S2 keeps its normal optional gate.
 **Skip:** single obvious shape ∨ mechanical.  
 **Do (conductor, after spawn):** CDP architecture consult per Mode B transport above.
 Copy **§ S3 Fable generate recipe** (followup vs fresh generate). Staging
-`purpose=ask` seals the arch pair — do not reconstruct `skills=`. Harvest to cortex.
+`session=ask, job=freeform` seals the arch pair — do not reconstruct `skills=`. Harvest to cortex.
 IDE seed path stamps Mode B on the disposition; it does not fire the consult.
 
 **Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
@@ -245,7 +245,7 @@ Live CSE ≻ fresh generate (transport rule above).
 ```
 cse_session(
     op="followup",
-    purpose="operator-proxy",
+    session="operator-proxy", job="freeform",
     chat_url="<attached>",  # or registration_id / execution_id
     prompt_text=…,          # or prompt_uri=cortex://…
 )
@@ -255,19 +255,19 @@ cse_session(
 **Fresh generate** (no live attached CSE):
 
 ```
-manage(action="busy_status")  # serialize a second purpose=ask
+manage(action="busy_status")  # serialize a second session=ask, job=freeform
 team_dispatch(
     op="generate",
     model="cdp/fable",
-    contract="none",
-    purpose="ask",
+    job="freeform",
+    session="ask", job="freeform",
     packet_path="tmp/reviews/{slug}-fable-g1.md",  # or sidecar_ref=cortex://…
     dispatch_thread_id="<work thread, not an unrelated charter root>",
 )
 # same-turn: quote execution_id + poll_hint, or honest halt
 ```
 
-`purpose=ask` is the architecture-consult tag — staging merges the arch pair +
+`session=ask, job=freeform` is the architecture-consult tag — staging merges the arch pair +
 `reasoning-posture`. Caller `skills=` is additive only. ¬ `operator-proxy` unless
 this *is* a mission followup. Stock skills are a prompt verb, never `skills=`.
 
@@ -294,12 +294,12 @@ CDP rows (G1/G2/G4/G6) are out of scope — they use `team_dispatch(model=cdp/�
 
 | G-row | Leg | Default `contract` | Default `sdk_mode` | When to override |
 |---|---|---|---|---|
-| **G1** | Architecture consult | — (CDP `purpose=ask`) | — | Never cursor-sdk plan |
+| **G1** | Architecture consult | — (CDP `session=ask, job=freeform`) | — | Never cursor-sdk plan |
 | **G2** | Frame | — (CDP; transport per conductor profile) | — | — |
 | **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `implement_ready` assertion stamped or dense packet ⇒ **`agent`** + `contract=implement` |
 | **G4** | Skeptic | — (CDP) | — | — |
 | **G5** | Implement | `implement` \| `pure-mechanical` | **`agent`** | `sdk_mode=plan` **422** at admit (`validate_sdk_mode_at_admit`) |
-| **G6** | After-ship review | — (CDP `purpose=review`) | — | — |
+| **G6** | After-ship review | — (CDP `job=delivery-review`) | — | — |
 | **G7** | Land / merge | `conductor` (orchestrator) | **`agent`** | Conductor admit is always agent-class |
 
 **W3 plan → implement:** when a G3 plan leg closes
@@ -338,7 +338,7 @@ First codework utterance after S4a mint:
 ```text
 team_dispatch(
   seat="cursor-sdk",
-  contract="none",
+  job="freeform",
   lane="B",
   source_ref="todo:{slug}",
   model_knobs={"fast":"true"},
@@ -396,8 +396,8 @@ drop list — the command stays punch-then-spawn.
 | S3 fired ∧ no Fable harvest → S4b / claim G1 skip | Harvest consult first; S4a already done |
 | Conductor announces Mode B then ends CHECKPOINT with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
 | Mode B then wrapper dies without harvest/handoff (`CONSULT_PENDING` as session-end) | `CONSULT_PENDING` is a wait token — wait for `archive_uri` / `from=web-anthropic`, or honest `partial:consult` harvest-handoff (`NEXT_ADMIT`) |
-| Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | `purpose=ask` — staging owns the arch-pair floor |
-| Reconstruct the Fable generate from memory / path-sim Q | Copy § S3 Fable generate recipe (`purpose=ask`; do not rebuild `skills=`) |
+| Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | `session=ask, job=freeform` — staging owns the arch-pair floor |
+| Reconstruct the Fable generate from memory / path-sim Q | Copy § S3 Fable generate recipe (`session=ask, job=freeform`; do not rebuild `skills=`) |
 | Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `cse_session(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → remint or bare `/layer` | Re-admit conductor · attach · G2 |
 | Slash `/work-item-seed {idea}` after same-session NL punch of that idea | S0 hit · re-admit or halt · ¬ second todo · ¬ second conductor |

@@ -297,7 +297,7 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             response.status_code = 200
             payload = {
-                "contract": "wrap",
+                "job": "wrap",
                 "status": "materialized",
                 "materialized": True,
                 "materialization_mode": "auto",

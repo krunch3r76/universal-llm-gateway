@@ -24,7 +24,7 @@ def live_probe_generate_kwargs(**overrides: Any) -> dict[str, Any]:
         team_dispatch(
             op="generate",
             seat="cursor-sdk",
-            contract="none",
+            job="freeform",
             dispatch_thread_id=thread_id,
             prompt=prompt,
             **live_probe_generate_kwargs(),  # includes lane="A"

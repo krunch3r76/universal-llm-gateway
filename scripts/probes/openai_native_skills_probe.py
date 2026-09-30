@@ -61,7 +61,7 @@ def main() -> int:
         "role": args.role,
         "dispatch_thread_id": f"probe-skills-{uuid.uuid4().hex[:12]}",
         "model": args.model,
-        "contract": "none",
+        "job": "freeform",
         "skills": ["advisor-timing"],
         "messages": [{"role": "user", "content": prompt}],
         "mcp": False,

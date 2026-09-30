@@ -273,7 +273,7 @@ async def complete_continuity_hop(
         job,
         model=model,
         reasoning_effort=str(wire_effort) if wire_effort else None,
-        purpose="operator-proxy",
+        session="operator-proxy", job="freeform",
         mission_kind="hop",
         parent_thread=str(job.thread_id),
         prompt_override=prepend_orientation(job.body, orientation.get("block")),

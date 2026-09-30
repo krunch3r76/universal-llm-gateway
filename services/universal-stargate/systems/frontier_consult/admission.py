@@ -393,7 +393,7 @@ def enforce_team_dispatch_generate_admit(
 
     Admission predicate (FOL):
       admit_generate(role) ⟺ role ∈ generate_roles()
-      ¬(role=reviewer ∧ is_mcp_probe_caller(caller_agent))
+      ¬(job=check-review ∧ is_mcp_probe_caller(caller_agent))
 
     Auto-dispatch seats (``cursor-sdk``, …) must use ``seat=``, not ``role=``.
     """
@@ -431,7 +431,7 @@ def enforce_team_dispatch_generate_admit(
         f"auto_dispatchable={profile.auto_dispatchable}). "
         f"Manual seats are reachable only via op=handoff. "
         f"If you are {to_agent}, use fs/cortex locally; "
-        f"for peer consult use `team_dispatch(op=generate, role=reviewer, "
+        f"for peer consult use `team_dispatch(op=generate, job=check-review, "
         f"dispatch_thread_id=…)` or another API role. Passing model= dispatches "
         f"an API endpoint only — it does not spawn a web session."
     )

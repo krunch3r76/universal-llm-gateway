@@ -707,7 +707,7 @@ def build_play_dispatch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "conductor",
+        "job": "conductor",
         "lane": "B",
         "source_ref": f"todo:{todo_slug}",
         "work_key": work_key,

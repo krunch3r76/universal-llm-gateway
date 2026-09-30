@@ -18,7 +18,7 @@ Authoring-time map for `seat=cursor-sdk` `op=generate` — do not mix shapes:
 output — never `sidecar_ref` (or `prompt`) beside `source_ref` (`multiple_prompt_sources`).
 See `agent_skill:conductor` § First-utterance spawn.
 
-Foot-gun: `contract=none` + `source_ref` without `` is invalid
+Foot-gun: `job=freeform` + `source_ref` without `` is invalid
 (agent-bus:4866). Do not paper over conductor spawn with `sidecar_ref`.
 
 ## Writing consult substrate
@@ -29,7 +29,7 @@ Work class: outbound letters, correspondence, prose critique+rewrite. Complement
 |---|---|
 | `xai/grok-4.7` / `cursor/grok-4.7` | **PROHIBITED** for writing |
 | `openai/gpt-5.5` | **OPERATOR-GATED** |
-| Standing writing multi-model | `role=reviewer` → `openai/gpt-5.6-terra` + `role=synthesizer` → Gemini; ¬ default `panel_dispatch` |
+| Standing writing multi-model | `job=freeform` → `openai/gpt-5.6-terra` + `job=freeform` → Gemini; ¬ default `panel_dispatch` |
 | Lead / web-anthropic in-seat | OK when corpus staged |
 
 Entity: `decision:writing-consult-model-routing`.
@@ -63,7 +63,7 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
 standing default `workflows.check_review.model` (`cursor/claude-fable-5-1` during Fable window)
 or explicit `cursor/gpt-5.6-terra|sol|luna` pin; poll `reply_from_agent` from admit. API
-`role=reviewer` + terra only when **all** reading pre-staged inline (`code-on-api`). Access-only
+`job=freeform` + terra only when **all** reading pre-staged inline (`code-on-api`). Access-only
 REVISE ≠ Gate-6 close.
 
 **Steps 1–2 zoom-out (C2):** recon/investigate packets MUST carry touch-point inventory + class/sibling
@@ -109,7 +109,7 @@ explicitly chooses `cursor`.
 
 ```python
 team_dispatch(op="generate", seat="cursor-sdk", dispatch_thread_id="<thread>",
-              contract="none"|"pure-mechanical", packet_path?=...)
+              job="freeform"|"pure-mechanical", packet_path?=...)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Repo-venv: cursor-sdk inherits repo venv. Inline lead edits =
@@ -129,7 +129,7 @@ Outer `CURSOR_SDK_TIMEOUT` ≠ terminal. RAG ingest batches: default `scripts/in
 
 ## CONFORM lane — provisional
 
-Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", contract="none",
+Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", job="freeform",
 packet_path=<frozen-envelope>)`. Envelope: `objective`, `touch_points`, `acceptance_criteria_known`,
 `judgment_settled`, optional `required_skills_hint`. Verify Layer 1 wrap precondition + Layer 2 semantic diff.
 Promotion blocked until N≥5 real runs.

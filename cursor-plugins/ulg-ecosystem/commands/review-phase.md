@@ -72,14 +72,14 @@ If any match is found:
 
 `scripts/consult -r reviewer` is retired with the `code-review` pipeline.
 A code review that leaves the tab is
-`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
+`team_dispatch(op=generate, model=cdp/opus-5.5, job=delivery-review)`.
 `cdp/opus-5` is the same class. In this tab, apply `review-task-guidance`
 and do not dispatch. Do not call model `code-review`.
 
 ### 4. Dispatch the review
 
 Do not run `scripts/consult -r reviewer`. Send the prompt below as
-`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
+`team_dispatch(op=generate, model=cdp/opus-5.5, job=delivery-review)`.
 
 Prompt body (whole files, not a patch):
 

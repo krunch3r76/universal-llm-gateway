@@ -73,7 +73,7 @@ def fill_recon_packet(
         corpus_lines.append(f"- {ref}")
 
     return f"""---
-contract: consult
+contract: confer
 density_triage: {density}
 todo: {todo_ref}
 dispatch_lane: code

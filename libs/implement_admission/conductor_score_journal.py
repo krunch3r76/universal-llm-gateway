@@ -48,7 +48,7 @@ _G_LABELS: dict[str, str] = {
     "G7": "Ship / land",
 }
 _G6_PRE_LAND_REVIEW = (
-    "G6 pre-land review witness — `cdp/opus-5` `purpose=review` on the lane "
+    "G6 pre-land review witness — `cdp/opus-5` `job=delivery-review` on the lane "
     "branch diff before merge; harvest ≺ land (a:32226 · a:32146)."
 )
 _WITNESS_KIND_BIND = "BIND"

@@ -38,7 +38,7 @@ outside `/path-sim` still owes the same ship gate:
 | `/overhaul` | Production surface (tests may be excluded) clears empty, too_short, and name_echo before step 9 — command §5.5 / §5.6 |
 | Lead path-sim closeout / R-after | Same scan — path-sim § Docstring AC |
 
-**¬** invent API `role=reviewer|skeptic` docstring floors. **¬** skip scan when the
+**¬** invent API `job=freeform|skeptic` docstring floors. **¬** skip scan when the
 arc skipped path-sim.
 
 Arch docs project **docstring inventory** (signatures/imports/docstrings), not

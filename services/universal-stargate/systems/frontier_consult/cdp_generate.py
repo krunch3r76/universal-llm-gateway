@@ -3,7 +3,7 @@
 Thin admit front over the native CDP API (``cdp_ask.client`` /
 ``POST /api/v1/providers/cdp/ask`` via ``claude_bundles.cdp_model_endpoint``).
 Forwards optional ``purpose`` (default ``ask``) onto the satellite submit so
-operator-proxy missions can set ``purpose=operator-proxy|mission`` without
+operator-proxy missions can set ``session=operator-proxy, job=freeform|mission`` without
 bare ``project_ask``. Posts on-behalf turns as ``from=web-anthropic`` (endpoint
 address) only after harvest proof (or failed+stall). CDP is substrate/session
 association (``web-anthropic-cdp``, ``execution_id``), not a bus seat.
@@ -87,7 +87,7 @@ def default_operator_seat_binding(
 
     ``mission_kind="hop"`` is never overwritten. ``parent_thread`` defaults from
     the generate ``thread_id`` when omitted for operator-proxy/mission and for
-    ``purpose=review``.
+    ``job=code-review``.
     """
     if not _binds_operator_lane(purpose):
         return parent_thread, mission_kind
@@ -436,7 +436,12 @@ async def dispatch_cdp_generate(
         model=model,
         request_id=request_id,
     )
-    contract = body.contract
+    raw_job = getattr(body, "job", None)
+    if isinstance(raw_job, str) and raw_job.strip():
+        contract = raw_job.strip()
+    else:
+        legacy = getattr(body, "contract", None)
+        contract = legacy.strip() if isinstance(legacy, str) and legacy.strip() else None
     if contract in {"implement", "wrap"}:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -590,9 +595,9 @@ async def dispatch_cdp_generate(
             tags=[
                 "agent:web-anthropic",
                 "type:generate",
-                f"contract:{contract or 'none'}",
+                *([f"contract:{contract}"] if contract else []),
             ],
-            handoff_contract=contract or "none",
+            handoff_contract=contract,
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
         )
         after_turn = 1
@@ -661,8 +666,9 @@ async def dispatch_cdp_generate(
         "mission_kind": mission_kind,
         "parent_thread": parent_thread,
         "topic": dispatch_topic,
-        "contract": str(contract or "none"),
     }
+    if contract is not None:
+        worker_kwargs["contract"] = contract
     if isinstance(opts, dict):
         if "harvest_source" in opts:
             worker_kwargs["harvest_source"] = opts["harvest_source"]
@@ -726,7 +732,7 @@ async def dispatch_cdp_generate(
         "to_agent": CDP_REPLY_FROM,
         "reply_from_agent": CDP_REPLY_FROM,
         "resolved_model": model,
-        "resolved_contract": contract or "none",
+        "resolved_job": contract,
         "substrate": CDP_SUBSTRATE,
         "cost_source": "unavailable",
         "prompt_uri": staged.prompt_uri,

@@ -21,7 +21,7 @@ plan-first dispatch path on the SDK substrate.
 | Surface | Mechanism | Output | Land |
 |---|---|---|---|
 | **Cursor IDE Plan mode** | IDE mode switch + parent `plan-mode.mdc` checklist | `tmp/prompts/{project}/phase{n}.md` | Lead / attended implement |
-| **cursor-sdk plan mode** | `sdk_mode: plan` on `team_dispatch(seat=cursor-sdk)` | cortex:// sidecars, specs, reviews | **Forbidden** on plan leg — nest `contract=implement` after |
+| **cursor-sdk plan mode** | `sdk_mode: plan` on `team_dispatch(seat=cursor-sdk)` | cortex:// sidecars, specs, reviews | **Forbidden** on plan leg — nest `job=implement` after |
 
 Do not conflate them: IDE Plan mode is in-seat authoring; cursor-sdk plan is a
 headless read-only dispatch (`read_only=true`, lease-exempt) that closes with
@@ -29,7 +29,7 @@ headless read-only dispatch (`read_only=true`, lease-exempt) that closes with
 
 ## When to use cursor-sdk plan
 
-- Sparse recon / architecture bind before implement (`contract: none|consult|ask|recon|seed`)
+- Sparse recon / architecture bind before implement (`job: freeform|consult|ask|recon|seed`)
 - Conductor G3 row before `implement_ready` (`work-item-seed-path` G-row ladder)
 - Packet or wire explicitly names `sdk_mode: plan`
 - `read_only=true` on plan-default contracts (unless `sdk_mode: agent` overrides)

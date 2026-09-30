@@ -260,7 +260,7 @@ judgment of when to bind directly with this seat.
 
 **Knob relay (this seat fires the dispatch):** this seat fires `team_dispatch` on ulg-code. `model`, `contract`, `lane`, `work_key`, and `model_knobs` go on that wire. `reasoning_effort` on `seat=cursor-sdk` is 422 `reasoning_effort_not_supported`. Body-level `effort:`, `reasoning_effort:`, or line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT: `libs/cursor_capabilities/cursor_capabilities.py`). Name `fast=true` on the cursor-sdk dispatch wire when an arc pin says so. Hop successor model: `desired_model=cdp/opus-5.5-extra`.
 
-**CDP Fable / Opus pin (BINDING):** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. A fresh operator window is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, dispatch_thread_id=<this private lane>, handoff_prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
+**CDP Fable / Opus pin (BINDING):** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. A fresh operator window is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform, dispatch_thread_id=<this private lane>, handoff_prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`
 (+ `vision:` on `TYPE: DIRECTIVE` when applicable). Empty scope or a missing contract
@@ -338,7 +338,7 @@ page once if away, then proceed — approval is standing.
 
 **New CDP window (BINDING):** when this Cowork CSE's context is stale, or Customize
 skills / life MCP just uploaded and must go live, open a fresh operator window with
-ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy,
+ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform,
 dispatch_thread_id=<THIS private request lane>, handoff_prompt=...)``. Not via
 cursor-auto. Not ``cdp/fable`` unless Kaywan asked. **Same private lane**, never a
 second request thread. Warm follow-up on a dead/stale CSE does not pick up new skill

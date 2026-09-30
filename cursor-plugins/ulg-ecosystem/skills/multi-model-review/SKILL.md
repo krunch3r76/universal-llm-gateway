@@ -43,7 +43,7 @@ Panel-close assert fields: `consensus_disposition=panel`, `panel_families`, `pan
 
 ## Workflow
 
-1. Dispatch Reviewer 1 with `/session-review` or `/diff-review` packet. A code review request is `team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`. `cdp/opus-5` is the same class. Do not use `role=reviewer` and do not call model `code-review`.
+1. Dispatch Reviewer 1 with `/session-review` or `/diff-review` packet. A code review request is `team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`. `cdp/opus-5` is the same class. Do not use `job=code-review` and do not call model `code-review`.
 2. Dispatch Reviewer 2 with a clean packet or Reviewer 1 packet plus findings-only addendum:
    - include `Prior pass findings (do not assume correct)` + Reviewer 1 findings verbatim;
    - instruct: validate, refute, extend, surface false negatives, and mark high-confidence concurrence;

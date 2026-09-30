@@ -127,7 +127,7 @@ Pick the cheapest sound route for this seat. **SOT:** consult-routing § Address
 | **SEED** | no closable `todo:` ∧ codework | **`/work-item-seed`** S4a then spawn — Use the `work-item-seed-path` skill |
 | **LAYER** | **`bind_status=unsettled`** ∧ **`density_triage∈{judgment_required,recon_pending}`** ∧ codework; default when unmatched codework | Re-admit conductor at highest open G — Use the `abstraction-layering` skill for **gate shape**; `/layer` is not a second admit; **defer §3b** unless `check_requested=true` |
 | **PATH-SIM** | same bind ∧ (**non-codework** ∨ `arc_lane=path_sim` ∨ operator named `/path-sim`) | `/path-sim` (bundled) — Use the `path-sim` skill § Bundled dispatch |
-| DISPATCH | **`density_triage=mechanical`**; or **`implement_ready`** ∧ dense spec after Gate-2; explicit post-densify implement after opt-in Gate-6 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=…)` |
+| DISPATCH | **`density_triage=mechanical`**; or **`implement_ready`** ∧ dense spec after Gate-2; explicit post-densify implement after opt-in Gate-6 | `team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=…)` |
 | COORDINATE | operator/other seat needed; dirty-tree commit; cross-seat changes; owner ratification | ask/operator or agent_bus handoff |
 
 `bind_status=deferred` ⇒ **held** (no route; `next_action=await_unblock`).
@@ -147,7 +147,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 
 `DISPATCH ∧ contract=implement ∧ density_triage=judgment_required ∧ check_requested ⇒ finish this checklist before team_dispatch`. Gate contracts: consult-routing § Implement admission gates; lifecycle: todo-lifecycle §6–7.
 
-**Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` (CDP default). `cursor/gpt-5.6-terra|sol|luna` only if the operator/packet **names** Other Models. API `role=reviewer` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
+**Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `team_dispatch(model=cdp/opus-5, job=delivery-review, reasoning_effort="high")` (CDP default). `cursor/gpt-5.6-terra|sol|luna` only if the operator/packet **names** Other Models. API `job=freeform` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
 
 **Happy path**
 
@@ -157,7 +157,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 | 2 | Dispatch Gate-6 on the substrate above; ensure the ratifying turn body carries literal `FILE_EVIDENCE_PATHS:` (bare `workspaces://`/`cortex://` paths, no bullets). Spine home = GPT merged-check turn. |
 | 3 | Assert `status(todo, skeptic_ratified, current)` **confirmed**, `evidence_uris` = [`agent-bus:{tid}#turn-{N}` of that FILE_EVIDENCE turn, `spec_sha256:<current hex>`]. Grounding reads the **first** `agent-bus:` URI — ¬ cite orchestration root / densify WIP. |
 | 4 | `cortex(tool="implement_ready_preflight", arguments='{"source_ref":"todo:{slug}"}')` → `admitted=true` (empty gate-13 warnings, or fix named code). |
-| 5 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`. |
+| 5 | `team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})`. |
 
 `FILE_EVIDENCE_PATHS ∈ Gate-6 turn body ⇏ Gate-13 pass`. Absent the `skeptic_ratified` assertion citing that turn → `skeptic_pass_missing` / `skeptic_evidence_missing` (incident: a23903 + 4917#110).
 
@@ -169,7 +169,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 | A2 | Confirm Gate-6 turn has `FILE_EVIDENCE_PATHS:` + affirmative verdict + `spec_sha256:<hex>`. |
 | A3 | Set `attributes.gate6_ratification_uri=agent-bus:{tid}#turn-{N}` (explicit `#turn-N` required). |
 | A4 | `implement_ready_preflight` → `admitted=true` with gate-13 evidence grounded. |
-| A5 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`. |
+| A5 | `team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})`. |
 
 **Waiver path** (stamp unavailable; same pattern as sw-imprint-commit densify): set `attributes.recon_waived` to a **JSON string**:
 
@@ -230,7 +230,7 @@ Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT.
 **Event instrumentation closeout (BINDING — judgment, not a scan):** when the pickup touched behavioral edges or `@event_factory` emit sites, closeout states in one line — events added (`signal` · `role` · why) OR "no event warranted (reason)", plus any prune/relabel candidates spotted (Use the `event-instrumentation-discipline` skill). No criticals scan — add/prune is judgment. Silence on an event-bearing change is the miss.
 
 **Session / work review (optional, recommended):** on judgment-bearing ship, cue
-`team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` (`consult-routing` § CDP
+`team_dispatch(model=cdp/opus-5, job=delivery-review, reasoning_effort="high")` (`consult-routing` § CDP
 transport). Background preferred; defer and name it when attended-blocking.
 ¬ a close gate; ¬ silent Terra G4; ¬ a substitute for path-sim R-after.
 

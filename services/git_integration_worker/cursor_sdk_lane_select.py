@@ -23,7 +23,7 @@ LaneSelectionReason = Literal[
     "auto_regime",
 ]
 
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "none"})
+_IMPLEMENT_CLASS_JOBS = frozenset({"implement", "none"})
 
 
 class LaneScopeRefused(Exception):  # noqa: N818
@@ -164,7 +164,7 @@ def select_lane(
 
     if regime_active:
         normalized = (contract or "").lower()
-        if normalized in _IMPLEMENT_CLASS_CONTRACTS:
+        if normalized in _IMPLEMENT_CLASS_JOBS:
             return "B", advisories, "contract_regime"
         return "B", advisories, "regime"
 

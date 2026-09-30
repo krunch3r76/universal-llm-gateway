@@ -77,7 +77,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
    6. **`In one line:`** the aim again, outcome and constraint together.
    7. **Receipts, skippable.** One line after the picture, labeled as a receipt the person may skip: tip CHECKPOINT turn# · `seal_status` · `summary_row_source` · `fence_id` · `head_sha`. The fence id and the commit hash live on this line. These do not lead, and they are not the proof the tape was read.
 
-   `In` / `Out` stay the lock, spoken inside the aim. Source of the lock: card `## Objective`, else the birth objective. Slug is not the mission. Spoken mission ≠ CDP `purpose=mission`. Correct-if-wrong is the agreement beat; silent continue = agree. Widening past `Out` ⇒ stop and re-bind. ¬ permission-seek on work that stays inside the stated lock.
+   `In` / `Out` stay the lock, spoken inside the aim. Source of the lock: card `## Objective`, else the birth objective. Slug is not the mission. Spoken mission ≠ CDP `session=mission, job=freeform`. Correct-if-wrong is the agreement beat; silent continue = agree. Widening past `Out` ⇒ stop and re-bind. ¬ permission-seek on work that stays inside the stated lock.
 
    **Profile gate (binding — todo:orchestration-resume-charter-print):** Discriminator = `checkpoint-discipline` — root tagged `charter-runner` ⇒ **`tick_charter`**; else ⇒ **`orchestrator_continuity`** (manual orchestration).
 
@@ -158,7 +158,7 @@ When communicating scoreboard gates to the **human operator**: pair `G#` with th
 | G3 | implementation spec | Densified spec ready for review or build |
 | G4 | skeptic review | Independent skeptic / gate-6 verdict |
 | G5 | implementation | Code / config land in workspace |
-| G6 | pre-land review | `cdp/opus-5.5` `purpose=review` on lane branch diff (R1) |
+| G6 | pre-land review | `cdp/opus-5.5` `job=delivery-review` on lane branch diff (R1) |
 | G7 | ship and land | Merge, path-explicit commit, recycle / go-live proof (L1) |
 
 Arc-specific rows and example pager lines live on each scoreboard under **## Gate legend** and **## Pager triggers (natural language)** — e.g. `cortex://notes/system/scoreboards/event-db-corruption-recovery-scoreboard.md`. Do not page on bare `G4 cleared`; say what gate completed in words the operator can act on or ignore.

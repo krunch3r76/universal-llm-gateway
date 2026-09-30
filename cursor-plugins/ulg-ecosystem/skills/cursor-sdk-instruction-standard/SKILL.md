@@ -3,7 +3,7 @@ name: cursor-sdk-instruction-standard
 description: "Before authoring cursor-sdk dispatch turns — none, pure-mechanical, or implement contracts; ensures Composer executors get verifiable instructions."
 skill_category: dispatch-delegation
 trigger_short: cursor-sdk ∨ none ∨ pure-mechanical ∨ self-check ∨ acceptance_criteria
-trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "contract=implement", "lane"]
+trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "job=implement", "lane"]
 canonical: workspaces://universal-llm-gateway/.cursor/skills/cursor-sdk-instruction-standard/SKILL.md
 ---
 
@@ -13,7 +13,7 @@ Composer 2.5 is a capable mechanical executor; self-reports are usually reliable
 
 `cursor-sdk dispatch ⇒ explicit determinate instructions ∧ repeated output contract ∧ worker self-check ∧ lead verification for irreversible writes`.
 
-Light execution: `team_dispatch(op=generate, seat=cursor-sdk)` invokes Composer without IDE handoff. Prefer `contract=implement` when implement-ready; use narrower contracts only when appropriate. On `op=generate`, `subject` is ignored; use `op=to_thread` to set thread subject.
+Light execution: `team_dispatch(op=generate, seat=cursor-sdk)` invokes Composer without IDE handoff. Prefer `job=implement` when implement-ready; use narrower contracts only when appropriate. On `op=generate`, `subject` is ignored; use `op=to_thread` to set thread subject.
 
 ## D1 — Determinate steps
 
@@ -152,7 +152,7 @@ Before marking a `judgment_required` todo implement-ready, verify ALL:
 
 ## Materializer preconditions
 
-`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})` reads entity state, not dispatch params. Required:
+`team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})` reads entity state, not dispatch params. Required:
 
 1. `todo.attributes.density_triage ∈ {judgment_required, mechanical}`. `mechanical` bypasses spec; any other value rejects (`implement_triage_unknown`).
 2. Todo entity `source_uri` points at `cortex://notes/system/specs/{slug}.md` or `notes/system/specs/{slug}.md`; `attributes.spec_path` is ignored.
@@ -160,7 +160,7 @@ Before marking a `judgment_required` todo implement-ready, verify ALL:
 
 First-failure order: `implement_triage_unknown` → `implement_not_ready_judgment_required` → `implement_ready_assertion_missing` → `implement_ready_assertion_entity_mismatch` → `implement_ready_assertion_inactive` → `implement_not_ready_no_dense_spec` → `implement_ready_assertion_spec_uncited` → `implement_spec_unreadable` → `implement_spec_not_dense` → `implement_spec_drifted_since_ready` → `implement_attrs_unpopulated`.
 
-Dry-run before declaring ready: `team_dispatch(op=generate, seat=cursor-sdk, contract=wrap, source_ref=todo:{slug})`. `wrap` runs the same `require_implement_ready` gate then materializes a packet without SDK worker. `422` names the missing precondition; `200 + packet_path` means execute will admit.
+Dry-run before declaring ready: `team_dispatch(op=generate, seat=cursor-sdk, job=wrap, source_ref=todo:{slug})`. `wrap` runs the same `require_implement_ready` gate then materializes a packet without SDK worker. `422` names the missing precondition; `200 + packet_path` means execute will admit.
 
 Re-versioned / previously done todo: stale `implement_ready_assertion_id` may be reused by source-ref materialization. Supersede old assertion, re-pin, re-distill attrs, or use `packet_path` until verified.
 

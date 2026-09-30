@@ -39,7 +39,6 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 import httpx
 from mcp_events import record
 from pydantic import Field
-from team_dispatch_vocab import TeamDispatchContract
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -282,7 +281,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         subject: str | None = None,
         packet_path: str | None = None,
         source_ref: str | None = None,
-        contract: TeamDispatchContract | None = None,
+        contract: str | None = None,
         density_triage: _DENSITY_TRIAGE_LITERAL | None = None,
         review_opt_out_reason_code: (
             Literal[
@@ -369,7 +368,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "CDP registry/mission purpose tag on model=cdp/… generate "
-                    "(default ask). Set purpose=operator-proxy or mission for "
+                    "(default ask). Set session=operator-proxy, job=freeform or mission for "
                     "operator-proxy skill-chip inject; ignored on non-CDP models."
                 ),
             ),
@@ -391,7 +390,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "Stable work identity for cursor-sdk admits (D4 grammar: "
                     "todo:, plan:, agent-bus:, packet:, friction:, decision:). "
                     "Required for write-class / Lane B. write-class is the "
-                    "lane/read_only admit, including contract=none; it does "
+                    "lane/read_only admit, including job=freeform; it does "
                     "not select contract=implement. Allowed on every contract "
                     "including none."
                 ),
@@ -472,7 +471,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-        **generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`,`sketch`,`conductor`}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=none` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=none` and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=none`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`,`sketch`,`conductor`}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `job=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `job=freeform` and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `job=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
         **to_thread:** `contract`∈{`none`,`pure-mechanical`}. `thread` required.
 
@@ -622,7 +621,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if source_ref is not None:
                 handoff_body["source_ref"] = source_ref
             if contract is not None:
-                handoff_body["contract"] = contract
+                handoff_body["job"] = contract
             for key, val in (
                 ("executor_override", executor_override),
                 ("executor_override_reason_code", executor_override_reason_code),
@@ -842,7 +841,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if sidecar_ref is not None:
                 body["sidecar_ref"] = sidecar_ref
             if contract is not None:
-                body["contract"] = contract
+                body["job"] = contract
             if density_triage is not None:
                 body["density_triage"] = density_triage
             if review_opt_out_reason_code is not None:
@@ -897,7 +896,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["prompt"] = prompt
             if sidecar_ref is not None:
                 body["sidecar_ref"] = sidecar_ref
-            body["contract"] = contract
+            body["job"] = contract
             if auto_review_child is not None:
                 body["auto_review_child"] = auto_review_child
             if spawn_review_provenance is not None:

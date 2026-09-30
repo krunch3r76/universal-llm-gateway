@@ -102,7 +102,7 @@ def build_continuity_handoff_body(
     birth_id = (successor_birth_id or "").strip() or mint_successor_birth_id()
     lines = [
         "TYPE: CONTINUITY_HANDOFF",
-        "contract: none",
+        "contract: freeform",
         f"source: {source}",
         f"trigger: {trigger}",
         f"thread_id: {thread_id}",

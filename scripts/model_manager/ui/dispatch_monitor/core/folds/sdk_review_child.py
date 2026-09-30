@@ -29,7 +29,7 @@ def on_review_child_spawned(fold: SdkFold, record: EventRecord) -> None:
     child = _ensure_row(fold, execution_id)
     child.review_child = True
     child.parent_execution_id = parent_execution_id
-    child.role = "reviewer"
+    child.job="check-review"
     reviewer_model = payload.get("reviewer_model")
     if reviewer_model:
         child.model = str(reviewer_model)
