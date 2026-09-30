@@ -239,8 +239,13 @@ per-G-row one. Default posture once running:
   crash's loss to the in-flight row (`a:31786`). A mission that ends inside
   one dispatch simply stops `DONE`. Owed stops win at a boundary:
   `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
-  `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify (`cdp/fable-5.1`)
-  then continues — a live summoning chat is not a human stop; named
+  `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify on ACTIVE
+  (`cdp/opus-5`, reasoning_effort=max, and effort_when_bind_gates_wave=max
+  when a bind gates a wave) then continues — a live summoning chat is not a
+  human stop (shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the
+  constant in libs/implement_admission/conductor_width_seat.py wins if they
+  differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1,
+  reasoning_effort=high, effort_when_bind_gates_wave=max)); named
   hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
   then hop. If you end with the mission open and **no** token, the substrate
   still re-admits you (budgeted) — that is the safety net, not the default.
@@ -332,9 +337,11 @@ Rates: `config/model_rates.yaml`.
 |---|---|---|
 | **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
 | **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
-| **CDP width** | **`cdp/fable-5.1`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. Stronger Fable is explicit `cdp/fable-5`. |
+| **CDP width** | **`cdp/opus-5`** `reasoning_effort=max` | G1 architecture, G2 frame, G4 skeptic, and G3→G5 score-ratify read ACTIVE (model + reasoning_effort; effort_when_bind_gates_wave=max only when a bind gates a wave). G2 follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
 | **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
+
+While ACTIVE.model is cdp/opus-5, G4 is the same usage channel as an Opus binder; restoring cdp/fable-5.1 returns the cross-family skeptic, and Sonnet, Terra, or another model does not imitate that split.
 
 > `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
 
@@ -362,20 +369,22 @@ Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-
 
 **Selector precedence:** packet profile line (`conductor_profile: fable-scarce` in
 packet frontmatter) ≻ todo attr `conductor_profile=fable-scarce` ≻ house default.
-Absent the selector ⇒ house G-row pickers below, not this table. Scoreboard rows
-**G2 / G4 / G6** annotate `profile=fable-scarce` and track **`cdp_fable_legs_arc`**
-(harvested G4/M2 `cdp/fable-5.1` legs only — G1 Fable and cursor-sdk `check_review`
-Fable-5.1 are not counted).
+Absent the selector ⇒ house G-row pickers below, not this table. This profile
+does not name a different width model: G1, G2, G4, and G3→G5 read ACTIVE, and
+the ≤1 `cdp/fable-5.1` leg-per-arc allowance is removed. Shipped ACTIVE is
+cdp/opus-5 at reasoning_effort=max; the constant in
+libs/implement_admission/conductor_width_seat.py wins if they differ; restore
+by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high,
+effort_when_bind_gates_wave=max). Scoreboard rows **G2 / G4 / G6** may still
+annotate `profile=fable-scarce`.
 
 | G-row | Picker | Effort pin | Transport | `purpose` |
 |---|---|---|---|---|
-| **G2 Frame** | `cdp/opus-5.5` **fresh** | **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`) — one rung, two spellings | Fresh `team_dispatch(model=cdp/opus-5.5)`. **¬** Fable followup into G1 CSE (`fable-scarce`) | **`ask`** |
-| **G4 Skeptic** | **≤1 `cdp/fable-5.1` leg per arc** (incl. `panel_dispatch` members) | `high`; **`max` only when bind gates a wave** — not the G4 default | Fresh. **No automatic Opus re-pass** when Fable bound; second CDP needs M2 invariant attr or operator/packet pin on the scoreboard row | `ask` \| `review` |
+| **G2 Frame** | ACTIVE (`cdp/opus-5`) | `reasoning_effort=max`; `effort_when_bind_gates_wave=max` when a bind gates a wave. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | **`ask`** |
+| **G4 Skeptic** | ACTIVE (`cdp/opus-5`). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | `reasoning_effort=max`; `effort_when_bind_gates_wave=max` when a bind gates a wave. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | Same seat as G1. The ≤1 `cdp/fable-5.1` leg allowance is removed. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | `ask` \| `review` |
 | **G6 Pre-land review** | `cdp/opus-5.5` | **`extra`/`xhigh` floor**; **`max` when invariant-touching** | Lane branch diff; **`review harvest ≺ land ≺ DONE`** unchanged | **`review`** |
 
-Fresh Opus G2 under this profile is the **house G2 falsifier discharging**
-(assertion:36248), not a standing exception to followup-first. **Refused effort
-pin** on admit ⇒ report and halt — never silent substitute to another rung or seat
+**Refused effort pin** on admit ⇒ report and halt — never silent substitute to another rung or seat
 (S7-I).
 
 ## Role split
@@ -579,12 +588,17 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
   without the owed stronger-model **harvest**. Two pickers, not one:
-  **G4 Skeptic** (pre-implement, on the G3 **spec**) = `cdp/fable-5.1` (high/max).
-  **Under `conductor_profile=fable-scarce`:** ≤1 `cdp/fable-5.1` leg in the G4/M2
-  skeptic slot per arc, `panel_dispatch` members count as legs, effort `high`
-  (`max` only when the bind gates a wave — not the default); no automatic Opus
-  re-pass when Fable bound — a second CDP needs an M2 invariant attr or an
-  operator/packet pin written on the scoreboard row. **After-ship code review**
+  **G4 Skeptic** (pre-implement, on the G3 **spec**) = ACTIVE (`cdp/opus-5`,
+  reasoning_effort=max; effort_when_bind_gates_wave=max when a bind gates a
+  wave). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in
+  libs/implement_admission/conductor_width_seat.py wins if they differ; restore
+  by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high,
+  effort_when_bind_gates_wave=max). **Under `conductor_profile=fable-scarce`:**
+  G4 still reads ACTIVE, and the ≤1 `cdp/fable-5.1` leg-per-arc allowance is
+  removed. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant
+  in libs/implement_admission/conductor_width_seat.py wins if they differ;
+  restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1,
+  reasoning_effort=high, effort_when_bind_gates_wave=max). **After-ship code review**
   (post-implement, on the **lane branch**, before land) = `cdp/opus-5.5`
   (xhigh/Extra). Skeptic ≠ code review. Composer cannot self-certify either.
   Same-family effort bumps are **not** the gate.
@@ -599,8 +613,13 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   rebinds that gate’s seat (e.g. Cursor skeptic) — inform-then-proceed, never
   silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
 - Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
-  (`cdp/fable-5.1`) as an away summon, and post `SCORE_RESURFACE` on the
-  summoning thread as a report. The report is not a stop. A human gate is
+  on ACTIVE (`cdp/opus-5`, reasoning_effort=max; effort_when_bind_gates_wave=max
+  when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
+  summoning thread as a report. Shipped ACTIVE is cdp/opus-5 at
+  reasoning_effort=max; the constant in
+  libs/implement_admission/conductor_width_seat.py wins if they differ; restore
+  by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high,
+  effort_when_bind_gates_wave=max). The report is not a stop. A human gate is
   only an explicit see-score or `OPERATOR_GATE`.
 - `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
 - `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
@@ -624,11 +643,14 @@ sidecar write ≺ bus tip ≺ closeout.
 
 Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` ·
 `Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
-field under profile **`cdp_fable_legs_arc`**: counts **harvested** G4/M2
-`cdp/fable-5.1` legs only (G1 Fable and cursor-sdk `check_review` Fable-5.1 are not
-counted). Empty / `FAILED body_len=0` leg ⇒ record `attempt=<execution_id>` on
-the row; does not consume the cap; one retry allowed; second empty ⇒ HARD STOP or
-operator pin — never silent Opus substitute. Field-level
+field under profile **`cdp_fable_legs_arc`** no longer caps legs: the ≤1
+`cdp/fable-5.1` leg-per-arc allowance is removed, and G4 reads ACTIVE.
+Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in
+libs/implement_admission/conductor_width_seat.py wins if they differ; restore
+by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high,
+effort_when_bind_gates_wave=max). Empty / `FAILED body_len=0` leg ⇒ record
+`attempt=<execution_id>` on the row; one retry allowed; second empty ⇒ HARD
+STOP or operator pin — never a silent substitute to another width model. Field-level
 content and the why-a-cold-successor-needs-it column:
 `cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the
@@ -949,10 +971,14 @@ Command `/conductor` (plugin): orient → ask establishing questions (incl. **mo
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
 when the operator already bound the answers in chat. Scoreboard mint includes
-stronger-model gates (a:32146 · a:32226): G4 Skeptic = `cdp/fable-5.1`; after-ship
-code review = `cdp/opus-5.5` — hard, ¬ optional, ¬ Composer self-cert; CDP
-transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
-`fable-scarce` ⇒ see § Profile fable-scarce.
+stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE (`cdp/opus-5`,
+reasoning_effort=max); after-ship code review = `cdp/opus-5.5` — hard, ¬
+optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
+(¬ DEFERRED-and-proceed). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max;
+the constant in libs/implement_admission/conductor_width_seat.py wins if they
+differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1,
+reasoning_effort=high, effort_when_bind_gates_wave=max). Profile
+`fable-scarce` ⇒ see § Profile fable-scarce (width rows stay on ACTIVE).
 
 ## Composes with
 
@@ -1007,7 +1033,7 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
 | Fire Opus after-ship / Fable Skeptic and never read it | Summoning-thread lead quotes the harvest; unread ⇒ ¬ DONE |
 | Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | **HARD STOP** — restore CDP + harvest, or operator-explicit seat rebind; ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Cursor/Composer silent substitute (a:32146 · a:32226 · 9638 hop3 · 10013) |
 | Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
-| Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = Fable on spec; code review = Opus on the lane branch diff, before land (G6) |
+| Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = ACTIVE on the spec (shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max)); code review stays `cdp/opus-5.5` on the lane branch diff, before land (G6) |
 | Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Path-explicit commit of session paths, then prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |

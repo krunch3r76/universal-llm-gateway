@@ -26,6 +26,10 @@ from implement_admission.conductor_score_journal import (
     scoreboard_tip_uri,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_width_seat import (
+    ConductorWidthSeat,
+    g3_g5_score_ratify_clause,
+)
 from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
 from implement_admission.materialize import MaterializedPacket, _extract_block
 from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
@@ -43,6 +47,36 @@ _SCORE_PLAY_SEAT_LINES = (
     "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
     "was underspecified.",
 )
+
+
+def hop_invariant_g3_g5_fragment(
+    seat: ConductorWidthSeat | None = None,
+) -> str:
+    """G3→G5 fragment of the hop invariant, filled at call time.
+
+    Production omits ``seat`` and reads ACTIVE. Tests pass RESTORE so the
+    Fable wire renders without editing that assignment.
+    """
+    return (
+        "G3→G5 fires in-process CDP score-ratify "
+        f"({g3_g5_score_ratify_clause(seat)}) then continues — a live "
+        "summoning chat is not a human stop"
+    )
+
+
+def attended_g3_g5_task_sentence(
+    seat: ConductorWidthSeat | None = None,
+) -> str:
+    """Attended G3→G5 task-guidance sentence, filled at call time.
+
+    Uses the same clause as the hop invariant and the GIW preamble so one
+    assignment names the seat in every rendered packet.
+    """
+    return (
+        "G3→G5 attended: fire in-process CDP score-ratify "
+        f"({g3_g5_score_ratify_clause(seat)}, do-not-fight / likely-optimal), "
+        "then continue."
+    )
 
 
 def _default_entry_gate(
@@ -313,9 +347,8 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "admits your successor on this same thread and Lane-B checkout after your "
             "row goes terminal. ROW_HOP is not a pause and not a page; the mission "
             "continues under this admit. Owed stops win: stop_after ⇒ ROW_PINNED; "
-            "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; G3→G5 fires "
-            "in-process CDP score-ratify (cdp/fable-5.1) then continues — a live "
-            "summoning chat is not a human stop; a live nested child "
+            "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; "
+            f"{hop_invariant_g3_g5_fragment()}; a live nested child "
             "forbids the hop — harvest first."
         ),
         (
@@ -338,8 +371,7 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
     if ctx.summon_mode == "attended":
         g3_g5_lines = [
             (
-                "G3→G5 attended: fire in-process CDP score-ratify "
-                "(cdp/fable-5.1, do-not-fight / likely-optimal), then continue. "
+                f"{attended_g3_g5_task_sentence()} "
                 "Post SCORE_RESURFACE on "
                 f"summoning_thread_id={ctx.summoning_thread_id or '<parent/root>'} "
                 "(never this worker thread) as a report. The report is not a stop."

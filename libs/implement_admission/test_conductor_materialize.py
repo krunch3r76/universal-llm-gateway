@@ -28,6 +28,7 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_width_seat import ACTIVE
 from implement_admission.conductor_witness import FoldDeps
 
 
@@ -343,7 +344,9 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     assert "summon_mode: attended" in mp.text
     assert "SCORE_RESURFACE on summoning_thread_id=" in mp.text
     assert "never this worker thread" in mp.text
-    assert "cdp/fable-5.1" in mp.text
+    assert ACTIVE.model in mp.text
+    assert "score-ratify (" + ACTIVE.model in mp.text
+    assert "cdp/fable-5.1" not in mp.text
     assert "A live summoning chat is not a gate." in mp.text
 
 

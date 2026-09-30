@@ -47,8 +47,7 @@ Execution lives on conductor CHECKPOINTs, score journal, and nested Composer G5.
 ## Invariant
 
 `∀ layering:` high abstraction → low concreteness; inherit binds above; ¬ re-reason
-closed layers. `Fable CDP → Fable followup frame (or Opus if G1 was not Fable **or `conductor_profile=fable-scarce`**) →
-Grok densify → optional explicit Other Models check → Composer → pre-land review → ship`.
+closed layers. Width seat is ACTIVE: G1 on ACTIVE.model, then G2 followup into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists (`conductor_profile=fable-scarce` does not pick a different width model). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). Then Grok densify → optional explicit Other Models check → Composer → pre-land review → ship.
 No standing path-sim R-windows. **G6** = binding pre-land `cdp/opus-5` review (§ Pre-land
 CDP Opus review); **G7** = ship/land + mechanical verify. Keep path-sim Q≠R.
 
@@ -114,8 +113,8 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 
 | G | Layer | Seat | Token | Exit |
 |---|---|---|---|---|
-| 1 | Architecture | Fable/wide CDP · **arch skill floor** | `[consult:judgment_gap]` | `fable-answer.md` |
-| 2 | Frame | **Fable followup** in the G1 CSE · else `cdp/opus-5` fresh · **inherit arch floor** · **profile `fable-scarce` ⇒ `cdp/opus-5` fresh, `extra`, `purpose=ask`, ¬ followup** | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
+| 1 | Architecture | ACTIVE `cdp/opus-5` reasoning_effort=max · **arch skill floor**. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | `[consult:judgment_gap]` | `fable-answer.md` |
+| 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (not a different model, not `extra`). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | **Explicit Other Models pin only** (e.g. Terra). Default **skip** (G3→G5). `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
@@ -129,8 +128,8 @@ densify. Under-primed G1/G2 → densify hardens the wrong shape.
 
 | Gate | Required delivery |
 |---|---|
-| **G1 (incl. default Fable)** | **Always** for ULG codebase layer work: sealed delivery of **`architecture-invariants` ∧ `ulg-architecture`**. Prefer Customize attach for Claude-slug skills; **non-slugs / cursor_only must be inlined**. URI-cite alone ≠ delivery. Judgment chips (`reasoning-posture`) **do not substitute** for the arch pair. **Halt** if floor missing. Compose `claude-ai-cdp-navigation` § Skill delivery. |
-| **G2** | Frame instructions inherit the G1 floor (and cite it). “Minimal `skills=`” means **minimal beyond the arch floor** — ¬ license stripping `architecture-invariants` / `ulg-architecture`. When frame touches placement/hosting, keep `[ulg:host-process]` inline. **Under `conductor_profile=fable-scarce` with fresh Opus G2:** the **`architecture-invariants` ∧ `ulg-architecture`** pair must be **fresh on dispatch** (`purpose=ask` staging) — same floor as house G1/G2, not a lighter read. |
+| **G1 (ACTIVE width seat)** | **Always** for ULG codebase layer work: sealed delivery of **`architecture-invariants` ∧ `ulg-architecture`**. Prefer Customize attach for Claude-slug skills; **non-slugs / cursor_only must be inlined**. URI-cite alone ≠ delivery. Judgment chips (`reasoning-posture`) **do not substitute** for the arch pair. **Halt** if floor missing. Compose `claude-ai-cdp-navigation` § Skill delivery. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). |
+| **G2** | Frame instructions inherit the G1 floor (and cite it). “Minimal `skills=`” means **minimal beyond the arch floor** — ¬ license stripping `architecture-invariants` / `ulg-architecture`. When frame touches placement/hosting, keep `[ulg:host-process]` inline. When G2 is a fresh ACTIVE dispatch because no live G1 CSE exists, the **`architecture-invariants` ∧ `ulg-architecture`** pair must be **fresh on dispatch** (`purpose=ask` staging) — same floor as house G1/G2, not a lighter read. `conductor_profile=fable-scarce` does not switch this seat. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). |
 
 #### Fable / CDP G1 admit (BINDING)
 
@@ -142,12 +141,7 @@ Lead duty is the S3 recipe + same-turn admit — not a preflight checklist.
 2. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit)
    **or** honest halt.
 
-**G2:** followup into the G1 CSE (`cse_session(op=followup)`). Fresh `cdp/opus-5`
-only when G1 ran on a live operator-proxy CSE that is not Fable **or when
-`conductor_profile=fable-scarce`** (assertion:36248 — the house G2 falsifier
-discharging, not an exception). Keep path-sim Q≠R — that split is
-independence-bearing. Falsifier: a recorded G2-contradicts-G1 case ⇒ keep a fresh
-Opus G2 (profile `fable-scarce` is one such discharge path).
+**G2:** follow up into the live G1 CSE (`cse_session(op=followup)`) when that CSE ran on ACTIVE.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not require a fresh different-family Opus. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). Keep path-sim Q≠R — that split is independence-bearing.
 
 Same fail-closed class as `/modularize` M-Arch (`modularize-path` § Skill delivery floor).
 
@@ -228,7 +222,7 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    envelope **R1** (semantic locator: registry URI + row id; ¬ row sha — W7); ¬ restate envelope vocabulary.
    **Exit also stamps** the architecture-consult document + `derived_from` edge (§ Stage 0 attach)
    before G1→2 — that edge is the standing skip signal for later `/layer` entry.
-2. **G2** — Fable followup in the G1 CSE (else Opus fresh; **`conductor_profile=fable-scarce` ⇒ fresh Opus**) → densifier instructions ≤120L; ¬ dense
+2. **G2** — follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists (`conductor_profile=fable-scarce` stays on ACTIVE). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). Densifier instructions ≤120L; ¬ dense
    spec. **Inherit arch skill floor**.
 3. **G3** — Grok dense spec; Gate-2 (`doc_validate`, attrs, `implement_ready`, STOP).
    **VISION-ALIGN emit (Gate-2):** when `density_triage = judgment_required` ∨
@@ -309,8 +303,7 @@ implements · ¬ land (G7) without G6 review harvest · frame >120L · bare tick
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already
 resolves · ¬ Fable/Opus G1 without `purpose=ask` (staging owns the arch pair) ≺ densify ·
 ¬ reconstruct G1 `team_dispatch` kwargs (cite `work-item-seed-path` § S3).
-¬ fresh Opus G2 when a Fable G1 CSE is live (followup first) **unless
-`conductor_profile=fable-scarce`**.
+¬ fresh width-seat G2 when a live G1 CSE ran on ACTIVE.model (followup first); `conductor_profile=fable-scarce` does not switch the width model. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max).
 
 ## Conformance
 

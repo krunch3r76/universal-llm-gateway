@@ -52,15 +52,15 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 ¬ a second admit. Natural language fires the same punch — “commission this”,
 “loop Fable in”, “architectural guidance”. Do not wait for a slash.
 
-## When Fable defaults (CDP — not a Cursor pool)
+## When the width seat defaults (CDP — not a Cursor pool)
 
-Fable is `cdp/fable` (web product). It is **not** in Cursor Models. `cursor/claude-fable-5`
+Conductor G1/G2 width is ACTIVE, not a Cursor pool. `cursor/claude-fable-5`
 and `cursor/claude-fable-5-1` (launched 2026-09-01, same headline $/M) are carded Other
-Models options; we **block** both for cost — do not pin either. Use `cdp/fable`.
+Models options; we **block** both for cost — do not pin either. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max).
 
-| Default Fable | When |
+| Width seat | When |
 |---|---|
-| **Conductor G1 / Mode B** | Architecture open: named Fable / architectural consult / ≥2 unranked forks / feature-add ∧ invariant-touching / detent≥wide. Recipe: § S3 — **conductor copies**; IDE seed path does not fire it |
+| **Conductor G1 / Mode B** | Architecture open: architectural consult / ≥2 unranked forks / feature-add ∧ invariant-touching / detent≥wide. Seat is ACTIVE `cdp/opus-5` at reasoning_effort=max. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). Recipe: § S3 — **conductor copies**; IDE seed path does not fire it |
 | **Path-sim Q** | Non-codework bundled Q — not this path |
 | **Ladder 2b** | Independent binder when the producer is Opus |
 
@@ -71,13 +71,11 @@ Models options; we **block** both for cost — do not pin either. Use `cdp/fable
 | Pool | Models | Job on a codework arc |
 |---|---|---|
 | **Cursor Models** | Composer 2.5 | G3 densify / G5 implement / conductor orchestrate / CDP-stuck 2b default — **after** Fable harvest |
-| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5{,-1}` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5{,-1}` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
+| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5{,-1}` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5{,-1}` **blocked** (cost). Conductor width is ACTIVE, not `cdp/fable`. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
-G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh; **when
-`conductor_profile=fable-scarce`:** `cdp/opus-5` fresh, `extra`/`xhigh`,
-`purpose=ask`, **¬** Fable followup in G1 CSE), not the Other Models pool.
-Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a
-Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named**
+G2 frame follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model and does not pin `cdp/opus-5` at `extra`. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). G2 is not the Other Models pool.
+Other Models quota is not a reason to skip the ACTIVE G1 width seat or to spend T3 Opus as a
+substitute for it. T2/T3 and hop-4 live-checkout Opus still need their **named**
 trigger — they are not silent defaults.
 
 ## When
@@ -130,7 +128,7 @@ fire Mode B Fable; spawn after S4a and let the conductor own admit-proof.
 when an **attached live operator-proxy CSE** exists (identity ladder
 `chat_url ≻ registration_id ≻ execution_id`), Mode B / CDP architecture consult MUST use
 `cse_session(op=followup, purpose=operator-proxy, …)` into that CSE —
-**¬** fresh `team_dispatch(model=cdp/fable|cdp/opus-5)`. Fresh `team_dispatch(model=cdp/…)`
+**¬** fresh `team_dispatch` of ACTIVE while that CSE is live. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). Fresh `team_dispatch(model=cdp/…)`
 only when no live attached CSE (continuity hop / new window / Customize refresh).
 Compose `cdp-operator-proxy` inv 23.
 
@@ -252,13 +250,14 @@ cse_session(
 # same-turn: quote followup admit fields, or honest halt
 ```
 
-**Fresh generate** (no live attached CSE):
+**Fresh generate** (no live attached CSE). Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max).
 
 ```
 manage(action="busy_status")  # serialize a second purpose=ask
 team_dispatch(
     op="generate",
-    model="cdp/fable",
+    model="cdp/opus-5",
+    reasoning_effort="max",
     contract="none",
     purpose="ask",
     packet_path="tmp/reviews/{slug}-fable-g1.md",  # or sidecar_ref=cortex://…
@@ -413,7 +412,7 @@ drop list — the command stays punch-then-spawn.
 ## Commissioning register (operator bind 2026-08-02)
 
 This path is the **IDE identity mint** before spawn. After S4a the **conductor** owns
-S2/S3/S4b/S5 and the G-ladder — Explore (S2), Fable (G1 / Mode B), Composer densify /
+S2/S3/S4b/S5 and the G-ladder — Explore (S2), ACTIVE width seat (G1 / Mode B; shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max)), Composer densify /
 G5 implement. `¬` a second admit machine. `¬` a hard rule that the conductor-as-sub-PM
 must re-run S1–S6 in-seat after spawn.
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from implement_admission.conductor_width_seat import g3_g5_score_ratify_clause
 from reasoning_posture_contracts import (
     HYPOTHESIZE_SIMULATE_CONTRACTS,
     REASONING_POSTURE_SKIP_CONTRACTS,
@@ -178,7 +179,7 @@ _CONDUCTOR_HOP_TEMPLATE = (
     "never the mission: no ack, no reply, no page. A live nested child forbids the hop -- "
     "harvest it first (W3). Owed stops win over ROW_HOP: stop_after => ROW_PINNED; "
     "explicit see-score or OPERATOR_GATE => ROW_PINNED; named hold => HOLD_MERGE; "
-    "G3->G5 fires in-process CDP score-ratify (cdp/fable-5.1) then continues — "
+    "G3->G5 fires in-process CDP score-ratify ({width_clause}) then continues — "
     "a live summoning chat is not a human stop; "
     "G6 review harvest unread => ROW_PINNED (never land); G7 landed => DONE."
 )
@@ -194,7 +195,7 @@ _CONDUCTOR_PARK_HARVEST_TEMPLATE = (
 _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
     "CONDUCTOR ATTENDED RESURFACE (mandatory): summon_mode is attended — the "
     "summoning IDE chat is live. At G3→G5 fire in-process CDP score-ratify "
-    "(do-not-fight / likely-optimal) on cdp/fable-5.1, record the harvest, "
+    "(do-not-fight / likely-optimal) on {width_clause}, record the harvest, "
     "then continue (ROW_HOP). Post SCORE_RESURFACE to {caller_agent} on "
     "summoning bus thread {summoning_thread_id} (the parent/root — never this "
     "leftover worker thread) as a report for the summoning lead. That report "
@@ -715,6 +716,7 @@ def resolve_prompt_preamble(
                 _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE.format(
                     caller_agent=caller_agent or "cursor",
                     summoning_thread_id=summoning,
+                    width_clause=g3_g5_score_ratify_clause(),
                 )
             )
         else:
@@ -734,6 +736,7 @@ def resolve_prompt_preamble(
                     hop_seq=effective_hop_seq,
                     thread_id=thread_id,
                     lineage=lineage,
+                    width_clause=g3_g5_score_ratify_clause(),
                 )
             )
             if hop_reason == "park_harvest" and hop_from:
