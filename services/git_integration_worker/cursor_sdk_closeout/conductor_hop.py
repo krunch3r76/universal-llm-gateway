@@ -11,7 +11,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -481,7 +481,7 @@ def _write_budget_authority(dispatch_id: str, row: dict[str, Any]) -> None:
 
 
 def _utc_closeout_instant() -> str:
-    return datetime.now(datetime.UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _summoning_head_turn_patch(

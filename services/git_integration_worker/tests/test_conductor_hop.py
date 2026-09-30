@@ -14,6 +14,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons 
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     SKIP_GATE_NEXT_ADMIT_BLOCKED,
+    _utc_closeout_instant,
     _hop_skip_gate,
     build_conductor_hop_idempotency_key,
     build_hop_team_dispatch_body,
@@ -1325,3 +1326,9 @@ def test_ac_p1_6_hop_carries_ledger_summoning_thread() -> None:
     assert body["dispatch_thread_id"] == "10223"
     assert body["generation_options"]["summoning_thread_id"] == "10223"
     assert "summoning_thread_id_unresolved" not in body["generation_options"]
+
+
+def test_utc_closeout_instant_returns_non_empty_iso_timestamp() -> None:
+    instant = _utc_closeout_instant()
+    assert instant
+    assert "T" in instant
