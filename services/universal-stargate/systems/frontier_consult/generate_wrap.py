@@ -324,7 +324,7 @@ async def dispatch_cursor_sdk_generate_route(
         ):
             operator_lane_summon_warning = await refuse_conductor_operator_lane_summon(
                 request_id=request_id,
-                contract=body.contract,
+                contract=body.job,
                 dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
             )
             loop = asyncio.get_running_loop()

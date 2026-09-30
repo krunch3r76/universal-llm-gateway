@@ -648,7 +648,7 @@ async def _conductor_route(
     calls, captured = _install_route_stubs(monkeypatch)
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="conductor",
+        job="conductor",
         source_ref="todo:seed-conductor-own-worker-summon",
         lane="B",
         caller_agent="cursor",
