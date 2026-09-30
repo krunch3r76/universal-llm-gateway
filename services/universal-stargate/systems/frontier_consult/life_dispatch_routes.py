@@ -86,7 +86,7 @@ async def life_dispatch(
             "op": "generate",
             "model": model,
             "job": "freeform",
-            "session": "operator-proxy",
+            "purpose": "operator-proxy",
             "caller_agent": _LIFE_CALLER,
             "prompt": prompt,
             "sidecar_ref": sidecar_ref,
