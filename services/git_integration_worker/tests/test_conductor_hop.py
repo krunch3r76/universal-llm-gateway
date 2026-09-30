@@ -400,14 +400,23 @@ def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:
 
 
 def test_admit_record_json_stores_policy_filled_effort() -> None:
+    from systems.frontier_consult.cursor_sdk_alignment import align_cursor_knobs
+
     ledger = CursorDispatchLedger.instance()
-    req = _req(model_knobs={"effort": "low", "fast": "true"})
+    alignment = align_cursor_knobs(
+        resolved_model="cursor/grok-4.7",
+        contract="conductor",
+        model_knobs={"fast": "true"},
+    )
+    assert alignment.aligned_knobs["effort"] == "low"
+    req = _req(model_knobs=alignment.aligned_knobs)
     _admit_conductor(ledger, req)
     with ledger._connect() as conn:
         raw = conn.execute(
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
         ).fetchone()[0]
-    assert json.loads(raw)["model_knobs"] == {"effort": "low", "fast": "true"}
+    assert json.loads(raw)["model_knobs"]["effort"] == "low"
+    assert json.loads(raw)["model_knobs"]["fast"] == "true"
 
 
 def test_park_resume_request_carries_model_knobs() -> None:
