@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_park_preflight import (
     _TERMINAL_ROW_STATUSES,
     load_park_candidate_row,
 )
 from services.git_integration_worker.cursor_sdk_supersede import is_dispatch_live
+
+_CURSOR_SDK_DISPATCH_PREFIX = "cursor-sdk:dispatch:"
 
 
 class InjectRefusal(StrEnum):
@@ -33,11 +36,7 @@ class InjectPreflight:
     detail: str | None = None
 
 
-def preflight_inject(dispatch_id: str) -> InjectPreflight:
-    """Decide inject refusal for *dispatch_id* without mutating state."""
-    row = load_park_candidate_row(dispatch_id)
-    if row is None:
-        return InjectPreflight(refusal=InjectRefusal.NOT_FOUND, row=None)
+def _preflight_one_row(row: dict[str, Any]) -> InjectPreflight:
     status = str(row.get("status") or "")
     if status in _TERMINAL_ROW_STATUSES:
         return InjectPreflight(
@@ -45,7 +44,8 @@ def preflight_inject(dispatch_id: str) -> InjectPreflight:
             row=row,
             detail=f"row status={status!r}",
         )
-    if not is_dispatch_live(dispatch_id=dispatch_id):
+    dispatch_key = str(row["dispatch_id"])
+    if not is_dispatch_live(dispatch_id=dispatch_key):
         return InjectPreflight(
             refusal=InjectRefusal.NOT_LIVE,
             row=row,
@@ -59,6 +59,49 @@ def preflight_inject(dispatch_id: str) -> InjectPreflight:
             detail="thread_id not yet recorded",
         )
     return InjectPreflight(refusal=None, row=row)
+
+
+def _execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
+    conn = CursorDispatchLedger.instance()._connect()
+    cur = conn.execute(
+        "SELECT * FROM cursor_sdk_dispatches WHERE execution_id=?",
+        (execution_id,),
+    )
+    return [{k: row[k] for k in row.keys()} for row in cur.fetchall()]
+
+
+def preflight_inject(submitted_id: str) -> InjectPreflight:
+    """Decide inject refusal for *submitted_id* without mutating state."""
+    stripped = submitted_id.removeprefix(_CURSOR_SDK_DISPATCH_PREFIX)
+    row = load_park_candidate_row(stripped)
+    if row is not None:
+        return _preflight_one_row(row)
+    candidates = _execution_id_candidates(stripped)
+    if not candidates:
+        return InjectPreflight(refusal=InjectRefusal.NOT_FOUND, row=None)
+    passed: list[dict[str, Any]] = []
+    failed: list[InjectPreflight] = []
+    for candidate in candidates:
+        checked = _preflight_one_row(candidate)
+        if checked.refusal is None:
+            passed.append(candidate)
+        else:
+            failed.append(checked)
+    if len(passed) == 1:
+        return InjectPreflight(refusal=None, row=passed[0])
+    if len(passed) > 1:
+        n = len(passed)
+        return InjectPreflight(
+            refusal=InjectRefusal.NOT_LIVE,
+            row=None,
+            detail=f"ambiguous execution_id: {n} live rows share this execution_id",
+        )
+    detail = (
+        failed[0].detail
+        if len(candidates) == 1
+        else "no live row for this execution_id"
+    )
+    return InjectPreflight(refusal=InjectRefusal.NOT_LIVE, row=None, detail=detail)
 
 
 __all__ = [

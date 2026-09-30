@@ -48,6 +48,7 @@ def SdkSteerInjectRequested(  # noqa: N802
     entry_id: str,
     ttl_s: int,
     actor: str,
+    submitted_id: str,
 ) -> Event:
     return Event(
         signal="frontier.sdk.steer.inject.requested",
@@ -57,6 +58,7 @@ def SdkSteerInjectRequested(  # noqa: N802
             "entry_id": entry_id,
             "ttl_s": ttl_s,
             "actor": actor,
+            "submitted_id": submitted_id,
         },
         scope="node",
     )
@@ -178,6 +180,7 @@ def _deposit_authority_turn(
 def deposit_steer_directive(
     *,
     dispatch_id: str,
+    submitted_id: str,
     thread_id: str,
     directive: str,
     reason: str,
@@ -197,6 +200,7 @@ def deposit_steer_directive(
             entry_id=entry_id,
             ttl_s=ttl_s,
             actor=actor,
+            submitted_id=submitted_id,
         )
     )
     authority_turn_id = _deposit_authority_turn(

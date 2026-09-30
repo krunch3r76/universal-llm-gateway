@@ -14,6 +14,7 @@ from services.git_integration_worker.cursor_sdk_steer_inject import (
 )
 from services.git_integration_worker.cursor_sdk_steer_inject_preflight import (
     REFUSAL_HTTP,
+    InjectRefusal,
     preflight_inject,
 )
 
@@ -60,32 +61,41 @@ async def inject_one_dispatch(
     pre = preflight_inject(dispatch_id)
     if pre.refusal is not None:
         status, retryable = REFUSAL_HTTP[pre.refusal]
+        if pre.refusal is InjectRefusal.NOT_FOUND:
+            message = f"inject refused: NOT_FOUND: {dispatch_id}"
+        else:
+            message = pre.detail or f"inject refused: {pre.refusal.value}"
+        echo_id = (
+            str(pre.row["dispatch_id"]) if pre.row is not None else dispatch_id
+        )
         return status, error_envelope(
             code=f"CURSOR_INJECT_{pre.refusal.value}",
-            message=pre.detail or f"inject refused: {pre.refusal.value}",
+            message=message,
             source=_SOURCE,
             retryable=retryable,
-            data={"dispatch_id": dispatch_id, "refusal": pre.refusal.value},
+            data={"dispatch_id": echo_id, "refusal": pre.refusal.value},
         )
     assert pre.row is not None
+    resolved = str(pre.row["dispatch_id"])
     thread_id = str(pre.row["thread_id"])
     await asyncio.to_thread(
         recover_undelivered_steer_from_thread,
-        dispatch_id=dispatch_id,
+        dispatch_id=resolved,
         thread_id=thread_id,
     )
     deposit = await asyncio.to_thread(
         deposit_steer_directive,
-        dispatch_id=dispatch_id,
+        dispatch_id=resolved,
+        submitted_id=dispatch_id,
         thread_id=thread_id,
         directive=directive,
         reason=reason,
         actor=actor,
         ttl_s=ttl_s if ttl_s is not None else DEFAULT_TTL_S,
     )
-    execution_id = str(pre.row.get("execution_id") or dispatch_id)
+    execution_id = str(pre.row.get("execution_id") or resolved)
     return inject_dispatch_response(
-        dispatch_id=dispatch_id,
+        dispatch_id=resolved,
         execution_id=execution_id,
         entry_id=deposit.entry_id,
         authority_turn_id=deposit.authority_turn_id,
