@@ -13,7 +13,35 @@ from ..routes.edges import (
     _update_edge_impl,
 )
 from ..routes.graph import impact_analysis
-from ._shared import record
+from ._shared import (
+    _SESSION_ID_EXAMPLES,
+    _SESSION_ID_RE,
+    _SESSION_ID_RE_SOURCE,
+    record,
+)
+
+
+def _session_id_grammar_error(session_id: str) -> dict[str, Any]:
+    """Refuse a session_id that is not the session-grain identifier.
+
+    ``session_edges.session_id`` is the key ``session_close`` later closes as
+    ``session_journals.session_id`` / ``transcript:{session_id}``. A label that
+    merely type-checks (thread slug, dispatch tag, hand-written date) breaks
+    that join and ``agent_slug_from_session_id``; friction a:36942.
+    """
+    return {
+        "error": f"session_id {session_id!r} does not match the session grammar",
+        "reason": "session_id_grammar",
+        "expected": _SESSION_ID_RE_SOURCE,
+        "examples": list(_SESSION_ID_EXAMPLES),
+        "hint": (
+            "Pass the id minted at session start (cortex_brief.session_id). A seat "
+            "that has not booted uses the same derivation session_close applies "
+            "when session_id is omitted: derive_session_id_from_jsonl_start on its "
+            "own transcript JSONL (agent_seat.session_id grammar). Do not invent "
+            "a label."
+        ),
+    }
 
 
 def _op_edge_create(
@@ -40,6 +68,9 @@ def _op_edge_create(
     for field, val in required.items():
         if not val:
             return {"error": f"{field} is required"}
+    assert session_id is not None
+    if not _SESSION_ID_RE.match(session_id):
+        return _session_id_grammar_error(session_id)
     body: dict[str, Any] = {
         "session_id": session_id,
         "agent": agent,
