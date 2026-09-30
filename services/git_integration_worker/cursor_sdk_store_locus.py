@@ -22,8 +22,6 @@ from services.git_integration_worker.cursor_sdk_resume_store_events import (
     emit_resume_store_owner_resolved,
 )
 
-MAX_RESUME_LINEAGE_HOPS = 11
-
 
 def load_row_columns(
     ledger: CursorDispatchLedger, *, dispatch_id: str, columns: str
@@ -108,10 +106,14 @@ def _store_at_dispatch(*, dispatch_id: str, state_root: str | None) -> Path | No
 def _iter_resume_lineage(
     ledger: CursorDispatchLedger, *, start_id: str
 ) -> Iterator[tuple[str, str | None]]:
-    """Yield ``(dispatch_id, state_root)`` walking ``resume_of`` toward ancestors."""
+    """Yield ``(dispatch_id, state_root)`` walking ``resume_of`` toward ancestors.
+
+    Stops when ``current`` is already in ``seen``, or when ``load_parent_row``
+    returns None or ``resume_of`` is empty or absent.
+    """
     current = start_id
     seen: set[str] = set()
-    for _ in range(MAX_RESUME_LINEAGE_HOPS):
+    while True:
         if current in seen:
             break
         seen.add(current)
