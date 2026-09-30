@@ -217,9 +217,10 @@ def test_drain_belt_requires_amber_and_stalled() -> None:
 
 
 def test_stale_auto_heartbeat_drops_active_count_fresh_row_remains() -> None:
-    """heartbeat_age_s above HEARTBEAT_TTL_S does not keep active_count at 1.
+    """A claimed row with heartbeat_age_s past HEARTBEAT_TTL_S stays in active_ops.
 
-    A row inside the TTL still counts. No SIGTERM is armed from the stall.
+    Age since claim is not an occupancy filter. Both the stale row and a
+    fresh row count.
     """
     from datetime import UTC, datetime, timedelta
 
@@ -260,9 +261,19 @@ def test_stale_auto_heartbeat_drops_active_count_fresh_row_remains() -> None:
     controller = _controller()
     ops = controller.active_ops()
     ids = {op.get("op_id") for op in ops}
-    assert stale.job_id not in ids
+    assert stale.job_id in ids
     assert fresh.job_id in ids
-    assert controller.active_count() == 1
-    queue.mark_done(fresh.job_id)
-    assert controller.active_count() == 0
-    assert controller.active_ops() == []
+    assert controller.active_count() == 2
+    stale_row = next(op for op in ops if op.get("op_id") == stale.job_id)
+    assert stale_row["heartbeat_age_s"] > HEARTBEAT_TTL_S
+
+
+def test_mark_done_on_failed_row_keeps_status_and_reason() -> None:
+    claimed = _claim_propagate_job()
+    queue = get_queue()
+    queue.mark_done(claimed.job_id, failed=True, terminal_reason="first-reason")
+    queue.mark_done(claimed.job_id, failed=True, terminal_reason="second-reason")
+    stored = queue.get(claimed.job_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.terminal_reason == "first-reason"

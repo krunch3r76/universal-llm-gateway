@@ -334,3 +334,158 @@ async def test_release_claimed_auto_job_fails_one_id_park_still_404(
     assert body["code"] == "CURSOR_PARK_NOT_FOUND"
     assert killed == []
     assert belt == []
+
+
+@pytest.mark.asyncio
+async def test_release_route_409_until_override_then_failed(tmp_path: Path) -> None:
+    """Fresh heartbeat refuses without override (409). Override terminalizes."""
+    from fastapi.testclient import TestClient
+
+    from services.git_integration_worker.app import create_app
+    from services.git_integration_worker.cursor_auto.job_ledger import AutoJobLedger
+    from services.git_integration_worker.cursor_auto.queue import (
+        get_queue,
+        reset_queue_for_tests,
+    )
+
+    AutoJobLedger.reset_for_tests()
+    reset_queue_for_tests(durable=True)
+    queue = get_queue()
+    job = queue.enqueue(
+        thread_id="rel-409",
+        turn_number=1,
+        subject="fresh",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="answer",
+    )
+    claimed = queue.claim_job(job.job_id)
+    assert claimed is not None
+    app = create_app()
+    app.state.admission_controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="w",
+        pid=1,
+        worker_started_at="b",
+    )
+    client = TestClient(app)
+    url = f"/api/v1/git/cursor-auto/jobs/{claimed.job_id}/release"
+    refused = client.post(url, json={"reason": "too-soon"})
+    assert refused.status_code == 409
+    assert refused.json()["ok"] is not True
+    released = client.post(url, json={"reason": "override-now", "override": True})
+    assert released.status_code == 200
+    assert released.json()["status"] == "failed"
+    stored = queue.get(claimed.job_id)
+    assert stored is not None and stored.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_release_route_409_when_present_but_not_claimed() -> None:
+    from fastapi.testclient import TestClient
+
+    from services.git_integration_worker.app import create_app
+    from services.git_integration_worker.cursor_auto.queue import (
+        get_queue,
+        reset_queue_for_tests,
+    )
+
+    reset_queue_for_tests(durable=False)
+    queue = get_queue()
+    job = queue.enqueue(
+        thread_id="rel-queued",
+        turn_number=1,
+        subject="queued",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="answer",
+    )
+    app = create_app()
+    app.state.admission_controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="w",
+        pid=1,
+        worker_started_at="b",
+    )
+    client = TestClient(app)
+    present = client.post(
+        f"/api/v1/git/cursor-auto/jobs/{job.job_id}/release",
+        json={"reason": "not-claimed", "override": True},
+    )
+    assert present.status_code == 409
+    assert present.json()["status"] == "queued"
+    missing = client.post(
+        "/api/v1/git/cursor-auto/jobs/does-not-exist/release",
+        json={"reason": "missing"},
+    )
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_release_cancels_hop_and_concurrent_tracked_tasks() -> None:
+    import asyncio
+
+    from services.git_integration_worker.cursor_auto.queue import (
+        get_queue,
+        reset_queue_for_tests,
+    )
+    from services.git_integration_worker.cursor_auto.release_claimed import (
+        release_claimed_auto_job,
+    )
+
+    reset_queue_for_tests(durable=False)
+    queue = get_queue()
+    job = queue.enqueue(
+        thread_id="rel-tasks",
+        turn_number=1,
+        subject="tasks",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="answer",
+    )
+    claimed = queue.claim_job(job.job_id)
+    assert claimed is not None
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="w",
+        pid=1,
+        worker_started_at="b",
+    )
+
+    async def _hang() -> None:
+        await asyncio.sleep(60)
+
+    hop_op = f"cursor-auto-continuity-hop:{claimed.job_id}"
+    concurrent_op = f"cursor-auto-concurrent:{claimed.job_id}"
+    hop_task = controller.create_tracked_task(_hang(), op_id=hop_op)
+    concurrent_task = controller.create_tracked_task(_hang(), op_id=concurrent_op)
+    refused = release_claimed_auto_job(
+        claimed.job_id,
+        reason="alive",
+        queue=queue,
+        controller=controller,
+        override=False,
+    )
+    assert refused["ok"] is not True
+    assert queue.get(claimed.job_id).status == "claimed"
+    released = release_claimed_auto_job(
+        claimed.job_id,
+        reason="override-alive",
+        queue=queue,
+        controller=controller,
+        override=True,
+    )
+    assert released["status"] == "failed"
+    assert set(released["cancelled_tasks"]) == {hop_op, concurrent_op}
+    await asyncio.sleep(0)
+    assert hop_task.cancelled()
+    assert concurrent_task.cancelled()

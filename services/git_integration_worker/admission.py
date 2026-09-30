@@ -33,10 +33,7 @@ from services.git_integration_worker import (
 )
 from services.git_integration_worker import git_worker_drain_events as drain_events
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
-from services.git_integration_worker.drain_progress import (
-    OccupancyProgressTracker,
-    cursor_auto_occupancy_holds_drain,
-)
+from services.git_integration_worker.drain_progress import OccupancyProgressTracker
 
 logger = get_logger(__name__)
 
@@ -279,13 +276,12 @@ class WorkAdmissionController:
                 job_id=op_id, intent_id=drain_intent
             ):
                 continue
-            # Stale claimed auto rows must not be the sole pending_drain
-            # holder. Fresh heartbeats still count. Do not skip continuity
-            # hops here — queue health's serial_occupant skip is projection
-            # only and must not hide a fresh hop from drain accounting.
-            # This filter does not arm SIGTERM.
-            if not cursor_auto_occupancy_holds_drain(auto_op):
-                continue
+            # Claimed cursor-auto rows stay occupancy for the life of the
+            # claim. Heartbeat age is stall telemetry only — concurrent and
+            # hop rows are not bumped after mark_claimed, so age is time
+            # since claim and must not drop the row. Fail-on-death and the
+            # release verb are the exits. Do not skip continuity hops here;
+            # queue health's serial_occupant skip is projection only.
             ops.append(auto_op)
             seen.add(op_id)
         return ops

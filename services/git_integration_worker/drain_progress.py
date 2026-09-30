@@ -58,24 +58,6 @@ def _heartbeat_age_s(
     return max(0.0, (clock - then).total_seconds())
 
 
-def cursor_auto_occupancy_holds_drain(
-    op: dict[str, Any],
-    *,
-    ttl_s: float = HEARTBEAT_TTL_S,
-) -> bool:
-    """Whether one cursor-auto occupancy row may keep GIW drain from finishing.
-
-    Fresh heartbeats hold. Age past ``ttl_s`` does not. A missing
-    ``heartbeat_age_s`` still holds — absence is not proof the row is stale.
-    Dropping the row is occupancy accounting only. Stall telemetry must not
-    arm supervisor SIGTERM.
-    """
-    age = op.get("heartbeat_age_s")
-    if isinstance(age, int | float) and float(age) > ttl_s:
-        return False
-    return True
-
-
 def heartbeat_fresh(
     ops: list[dict[str, Any]],
     *,

@@ -75,6 +75,14 @@ class AutoJob:
     # Cleared only by process death — not a success terminal (mark_done stays
     # after closeout). Supersede must not treat this job as in-flight.
     nested_sdk_finished: bool = False
+    # Set once, when the row first leaves claimed/queued. Later mark_done
+    # calls must not rewrite it.
+    terminal_reason: str | None = None
+
+
+_TERMINAL_STATUSES = frozenset(
+    {"done", "failed", "report_undelivered", "superseded"}
+)
 
 
 class AutoJobQueue:
@@ -267,15 +275,16 @@ class AutoJobQueue:
         failed: bool = False,
         terminal_reason: str | None = None,
     ) -> None:
-        """Terminalize a job; a superseded job keeps its interrupt status."""
-        if failed and not terminal_reason:
-            raise ValueError("terminal_reason required when failed=True")
+        """Terminalize a job. An already-terminal row keeps status and reason."""
         terminal_status: str | None = None
         with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job.status == "superseded":
+            if job is None or job.status in _TERMINAL_STATUSES:
                 return
+            if failed and not terminal_reason:
+                raise ValueError("terminal_reason required when failed=True")
             job.status = "failed" if failed else "done"
+            job.terminal_reason = terminal_reason
             terminal_status = job.status
         ledger = self._ledger_client()
         if ledger is not None and terminal_status is not None:

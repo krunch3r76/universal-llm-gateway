@@ -7,7 +7,6 @@ from services.git_integration_worker.drain_progress import (
     HEARTBEAT_TTL_S,
     STALL_WINDOW_S,
     OccupancyProgressTracker,
-    cursor_auto_occupancy_holds_drain,
     heartbeat_fresh,
     is_progress,
     occupancy_op_ids,
@@ -108,20 +107,25 @@ def test_tracker_completed_unconsumed_past_grace() -> None:
 
 
 def test_stale_auto_heartbeat_does_not_hold_drain_fresh_does() -> None:
-    """Past HEARTBEAT_TTL_S drops the row. Inside TTL, and a missing age, hold.
+    """Past HEARTBEAT_TTL_S is stall telemetry. It does not drop occupancy.
 
-    The predicate does not arm SIGTERM — stall stays on OccupancyProgressTracker.
+    A claimed cursor-auto row older than the TTL is still an occupancy id.
     """
-    assert not cursor_auto_occupancy_holds_drain(
-        {"kind": "cursor-auto", "heartbeat_age_s": HEARTBEAT_TTL_S + 1}
+    stale = {
+        "op_id": "stale-auto",
+        "kind": "cursor-auto",
+        "heartbeat_age_s": HEARTBEAT_TTL_S + 1,
+    }
+    fresh = {
+        "op_id": "fresh-auto",
+        "kind": "cursor-auto",
+        "heartbeat_age_s": 1.0,
+    }
+    assert occupancy_op_ids([stale, fresh]) == frozenset(
+        {"stale-auto", "fresh-auto"}
     )
-    assert cursor_auto_occupancy_holds_drain(
-        {"kind": "cursor-auto", "heartbeat_age_s": HEARTBEAT_TTL_S}
-    )
-    assert cursor_auto_occupancy_holds_drain(
-        {"kind": "cursor-auto", "heartbeat_age_s": 1.0}
-    )
-    assert cursor_auto_occupancy_holds_drain({"kind": "cursor-auto"})
+    assert not heartbeat_fresh([stale])
+    assert heartbeat_fresh([fresh])
 
 
 def test_occupancy_op_ids_skips_missing() -> None:

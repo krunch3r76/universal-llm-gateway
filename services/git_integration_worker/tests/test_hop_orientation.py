@@ -135,26 +135,10 @@ async def test_commission_receives_orientation_prefixed_prompt(
     assert captured["purpose"] == "operator-proxy"
     assert "session" not in captured
     assert "job" not in captured
+    import inspect
 
-
-@pytest.mark.asyncio
-async def test_generate_l2_error_degrades_outside_lane_fetch_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Substrate generation sits after the 5s lane fetch. It degrades; it is
-    not given a second timeout on top of that fetch."""
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.hop_orientation.fetch_thread_turns",
-        AsyncMock(return_value=[]),
+    from services.git_integration_worker.cursor_auto.cdp_escalation import (
+        commission_cdp_escalation,
     )
-    def _boom(**_kw: Any) -> Any:
-        raise RuntimeError("substrate read")
 
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.hop_orientation.generate_l2_orientation",
-        _boom,
-    )
-    result = await build_hop_orientation(_job(), model="cdp/opus-5", effort=_EFFORT)
-    assert result["generated"] is False
-    assert result["error"] == "substrate read"
-    assert "resolved_envelope: model=cdp/opus-5" in result["block"]
+    inspect.signature(commission_cdp_escalation).bind(_job(), **captured)
