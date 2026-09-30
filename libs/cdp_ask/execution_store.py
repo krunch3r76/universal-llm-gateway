@@ -208,8 +208,14 @@ class ExecutionStore:
         *,
         reason: str | None = None,
     ) -> None:
-        """Stamp *state* on the record's registry row unless already recorded."""
-        if not rec.registration_id or rec.durable_state == state:
+        """Stamp *state* on the record's registry row unless already recorded.
+
+        A *reason* always reaches the authority (it dedups on state+reason):
+        that is how a resume leaves its receipt on a row already ``streaming``.
+        """
+        if not rec.registration_id:
+            return
+        if rec.durable_state == state and reason is None:
             return
         from claude_bundles.cdp_registry.execution_state import set_execution_state
 

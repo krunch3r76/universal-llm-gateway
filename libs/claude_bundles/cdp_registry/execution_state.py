@@ -150,8 +150,10 @@ def set_execution_state(
 ) -> dict[str, Any] | None:
     """Stamp *state* for *execution_id* on the row; return the entry written.
 
-    Returns None when the row is gone. A repeat of the same state for the same
-    execution writes nothing. A different execution replaces the entry and
+    Returns None when the row is gone. A repeat of the same state and reason
+    for the same execution writes nothing; the same state with a new reason
+    (``resumed:boot`` on a row a predecessor left ``streaming``) is a receipt
+    and refreshes ``holder_pid``. A different execution replaces the entry and
     restarts ``started_at`` — one row drives one execution at a time. The
     write is one ``active.json`` replace plus one ``execution_state`` journal
     line under ``ports.lock``; the advisory event follows outside the lock.
@@ -171,7 +173,7 @@ def set_execution_state(
         current = execution_state_of(row)
         if current is not None and current["execution_id"] == eid:
             previous = str(current["state"])
-            if previous == state:
+            if previous == state and (reason or None) == current.get("reason"):
                 return current
             started = current.get("started_at")
         else:
