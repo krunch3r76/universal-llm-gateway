@@ -52,6 +52,11 @@ from tool_search_matcher import (
     search_manifest,
     server_primary_empty_search_note,
 )
+from tool_search_primary_ops import (
+    primary_op_to_response,
+    search_primary_ops,
+    verb_named_in_query,
+)
 
 PRIMARY_TOOLS_FROZEN: frozenset[str] = frozenset(
     e["tool_name"] for e in get_claude_manifest()
@@ -85,7 +90,8 @@ def execute_tool_search(
             ),
         }
     results = search_manifest(active_manifest, query, limit=limit)
-    if not results:
+    op_hits = search_primary_ops(query, limit=limit)
+    if not results and not op_hits:
         record("mcp.tool.search.miss", query=query)
         primary_note = server_primary_empty_search_note()
         primary_hint = primary_tool_hint_for_search(query, results)
@@ -110,13 +116,28 @@ def execute_tool_search(
             )
         return payload
     primary_hint = primary_tool_hint_for_search(query, results)
+    overflow_rows = [_entry_to_response(e) for e in results]
+    op_rows = [primary_op_to_response(e) for e in op_hits]
+    # A query that names the verb ("friction", "assert") wants the call shape
+    # first; otherwise sub-op hits trail the overflow tools they merely resemble.
+    merged = (
+        op_rows + overflow_rows
+        if verb_named_in_query(query, op_hits)
+        else overflow_rows + op_rows
+    )
     payload: dict[str, Any] = {
         "query": query,
-        "results": [_entry_to_response(e) for e in results],
-        "total_matches": len(results),
+        "results": merged[:limit],
+        "total_matches": len(merged),
     }
     if primary_hint:
         payload["primary_tool_hint"] = primary_hint
+    if op_hits and (not results or verb_named_in_query(query, op_hits)):
+        payload["_next"] = (
+            "Use call_shape on the primary_op result — call the primary tool "
+            "directly by name. Overflow dispatch templates (if any) are secondary."
+        )
+    elif primary_hint:
         payload["_next"] = (
             "Use primary_tool_hint — call the named primary tool directly; "
             "overflow dispatch templates below are secondary."
@@ -169,17 +190,17 @@ def register_tool_search_tool(
         binding block. Absent from the initial callable set ≠ connector dropped
         the tool.
 
-        This endpoint indexes **overflow only**: sql, web_fetch, advisor,
-        boot_inspect, quality_gate, pipeline_consult, git_*, and
-        ``tools.local`` when installed. Results include ``dispatch_template`` —
-        invoke via ``dispatch(tool="<name>", arguments='…')`` when ``dispatch``
-        is bound. Do NOT route server-primary names through ``dispatch``; it
-        rejects them.
+        Indexes **overflow tools** (sql, web_fetch, quality_gate, git_*,
+        ``tools.local``) → ``dispatch_template`` for ``dispatch(tool=…)``, plus
+        **named sub-ops of umbrella primaries** (``cortex.friction``,
+        ``cortex.assert``, ``cortex.entity_create``, ``rag.search``,
+        ``fs.md_read``) → ``kind="primary_op"`` with ``call_shape``: call that
+        primary directly. Never route primaries through ``dispatch``. Whole
+        primary tools are not indexed — see ``server_primary_note``.
 
         Pass keywords; default limit=5. Examples:
-          tool_search(query="email mailbox")
           tool_search(query="raw sql")
-          tool_search(query="query events")
+          tool_search(query="friction")
         """
         return execute_tool_search(query, limit=limit, manifest=manifest)
 

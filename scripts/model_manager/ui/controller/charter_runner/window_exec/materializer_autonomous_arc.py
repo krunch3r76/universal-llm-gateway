@@ -7,6 +7,7 @@ Emitted packet bodies append ``charter-state`` via
 from __future__ import annotations
 
 from implement_admission.check_review_substrate import consultant_identity
+from implement_admission.conductor_width_seat import ACTIVE
 
 _CONSULT_IDENT = consultant_identity("cdp/opus-5")
 _CONSULT_MODEL = _CONSULT_IDENT.model_identity
@@ -14,7 +15,11 @@ _CONSULT_EFFORT = _CONSULT_IDENT.rung or "unmeasured"
 
 
 def autonomous_arc_guidance(*, revise_cap: int) -> str:
-    """Return the G-row decomposition block for autonomous task guidance."""
+    """Return the G-row decomposition block for autonomous task guidance.
+
+    G1 names ``conductor_width_seat.ACTIVE`` at format time so restoring
+    Fable is that assignment, not a second string in this packet.
+    """
     return f"""\
 ## Autonomous arc (G-row decomposition — lay/advance on the scoreboard)
 Steps template (machine lane annotations — BINDING on mint):
@@ -22,8 +27,10 @@ Steps template (machine lane annotations — BINDING on mint):
 4. [ ] G4 — implement · [implement]
 5. [ ] G5 — R-after · [consult:judgment_gap]   # or [inline] when folded into G4
 
-G1  Q (L0)           lead CDP Fable — ranked question table + Question set
-                     (team_dispatch model=cdp/fable / CLI fable-5.1;
+G1  Q (L0)           lead CDP width seat ACTIVE — ranked question table + Question set
+                     (team_dispatch model={ACTIVE.model}, reasoning_effort={ACTIVE.reasoning_effort};
+                     CLI --model is that id without the cdp/ prefix.
+                     Assignment: libs/implement_admission/conductor_width_seat.py.
                      ¬ default Grok on bundled arc; closed-detent carve-out stays Grok).
 G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.

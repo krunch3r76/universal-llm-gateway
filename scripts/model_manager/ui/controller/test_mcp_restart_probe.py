@@ -85,8 +85,53 @@ def test_mcp_probe_defers_on_life_activity_when_cdp_idle() -> None:
         mcp_probe=_StaticBusyProbe(
             ActiveWork(
                 busy=True,
-                detail={"busy": True, "in_flight": 0, "life_hot": True, "life_idle_s": 12},
+                detail={
+                    "busy": True,
+                    "in_flight": 0,
+                    "life_hot": True,
+                    "life_idle_s": 12,
+                },
             )
+        ),
+    )
+    work = _run(probe.snapshot())
+    assert work.busy is True
+    assert "mcp_session_hot" in work.detail["busy_reasons"]
+
+
+def test_mcp_probe_ignores_own_restart_request_in_flight() -> None:
+    """a:36950 second payload: the only open request is the manage call itself."""
+    probe = McpBusyProbe(
+        cdp_probe=_StaticBusyProbe(
+            ActiveWork(busy=False, detail={"busy": False, "running_count": 0})
+        ),
+        mcp_probe=_StaticBusyProbe(
+            ActiveWork(
+                busy=True,
+                detail={
+                    "busy": True,
+                    "in_flight": 1,
+                    "life_hot": False,
+                    "life_idle_s": 217.9,
+                    "life_activity_ttl_s": 180.0,
+                    "draining": False,
+                },
+            )
+        ),
+    )
+    work = _run(probe.snapshot())
+    assert work.busy is False
+    assert work.detail["busy_reasons"] == []
+    assert work.detail["mcp"]["in_flight"] == 1
+
+
+def test_mcp_probe_fails_closed_on_payload_without_life_hot() -> None:
+    probe = McpBusyProbe(
+        cdp_probe=_StaticBusyProbe(
+            ActiveWork(busy=False, detail={"busy": False, "running_count": 0})
+        ),
+        mcp_probe=_StaticBusyProbe(
+            ActiveWork(busy=True, detail={"busy": True, "in_flight": 1})
         ),
     )
     work = _run(probe.snapshot())

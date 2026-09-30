@@ -47,7 +47,7 @@ The operator seat holds **ulg-code**. This seat makes no repo writes. The write 
 
 **Still forbidden** on this seat: `panel_dispatch`, `claudeburst`. `pipeline` is on toys. Repo writes are a lane-B `team_dispatch`.
 
-Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls included; do not query `suggestion_orientation` while a:36837 stands), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
+Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls including off-topic yields), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
 
 `cursor-auto`, `cursor_request`, and `operator_request` are deprecated. No fallback procedure. A refuse comes back verbatim. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks.
 

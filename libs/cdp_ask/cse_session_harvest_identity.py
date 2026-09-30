@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_provenance import read_episodes
+from claude_bundles.cse_provenance import latest_episode
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
@@ -77,15 +77,17 @@ def chat_url_from_archives(
 
 
 def chat_url_from_provenance(execution_id: str) -> str | None:
-    """Latest provenance episode whose correlation_id matches the token."""
+    """Cowork URL of the latest provenance episode whose correlation_id matches the token.
+
+    One keyed index lookup; ``append_episode`` validates ``chat_url`` on every
+    write, so the newest match is the one carrying the URL.
+    """
     token = (execution_id or "").strip()
     if not token:
         return None
-    from claude_bundles.cse_provenance import read_episodes
-
-    for episode in reversed(read_episodes()):
-        if episode.correlation_id == token and episode.chat_url:
-            return cse_url_from_token(episode.chat_url)
+    episode = latest_episode(correlation_id=token)
+    if episode is not None and episode.chat_url:
+        return cse_url_from_token(episode.chat_url)
     return None
 
 
@@ -135,13 +137,12 @@ async def resolve_execution_provenance(
         if bound:
             chat_url = normalize_cse_url(bound)
 
-    for episode in reversed(read_episodes()):
-        if episode.correlation_id == token:
-            if not chat_url:
-                chat_url = episode.chat_url
-            if not registration_id:
-                registration_id = episode.registration_id
-            break
+    episode = latest_episode(correlation_id=token)
+    if episode is not None:
+        if not chat_url:
+            chat_url = episode.chat_url
+        if not registration_id:
+            registration_id = episode.registration_id
 
     if not chat_url and not registration_id:
         satellite = satellite_id_from_inflight(token)

@@ -114,16 +114,76 @@ def _orphan_profile_sweep(
     return removed
 
 
+def _chrome_dead(row: dict[str, Any], listen: _ListenFn) -> bool:
+    """True when the row names a Chrome pid that is gone and a port nobody serves."""
+    chrome_pid = row.get("chrome_pid")
+    port = row.get("port")
+    if not isinstance(chrome_pid, int) or not isinstance(port, int):
+        return False
+    return not _pid_alive(chrome_pid) and not listen(port)
+
+
+def _park_dead_chrome_row(
+    rid: str, row: dict[str, Any], *, now: float
+) -> dict[str, Any]:
+    """Reclaim an active row whose Chrome is dead while its holder may still live.
+
+    The holder pid being alive was the reason these rows were never reaped
+    (a:36924: 7 of 24 active rows, holder 3614025 alive, Chrome gone). Holder
+    liveness says the admitting process exists, not that the host does. A row
+    with a bound ``chat_url`` keeps the session: it parks ``dormant`` in the
+    same shape ``make_dormant`` writes, so a resume or followup relaunches it
+    by URL. Without a URL there is nothing to resume and it is ``released``.
+    Rows whose recorded execution is still in flight park too — the driver
+    sees the dead tab as a host loss and resumes through the dormant seat.
+    """
+    updated = dict(row)
+    updated["chrome_pid"] = None
+    if str(row.get("chat_url") or "").strip():
+        updated["status"] = "dormant"
+        updated["dormant_at"] = now
+        updated["dormant_reason"] = "chrome_dead_reap"
+        _store.append_log("dormant", updated)
+        with contextlib.suppress(Exception):
+            from claude_bundles import cdp_registry_events as _events
+
+            _events.emit(
+                _events.cdp_port_dormant(
+                    registration_id=rid,
+                    port=row.get("port"),
+                    purpose=row.get("purpose"),
+                    chat_url=str(row.get("chat_url")),
+                    reason="chrome_dead_reap",
+                )
+            )
+    else:
+        updated["status"] = "released"
+        updated["released_at"] = now
+        updated["reaped_dead_chrome"] = True
+        _store.append_log("dead_chrome_reap", updated)
+    return updated
+
+
 def _reap_stale_active_rows(
     active: dict[str, dict[str, Any]],
     listen: _ListenFn,
     *,
     now: float | None = None,
 ) -> list[str]:
+    """Reclaim active rows without a host: dead Chrome first, then the stale-TTL sweep.
+
+    The dead-Chrome branch ignores ``holder_pid`` and ``STALE_ACTIVE_TTL_S``;
+    the TTL branch keeps its live-holder skip for rows whose Chrome state is
+    unknown (no ``chrome_pid`` recorded).
+    """
     ts = time.time() if now is None else now
     reaped: list[str] = []
     for rid, row in active.items():
         if row.get("status") != "active":
+            continue
+        if _chrome_dead(row, listen):
+            active[rid] = _park_dead_chrome_row(rid, row, now=ts)
+            reaped.append(rid)
             continue
         started = row.get("started_at")
         if not isinstance(started, (int, float)):
@@ -246,6 +306,13 @@ def hygiene_reclaim_extended(
     listen = is_listening or cdp_lane.is_listening
     reclaimed: list[int] = []
     removed: list[str] = []
+    if include_stale_active:
+        # Own ports.lock (not re-entrant): settle abandoned in-flight entries
+        # before the reap reads them.
+        from .execution_state import expire_stale_in_flight
+
+        with contextlib.suppress(Exception):
+            expire_stale_in_flight()
     with _store.ports_lock():
         active = _store.load_active()
         if include_stale_active:

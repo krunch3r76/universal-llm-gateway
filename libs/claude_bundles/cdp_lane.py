@@ -32,6 +32,7 @@ import contextlib
 import fcntl
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -103,11 +104,19 @@ def chrome_display_env(display: str | None = None) -> dict[str, str]:
     Clears inherited ``XAUTHORITY`` then sets the cookie from
     ``resolve_display_auth`` (per-display → flat → live Xvfb ``-auth``). Pins
     ``LC_ALL=C`` so listen-timeout log tokens stay English (Opus F6).
+
+    Drops ``WAYLAND_DISPLAY`` / ``XDG_SESSION_TYPE``: with them inherited from
+    the cdp-ask unit, Chrome auto-selected the Wayland backend and every seat
+    became a client of the desktop compositor, dying together on each output
+    reconfiguration (a:36969, seven kill batches on 2026-09-29). Paired with
+    ``--ozone-platform=x11`` in ``chrome_launch_argv``.
     """
     from claude_bundles.cdp_display_auth import apply_display_auth_env
 
     display_val = cdp_display(display)
     env = dict(os.environ)
+    env.pop("WAYLAND_DISPLAY", None)
+    env.pop("XDG_SESSION_TYPE", None)
     apply_display_auth_env(env, display_val)
     env.setdefault("LC_ALL", "C")
     env.setdefault("LANG", "C")
@@ -195,11 +204,37 @@ def chrome_launch_argv(port: int, profile: Path) -> list[str]:
         f"--remote-debugging-port={port}",
         "--remote-allow-origins=*",
         f"--user-data-dir={profile}",
+        # Seats live on the X display cdp_display() names, never on the
+        # compositor's Wayland socket (a:36969; see chrome_display_env).
+        "--ozone-platform=x11",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-features=OptimizationGuideOnDeviceModel",
         "--disk-cache-size=134217728",
         "--media-cache-size=134217728",
+    ]
+
+
+def scoped_launch_argv(argv: list[str], port: int) -> list[str]:
+    """Wrap *argv* in a transient user scope so the host outlives its launcher's unit.
+
+    Chrome's browser process re-parents itself into ``app-com.google.Chrome-*``
+    but its renderer/gpu children stay in the launcher's cgroup; a
+    ``systemctl kill`` of cdp-ask.service then takes every open CSE down with
+    the service (a:36948 acceptance, 2026-09-30). ``systemd-run --scope`` execs
+    Chrome in place (the Popen pid is still Chrome's) inside its own scope. No
+    ``systemd-run`` on PATH ⇒ plain argv.
+    """
+    if shutil.which("systemd-run") is None:
+        return argv
+    return [
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--quiet",
+        "--collect",
+        f"--unit=cdp-host-{port}-{int(time.time())}",
+        *argv,
     ]
 
 
@@ -399,19 +434,17 @@ def _launch_chrome(port: int, profile: Path) -> int:
         log_bytes_show_display_dead,
         log_bytes_show_x_exhaustion,
         require_cdp_display_reachable,
-        require_chrome_headroom,
     )
 
     display_val = cdp_display()
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
-    require_chrome_headroom()
     _seed_profile(profile)
     log = chrome_cdp_log_path(port)
     pre_size = Path(log).stat().st_size if Path(log).is_file() else 0
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
-            chrome_launch_argv(port, profile),
+            scoped_launch_argv(chrome_launch_argv(port, profile), port),
             stdout=logf,
             stderr=logf,
             stdin=subprocess.DEVNULL,

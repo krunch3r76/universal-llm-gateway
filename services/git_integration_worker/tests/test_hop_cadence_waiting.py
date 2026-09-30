@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from claude_bundles.cse_session_common import is_parked_waiting_body
@@ -278,7 +278,8 @@ async def test_scan_and_fire_skips_auto_in_flight(tmp_path: Path) -> None:
             return_value=None,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_standdown._fetch_thread_turns_sync",
+            "services.git_integration_worker.cursor_auto.hop_cadence.fetch_thread_turns",
+            new_callable=AsyncMock,
             return_value=[],
         ),
         patch(
@@ -311,7 +312,8 @@ async def test_scan_and_fire_skips_parked_waiting(tmp_path: Path) -> None:
             return_value=None,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_standdown._fetch_thread_turns_sync",
+            "services.git_integration_worker.cursor_auto.hop_cadence.fetch_thread_turns",
+            new_callable=AsyncMock,
             return_value=[],
         ),
         patch(
@@ -343,7 +345,8 @@ async def test_scan_and_fire_skips_idle_lane(tmp_path: Path) -> None:
             return_value=None,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_standdown._fetch_thread_turns_sync",
+            "services.git_integration_worker.cursor_auto.hop_cadence.fetch_thread_turns",
+            new_callable=AsyncMock,
             return_value=[],
         ),
         patch(

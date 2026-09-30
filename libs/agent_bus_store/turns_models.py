@@ -455,6 +455,9 @@ class ThreadCreate(BaseModel):
     # When set, opts this thread into lifecycle management from creation.
     # None = no lifecycle (backward-compat default).
     lifecycle_state: str | None = None
+    # Caller-minted retry token: a second create with the same key returns the
+    # thread the first one made (200 + idempotent_replay) instead of a sibling.
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class ThreadDetail(BaseModel):

@@ -461,6 +461,123 @@ def test_bind_registry_lane_role_never_becomes_proof(
     assert episode.lineage_state != "proven"
 
 
+def _isolate(monkeypatch, tmp_path: Path) -> Path:
+    log = tmp_path / "registry.jsonl"
+    monkeypatch.setattr(cse_provenance.store, "REGISTRY_LOG", log)
+    monkeypatch.setattr(cse_provenance.store, "REGISTRY_DIR", tmp_path)
+    return log
+
+
+_URL = "https://claude.ai/cowork/cse_guard"
+
+
+def _bind(registration_id: str = "reg-a", **overrides):
+    kwargs = {
+        "chat_url": _URL,
+        "registration_id": registration_id,
+        "cdp_url": "http://127.0.0.1:9223",
+        "lane_thread": "thread-a",
+        "correlation_id": "exec-a",
+    }
+    kwargs.update(overrides)
+    return cse_provenance.append_episode(**kwargs)
+
+
+def test_unchanged_bind_writes_no_row(monkeypatch, tmp_path: Path) -> None:
+    """N identical binds leave one episode, one line, one bound signal (a:36945)."""
+    log = _isolate(monkeypatch, tmp_path)
+    signals = _capture_signals(monkeypatch)
+
+    first = _bind()
+    repeats = [_bind() for _ in range(5)]
+
+    assert all(repeat == first for repeat in repeats)
+    assert len(cse_provenance.read_episodes()) == 1
+    assert log.read_text().count("cse.provenance.episode") == 1
+    assert [s[0] for s in signals].count("cdp.provenance.bound") == 1
+
+
+def test_rebind_appends_with_supersedes(monkeypatch, tmp_path: Path) -> None:
+    """A host change is a real change: same row shape as before the guard."""
+    _isolate(monkeypatch, tmp_path)
+    first = _bind("reg-a")
+    second = _bind("reg-b", cdp_url="http://127.0.0.1:9224", lane_thread="thread-b")
+
+    assert second.supersedes == first.episode_id
+    assert len(cse_provenance.read_episodes()) == 2
+
+
+def test_late_lane_thread_on_same_registration_appends(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A lane claim arriving after a lane-less bind changes the binding."""
+    _isolate(monkeypatch, tmp_path)
+    laneless = _bind(lane_thread=None)
+    claimed = _bind(lane_thread="thread-a")
+
+    assert laneless.lineage_state == "unresolved"
+    assert claimed.lineage_state == "claimed"
+    assert claimed.supersedes == laneless.episode_id
+    assert len(cse_provenance.read_episodes()) == 2
+
+
+def test_rebind_a_b_a_appends_three(monkeypatch, tmp_path: Path) -> None:
+    """The guard compares against the latest row for the URL, not per registration."""
+    _isolate(monkeypatch, tmp_path)
+    a1 = _bind("reg-a")
+    b = _bind("reg-b", cdp_url="http://127.0.0.1:9224", lane_thread="thread-b")
+    a2 = _bind("reg-a")
+
+    assert a2.episode_id != a1.episode_id
+    assert a2.supersedes == b.episode_id
+    assert [e.registration_id for e in cse_provenance.read_episodes()] == [
+        "reg-a",
+        "reg-b",
+        "reg-a",
+    ]
+    assert cse_provenance.resolve(chat_url=_URL)["registration_id"] == "reg-a"
+
+
+def test_enrich_proven_overlay_appends_and_resolves_proven(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The proven overlay differs from the registry row and passes the guard."""
+    _isolate(monkeypatch, tmp_path)
+    claim = _bind()
+    proven = _bind(
+        lineage={"parent_thread": "bus-parent", "lane_role": "side"},
+        association_id=42,
+        lineage_state="proven",
+        lineage_observed_at=100.0,
+        attribution_source="cse-provenance-enrich",
+        state="current",
+        reason="bus_lane_current",
+    )
+
+    assert proven.supersedes == claim.episode_id
+    assert len(cse_provenance.read_episodes()) == 2
+    resolved = cse_provenance.resolve(chat_url=_URL)
+    assert resolved["lineage_state"] == "proven"
+    assert resolved["association_id"] == 42
+
+
+def test_dormant_transition_appends(monkeypatch, tmp_path: Path) -> None:
+    """A state change on the same host is evidence, not a re-observation."""
+    _isolate(monkeypatch, tmp_path)
+    bound = _bind()
+    dormant = _bind(
+        cdp_url="",
+        lane_thread=None,
+        correlation_id=None,
+        state="dormant",
+        reason="idle_exit",
+    )
+
+    assert dormant.supersedes == bound.episode_id
+    assert dormant.state == "dormant"
+    assert len(cse_provenance.read_episodes()) == 2
+
+
 def test_resolver_emits_unresolved_when_lane_thread_missing(
     monkeypatch, tmp_path: Path
 ) -> None:

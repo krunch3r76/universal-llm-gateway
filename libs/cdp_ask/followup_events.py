@@ -19,6 +19,59 @@ from universal_event_bus.events.factory import event_factory
 
 
 @event_factory
+def cdp_ask_execution_resumed(
+    *,
+    execution_id: str,
+    registration_id: str | None,
+    chat_url: str,
+    trigger: str,
+    relaunched: bool,
+) -> Event:
+    """An in-flight execution re-attached to its Cowork session by chat_url.
+
+    ``trigger`` ∈ {boot, host_lost}: boot after a cdp_ask recycle, host_lost
+    when the Chrome died under the live turn. This event and the row's
+    ``execution_state`` are the re-attach receipts — never a provenance episode.
+    """
+    return Event(
+        signal="cdp_ask.execution.resumed",
+        role="observation",
+        scope="node",
+        payload={
+            "execution_id": execution_id,
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "trigger": trigger,
+            "relaunched": relaunched,
+        },
+    )
+
+
+@event_factory
+def cdp_ask_execution_resume_failed(
+    *,
+    execution_id: str,
+    registration_id: str | None,
+    chat_url: str | None,
+    trigger: str,
+    error_code: str,
+) -> Event:
+    """Resume could not re-attach or harvest; the execution terminalizes ``failed``."""
+    return Event(
+        signal="cdp_ask.execution.resume_failed",
+        role="observation",
+        scope="node",
+        payload={
+            "execution_id": execution_id,
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "trigger": trigger,
+            "error_code": error_code,
+        },
+    )
+
+
+@event_factory
 def cdp_ask_followup_paste_attempt(
     *,
     registration_id: str,

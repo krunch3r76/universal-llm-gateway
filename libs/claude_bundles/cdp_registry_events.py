@@ -158,6 +158,50 @@ def cdp_port_reattached(reg: Registration) -> Event:
 
 
 @event_factory
+def cdp_port_allocating(
+    *,
+    registration_id: str,
+    port: int | None,
+    parent_thread: str | None,
+    holder: str | None,
+) -> Event:
+    """Report a port reserved while its Chrome process is still starting."""
+    return Event(
+        signal="cdp.port.allocating",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "port": port if isinstance(port, int) else None,
+            "parent_thread": parent_thread if isinstance(parent_thread, str) else None,
+            "holder": holder if isinstance(holder, str) else None,
+        },
+    )
+
+
+@event_factory
+def cdp_port_alloc_failed(
+    *,
+    registration_id: str,
+    port: int | None,
+    parent_thread: str | None,
+    holder: str | None,
+) -> Event:
+    """Report an allocating reservation rolled back before Chrome became active."""
+    return Event(
+        signal="cdp.port.alloc_failed",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "port": port if isinstance(port, int) else None,
+            "parent_thread": parent_thread if isinstance(parent_thread, str) else None,
+            "holder": holder if isinstance(holder, str) else None,
+        },
+    )
+
+
+@event_factory
 def cdp_port_exit_kill_decision(
     *,
     purpose: str | None,
@@ -219,6 +263,34 @@ def cdp_port_relaunched(
             "registration_id": registration_id,
             "port": port if isinstance(port, int) else None,
             "purpose": purpose,
+            "chat_url": chat_url,
+        },
+    )
+
+
+@event_factory
+def cdp_execution_state_changed(
+    *,
+    registration_id: str,
+    execution_id: str,
+    state: str,
+    previous_state: str | None,
+    kind: str,
+    reason: str | None,
+    chat_url: str | None,
+) -> Event:
+    """Durable ``execution_state`` on a registry row changed (advisory mirror, not the record)."""
+    return Event(
+        signal="cdp.execution.state_changed",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "execution_id": execution_id,
+            "state": state,
+            "previous_state": previous_state,
+            "kind": kind,
+            "reason": reason,
             "chat_url": chat_url,
         },
     )
@@ -569,6 +641,7 @@ def cdp_display_exhausted(
     x_max_clients: int,
     x_headroom: int | None,
     x_chrome_client_budget: int,
+    x_reserved_chromes: int = 0,
 ) -> Event:
     """Mint refused because Xvfb/X11 MaxClients cannot host another Chrome."""
     return Event(
@@ -581,6 +654,7 @@ def cdp_display_exhausted(
             "x_max_clients": x_max_clients,
             "x_headroom": x_headroom,
             "x_chrome_client_budget": x_chrome_client_budget,
+            "x_reserved_chromes": x_reserved_chromes,
         },
     )
 

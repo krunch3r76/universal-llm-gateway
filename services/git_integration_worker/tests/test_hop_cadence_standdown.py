@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -196,7 +196,8 @@ async def test_scan_and_fire_skips_open_standdown_ack(tmp_path: Path) -> None:
             return_value=None,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_standdown._fetch_thread_turns_sync",
+            "services.git_integration_worker.cursor_auto.hop_cadence.fetch_thread_turns",
+            new_callable=AsyncMock,
             return_value=[
                 {
                     "turn_number": 10,
@@ -229,7 +230,8 @@ async def test_scan_and_fire_skips_idle_when_successor_consumes(tmp_path: Path) 
             return_value=None,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_standdown._fetch_thread_turns_sync",
+            "services.git_integration_worker.cursor_auto.hop_cadence.fetch_thread_turns",
+            new_callable=AsyncMock,
             return_value=[
                 {
                     "turn_number": 10,

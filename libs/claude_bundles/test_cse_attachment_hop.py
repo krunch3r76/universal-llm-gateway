@@ -9,9 +9,12 @@ import pytest
 from universal_protocol.errors import ProtocolError
 
 from claude_bundles import cdp_registry as reg
+from claude_bundles.cdp_registry.attachment_journal import (
+    append_attachment_journal,
+    fold_attachment_journal,
+)
 from claude_bundles.cdp_registry.session_address import attachment_for_chat_url
 from claude_bundles.cdp_registry_store import (
-    fold_attachment_journal,
     open_seats_per_lane,
     verify_seat_fold_invariant,
 )
@@ -264,7 +267,7 @@ def test_fold_replay_observation_only_retains_chat_url(isolated_registry: Path) 
 def test_ac14_attachment_fold_replay(isolated_registry: Path) -> None:
     row = _mint()
     rid = row.registration_id
-    reg._store.append_attachment_journal(
+    append_attachment_journal(
         registration_id=rid,
         chat_url=_CSE,
         attach_proof="streaming",
