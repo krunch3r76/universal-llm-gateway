@@ -442,7 +442,7 @@ def _normalize_op_body(
         common["model"] = body.model
     if hasattr(body, "mcp"):
         common["mcp"] = body.mcp
-    if hasattr(body, "contract"):
+    if hasattr(body, "job"):
         common["resolved_contract"] = body.job
     if hasattr(body, "density_triage"):
         common["density_triage"] = body.density_triage
@@ -569,7 +569,7 @@ async def team_dispatch(
         reject_unsupported_packet_inputs(
             request_id=request_id,
             op=body.op,
-            contract=getattr(body, "contract", None),
+            contract=getattr(body, "job", None),
             packet_path=getattr(body, "packet_path", None),
             source_ref=getattr(body, "source_ref", None),
             stop_after=(
@@ -700,7 +700,7 @@ async def team_dispatch(
 
     if (
         body.op == "generate"
-        and getattr(body, "contract", None) == "wrap"
+        and getattr(body, "job", None) == "wrap"
         and role is not None
         and not is_cursor_sdk_generate_admission(
             role=role, seat=seat, model=model, request_id=request_id

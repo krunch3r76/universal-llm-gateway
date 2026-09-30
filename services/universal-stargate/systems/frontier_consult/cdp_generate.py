@@ -437,15 +437,11 @@ async def dispatch_cdp_generate(
         request_id=request_id,
     )
     raw_job = getattr(body, "job", None)
-    if isinstance(raw_job, str) and raw_job.strip():
-        contract = raw_job.strip()
-    else:
-        legacy = getattr(body, "contract", None)
-        contract = (
-            legacy.strip()
-            if isinstance(legacy, str) and legacy.strip()
-            else None
-        )
+    contract = (
+        raw_job.strip()
+        if isinstance(raw_job, str) and raw_job.strip()
+        else None
+    )
     if contract in {"implement", "wrap"}:
         raise FrontierEndpointError(
             request_id=request_id,

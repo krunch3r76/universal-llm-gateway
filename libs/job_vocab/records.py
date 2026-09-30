@@ -117,7 +117,8 @@ _G_HAND_AUTO = frozenset({_GENERATE, _HANDOFF, _CURSOR_AUTO})
 _G_AUTO = frozenset({_GENERATE, _CURSOR_AUTO})
 _AUTO = frozenset({_CURSOR_AUTO})
 
-# freeform / code-review / delivery-review copy the old ``none`` row.
+# freeform copies the old ``none`` row, including hypothesize_on.
+# code-review / delivery-review copy that row without hypothesize_on.
 # check-review copies that row and sets delivery_role.
 # mechanical copies the old pure-mechanical row (stop_after was not forbidden).
 # confer copies the old consult row.
@@ -127,6 +128,7 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         _ALL_WIRE,
         stop_after_allowed=False,
         recon_owed=True,
+        hypothesize_on=True,
         harness_stack_skip=True,
     ),
     _inline(
@@ -236,7 +238,7 @@ _SOURCE_REF_LITERAL = frozenset({"implement", "sketch", "wrap", "conductor"})
 _POSTURE_SKIP_LITERAL = frozenset(
     {"implement", "mechanical", "propagate", "execute", "answer", "ask"}
 )
-_HYPOTHESIZE_LITERAL = frozenset({"confer", "sketch", "conductor"})
+_HYPOTHESIZE_LITERAL = frozenset({"confer", "sketch", "conductor", "freeform"})
 _HARNESS_STACK_SKIP_LITERAL = frozenset({"freeform"})
 
 assert GENERATE_ADMITTED_JOBS == _GENERATE_ADMITTED_LITERAL

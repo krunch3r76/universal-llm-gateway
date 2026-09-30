@@ -21,6 +21,7 @@ from job_vocab import (
     GENERATE_ADMITTED_JOBS,
     INLINE_ONLY_JOBS,
     SOURCE_REF_JOBS,
+    TO_THREAD_ADMITTED_JOBS,
 )
 from universal_logging import get_logger
 
@@ -189,10 +190,16 @@ def reject_unsupported_packet_inputs(
     if op not in ("generate", "to_thread"):
         return None
     wire = (contract or "").strip().lower()
-    if wire and wire not in GENERATE_ADMITTED_JOBS:
+    admitted = (
+        TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
+    )
+    if not wire or wire not in admitted:
+        shown = wire or "(omitted)"
         return _validation_error(
-            f"contract must be one of: {', '.join(sorted(GENERATE_ADMITTED_JOBS))}",
-            field="contract",
+            f"job {shown!r} is not admitted for op={op!r}; "
+            f"must be one of: {', '.join(sorted(admitted))}",
+            field="job",
+            code="job_not_admitted",
         )
     if wire in SOURCE_REF_JOBS and source_ref is None:
         message = f"source_ref is required for contract={wire!r}"
