@@ -44,6 +44,7 @@ from cdp_ask.page_liveness import (
 from cdp_ask.unverifiable import (
     converse_fail_error,
     converse_stall_stage,
+    is_host_lost_error,
     is_unverifiable_stall,
 )
 
@@ -726,7 +727,9 @@ async def run_execution(
                 satellite_execution_id=_compose_witness_satellite_id(
                     fail_error, execution_id
                 ),
-            ):
+            ) or (not conv_ok and is_host_lost_error(fail_error)):
+                # Host loss keeps the row: execution_ladder parks it dormant and
+                # resumes by chat_url instead of terminalizing (a:36969).
                 retain_host = True
             _persist_session_address(
                 reg.registration_id,
@@ -816,7 +819,7 @@ async def run_execution(
                 satellite_execution_id=_compose_witness_satellite_id(
                     result.error, execution_id
                 ),
-            ):
+            ) or is_host_lost_error(result.error):
                 retain_host = True
         elif result.archive_uri and ladder and ladder.on_archiving:
             await ladder.on_archiving()

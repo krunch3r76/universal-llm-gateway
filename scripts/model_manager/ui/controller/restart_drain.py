@@ -396,6 +396,21 @@ def _default_probes() -> dict[str, BusyProbe]:
     return probes
 
 
+def default_restart_witnesses() -> dict[str, list[InFlightWitness]]:
+    """Service → in-flight witnesses consulted when the live probe fails.
+
+    cdp_ask's witness reads the registry ``execution_state`` rows — the same
+    durable authority its ``/drain-state`` busy flag derives from — so a
+    pinned or already-dead process still yields a named busy or a real idle.
+    """
+    from .cdp_ask_inflight_witness import CdpAskInFlightWitness
+
+    witnesses: dict[str, list[InFlightWitness]] = {}
+    if cdp_ask_url_config() is not None:
+        witnesses["cdp_ask"] = [CdpAskInFlightWitness()]
+    return witnesses
+
+
 class RestartDrainGate:
     """Per-service restart mutex + busy-probe drain check.
 
@@ -1103,6 +1118,7 @@ __all__ = [
     "HttpActiveWorkProbe",
     "InFlightWitness",
     "LastProbeWitness",
+    "default_restart_witnesses",
     "LocalServiceDrainSupervisor",
     "NullBusyProbe",
     "RETRY_AFTER_S",

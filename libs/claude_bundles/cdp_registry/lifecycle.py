@@ -200,7 +200,12 @@ def register_lane(
 
 
 def reattach(registration_id: str, *, holder: str) -> Registration:
-    """Reattach the same holder while claiming its driver lock under ports.lock."""
+    """Reattach the same holder while claiming its driver lock under ports.lock.
+
+    ``holder_pid`` moves to the reattaching process: after a cdp_ask recycle the
+    row otherwise keeps the dead predecessor pid, and any reader keying on
+    holder liveness would judge a driven row abandoned (a:36948 / 36963).
+    """
     if not holder or not str(holder).strip():
         raise RegistryError("holder is required")
     with _store.ports_lock():
@@ -218,6 +223,13 @@ def reattach(registration_id: str, *, holder: str) -> Registration:
                 f"expected {row.get('holder')!r}, got {holder!r}"
             )
         _claim_driver_lock(registration_id)
+        if row.get("holder_pid") != os.getpid():
+            row = dict(row)
+            row["holder_pid"] = os.getpid()
+            row["reattached_at"] = time.time()
+            active[registration_id] = row
+            _store.write_active(active)
+            _store.append_log("reattach", row)
         reg = _row_to_registration(row)
     _events.emit(_events.cdp_port_reattached(reg))
     return reg

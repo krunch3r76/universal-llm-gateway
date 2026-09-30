@@ -29,6 +29,7 @@ from ..gpu_docker_preflight import (
 from ..restart_drain import (
     GIT_INTEGRATION_WORKER_URL,
     RestartDrainGate,
+    default_restart_witnesses,
 )
 from ..restart_intent_store import RestartIntentStore
 from ..service_config import (
@@ -139,7 +140,7 @@ class ServiceController:
         self._build_process: asyncio.subprocess.Process | None = None
         # Drain-aware restart coordination — persists across manage calls so the
         # per-service restart mutex coalesces concurrent agents / TUI.
-        self._restart_gate = RestartDrainGate()
+        self._restart_gate = RestartDrainGate(witnesses=default_restart_witnesses())
         # Durable restart-intent store (event-driven deferred restart, P2). The
         # singleton survives across manage calls; pending intents are reconciled
         # at boot via reconcile_pending_restart_intents().

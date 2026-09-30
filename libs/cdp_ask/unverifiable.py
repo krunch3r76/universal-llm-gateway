@@ -38,6 +38,27 @@ DEATH_STALL_STAGES = frozenset(
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
+# Playwright / CDP wording when the Chrome host went away under a live turn
+# (a:36969: compositor Wayland reset → TargetClosedError in harvest). The
+# Cowork session at chat_url outlives the tab, so this class resumes rather
+# than terminalizing.
+_HOST_LOST_TOKENS = (
+    "targetclosederror",
+    "target closed",
+    "has been closed",
+    "browser has been closed",
+    "connection closed",
+    "websocket is closed",
+    "econnrefused",
+)
+
+
+def is_host_lost_error(error: str | None) -> bool:
+    """True when *error* reads as the CDP host dying, not the model failing."""
+    low = (error or "").strip().lower()
+    return bool(low) and any(token in low for token in _HOST_LOST_TOKENS)
+
+
 _UNSET = object()
 
 _DEATH_ERROR_TOKENS = (

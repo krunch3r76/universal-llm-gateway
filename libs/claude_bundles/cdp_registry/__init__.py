@@ -68,6 +68,12 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "make_dormant": (".dormant", "make_dormant"),
     "reclaim_dormant_rows": (".dormant", "reclaim_dormant_rows"),
     "relaunch_dormant": (".dormant", "relaunch_dormant"),
+    # execution_state — durable in-flight authority (a:36948)
+    "execution_state_of": (".execution_state", "execution_state_of"),
+    "expire_stale_in_flight": (".execution_state", "expire_stale_in_flight"),
+    "in_flight_rows": (".execution_state", "in_flight_rows"),
+    "row_execution_in_flight": (".execution_state", "row_execution_in_flight"),
+    "set_execution_state": (".execution_state", "set_execution_state"),
     # dormant_drain
     "DrainResult": (".dormant_drain", "DrainResult"),
     "drain_live_hosts_to_dormant": (".dormant_drain", "drain_live_hosts_to_dormant"),
