@@ -143,6 +143,14 @@ def _body_of(response: Any) -> str:
 
 
 _CSE_ID = re.compile(r"/cowork/(cse_[A-Za-z0-9]+)")
+# ExecutionPollResponse.harvest_provenance literal; the CSE harvester's own
+# labels (cse-dom, metadata_only) are DOM-level and read as "chat" to a poller.
+_POLL_PROVENANCE = {"output-file", "cortex-uri", "chat", "chat-large", "artifact-card"}
+
+
+def _poll_provenance(content_provenance: str | None) -> str:
+    value = str(content_provenance or "")
+    return value if value in _POLL_PROVENANCE else "chat"
 
 
 def _cse_id(url: str) -> str:
@@ -270,7 +278,7 @@ async def resume_execution(
                 "project_url": "",
                 "model": {},
                 "attested_model": attested,
-                "harvest_provenance": response.content_provenance or "cse-dom",
+                "harvest_provenance": _poll_provenance(response.content_provenance),
                 "resumed": True,
                 "resume_trigger": trigger,
             },

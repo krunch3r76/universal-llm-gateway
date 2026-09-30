@@ -45,7 +45,9 @@ _SSH_TIMEOUT_S = 30.0
 _NFS_PROBE_S = 2
 _DEFAULT_INGEST_TCP_PORT = 7101
 # Graceful-exit window for the teardown park (rows stay in flight, Chrome kept).
-_STOP_GRACE_S = 20
+# Must leave room inside the 30 s manage API / SSH budget for connect, the
+# reset-failed call and the start half of a restart (acceptance #6 overran at 20).
+_STOP_GRACE_S = 12
 
 
 def _graceful_stop_snippet(port: int) -> str:
