@@ -40,6 +40,12 @@ from services.git_integration_worker import (
 )
 
 from .git_worker_activation_verify import mint_activation_validation
+from .restart_drain_witness import (
+    InFlightWitness,
+    LastProbeWitness,
+    in_flight_defer_reason,
+    resolve_probe_failure,
+)
 from .restart_intent_consumer import blocking_drain_result, drain_deferred_result
 from .restart_window_ctl import open_service_window
 from .service_config import cdp_ask_url_config
@@ -132,7 +138,6 @@ def sole_busy_holder_matches(
     return True
 
 
-_IN_FLIGHT_REASON = "service has in-flight work; retry later or pass force=true"
 _CALLER_ID_KEYS = ("op_id", "job_id", "dispatch_id")
 
 
@@ -154,32 +159,6 @@ def _holder_record(row: dict[str, Any], *, kind: str | None = None) -> dict[str,
     if isinstance(subject, str) and subject.strip():
         rec["subject_preview"] = subject.strip()
     return rec
-
-
-def _deferral_holder_label(detail: dict[str, Any]) -> str | None:
-    """Name the first census holder, when ``evaluate`` attached one."""
-    holders = detail.get("holders")
-    if not isinstance(holders, list) or not holders:
-        return None
-    first = holders[0]
-    if not isinstance(first, dict):
-        return None
-    ident = first.get("op_id") or first.get("dispatch_id")
-    if not isinstance(ident, str) or not ident.strip():
-        return None
-    label = f"{first.get('kind') or 'holder'}:{ident.strip()}"
-    subject = first.get("subject_preview")
-    if isinstance(subject, str) and subject.strip():
-        label += f" subject={subject.strip()}"
-    return label
-
-
-def in_flight_defer_reason(detail: dict[str, Any]) -> str:
-    """Busy-deferral reason. Names a holder only when the census attached one."""
-    named = _deferral_holder_label(detail)
-    if not named:
-        return _IN_FLIGHT_REASON
-    return f"{_IN_FLIGHT_REASON}; holder={named}"
 
 
 def exclude_caller_from_agent_bus_census(
@@ -422,13 +401,27 @@ class RestartDrainGate:
 
     One instance is owned by ServiceController so the per-service gates persist
     across manage calls (coalescing requires shared state).
+
+    ``witnesses`` are per-service in-flight sources consulted only when the
+    live probe raises (``restart_drain_witness``). Every service additionally
+    gets the gate's own ``LastProbeWitness`` — the last answered probe.
     """
 
-    def __init__(self, probes: dict[str, BusyProbe] | None = None) -> None:
+    def __init__(
+        self,
+        probes: dict[str, BusyProbe] | None = None,
+        *,
+        witnesses: dict[str, list[InFlightWitness]] | None = None,
+    ) -> None:
         self._probes: dict[str, BusyProbe] = (
             probes if probes is not None else _default_probes()
         )
         self._gates: dict[str, FifoCapacityGate] = {}
+        self._witnesses: dict[str, list[InFlightWitness]] = witnesses or {}
+        self._last_probe = LastProbeWitness()
+
+    def _witnesses_for(self, service: str) -> list[InFlightWitness]:
+        return [*self._witnesses.get(service, ()), self._last_probe]
 
     def _gate(self, service: str) -> FifoCapacityGate:
         gate = self._gates.get(service)
@@ -499,13 +492,23 @@ class RestartDrainGate:
             try:
                 work = await self.probe(service)
             except (httpx.HTTPError, ValueError, OSError) as exc:
-                # Probe failure must not kill a maybe-busy service. Fail closed: defer.
+                # Probe failure must not kill a maybe-busy service. Fail closed,
+                # but ask the witnesses first: a recent busy answer names the
+                # work; only an independent idle witness may clear the restart.
                 detail = describe_probe_exc(exc)
                 logger.warning("active-work probe failed for %s: %s", service, detail)
+                resolution = await resolve_probe_failure(
+                    service, probe_error=detail, witnesses=self._witnesses_for(service)
+                )
+                if resolution.verdict == "idle":
+                    logger.info("restart of %s: %s", service, resolution.reason)
+                    proceed = True
+                    return None  # slot held; proceed
                 return DrainOutcome(
-                    state="probe_error",
+                    state=resolution.state,
                     service=service,
-                    reason=f"could not determine in-flight work: {detail}",
+                    reason=resolution.reason,
+                    active_work=resolution.active_work,
                 )
 
             if (
@@ -544,8 +547,11 @@ class RestartDrainGate:
         probe implementation. Probe exceptions propagate to the caller, which
         decides how to render them (``evaluate`` → ``state=probe_error`` deferral;
         ``busy_report`` → ``restart_would_defer=True`` with an error detail).
+        Every answered probe is recorded for ``LastProbeWitness``.
         """
-        return await self._probe(service).snapshot()
+        work = await self._probe(service).snapshot()
+        self._last_probe.record(service, busy=work.busy, detail=work.detail)
+        return work
 
     def restart_in_progress(self, service: str) -> bool:
         """True iff the per-service restart slot is currently held (no free slot).
@@ -565,11 +571,13 @@ class RestartDrainGate:
         ``determination``, and ``active_work``.
 
         ``restart_would_defer`` ⟺ ``busy`` ∨ a restart is already in progress ∨
-        the probe failed. Probe failure is ``busy=False``,
-        ``determination=undetermined``, ``restart_would_defer=True`` (fail
-        closed: a non-force restart would defer with ``state=probe_error``)
-        and an ``error`` entry in ``active_work``. ``busy=False`` alone is
-        not an idle finding — read ``determination``.
+        the probe failed with no witness verdict. Probe failure goes through
+        the same witnesses as ``evaluate``: a busy witness reports ``busy``;
+        otherwise ``busy=False``, ``determination=undetermined``,
+        ``restart_would_defer=True`` (fail closed: a non-force restart would
+        defer with ``state=probe_error``) and an ``error`` entry in
+        ``active_work``. ``busy=False`` alone is not an idle finding — read
+        ``determination``.
         """
         report: dict[str, dict[str, Any]] = {}
         for service in services:
@@ -577,12 +585,14 @@ class RestartDrainGate:
             try:
                 work = await self.probe(service)
             except (httpx.HTTPError, ValueError, OSError) as exc:
-                report[service] = {
-                    "busy": False,
-                    "restart_would_defer": True,
-                    "determination": "undetermined",
-                    "active_work": {"error": describe_probe_exc(exc)},
-                }
+                resolution = await resolve_probe_failure(
+                    service,
+                    probe_error=describe_probe_exc(exc),
+                    witnesses=self._witnesses_for(service),
+                )
+                report[service] = resolution.busy_report_row(
+                    restart_in_progress=in_progress
+                )
                 continue
             if work.busy:
                 determination = "busy"
@@ -1091,6 +1101,8 @@ __all__ = [
     "GATED_ACTIONS",
     "GIT_INTEGRATION_WORKER_URL",
     "HttpActiveWorkProbe",
+    "InFlightWitness",
+    "LastProbeWitness",
     "LocalServiceDrainSupervisor",
     "NullBusyProbe",
     "RETRY_AFTER_S",
