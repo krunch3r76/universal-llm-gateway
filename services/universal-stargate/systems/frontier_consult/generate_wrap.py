@@ -317,16 +317,17 @@ async def dispatch_cursor_sdk_generate_route(
 
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
         source_ref = getattr(body, "source_ref", None)
-        if (
-            body.job == "conductor"
-            and source_ref
-            and not getattr(body, "packet_path", None)
-        ):
+        if body.job == "conductor":
             operator_lane_summon_warning = await refuse_conductor_operator_lane_summon(
                 request_id=request_id,
                 contract=body.job,
                 dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
             )
+        if (
+            body.job == "conductor"
+            and source_ref
+            and not getattr(body, "packet_path", None)
+        ):
             loop = asyncio.get_running_loop()
             gen_opts = getattr(body, "generation_options", None) or {}
             raw_summon = gen_opts.get("summon_mode")

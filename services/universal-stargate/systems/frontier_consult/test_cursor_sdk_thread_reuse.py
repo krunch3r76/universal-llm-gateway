@@ -723,6 +723,42 @@ async def test_operator_proxy_refuses_before_materialize(
 
 
 @pytest.mark.asyncio
+async def test_operator_proxy_refuses_when_packet_path_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = {
+        "purpose": "operator-proxy",
+        "ids": {"registration_id": "reg-op", "lane_thread": "12286"},
+    }
+    _patch_session(
+        monkeypatch,
+        read=lambda: _registry_read(present=True, data={"s": row}),
+        found=lambda _sessions, _reg: ("reg:op", row),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: Path("/tmp/conductor-packet.md"),
+    )
+    _patch_probe(monkeypatch, _OPERATOR_PAYLOAD)
+    calls, _captured = _install_route_stubs(monkeypatch)
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="conductor",
+        packet_path="tmp/packets/conductor-packet.md",
+        lane="B",
+        caller_agent="cursor",
+        dispatch_thread_id="12286",
+    )
+    result = await dispatch_cursor_sdk_generate_route(
+        request_id="req-op-lane-packet",
+        body=body,
+        seat="cursor-sdk",
+        response=Response(),
+    )
+    _assert_operator_lane_422(result, calls)
+
+
+@pytest.mark.asyncio
 async def test_operator_proxy_refuses_when_reuse_thread_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
