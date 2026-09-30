@@ -63,7 +63,7 @@ def test_team_dispatch_generate_body_accepts_lane_b() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="implement",
+        job="implement",
         dispatch_thread_id="5777",
         seat="cursor-sdk",
         lane="B",
@@ -76,7 +76,7 @@ def test_team_dispatch_generate_body_accepts_workspace() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="implement",
+        job="implement",
         dispatch_thread_id="5777",
         seat="cursor-sdk",
         workspace="claudeburst",
@@ -97,7 +97,7 @@ def test_team_dispatch_generate_body_rejects_invalid_lane() -> None:
     with pytest.raises(ValidationError):
         TeamDispatchGenerateBody(
             op="generate",
-            contract="implement",
+            job="implement",
             dispatch_thread_id="5777",
             seat="cursor-sdk",
             lane="C",

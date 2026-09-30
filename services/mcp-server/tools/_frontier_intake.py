@@ -17,10 +17,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from team_dispatch_vocab import (
-    MATERIALIZER_CONTRACTS,
-    RESIDUAL_CONTRACTS,
-    TEAM_DISPATCH_CONTRACTS,
+from job_vocab import (
+    GENERATE_ADMITTED_JOBS,
+    INLINE_ONLY_JOBS,
+    SOURCE_REF_JOBS,
+    TO_THREAD_ADMITTED_JOBS,
 )
 from universal_logging import get_logger
 
@@ -155,7 +156,7 @@ def require_contract(contract: str | None) -> dict[str, Any] | None:
     if contract is None or not str(contract).strip():
         return _validation_error(
             "contract is required — valid values: "
-            + ", ".join(sorted(TEAM_DISPATCH_CONTRACTS)),
+            + ", ".join(sorted(GENERATE_ADMITTED_JOBS)),
             field="contract",
         )
     return None
@@ -189,17 +190,23 @@ def reject_unsupported_packet_inputs(
     if op not in ("generate", "to_thread"):
         return None
     wire = (contract or "").strip().lower()
-    if wire and wire not in TEAM_DISPATCH_CONTRACTS:
+    admitted = (
+        TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
+    )
+    if not wire or wire not in admitted:
+        shown = wire or "(omitted)"
         return _validation_error(
-            f"contract must be one of: {', '.join(sorted(TEAM_DISPATCH_CONTRACTS))}",
-            field="contract",
+            f"job {shown!r} is not admitted for op={op!r}; "
+            f"must be one of: {', '.join(sorted(admitted))}",
+            field="job",
+            code="job_not_admitted",
         )
-    if wire in MATERIALIZER_CONTRACTS and source_ref is None:
+    if wire in SOURCE_REF_JOBS and source_ref is None:
         message = f"source_ref is required for contract={wire!r}"
         if wire == "implement":
             message += (
                 ". implement is the materialized work-item path, not a "
-                "generic repo-write; an ad-hoc edit uses contract='none' "
+                "generic repo-write; an ad-hoc edit uses job='freeform' "
                 "with prompt or packet_path"
             )
         return _validation_error(
@@ -213,7 +220,7 @@ def reject_unsupported_packet_inputs(
             field="packet_path",
             code=f"{wire}_with_packet_path",
         )
-    if wire in RESIDUAL_CONTRACTS and source_ref is not None:
+    if wire in INLINE_ONLY_JOBS and source_ref is not None:
         return _validation_error(
             f"source_ref is forbidden for contract={wire!r}; pick a materializer contract",
             field="source_ref",
@@ -221,17 +228,17 @@ def reject_unsupported_packet_inputs(
         )
     if wire == "none" and source_ref is not None:
         return _validation_error(
-            "source_ref is forbidden for contract='none'; use work_key instead",
+            "source_ref is forbidden for job='freeform'; use work_key instead",
             field="source_ref",
             code="none_with_source_ref",
         )
     if wire == "none" and stop_after:
         return _validation_error(
-            "stop_after is forbidden with contract='none'",
+            "stop_after is forbidden with job='freeform'",
             field="stop_after",
             code="none_with_stop_after",
         )
-    if wire in MATERIALIZER_CONTRACTS and prompt is not None:
+    if wire in SOURCE_REF_JOBS and prompt is not None:
         return _validation_error(
             f"prompt is forbidden for contract={wire!r}; materializer owns the packet",
             field="prompt",
@@ -277,7 +284,7 @@ def validate_inline_prompt_inputs(
             "implement, wrap, sketch, and conductor are materializer "
             "contracts: source_ref, and the server owns the packet. "
             "implement is not a generic repo-write. An ad-hoc edit uses "
-            "contract='none' with prompt or packet_path.",
+            "job='freeform' with prompt or packet_path.",
             field=field,
             code="inline_prompt_not_supported",
         )
@@ -423,10 +430,10 @@ def require_explicit_cursor_seat_for_handoff(
             "message": (
                 "op=handoff to claude-cursor requires explicit seat selection via "
                 "seat='claude-cursor' (or alias 'cursor'). "
-                "role='cursor-consult' and role='cursor-implement' route to the Cursor IDE "
+                "seat='cursor', job='confer' and seat='cursor', job='implement' route to the Cursor IDE "
                 "seat, which requires the operator to explicitly pick it "
                 "(decision:handoff-default-seat-claude-web). "
-                "Default handoffs use role='web-consult' (claude-web). "
+                "Default handoffs use seat='web-anthropic', job='confer' (claude-web). "
                 "For Cursor IDE implement: pass seat='claude-cursor', contract='implement'."
             ),
         },
@@ -442,7 +449,7 @@ def require_explicit_cursor_seat_for_handoff(
 _LANE_REQUIRED_MESSAGE = (
     "lane is required for top-level seat=cursor-sdk generate/to_thread. "
     "Lane B is the default checkout for in-repo generate, including "
-    "contract=none. contract=implement is not implied by a write. "
+    "job=freeform. contract=implement is not implied by a write. "
     "Pass A only as the named exception "
     "(bind-only / empty files_expected / out-of-repo) with a one-line reason. "
     "Omit only when nest_under or resume_of inherits parent isolation. "

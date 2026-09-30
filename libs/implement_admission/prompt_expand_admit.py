@@ -21,16 +21,16 @@ _TICKER_CALLERS = frozenset({"liaison-ticker"})
 # wrap / pure-mechanical have no authoring hop. Sketch is the shape-bind hop —
 # taking the A — so it is not mechanical for this door (enrolled roots only).
 # implement / conductor (Play) skip: g5 author drops holes (7154e190 / 5c59e467).
-# should_expand skip of contract=none is author/residual generate (AUTHOR_CONTRACT,
+# should_expand skip of job=freeform is author/residual generate (AUTHOR_CONTRACT,
 # conductor spawn, bind leg, path-sim, unnamed Auto nest) so expand does not
 # recurse. An unspecified operator TASK still uses pipeline options
-# contract=none / stage=none — that seat door is not this skip.
-_MECHANICAL = frozenset({"wrap", "pure-mechanical"})
-_VALID_CONTRACTS = frozenset(
+# job=freeform / stage=none — that seat door is not this skip.
+_KNOB_MECHANICAL_JOBS = frozenset({"wrap", "pure-mechanical"})
+_VALID_JOBS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
 )
 # consult = retired wire name; live hop is contract=sketch. Profile row is g1.
-_CONTRACT_ALIASES = {"conductor": "implement", "sketch": "consult"}
+_REMOVED_JOB_ALIASES = {"conductor": "implement", "sketch": "consult"}
 SkipReason = Literal[
     "liaison_ticker",
     "already_expanded",
@@ -114,7 +114,7 @@ def should_expand(
     if root is None:
         return ExpandDecision(admit=False, skip_reason="root_not_enrolled")
     kind = str(contract or "none").strip() or "none"
-    if kind in _MECHANICAL:
+    if kind in _KNOB_MECHANICAL_JOBS:
         return ExpandDecision(admit=False, root=root, skip_reason="mechanical")
     if expand_contract(kind) == "implement":
         return ExpandDecision(admit=False, root=root, skip_reason="implement")
@@ -126,8 +126,8 @@ def should_expand(
 def expand_contract(contract: str | None) -> str:
     """Map a generate contract onto a prompt-expand options.contract."""
     raw = str(contract or "none").strip() or "none"
-    aliased = _CONTRACT_ALIASES.get(raw, raw)
-    if aliased in _VALID_CONTRACTS:
+    aliased = _REMOVED_JOB_ALIASES.get(raw, raw)
+    if aliased in _VALID_JOBS:
         return aliased
     return "none"
 

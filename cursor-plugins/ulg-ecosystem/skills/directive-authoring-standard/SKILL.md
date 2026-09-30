@@ -119,14 +119,15 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 
 **Transport:** this seat has ulg-code `team_dispatch`. Commission is `team_dispatch(op=generate, seat=cursor-sdk, lane=B, ...)`. The cursor-sdk seat nests its own further dispatches. `cursor_request` is not the wire.
 
-**Reachability:** no `conductor` contract token exists; body prose is the instruction. A non-roaming reasoning model on mechanical `handoff=pure-mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `contract=investigate` when the leg is facts, not edits.
+**Reachability:** no `conductor` contract token exists; body prose is the instruction. A non-roaming reasoning model on mechanical `handoff=pure-mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `job=investigate` when the leg is facts, not edits.
 
 **Model + lane (BINDING):**
 - Omit `model=` resolves `cursor/grok-4.7` (`workflows.auto_judgment.model`). Card default `fast=true`. Pin `model=cursor/composer-2.5` when the leg is mechanical implement.
 - Name `cdp/opus-5.5` in the directive when the leg needs a CDP bind. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor model is `desired_model=cdp/opus-5.5-extra`.
 - Pass `lane="B"` on the wire (`team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. `team_dispatch` top-level omit is 422 `lane_required`. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
 
-Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, contract=investigate, …)`. The cursor-sdk seat nests further dispatches. A conductor-class commission uses the contract the conductor recipe names, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
+Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, job=investigate, …)`. The cursor-sdk seat nests further dispatches. `job=implement` redirects the executor to Composer, so a conductor-class commission uses the job the conductor recipe names, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
+
 
 This seat: frame the Question, ratify conductor Leg-boundary DISPOSITIONs, hold true operator-only gates — ¬ personally drive each nested admit/poll/harvest.
 
@@ -164,4 +165,4 @@ Live field contract: full grammar in `cortex://notes/system/specs/directive-loop
 - [ ] Mint-then-quote: every id in the body was read from a tool payload this turn
 - [ ] Framed multi-step (≥3 G-row or bind-then-compose) ⇒ D4 conductor, not a G-row loop
 - [ ] Pre-frame shape talk ⇒ D5 `negotiation_phase` on `contract: confer`, then D4
-- [ ] Conductor: `contract=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)
+- [ ] Conductor: `job=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)

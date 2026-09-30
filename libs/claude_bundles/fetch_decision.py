@@ -1,21 +1,11 @@
 """Arrival-inject receipt for a staged fetch.
 
-RULING: operator-seat procedure is in force at the act only as its success
-condition, and that sentence lives in the harness-authored arrival inject
-(``## This hop``), which exists before the seat's first token. The step list
-stays in the runbook or skill and is not copied. A pointer line is not a
-receipt. ``resolved`` means the harness hashed bytes (reachable). ``in_context``
-means a caller attested the body was loaded. Reachable is not read.
-
-What breaks the circle: ``runbook:maestro-loop`` § Trigger can bind only a
-seat that has already read it. This module's success-condition line is
-written by the hop composer, which is not waiting on that read.
-
-Falsifier: ``arrival_bind_failure`` returns ``receipt_absent`` when the inject
-does not carry a ``fetch-decision`` for each required ref (a lone
-``- runbook:`` line fails), or ``success_condition_absent`` when that line
-is missing. ``skipped`` satisfies the receipt and ``step_list_in_force``
-stays false.
+Trigger and Refuse are inlined by the hop composer from runbook bytes the
+composer read. The Steps section is not copied. ``resolved`` means the harness
+hashed reachable bytes. ``in_context`` means a caller attested the body was
+loaded. ``skipped`` on ``runbook:maestro-loop`` is ``receipt_unresolved`` for
+arrival bind; ``skipped`` on any other ref is still a trace line in the block.
+A pointer line is not a receipt.
 """
 
 from __future__ import annotations
@@ -29,14 +19,7 @@ ARRIVAL_FETCH_REFS: tuple[str, ...] = (
     "skill:retrieval-before-authoring",
 )
 
-# Success condition of the maestro loop, not its step list. One line so the
-# arrival inject does not re-inline the procedure.
-HOP_SUCCESS_CONDITION = (
-    "- success-condition: the first commission is not `wait`, not "
-    "`to=cursor-auto`, not a copied thread `cse_*` identity, not over "
-    "2000 characters, and not a propagate while porcelain shows `M`/`D` "
-    "on a landed path"
-)
+ARRIVAL_REQUIRED_RESOLVED: tuple[str, ...] = ("runbook:maestro-loop",)
 
 _REASON_RE = re.compile(r"[a-z0-9_]+")
 _LINE_RE = re.compile(
@@ -56,6 +39,14 @@ class FetchDecision:
     reason: str = ""
     sha256: str = ""
     nbytes: int = 0
+
+
+def success_condition_line(refuse_body: str) -> str:
+    """One success-condition bullet derived from the Refuse excerpt body."""
+    collapsed = " ".join((refuse_body or "").split())
+    if not collapsed:
+        return "- success-condition:"
+    return f"- success-condition: {collapsed}"
 
 
 def format_fetch_decision(
@@ -89,23 +80,27 @@ def decision_lines(
     in_context_refs: tuple[str, ...] = (),
     resolved_bodies: dict[str, str] | None = None,
     skip_reason: str = "not_in_context",
+    refuse_body: str = "",
+    skip_reasons: dict[str, str] | None = None,
 ) -> str:
     """Success condition plus one receipt per ``ARRIVAL_FETCH_REFS`` entry.
 
-    ``in_context`` wins over ``resolved``. Absent bytes and no attestation
-    is ``skipped``.
+    ``in_context`` wins over ``resolved``. Per-ref skip uses *skip_reasons*
+    when present, else *skip_reason*.
     """
     attested = set(in_context_refs)
     bodies = resolved_bodies or {}
-    lines = [HOP_SUCCESS_CONDITION]
+    per_ref_skip = skip_reasons or {}
+    lines = [success_condition_line(refuse_body)]
     for ref in ARRIVAL_FETCH_REFS:
         if ref in attested:
             lines.append(format_fetch_decision(ref, state="in_context"))
         elif ref in bodies:
             lines.append(format_fetch_decision(ref, state="resolved", body=bodies[ref]))
         else:
+            reason = per_ref_skip.get(ref, skip_reason)
             lines.append(
-                format_fetch_decision(ref, state="skipped", reason=skip_reason)
+                format_fetch_decision(ref, state="skipped", reason=reason)
             )
     return "\n".join(lines)
 
@@ -137,41 +132,39 @@ def parse_fetch_decisions(text: str) -> tuple[FetchDecision, ...]:
 
 
 def arrival_bind_failure(block: str) -> str | None:
-    """None when the inject carries the success condition and every required receipt.
-
-    A pointer-only ``- runbook:`` line is ``receipt_absent``. ``skipped`` is
-    not a failure: the skip is the trace.
-    """
+    """None when bind checks pass; else a failure token."""
     if "- success-condition:" not in (block or ""):
         return "success_condition_absent"
     parsed = {row.ref: row for row in parse_fetch_decisions(block)}
     for ref in ARRIVAL_FETCH_REFS:
         if ref not in parsed:
             return "receipt_absent"
+    for ref in ARRIVAL_REQUIRED_RESOLVED:
+        row = parsed.get(ref)
+        if row is not None and row.state == "skipped":
+            return "receipt_unresolved"
     return None
 
 
-def step_list_in_force(block: str, ref: str) -> bool:
-    """True only when *ref* is ``in_context``. ``resolved`` and ``skipped`` are not."""
-    for row in parse_fetch_decisions(block):
-        if row.ref == ref and row.state == "in_context":
-            return True
-    return False
-
-
 def receipts_present(block: str) -> bool:
-    """True when grafting would be a no-op."""
-    return arrival_bind_failure(block) is None
+    """True when the block carries a success condition and every ref is parsed."""
+    if "- success-condition:" not in (block or ""):
+        return False
+    parsed = {row.ref: row for row in parse_fetch_decisions(block)}
+    for ref in ARRIVAL_FETCH_REFS:
+        if ref not in parsed:
+            return False
+    return True
 
 
 __all__ = [
     "ARRIVAL_FETCH_REFS",
-    "HOP_SUCCESS_CONDITION",
+    "ARRIVAL_REQUIRED_RESOLVED",
     "FetchDecision",
     "arrival_bind_failure",
     "decision_lines",
     "format_fetch_decision",
     "parse_fetch_decisions",
     "receipts_present",
-    "step_list_in_force",
+    "success_condition_line",
 ]

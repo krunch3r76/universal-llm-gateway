@@ -129,21 +129,21 @@ def test_r3_invalid_model_for_cursor_sdk_seat() -> None:
 
 def test_r4_unknown_contract_in_workflow() -> None:
     policy = _base_policy()
-    policy["workflows"]["investigate"]["contracts"].append("not-a-contract")
+    policy["workflows"]["investigate"]["jobs"].append("not-a-contract")
     errors = registry_errors(policy)
     assert any("unknown contract 'not-a-contract'" in e for e in errors)
 
 
 def test_r4_duplicate_contract_claim() -> None:
     policy = _base_policy()
-    policy["workflows"]["auto_judgment"]["contracts"].append("investigate")
+    policy["workflows"]["auto_judgment"]["jobs"].append("investigate")
     errors = registry_errors(policy)
     assert any("contract 'investigate' claimed by both" in e for e in errors)
 
 
 def test_r4_unclaimed_contract() -> None:
     policy = _base_policy()
-    policy["workflows"]["investigate"]["contracts"] = ["recon", "seed"]
+    policy["workflows"]["investigate"]["jobs"] = ["recon", "seed"]
     errors = registry_errors(policy)
     assert any("contract 'investigate' is not claimed" in e for e in errors)
 

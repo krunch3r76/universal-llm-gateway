@@ -94,7 +94,7 @@ R-admit transport from this window. The consult seat owns primary submit→poll�
 via team_dispatch(model=cdp/opus-5) (web-anthropic Opus). IF6 = CLI
 project-ask (MCP project_ask removed). Autonomous ≠ self-certify. Never collapse R-admit into your own
 self-assessment. External review for this arc is the G3 cdp/opus-5 R-admit. Do NOT open
-implement-todo §3b Gate-6, and do NOT dispatch role=reviewer or role=skeptic —
+implement-todo §3b Gate-6, and do NOT dispatch job=check-review or job=check-review —
 check_requested is not set on charter work items.
 [sealed-unattended] When pinning the R prompt URI at G3, the prompt body MUST
 include the sealed unattended clause (a:26156): answer with best judgment;

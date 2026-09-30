@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from claude_bundles.fetch_decision import parse_fetch_decisions
 from claude_bundles.operator_proxy_mission import MISSION_SKILL_SLUGS
 
 from .db.connection import write_connect
@@ -90,12 +91,11 @@ def _parse_open_children(body: str) -> set[str] | None:
     return {part.strip() for part in raw.split(",") if part.strip()}
 
 
-def _has_maestro_fetch_decision(body: str) -> bool:
-    for line in body.splitlines():
-        text = line.strip()
-        if "fetch-decision:" in text and "runbook:maestro-loop" in text:
-            return True
-    return False
+def _fetch_state(body: str, ref: str) -> str | None:
+    for row in parse_fetch_decisions(body):
+        if row.ref == ref:
+            return row.state
+    return None
 
 
 def apply_standing_bind(
@@ -166,11 +166,20 @@ def seat_registration_refusal(
             "missing": missing,
         }
 
-    if not _has_maestro_fetch_decision(body):
+    runbook_state = _fetch_state(body, "runbook:maestro-loop")
+    if runbook_state not in ("resolved", "in_context"):
         return {
             "reason": "seat_registration_fetch_decision",
-            "fix_hint": "add a line: fetch-decision: runbook:maestro-loop",
+            "fix_hint": "- fetch-decision: runbook:maestro-loop in_context",
             "missing": ["fetch-decision: runbook:maestro-loop"],
+        }
+
+    skill_state = _fetch_state(body, "skill:retrieval-before-authoring")
+    if skill_state != "in_context":
+        return {
+            "reason": "seat_registration_retrieval_skill",
+            "fix_hint": "- fetch-decision: skill:retrieval-before-authoring in_context",
+            "missing": ["fetch-decision: skill:retrieval-before-authoring"],
         }
 
     declared_open = _parse_open_children(body)

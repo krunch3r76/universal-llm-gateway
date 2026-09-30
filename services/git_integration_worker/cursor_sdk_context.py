@@ -44,7 +44,7 @@ _SETTING_SOURCES: tuple[str, ...] = ("all",)
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
 CURSOR_SDK_DISPATCH_ID_ENV = "CURSOR_SDK_DISPATCH_ID"
 ULG_STEER_SPOOL_DIR_ENV = "ULG_STEER_SPOOL_DIR"
-_CONTRACT_MCP_FILTER: frozenset[str] = frozenset({"implement", "pure-mechanical"})
+_JOB_MCP_FILTER: frozenset[str] = frozenset({"implement", "pure-mechanical"})
 _MCP_YAML_REL = Path(".gateway") / "mcp.yaml"
 _CURSOR_XDG_AUTH = Path(".config") / "cursor" / "auth.json"
 CURSOR_API_KEY_OTHER_MODELS_ENV = "CURSOR_API_KEY_OTHER_MODELS"
@@ -320,7 +320,7 @@ def build_mcp_servers(
     bridge = resolve_mcp_bridge(source_repo)
     env = dict(_resolve_mcp_token_env(real_home=real_home))
     contract = (handoff_contract or "").strip().lower()
-    if contract in _CONTRACT_MCP_FILTER:
+    if contract in _JOB_MCP_FILTER:
         env[ULG_MCP_CONTRACT_ENV] = contract
     if substrate_ctx is not None:
         env[CURSOR_SDK_DISPATCH_ID_ENV] = substrate_ctx.dispatch_id

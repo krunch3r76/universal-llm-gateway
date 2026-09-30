@@ -81,7 +81,7 @@ def build_navigator_body(
             "body": doorbell,
             "from_agent": "liaison-ticker",
             "to": "cursor",
-            "contract": "recon",
+            "job": "recon",
             "work_key": work_key,
             "timeout_seconds": timeout,
             "caller_agent": "liaison-ticker",
@@ -92,7 +92,7 @@ def build_navigator_body(
     body = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "none",
+        "job": "freeform",
         "lane": "A",
         "prompt": doorbell,
         "dispatch_thread_id": tape,

@@ -36,9 +36,9 @@ YAML shape::
 Caller::
 
     # Agent surface (MCP — preferred):
-    team_dispatch(op="generate", role="gatherer", model="openai/gpt-5.4",
+    team_dispatch(op="generate", job="freeform", model="openai/gpt-5.4",
                   dispatch_thread_id="<agent-bus-thread>",
-                  contract="none")
+                  job="freeform")
 
     # Internal HTTP (pipeline composition / Stargate callers):
     POST /api/v1/frontier/dispatch  # persona-free
@@ -46,7 +46,7 @@ Caller::
 
     # Raw escape hatch (advanced — bypasses canonical admission):
     pipeline(op="async", pipeline_id="chat-dispatch",
-             pipeline_options={"model": "openai/gpt-5.4", "role": "gatherer"},
+             pipeline_options={"model": "openai/gpt-5.4", "job": "freeform"},
              messages=[{"role": "user", "content": "..."}])
 """
 

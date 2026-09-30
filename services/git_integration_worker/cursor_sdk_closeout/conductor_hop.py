@@ -687,11 +687,14 @@ def build_hop_team_dispatch_body(
     else:
         generation_options["summoning_thread_id_unresolved"] = True
     routing_model = rec.get("model") or row.get("resolved_model")
-    contract = rec.get("contract") or row.get("contract") or "conductor"
+    raw_contract = str(rec.get("contract") or row.get("contract") or "conductor")
+    job = {"none": "freeform", "pure-mechanical": "mechanical"}.get(
+        raw_contract, raw_contract
+    )
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": str(contract),
+        "job": job,
         "lane": rec.get("lane") or "B",
         "caller_agent": "conductor-hop",
         "reuse_thread": thread_id,

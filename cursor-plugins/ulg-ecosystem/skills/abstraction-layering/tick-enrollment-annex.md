@@ -55,7 +55,8 @@ TYPE: CHECKPOINT
 ## State
 **Primary OPEN:** G{ENTRY}–G7 (abstraction layering).
 **WIP:** none.
-**G6 (binding):** pre-land `cdp/opus-5` `purpose=review` `reasoning_effort="high"` on lane branch diff — R1 sidecar. If that consult is refused or fails, escalate at once (`cdp_fail_route` `nested-grok` or `operator`). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest. ¬ background overlay · ¬ defer-and-proceed.
+**G6 (binding):** pre-land `cdp/opus-5` `job=delivery-review` `reasoning_effort="high"` on lane branch diff — R1 sidecar. If that consult is refused or fails, escalate at once (`cdp_fail_route` `nested-grok` or `operator`). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest. ¬ background overlay · ¬ defer-and-proceed.
+
 
 ## Steps
 1. [ ] G1 — architecture verdict + target shape · [consult:judgment_gap]
@@ -63,7 +64,7 @@ TYPE: CHECKPOINT
 3. [ ] G3 — densify dense spec + Gate-2 close · [judgment]
 4. [ ] G4 — merged check · [judgment]
 5. [ ] G5 — implement (Composer, source_ref) · [implement]
-6. [ ] G6 — pre-land review (`cdp/opus-5` purpose=review on lane branch) · [judgment]
+6. [ ] G6 — pre-land review (`cdp/opus-5` job=delivery-review on lane branch) · [judgment]
 7. [ ] G7 — verify + close (gates · ACs · docstrings · land) · [inline]
 
 ## WIP / In-flight

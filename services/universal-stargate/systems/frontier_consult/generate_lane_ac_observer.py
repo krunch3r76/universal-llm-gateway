@@ -264,7 +264,7 @@ def validate_generate_contract_packet_rules(
             request_id=request_id,
             field="packet_path",
             reason=(
-                "contract=pure-mechanical is packet-free; use contract=implement "
+                "job=mechanical is packet-free; use contract=implement "
                 "or none for packet-based dispatches"
             ),
             status_code=422,

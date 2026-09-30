@@ -6,10 +6,11 @@ import asyncio
 import time
 import uuid
 from functools import partial
-from typing import Annotated, Any, Literal, Self, get_args
+from typing import Annotated, Any, Literal, Self
 
 import httpx
 from agent_seat.profiles import get_profile
+from agent_seat.registry import normalize_agent_slug
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from implement_admission.preflight import (
@@ -18,12 +19,11 @@ from implement_admission.preflight import (
 )
 from implement_admission.skill_delivery_channels import SkillInlineBudgetExceeded
 from implement_admission.source_ref import SourceRefError, parse_source_ref
-from pydantic import BaseModel, Field, model_validator
-from team_dispatch_vocab import (
-    HANDOFF_OVERRIDE_CONTRACTS,
-    TO_THREAD_CONTRACTS,
-    TeamDispatchContract,
+from job_vocab import (
+    HANDOFF_ADMITTED_JOBS,
+    TO_THREAD_ADMITTED_JOBS,
 )
+from pydantic import BaseModel, Field, model_validator
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -119,20 +119,14 @@ frontier_router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])
 implement_router = APIRouter(prefix="/api/v1/implement", tags=["implement"])
 logger = get_logger(__name__)
 
-_TO_THREAD_CONTRACT = Literal[
-    "sketch",
-    "pure-mechanical",
-    "implement",
-    "none",
-]
-_HANDOFF_OVERRIDE_CONTRACT = Literal[
-    "sketch",
-    "pure-mechanical",
-    "implement",
-    "none",
-]
-assert frozenset(get_args(_TO_THREAD_CONTRACT)) == TO_THREAD_CONTRACTS
-assert frozenset(get_args(_HANDOFF_OVERRIDE_CONTRACT)) == HANDOFF_OVERRIDE_CONTRACTS
+_TO_THREAD_ADMITTED_LITERAL = frozenset(
+    {"freeform", "mechanical", "sketch", "implement"}
+)
+_HANDOFF_ADMITTED_LITERAL = frozenset(
+    {"freeform", "mechanical", "sketch", "implement", "confer"}
+)
+assert TO_THREAD_ADMITTED_JOBS == _TO_THREAD_ADMITTED_LITERAL
+assert HANDOFF_ADMITTED_JOBS == _HANDOFF_ADMITTED_LITERAL
 
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
@@ -192,10 +186,22 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # Inline prompt (SF1): bypass thread latch — prefer over bus-turn-only dispatch.
     prompt: str | None = None
     sidecar_ref: str | None = None
-    # When set and packet_path is absent (contract=implement|wrap), the server
+    # When set and packet_path is absent (job=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
-    contract: TeamDispatchContract
+    job: Literal[
+        "freeform",
+        "mechanical",
+        "sketch",
+        "implement",
+        "wrap",
+        "conductor",
+        "code-review",
+        "delivery-review",
+        "check-review",
+        "confer",
+        "investigate",
+    ]
     reuse_thread: str | None = None
     split_thread: bool = False
     density_triage: DensityTriage | None = None
@@ -271,7 +277,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     @model_validator(mode="after")
     def _validate_inline_prompt_sources(self) -> Self:
         validate_explicit_prompt_sources(
-            contract=self.contract,
+            contract=self.job,
             packet_path=self.packet_path,
             source_ref=self.source_ref,
             prompt=self.prompt,
@@ -281,7 +287,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
     @model_validator(mode="after")
     def _require_dispatch_thread_id_unless_wrap(self) -> Self:
-        if self.contract != "wrap":
+        if self.job != "wrap":
             has_explicit_prompt = any(
                 value is not None and str(value).strip()
                 for value in (self.packet_path, self.prompt, self.sidecar_ref)
@@ -296,7 +302,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
     @model_validator(mode="after")
     def _validate_wrap_contract_inputs(self) -> Self:
-        if self.contract != "wrap":
+        if self.job != "wrap":
             return self
         if self.packet_path is not None:
             raise ValueError("wrap_with_packet_path")
@@ -348,7 +354,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     model: str | None = None
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
-    contract: _TO_THREAD_CONTRACT
+    job: Literal["freeform", "mechanical", "sketch", "implement"]
     prompt: str | None = None
     sidecar_ref: str | None = None
     auto_review_child: bool | None = None
@@ -363,7 +369,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     @model_validator(mode="after")
     def _validate_inline_prompt_sources(self) -> Self:
         validate_explicit_prompt_sources(
-            contract=self.contract,
+            contract=self.job,
             packet_path=None,
             source_ref=None,
             prompt=self.prompt,
@@ -453,8 +459,8 @@ def _normalize_op_body(
         common["model"] = body.model
     if hasattr(body, "mcp"):
         common["mcp"] = body.mcp
-    if hasattr(body, "contract"):
-        common["resolved_contract"] = body.contract
+    if hasattr(body, "job"):
+        common["resolved_contract"] = body.job
     if hasattr(body, "density_triage"):
         common["density_triage"] = body.density_triage
     if hasattr(body, "review_opt_out_reason_code"):
@@ -580,7 +586,7 @@ async def team_dispatch(
         reject_unsupported_packet_inputs(
             request_id=request_id,
             op=body.op,
-            contract=getattr(body, "contract", None),
+            contract=getattr(body, "job", None),
             packet_path=getattr(body, "packet_path", None),
             source_ref=getattr(body, "source_ref", None),
             stop_after=(
@@ -645,6 +651,31 @@ async def team_dispatch(
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
+    # job=wrap on an explicit non-sdk role must refuse before check-review
+    # coercion rewrites reviewer/skeptic into seat=cursor-sdk. role=cursor-sdk
+    # stays on the later role_is_not_a_seat teaching path.
+    if (
+        body.op == "generate"
+        and getattr(body, "job", None) == "wrap"
+        and isinstance(role, str)
+        and role.strip()
+        and normalize_agent_slug(role) != "cursor-sdk"
+        and not is_cursor_sdk_generate_admission(
+            role=role, seat=seat, model=model, request_id=request_id
+        )
+    ):
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="role",
+                reason=(
+                    "contract=wrap is only admitted on the cursor-sdk generate branch"
+                ),
+                status_code=422,
+                code="wrap_role_not_admitted",
+            ).to_dict(),
+        )
     if body.op == "generate":
         from implement_admission.check_review_substrate import (
             coerce_check_review_omit_to_cursor_seat,
@@ -722,27 +753,6 @@ async def team_dispatch(
             response=response,
         )
 
-    if (
-        body.op == "generate"
-        and getattr(body, "contract", None) == "wrap"
-        and role is not None
-        and not is_cursor_sdk_generate_admission(
-            role=role, seat=seat, model=model, request_id=request_id
-        )
-    ):
-        return JSONResponse(
-            status_code=422,
-            content=FrontierEndpointError(
-                request_id=request_id,
-                field="role",
-                reason=(
-                    "contract=wrap is only admitted on the cursor-sdk generate branch"
-                ),
-                status_code=422,
-                code="wrap_role_not_admitted",
-            ).to_dict(),
-        )
-
     if body.op == "generate" and role is not None:
         from .api_role_generate import dispatch_api_role_generate
 
@@ -781,7 +791,7 @@ async def frontier_dispatch(
       ``pipeline(op="result", execution_id=…)`` for content.
     - ``op="to_thread"``: admits dispatch; model's reply lands on ``thread``.
 
-    Agents: use MCP ``team_dispatch`` (``role=synthesizer`` for inline-only,
+    Agents: use MCP ``team_dispatch`` (``job=freeform`` for inline-only,
     API roles for tool-loop consults). ``POST /api/v1/team/dispatch`` is the
     role-envelope HTTP twin of MCP ``team_dispatch``.
     """
@@ -816,7 +826,7 @@ class TeamHandoffBody(BaseModel):
     seat: str | None = None
     packet_path: str | None = None
     source_ref: str | None = None
-    contract: _HANDOFF_OVERRIDE_CONTRACT | None = None
+    job: str | None = None
     executor_override: str | None = None
     executor_override_reason_code: str | None = None
     executor_override_reason: str | None = None
@@ -909,7 +919,7 @@ async def team_handoff(
                         workspaces_root=workspaces_root,
                         request_id=request_id,
                         author_family=body.caller_agent,
-                        contract=body.contract,
+                        contract=body.job,
                     ),
                 )
                 if bridge_result.gated:
@@ -956,7 +966,7 @@ async def team_handoff(
         handoff_contract, contract_source = await loop.run_in_executor(
             None,
             lambda: derive_contract(
-                explicit_contract=body.contract,
+                explicit_contract=body.job,
                 source_ref=body.source_ref,
                 packet_path=packet_path,
                 role=body.role,

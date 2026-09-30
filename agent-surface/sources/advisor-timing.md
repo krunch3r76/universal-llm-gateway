@@ -28,7 +28,7 @@ code seat to fire transport; or (3) skip transport-dependent legs when no code s
 ### 0. Before any dispatch (MANDATORY)
 
 ∀ **any** `team_dispatch` (code surface only — on life: `agent_bus` a code seat) — including `op=handoff` with
-**`role=cursor-implement`** (bound implement handoff) — and any substantive `agent_bus` post/reply
+**`seat=cursor, job=implement`** (bound implement handoff) — and any substantive `agent_bus` post/reply
 that opens a consult: pause **before** the first call. Implement routing is
 **NOT exempt**: a bound-implementation handoff is a dispatch and must complete
 preflight exactly like a consult handoff.
@@ -57,19 +57,19 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    `universal-llm-gateway/` prefix), NOT under the repo's `.cursor/rules/`.
    Cursor IDE may also load `consult-routing` (plugin skill).
 3. **Standard openers** (code surface only — on life: `agent_bus` a code seat to fire transport; see consult-routing decision table):
-   - **web-anthropic** → `team_dispatch(op=handoff, role=web-consult, packet_path=…)` + six-block packet
-   - **cursor** (fresh tier / IDE) → `team_dispatch(op=handoff, role=cursor-consult, …)`
-   - **hands-off API** → `team_dispatch(generate, role=reviewer)`
+   - **web-anthropic** → `team_dispatch(op=handoff, seat=web-anthropic, job=confer, packet_path=…)` + six-block packet
+   - **cursor** (fresh tier / IDE) → `team_dispatch(op=handoff, seat=cursor, job=confer, …)`
+   - **hands-off API** → `team_dispatch(generate, job=freeform)`
    - **thin implement ping** → `agent_bus(post, …)` — **not** handoff
 4. **`agent_bus(reply)`** on an existing thread = **iteration/follow-up only** — not the
    standard opener for a substantive review consult. Thread continuity does not override
    handoff routing.
 5. **Bug/friction tickets (investigate→execute + pass zoom-out)**: an actionable defect needing a fix
-   cycle routes in **two stages** — **investigate + decide** (`role=cursor-consult`
-   from the IDE, or `role=web-consult` from web) to trace root cause, inventory touch points,
+   cycle routes in **two stages** — **investigate + decide** (`seat=cursor, job=confer`
+   from the IDE, or `seat=web-anthropic, job=confer` from web) to trace root cause, inventory touch points,
    and resolve design choice into a dense spec; **investigate close** distills `files_expected` /
    `acceptance_criteria` (+ `required_skills`) and records implement-ready + `spec_sha256`;
-   **execute** default = `team_dispatch(op=generate, seat=cursor-sdk, contract=implement,
+   **execute** default = `team_dispatch(op=generate, seat=cursor-sdk, job=implement,
    source_ref=todo:{slug})` (code surface only — on life: `agent_bus` a code seat) (or web-native inline `fs` fix) only once attrs are distilled;
    `cursor-implement` / `web-implement` + `packet_path` = named fallback. **Pass zoom-out duty:**
    on every `type:bug` bus pickup or bug handoff to web/cursor, zoom out in the pass — grep the
@@ -144,7 +144,7 @@ bouncing between two incompatible approaches.
 - ¬ try a third variant of the same idea
 - Instead: consult (`advisor` or `/consult-implement`) with the full failure
   context — what was tried, what failed, what the error says
-- Prefer **`team_dispatch(op="handoff", role="cursor-consult")`** (code surface only — on life: `agent_bus` a code seat) (fresh IDE thread + Opus)
+- Prefer **`team_dispatch(op="handoff", seat="cursor", job="confer")`** (code surface only — on life: `agent_bus` a code seat) (fresh IDE thread + Opus)
   over re-reasoning in the same polluted executor thread when MCP + IDE access matters
 - The value here is escaping the executor's framing trap: a packet-booted consult
   pass often identifies root causes the executor missed
@@ -173,9 +173,9 @@ bouncing between two incompatible approaches.
 | Architectural decision with cross-subsystem impact | Plan mode or `/consult-plan` |
 | Pre-commit quality check on large changeset | `/consult-review` |
 | Unknown territory requiring exploration | Subagent (per subagent-strategy) |
-| Fresh perspective, tier upgrade (Opus), or escape executor framing — **from Cursor** | `team_dispatch(op="handoff", role="cursor-consult", …)` (code surface) per `handoff-dispatchers.mdc` § `cursor-claude` — applies to reviews, projects, and exploration alike |
-| Consult **web-anthropic** (review, dialectic, architecture) | `team_dispatch(op=handoff, role=web-consult, packet_path=…)` (code surface) — poll `agent_bus(wait)` |
-| Hands-off synchronous review (no operator push) | `team_dispatch(generate, role=reviewer)` (code surface) — poll `pipeline(result)` |
+| Fresh perspective, tier upgrade (Opus), or escape executor framing — **from Cursor** | `team_dispatch(op="handoff", seat="cursor", job="confer", …)` (code surface) per `handoff-dispatchers.mdc` § `cursor-claude` — applies to reviews, projects, and exploration alike |
+| Consult **web-anthropic** (review, dialectic, architecture) | `team_dispatch(op=handoff, seat=web-anthropic, job=confer, packet_path=…)` (code surface) — poll `agent_bus(wait)` |
+| Hands-off synchronous review (no operator push) | `team_dispatch(generate, job=freeform)` (code surface) — poll `pipeline(result)` |
 
 ## Anti-Patterns
 

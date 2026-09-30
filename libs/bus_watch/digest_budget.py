@@ -90,7 +90,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "successor_seat": "cdp",
         "successor_model": "cdp/opus-5.5",
         "successor_cost_intent": None,
-        "successor_contract": "conductor",
+        "successor_job": "conductor",
         "ready": False,
     },
 }

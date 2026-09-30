@@ -508,7 +508,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           (auto-detected from pipeline config when omitted). Hot-reload:
           YAML/prompts/models reload on file change. An operator TASK that
           does not name a contract uses ``pipeline_id="prompt-expand"`` with
-          ``options`` ``contract="none"``, ``stage="none"``,
+          ``options`` ``job="freeform"``, ``stage="none"``,
           ``executor_tier="frontier"``, ``delivery="prompt"`` (target stays
           ``cdp`` or ``cursor``); a TASK that already names a contract is
           not that door.

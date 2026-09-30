@@ -125,7 +125,7 @@ Waiting for `live_cse=0` × idle confirmations after a CHECKPOINT that already n
 
 `commission_seq > last_summoned_seq ∧ running_count=0 ∧ arc_complete=false`
 
-⇒ **fire the successor now** (`team_dispatch(model=cdp/…, purpose=operator-proxy,
+⇒ **fire the successor now** (`team_dispatch(model=cdp/…, session=operator-proxy, job=freeform,
 sidecar_ref=commission)` or re-arm watchdog with the fast path). Do **not** wait for a
 lingering CSE to die. Prefer warm follow-up into a live CSE when the departing seat is
 still correspondent; otherwise a new window on the **same** private lane.
@@ -215,7 +215,7 @@ get a window.
      op=generate,
      seat=cursor-sdk,
      model=cursor/grok-4.7,
-     contract=none,
+     job=freeform,
      dispatch_thread_id=<same thread as brief>,
      lane=A,
      model_knobs={"fast":"true"},

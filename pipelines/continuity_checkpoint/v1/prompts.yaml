@@ -5,7 +5,7 @@ prompts:
       card patch + bounded residue (contract none · JSON-only closeout).
     template: |
       ---
-      contract: none
+      contract: freeform
       read_only: true
       sdk_mode: agent
       packet_label: continuity_checkpoint

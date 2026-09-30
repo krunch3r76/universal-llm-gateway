@@ -115,10 +115,11 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 |---|---|---|---|---|
 | 1 | Architecture | ACTIVE `cdp/opus-5` reasoning_effort=max · **arch skill floor**. | `[consult:judgment_gap]` | `fable-answer.md` |
 | 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (not a different model, not `extra`). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
+
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
-| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `purpose=review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
+| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `job=delivery-review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
-| 6 | Pre-land review | `cdp/opus-5` `purpose=review` on lane branch diff | `[judgment]` | R1 sidecar |
+| 6 | Pre-land review | `cdp/opus-5` `job=code-review` on lane branch diff | `[judgment]` | R1 sidecar |
 | 7 | Verify + ship | inline + land | `[inline]` | ACs, docstrings, close, L1 |
 
 ### G1 / G2 architecture skill floor (BINDING — pre-densify)
@@ -129,15 +130,16 @@ densify. Under-primed G1/G2 → densify hardens the wrong shape.
 | Gate | Required delivery |
 |---|---|
 | **G1 (ACTIVE width seat)** | **Always** for ULG codebase layer work: sealed delivery of **`architecture-invariants` ∧ `ulg-architecture`**. Prefer Customize attach for Claude-slug skills; **non-slugs / cursor_only must be inlined**. URI-cite alone ≠ delivery. Judgment chips (`reasoning-posture`) **do not substitute** for the arch pair. **Halt** if floor missing. Compose `claude-ai-cdp-navigation` § Skill delivery. |
-| **G2** | Frame instructions inherit the G1 floor (and cite it). “Minimal `skills=`” means **minimal beyond the arch floor** — ¬ license stripping `architecture-invariants` / `ulg-architecture`. When frame touches placement/hosting, keep `[ulg:host-process]` inline. When G2 is a fresh ACTIVE dispatch because no live G1 CSE exists, the **`architecture-invariants` ∧ `ulg-architecture`** pair must be **fresh on dispatch** (`purpose=ask` staging) — same floor as house G1/G2, not a lighter read. `conductor_profile=fable-scarce` does not switch this seat. |
+| **G2** | Frame instructions inherit the G1 floor (and cite it). “Minimal `skills=`” means **minimal beyond the arch floor** — ¬ license stripping `architecture-invariants` / `ulg-architecture`. When frame touches placement/hosting, keep `[ulg:host-process]` inline. When G2 is a fresh ACTIVE dispatch because no live G1 CSE exists, the **`architecture-invariants` ∧ `ulg-architecture`** pair must be **fresh on dispatch** (`session=ask, job=freeform` staging) — same floor as house G1/G2, not a lighter read. `conductor_profile=fable-scarce` does not switch this seat. |
+
 
 #### Fable / CDP G1 admit (BINDING)
 
-Staging `purpose=ask` owns the arch-pair floor (`consult-routing` § CDP transport).
+Staging `session=ask, job=freeform` owns the arch-pair floor (`consult-routing` § CDP transport).
 Lead duty is the S3 recipe + same-turn admit — not a preflight checklist.
 
 1. Copy `work-item-seed-path` § S3 Fable generate recipe (live-CSE followup vs
-   fresh `team_dispatch(purpose=ask)`). **¬** reconstruct `skills=`.
+   fresh `team_dispatch(session=ask, job=freeform)`). **¬** reconstruct `skills=`.
 2. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit)
    **or** honest halt.
 
@@ -232,8 +234,8 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    legs with no G3 densify: skip emit.
 4. **G4** — optional explicit Other Models check (Terra if named). Default **skip**.
    When run: fold amendments + refresh `spec_sha256`.
-5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
-6. **G6** — pre-land: `cdp/opus-5` `purpose=review` on lane branch diff; R1 sidecar.
+5. **G5** — Composer `job=implement`, `source_ref=todo:{slug}`.
+6. **G6** — pre-land: `cdp/opus-5` `job=code-review` on lane branch diff; R1 sidecar.
 7. **G7** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5 · land (L1).
    **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨
    `files_expected ∩ surface-glob-table ≠ ∅`), verify `(block present in dense spec) ∧
@@ -268,7 +270,7 @@ envelope advise-vs-reject). G3→4 / G5→7 keep their reject-mode checkers.
 
 ### Pre-land CDP Opus review (G6 — binding on conductor arcs)
 
-`cdp/opus-5` **`purpose=review`** on the **lane branch diff** is **G6**, not G4
+`cdp/opus-5` **`job=code-review`** on the **lane branch diff** is **G6**, not G4
 (pre-ship spec) and not optional commentary. Fire **after G5 implement, before G7
 land** — `review harvest ≺ land ≺ DONE`. Stage closeout + diff to `cortex://`;
 record harvest on sidecar **R1**.
@@ -301,7 +303,7 @@ implements · ¬ land (G7) without G6 review harvest · frame >120L · bare tick
 ¬ close a `bug_class_sweep_required` todo without a labeled Secondary findings block ·
 ¬ claim G1 closed from chat inform / sidecar path alone without `derived_from` →
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already
-resolves · ¬ Fable/Opus G1 without `purpose=ask` (staging owns the arch pair) ≺ densify ·
+resolves · ¬ Fable/Opus G1 without `session=ask, job=freeform` (staging owns the arch pair) ≺ densify ·
 ¬ reconstruct G1 `team_dispatch` kwargs (cite `work-item-seed-path` § S3).
 ¬ fresh width-seat G2 when a live G1 CSE ran on ACTIVE.model (followup first); `conductor_profile=fable-scarce` does not switch the width model.
 

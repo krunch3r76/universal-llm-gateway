@@ -34,7 +34,7 @@ _COST_RISK_MODELS = frozenset(
         "claude-fable-5-1",
     }
 )
-_MECHANICAL_CONTRACTS = frozenset({"pure-mechanical", "none"})
+_MECHANICAL_CONTRACTS = frozenset({"mechanical"})
 
 
 @dataclass(frozen=True, slots=True)

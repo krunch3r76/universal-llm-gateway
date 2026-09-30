@@ -93,7 +93,7 @@ None.
 
 **Autonomous attendance:** set todo attr `attendance=autonomous` and include tag `attendance:autonomous` on the root when `/path-sim … autonomous` was invoked.
 
-**Post-arc (lead):** densify projection; cite R-admit sidecar + CDP harvest (or allowed-skip evidence); **fire R-after** (`/work-item-review todo:{slug}` · `cdp/opus-5` `purpose=review`, default-on — same closed skip set) and cite its verdict URI; apply REVISE or seed follow-up; **docstring-quality scan on touched paths — criticals=0** (cite evidence); if concentrated warnings on new public surface ∨ arch-doc feedstock needed → `/docstring-enhance` CDP Sonnet then re-scan; event-instrumentation closeout one-liner when applicable; stamp `recon_waived` with `reason_code=path_sim_self_certify` **only** when R-admit **or** R-after was skipped under the closed set above **and** friction already filed — ¬ as a routine substitute for R; `friction_close` if arc started from friction; `todo-close` with evidence URIs [recon, Q, A, R-admit, implement, R-after, docstring-scan, closeout].
+**Post-arc (lead):** densify projection; cite R-admit sidecar + CDP harvest (or allowed-skip evidence); **fire R-after** (`/work-item-review todo:{slug}` · `cdp/opus-5` `job=delivery-review`, default-on — same closed skip set) and cite its verdict URI; apply REVISE or seed follow-up; **docstring-quality scan on touched paths — criticals=0** (cite evidence); if concentrated warnings on new public surface ∨ arch-doc feedstock needed → `/docstring-enhance` CDP Sonnet then re-scan; event-instrumentation closeout one-liner when applicable; stamp `recon_waived` with `reason_code=path_sim_self_certify` **only** when R-admit **or** R-after was skipped under the closed set above **and** friction already filed — ¬ as a routine substitute for R; `friction_close` if arc started from friction; `todo-close` with evidence URIs [recon, Q, A, R-admit, implement, R-after, docstring-scan, closeout].
 
 ## Autonomous charter procession (attendance axis)
 
@@ -177,7 +177,7 @@ model-endpoint (IF6 escape = CLI `claude-ai-sync-jupiter project-ask`. MCP `proj
 
 ```
 # Primary
-team_dispatch(op=generate, model=cdp/opus-5, contract=none,
+team_dispatch(op=generate, model=cdp/opus-5, job=freeform,
               sidecar_ref=cortex://…, dispatch_thread_id=…)
 agent_bus.wait(… from_agent=web-anthropic)   # reply OR DELIVERY FAILED; long running ≠ stalled
 

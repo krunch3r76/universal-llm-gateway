@@ -15,7 +15,7 @@ from services.git_integration_worker.models.cursor_api import CursorDispatchRequ
 
 SdkMode = Literal["agent", "plan"]
 
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "pure-mechanical", "conductor"})
+_IMPLEMENT_CLASS_JOBS = frozenset({"implement", "pure-mechanical", "conductor"})
 _PLAN_CLOSEOUT_VERDICT = "plan:closeout_verdict"
 
 
@@ -41,7 +41,7 @@ def resolve_sdk_mode(
     if packet_mode is not None:
         return packet_mode
     contract_l = contract.lower()
-    if contract_l in _IMPLEMENT_CLASS_CONTRACTS:
+    if contract_l in _IMPLEMENT_CLASS_JOBS:
         return "agent"
     return "agent"
 
@@ -52,7 +52,7 @@ def validate_sdk_mode_at_admit(
     contract: str,
 ) -> str | None:
     """Return a 422 detail string when *sdk_mode* is incompatible with *contract*."""
-    if sdk_mode == "plan" and contract.lower() in _IMPLEMENT_CLASS_CONTRACTS:
+    if sdk_mode == "plan" and contract.lower() in _IMPLEMENT_CLASS_JOBS:
         return (
             f"sdk_mode=plan is incompatible with contract={contract.lower()} "
             "(implement-class dispatches must use agent mode)"

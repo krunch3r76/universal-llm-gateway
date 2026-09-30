@@ -44,7 +44,8 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | **Composer enumerate → `cdp/fable` bind** |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=cdp/opus-5, reasoning_effort=max)` while that is the shipped seat (`libs/implement_admission/conductor_width_seat.py`; annex A) |
-| `team_dispatch` `role=artisan, model=xai/grok-4.7` for checkout-present coding consult | **PROHIBITED** |
+| `team_dispatch` `job=freeform, model=xai/grok-4.7` for checkout-present coding consult | **PROHIBITED** |
+
 | Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.7` |
 | Writing / correspondence / outbound prose | **PROHIBITED** for Grok — Terra+Gemini (or lead/web); `openai/gpt-5.5` operator-gated (`consult-routing` § Writing consult substrate) |
 | Quality tier "Grok-4.5 High" | Names effort — transport = cursor-sdk on code lane |

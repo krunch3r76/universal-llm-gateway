@@ -10,7 +10,7 @@ sot: workspace
 Stage → densify → wrap → `source_ref` dispatch. Default:
 
 ```text
-team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})
+team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})
 ```
 
 Six-block authority: `architecture-handoff-protocol.mdc` § The Six Required Blocks. Human kickoff: `handoff-prompt-authoring`.
@@ -51,7 +51,7 @@ implement-ready.
 
 **Triage:** `judgment_required` ⇒ densify; `mechanical` ⇒ skip w/ dense source; unset ⇒ blocked.
 
-**Sequence:** verify lane → stub spec (`doc_template`) → consult brief → `handoff web-consult` (¬ `contract=consult`
+**Sequence:** verify lane → stub spec (`doc_template`) → consult brief → `handoff web-consult` (¬ `job=confer`
 param) → distill attrs → implement-ready + `spec_sha256`. Detail: L3 annex § Gate 2 — expanded sequence. **`required_skills`:**
 catalog-registered slugs only (`config/skills.yaml`). Rule `*_ulg.mdc` stems (e.g. `skill-surface`) are not valid — write-time 422 `required_skills_uncatalogued`.
 
@@ -62,7 +62,7 @@ dispatch/CLOSEOUT turn or the todo attribute, never as a trailer inside the docu
 ## Gate 3 — direct implement dispatch
 
 ```python
-team_dispatch(op="generate", seat=cursor-sdk, contract=implement, lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+team_dispatch(op="generate", seat=cursor-sdk, job=implement, lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
 ```
 
 **Compliance:** todo resolves; implement-ready + `spec_sha256`; attrs populated; zero forks; `validate_dense_spec` passes.
@@ -112,7 +112,7 @@ Materialized cursor-sdk packets (conductor/sketch/wrap) must include a `---` blo
 without identity when these are absent on the wire and in frontmatter.
 
 **`sdk_mode:` on recon / bind packets (cursor-sdk plan mode):** optional frontmatter
-on `contract: none|consult|ask|recon|seed` packets. Omitted + `read_only=true`
+on `job: freeform|consult|ask|recon|seed` packets. Omitted + `read_only=true`
 defaults to **`plan`** at admit unless `sdk_mode: agent` overrides. Forbidden on
 `implement|pure-mechanical|conductor` (422). SoT: `cursor_sdk_mode.py`.
 
@@ -131,7 +131,7 @@ Example — explicit agent on a consult leg (override default plan):
 
 ```yaml
 ---
-contract: consult
+job: confer
 sdk_mode: agent
 work_key: todo:{slug}
 ---

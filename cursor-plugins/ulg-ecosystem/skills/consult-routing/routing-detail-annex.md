@@ -18,7 +18,7 @@ Authoring-time map for `seat=cursor-sdk` `op=generate` — do not mix shapes:
 output — never `sidecar_ref` (or `prompt`) beside `source_ref` (`multiple_prompt_sources`).
 See `agent_skill:conductor` § First-utterance spawn.
 
-Foot-gun: `contract=none` + `source_ref` without `` is invalid
+Foot-gun: `job=freeform` + `source_ref` without `` is invalid
 (agent-bus:4866). Do not paper over conductor spawn with `sidecar_ref`.
 
 ## Writing consult substrate
@@ -29,7 +29,7 @@ Work class: outbound letters, correspondence, prose critique+rewrite. Complement
 |---|---|
 | `xai/grok-4.7` / `cursor/grok-4.7` | **PROHIBITED** for writing |
 | `openai/gpt-5.5` | **OPERATOR-GATED** |
-| Standing writing multi-model | `role=reviewer` → `openai/gpt-5.6-terra` + `role=synthesizer` → Gemini; ¬ default `panel_dispatch` |
+| Standing writing multi-model | `job=freeform` → `openai/gpt-5.6-terra` + `job=freeform` → Gemini; ¬ default `panel_dispatch` |
 | Lead / web-anthropic in-seat | OK when corpus staged |
 
 Entity: `decision:writing-consult-model-routing`.
@@ -62,7 +62,8 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
 standing default `workflows.check_review.model` (`cursor/grok-4.7`); poll `reply_from_agent` from admit. API
-`role=reviewer` only when **all** reading is pre-staged inline (`code-on-api`). Access-only
+`job=freeform` only when **all** reading is pre-staged inline (`code-on-api`). Access-only
+
 REVISE ≠ Gate-6 close.
 
 **Steps 1–2 zoom-out (C2):** recon/investigate packets MUST carry touch-point inventory + class/sibling
@@ -93,7 +94,7 @@ conformance/drift audit every 5 autonomous closes or each CHECKPOINT.
 Seat/role and executor tier are orthogonal. Manual seats admit only `op=handoff` + `source_ref|packet_path`.
 
 - **R1 reasoning/spec:** judgment, design, root cause, dense-spec authorship → consult/generate/manual.
-- **R2 settled implement:** fork-free dense spec + attrs → default `cursor-sdk` `contract=implement`.
+- **R2 settled implement:** fork-free dense spec + attrs → default `cursor-sdk` `job=implement`.
 - **R3 bounded widened discovery:** sibling/same-class defects; label secondary findings; ¬ open-ended redesign.
 
 | Axis | `cursor` handoff | `cursor-sdk` generate |
@@ -108,7 +109,7 @@ explicitly chooses `cursor`.
 
 ```python
 team_dispatch(op="generate", seat="cursor-sdk", dispatch_thread_id="<thread>",
-              contract="none"|"pure-mechanical", packet_path?=...)
+              job="freeform"|"pure-mechanical", packet_path?=...)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Repo-venv: cursor-sdk inherits repo venv. Inline lead edits =
@@ -117,7 +118,7 @@ one exact judgment-authored edit only; multi-edit mechanical work ⇒ cursor-sdk
 ### cursor-sdk write channels
 
 `op=generate` writes closeout sidecar (A); may write durable deliverables via MCP `fs` when D0 names path (B);
-shared-checkout mutation (C) needs `contract=implement` or attended handoff. Verify channel-B by
+shared-checkout mutation (C) needs `job=implement` or attended handoff. Verify channel-B by
 `written_sha256` or read-back. Empty `0 tool calls / ~2.8s / 0B` closeout = credit exhaustion.
 
 ### Post-dispatch output mutation gate
@@ -128,7 +129,7 @@ Outer `CURSOR_SDK_TIMEOUT` ≠ terminal. RAG ingest batches: default `scripts/in
 
 ## CONFORM lane — provisional
 
-Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", contract="none",
+Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", job="freeform",
 packet_path=<frozen-envelope>)`. Envelope: `objective`, `touch_points`, `acceptance_criteria_known`,
 `judgment_settled`, optional `required_skills_hint`. Verify Layer 1 wrap precondition + Layer 2 semantic diff.
 Promotion blocked until N≥5 real runs.

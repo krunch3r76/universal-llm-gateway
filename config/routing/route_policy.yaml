@@ -87,24 +87,24 @@ workflows:
     # whatever model the orchestrator named (unless that model is roaming).
     seat: cursor-sdk
     model: cursor/composer-2.5
-    contracts: [implement]
+    jobs: [implement]
   investigate:
     # investigate and seed omit-effort are xhigh; recon stays medium.
     # fast=true is the grok-4.7 card default when the knob is omitted.
     seat: cursor-sdk
     model: cursor/grok-4.7
-    contracts: [investigate, recon, seed]
+    jobs: [investigate, recon, seed]
   auto_judgment:
     # Judgment omit-model. Never Composer. Effort for these contracts is
     # contract_effort high. fast=true is the grok-4.7 card default, filled
     # when the knob is omitted (compose_model_knobs / build_model_selection).
     seat: cursor-sdk
     model: cursor/grok-4.7
-    contracts: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
+    jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
     # Reviewer omit-model is judgment, so it uses the same model as
     # workflows.auto_judgment. Second-pool ids (muse, fable, terra, sol, luna)
-    # stay explicit pins. role=reviewer omit-model coerces to seat=cursor-sdk
+    # stay explicit pins. job=freeform omit-model coerces to seat=cursor-sdk
     # + this model. Grok's bus delivery role is skeptic.
     seat: cursor-sdk
     model: cursor/grok-4.7

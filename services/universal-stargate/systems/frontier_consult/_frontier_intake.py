@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS
+
 from .service import FrontierEndpointError
 
 
@@ -38,6 +40,21 @@ def reject_unsupported_packet_inputs(
     if op not in ("generate", "to_thread"):
         return
     wire = (contract or "").strip().lower()
+    admitted = (
+        TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
+    )
+    if not wire or wire not in admitted:
+        shown = wire or "(omitted)"
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="job",
+            reason=(
+                f"job {shown!r} is not admitted for op={op!r}; "
+                f"must be one of: {', '.join(sorted(admitted))}"
+            ),
+            status_code=422,
+            code="job_not_admitted",
+        )
     if wire in {"none", "pure-mechanical"} and source_ref is not None:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -53,7 +70,7 @@ def reject_unsupported_packet_inputs(
         raise FrontierEndpointError(
             request_id=request_id,
             field="stop_after",
-            reason="stop_after is forbidden with contract='none'",
+            reason="stop_after is forbidden with job='freeform'",
             status_code=422,
             code="none_with_stop_after",
         )

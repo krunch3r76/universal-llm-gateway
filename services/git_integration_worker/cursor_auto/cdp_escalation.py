@@ -159,7 +159,7 @@ async def commission_cdp_escalation(
         "model": model,
         "prompt": prompt,
         "dispatch_thread_id": job.thread_id,
-        "contract": "none",
+        "job": "freeform",
         "caller_agent": "cursor-auto",
     }
     if purpose:

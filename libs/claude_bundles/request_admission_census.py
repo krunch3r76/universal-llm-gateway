@@ -114,7 +114,7 @@ def census_row_from_claimed_auto_job(
     return {
         "parent_thread": tid,
         "registration_id": reg,
-        "purpose": "operator-proxy",
+        "session": "operator-proxy",
         "stream_state": "running",
         "status": "running",
         "source": source,

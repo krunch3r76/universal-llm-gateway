@@ -153,7 +153,7 @@ complexity ⇏ professional_referral
 ```
 
 - **Recall first.** Memory-shaped or “full picture” → `recall` before any absence sentence. Do not answer “I don’t have X” from a skipped walk.
-- **Repair ≺ scout.** Thin card (`nulls`, `_next.reason` in `{vocab_not_covered, scope_truncated, thin_card, pin_seed}`) → if sibling hubs already exist and hold the fact, `relationship_create` now and re-recall. Do not hire `cursor_request(contract=recon)` as a substitute for a visible missing edge. Scout only when the neighborhood is unknown (`resolver_miss`, candidates-only with no pin, no sibling found).
+- **Repair ≺ scout.** Thin card (`nulls`, `_next.reason` in `{vocab_not_covered, scope_truncated, thin_card, pin_seed}`) → if sibling hubs already exist and hold the fact, `relationship_create` now and re-recall. Do not hire `cursor_request(job=recon)` as a substitute for a visible missing edge. Scout only when the neighborhood is unknown (`resolver_miss`, candidates-only with no pin, no sibling found).
 - **Ingest on rule miss.** `rag` miss → state the working rule as `[unverified]` and fire ingest (life `rag(upsert_article)` or `cursor_request` for scope/bytes). A queue that never fires is a slow “I can’t.”
 - **License, not complexity.** A licensed professional is only for acts that require a license (paid-preparer signature, IRS representation / POA, CPA attest). “This is complicated” / “I’m not a CPA” / “I don’t know tax law” is not a closer.
 

@@ -36,7 +36,7 @@ HISTORICAL_INCLUSION_RULE = (
 
 # Commit 10811941 — own-commit path attribution floor (fold-2 census).
 ATTRIBUTION_FLOOR_ISO = "2026-08-01T22:24:33+00:00"
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "none"})
+_IMPLEMENT_CLASS_JOBS = frozenset({"implement", "none"})
 _orphan_aged_emitted: set[tuple[str, str]] = set()
 
 
@@ -110,14 +110,14 @@ def is_declared_write_implement(*, contract: str | None, read_only: bool) -> boo
     """Implement-class rows with explicit contract only (D1 — no NULL fallback)."""
     if read_only:
         return False
-    return contract in _IMPLEMENT_CLASS_CONTRACTS
+    return contract in _IMPLEMENT_CLASS_JOBS
 
 
 def is_implement_class(*, contract: str | None, read_only: bool) -> bool:
     """Legacy implement-class predicate (includes NULL contract — legacy peaks)."""
     if read_only:
         return False
-    if contract in _IMPLEMENT_CLASS_CONTRACTS:
+    if contract in _IMPLEMENT_CLASS_JOBS:
         return True
     return contract is None
 

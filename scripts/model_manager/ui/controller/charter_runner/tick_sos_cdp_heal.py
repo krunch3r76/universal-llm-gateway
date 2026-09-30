@@ -1,7 +1,7 @@
 """CDP operator-proxy heal submit for charter-tick SOS.
 
 Fires ``POST /api/v1/team/dispatch`` with ``model=cdp/opus-5`` and
-``purpose=operator-proxy`` so mission skill chips ride the CDP generate path
+``session=operator-proxy, job=freeform`` so mission skill chips ride the CDP generate path
 (``decision:project-ask-escape-only-teaching-align`` Class-F).
 """
 
@@ -67,7 +67,7 @@ def build_heal_prompt(
         "Prevention via friction/amend at your discretion. Commission cursor-auto "
         "for implement. Page COME TO IDE only for debrief / options exhausted.\n"
         "Doctrine: decision:tick-heal-cdp-operator-default\n"
-        "purpose: operator-proxy\n"
+        "session: operator-proxy, job: freeform\n"
     )
 
 
@@ -92,9 +92,9 @@ async def submit_cdp_heal(
     body = {
         "op": "generate",
         "model": _CDP_MODEL,
-        "contract": "none",
+        "job": "freeform",
         "prompt": prompt,
-        "purpose": "operator-proxy",
+        "session": "operator-proxy",
         "dispatch_thread_id": str(root_id),
         "caller_agent": _CALLER,
     }

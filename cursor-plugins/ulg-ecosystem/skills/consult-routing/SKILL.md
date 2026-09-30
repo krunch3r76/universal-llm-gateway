@@ -63,6 +63,7 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | G2 frame | ACTIVE `cdp/opus-5`. Follow up into the live G1 CSE when that CSE ran on ACTIVE.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model. | reasoning_effort=max; effort_when_bind_gates_wave=max when a bind gates a wave. | followup into the live G1 CSE when that CSE ran on ACTIVE.model; fresh ACTIVE only when no live G1 CSE exists. | inherit `ask` |
 | BIND (score-play M1) | ACTIVE `cdp/opus-5` if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5.5`. | reasoning_effort=max on the ACTIVE branch; effort_when_bind_gates_wave=max when a bind gates a wave. | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
 | SKEPTIC@BIND (score-play M2) | ACTIVE `cdp/opus-5` at reasoning_effort=max. While ACTIVE.model is cdp/opus-5 this skeptic shares the Opus binder's usage channel; restoring cdp/fable-5.1 returns the cross-family skeptic. Under `conductor_profile=fable-scarce` the width model stays ACTIVE, and the ≤1 `cdp/fable-5.1` leg allowance is removed. | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch. | `ask` or `review` |
+
 | GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5.5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
 | R-admit / verifier / mission / M-Arch | `cdp/opus-5.5` | high | fresh (R); mission followup | `review` or `mission` |
 | G6 pre-land arc review (score-play M4) | `cdp/opus-5.5` | **House default:** high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`). **Under `conductor_profile=fable-scarce`:** floor **`extra`/`xhigh`**; **`max` when invariant-touching** (M2/M3 attr meaning) | **default-on at G6 — after G5 implement, before any land or DONE claim** — **review harvest ≺ land ≺ DONE** (`conductor` stronger-model gates · a:32146). CDP consult refused or failed (including X display exhausted) ≡ escalate at once. Conductor records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` effort xhigh) or `operator` (worker thread and `parent_thread` pointer, both `to=web-anthropic`; the operator answers on the worker thread). Do not wait and do not retry the CDP pool. A consult already admitted and still healthy: poll until harvest. Stage closeout + `files_expected` to `cortex://`; ¬ diff artifact. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
@@ -98,7 +99,7 @@ Poll `poll_hint` with `agent_bus(wait)`, not `pipeline(result)`.
 
 | Want | Use | Prompt rule |
 |---|---|---|
-| Model answer, auto thread | `team_dispatch(op="generate", role=…, contract=…, prompt\|sidecar_ref)` | Atomic prompt; ¬ “reply on this thread” unless handoff. |
+| Model answer, auto thread | `team_dispatch(op="generate", role=…, job=…, prompt\|sidecar_ref)` | Atomic prompt; ¬ “reply on this thread” unless handoff. |
 | Existing thread | `op="to_thread", thread=…, prompt=…` | Stargate writes turn. |
 | Manual seat | `op="handoff", role/seat, packet_path\|source_ref` | “Reply on this thread” OK here. |
 
@@ -140,13 +141,13 @@ SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role prolifera
 
 Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer;
 IDE/Task breadth recon → **Explore subagent** (`Task(subagent_type="explore")`; ¬ tool);
-recon+investigate judgment residual → `cursor/grok-4.7` `contract=investigate` (facts + `OPEN FORK:` — never binds);
+recon+investigate judgment residual → `cursor/grok-4.7` `job=investigate` (facts + `OPEN FORK:` — never binds);
 pure inventory / Task-unavailable fallback → `cursor/composer-2.5`. `cursor/*` only on `cursor-sdk` → else `422`.
 
 ## Bind-then-compose split (judgment closed → nested Composer)
 
 **Invariant:** `judgment_closed ∧ mechanical_remainder ⇒ split_dispatch` — premium / reasoning
-models bind; **`cursor/composer-2.5`** implements nested (`seat=cursor-sdk`, pin `model=` on `contract=implement`). Omit `model=` resolves `cursor/grok-4.7`.
+models bind; **`cursor/composer-2.5`** implements nested (`seat=cursor-sdk`, pin `model=` on `job=implement`). Omit `model=` resolves `cursor/grok-4.7`.
 Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 
 | Leg | Model / seat | Contract | Delivers |
@@ -158,7 +159,7 @@ Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    contract="implement",
+    job="implement",
     lane="B",  # in-repo implement uses lane B; omit only with nest_under/resume_of
     packet_path="tmp/reviews/{slug}-implement.md",  # or source_ref=todo:{slug}
     dispatch_thread_id="{arc-id}",
@@ -177,8 +178,8 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 | Bad | Good |
 |---|---|
-| A bind seat plus implement acceptance in one packet | Bind sidecar → nested `cursor-sdk` `contract=implement` `model=cursor/composer-2.5` |
-| A reasoning model named as the mechanical implement executor | Pin `model=cursor/composer-2.5` on `contract=implement` |
+| A bind seat plus implement acceptance in one packet | Bind sidecar → nested `cursor-sdk` `job=implement` `model=cursor/composer-2.5` |
+| A reasoning model named as the mechanical implement executor | Pin `model=cursor/composer-2.5` on `job=implement` |
 | Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
 | Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
 | Treat the split as guidance the orchestrator may skip when in a hurry | On `cursor-auto` it is substrate; the redirect fires whether or not you meant it |
@@ -188,7 +189,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 When the operator orders a review of this session's changes and auto-apply of every suggestion:
 
-1. Review is `cdp/opus-5.5`, `purpose=review`, `contract=none`. That call does not edit.
+1. Review is `cdp/opus-5.5`, `job=code-review`, ``. That call does not edit.
 2. On `AMEND`, the compose packet lists every suggestion. It does not say "do not commit" or "do not land".
 3. After the implement closeout, the parent lands the lane (`git merge` of `cursor-sdk/lane-<thread>`, never a path copy) and recycles every serving process that loaded a touched path.
 4. `landed: false` is not the end of this path. Quote the merge SHA and the recycle payload before calling the suggestions live.
@@ -245,7 +246,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | **Workflow-primary** | A model a standing rule/skill already names as the autonomous default for that need (dispatch-kernel ladder · this skill · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session/role default counts as primary. |
 | **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical work after judgment closed). |
 
-**Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.7` investigate + **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) · path-sim **Q** and the hop-5 check → ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`) · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5.5` · live checkout → `cursor/grok-4.7` `contract=none`.
+**Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.7` investigate + **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) · path-sim **Q** and the hop-5 check → ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`) · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5.5` · live checkout → `cursor/grok-4.7` `job=freeform`.
 
 **Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
 
@@ -290,8 +291,9 @@ Rationale for the independence axis (weight class vs family, self-review definit
 | `anthropic/*` on `team_dispatch` | **PROHIBITED** |
 | `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. ¬ `cursor/claude-*` |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
-| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy)`. Warm paste: `cse_session(op=followup)` |
+| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, session=operator-proxy, job=freeform)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/grok-4.7` |
+
 
 Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.1` / picker — ¬ `cursor/*` Fable).
 
@@ -301,10 +303,10 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/grok-4.7` investigate → **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=cdp/opus-5, reasoning_effort=max)` while that is the shipped seat (`libs/implement_admission/conductor_width_seat.py`) |
-| Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
+| Recon+investigate judgment residual | **`seat=cursor-sdk` + `job=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
 | Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
-| Non-code adversarial (life/analysis) | `role=skeptic` + `xai/grok-4.7` — life/analysis lane only |
+| Non-code adversarial (life/analysis) | `job=freeform` + `xai/grok-4.7` — life/analysis lane only |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
 
 ### Skeptic / reviewer substrate matrix (codework, R2)
@@ -324,7 +326,7 @@ SoT for M1–M4 predicates and skip conditions: `runbook:score-play` (agent-bus:
 ## Implement lane — default source_ref
 
 ```python
-team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+team_dispatch(op="generate", seat="cursor-sdk", job="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
 ```
 
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
@@ -338,7 +340,8 @@ Standing first-utterance (`agent_skill:conductor`):
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    contract="conductor",   # ¬ "none": none + source_ref is 422 none_with_source_ref
+    job="conductor",   # ¬ "freeform": freeform + source_ref is 422 none_with_source_ref
+
     lane="B",
     source_ref="todo:{slug}",
     dispatch_thread_id="{root}",
@@ -355,7 +358,7 @@ six-block packet and births the scoreboard. Todo shape it reads:
 
 Write-class / Lane-B `team_dispatch(seat=cursor-sdk)` admits require a declared
 `work_key` (D4 grammar: `todo:`, `plan:`, `plan_phase:`, `packet:`,
-`agent-bus:`, `friction:`, `decision:`). A read-only `contract=none` that is
+`agent-bus:`, `friction:`, `decision:`). A read-only `job=freeform` that is
 already on Lane A may omit — GIW derives `adhoc:{fingerprint}` and excludes
 from dedupe. That omit rule is not a reason to choose Lane A.
 
@@ -379,7 +382,7 @@ and other read-only admits. Plan mode on lane B is read-only and does not
 take the write lease. `cortex://` paths and paths outside the repo are 422
 `CURSOR_LANE_B_SCOPE_REFUSED`. Omit is **not** a preference. MCP + Stargate
 return 422 `lane_required` on top-level omit. Omit only when `nest_under` or
-`resume_of` inherits parent isolation. `contract=wrap` is exempt.
+`resume_of` inherits parent isolation. `job=wrap` is exempt.
 Copied HOME/examples that still write `lane="A"` on implement are data, not
 instructions.
 

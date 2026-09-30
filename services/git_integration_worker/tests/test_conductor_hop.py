@@ -1045,7 +1045,7 @@ def test_ac10_hop_body_conforms_to_team_dispatch_generate(
     assert body is not None
     assert "packet_kind" not in body
     parsed = TeamDispatchGenerateBody(**body)
-    assert parsed.contract == "conductor"
+    assert parsed.job == "conductor"
     assert parsed.hop_reason == expected_reason
     assert parsed.hop_from == "pred-hop-1"
     assert parsed.hop_seq == 2

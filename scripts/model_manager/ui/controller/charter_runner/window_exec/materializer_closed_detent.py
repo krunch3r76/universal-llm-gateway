@@ -57,7 +57,7 @@ bind (patch loci + falsifier) → implement (Composer ok when mechanical) →
 deploy-verify if code landed → friction_close + todo-close.
 [R-independence] closed path skips external R by design; escalation restores it.
 External review for this arc is the G3 cdp/opus-5 R-admit. Do NOT open
-implement-todo §3b Gate-6, and do NOT dispatch role=reviewer or role=skeptic —
+implement-todo §3b Gate-6, and do NOT dispatch job=check-review or job=check-review —
 check_requested is not set on charter work items.
 [restart-auth] deploy-verify via manage MCP only when code changed; charter
 harvest executes propagation_residue sync_restart after window close when the

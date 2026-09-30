@@ -150,7 +150,7 @@ def build_row_bind_body(
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
-        "contract": "none",
+        "job": "freeform",
         "prompt": prompt,
         "dispatch_thread_id": tape,
         "work_key": friction_night_key(fid),
@@ -188,7 +188,7 @@ def build_low_implement_body(
     return {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "implement",
+        "job": "implement",
         "lane": "B",
         "source_ref": low_key,
         "work_key": low_key,
@@ -227,7 +227,7 @@ def build_trio_sketch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
-        "contract": "none",
+        "job": "freeform",
         "prompt": prompt,
         "dispatch_thread_id": tape,
         "work_key": friction_night_key(fid, role="trio"),
@@ -255,7 +255,7 @@ def build_trio_fire_body(
         return {
             "op": "generate",
             "seat": "cursor-sdk",
-            "contract": "none",
+            "job": "freeform",
             "lane": "B",
             "work_key": f"todo:{todo_slug}",
             "dispatch_thread_id": str(root_id),

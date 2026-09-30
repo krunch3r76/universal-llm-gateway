@@ -1,7 +1,7 @@
 """Pipeline consultation for consult roles that still have a virtual model.
 
 The code-review pipeline is retired. A code review that leaves the tab is
-``team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)``.
+``team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .constants import DEFAULT_STARGATE_URL
 CODE_REVIEW_PIPELINE_RETIRED = (
     "The code-review pipeline is retired. "
     "A code review that leaves this tab is "
-    "team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none). "
+    "team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review). "
     "cdp/opus-5 is the same class. "
     "In this tab, apply review-task-guidance and do not call model code-review."
 )
@@ -225,7 +225,7 @@ def run_code_review_pipeline(
     timeout: float,
     pipeline_options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Refuse. Code review is a purpose=review generate, not this pipeline."""
+    """Refuse. Code review is a job=code-review generate, not this pipeline."""
     del stargate_url, files, timeout, pipeline_options
     raise PipelineError(CODE_REVIEW_PIPELINE_RETIRED)
 

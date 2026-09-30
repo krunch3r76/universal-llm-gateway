@@ -32,7 +32,7 @@ _RETRIEVE_MAX_ATTEMPTS = 3
 _RETRIEVE_BACKOFF_SECONDS = 2.0
 _PIPELINE_CALL_HANDLER = PipelineCallHandler()
 
-_VALID_CONTRACTS = frozenset(
+_VALID_JOBS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
 )
 _VALID_STAGES = frozenset(
@@ -198,7 +198,7 @@ class PromptExpandValidateOptionsHandler(BaseHandler):
             )
 
         contract = opts.get("contract")
-        if contract not in _VALID_CONTRACTS:
+        if contract not in _VALID_JOBS:
             return _typed_reject(
                 "expand.contract_invalid",
                 f"invalid contract {contract!r}",

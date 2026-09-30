@@ -17,7 +17,7 @@ remains for non-path-sim work items. Skip only the closed set shared with R-admi
 | Pin | Default substrate |
 |---|---|
 | R-admit | web-anthropic CDP · Opus 4.8 (staged corpus) |
-| **R-after (this command)** | **`cdp/opus-5` `purpose=review` `reasoning_effort="high"`** reading `workspaces://` — Composer `pure-mechanical` limb for execution probes |
+| **R-after (this command)** | **`cdp/opus-5` `job=delivery-review` `reasoning_effort="high"`** reading `workspaces://` — Composer `pure-mechanical` limb for execution probes |
 
 Independence trade (documented, not hidden): CDP may already have run path-sim Q;
 R-after is still ≠ Composer implement and has checkout the web seat lacks. Override
@@ -58,16 +58,16 @@ admitted under, across however many sessions produced it.
 /work-item-review todo:{slug}
 /work-item-review a:{assertion_id}
 /work-item-review plan:{slug}
-/work-item-review todo:{slug} [model]     # optional override — default cdp/opus-5 purpose=review
+/work-item-review todo:{slug} [model]     # optional override — default cdp/opus-5 job=delivery-review
 ```
 
-**Default:** `cdp/opus-5` `purpose=review` `reasoning_effort="high"` reading `workspaces://`;
+**Default:** `cdp/opus-5` `job=delivery-review` `reasoning_effort="high"` reading `workspaces://`;
 Composer `pure-mechanical` limb for execution probes. Operator model
 token overrides when explicitly supplied. **¬** default to web-anthropic / CDP for
 R-admit (that seat is R-admit).
 
 **Optional overlay (path-sim only):** after R-after on path-sim arcs (or instead of a second CDP
-pass on non-path-sim work), fire `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`
+pass on non-path-sim work), fire `team_dispatch(model=cdp/opus-5, job=delivery-review, reasoning_effort="high")`
 on the staged delivery + session arc. Background preferred; defer when attended
 blocking. SOT: `consult-routing` § CDP transport · `abstraction-layering`
 § Pre-land CDP Opus review for conductor arcs. This is session/work judgment review — not a G4 Terra restore
@@ -168,9 +168,9 @@ Slug line in packet: `Use the path-sim skill` (R-after pin) · `Use the event-in
 team_dispatch(
   op=generate,
   model=cdp/opus-5,
-  purpose=review,
+  job=delivery-review,
   reasoning_effort="high",
-  contract=none,
+  job=freeform,
   dispatch_thread_id=<bus thread id or path-sim-{slug}>,
   packet_path=tmp/prompts/work-item-review-{slug}-packet.md,
   skills=[path-sim, review-task-guidance, docstring-quality, event-instrumentation-discipline, cursor-sdk-instruction-standard]
@@ -180,7 +180,7 @@ team_dispatch(
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=pure-mechanical,
+  job=mechanical,
   model_knobs={"fast":"true"},
   ...
 )
@@ -225,8 +225,8 @@ cortex(tool="assert", arguments='{"entity_id":"<work-item-id>",
 | Rubber-stamp | Acceptance ledger with cited evidence + decisive falsifier |
 | Fork the shared review body | Embed `review-task-guidance` by reference |
 | Re-catch the same finding class every item | G4 distill → mint a rule/skill |
-| Default R-after to Composer implement | `cdp/opus-5` `purpose=review` (R-admit keeps web Opus) |
-| `role=artisan, model=xai/grok-*` for checkout review | `cdp/opus-5` `purpose=review`; Composer `pure-mechanical` for execution probes |
+| Default R-after to Composer implement | `cdp/opus-5` `job=delivery-review` (R-admit keeps web Opus) |
+| `job=freeform, model=xai/grok-*` for checkout review | `cdp/opus-5` `job=delivery-review`; Composer `pure-mechanical` for execution probes |
 | Skip after path-sim Stage-B without closed-set evidence | Path-sim fires R-after by default — run it |
 | Silent on event-bearing ON_CHARTER delivery | Challenge closeout one-liner + missed add/prune |
 | Route REVISE through `/review-apply` | Direct patch or implement dispatch (24952) |

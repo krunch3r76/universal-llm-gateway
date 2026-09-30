@@ -11,7 +11,7 @@ They record tool/schema/boot/protocol gaps (F5 funnel) **and** feature asks (`ca
 **Critical split:** `friction()` = **informing observation log** (see § Informing frictions).
 A fix cycle = **codified bug ticket** via the investigate→execute lifecycle; once the
 investigate close distills attributes, the execute default is server materialization via
-`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})` —
+`team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})` —
 `cursor-implement` / `web-implement` + `packet_path` are the named fallback. Operator says
 "dispatch / address / fix the friction" → open the ticket; do not stop at logging.
 
@@ -109,7 +109,7 @@ Examples: "report this as a friction, the boot card is stale" → `friction(boot
 ## Codified bug ticket (investigate→execute fix cycle)
 
 A codified bug ticket follows **recon → investigate/settle → densify → check → execute**.
-**Recon is the named default first hop** for feature/bug frictions: load `cheap-recon-before-escalation` and run the axis-1 cost ladder (**Tier-1 breadth → Explore subagent** `Task(subagent_type="explore")` — ¬ tool, ¬ UI Exploring, ¬ Composer-as-recon; judgment residual → `team_dispatch(op=generate, seat=cursor-sdk, contract=investigate)`; Task unavailable / pure mechanical inventory-only → Composer fallback → GPT cross-family filter → Opus/Fable for hard residual).
+**Recon is the named default first hop** for feature/bug frictions: load `cheap-recon-before-escalation` and run the axis-1 cost ladder (**Tier-1 breadth → Explore subagent** `Task(subagent_type="explore")` — ¬ tool, ¬ UI Exploring, ¬ Composer-as-recon; judgment residual → `team_dispatch(op=generate, seat=cursor-sdk, job=investigate)`; Task unavailable / pure mechanical inventory-only → Composer fallback → GPT cross-family filter → Opus/Fable for hard residual).
 
 **Spine vs attended fork (bind before transport):** After a code-lane bug-fix `todo:` exists with `density_triage=judgment_required`, the default is the **autonomous work-item spine** (`decision:autonomous-work-item-spine`; consult-routing § Autonomous work-item spine; todo-lifecycle Gates 3–4):
 
@@ -134,7 +134,7 @@ input to investigate, not authorization to skip investigate and self-execute.
 | Stage | When (default) | Transport | Tier |
 |---|---|---|---|
 | **Investigate + decide** | Root cause unknown / design open; most `friction()` categories except mechanical-only | **Code-lane `judgment_required` todo:** autonomous spine (recon→settle→Grok densify→GPT check). **Attended/web:** only on operator opt-in or `authority_fork` escalate. **Self-contained corpus (no spine todo yet):** GPT generate OK. **`cursor-consult`:** Cursor-seat need or operator ask | spine / GPT / attended opt-in |
-| **Execute** | Dense implement spec exists OR mechanical-only | default `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`; web-native inline `fs` fix when already on web seat; `cursor-implement` / `web-implement` + `packet_path` = named fallback (§ Fallback triggers) | Composer / web |
+| **Execute** | Dense implement spec exists OR mechanical-only | default `team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})`; web-native inline `fs` fix when already on web seat; `cursor-implement` / `web-implement` + `packet_path` = named fallback (§ Fallback triggers) | Composer / web |
 
 | Initiator / seat | Investigate (default) | Execute |
 |------------------|----------------------|-----------|
@@ -149,7 +149,7 @@ input to investigate, not authorization to skip investigate and self-execute.
    **distill `files_expected` / `acceptance_criteria` (+ `required_skills`) onto the bug-fix `todo:`** +
    implement-ready assertion citing the spec + `spec_sha256` (cross-ref `handoff-packet-authoring.md`
    § Gate 2 step 6 + consult-routing § Densify lane) + spine GPT merged check
-3. **Execute** — default `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`;
+3. **Execute** — default `team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})`;
    web-native inline `fs` fix on web seat; patch, verify, restart if substrate change
 4. **Report** — bus closeout: root cause, paths, verification evidence
 5. **Secondary findings** — issues found during investigation → labeled in closeout;

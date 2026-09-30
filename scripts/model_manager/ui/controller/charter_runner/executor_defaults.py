@@ -131,7 +131,7 @@ def default_handoff_body(
     """Wire body for ``POST /api/v1/team/handoff`` (attended IDE consult)."""
     return {
         "op": "handoff",
-        "role": "cursor-consult",
+        "seat": "cursor",
         "packet_path": packet_path,
         "subject": subject,
         "caller_agent": caller_agent,
@@ -237,7 +237,7 @@ def consult_handoff_body(
     """
     return {
         "op": "handoff",
-        "role": "web-consult",
+        "seat": "web-anthropic",
         "packet_path": packet_path,
         "subject": subject,
         "caller_agent": caller_agent,

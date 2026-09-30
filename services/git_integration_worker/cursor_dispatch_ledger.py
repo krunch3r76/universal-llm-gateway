@@ -970,7 +970,7 @@ def _migrate_packet_kind_to_contract(conn: sqlite3.Connection) -> None:
             elif data.get("source_ref", "").startswith("todo:"):
                 new_contract = "sketch"
             else:
-                new_contract = "none"
+                new_contract = "freeform"
         if new_contract != contract:
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET contract=? WHERE dispatch_id=?",

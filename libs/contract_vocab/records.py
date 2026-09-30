@@ -104,7 +104,7 @@ RECORDS: tuple[ContractRecord, ...] = (
     ),
 )
 
-DEPRECATED_ALIASES: dict[str, str] = {"consult": "confer"}
+REMOVED_JOB_ALIASES: dict[str, str] = {"consult": "confer"}
 DEFAULT_CONTRACT: str = "answer"
 
 CANONICAL_CONTRACTS: tuple[str, ...] = tuple(record.name for record in RECORDS)

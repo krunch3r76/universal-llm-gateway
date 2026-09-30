@@ -86,7 +86,7 @@ async def test_f22100_api_role_generate_pointer_is_reference_not_truncation() ->
         op="generate",
         role="synthesizer",
         dispatch_thread_id="4116",
-        contract="none",
+        job="freeform",
         model="anthropic/claude-sonnet-4-6",
         caller_agent="claude-web",
     )

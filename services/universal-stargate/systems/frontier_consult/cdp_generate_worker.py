@@ -406,7 +406,7 @@ async def run_cdp_worker(
     parent_thread: str | None = None,
     topic: str | None = None,
     project_uuid: str | None = None,
-    contract: str = "none",
+    contract: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import (
