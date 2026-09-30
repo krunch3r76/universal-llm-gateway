@@ -243,6 +243,18 @@ def maybe_steer_live_dispatch(
     }
 
 
+def _release_stop_claim(stop_id: str, body: dict[str, Any] | None) -> None:
+    """Return a stop's one admit slot after the claimed admit was refused."""
+    admit_id = str((body or {}).get("dispatch_id") or "").strip()
+    if not stop_id or not admit_id:
+        return
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    CursorDispatchLedger.instance().release_stop_service(stop_id, admit_id)
+
+
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -412,6 +424,7 @@ def fire_spawn(
             "body": body,
             "leftover": verdict,
         }
+    stop_id = ""
     if body and verdict.get("leftover") == LEFTOVER_PLAY:
         stop_id = str(body.get("hop_from") or body.get("_stop_id") or "").strip()
         if stop_id:
@@ -440,6 +453,8 @@ def fire_spawn(
         "body": body,
         "leftover": verdict,
     }
+    if status <= 0 or status >= 400:
+        _release_stop_claim(stop_id, body)
     if status >= 400:
         err = payload.get("error") or {}
         code = err.get("code") if isinstance(err, dict) else None
@@ -631,10 +646,10 @@ def _post_roster_hires(
                 CursorDispatchLedger,
             )
 
-            # The generate schema forbids dispatch_id. A claim id on the body
-            # is a 400, which burns the one-shot slot and leaves no dispatch row.
-            admit_id = str(uuid.uuid4())
-            body.pop("dispatch_id", None)
+            # Stargate reserves this id for the admitted row, so the slot's
+            # serviced_admit and the successor dispatch_id stay the same value.
+            admit_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
+            body["dispatch_id"] = admit_id
             if not CursorDispatchLedger.instance().claim_stop_service(
                 stop_id, admit_id
             ):
@@ -668,6 +683,8 @@ def _post_roster_hires(
         code = err.get("code") if isinstance(err, dict) else None
         posted_key = str(body.get("work_key") or work_key)
         row_id = str(row.get("row_id") or "")
+        if status <= 0 or status >= 400:
+            _release_stop_claim(stop_id, body)
         if code == _WORK_KEY_IN_FLIGHT or status == 409:
             # REMINT_CAP is itself a 409. Page that wall; other 409s stay in-flight.
             if _page_roster_remint(root_id, state, payload):

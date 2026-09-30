@@ -59,5 +59,31 @@ def reject_unsupported_packet_inputs(
         )
 
 
+def reject_dispatch_id_off_sdk(
+    *,
+    request_id: str,
+    dispatch_id: str | None,
+    sdk_admission: bool,
+) -> None:
+    """Raise 422 ``dispatch_id_sdk_only`` when a reserved id cannot be honored.
+
+    Only the cursor-sdk branch forwards ``dispatch_id`` to GIW. Dropping it
+    silently on any other branch would leave the caller's stop-slot claim
+    pointing at an id that never becomes a ledger row.
+    """
+    if not dispatch_id or sdk_admission:
+        return
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="dispatch_id",
+        reason=(
+            "dispatch_id is only honored on seat='cursor-sdk' generate; "
+            "other branches mint their own ids"
+        ),
+        status_code=422,
+        code="dispatch_id_sdk_only",
+    )
+
+
 def intake_error_to_response(exc: FrontierEndpointError) -> dict[str, Any]:
     return exc.to_dict()

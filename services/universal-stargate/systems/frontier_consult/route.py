@@ -657,6 +657,19 @@ async def team_dispatch(
             body.role = role
             body.seat = seat
             body.model = model
+    if body.op == "generate" and getattr(body, "dispatch_id", None):
+        from ._frontier_intake import reject_dispatch_id_off_sdk
+
+        try:
+            reject_dispatch_id_off_sdk(
+                request_id=request_id,
+                dispatch_id=body.dispatch_id,
+                sdk_admission=is_cursor_sdk_generate_admission(
+                    role=role, seat=seat, model=model, request_id=request_id
+                ),
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     if body.op == "generate" and is_cdp_model(model):
         try:
             reject_cursor_sdk_seat_with_cdp(

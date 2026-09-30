@@ -175,7 +175,8 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):
         return await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
     if _admit_error_permanent(row):
-        _emit_hop_skipped(row, gate=SKIP_GATE_ADMIT_ERROR_PERMANENT)
+        # Already announced once, below, on the attempt that went permanent.
+        # Re-emitting on every sweep produced ~12k events/day per stalled fleet.
         return False
     verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
     if verdict.park and verdict.reason:
