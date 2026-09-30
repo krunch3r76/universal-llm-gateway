@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from agent_bus_store import create_app
+from agent_bus_store.auth import require_token
+from fastapi.testclient import TestClient
 
 from scripts.mcp_bridge_steer_inject import (
     PendingSteer,
@@ -294,3 +298,95 @@ def test_recover_undelivered_steer_from_thread_re_spools(
     pending = claim_pending("disp-rec", spool_dir=spool)
     assert pending is not None
     assert pending.directive == "resume harvest"
+
+
+class _StoreClient:
+    def __init__(self, client: TestClient) -> None:
+        self._client = client
+        self.posts: list[Any] = []
+
+    def __enter__(self) -> _StoreClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def post(self, path: str, json: dict | None = None, headers: dict | None = None):
+        resp = self._client.post(path, json=json, headers=headers)
+        self.posts.append(resp)
+        return resp
+
+    def get(self, path: str, params: dict | None = None, headers: dict | None = None):
+        return self._client.get(path, params=params, headers=headers)
+
+
+def test_deposit_4442_directive_stores_inline_and_recovers(
+    spool: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """4442-char directive stays JSON on POST /turns. No spill, no sidecar."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+    directive = "d" * 4442
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "steer-inline-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+        store = _StoreClient(client)
+        monkeypatch.setattr(
+            "services.git_integration_worker.cursor_sdk_steer_inject.make_sync_client",
+            lambda *_a, **_k: store,
+        )
+        result = deposit_steer_directive(
+            dispatch_id="disp-4442",
+            thread_id=thread_id,
+            directive=directive,
+            reason="operator steer",
+            spool_dir=spool,
+        )
+        assert store.posts, "deposit did not POST /turns"
+        created = store.posts[0]
+        assert created.status_code == 201, created.text
+        created_body = created.json()
+        assert not created_body.get("auto_spilled")
+        assert created_body.get("sidecar_uri") is None
+        posted = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number={result.authority_turn_id}"
+        )
+        assert posted.status_code == 200, posted.text
+        payload = posted.json()
+        assert not payload.get("auto_spilled")
+        assert payload.get("sidecar_uri") is None
+        parsed = json.loads(payload["body"])
+        assert parsed["directive"] == directive
+        from scripts.mcp_bridge_steer_inject import claim_pending, spool_path
+
+        spool_path(spool, "disp-4442").unlink()
+        recovered = recover_undelivered_steer_from_thread(
+            dispatch_id="disp-4442",
+            thread_id=thread_id,
+            spool_dir=spool,
+        )
+        pending = claim_pending("disp-4442", spool_dir=spool)
+    assert len(recovered) == 1
+    assert pending is not None
+    assert pending.directive == directive

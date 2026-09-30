@@ -6,6 +6,7 @@ import inspect
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.body_briefing_advisory import INLINE_CONTRACT_PREFIXES
@@ -77,6 +78,9 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     assert captured["contract"] == "answer"
     assert captured["new_slug"] is None
     assert captured["thread"] == "77"
+    assert captured["sidecar_content"] is None
+    assert captured["allow_long_body"] is True
+    assert captured["enqueue_body"] == captured["body"]
     body = str(captured["body"])
     first = next(line for line in body.splitlines() if line.strip())
     assert first == "TYPE: CONTINUITY_HANDOFF"
@@ -210,13 +214,11 @@ def _relay_via_test_client(client: TestClient, sent: list[dict[str, Any]]):
     return relay
 
 
-def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) -> None:
-    """Lane 12286 specimen, observed 2026-09-29 00:0xZ.
-
-    Unsplit hop body is 3045 characters; the store auto-spills bare overshoots,
-    but the hop verb still stores the structural header and writes doctrine tail
-    to the sidecar.
-    """
+@pytest.mark.parametrize("reason", ["r" * 38, "r" * 3000])
+def test_hop_split_stores_header_under_briefing_shield(
+    reason: str, tmp_path, monkeypatch
+) -> None:
+    """Full handoff is stored inline. Line 1 is the handoff type; no sidecar."""
     handoff = StandingHandoffFreshness(
         status="current",
         uri="cortex://notes/system/threads/12286-standing-handoff.md",
@@ -225,13 +227,15 @@ def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) ->
     )
     specimen = build_continuity_handoff_body(
         thread_id="12286",
-        trigger="r" * 38,
+        trigger=reason,
         source="agent-bus-hop-verb",
         handoff=handoff,
     )
-    assert len(specimen) == 3045, len(specimen)
+    assert len(specimen) > 2000, len(specimen)
+    if reason == "r" * 38:
+        assert len(specimen) == 3045, len(specimen)
 
-    app, cortex_root = _hop_store_app(tmp_path, monkeypatch)
+    app, _cortex_root = _hop_store_app(tmp_path, monkeypatch)
     sent: list[dict[str, Any]] = []
     captured_enqueue: dict[str, Any] = {}
 
@@ -272,30 +276,22 @@ def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) ->
         ):
             result = _hop_dispatch(
                 thread=thread_id,
-                reason="r" * 38,
+                reason=reason,
                 from_agent="web-anthropic",
             )
 
         assert result.get("continuity_hop") is True, result
         stored = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         stored_body = stored["body"]
-        assert len(stored_body) <= 2000
         assert stored_body.splitlines()[0] == "TYPE: CONTINUITY_HANDOFF"
+        assert "Sidecar:" not in stored_body
         assert "successor_birth_id:" in stored_body
-        assert "Sidecar:" in stored_body
-        assert "KEEP-ALIVE" not in stored_body
-
-        sidecar_uri = result["sidecar_uri"]
-        sidecar_text = (cortex_root / sidecar_uri.removeprefix("cortex://")).read_text(
-            encoding="utf-8"
-        )
-        assert "KEEP-ALIVE" in sidecar_text
+        assert result.get("sidecar_uri") is None
 
         enqueue_body = str(captured_enqueue["body"])
-        assert "KEEP-ALIVE" in enqueue_body
         assert parse_successor_birth_id(enqueue_body) == parse_successor_birth_id(
             stored_body
         )
         assert sent, "hop did not POST /threads/send"
-        assert sent[-1].get("allow_long_body") is not True
+        assert sent[-1].get("allow_long_body") is True
         assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
