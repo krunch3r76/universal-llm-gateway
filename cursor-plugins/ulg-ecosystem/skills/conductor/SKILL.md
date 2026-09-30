@@ -40,11 +40,12 @@ gates. This is how models finish together on one graph after the lid closes
 
 | Term | Means |
 |---|---|
-| **conductor score** | packet + scoreboard — Mission Composer product; what this seat plays |
-| **conductor packet** | six-block admit file (`packet_path=`) |
-| **scoreboard** | G-row table the packet binds |
+| **conductor score** | the **densified todo** (dense spec + implement-lane attrs + pins) — Mission Composer product; what this seat plays. Packet + scoreboard are **derived** from it at admit |
+| **conductor packet** | six-block file Stargate **materializes** from `source_ref=todo:` at `contract=conductor` admit. Hand-authored `packet_path=` is refused on that contract (`conductor_with_packet_path`) |
+| **scoreboard** | G-row table the materializer births from the todo (`birth_scoreboard`); re-admit never rewinds it |
 
 ¬ admit package. ¬ shorten conductor score to **score**. Mission Composer ≠ `cursor/composer-2.5`.
+Hop → wire → product map: § Admit from an existing plan.
 
 **Default is run, don't ask.** Once admitted, the conductor drives every open
 G-row through to the scoreboard's own completion criterion in one continuous
@@ -389,8 +390,13 @@ pin** on admit ⇒ report and halt — never silent substitute to another rung o
 
 ## Packet
 
-Six-block handoff packet (`architecture-handoff-protocol`). Front-matter SHOULD
-set `packet_kind: conductor` and `role_name: conductor`.
+Six-block handoff packet (`architecture-handoff-protocol`), **materialized by
+Stargate from the todo** on `contract=conductor` + `source_ref` (front-matter
+`role_name: conductor`, the Use-line, entry gate, `summon_mode`, pins). The lead
+shapes the **todo**, not the file; `packet_kind` is retired on the wire (the
+contract carries it). The list below is what the materialized packet must end up
+saying — audit the materialized file against it, and put anything missing on the
+todo (`scope`, `problem`, attrs), not in a hand-edited copy.
 
 **Optional frontmatter `sdk_mode:` (conductor admit vs nested legs):**
 
@@ -743,16 +749,87 @@ Pager only when `summon_mode` is absent/away or the packet names see-score-page 
 not on every attended `ROW_PINNED` (attended floor = bus `SCORE_RESURFACE` on the
 summoning thread + summoning lead relay).
 
+## Admit from an existing plan (substitute sketch)
+
+**Trigger:** a written plan already exists (Plan-mode doc, consult note, operator
+paste) and the operator says *densify + implement* / *admit the conductor*.
+Select and follow this map; do not rebuild the path from source reading and 422s
+(specimen `todo:cdp-ask-harvest-prompt-anchor` · a:36905).
+
+### Hop → wire → product (the wire is `contract`; `packet_kind` is retired)
+
+| Hop | Wire | Product | Written by |
+|---|---|---|---|
+| **Sketch** | `contract=sketch` + `source_ref=todo:` (materializer reads todo `problem` / `scope`) | **shape bind** — R1 four blocks (`scope_pin` · `negative_space` · `output_envelope` · `transfer_predicate`) at `cortex://notes/system/consults/{slug}-sketch.md` | dispatched Sketch, or a **substitute** (below) |
+| **Mission Composer** | `runbook:score-composer-author` — `contract=none` + `prompt=` (¬ a materializer contract) | **conductor score** = the **densified todo**: dense spec at `source_uri`, implement-lane attrs, `stop_after` / `conductor_profile` pins, S5 attach when architecture is closed. ¬ a hand-written six-block file | dispatched Composer worker |
+| **Conductor** | `contract=conductor` + `source_ref=todo:` · `packet_path` **refused** (`conductor_with_packet_path`) · `prompt` refused | Stargate **materializes** the packet and **births the scoreboard** from the todo at admit | substrate |
+
+`contract=none` + `source_ref` is refused (`none_with_source_ref`) — it is not a
+lighter conductor. Sweep `19ab1566a` rewrote `light-bounded` → `none` and dropped
+`packet_kind=conductor` mechanically; any recipe still showing that pair is stale.
+
+### What stands in for the Sketch
+
+A plan is a valid Sketch substitute when it carries the four R1 blocks (prepend
+them as a header when missing) and is registered as a sidecar the todo points at
+(`scope:` / description / `density_triage_evidence_uri`). Frontmatter:
+`consult_kind: sketch` · `substitute_for:` · `as_of:` HEAD sha · `status:` naming
+that its decisions are **not independently checked** — the Mission Composer read
+is that check. A substitute sketch closes the **Sketch hop**; it does **not**
+close **G1**.
+
+### Entry gate (`conductor_materialize.resolve_entry_gate`)
+
+| Todo state at admit | Entry gate |
+|---|---|
+| scoreboard already born (re-admit / hop) | fold `entry_gate` = first non-DONE row — **wins** over every row below |
+| attribute `derived_from` set | **G2** — packet says `G1 CLOSED by derived_from:…` |
+| `density_triage=mechanical` | **G5** |
+| else | **G1** |
+
+### Skipping G1 legitimately — stamp **both**, or neither
+
+| Stamp | Reader | Missing ⇒ |
+|---|---|---|
+| todo **attribute** `derived_from=document:{slug}-architecture-consult` | materializer → entry gate G2 | entry gate G1; conductor re-derives architecture |
+| **structural edge** `todo --derived_from--> document:*` whose document carries `consult_kind=architecture` | witness fold (`_witness_g1`) → G1 renders DONE | G1 has no witness — fold leaves it OPEN while the seat is already driving G2 |
+
+A `consult_kind: sketch` document never witnesses G1. Rival shapes still open ⇒
+stamp neither; let G1 fire. Attach recipe: `work-item-seed-path` § S3 / S5.
+
+### Todo seed contract (what the materializer and validators read)
+
+| Key | Rule | 422 |
+|---|---|---|
+| `files_expected` · `acceptance_criteria` · `required_skills` | non-empty `list[str]`, no blank items. Optional at seed; owed before `implement_ready` | `implement_attr_shape_invalid` — payload carries `canonical_keys` + `expected_shape` |
+| `files_modified` · `acceptance` | aliases — refused | `implement_attr_alias_rejected` — payload names `canonical` |
+| `required_skills[i]` | slug ∈ `config/skills.yaml`; mirror each with a `requires` edge todo → `agent_skill:` | `required_skills_uncatalogued` |
+| `implement_ready` | **never seeded** — an assertion the conductor stamps at Gate-2 (`implement_ready_assertion_id` mirrors it) | — |
+| `problem` · `scope` · `source_uri` | prose the Sketch materializer and spec hash read | — |
+| `density_triage` · `kind` · `spawned_by_friction=<int>` · `stop_after` · `conductor_profile` · `summon_mode` · `derived_from` | attrs folded into the packet header | — |
+
+### `dispatch_thread_id` shapes
+
+§ First-utterance spawn. The 422 `conductor_coord_split_refused` repeats the
+three legal shapes in `details.hint` — read the payload before probing threads.
+
+### Preflight gate (dispatch-kernel "agent_bus + stargate + GIW up")
+
+`manage(action="status")` answers up/down compactly. `busy_status` is the
+lane-**holder** read (§ Admit post-admit check); it is large and does not scope
+by `service=` — do not spend it on up/down (a:36905 item 5).
+
 ## Admit
 
 ```text
 # Default conductor (Composer omit model=)
-# Precondition: packet <invariants> already carries "Use the conductor skill — …"
+# Precondition: todo shaped per § Admit from an existing plan; the materializer
+# writes the "Use the conductor skill — …" line into <invariants> itself.
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=conductor,
-  packet_path=tmp/reviews/{slug}-conductor-packet.md,
+  source_ref="todo:{slug}",       # packet_path is REFUSED on this contract
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
   model_knobs={"fast":"true"},
@@ -764,9 +841,11 @@ team_dispatch(
 )
 ```
 
-Preflight: packet Use-line present ∧ `manage(busy_status)` — if the chosen lane's
-write lease is held by another dispatch, expect **queued**; record holder on the
-root CHECKPOINT. ¬ nest_under an unrelated mission's lease.
+Preflight: `manage(action="status")` shows agent_bus + stargate + GIW up ∧
+`busy_status` — if the chosen lane's write lease is held by another dispatch,
+expect **queued**; record holder on the root CHECKPOINT. ¬ nest_under an
+unrelated mission's lease. Receipt: quote `packet_path` (materialized),
+`packet_sha256`, `scoreboard_uri`, `dispatch_id`, admitted thread.
 
 **Post-admit check (binding — default regime is Lane B):** quote `active_by_lane` /
 `holder_source_repo` from `busy_status`. Expected: `B≥1`, worktree under
@@ -898,6 +977,11 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
 | Bad | Good |
 |---|---|
 | Admit conductor packet without `Use the conductor skill` in `<invariants>` | Continuity-lead required-skill gate (Audience) |
+| Hand-author `tmp/reviews/{slug}-conductor-packet.md` and pass `packet_path=` on `contract=conductor` | Shape the **todo**; `source_ref=todo:` — the materializer writes the packet and the scoreboard (§ Admit from an existing plan) |
+| Spawn with `contract="none"` + `source_ref=todo:` (post-`19ab1566a` residue) | `contract="conductor"` — `none_with_source_ref` is a 422, not a lighter admit |
+| Stamp `derived_from` attribute only (or edge only) to skip G1 | Both attribute and `consult_kind=architecture` edge, or neither — a `consult_kind: sketch` doc is not a G1 witness |
+| Seed `implement_ready` / `files_modified` / `acceptance` on the todo | Readiness is a Gate-2 assertion; canonical keys are `files_expected` / `acceptance_criteria` / `required_skills` (non-empty `list[str]`) |
+| Reconstruct the admit path from source + 422s because the plan “isn't a sketch” | Register the plan as the substitute sketch (`consult_kind: sketch`), then follow § Admit from an existing plan |
 | Drop the packet Use-line because `skills=["conductor"]` now mounts | Both — the Use-line is what survives a replayed or `skills=`-less admit |
 | One flat `implement` "does the whole mission" | Conductor + nested contracts per G-row |
 | Page human "which remedy?" | Nest binder; `needs-attended` only for operator-only |

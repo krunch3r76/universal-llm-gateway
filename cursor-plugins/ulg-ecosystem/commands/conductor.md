@@ -1,8 +1,9 @@
 Conductor — cursor-sdk as **mission operator** of a continuity root.
 
 Interactive setup: bring this chat up to speed, ask establishing questions, then
-author the **conductor score** (six-block packet + scoreboard) and (on confirm)
-admit the packet.
+shape the **conductor score** (the densified `todo:` — Stargate materializes the
+six-block packet and births the scoreboard from it at admit) and (on confirm)
+admit with `contract=conductor` + `source_ref=todo:{slug}`.
 
 **Default posture (binding): run to completion, merge rubber-stamped.** Once
 admitted, the conductor drives every open G-row to completion in one
@@ -19,7 +20,7 @@ grant the default.
 | Condition | Route |
 |---|---|
 | Operator `/conductor` (optional ring / objective) | This command |
-| Continuity root already live; just admit | Skip Qs already bound; author/admit packet |
+| Continuity root already live; just admit | Skip Qs already bound; shape todo → admit `source_ref` |
 | Pinned worker terminal; retained store | Skill § Resume-if-dead — `resume_of` + `reuse_thread` (same agent continues) |
 | Formal CDP `operator_proxy` mission | `mission-operator` + `cdp-operator-proxy` — not this |
 | Single dense implement | `/todo` / wrap — not conductor |
@@ -59,7 +60,7 @@ Ask in one batch; skip any already bound in chat:
 7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
    judgment nests `cdp/fable-5.1` / `cdp/opus-5.5` escalation or an Other-Models pin only
    with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
-8. **Admit now?** — draft packet only vs admit after confirm.
+8. **Admit now?** — shape the todo only vs admit after confirm.
 
 Default to Lane B on Q4 absent an operator override; do **not** silently carry
 Lane A forward just because a prior ring in this arc happened to run Lane A —
@@ -73,35 +74,38 @@ before stamp when material.
 
 If root exists: update scoreboard Next-pickup to "conductor admit" if needed.
 
-### 4 — Author packet
+### 4 — Shape the todo (the conductor score)
 
-Write `tmp/reviews/{slug}-conductor-packet.md` (six blocks). Mirror to
-`cortex://notes/system/threads/{id}-conductor-packet.md` when ring id known.
+The packet is **not** hand-authored: `contract=conductor` refuses `packet_path`
+(`conductor_with_packet_path`) and materializes the six blocks + scoreboard from
+the todo. Shape the `todo:` instead — canonical keys, G1-skip stamps, entry gate,
+substitute-sketch registration: skill § Admit from an existing plan.
 
-Front-matter: `packet_kind: conductor`, `role_name: conductor`, checkout regime,
-bound `model` / `effort` (or "admit-time tier"), `off_tick: true` unless
-tick-enrolled.
+- S0 lookup ⇒ existing open todo ⇒ re-admit, ¬ remint (`work-item-seed-path`).
+- Sparse birth: `problem` · `scope` · `density_triage` · `kind` (+ `spawned_by_friction=<int>`).
+- Plan already written ⇒ register it as the substitute sketch
+  (`cortex://notes/system/consults/{slug}-sketch.md`, `consult_kind: sketch`) and
+  point `scope:` at it. Architecture closed ⇒ `derived_from` attribute **and**
+  `consult_kind=architecture` edge; open ⇒ neither (G1 fires).
+- Pins as attrs: `stop_after`, `conductor_profile`, `summon_mode`, `required_skills`
+  (catalog slugs + mirrored `requires` edges). Never seed `implement_ready`.
 
-**Required skill on the dispatch (binding):** first line of `<invariants>` MUST be
-`Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; cost
-tier from this skill.` (`team_dispatch(skills=["conductor"])` mounts too, but the
-Use-line is what survives a replayed or `skills=`-less admit — send both.)
+The materializer writes the conductor Use-line into `<invariants>` itself; the
+Q6 hold-merge exception, if any, goes on the todo `scope` so it lands in the
+packet.
 
-Validate: line-anchored six tags + `acceptance` in `<task_guidance>` + conductor
-Use-line present.
 ### 5 — Confirm → admit
 
-Show packet path + sha256 + **model tier** + admit knobs + confirm conductor
-Use-line in `<invariants>`. On operator **go** / **admit**:
+Show todo id + `source_uri` + **model tier** + admit knobs + entry gate you
+expect (G1 / G2 / G5). On operator **go** / **admit**:
 
 ```text
 # Example: Composer standing seat — substitute pin from Q7 if any
-# Packet MUST already carry: Use the conductor skill — …
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=conductor,
-  packet_path=tmp/reviews/{slug}-conductor-packet.md,
+  source_ref="todo:{slug}",   # packet_path is refused on this contract
   dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
   model_knobs={"fast":"true"},
   lane="B",                    # DEFAULT (Q4) — pass explicitly even when
@@ -109,9 +113,11 @@ team_dispatch(
 )
 ```
 
-If `CURSOR_LANE_B_SCOPE_REFUSED`: **¬ omit `lane=`** — fix packet scope paths, then
-re-admit (skill § Gotchas). After admit, confirm `busy_status.active_by_lane`
-matches the bound regime.
+Receipt: quote materialized `packet_path` + `packet_sha256`, `scoreboard_uri`,
+`dispatch_id`, admitted thread, and audit the materialized `<invariants>` for the
+Use-line. If `CURSOR_LANE_B_SCOPE_REFUSED`: **¬ omit `lane=`** — fix the todo's
+`files_expected` paths (repo-relative), then re-admit (skill § Gotchas). After
+admit, confirm `busy_status.active_by_lane` matches the bound regime.
 
 If explicit `claude-opus-5` pin: announce inform-then-proceed trigger line. Post root CHECKPOINT with
 `execution_id` / `dispatch_id` / worker thread / queue holder if queued / **model**.
