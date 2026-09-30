@@ -18,10 +18,12 @@ from claude_bundles.cowork_skill_delivery import (
     format_cdp_slash_prefix,
     split_leading_slash_skills,
 )
+from claude_bundles.maestro_runbook_load import load_maestro_runbook
 from claude_bundles.operator_proxy_hop_status import ensure_hop_status_first
 from claude_bundles.operator_proxy_skill_introspect import skill_introspection_block
 from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
 from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
+from claude_bundles.runbook_excerpt import extract_sections
 
 # CONSUMERS = import-nomination (GIW loads purposes). INJECTORS = seat paste.
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
@@ -382,10 +384,39 @@ def ensure_operator_proxy_mission_prompt(
     field_source = _field_source_without_briefing(rest_body)
     if _BRIEFING_MARKER not in rest_body:
         rest_body = f"{_BRIEFING_BLOCK.strip()}\n\n{rest_body}".rstrip() + "\n"
+
+    body, load_err = load_maestro_runbook()
+    resolved_bodies: dict[str, str] | None = None
+    trigger_excerpt = ""
+    refuse_body = ""
+    skip_reasons: dict[str, str] = {
+        "skill:retrieval-before-authoring": "not_resolvable_by_composer",
+    }
+    if body:
+        resolved_bodies = {"runbook:maestro-loop": body}
+        trigger_block = extract_sections(body, ("Trigger",))
+        trigger_excerpt = "\n".join(
+            line
+            for line in trigger_block.splitlines()
+            if not line.strip().startswith("## ")
+        ).strip()
+        refuse_block = extract_sections(body, ("Refuse",))
+        refuse_body = "\n".join(
+            line
+            for line in refuse_block.splitlines()
+            if not line.strip().startswith("## ")
+        ).strip()
+    else:
+        skip_reasons["runbook:maestro-loop"] = load_err or "unreachable"
+
     rest_body = ensure_hop_status_first(
         rest_body,
         standing_handoff_text=standing_handoff_text,
         field_source=field_source,
+        resolved_bodies=resolved_bodies,
+        skip_reasons=skip_reasons,
+        refuse_body=refuse_body,
+        trigger_excerpt=trigger_excerpt,
     )
     return f"{prefix}\n{rest_body}"
 
@@ -419,6 +450,7 @@ __all__ = [
     "MISSION_SKILL_SLUGS",
     "ULG_CODE_PRIMARY_TOOLS",
     "OPERATOR_PROXY_MISSION_PURPOSES",
+    "_BRIEFING_BLOCK",
     "_FORBIDDEN_HEADING",
     "ensure_operator_proxy_mission_prompt",
     "is_operator_proxy_mission_purpose",

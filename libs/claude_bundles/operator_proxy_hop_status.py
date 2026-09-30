@@ -46,7 +46,8 @@ INJECTORS: tuple[str, ...] = ("cdp_ask",)
 HOP_STATUS_MARKER = "## This hop (read first)"
 UNSPECIFIED = "(unspecified)"
 _FIRST_ACTS_LINE = (
-    "- first-acts: skill reloads (`lane-act-gates` with the birth slugs) → "
+    "- first-acts: read cortex://notes/runbooks/maestro-loop.md § Steps → "
+    "skill reloads (`lane-act-gates` with the birth slugs) → "
     "handoff head (fs offset=0 limit=50) → journal → "
     "fetch(last=3) → mark_read(through_turn, agent=web-anthropic) → send "
     "TYPE: SEAT_REGISTRATION quoting successor_birth_id"
@@ -139,6 +140,9 @@ def ensure_hop_status_first(
     field_source: str | None = None,
     in_context_refs: tuple[str, ...] = (),
     resolved_bodies: dict[str, str] | None = None,
+    skip_reasons: dict[str, str] | None = None,
+    refuse_body: str = "",
+    trigger_excerpt: str = "",
 ) -> str:
     """Guarantee ``This hop`` sits above the seat map. Idempotent once receipted.
 
@@ -161,6 +165,9 @@ def ensure_hop_status_first(
             body,
             in_context_refs=in_context_refs,
             resolved_bodies=resolved_bodies,
+            skip_reasons=skip_reasons,
+            refuse_body=refuse_body,
+            trigger_excerpt=trigger_excerpt,
         )
     if existing is not None:
         hoisted = f"{existing.rstrip()}\n\n{remainder.lstrip()}"
@@ -168,6 +175,9 @@ def ensure_hop_status_first(
             hoisted,
             in_context_refs=in_context_refs,
             resolved_bodies=resolved_bodies,
+            skip_reasons=skip_reasons,
+            refuse_body=refuse_body,
+            trigger_excerpt=trigger_excerpt,
         )
     source = remainder if field_source is None else field_source
     block = _format_hop_status(
@@ -175,6 +185,9 @@ def ensure_hop_status_first(
         in_context_refs=in_context_refs,
         resolved_bodies=resolved_bodies,
         source_text=body,
+        skip_reasons=skip_reasons,
+        refuse_body=refuse_body,
+        trigger_excerpt=trigger_excerpt,
     )
     return f"{block}\n{remainder.lstrip()}"
 
@@ -184,6 +197,9 @@ def _graft_receipts(
     *,
     in_context_refs: tuple[str, ...] = (),
     resolved_bodies: dict[str, str] | None = None,
+    skip_reasons: dict[str, str] | None = None,
+    refuse_body: str = "",
+    trigger_excerpt: str = "",
 ) -> str:
     """Append the receipt to the first hop block when it is missing.
 
@@ -202,9 +218,16 @@ def _graft_receipts(
     block = text[idx:end]
     if receipts_present(block):
         return text
-    addition = decision_lines(
-        in_context_refs=in_context_refs,
-        resolved_bodies=resolved_bodies,
+    has_runbook = bool((resolved_bodies or {}).get("runbook:maestro-loop"))
+    addition = _receipt_with_runbook_excerpts(
+        decision_lines(
+            in_context_refs=in_context_refs,
+            resolved_bodies=resolved_bodies,
+            skip_reasons=skip_reasons,
+            refuse_body=refuse_body,
+        ),
+        trigger_excerpt=trigger_excerpt if has_runbook else "",
+        refuse_body=refuse_body if has_runbook else "",
     )
     successor = _successor_inject_lines(text)
     prefix = text[:end].rstrip()
@@ -377,16 +400,47 @@ def _successor_inject_lines(source_text: str) -> str:
     )
 
 
+def _receipt_with_runbook_excerpts(
+    receipt: str,
+    *,
+    trigger_excerpt: str,
+    refuse_body: str,
+) -> str:
+    """Place Trigger/Refuse excerpts immediately after the runbook resolved line."""
+    if not trigger_excerpt.strip() and not refuse_body.strip():
+        return receipt
+    out: list[str] = []
+    for line in receipt.splitlines():
+        out.append(line)
+        if line.startswith("- fetch-decision: runbook:maestro-loop resolved"):
+            if trigger_excerpt.strip():
+                out.extend(trigger_excerpt.rstrip("\n").splitlines())
+            if refuse_body.strip():
+                out.extend(refuse_body.rstrip("\n").splitlines())
+    return "\n".join(out)
+
+
 def _format_hop_status(
     fields: dict[str, str],
     *,
     in_context_refs: tuple[str, ...] = (),
     resolved_bodies: dict[str, str] | None = None,
     source_text: str = "",
+    skip_reasons: dict[str, str] | None = None,
+    refuse_body: str = "",
+    trigger_excerpt: str = "",
 ) -> str:
-    receipt = decision_lines(
-        in_context_refs=in_context_refs,
-        resolved_bodies=resolved_bodies,
+    receipt = _receipt_with_runbook_excerpts(
+        decision_lines(
+            in_context_refs=in_context_refs,
+            resolved_bodies=resolved_bodies,
+            skip_reasons=skip_reasons,
+            refuse_body=refuse_body,
+        ),
+        trigger_excerpt=trigger_excerpt,
+        refuse_body=refuse_body
+        if (resolved_bodies or {}).get("runbook:maestro-loop")
+        else "",
     )
     successor = _successor_inject_lines(source_text)
     return (
