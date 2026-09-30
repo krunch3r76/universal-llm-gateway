@@ -248,14 +248,10 @@ from services.git_integration_worker.cursor_sdk_restart_orphan import (
 )
 from services.git_integration_worker.cursor_sdk_resume import (
     closeout_qualifies_for_resume_retain,
-    load_parent_row,
     load_resume_run_context,
     persist_resume_retain,
     persist_timeout_retain,
-    record_resolved_store_roots,
     reject_resume_if_ineligible,
-    resolve_sdk_store_dir,
-    resolve_store_bearing_dispatch_id,
     sdk_agent_id_from_agent,
     start_or_resume_agent,
 )
@@ -268,6 +264,12 @@ from services.git_integration_worker.cursor_sdk_skills_mount import (
 )
 from services.git_integration_worker.cursor_sdk_steer_inject_http import (
     inject_one_dispatch,
+)
+from services.git_integration_worker.cursor_sdk_store_locus import (
+    load_parent_row,
+    record_resolved_store_roots,
+    resolve_sdk_store_dir,
+    resolve_store_bearing_dispatch_id,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from services.git_integration_worker import cursor_home
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -24,12 +25,15 @@ from services.git_integration_worker.cursor_sdk_resume import (
     load_resume_run_context,
     persist_resume_retain,
     persist_timeout_retain,
-    record_resolved_store_roots,
     reject_resume_if_ineligible,
     resume_eligibility_reason,
     resume_retain_active,
     start_or_resume_agent,
     timeout_retain_active,
+)
+from services.git_integration_worker.cursor_sdk_store_locus import (
+    record_resolved_store_roots,
+    resolve_store_bearing_dispatch_id,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     prune_dispatch_worktree,
@@ -633,6 +637,7 @@ def test_multi_hop_resume_of_finds_ancestor_home_store(
     """A→B→C chain: B has empty bridge-state; C resolves store via A HOME."""
     homes_root = tmp_path / "homes"
     monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    monkeypatch.setattr(cursor_home, "_DISPATCH_HOME_ROOT", homes_root)
     empty_bridge = tmp_path / "empty-bridge"
     empty_bridge.mkdir()
 
@@ -720,6 +725,17 @@ def test_multi_hop_resume_of_finds_ancestor_home_store(
         ).fetchone()
     assert b_row["state_root"] == str(store)
     assert c_row["state_root"] == str(store)
+
+    stray = (
+        dispatch_home_path(dispatch_b)
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    stray.mkdir(parents=True, exist_ok=True)
+    assert resolve_store_bearing_dispatch_id(parent_id=dispatch_b) == dispatch_a
+    assert resolve_store_bearing_dispatch_id(parent_id=dispatch_c) == dispatch_a
 
 
 def test_resume_retain_blocks_prune_for_completed_conductor(

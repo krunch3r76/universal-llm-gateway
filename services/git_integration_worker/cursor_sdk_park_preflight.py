@@ -195,7 +195,7 @@ def preflight_park(
                 row=row,
                 detail="sdk_agent_id not yet recorded",
             )
-        from services.git_integration_worker.cursor_sdk_resume import (
+        from services.git_integration_worker.cursor_sdk_store_locus import (
             resolve_sdk_store_dir,
         )
 
