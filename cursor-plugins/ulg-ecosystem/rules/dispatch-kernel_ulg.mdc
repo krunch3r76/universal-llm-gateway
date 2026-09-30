@@ -1,5 +1,5 @@
 ---
-description: Dispatch kernel — dispatch-first, Explore-first recon, escalation ladder + binder order, anthropic/* prohibited, non-primary model gate, bind-then-compose split, recon before implement, request front door. Always-on; procedure lives in consult-routing / subagent-strategy / conductor / cdp-operator-proxy.
+description: Dispatch kernel — dispatch-first ladder, binder order, front door. Procedure lives in consult-routing / conductor / cdp-operator-proxy.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
@@ -28,7 +28,7 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 | Live checkout | `cursor/grok-4.7` `contract=none` on cursor-sdk | autonomous |
 
 Binder order (reasoning strength): `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`;
-`binder_unsure ⇒ human`. CDP refused or failed: do not wait or retry the pool. Record `cdp_fail_route` — `nested-grok` (`cursor/grok-4.7` xhigh) or `operator` (worker thread + `parent_thread`, both `to=web-anthropic`). Never Cowork Ask. Bus steps: `cdp-operator-proxy` 2b.
+`binder_unsure ⇒ human`. CDP fail ⇒ no wait, no pool retry. `cdp_fail_route`: `nested-grok` (`cursor/grok-4.7` xhigh) or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask. Steps: cdp-operator-proxy 2b.
 
 ## Hard walls
 
