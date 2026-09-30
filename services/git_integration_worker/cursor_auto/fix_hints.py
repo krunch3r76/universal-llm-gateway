@@ -34,10 +34,12 @@ VISION_MISSING_FIX_HINT = (
 CONTINUITY_HOP_FIX_HINT = (
     "This body carries `TYPE: CONTINUITY_HANDOFF` — do not add `vision:` / "
     "`scope:` / `files_expected:` to satisfy implement admit. Re-issue with "
-    "first line `TYPE: CONTINUITY_HANDOFF` and a short body (sidecar for "
-    "substance); Auto must route to CDP commission, not nest implement. "
-    "If hops still block or dispatch as implement, the F5 continuity-hop "
-    "routing path is broken — escalate, do not deepen the DIRECTIVE fields."
+    "first line `TYPE: CONTINUITY_HANDOFF` and the full handoff inline. "
+    "Hop bodies are stored inline (`allow_long_body`, hard cap 64k); do not "
+    "shorten the body or move substance to a sidecar. Auto must route to CDP "
+    "commission, not nest implement. If hops still block or dispatch as "
+    "implement, the F5 continuity-hop routing path is broken — escalate, do "
+    "not deepen the DIRECTIVE fields."
 )
 
 EXECUTE_TOOL_OP_FIX_HINT = (

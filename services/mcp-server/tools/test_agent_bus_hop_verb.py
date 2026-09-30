@@ -10,6 +10,10 @@ import pytest
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.body_briefing_advisory import INLINE_CONTRACT_PREFIXES
+from agent_bus_store.turns_models import (
+    MAX_LONG_TURN_BODY_CHARS,
+    MAX_TURN_BODY_CHARS,
+)
 from contract_vocab import CANONICAL_CONTRACTS
 from fastapi.testclient import TestClient
 from hop_handoff import (
@@ -214,11 +218,18 @@ def _relay_via_test_client(client: TestClient, sent: list[dict[str, Any]]):
     return relay
 
 
-@pytest.mark.parametrize("reason", ["r" * 38, "r" * 3000])
+@pytest.mark.parametrize(
+    "reason",
+    ["r" * 38, "r" * 3000, "r" * (MAX_TURN_BODY_CHARS + 1)],
+)
 def test_hop_split_stores_header_under_briefing_shield(
     reason: str, tmp_path, monkeypatch
 ) -> None:
-    """Full handoff is stored inline. Line 1 is the handoff type; no sidecar."""
+    """Full handoff is stored inline. Line 1 is the handoff type; no sidecar.
+
+    The third reason pushes the authored body past the 8k soft limit and
+    under the 64k hard cap, so ``allow_long_body`` is what keeps it inline.
+    """
     handoff = StandingHandoffFreshness(
         status="current",
         uri="cortex://notes/system/threads/12286-standing-handoff.md",
@@ -234,6 +245,10 @@ def test_hop_split_stores_header_under_briefing_shield(
     assert len(specimen) > 2000, len(specimen)
     if reason == "r" * 38:
         assert len(specimen) == 3045, len(specimen)
+    if len(reason) > MAX_TURN_BODY_CHARS:
+        assert MAX_TURN_BODY_CHARS < len(specimen) <= MAX_LONG_TURN_BODY_CHARS, len(
+            specimen
+        )
 
     app, _cortex_root = _hop_store_app(tmp_path, monkeypatch)
     sent: list[dict[str, Any]] = []
@@ -295,3 +310,74 @@ def test_hop_split_stores_header_under_briefing_shield(
         assert sent, "hop did not POST /threads/send"
         assert sent[-1].get("allow_long_body") is True
         assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
+
+
+def test_hop_over_hard_limit_returns_body_too_large(tmp_path, monkeypatch) -> None:
+    """A hop past 64k is a 413 on the allow_long lane. No sidecar fallback."""
+    reason = "r" * (MAX_LONG_TURN_BODY_CHARS + 1)
+    handoff = StandingHandoffFreshness(
+        status="current",
+        uri="cortex://notes/system/threads/12286-standing-handoff.md",
+        mtime_epoch=1.0,
+        age_s=10.0,
+    )
+    specimen = build_continuity_handoff_body(
+        thread_id="12286",
+        trigger=reason,
+        source="agent-bus-hop-verb",
+        handoff=handoff,
+    )
+    assert len(specimen) > MAX_LONG_TURN_BODY_CHARS, len(specimen)
+
+    app, _cortex_root = _hop_store_app(tmp_path, monkeypatch)
+    sent: list[dict[str, Any]] = []
+    captured_enqueue: dict[str, Any] = {}
+
+    def fake_enqueue(**kwargs: Any) -> dict[str, Any]:
+        captured_enqueue.update(kwargs)
+        return {"ok": True, "auto_handler_status": "auto-handler-live"}
+
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "hop-hard-limit-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+
+        relay = _relay_via_test_client(client, sent)
+        with (
+            patch(
+                "tools.agent_bus.hop.assess_standing_handoff",
+                return_value=handoff,
+            ),
+            patch("tools.agent_bus.send.relay", side_effect=relay),
+            patch("tools.agent_bus._shared.relay", side_effect=relay),
+            patch(
+                "tools.agent_bus.request.probe_auto_liveness",
+                return_value={"live": True},
+            ),
+            patch(
+                "tools.agent_bus.request.enqueue_auto_job",
+                side_effect=fake_enqueue,
+            ),
+        ):
+            result = _hop_dispatch(
+                thread=thread_id,
+                reason=reason,
+                from_agent="web-anthropic",
+            )
+
+        assert result.get("reason") == "body_too_large", result
+        assert result.get("continuity_hop") is not True
+        assert not captured_enqueue
+        assert sent, "hop did not POST /threads/send"
+        assert sent[-1].get("allow_long_body") is True
+        missing = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2")
+        assert missing.status_code == 404, missing.text

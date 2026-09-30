@@ -10,6 +10,10 @@ from unittest.mock import MagicMock
 import pytest
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
+from agent_bus_store.turns_models import (
+    MAX_LONG_TURN_BODY_CHARS,
+    MAX_TURN_BODY_CHARS,
+)
 from fastapi.testclient import TestClient
 
 from scripts.mcp_bridge_steer_inject import (
@@ -390,3 +394,127 @@ def test_deposit_4442_directive_stores_inline_and_recovers(
     assert len(recovered) == 1
     assert pending is not None
     assert pending.directive == directive
+
+
+def test_deposit_over_8k_stores_inline_and_recovers(
+    spool: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A steer JSON body past 8k and under 64k stays inline and recoverable."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+    directive = "d" * (MAX_TURN_BODY_CHARS + 1)
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "steer-over-8k-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+        store = _StoreClient(client)
+        monkeypatch.setattr(
+            "services.git_integration_worker.cursor_sdk_steer_inject.make_sync_client",
+            lambda *_a, **_k: store,
+        )
+        result = deposit_steer_directive(
+            dispatch_id="disp-over8k",
+            thread_id=thread_id,
+            directive=directive,
+            reason="operator steer",
+            spool_dir=spool,
+        )
+        created = store.posts[0]
+        assert created.status_code == 201, created.text
+        assert not created.json().get("auto_spilled")
+        assert created.json().get("sidecar_uri") is None
+        posted = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number={result.authority_turn_id}"
+        )
+        assert posted.status_code == 200, posted.text
+        payload = posted.json()
+        assert MAX_TURN_BODY_CHARS < len(payload["body"]) <= MAX_LONG_TURN_BODY_CHARS
+        assert not payload.get("auto_spilled")
+        assert payload.get("sidecar_uri") is None
+        parsed = json.loads(payload["body"])
+        assert parsed["directive"] == directive
+        from scripts.mcp_bridge_steer_inject import claim_pending, spool_path
+
+        spool_path(spool, "disp-over8k").unlink()
+        recovered = recover_undelivered_steer_from_thread(
+            dispatch_id="disp-over8k",
+            thread_id=thread_id,
+            spool_dir=spool,
+        )
+        pending = claim_pending("disp-over8k", spool_dir=spool)
+    assert len(recovered) == 1
+    assert pending is not None
+    assert pending.directive == directive
+
+
+def test_deposit_over_64k_raises_before_spool(
+    spool: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past 64k the allow_long lane returns 413 and the directive is not spooled."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+    directive = "d" * (MAX_LONG_TURN_BODY_CHARS + 1)
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "steer-over-64k-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+        store = _StoreClient(client)
+        monkeypatch.setattr(
+            "services.git_integration_worker.cursor_sdk_steer_inject.make_sync_client",
+            lambda *_a, **_k: store,
+        )
+        with pytest.raises(RuntimeError, match="413"):
+            deposit_steer_directive(
+                dispatch_id="disp-over64k",
+                thread_id=thread_id,
+                directive=directive,
+                reason="operator steer",
+                spool_dir=spool,
+            )
+        assert store.posts, "deposit did not POST /turns"
+        created = store.posts[0]
+        assert created.status_code == 413, created.text
+        assert created.json()["detail"]["reason"] == "body_too_large"
+    from scripts.mcp_bridge_steer_inject import spool_path
+
+    assert not spool_path(spool, "disp-over64k").is_file()
