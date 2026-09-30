@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons 
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     SKIP_GATE_NEXT_ADMIT_BLOCKED,
     _hop_skip_gate,
+    _utc_closeout_instant,
     build_conductor_hop_idempotency_key,
     build_hop_team_dispatch_body,
     hop_owed,
@@ -584,6 +585,110 @@ def _live_gate_snap_seated_only(*, parent_thread: str = "9638") -> dict:
     }
 
 
+def _live_operator_proxy_snap(*, parent_thread: str = "9638") -> dict:
+    return {
+        "observed_at": "2026-09-05T00:00:00+00:00",
+        "rows": [
+            {
+                "execution_id": "exec-ext-gate",
+                "parent_thread": parent_thread,
+                "status": "running",
+                "stream_state": "running",
+                "purpose": "operator-proxy",
+            }
+        ],
+    }
+
+
+def test_external_gate_clear_when_harvest_not_owed_despite_live_stream() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        external_gate_hop_verdict,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": False},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_operator_proxy_snap(),
+    ):
+        verdict, skip_gate = external_gate_hop_verdict(row)
+        assert verdict == "clear"
+        assert skip_gate is None
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
+
+
+def test_external_gate_live_when_harvest_owed_and_other_execution() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        external_gate_hop_verdict,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": True},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_gate_snap(),
+    ):
+        verdict, skip_gate = external_gate_hop_verdict(row)
+        assert verdict == "live"
+        assert skip_gate == SKIP_GATE_LIVE_EXTERNAL
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+
+
+def test_external_gate_clear_when_only_own_execution_live() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        external_gate_hop_verdict,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": True},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    own_exec = str(row.get("execution_id") or "")
+    snap = {
+        "observed_at": "2026-09-05T00:00:00+00:00",
+        "rows": [
+            {
+                "execution_id": own_exec,
+                "parent_thread": "9638",
+                "stream_state": "running",
+                "purpose": "review",
+            }
+        ],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=snap,
+    ):
+        verdict, skip_gate = external_gate_hop_verdict(row)
+        assert verdict == "clear"
+        assert skip_gate is None
+
+
 def test_live_external_gate_reads_stream_state_not_seat() -> None:
     """L2-AC-h: external gate blocks on live stream_state only."""
     from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
@@ -664,12 +769,31 @@ def test_hop_owed_true_when_seated_only_without_live_stream() -> None:
         assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
 
 
-def test_hop_owed_false_when_live_external_gate_ac1() -> None:
+def test_hop_owed_true_when_live_external_gate_and_harvest_not_owed() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
     ledger.merge_record_json(
         dispatch_id="pred-hop-1",
         patch={"summoning_thread_id": "9638", "closeout_harvest_owed": False},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_gate_snap(),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
+
+
+def test_hop_owed_false_when_live_external_gate_and_harvest_owed() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": True},
     )
     with ledger._connect() as conn:
         refreshed = conn.execute(
@@ -713,7 +837,10 @@ async def test_ac2_five_terminals_zero_posts_while_external_gate_live() -> None:
     _terminal_row(ledger, closeout_tokens=["ROW_HOP"], dispatch_id=dispatch_id)
     ledger.merge_record_json(
         dispatch_id=dispatch_id,
-        patch={"summoning_thread_id": "9638"},
+        patch={
+            "summoning_thread_id": "9638",
+            "closeout_harvest_owed": True,
+        },
     )
     post_mock = AsyncMock(return_value=(True, {"dispatch_id": "should-not-fire"}))
     with patch(
@@ -1199,3 +1326,9 @@ def test_ac_p1_6_hop_carries_ledger_summoning_thread() -> None:
     assert body["dispatch_thread_id"] == "10223"
     assert body["generation_options"]["summoning_thread_id"] == "10223"
     assert "summoning_thread_id_unresolved" not in body["generation_options"]
+
+
+def test_utc_closeout_instant_returns_non_empty_iso_timestamp() -> None:
+    instant = _utc_closeout_instant()
+    assert instant
+    assert "T" in instant

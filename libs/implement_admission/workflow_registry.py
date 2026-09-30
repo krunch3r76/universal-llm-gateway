@@ -78,6 +78,17 @@ def _valid_models_block_key(bare_id: str) -> bool:
     return bare_id in CURSOR_MODEL_CAPABILITIES or bare_id == "composer-2.5-fast"
 
 
+def _workflow_claim_field(entry: Mapping[str, Any]) -> str:
+    """Key that holds a workflow's claimed ids.
+
+    Commit 524fe6299 renamed the list to ``jobs``. ``contracts`` remains for
+    entries that were not renamed (``check_review`` still carries an empty list).
+    """
+    if "jobs" in entry:
+        return "jobs"
+    return "contracts"
+
+
 def _valid_seats(policy: dict[str, Any]) -> frozenset[str]:
     seats: set[str] = set()
     default_seat = policy.get("default_seat")
@@ -115,7 +126,8 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
 
         seat = entry.get("seat")
         model = entry.get("model")
-        contracts_raw = entry.get("contracts")
+        claim_field = _workflow_claim_field(entry)
+        contracts_raw = entry.get(claim_field)
 
         if not isinstance(seat, str) or not seat.strip():
             errors.append(f"workflows.{slug}.seat must be a non-empty string")
@@ -153,14 +165,14 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
             )
 
         if not isinstance(contracts_raw, list):
-            errors.append(f"workflows.{slug}.contracts must be a list")
+            errors.append(f"workflows.{slug}.{claim_field} must be a list")
             contracts: tuple[str, ...] = ()
         else:
             contract_items: list[str] = []
             for item in contracts_raw:
                 if not isinstance(item, str) or not item.strip():
                     errors.append(
-                        f"workflows.{slug}.contracts entries must be non-empty strings"
+                        f"workflows.{slug}.{claim_field} entries must be non-empty strings"
                     )
                     continue
                 contract_items.append(item.strip().lower())
@@ -168,7 +180,7 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
             for contract in contracts:
                 if contract not in AUTO_OMIT_CONTRACTS:
                     errors.append(
-                        f"workflows.{slug}.contracts contains unknown contract {contract!r}"
+                        f"workflows.{slug}.{claim_field} contains unknown contract {contract!r}"
                     )
                 prior = contract_claims.get(contract)
                 if prior is not None:
@@ -302,7 +314,7 @@ def parse_workflow_registry(policy: dict[str, Any]) -> WorkflowRegistry:
     raw_workflows = policy["workflows"]
     workflows: dict[str, WorkflowBinding] = {}
     for slug, entry in raw_workflows.items():
-        contracts_raw = entry.get("contracts") or []
+        contracts_raw = entry.get(_workflow_claim_field(entry)) or []
         contracts = tuple(str(c).strip().lower() for c in contracts_raw)
         workflows[str(slug)] = WorkflowBinding(
             slug=str(slug),
@@ -408,7 +420,7 @@ def render_workflow_registry_block(policy: dict[str, Any] | None = None) -> str:
     for slug, entry in sorted(workflows.items()):
         if not isinstance(entry, dict):
             continue
-        contracts = entry.get("contracts") or []
+        contracts = entry.get(_workflow_claim_field(entry)) or []
         contract_cell = ", ".join(str(c) for c in contracts) if contracts else "—"
         lines.append(
             f"| {slug} | {entry.get('seat', '')} | {entry.get('model', '')} | "

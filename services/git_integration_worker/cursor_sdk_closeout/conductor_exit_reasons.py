@@ -108,7 +108,10 @@ def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
         if harvest_owed:
             return "indeterminate_closed", SKIP_GATE_PROBE_INDETERMINATE
         return "indeterminate_open", None
-    if live_external_gate_for_lane(snap, lane):
+    if not harvest_owed:
+        return "clear", None
+    exclude = rec.get("cdp_execution_id") or row.get("execution_id")
+    if live_external_gate_for_lane(snap, lane, exclude_execution_id=exclude):
         return "live", SKIP_GATE_LIVE_EXTERNAL
     return "clear", None
 
@@ -164,17 +167,32 @@ def conductor_row_pinned_degraded_reason(
 
 
 def conductor_has_live_nested(*, dispatch_id: str | None) -> bool:
-    """True when a nest_under child is still queued/admitted/running/parked."""
+    """True when any nested descendant is still live (transitive nest_under walk)."""
     if not dispatch_id:
         return False
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
+    from services.git_integration_worker.cursor_sdk_nest_depth import (
+        MAX_WALK_HOPS,
+    )
 
     ledger = CursorDispatchLedger.instance()
-    children = ledger.list_nested_children(parent_dispatch_id=dispatch_id)
-    for child_id in children:
+    queue: list[str] = list(
+        ledger.list_nested_children(parent_dispatch_id=dispatch_id)
+    )
+    seen: set[str] = {dispatch_id}
+    hops = 0
+    while queue:
+        if hops >= MAX_WALK_HOPS:
+            return True
+        child_id = queue.pop(0)
+        if child_id in seen:
+            continue
+        seen.add(child_id)
+        hops += 1
         row = ledger.dispatch_status_by_id(dispatch_id=child_id)
         if row and row.get("status") in _LIVE_NEST:
             return True
+        queue.extend(ledger.list_nested_children(parent_dispatch_id=child_id))
     return False
