@@ -2257,6 +2257,116 @@ def test_miss_cell_ac2_substance_without_deltas_candidate_stays_relay_miss() -> 
     assert not cell.casefold().startswith("parse_failed")
 
 
+def test_miss_cell_colonless_midline_backtick_mention_is_relay_miss() -> None:
+    """Colon-less mid-line backtick mention is absence, not parse_failed."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        relay_parse_failure_detected,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**status_claim:** partial\n"
+        "**ac_verdict:** PASS — scoped work delivered\n"
+        "**evidence:** pytest output quoted inline\n"
+        "I did not fill `deltas_to_spec` this run.\n"
+    )
+    provenance = "workspaces://test/closeout-relay-miss-colonless-backtick"
+    body, _status = project_section2_table(prose, provenance=provenance)
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell.startswith("relay could not locate"), cell
+    assert relay_parse_failure_detected(body) is False
+
+
+def test_miss_cell_colonless_midline_bold_mention_is_relay_miss() -> None:
+    """Colon-less mid-line bold mention is absence, not parse_failed."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        relay_parse_failure_detected,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**status_claim:** partial\n"
+        "**ac_verdict:** PASS — scoped work delivered\n"
+        "**evidence:** pytest output quoted inline\n"
+        "Note: skipped **deltas_to_spec** entirely.\n"
+    )
+    provenance = "workspaces://test/closeout-relay-miss-colonless-bold"
+    body, _status = project_section2_table(prose, provenance=provenance)
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell.startswith("relay could not locate"), cell
+    assert relay_parse_failure_detected(body) is False
+
+
+def test_miss_cell_colonless_whole_line_backtick_is_not_relay_miss() -> None:
+    """Whole-line colon-less backtick is presence; the next line stays unextracted."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**status_claim:** partial\n"
+        "`deltas_to_spec`\n"
+        "Diagnosis only.\n"
+        "**ac_verdict:** PASS\n"
+    )
+    provenance = "workspaces://test/closeout-relay-miss-whole-line-backtick"
+    body, _status = project_section2_table(prose, provenance=provenance)
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell.startswith("parse_failed"), cell
+    assert "relay could not locate" not in cell.casefold()
+
+
+def test_miss_cell_archived_open_forks_parenthetical_is_not_relay_miss() -> None:
+    """Archived offset-0 colon-less headings stay presence, not a relay miss."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    provenance = "workspaces://test/closeout-relay-miss-archived-offset0"
+    open_forks = project_section2_table(
+        "**open_forks** (verbatim from spec):\n"
+        "- lane stays unlanded\n"
+        "- no fifth regex\n"
+        "- offset 0 only\n"
+        "- extraction unchanged\n",
+        provenance=provenance,
+    )[0]
+    open_forks_cell = _extract_table_cell(open_forks, "open forks") or ""
+    assert "relay could not locate" not in open_forks_cell.casefold()
+
+    bullet = project_section2_table(
+        "- **deltas_to_spec**\n",
+        provenance=provenance,
+    )[0]
+    bullet_cell = _extract_table_cell(bullet, "deltas_to_spec") or ""
+    assert "relay could not locate" not in bullet_cell.casefold()
+
+    scope_delta = project_section2_table(
+        "**status_claim:** partial\n"
+        "**SCOPE DELTA** — none material\n"
+        "**ac_verdict:** PASS\n",
+        provenance=provenance,
+    )[0]
+    scope_cell = _extract_table_cell(scope_delta, "deltas_to_spec") or ""
+    assert "relay could not locate" not in scope_cell.casefold()
+
+
 def test_q1_line_start_decorations_extract_value_not_absence() -> None:
     """Q1 — bullet, blockquote, and emphasis labels are the field, not a miss."""
     from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
