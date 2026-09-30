@@ -8,8 +8,10 @@ Fires after ``ledger.mark_terminal`` on the closeout hot path. Closeout authorit
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,12 @@ from claude_bundles.conductor_stop import (
     parse_designed_stop_tokens,
 )
 from implement_admission.conductor_witness_types import row_status_in_tip
-from transport_utils import DEFAULT_STARGATE_URL, make_async_client
+from transport_utils import (
+    DEFAULT_AGENT_BUS_URL,
+    DEFAULT_STARGATE_URL,
+    make_async_client,
+    make_sync_client,
+)
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -473,6 +480,86 @@ def _write_budget_authority(dispatch_id: str, row: dict[str, Any]) -> None:
     )
 
 
+def _utc_closeout_instant() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _summoning_head_turn_patch(
+    *,
+    summoning_thread_id: str,
+    row: dict[str, Any],
+    rec: dict[str, Any],
+) -> dict[str, Any]:
+    """Stamp consult summoning watermark or closeout-anchored error for retry."""
+    patch: dict[str, Any] = {}
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    closeout_instant = _utc_closeout_instant()
+    try:
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=2.0) as client:
+            resp = client.get(
+                "/turns/by-number",
+                params={"thread": summoning_thread_id, "turn_number": "latest"},
+                headers=headers,
+            )
+    except Exception:
+        patch["consult_summoning_stamp_error"] = {
+            "class": "connect_error",
+            "closeout_instant": closeout_instant,
+        }
+        return patch
+    if resp.status_code == 404:
+        try:
+            detail = resp.json().get("detail", {})
+        except ValueError:
+            detail = {}
+        data = detail.get("data") if isinstance(detail, dict) else None
+        turn_count = data.get("turn_count") if isinstance(data, dict) else None
+        if turn_count == 0:
+            patch["consult_summoning_stamp_error"] = {
+                "class": "empty_thread",
+                "closeout_instant": closeout_instant,
+            }
+            return patch
+        patch["consult_summoning_stamp_error"] = {
+            "class": "not_found",
+            "closeout_instant": closeout_instant,
+        }
+        return patch
+    if resp.status_code != 200:
+        patch["consult_summoning_stamp_error"] = {
+            "class": f"http_{resp.status_code}",
+            "closeout_instant": closeout_instant,
+        }
+        return patch
+    try:
+        payload = resp.json()
+    except ValueError:
+        patch["consult_summoning_stamp_error"] = {
+            "class": "parse_error",
+            "closeout_instant": closeout_instant,
+        }
+        return patch
+    if not isinstance(payload, dict):
+        patch["consult_summoning_stamp_error"] = {
+            "class": "parse_error",
+            "closeout_instant": closeout_instant,
+        }
+        return patch
+    turn_number = payload.get("turn_number")
+    if not isinstance(turn_number, int):
+        patch["consult_summoning_stamp_error"] = {
+            "class": "missing_turn_number",
+            "closeout_instant": closeout_instant,
+        }
+        return patch
+    patch["consult_summoning_after_turn"] = turn_number
+    exec_id = rec.get("cdp_execution_id") or row.get("execution_id")
+    if exec_id:
+        patch["cdp_execution_id"] = str(exec_id)
+    return patch
+
+
 def merge_conductor_closeout_hop_authority(
     *,
     dispatch_id: str,
@@ -515,6 +602,18 @@ def merge_conductor_closeout_hop_authority(
         dispatch_id,
         json.dumps(data, sort_keys=True, separators=(",", ":")),
     )
+    summoning_thread_id = str(data.get("summoning_thread_id") or "").strip()
+    if summoning_thread_id:
+        summoning_patch = _summoning_head_turn_patch(
+            summoning_thread_id=summoning_thread_id,
+            row=row,
+            rec=data,
+        )
+        if summoning_patch:
+            CursorDispatchLedger.instance().merge_record_json(
+                dispatch_id=dispatch_id,
+                patch=summoning_patch,
+            )
     row = _load_row(dispatch_id) or row
     if "ROW_HOP" in tokens:
         hop_seq = data.get("closeout_hop_seq")
