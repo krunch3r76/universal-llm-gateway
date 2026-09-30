@@ -3,7 +3,10 @@
 Owns the deferred-drain lifecycle for ONE restart intent:
 
   1. begin-drain (worker flips the drain epoch -> rejects new mutating work ->
-     CONVERGES to idle), persist the returned epoch + worker generation;
+     CONVERGES to idle), persist the returned epoch + worker generation. An
+     HTTP timeout here with a live pid retries (``drain_begin_stall``); the
+     kill-without-epoch path needs the health/pid probe to report the process
+     absent, or recycle mode to exhaust ``idle_escalate_s``;
   2. await ``git_worker.drain.completed`` for THIS intent's epoch + worker_id,
      event-driven and resume-aware via the event-service ``/v1/subscribe`` WS,
      with a periodic ``drain-state`` reconcile fallback when push is unavailable;
@@ -57,6 +60,7 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event as events
 
 from . import git_worker_liveness as _liveness
+from .drain_begin_stall import begin_drain_or_wait
 from .drain_dead_recovery import (
     START_ON_DEAD_ACTIONS,
     force_start_and_validate,
@@ -193,9 +197,10 @@ class GitWorkerDrainSupervisor:
         deadline = t0 + self.deadline_s
         timeout_alerted = False
         try:
-            intent = await self._begin_drain(intent)
-            if await self._abort_if_requested(intent):
+            begun = await begin_drain_or_wait(self, intent, t0=t0)
+            if await self._abort_if_requested(intent) or begun is None:
                 return
+            intent = begun
             if intent.park_live:
                 await self._park_live_after_grace(intent)
             while True:
@@ -271,10 +276,13 @@ class GitWorkerDrainSupervisor:
                 STATUS_FORCE_REQUESTED,
             }:
                 return
-            # Health-dead GIW: begin-drain HTTP never lands (drain_epoch stays
-            # null). Cooperative drain cannot start — SIGTERM. Recycle already
-            # killed here (a:36019); fleet stop used to mark failed and abort
-            # Sync+Restart All after the 10s HTTP timeout.
+            # begin-drain never landed (drain_epoch stays null) AND
+            # begin_drain_or_wait gave up: the health/pid probe reported the
+            # process absent, or recycle mode exhausted idle_escalate_s on a
+            # pid-alive, HTTP-wedged GIW (a:36019). Cooperative drain cannot
+            # start — SIGTERM. A pid-alive stall alone retries there and never
+            # reaches this kill (a:36911: one 10s timeout reaped six live
+            # conductors).
             if intent.drain_epoch is None:
                 await self._on_idle(intent, t0)
                 return
@@ -651,8 +659,8 @@ class GitWorkerDrainSupervisor:
             )
         else:
             logger.warning(
-                "git-worker begin-drain unreachable; SIGTERM without epoch: "
-                "intent_id=%s",
+                "git-worker begin-drain unreachable and process absent; "
+                "SIGTERM without epoch: intent_id=%s",
                 intent.intent_id,
             )
         self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
