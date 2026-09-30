@@ -15,6 +15,7 @@ from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
+from .attachment_journal import has_standdown_token
 from .driver_locks import _claim_driver_lock, _release_driver_lock
 from .hygiene import reclaim_best_effort, reclaim_profile_for_detached_row
 from .models import (
@@ -360,7 +361,7 @@ def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
                 retryable=False,
                 data={"registration_id": rid, "seat_lane": row.get("seat_lane")},
             )
-        if row.get("superseded_by") and not _store.has_standdown_token(rid):
+        if row.get("superseded_by") and not has_standdown_token(rid):
             raise ProtocolError(
                 code="standdown.missing",
                 message="stand-down token required before detach",

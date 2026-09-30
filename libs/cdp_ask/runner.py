@@ -150,21 +150,25 @@ def _latch_streaming_attachment(
     execution_id: str = "",
 ) -> None:
     """Append ``attachment_observed`` on first streaming sample, then fold."""
-    from claude_bundles import cdp_registry_store as store
+    from claude_bundles.cdp_registry.attachment_journal import (
+        append_attachment_journal,
+        fold_attachment_journal,
+        has_attachment_observed,
+    )
 
     raw = (url or "").strip()
     if not raw or _CSE_URL_MARKER not in raw:
         return
-    if store._has_attachment_observed(registration_id, raw):
-        store.fold_attachment_journal()
+    if has_attachment_observed(registration_id, raw):
+        fold_attachment_journal()
         return
-    store.append_attachment_journal(
+    append_attachment_journal(
         registration_id=registration_id,
         chat_url=raw,
         attach_proof="streaming",
         execution_id=execution_id or None,
     )
-    store.fold_attachment_journal()
+    fold_attachment_journal()
 
 
 def _wrap_harvest_with_address(
