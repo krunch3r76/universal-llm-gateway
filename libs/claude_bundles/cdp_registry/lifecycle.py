@@ -178,7 +178,13 @@ def reserve_allocating_row(
             if current_status != expect_status:
                 raise SeatContended(
                     f"registration {registration_id!r} is {current_status!r}, "
-                    f"not {expect_status!r}"
+                    f"not {expect_status!r}",
+                    retryable=True,
+                    data={
+                        "depth": "reserve_compare_and_set",
+                        "observed_status": current_status,
+                        "registration_id": registration_id,
+                    },
                 )
         if launch:
             reserved_chromes = sum(
