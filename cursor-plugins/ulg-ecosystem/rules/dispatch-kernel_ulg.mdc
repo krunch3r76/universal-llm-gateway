@@ -24,10 +24,10 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 |---|---|---|
 | Mechanical implement | `team_dispatch(..., lane="B")` → Composer (omit `model=`). Throwaway worktree (lane B) for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
 | Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh fast; conductor → grok high fast. `OPEN FORK:` only | autonomous |
-| Greater reasoning / independent check | **`cdp/fable-5.1`** width · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
+| Greater reasoning / independent check | **ACTIVE** width (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
 | Premium live checkout | `cursor/claude-opus-5-5` — inform-then-proceed (wait only if premium spend paused) | announce |
 
-Binder order is reasoning strength, low → high: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` → `cursor/gpt-5.6-terra|sol` **explicit pin only**. `seat_unsure ⇒ consult(independent_binder)`;
+Binder order is reasoning strength, low → high: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` → `cursor/gpt-5.6-terra|sol` **explicit pin only**. The autonomous width default is ACTIVE, not the top rung, while that assignment is `cdp/opus-5`. `seat_unsure ⇒ consult(independent_binder)`;
 `binder_unsure ⇒ human`. CDP operator stuck ⇒ `cursor-auto` → nested `cursor-sdk`, never Cowork Ask.
 
 ## Hard walls

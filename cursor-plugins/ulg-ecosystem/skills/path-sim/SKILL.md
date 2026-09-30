@@ -90,19 +90,19 @@ Primary delivery is an explicit slug line, not a paste. Caller composes:
 
 - **Quality ≠ transport.** “Opus 5 Max / High”, “Fable Max”, “Grok-4.5 High” name **effort**, not a dispatch path.
 - **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): `model=anthropic/*` via Stargate API is **PROHIBITED**; wide consult / R-admit ⇒ **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed. ¬ unlock API via routine `cost_intent`.
-- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=none`**; bundled-arc **Q** defaults to **CDP Fable**. `role=artisan, model=xai/grok-4.7` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.7` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
+- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=none`**; bundled-arc **Q** defaults to ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`). `role=artisan, model=xai/grok-4.7` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.7` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
 - **Composer** = Stage-B implement only — never the A (L1+L2) leg. Detail: `consult-routing` § Anthropic-family substrate · § xAI coding-substrate · annex C.
 
 ## Dispatch cascade + R positions (essentials — mechanics in annex A)
 
 ```
-recon → Q (lead CDP Fable L0) → A (Composer enumerate → cdp/fable bind + Gate-2) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
+recon → Q (lead CDP ACTIVE L0: `cdp/opus-5`, reasoning_effort=max; `conductor_width_seat.py`) → A (Composer enumerate → cdp/fable bind + Gate-2) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
   →[ADMIT] implement (Composer) → R-after (/work-item-review · cdp/opus-5 purpose=review, default-on) → closeout
 ```
 
 - **Lead orchestrates, does not author.** ¬ in-seat L0/L1/L2 reasoning or hand-implement on `judgment_required` arcs unless the operator explicitly overrides.
-- **Q∧A are coupled (P1).** Never A without a Q sidecar/verdict; never Q without a following A. An operator frame is **input to Q**, never a substitute (`q_skipped` retired). Absence of frame stamps ⇒ unframed ⇒ normal **CDP Fable Q** → A (Composer enumerate → **`cdp/fable` bind**); ¬ escalate to the human for a frame. **Closed-detent quick recipe** (above) stays Fable-only — that carve-out is ¬ the bundled arc.
-- **Default seating (operator 2026-07-28):** Q = CDP Fable (explore width); A = Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); R-admit = Opus CDP — so Q and R are **not** the same seat.
+- **Q∧A are coupled (P1).** Never A without a Q sidecar/verdict; never Q without a following A. An operator frame is **input to Q**, never a substitute (`q_skipped` retired). Absence of frame stamps ⇒ unframed ⇒ normal **ACTIVE Q** → A (Composer enumerate → **`cdp/fable` bind**); ¬ escalate to the human for a frame. **Closed-detent quick recipe** (above) stays Fable-only — that carve-out is ¬ the bundled arc.
+- **Default seating:** Q = ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`). A = Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks). R-admit = Opus CDP. While ACTIVE.model is `cdp/opus-5`, Q and R-admit share that wire; `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`.
 - **R is one posture at two pins**, both default-on: **R-admit** (before implement · web-anthropic CDP Opus · lead-owned — a headless worker "running R" collapses to self-certify) and **R-after** (after ship · **`cdp/opus-5` `purpose=review` `reasoning_effort="high"`** · delivery critique over staged diff/closeout). Verdict grammar `RATIFY | REVISE | SCOPE-DRIFT` / `ADMIT | ADMIT_WITH_AMENDMENTS | RATIFY_WITH_CONDITIONS | RETURN`.
 - **R ≠ skeptic ≠ Gate-6.** ¬ stamp `recon_waived` / `skeptic_ratified` / lead self-ADMIT as a substitute for CDP R. Lead confidence that a bind is "mechanical" is **self-signal** — R exists to challenge that claim.
 - **Skip is a closed set:** operator `check_requested=false`, or transport genuinely down (CDP for R-admit / cursor-sdk for R-after) — log `reason_code` on the review sidecar + open `friction(owner=agent_skill:path-sim)`. "Mechanical" / "simple bind" / "credits thin" / "A already RATIFY'd" are **forbidden** rationalizations.

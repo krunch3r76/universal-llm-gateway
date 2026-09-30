@@ -8,21 +8,19 @@ L2 carries the one-line substrate rule and the VISION-ALIGN block grammar.
 ## Per-family parameters (effort tiers — NOT transport binds)
 
 **Do not read this table as “who fires Q.”** Transport binds live in annex A § Dispatch bindings
-and the xAI/Anthropic rows below. A `cdp/opus-5` event on a path-sim thread is usually
-**R-admit** (default-on after Stage-A), not L0 Q — e.g. agent-bus:6178
-`cdp.generate.admitted` @ 08:29:14Z on thread 6178 while Q ran `cursor/grok-4.7` on worker
-thread 6179 @ 08:23:27Z (`frontier.sdk.generate.requested`).
+and the xAI/Anthropic rows below. While ACTIVE.model is `cdp/opus-5`, a `cdp/opus-5`
+event on a path-sim thread may be Q or R-admit. Distinguish by phase.
 
-| Window | Q effort (when Fable Q fires) | A effort | R-admit effort |
+| Window | Q effort | A effort | R-admit effort |
 |---|---|---|---|
-| Fable remaining (≤~1 week from 2026-07-16) | Fable 5 Max | Grok-4.5 High (transport bind) | Opus 5 (CDP) |
-| Post-Fable (no pay-for-usage Fable) | Fable unavailable ⇒ **Q-CASCADE fallback** Opus 5 Max (rare) | Grok-4.5 High | Opus 5 (CDP) |
+| Shipped width seat | ACTIVE reasoning_effort (max) | Grok-4.5 High (transport bind) | Opus 5 (CDP) |
+| `ACTIVE = RESTORE` | Fable 5.1 high (max when a bind gates a wave) | Grok-4.5 High | Opus 5 (CDP) |
 
-- **Default bundled Q transport:** CDP Fable (`cdp/fable`) — operator 2026-07-28 (a:26714).
+- **Default bundled Q transport:** ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`).
 - **Default A transport:** Composer enumerate → **`cdp/fable` bind** — operator bind 2026-09-02 (a:31976).
-- **Default R-admit transport:** CDP Opus (`cdp/opus-5`) — **always Opus on bundled arcs**; this is the common Opus dispatch in event history, not L0.
-- **Fable→Opus (cascade principle):** greater pass explores question space; lesser pass answers under narrower aperture — implemented as **Fable Q → Composer enumerate + Fable A-bind → Opus R-admit**, not Opus-for-Q by default.
-- **Post-Fable Q fallback only:** when Fable is unavailable, Q-CASCADE may sharpen via Opus Max (annex A § Q-cascade) — not the standing bundled default.
+- **Default R-admit transport:** CDP Opus (`cdp/opus-5`). Same wire as Q while ACTIVE is that model.
+- **Cascade:** Q = ACTIVE → Composer enumerate + Fable A-bind → Opus R-admit. `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`.
+- Recovery sharpen uses ACTIVE again (annex A § Q-cascade). It is not a separate Fable hop.
 - Window params carry `operator ratify 2026-07-16 (a:24764)`; they name **effort**, not dispatch seat. ¬ rewrite annex A transport binds.
 
 ## Anthropic-family substrate (house rule — operator 2026-07-18)
@@ -45,7 +43,7 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 | Path | Default |
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | **Composer enumerate → `cdp/fable` bind** |
-| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; annex A) |
+| Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=cdp/opus-5, reasoning_effort=max)` while that is the shipped seat (`libs/implement_admission/conductor_width_seat.py`; annex A) |
 | `team_dispatch` `role=artisan, model=xai/grok-4.7` for checkout-present coding consult | **PROHIBITED** |
 | Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.7` |
 | Writing / correspondence / outbound prose | **PROHIBITED** for Grok — Terra+Gemini (or lead/web); `openai/gpt-5.5` operator-gated (`consult-routing` § Writing consult substrate) |
