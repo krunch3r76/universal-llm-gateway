@@ -15,13 +15,19 @@ from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
-from .driver_locks import _claim_driver_lock, _release_driver_lock
+from .driver_locks import (
+    _claim_driver_lock,
+    _release_driver_lock,
+    is_driver_lock_held,
+    process_holds_driver_lock,
+)
 from .hygiene import reclaim_best_effort, reclaim_profile_for_detached_row
 from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
     Registration,
     RegistryError,
+    SeatContended,
     _LaunchFn,
     _ListenFn,
     _row_to_registration,
@@ -79,7 +85,43 @@ def _rollback_allocating(registration_id: str) -> None:
             _store.append_log(
                 "alloc_failed", {"registration_id": registration_id, **row}
             )
+            port = row.get("port")
+            _events.emit(
+                _events.cdp_port_alloc_failed(
+                    registration_id=registration_id,
+                    port=port if isinstance(port, int) else None,
+                    parent_thread=row.get("parent_thread"),
+                    holder=row.get("holder"),
+                )
+            )
     _release_driver_lock(registration_id)
+
+
+def _operator_join_candidate(row: dict[str, Any]) -> bool:
+    rid = str(row.get("registration_id") or "").strip()
+    if not rid:
+        return False
+    return process_holds_driver_lock(rid) or is_driver_lock_held(rid)
+
+
+def _join_target(active: dict[str, Any], parent: str) -> dict[str, Any] | None:
+    """Smallest-started allocating row for *parent* that a driver still holds."""
+    from .driving_seat import driving_lane_census
+
+    eligible = [
+        row
+        for row in driving_lane_census(active, parent)["allocating"]
+        if _operator_join_candidate(row)
+    ]
+    if not eligible:
+        return None
+    return min(
+        eligible,
+        key=lambda row: (
+            float(row.get("started_at") or 0.0),
+            str(row.get("registration_id") or ""),
+        ),
+    )
 
 
 def reserve_allocating_row(
@@ -92,14 +134,56 @@ def reserve_allocating_row(
     registration_id: str | None = None,
     profile_suffix: str | None = None,
     carry: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Reserve a free port under ``ports.lock`` and stamp an ``allocating`` row.
+    expect_status: str | None = None,
+    launch: bool = True,
+    join: bool = True,
+) -> tuple[dict[str, Any], bool]:
+    """Reserve a port under ``ports.lock``, or join an in-flight allocating row.
 
-    Passing *registration_id* / *profile_suffix* reuses an existing identity — the
-    dormant relaunch path keeps its profile and CSE binding through ``carry``.
+    Returns ``(row, True)`` when this caller minted. Returns ``(row, False)``
+    when this caller joined a row whose driver lock is already held — no port
+    select, no write, no log line. A stranded allocating row (neither lock
+    held) is not a join target.
+
+    Passing *registration_id* / *profile_suffix* reuses an existing identity —
+    the dormant relaunch path keeps its profile and CSE binding through
+    ``carry``. *expect_status* compare-and-set runs before any claim or write.
     """
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+    from claude_bundles.x_display_capacity import require_chrome_headroom
+
     with _store.ports_lock():
         active = _store.load_active()
+        parent = str(parent_thread or "").strip()
+        purpose_norm = str(purpose or "").strip()
+        kind_norm = str(mission_kind or "").strip().lower()
+        if (
+            join
+            and registration_id is None
+            and parent
+            and purpose_norm in OPERATOR_PURPOSES
+            and kind_norm != "hop"
+        ):
+            target = _join_target(active, parent)
+            if target is not None:
+                return target, False
+        if expect_status is not None:
+            current = active.get(registration_id) if registration_id else None
+            current_status = (
+                current.get("status") if isinstance(current, dict) else None
+            )
+            if current_status != expect_status:
+                raise SeatContended(
+                    f"registration {registration_id!r} is {current_status!r}, "
+                    f"not {expect_status!r}"
+                )
+        if launch:
+            reserved_chromes = sum(
+                1
+                for row in active.values()
+                if isinstance(row, dict) and row.get("status") == "allocating"
+            )
+            require_chrome_headroom(reserved_chromes=reserved_chromes)
         exclude = _used_ports(active) | _peer_lane_ports()
         port = select_free_registry_port(listen, exclude=exclude)
         if registration_id is None or profile_suffix is None:
@@ -120,11 +204,21 @@ def reserve_allocating_row(
             "holder_pid": os.getpid(),
             "started_at": time.time(),
         }
+        for seat_key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
+            row.pop(seat_key, None)
+        _claim_driver_lock(registration_id)
         active[registration_id] = row
         _store.write_active(active)
         _store.append_log("allocating", row)
-        _claim_driver_lock(registration_id)
-    return row
+        _events.emit(
+            _events.cdp_port_allocating(
+                registration_id=registration_id,
+                port=port,
+                parent_thread=parent_thread if isinstance(parent_thread, str) else None,
+                holder=holder,
+            )
+        )
+    return row, True
 
 
 def activate_allocating_row(
@@ -145,6 +239,125 @@ def activate_allocating_row(
     return current
 
 
+def _finish_reserved_launch(
+    row: dict[str, Any],
+    *,
+    launch: bool,
+    launch_fn: _LaunchFn,
+) -> Registration:
+    """Launch outside the ports lock, then flip the reserved row to active."""
+    registration_id = str(row["registration_id"])
+    chrome_pid: int | None = None
+    try:
+        if launch:
+            chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
+        row = activate_allocating_row(registration_id, chrome_pid)
+    except Exception:
+        _rollback_allocating(registration_id)
+        raise
+    reg = _row_to_registration(row)
+    _events.emit(_events.cdp_port_registered(reg))
+    return reg
+
+
+def _mint_after_join(
+    *,
+    holder: str,
+    purpose: str | None,
+    mission_kind: str | None,
+    parent_thread: str | None,
+    listen: _ListenFn,
+    launch_fn: _LaunchFn,
+    join: bool,
+) -> Registration:
+    """One reserve re-entry. ``join=False`` is the stranded-row mint only."""
+    row, minted = reserve_allocating_row(
+        holder=holder,
+        purpose=purpose,
+        mission_kind=mission_kind,
+        parent_thread=parent_thread,
+        listen=listen,
+        launch=True,
+        join=join,
+    )
+    if not minted:
+        return _wait_for_joined_row(
+            row,
+            holder=holder,
+            purpose=purpose,
+            mission_kind=mission_kind,
+            parent_thread=parent_thread,
+            listen=listen,
+            launch_fn=launch_fn,
+            joined=None,
+        )
+    return _finish_reserved_launch(row, launch=True, launch_fn=launch_fn)
+
+
+def _wait_for_joined_row(
+    row: dict[str, Any],
+    *,
+    holder: str,
+    purpose: str | None,
+    mission_kind: str | None,
+    parent_thread: str | None,
+    listen: _ListenFn,
+    launch_fn: _LaunchFn,
+    joined: list | None,
+) -> Registration:
+    """Poll until the joined row leaves ``allocating``. No deadline.
+
+    The wait does not hold ``ports_lock``, does not take a blocking flock,
+    and does not raise ``LaneError``. ``_LAUNCH_WAIT_S`` stays inside
+    ``_launch_chrome`` only.
+    """
+    registration_id = str(row["registration_id"])
+    while True:
+        current = _store.load_active().get(registration_id)
+        status = current.get("status") if isinstance(current, dict) else None
+        held = process_holds_driver_lock(registration_id) or is_driver_lock_held(
+            registration_id
+        )
+        if status == "allocating" and held:
+            time.sleep(cdp_lane._POLL_MS / 1000)
+            continue
+        if status == "active" and isinstance(current, dict):
+            if joined is not None:
+                joined.append(registration_id)
+            return _row_to_registration(current)
+        if status == "allocating":
+            return _mint_after_join(
+                holder=holder,
+                purpose=purpose,
+                mission_kind=mission_kind,
+                parent_thread=parent_thread,
+                listen=listen,
+                launch_fn=launch_fn,
+                join=False,
+            )
+        re_row, minted = reserve_allocating_row(
+            holder=holder,
+            purpose=purpose,
+            mission_kind=mission_kind,
+            parent_thread=parent_thread,
+            listen=listen,
+            launch=True,
+            join=True,
+        )
+        if minted:
+            return _finish_reserved_launch(re_row, launch=True, launch_fn=launch_fn)
+        return _wait_for_joined_row(
+            re_row,
+            holder=holder,
+            purpose=purpose,
+            mission_kind=mission_kind,
+            parent_thread=parent_thread,
+            listen=listen,
+            launch_fn=launch_fn,
+            joined=joined,
+        )
+
+
 def register_lane(
     *,
     holder: str,
@@ -154,8 +367,13 @@ def register_lane(
     launch: bool = True,
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
+    joined: list | None = None,
 ) -> Registration:
     """Reserve port under lock, launch Chrome outside lock, then flip active (F1).
+
+    Same-parent operator mints join an allocating row whose driver lock is
+    held and wait on the bind worker until that row is active. The wait has
+    no deadline and does not raise ``LaneError``.
 
     Session address is **not** known at Chrome mint — callers must
     ``bind_session_address`` when the CSE URL is first observed.
@@ -170,32 +388,27 @@ def register_lane(
     reclaim_best_effort()
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome
-    if launch:
-        from claude_bundles.x_display_capacity import require_chrome_headroom
-
-        require_chrome_headroom()
-
-    row = reserve_allocating_row(
+    row, minted = reserve_allocating_row(
         holder=holder,
         purpose=purpose,
         mission_kind=kind,
         parent_thread=parent,
         listen=listen,
+        launch=launch,
+        join=True,
     )
-    registration_id = str(row["registration_id"])
-
-    chrome_pid: int | None = None
-    try:
-        if launch:
-            chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
-        row = activate_allocating_row(registration_id, chrome_pid)
-    except Exception:
-        _rollback_allocating(registration_id)
-        raise
-
-    reg = _row_to_registration(row)
-    _events.emit(_events.cdp_port_registered(reg))
-    return reg
+    if not minted:
+        return _wait_for_joined_row(
+            row,
+            holder=holder,
+            purpose=purpose,
+            mission_kind=kind,
+            parent_thread=parent,
+            listen=listen,
+            launch_fn=launch_fn,
+            joined=joined,
+        )
+    return _finish_reserved_launch(row, launch=launch, launch_fn=launch_fn)
 
 
 def reattach(registration_id: str, *, holder: str) -> Registration:

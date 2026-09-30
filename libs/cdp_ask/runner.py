@@ -102,12 +102,14 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     purpose = (req.purpose or "").strip()
     kind = (req.mission_kind or "").strip()
     parent = (req.parent_thread or "").strip()
+    joined: list = []
     if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
         seat = ensure_driving_operator_seat(
             holder=holder,
             parent_thread=parent,
             purpose=purpose,
             mission_kind=kind or "root",
+            joined=joined,
         )
     else:
         seat = cdp_registry.register_lane(
@@ -118,11 +120,15 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
         )
     reg_id = str(getattr(seat, "registration_id", "") or "").strip()
     if purpose in OPERATOR_PURPOSES and parent and reg_id:
+        from claude_bundles import cdp_registry_store as store
         from claude_bundles.cdp_registry.session_address import (
             retire_predecessor_identity,
         )
 
-        retire_predecessor_identity(reg_id, parent_thread=parent)
+        row = store.load_active().get(reg_id)
+        allocating = isinstance(row, dict) and row.get("status") == "allocating"
+        if not joined and not allocating:
+            retire_predecessor_identity(reg_id, parent_thread=parent)
     return seat
 
 
@@ -549,9 +555,7 @@ def _build_ladder_progress(
     execution_id: str,
 ) -> LadderAdvanceState:
     if not execution_id.strip():
-        raise ValueError(
-            "execution_id required for dual-completion ladder (non-empty)"
-        )
+        raise ValueError("execution_id required for dual-completion ladder (non-empty)")
     blocked_archive_paths = {
         Path(default_archive_path(req, execution_id=execution_id)).resolve(),
         *(
@@ -585,10 +589,7 @@ async def run_execution(
     """Run one registry-backed project-ask and return a terminal-shaped result dict."""
     holder = req.holder.strip() or "cdp-ask-satellite"
     prompts = await asyncio.to_thread(resolve_prompt, req)
-    # Stay on the event-loop thread: bind serializes the Chrome headroom
-    # check and ensure_driving_operator_seat in-process. A worker thread
-    # would let overlapping asks both mint a seat (review 12286).
-    reg = bind_execution_lane(req, holder=holder)
+    reg = await asyncio.to_thread(bind_execution_lane, req, holder=holder)
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None

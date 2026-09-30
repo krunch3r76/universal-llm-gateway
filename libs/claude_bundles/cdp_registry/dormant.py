@@ -211,11 +211,8 @@ def relaunch_dormant(
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome
     chat_url = str(row.get("chat_url") or "")
-    from claude_bundles.x_display_capacity import require_chrome_headroom
 
-    require_chrome_headroom()
-
-    reserved = reserve_allocating_row(
+    reserved, _minted = reserve_allocating_row(
         holder=holder or str(row["holder"]),
         purpose=row.get("purpose"),
         mission_kind=row.get("mission_kind"),
@@ -227,6 +224,8 @@ def relaunch_dormant(
             "chat_url": chat_url,
             "relaunched_from_dormant_at": row.get("dormant_at"),
         },
+        expect_status="dormant",
+        launch=True,
     )
     try:
         chrome_pid = launch_fn(int(reserved["port"]), Path(str(reserved["profile"])))

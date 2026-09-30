@@ -51,6 +51,10 @@ class RegistryBusyError(RegistryError):
     """Raised when a second driver attempts to attach a registration already held by another driver."""
 
 
+class SeatContended(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix
+    """Raised when a row's status changed before this caller could claim it."""
+
+
 class RegistryExhaustedError(RegistryError):
     """Raised when the configured CDP registry port pool has no free port remaining for a new host."""
 

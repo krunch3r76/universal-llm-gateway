@@ -191,7 +191,7 @@ def test_hop_bind_retires_stale_registry_rows(
     monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: False)
     monkeypatch.setattr(
         "claude_bundles.x_display_capacity.require_chrome_headroom",
-        lambda: None,
+        lambda **_kwargs: None,
     )
     from cdp_ask.models import SubmitProjectAskRequest
     from cdp_ask.runner import bind_execution_lane

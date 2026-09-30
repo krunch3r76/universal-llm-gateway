@@ -399,13 +399,11 @@ def _launch_chrome(port: int, profile: Path) -> int:
         log_bytes_show_display_dead,
         log_bytes_show_x_exhaustion,
         require_cdp_display_reachable,
-        require_chrome_headroom,
     )
 
     display_val = cdp_display()
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
-    require_chrome_headroom()
     _seed_profile(profile)
     log = chrome_cdp_log_path(port)
     pre_size = Path(log).stat().st_size if Path(log).is_file() else 0

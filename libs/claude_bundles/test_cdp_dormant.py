@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -699,3 +701,72 @@ def test_drain_binds_a_probed_url_before_parking(
     result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
     assert result.dormant == [seat.registration_id]
     assert _row(seat.registration_id)["chat_url"] == url
+
+
+def test_dormant_double_relaunch_one_proceeds(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_race")
+    reg.make_dormant(seat.registration_id, is_listening=lambda _p: False)
+    before = 0
+    log_path = isolated_registry / "registry.jsonl"
+    if log_path.is_file():
+        before = sum(
+            1
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line).get("event") == "allocating"
+        )
+    barrier = threading.Barrier(2)
+    workers: set[int] = set()
+    seen: set[int] = set()
+    guard = threading.Lock()
+    real_load = reg._store.load_active
+
+    def wrapped() -> dict[str, Any]:
+        data = real_load()
+        ident = threading.get_ident()
+        if ident not in workers:
+            return data
+        with guard:
+            first = ident not in seen
+            if first:
+                seen.add(ident)
+        if first:
+            row = data.get(seat.registration_id) or {}
+            assert row.get("status") == "dormant"
+            barrier.wait(timeout=5)
+        return data
+
+    monkeypatch.setattr(reg._store, "load_active", wrapped)
+    outcomes: list[tuple[str, object]] = []
+
+    def run() -> None:
+        workers.add(threading.get_ident())
+        try:
+            woken = reg.relaunch_dormant(
+                seat.registration_id,
+                launch_chrome=_noop_launch,
+                is_listening=lambda _port: False,
+            )
+            outcomes.append(("ok", woken.registration_id))
+        except Exception as exc:
+            outcomes.append(("err", exc))
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    oks = [item for item in outcomes if item[0] == "ok"]
+    errs = [item for item in outcomes if item[0] == "err"]
+    assert len(oks) == 1
+    assert oks[0][1] == seat.registration_id
+    assert len(errs) == 1
+    assert type(errs[0][1]) is reg.SeatContended
+    after = sum(
+        1
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("event") == "allocating"
+    )
+    assert after - before == 1
