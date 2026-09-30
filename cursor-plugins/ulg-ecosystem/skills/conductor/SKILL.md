@@ -90,7 +90,7 @@ a harvested conductor. ¬ leftover-execute.
 **Rematerialize trap:** `` + `source_ref=todo:X` forbids
 `packet_path` and rematerializes the **old** conductor packet. Harvested score /
 `NEXT_ADMIT: none` ⇒ park remints. New remit ⇒ **new sibling todo** +
-`contract=implement` (Composer). Never replay the harvested conductor todo.
+`job=implement` (Composer). Never replay the harvested conductor todo.
 W5 (`reuse_thread` + same `source_ref`) is unfinished-conductor only.
 
 **After land (binding):** path-explicit commit of session paths, then prompt
@@ -368,7 +368,7 @@ annotate `profile=fable-scarce`.
 |---|---|
 | **Conductor** (tier from table, `conductor`) | Orient, rank, update scoreboard/CHECKPOINT, nest legs, adjudicate closeouts. Bind the token/locus; ¬ implement. `conductor` / `owner: cursor-sdk` ⇏ conductor writes files+tests |
 | Nested **investigate** | Forensic / AC bind — pick tier by judgment density |
-| Nested **Composer** `contract=implement` | Mechanical G-row after densify; `nest_under` when lease held |
+| Nested **Composer** `job=implement` | Mechanical G-row after densify; `nest_under` when lease held |
 | Independent binder | Ladder step-2 when conductor unsure (weight/family) — ¬ self-ratify |
 | Human | Credentials, kill tabs, irreversible acts — `needs-attended` + one recommended answer. **¬** interim "continue?" or "ok to merge?" — both rubber-stamped by the admit (§ Run to completion) |
 
@@ -388,7 +388,7 @@ todo (`scope`, `problem`, attrs), not in a hand-edited copy.
 |---|---|---|
 | *(omit)* | resolves **`agent`** | Standing conductor admit — orchestrates, nests, may land |
 | `sdk_mode: agent` | explicit agent | Same; use when documenting intent in the packet file |
-| `sdk_mode: plan` | **forbidden** on `contract=conductor` | Plan mode is for **nested** G3 recon/bind legs only — worker 422 |
+| `sdk_mode: plan` | **forbidden** on `job=conductor` | Plan mode is for **nested** G3 recon/bind legs only — worker 422 |
 
 Nested G3 packets (not the top-level conductor admit) MAY carry `sdk_mode: plan`
 when the row is sparse recon before `implement_ready`. SoT:
@@ -411,7 +411,7 @@ Required in `<scope>` / `<invariants>`:
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
-- **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`contract=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `liaison`) and does not author G-rows, Sketch, or `contract=implement`. The conductor nests Composer implement after its own Compose.
+- **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `liaison`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
   implement, **G6** = `cdp/opus-5.5` `job=delivery-review` `reasoning_effort="high"`
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
@@ -437,7 +437,7 @@ IDE mints todo identity (S4a); Stargate materializes the packet:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=conductor,
+  job=conductor,
   lane="B",
   source_ref="todo:{slug}",
   dispatch_thread_id="{root}",   # continuity root with turns, or pending-empty work child
@@ -454,7 +454,7 @@ pre-create 422s (`conductor_coord_split_refused`). Resume-after-terminal:
 `branch_current=cursor-sdk/lane-{that id}` + `dispatch_id` + `scoreboard_uri`.
 Ledger holds
 `work_key=todo:{slug}` (no `todo:` packet front-matter — nested G5 uses
-`nest_under`). Top-level `contract=implement` on the same todo while conductor
+`nest_under`). Top-level `job=implement` on the same todo while conductor
 is open → 409.
 
 ### Scoreboard `sdk_mode` column (plan vs implement legs)
@@ -494,7 +494,7 @@ implement:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=implement,
+  job=implement,
   nest_under=<plan_dispatch_id>,
   lane=,                          # inherit parent isolation
   sdk_mode=agent,                 # omit ok — implement-class defaults agent
@@ -704,7 +704,7 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   model_knobs={"fast":"true"},
-  contract=conductor,
+  job=conductor,
   source_ref=todo:{slug},
   resume_of=<terminal parent dispatch_id>,  # ROW_PINNED lift — same agent
   reuse_thread=<parent worker thread>,      # REQUIRED with resume_of
@@ -742,7 +742,7 @@ Select and follow this map; do not rebuild the path from source reading and 422s
 
 | Hop | Wire | Product | Written by |
 |---|---|---|---|
-| **Sketch** | `contract=sketch` + `source_ref=todo:` (materializer reads todo `problem` / `scope`) | **shape bind** — R1 four blocks (`scope_pin` · `negative_space` · `output_envelope` · `transfer_predicate`) at `cortex://notes/system/consults/{slug}-sketch.md` | dispatched Sketch, or a **substitute** (below) |
+| **Sketch** | `job=sketch` + `source_ref=todo:` (materializer reads todo `problem` / `scope`) | **shape bind** — R1 four blocks (`scope_pin` · `negative_space` · `output_envelope` · `transfer_predicate`) at `cortex://notes/system/consults/{slug}-sketch.md` | dispatched Sketch, or a **substitute** (below) |
 | **Mission Composer** | `runbook:score-composer-author` — `job=freeform` + `prompt=` (¬ a materializer contract) | **conductor score** = the **densified todo**: dense spec at `source_uri`, implement-lane attrs, `stop_after` / `conductor_profile` pins, S5 attach when architecture is closed. ¬ a hand-written six-block file | dispatched Composer worker |
 | **Conductor** | `job=conductor` + `source_ref=todo:` · `packet_path` **refused** (`conductor_with_packet_path`) · `prompt` refused | Stargate **materializes** the packet and **births the scoreboard** from the todo at admit | substrate |
 
@@ -810,7 +810,7 @@ by `service=` — do not spend it on up/down (a:36905 item 5).
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=conductor,
+  job=conductor,
   source_ref="todo:{slug}",       # packet_path is REFUSED on this contract
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr

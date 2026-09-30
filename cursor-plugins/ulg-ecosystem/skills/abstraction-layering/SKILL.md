@@ -234,7 +234,7 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    legs with no G3 densify: skip emit.
 4. **G4** — optional explicit Other Models check (Terra if named). Default **skip**.
    When run: fold amendments + refresh `spec_sha256`.
-5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
+5. **G5** — Composer `job=implement`, `source_ref=todo:{slug}`.
 6. **G6** — pre-land: `cdp/opus-5` `job=code-review` on lane branch diff; R1 sidecar.
 7. **G7** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5 · land (L1).
    **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨

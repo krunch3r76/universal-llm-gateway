@@ -165,4 +165,4 @@ Live field contract: full grammar in `cortex://notes/system/specs/directive-loop
 - [ ] Mint-then-quote: every id in the body was read from a tool payload this turn
 - [ ] Framed multi-step (≥3 G-row or bind-then-compose) ⇒ D4 conductor, not a G-row loop
 - [ ] Pre-frame shape talk ⇒ D5 `negotiation_phase` on `contract: confer`, then D4
-- [ ] Conductor: `contract=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)
+- [ ] Conductor: `job=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)

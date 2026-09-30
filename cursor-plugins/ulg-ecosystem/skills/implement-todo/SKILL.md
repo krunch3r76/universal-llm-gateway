@@ -143,9 +143,9 @@ Routes are for one bounded pickup only. If you are deriving per-phase routes, yo
 **Default:** `judgment_required` codework ⇒ **LAYER route (§3)** (re-admit conductor) — skip this section.
 PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named `/path-sim`).
 
-**Fire §3b only when:** `attributes.check_requested=true` on the todo, operator explicitly requests Gate-6/API check, or post-path-sim follow-up `contract=implement` after split-phase densify (legacy spine).
+**Fire §3b only when:** `attributes.check_requested=true` on the todo, operator explicitly requests Gate-6/API check, or post-path-sim follow-up `job=implement` after split-phase densify (legacy spine).
 
-`DISPATCH ∧ contract=implement ∧ density_triage=judgment_required ∧ check_requested ⇒ finish this checklist before team_dispatch`. Gate contracts: consult-routing § Implement admission gates; lifecycle: todo-lifecycle §6–7.
+`DISPATCH ∧ job=implement ∧ density_triage=judgment_required ∧ check_requested ⇒ finish this checklist before team_dispatch`. Gate contracts: consult-routing § Implement admission gates; lifecycle: todo-lifecycle §6–7.
 
 **Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `team_dispatch(model=cdp/opus-5, job=delivery-review, reasoning_effort="high")` (CDP default). API `job=freeform` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk `cursor/grok-4.7`; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
 
@@ -192,7 +192,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 
 Proceed autonomously only on `READY ∧ (DIRECT ∨ read_only_low_risk_DISPATCH)`.
 
-`judgment_required ∧ contract=implement ⇒ §3b complete before DISPATCH` **only when `check_requested`**.
+`judgment_required ∧ job=implement ⇒ §3b complete before DISPATCH` **only when `check_requested`**.
 
 **LAYER default (§3) for codework:** §3b skipped. PATH-SIM A-bind + `path_sim_self_certify` only on the §3 PATH-SIM trigger set.
 
@@ -247,7 +247,7 @@ transport). Background preferred; defer and name it when attended-blocking.
 - Landing a named `todo:` in git and leaving `workflow_state=open` (the card becomes the next session's lie).
 - Closing a public-Python pickup without docstring-quality scan criticals=0 (path-sim or not — §5 Ship gate).
 - Closing an event-bearing change silent on instrumentation (add/prune judgment — §5 event closeout).
-- Firing `contract=implement` on `judgment_required` after Gate-6 FILE_EVIDENCE without stamping `skeptic_ratified` (or a designated `gate6_ratification_uri` turn, or hash-matched `recon_waived`).
+- Firing `job=implement` on `judgment_required` after Gate-6 FILE_EVIDENCE without stamping `skeptic_ratified` (or a designated `gate6_ratification_uri` turn, or hash-matched `recon_waived`).
 - Using `cortex(resolve)` on `cortex://notes/...` bodies instead of `fs(read)`.
 - Authoring a freeform dense note (or rewriting template headings by hand) instead of starting from `doc_template(implement_dense_spec)` (§2b).
 - Stamping `implement_ready` or asking operator Proceed without `doc_validate` PASS + attestation citation (§2b).

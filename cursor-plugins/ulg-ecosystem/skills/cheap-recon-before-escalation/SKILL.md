@@ -57,7 +57,7 @@ Semantics:
 
 Scope set for this practice: `{workflows, code_transformation, constitutional_ai, small_llm_prompting, software_agents, research_small_llm, knowledge_systems}`. Content-hash dedup may place canonical primaries under sibling scopes; this is working as designed, not a re-embed need.
 
-If delegating RAG recon unattended: mechanical multi-scope inventory → Composer (`model=cursor/composer-2.5`); investigate-emphasis RAG recon → **`seat=cursor-sdk` `contract=investigate`**. Enumerate each scope as a discrete numbered call (`S1..Sn`) and include `execute each once ∧ never-repeat ∧ never-default-scope`. Set `max_tool_turns`; cursor-sdk workers are not safely cancellable mid-flight. For ≤~7 scopes, lead inline may be cheaper than babysitting.
+If delegating RAG recon unattended: mechanical multi-scope inventory → Composer (`model=cursor/composer-2.5`); investigate-emphasis RAG recon → **`seat=cursor-sdk` `job=investigate`**. Enumerate each scope as a discrete numbered call (`S1..Sn`) and include `execute each once ∧ never-repeat ∧ never-default-scope`. Set `max_tool_turns`; cursor-sdk workers are not safely cancellable mid-flight. For ≤~7 scopes, lead inline may be cheaper than babysitting.
 
 ## Axis 2 — material-decision skeptic/panel
 

@@ -63,7 +63,7 @@ Reporting "done" without a passing self-check is a contract violation.
 ```
 
 - `none ∨ pure-mechanical` ⇒ embed final inline block.
-- `contract=implement` ⇒ embed in `acceptance_criteria` during Gate-2 distillation.
+- `job=implement` ⇒ embed in `acceptance_criteria` during Gate-2 distillation.
 - **Public Python surface touched** ⇒ self-check row: `docstring-quality check|scan` on touched files → **criticals=0** (or FAIL + path). Lead still re-gates at closeout (`docstring-quality` § Ship gate · `implement-todo` §5) — worker self-check does not replace lead scan citation.
 - **Named `todo:` land** ⇒ self-check row: `todo-close` or a LANDED assertion on that entity (`workflow_state=done` or an active LANDED claim citing the path SHA). A git commit of the locus without stamping the matter entity is incomplete. Lead `entity_get`s after harvest. Specimen: T14 `4a9246a` in tree, card left `open`.
 - **Propagation surface touched** ⇒ self-check row naming what makes the change live, because `landed ≠ live`. `services/{dir}/**.py` ⇒ `manage(action="sync_restart", service="{slug}")`; `cursor-plugins/ulg-ecosystem/{skills,commands,rules}/**` ∨ a census file ⇒ `HOME="$(getent passwd "$(id -un)" | cut -d: -f6)" scripts/cursor/install-ecosystem-plugin.sh` (bare `scripts/cursor/install-ecosystem-plugin.sh` is REFUSED under cursor-sdk dispatch HOME — `dispatch_home_host_guard`) + Developer → Reload Window. A changed skill whose catalog `surface_class` is `shared_sync` or `life_local` also gets `scripts/cortex/claude-ai-sync-jupiter upload --slugs <slug> --replace` for that slug. For `live@<sha>`, report the path-explicit commit SHA, restart action, observed code-ref relation, identity movement, and dirty-path disclosure; a headless seat reports `landed` when it cannot run the post-restart probe. State `propagation: none` explicitly when nothing is required. The packet author owns this: the operator seat disposes on closeout fields only, so a surface the closeout never names is a question it cannot ask. Doctrine: `decision:closeout-propagation-residue` (friction 26340).
@@ -119,7 +119,7 @@ Packet prose does not select a lane. SOT: `consult-routing` § cursor-sdk checko
 | `nest_under` / `resume_of` | omit (inherit) |
 
 Omit on a **top-level** generate is not “no preference”: MCP + Stargate 422
-`lane_required`. `contract=wrap` is exempt. GIW empty-scope omit still selects
+`lane_required`. `job=wrap` is exempt. GIW empty-scope omit still selects
 Lane A inside `select_lane` (`opt_out`) even when the Lane-B regime is on —
 that is inference, not a license to omit or to pass `lane="A"`. Explicit wire
 `lane="A"` is 422 `CURSOR_LANE_A_REFUSED` at admit. After admit, quote

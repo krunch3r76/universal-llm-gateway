@@ -94,7 +94,7 @@ conformance/drift audit every 5 autonomous closes or each CHECKPOINT.
 Seat/role and executor tier are orthogonal. Manual seats admit only `op=handoff` + `source_ref|packet_path`.
 
 - **R1 reasoning/spec:** judgment, design, root cause, dense-spec authorship → consult/generate/manual.
-- **R2 settled implement:** fork-free dense spec + attrs → default `cursor-sdk` `contract=implement`.
+- **R2 settled implement:** fork-free dense spec + attrs → default `cursor-sdk` `job=implement`.
 - **R3 bounded widened discovery:** sibling/same-class defects; label secondary findings; ¬ open-ended redesign.
 
 | Axis | `cursor` handoff | `cursor-sdk` generate |
@@ -118,7 +118,7 @@ one exact judgment-authored edit only; multi-edit mechanical work ⇒ cursor-sdk
 ### cursor-sdk write channels
 
 `op=generate` writes closeout sidecar (A); may write durable deliverables via MCP `fs` when D0 names path (B);
-shared-checkout mutation (C) needs `contract=implement` or attended handoff. Verify channel-B by
+shared-checkout mutation (C) needs `job=implement` or attended handoff. Verify channel-B by
 `written_sha256` or read-back. Empty `0 tool calls / ~2.8s / 0B` closeout = credit exhaustion.
 
 ### Post-dispatch output mutation gate

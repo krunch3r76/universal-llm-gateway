@@ -12,7 +12,7 @@ current modified and untracked files. Do not dispatch.
 
 `team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`
 
-`cdp/opus-5` is the same class. `job=freeform`. There is no `contract=review`.
+`cdp/opus-5` is the same class. `job=freeform`. There is no `job=review`.
 `job=code-review` is not this request. `scripts/consult -r reviewer` exits with
 that shape. `scripts/consult_review_submit.py` exits the same way.
 

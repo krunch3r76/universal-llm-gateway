@@ -57,7 +57,7 @@ Plus `<reasoning_trace>` with literal `no fork remains open`.
 | No implement-ready | not ready | return Gate 2 |
 | Open fork | not ready | resolve first |
 | Spec/attrs drift | `implement_spec_drifted_since_ready` | refresh assertion |
-| Inspect artifact | W4 `contract=wrap` | materialize only |
+| Inspect artifact | W4 `job=wrap` | materialize only |
 | Manual transport | W1 `packet_path`/handoff | exception |
 
 Wrap triggers: W4 inspection; W1 manual/alternate; W1 non-projectable corpus; break-glass materializer incident.
@@ -68,7 +68,7 @@ NOT wrap: missing attrs, open fork, no assertion, batch without plan route.
 - **W1** lifecycle Gate-3 wrap: hand-authored packet, no dispatch.
 - **W2** act split: artifact-gen vs implement dispatch.
 - **W3** `prepare_implement_packet`: server gate+materialize.
-- **W4** `contract=wrap`: materialize without Composer.
+- **W4** `job=wrap`: materialize without Composer.
 
 Legacy inline wrap: read todo + assertion → verify spec → write `tmp/reviews/{slug}-implement-packet.md` → dispatch.
 ¬ dispatch wrap step to cursor-sdk.
@@ -88,7 +88,7 @@ team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, jo
 team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, job=freeform)
 ```
 
-Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `contract=investigate`**; implement → Composer.
+Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `job=investigate`**; implement → Composer.
 
 ## Friction-ticket packet preflight
 

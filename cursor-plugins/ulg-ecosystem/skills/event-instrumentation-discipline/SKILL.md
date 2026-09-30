@@ -102,7 +102,7 @@ audit of hot dominators: `todo:event-server-top-signal-prune`.
 
 | Seat | Delivery |
 |---|---|
-| Cursor / cursor-sdk (`cursor/*`) | `Use the event-instrumentation-discipline skill` — self-fetch; add to `skills=[…]` on `contract=implement` dispatches |
+| Cursor / cursor-sdk (`cursor/*`) | `Use the event-instrumentation-discipline skill` — self-fetch; add to `skills=[…]` on `job=implement` dispatches |
 | web-anthropic / life | skill-inline excerpt (slug alone fails off-cursor) ∨ Customize Skills (`shared_sync`) |
 
 Cite this slug with the architecture + docstring floor on ULG code handoffs.

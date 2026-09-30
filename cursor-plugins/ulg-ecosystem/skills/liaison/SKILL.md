@@ -10,11 +10,11 @@ and never implements what a live dispatch owns (`in-flight-work-guard`). Consoli
 operator called *coordinator*; Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor =
 session to a designed stop), `decision:conductor-attended-vs-unattended-routing`.
 
-**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`. Sketch, Compose, densify, and `contract=implement` are that conductor's steps. This seat does not fire them. This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
+**Play (binding).** `played(todo:{slug}) ⇒ admit(job=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`. Sketch, Compose, densify, and `job=implement` are that conductor's steps. This seat does not fire them. This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
 
 | Bad | Good |
 |---|---|
-| Sketch or `contract=implement` from this tab on a house row | One conductor admit; harvest its closeout |
+| Sketch or `job=implement` from this tab on a house row | One conductor admit; harvest its closeout |
 | CDP generate on the house thread as the play | Conductor lane parented to the house |
 
 **Not the same as** `runbook:liaison-seat-on-a-lane` — that runbook is voice/web liaison on a **foreign lane**;
@@ -98,7 +98,7 @@ House wakes, cheapest first:
 
 Binds. Later prose that conflicts with them loses.
 
-1. **One conductor.** This seat holds `team_dispatch` and the checkout. A played `todo:{slug}` is `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)`, then end the turn. Repo write is that conductor's nested `contract=implement`. This seat does not send `contract=implement` or a Sketch generate for a house row. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
+1. **One conductor.** This seat holds `team_dispatch` and the checkout. A played `todo:{slug}` is `team_dispatch(op=generate, seat=cursor-sdk, job=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)`, then end the turn. Repo write is that conductor's nested `job=implement`. This seat does not send `job=implement` or a Sketch generate for a house row. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
 2. **Do not close the house on a dead tail or an empty wake.** A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished: `watch-supervise.sh stop --label <label>`. That tail is not a watcher, not a hop, and not a reason to end the seat. No playable next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop` if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction to play. The house stays. The wake stops.
 3. **File the friction, add the house row, play a gate.** A row that cannot proceed: `friction()` on the owner the same turn, and a row on the continuity card `## Rows`. A **gate** is a friction the current row cannot pass until it is resolved. A gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn on the ladder in (1). Do not STAY on the blocked row. Do not page unless the gate is an armed `OPERATOR_GATE`.
 4. **When a row has been played, close its todo, then add the next one.** A played row is a land on master for that `todo:{slug}`. Same turn, before the next row, `pipeline(op=run, pipeline_id=todo-close)` so `workflow_state=done`. The ticker drops a policy `now_row` when that state is terminal (`done` included). An open card is still the work: the clock admits another conductor for it. That re-admit is how a night fails to replace the operator. A finished row does not empty the house. After the close, add every next deliverable that is not gated on another row, to `## Rows` and `--set now_row=`, then play it. Adding that row clears `now_row=quiet` and re-arms `--loop --heartbeat 1200` if the loop is down. Ungated rows may run at the same time. A row that waits on some other row having been played first stays off NOW until that condition is true. `now_row=quiet` and an empty NOW are legal only when the house program has no open deliverable. Do not close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
@@ -269,21 +269,21 @@ team_dispatch(
   seat=cursor-sdk,
   lane="B",
   model=cursor/grok-4.7,     # policy.row_bind_model; model_knobs effort=high fast=false
-  contract=none,
+  job=freeform,
   prompt=<row-bind wake>,    # BIND ROW_CLASS: low|trio before nested dispatch
   dispatch_thread_id=<R>,
   work_key=row-bind:<fid>:night-<night>,
 )
 ```
 
-Other sit wakes (checkpoint / hop, no friction row) stay `contract=none` `lane="B"`
+Other sit wakes (checkpoint / hop, no friction row) stay `job=freeform` `lane="B"`
 `model=<policy.successor_model>`:
 
 ```
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=none,
+  job=freeform,
   lane="B",  # throwaway worktree. Lane A only on scope refusal or an explicit operator request for shared master. Bind-only and read-only are not that exception.
   model=<policy.successor_model>,
   prompt=<build_successor_message>,
@@ -304,19 +304,19 @@ an undispositioned friction on a charter-owned service, once per assertion id (`
 a fresh `CONTEXT_BUDGET` from the `sdk:` holder's own stream. Hold reasons are the per-clause booleans on the
 ticker's stdout line (`tmp/watchers/liaison-ticker-<R>.log` when started by `--go-under`). The successor claims
 the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
-dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
+dispatches (`job=implement`, omit `model=`) run **alongside** — they are not Fable seats.
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 
-`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(contract=conductor)` (§ Play). Code AutoJob admit is `agent_bus(tool="request")`. Life implement uses `cursor_request` because life has no `team_dispatch`.
+`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(job=conductor)` (§ Play). Code AutoJob admit is `agent_bus(tool="request")`. Life implement uses `cursor_request` because life has no `team_dispatch`.
 
 | Work | Executor | Bind / review |
 |---|---|---|
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
 | Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; the successor **dispatches** instead) | none — commit path-explicit same turn |
-| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
+| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, job=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
 | Mechanical implement with dense spec (`files_expected` + ACs) | the conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
-| Repo write when this seat lacks `team_dispatch` or the checkout (life) | **`cursor_request(contract=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
+| Repo write when this seat lacks `team_dispatch` or the checkout (life) | **`cursor_request(job=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
 | Design / judgment fork on a played row | the conductor's nest | one round inside the conductor; disagreement ⇒ CONSULT_PENDING |
 | Judgment fork (independent check) | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5.5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
@@ -364,7 +364,7 @@ dirs, stale watcher hygiene, scoreboard grooming — then lengthen the heartbeat
 house's **charter-owned** services are score rows: they enter the digest, need a disposition, and leave when
 closed on the assertion. Same driver as everything else — no second loop. Attended play of a `todo:{slug}`
 follows § Play. The ticker's LOW/TRIO fire below is the headless machine. It is not a license for this seat
-to Sketch or send `contract=implement`.
+to Sketch or send `job=implement`.
 
 | Leg | Mechanic |
 |---|---|
@@ -373,7 +373,7 @@ to Sketch or send `contract=implement`.
 | NOW | no seat bind (`summary_row` / `policy.now_row` empty) ⇒ the newest `forcing` row **is** NOW. A seat bind outranks a non-gate friction; that row stays an `Event:`. **A gate swaps.** |
 | Disposition | **Ticker first spawn = row-bind hop** (default `cursor/grok-4.7` Standard + high effort), not Composer house generate. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining hops (LOW = implement lane B + later apply-all review; TRIO sketch default `cdp/opus-5.5` when no `todo:{slug}`). `--mark-friction` still records `direct-first` / `todo-minted` / `declined`. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, and does not skip review+apply+land. Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
 | Close-back | **on the assertion**: `cortex(tool="friction_close", assertion_id=<n>, resolution_kind=todo:<slug> \| wontfix \| commit:<sha>)` — `todo-minted` / `declined` the same turn; `direct-first` when the fix lands. Superseded ⇒ the row leaves on the next harvest. A `todo-minted`/`declined` row still open = `state=close_pending` — you forgot the close |
-| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only); the ticker latches the class and fires LOW (`contract=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else `trio_sketch_model` consult) — never the Composer house successor on the bind leg. **Review harvest:** ticker applies ALL suggestions (SHOULD-FIX, nits, unused-code, adjacent) as one lane-B house generate (`contract=none` + apply-all message — ¬ `contract=implement`+`prompt`, wire-rejected) — ¬ page ¬ come-up ¬ park for the next resume; frozen `ready=false` and an attended `ide:` check-in do not hold that apply (`a:36093`) |
+| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only); the ticker latches the class and fires LOW (`job=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else `trio_sketch_model` consult) — never the Composer house successor on the bind leg. **Review harvest:** ticker applies ALL suggestions (SHOULD-FIX, nits, unused-code, adjacent) as one lane-B house generate (`job=freeform` + apply-all message — ¬ `job=implement`+`prompt`, wire-rejected) — ¬ page ¬ come-up ¬ park for the next resume; frozen `ready=false` and an attended `ide:` check-in do not hold that apply (`a:36093`) |
 | REPEATED_FAILURE | a **second** `direct-first` mark on the same row ⇒ `state=repeated_failure`: NOW reads "consult, then todo-minted \| declined; never a third variant" (`cdp/opus-5.5` first below Opus) |
 
 ## Gate swap (operator 2026-09-22)

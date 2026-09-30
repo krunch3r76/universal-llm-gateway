@@ -11,7 +11,7 @@ Answering-seat rival fill. Cognitive procedure only — ¬ cascade · ¬ header 
 
 ## Trigger
 
-`answering_seat ∧ (purpose ∈ {ask, review} ∨ contract ∈ {consult, none} ∨ judgment_required ∨ retry(same_AC) ∨ operator_names(alternatives|simulate|hypothesize|extraordinary aperture|outside the box))`. `contract=none ⇒ apply`. Fires without consult token (`HYPOTHESIZE_SIMULATE_CONTRACTS` in `libs/reasoning_posture_contracts.py`).
+`answering_seat ∧ (purpose ∈ {ask, review} ∨ contract ∈ {consult, none} ∨ judgment_required ∨ retry(same_AC) ∨ operator_names(alternatives|simulate|hypothesize|extraordinary aperture|outside the box))`. `job=freeform ⇒ apply`. Fires without consult token (`HYPOTHESIZE_SIMULATE_CONTRACTS` in `libs/reasoning_posture_contracts.py`).
 
 ## Refuse
 

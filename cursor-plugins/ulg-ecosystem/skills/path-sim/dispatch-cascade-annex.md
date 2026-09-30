@@ -118,7 +118,7 @@ rag(op=recon, durable_sink=cortex) ≡ optional iff a named corpus scope is know
 
 | Do | Don't |
 |---|---|
-| Breadth → Explore subagent; judgment residual → `cursor/grok-4.7` xhigh fast `contract=investigate`; mechanical inventory-only / no-Task → Composer (`cheap-recon`) | Equate “lead runs path-sim” with “lead hand-runs all greps” or Composer-as-recon |
+| Breadth → Explore subagent; judgment residual → `cursor/grok-4.7` xhigh fast `job=investigate`; mechanical inventory-only / no-Task → Composer (`cheap-recon`) | Equate “lead runs path-sim” with “lead hand-runs all greps” or Composer-as-recon |
 | Greps, source reads, Event Service gaps → `cortex://notes/system/recon/{slug}/tier1-anchors.md` (or theme) | Treat `rag(op=recon)` as a Q-gate |
 | Call RAG when the domain is actually indexed for the question (research / known scope) | Cargo-cult RAG on code-local Stargate/MCP frictions when Tier-1 already pins loci |
 | Discard noisy RAG hits in `## Discards` and bind on Tier-1 | Equate “path-sim without RAG” with incomplete cascade |
@@ -429,7 +429,7 @@ Lead MUST verify before auto-advancing:
 |---|---|
 | → A | Q sidecar present with verdict (unframed: ranked Q table; framed: `frame_verdict` + `frame_delta` on record) — **¬** advance on `q_skipped` (retired) |
 | → R | A sidecar present with ranked L1∧L2 + recommended bind; todo `source_uri` set to `cortex://notes/system/specs/{slug}.md`; dense spec passes `doc_validate` gates 6/8/9; `files_expected` + `acceptance_criteria` non-empty; `implement_ready` assertion cites current `spec_sha256:` |
-| → Stage-B implement | R-admit sidecar present with **CDP harvest URI** (`archive_uri` **or** `completion_phase=content_proof` after consumer fs-read + sha re-verify on `content_proof_uri`) + verdict ∈ `{ADMIT, ADMIT_WITH_AMENDMENTS, RATIFY, RATIFY_WITH_CONDITIONS}` **or** allowed skip evidence from the closed set above; **`implement_ready_preflight(source_ref=todo:{slug}).admitted === true`** (safety-net — surfaces gate-9 `missing_sections` early); if R-admit amended bind: dense spec re-validated + assertion `spec_sha256` refreshed. **Halt** if same `source_ref` already has a non-terminal cursor-sdk `contract=implement` (probe `manage(busy_status)` for write-lease/holder awareness — platform ledger reject on duplicate same-ref is authoritative; checklist is co-control, not a substitute). **Forbidden:** advance on `turn_idle` alone or sidecar path without consumer sha re-verify; `delete_after` / cleanup requires archive-proof — never content-proof alone |
+| → Stage-B implement | R-admit sidecar present with **CDP harvest URI** (`archive_uri` **or** `completion_phase=content_proof` after consumer fs-read + sha re-verify on `content_proof_uri`) + verdict ∈ `{ADMIT, ADMIT_WITH_AMENDMENTS, RATIFY, RATIFY_WITH_CONDITIONS}` **or** allowed skip evidence from the closed set above; **`implement_ready_preflight(source_ref=todo:{slug}).admitted === true`** (safety-net — surfaces gate-9 `missing_sections` early); if R-admit amended bind: dense spec re-validated + assertion `spec_sha256` refreshed. **Halt** if same `source_ref` already has a non-terminal cursor-sdk `job=implement` (probe `manage(busy_status)` for write-lease/holder awareness — platform ledger reject on duplicate same-ref is authoritative; checklist is co-control, not a substitute). **Forbidden:** advance on `turn_idle` alone or sidecar path without consumer sha re-verify; `delete_after` / cleanup requires archive-proof — never content-proof alone |
 | → R-after | Stage-B implement closeout present; dense spec + `files_expected` + `acceptance_criteria` still current; lead fires `/work-item-review todo:{slug}` with **`cdp/opus-5` `job=delivery-review` `reasoning_effort="high"`** (default-on) **or** allowed skip evidence from the closed set |
 | → Closeout / todo-close | R-after verdict sidecar present (`RATIFY|REVISE|SCOPE-DRIFT` + cursor-sdk dispatch/harvest URI) **or** allowed skip evidence; REVISE findings applied or follow-up todo seeded; docstring criticals=0; event-instrumentation closeout one-liner when applicable |
 
@@ -439,7 +439,7 @@ Lead MUST verify before auto-advancing:
 
 ```
 team_dispatch(
-  op=generate, seat=cursor-sdk, contract=implement, lane="B",
+  op=generate, seat=cursor-sdk, job=implement, lane="B",
   source_ref=todo:{slug}, dispatch_thread_id=<bus thread id>,
   skills=[path-sim, cheap-recon-before-escalation, docstring-quality, event-instrumentation-discipline, cursor-sdk-instruction-standard]
 )

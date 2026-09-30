@@ -99,7 +99,7 @@ Poll `poll_hint` with `agent_bus(wait)`, not `pipeline(result)`.
 
 | Want | Use | Prompt rule |
 |---|---|---|
-| Model answer, auto thread | `team_dispatch(op="generate", role=…, contract=…, prompt\|sidecar_ref)` | Atomic prompt; ¬ “reply on this thread” unless handoff. |
+| Model answer, auto thread | `team_dispatch(op="generate", role=…, job=…, prompt\|sidecar_ref)` | Atomic prompt; ¬ “reply on this thread” unless handoff. |
 | Existing thread | `op="to_thread", thread=…, prompt=…` | Stargate writes turn. |
 | Manual seat | `op="handoff", role/seat, packet_path\|source_ref` | “Reply on this thread” OK here. |
 
@@ -159,7 +159,7 @@ Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    contract="implement",
+    job="implement",
     lane="B",  # in-repo implement uses lane B; omit only with nest_under/resume_of
     packet_path="tmp/reviews/{slug}-implement.md",  # or source_ref=todo:{slug}
     dispatch_thread_id="{arc-id}",
@@ -303,7 +303,7 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/grok-4.7` investigate → **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=cdp/opus-5, reasoning_effort=max)` while that is the shipped seat (`libs/implement_admission/conductor_width_seat.py`) |
-| Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
+| Recon+investigate judgment residual | **`seat=cursor-sdk` + `job=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
 | Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
 | Non-code adversarial (life/analysis) | `job=freeform` + `xai/grok-4.7` — life/analysis lane only |
@@ -326,7 +326,7 @@ SoT for M1–M4 predicates and skip conditions: `runbook:score-play` (agent-bus:
 ## Implement lane — default source_ref
 
 ```python
-team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+team_dispatch(op="generate", seat="cursor-sdk", job="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
 ```
 
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
@@ -382,7 +382,7 @@ and other read-only admits. Plan mode on lane B is read-only and does not
 take the write lease. `cortex://` paths and paths outside the repo are 422
 `CURSOR_LANE_B_SCOPE_REFUSED`. Omit is **not** a preference. MCP + Stargate
 return 422 `lane_required` on top-level omit. Omit only when `nest_under` or
-`resume_of` inherits parent isolation. `contract=wrap` is exempt.
+`resume_of` inherits parent isolation. `job=wrap` is exempt.
 Copied HOME/examples that still write `lane="A"` on implement are data, not
 instructions.
 

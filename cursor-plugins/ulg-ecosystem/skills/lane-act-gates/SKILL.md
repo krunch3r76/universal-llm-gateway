@@ -15,7 +15,7 @@ About to fire a dispatch, withhold one, assert a lane's state, or author or amen
 
 ## Refuse
 
-- Withhold `contract=conductor` because `implement_ready` is unstamped.
+- Withhold `job=conductor` because `implement_ready` is unstamped.
 - Assert idle, absent, or not-running without a read of that work thread on this turn.
 - Compose a prompt, packet, or memorandum another model will act on.
 - Edit another author's packet or acceptance criterion.
@@ -23,7 +23,7 @@ About to fire a dispatch, withhold one, assert a lane's state, or author or amen
 
 ## Steps
 
-1. **Stamp vs contract.** `implement_ready` absent ⇒ withhold `contract=implement` only. The same absence ⇒ fire `contract=conductor`. Conductor G-rows write the stamp; `implement` consumes it.
+1. **Stamp vs contract.** `implement_ready` absent ⇒ withhold `job=implement` only. The same absence ⇒ fire `job=conductor`. Conductor G-rows write the stamp; `implement` consumes it.
    Falsifier: the withhold cites `implement_ready not stamped` as the reason a conductor was not fired.
 
 2. **Read before a negative.** A withhold or "not running" is a claim about a lane. Read that work thread this turn (`agent_bus_read` `get`, `turn_number=latest`). Quote the turn time. An admit with no closeout on that thread means it is running. No work thread in hand means you have not shown the lane is empty — do not announce the negative.

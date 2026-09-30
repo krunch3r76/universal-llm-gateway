@@ -283,7 +283,7 @@ Problem/Scope/Acceptance may be sparse. **Do not** set
 implement, set packet `sdk_mode: plan` (or rely on `read_only=true` default on
 `consult|none|ask|recon|seed`) so the nested dispatch runs Cursor SDK **plan**
 mode — artifact URIs only, no land claims. Follow with a separate
-`contract=implement` dispatch (`sdk_mode: agent` or omit) after the seated
+`job=implement` dispatch (`sdk_mode: agent` or omit) after the seated
 conductor stamps the **`implement_ready` assertion** (Gate-2 densify). SoT:
 `docs/agent-guides/cursor-sdk-conversation-mode.md` ·
 `services/git_integration_worker/cursor_sdk_mode.py`.
@@ -297,7 +297,7 @@ CDP rows (G1/G2/G4/G6) are out of scope — they use `team_dispatch(model=cdp/�
 |---|---|---|---|---|
 | **G1** | Architecture consult | — (CDP `session=ask, job=freeform`) | — | Never cursor-sdk plan |
 | **G2** | Frame | — (CDP; transport per conductor profile) | — | — |
-| **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `implement_ready` assertion stamped or dense packet ⇒ **`agent`** + `contract=implement` |
+| **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `implement_ready` assertion stamped or dense packet ⇒ **`agent`** + `job=implement` |
 | **G4** | Skeptic | — (CDP) | — | — |
 | **G5** | Implement | `implement` \| `pure-mechanical` | **`agent`** | `sdk_mode=plan` **422** at admit (`validate_sdk_mode_at_admit`) |
 | **G6** | After-ship review | — (CDP `job=delivery-review`) | — | — |
@@ -305,7 +305,7 @@ CDP rows (G1/G2/G4/G6) are out of scope — they use `team_dispatch(model=cdp/�
 
 **W3 plan → implement:** when a G3 plan leg closes
 `plan:closeout_verdict=PLAN_COMPLETE`, the conductor's `NEXT_ADMIT` is a nested
-`contract=implement` dispatch with `nest_under=<plan_dispatch_id>` (inherit lane
+`job=implement` dispatch with `nest_under=<plan_dispatch_id>` (inherit lane
 + worktree). Read plan closeout fields (`open_forks`, `spec_sha256`,
 `artifact_paths`, verdict) before authoring the implement packet. Sparse nested
 `ask|recon|seed` legs use explicit/packet **`sdk_mode: plan`** when plan mode
