@@ -136,10 +136,10 @@ Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-po
 _CURSOR_MODEL_ECONOMICS_BLOCK = """\
 ## Cursor model economics — load-bearing facts
 Detail: Use the `cursor-model-economics` skill (shared_sync — CDP + Cursor).
-- **T1 conductor:** `cursor/claude-sonnet-5` @ `effort=max` (`thinking=true`, `context=1m`) — ¬ Grok default.
+- **T1 conductor:** `cursor/grok-4.7` (omit-model default; card `effort=high`, `fast=true`). Mechanical implement: `cursor/composer-2.5`.
 - **Costs:** `config/model_rates.yaml` ($/M) — ¬ on model cards.
-- **Auto/Router:** Teams/Enterprise only; ¬ prompt-nudge; ULG dense work pins Composer (¬ `desired_model=auto`).
-- **GPT knobs:** `reasoning` — ¬ `extra-high`; Grok / Opus effort rungs follow the model card (Grok through `xhigh`, Opus through `max`)."""
+- **Auto/Router:** Teams/Enterprise only; ¬ prompt-nudge; omit `model=` resolves `cursor/grok-4.7` (¬ `desired_model=auto` on a dense pin).
+- **Grok knobs:** `effort` through `xhigh`; card default `fast=true`."""
 
 # Compact index — full playbook is skill `consult-routing` (current superset).
 # Web-dedup (friction 25727 follow-on): the transport-preflight mandate is GATES

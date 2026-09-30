@@ -116,7 +116,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | 1 | Architecture | ACTIVE `cdp/opus-5` reasoning_effort=max · **arch skill floor**. | `[consult:judgment_gap]` | `fable-answer.md` |
 | 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (not a different model, not `extra`). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
-| 4 | Check | **Explicit Other Models pin only** (e.g. Terra). Default **skip** (G3→G5). `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
+| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `purpose=review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
 | 6 | Pre-land review | `cdp/opus-5` `purpose=review` on lane branch diff | `[judgment]` | R1 sidecar |
 | 7 | Verify + ship | inline + land | `[inline]` | ACs, docstrings, close, L1 |
@@ -285,7 +285,7 @@ R1 ≺ L1 ≺ entry gate DONE (`conductor_score_journal` substrate).
 
 ## Tick enrollment
 
-Scoreboard → todo attrs → CHECKPOINT on `layer-{slug}` + `enroll_charter_runner=true`.
+Scoreboard → todo attrs → CHECKPOINT on `layer-{slug}`. Commission with ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`).
 Attended default (leave `attendance` unset); `attendance=autonomous` allowed with
 `arc_lane=layer` (recommended) or unset (defaults layer). Stamp `arc_lane=path_sim`
 only for deepen / non-layer arcs. Annotate every G-row. Template + mechanics:

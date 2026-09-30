@@ -226,8 +226,8 @@ def build_ide_hop_message(
         "git-posture § Land on every land (merge, keep both).",
         "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
         "cursor-sdk; life repo-write → cursor-auto; then cdp/opus-5.5 (check) → "
-        "cdp/fable-5.1 (design/judgment); cursor/claude-opus-5-5 "
-        "last-resort only; ¬ cursor/claude-fable-5-1; page human only on "
+        "cdp/opus-5 (design/judgment); cursor/grok-4.7 for live checkout; "
+        "¬ cursor/claude-*; page human only on "
         "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",

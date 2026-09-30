@@ -253,7 +253,7 @@ per-G-row one. Default posture once running:
   *completion*; do not round-trip for a separate "ok to merge?"
 - **Stop only for a true operator-only gate** — credentials, an irreversible
   non-revertible act, or a genuine unranked fork. Forks go to the judgment
-  ladder (independent binder — Fable / Opus / terra) first; `needs-attended`
+  ladder (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks) first; `needs-attended`
   is for the human-only remainder, not for "should I proceed" or "should I
   merge."
 - **Named exception overrides the default.** If a mission genuinely needs the
@@ -316,48 +316,36 @@ of a conductor dispatch).
 
 ## Model / effort tier (cost-aware — binding)
 
-`cursor/claude-opus-5-5` is **expensive**. Prefer the **cheapest tier that can
-honestly hold the conductor remit**. Re-check when pricing or fleet defaults
-move (`observability` dispatch-economics when spend matters). Compose with
-`lean-context-dispatch-first` + `consult-routing` — non-primary models stay
-operator-gated unless a standing rule names them.
-
-**Pool first, then rate.** Composer draws Cursor Models (generous).
-Sonnet / Opus / Terra draw the capped Other Models (second) pool.
-Do not cite total-dollar-by-model spend as the justification when call
-volumes differ — reprice the **same token mix** at both rate cards first.
-Cache-read-heavy workloads can shift relative cost by model (`cache_read`
-rates and input/output $/M differ across pools — see rate card).
+Prefer the **cheapest in-use tier that can honestly hold the conductor remit**.
+Re-check when pricing or fleet defaults move (`observability` dispatch-economics
+when spend matters). Compose with `lean-context-dispatch-first` + `consult-routing`.
+Cursor seats in use: `cursor/grok-4.7` and `cursor/composer-2.5`.
 Rates: `config/model_rates.yaml`.
 
 | Seat | Model / contract | Use when |
 |---|---|---|
-| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
-| **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
+| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — card default `effort=high`, `fast=true` | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
+| **Composer (nested implement)** | **`cursor/composer-2.5`** — pin `model=` on `contract=implement`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. Omit `model=` resolves grok, not Composer. |
 | **CDP width** | **`cdp/opus-5`** `reasoning_effort=max` | G1 architecture, G2 frame, G4 skeptic, and G3→G5 score-ratify read ACTIVE (model + reasoning_effort; effort_when_bind_gates_wave=max only when a bind gates a wave). G2 follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. Shipped ACTIVE is cdp/opus-5 at reasoning_effort=max; the constant in libs/implement_admission/conductor_width_seat.py wins if they differ; restore by setting ACTIVE to the RESTORE value (cdp/fable-5.1, reasoning_effort=high, effort_when_bind_gates_wave=max). |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
-| **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
+| **Live checkout** | **`cursor/grok-4.7`** `contract=none` | File:line depth on the cursor-sdk checkout. |
 
-While ACTIVE.model is cdp/opus-5, G4 is the same usage channel as an Opus binder; restoring cdp/fable-5.1 returns the cross-family skeptic, and Sonnet, Terra, or another model does not imitate that split.
-
-> `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
-
-Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-family binder stays on `judgment-escalation-ladder` 2c, not the default conductor seat.
+While ACTIVE.model is cdp/opus-5, G4 is the same usage channel as an Opus binder; restoring cdp/fable-5.1 returns the cross-family skeptic.
 
 **Nested legs (always split by cost class):**
-- Mechanical implement → Composer (`omit model=`, `contract=implement`)
-- Investigate densify → Composer `contract=investigate` returning `OPEN FORK:` lines
-- Independent binder when conductor unsure → CDP per trigger list
+- Mechanical implement → `cursor/composer-2.5` (`contract=implement`, pin `model=`)
+- Investigate densify → `cursor/grok-4.7` `contract=investigate` returning `OPEN FORK:` lines
+- Independent binder when conductor unsure → `cdp/opus-5.5` (`cdp/fable` only when Kaywan asks)
 
 **Anti-patterns (cost):**
 | Bad | Good |
 |---|---|
-| Default every conductor to Opus or Sonnet `max`/`1m` | Composer standing; CDP or explicit pins only on a named trigger |
+| Default every conductor off `cursor/grok-4.7` | Grok standing; `cdp/opus-5.5` only on a named bind trigger |
 | Premium model at default effort | Cheaper model at high effort **on the same pool** |
 | Composer conductor that also hand-codes a mechanical remainder after a pick | Nest Composer |
 | Re-spend Opus to amend a densified packet | Composer amend |
 | Ignore `sdk_cost_risk` warning | Downgrade model or split bind/compose |
-| Pin Terra/Sonnet because the skill used to | Composer standing unless the remit needs an Other Models explicit pin |
+| Pin a cursor seat other than grok or composer | `cursor/grok-4.7` standing; `cursor/composer-2.5` for mechanical implement |
 | Cite total-dollar-by-model when call volumes differ by an order of magnitude | Reprice the same token mix at both rate cards |
 
 `/conductor` asks standing seat / pin (Q7) when unbound; operator may pin a slug.
@@ -824,7 +812,7 @@ by `service=` — do not spend it on up/down (a:36905 item 5).
 ## Admit
 
 ```text
-# Default conductor (Composer omit model=)
+# Default conductor (omit model= → cursor/grok-4.7)
 # Precondition: todo shaped per § Admit from an existing plan; the materializer
 # writes the "Use the conductor skill — …" line into <invariants> itself.
 team_dispatch(
@@ -857,9 +845,6 @@ instead of silently admitting on shared master. If you see `A=1` and
 `holder_source_repo=…/universal-llm-gateway` without a named Lane-A reason, the
 admit selected Lane A (omitted/`lane="A"`) — stop nesting mechanical work onto
 a B branch that isn't this checkout.
-
-When admitting **explicit `cursor/claude-opus-5-5` pin**: one announce line (`Conductor Opus pin: <trigger> — <why>`),
-then proceed (`lean-context-dispatch-first` inform-then-proceed).
 
 ## Gotchas
 

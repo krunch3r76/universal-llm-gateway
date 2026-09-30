@@ -5,9 +5,8 @@ the binding rules; this file holds the byte-identical template and status tables
 
 ## Initial CHECKPOINT template (BINDING)
 
-**When:** hanging a layering work item on the charter runner — mint a `charter-runner`
-root (`agent_bus send` with `enroll_charter_runner=true`; tag alone is `422
-reserved_enrollment_tag`).
+**When:** recording layering progress on the work item. Commission the arc with
+ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`).
 
 **Order:** (1) mint scoreboard at
 `cortex://notes/system/threads/{slug}-scoreboard.md`; (2) stamp todo attrs (skill
@@ -45,7 +44,7 @@ cite that document's `source_uri` in the `[x]` line; do not mark G1 closed from 
 TYPE: CHECKPOINT
 
 ## Profile
-`tick_charter` (charter-runner enrolled)
+`orchestrator_continuity`
 
 ## Anchor
 - Thread: agent-bus:{ROOT_ID}

@@ -162,8 +162,8 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 
 | Element | Value |
 |---|---|
-| Default reviewer | **`cdp/opus-5`** · `purpose=review` · `reasoning_effort="high"` — delivery critique over staged diff/closeout. Terra / Other Models only if named |
-| Escalation | local `cursor/claude-opus-5` only when CDP review lane unavailable; Fable only for frame/doctrine meta — ¬ local Fable for this lane |
+| Default reviewer | **`cdp/opus-5`** · `purpose=review` · `reasoning_effort="high"` — delivery critique over staged diff/closeout |
+| Escalation | `cursor/grok-4.7` `contract=none` when the CDP review lane is unavailable. `cdp/fable` only when Kaywan asks |
 | Fire | `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` — queues behind the live holder, ¬ contend |
 | Deliver | `cse_session(op=followup)` into the attached CSE |
 | Log | NOTE on the **MONITOR sibling** — silence on the watched lane |

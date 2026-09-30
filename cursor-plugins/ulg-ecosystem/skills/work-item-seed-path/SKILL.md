@@ -216,15 +216,14 @@ Copy **§ S3 Fable generate recipe** (followup vs fresh generate). Staging
 `purpose=ask` seals the arch pair — do not reconstruct `skills=`. Harvest to cortex.
 IDE seed path stamps Mode B on the disposition; it does not fire the consult.
 
-**Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
-structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` (hop 4) when the
+**Checkout rung:** fork needs live-checkout verification at file:line depth a CDP seat
+structurally cannot perform ⇒ escalate to `cursor/grok-4.7` `contract=none` (hop 4) when the
 four-condition trigger in `decision:architecture-bind-escalation-chain` holds
 (`cdp-operator-proxy` § Architecture-bind chain) — **pre-authorized, ¬ operator ping**.
 That trigger picks the **seat**, not a second effort gate; once picked, knobs follow
-the model card. Hop 4 may recommend `{xhigh|max}` for that hop's duty. Announce
+the grok card (`effort` through `xhigh`). Announce
 model + effort + why. That SOT also binds the **mandatory** independent
-check (`cdp/fable` default; `cursor/gpt-5.6-terra` only if operator/packet names
-Other Models — an Opus-authored architecture is not self-ratifiable) and verbatim
+check (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks — an architecture is not self-ratifiable) and verbatim
 densify. ¬ fork those rules here.
 
 | Mode | Sequence | Choose when |

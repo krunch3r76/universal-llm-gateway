@@ -200,7 +200,7 @@ Two axes only. Spec: `docs/specs/agent-bus-thread-classification-thin.md`.
 | Axis | Values | Recognition |
 |---|---|---|
 | **Spine** | `root` \| `work` | Tag `role:root` ⇒ root; default (absent) ⇒ work. Legacy read: CHECKPOINT turn ∧ ¬`type:monitor` ⇒ root until stamped. |
-| **Enrollment** | `charter-runner` \| none | Dual-key unchanged (`enroll_charter_runner=true` to newly add). **Constraint:** enrolled ⇒ spine root (write gate auto-stamps `role:root`). |
+| **Enrollment** | `charter-runner` \| none | Not a launch path. Commissions are ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`). |
 
 Only reserved spine tag: `role:root`. Other `role:*` tags are rejected on write. Not classification: `bus_lifecycle:*`, DB `status` / `bus_lifecycle_state`, facet tags (`type:*`, `project:*`, …), thread `480`.
 

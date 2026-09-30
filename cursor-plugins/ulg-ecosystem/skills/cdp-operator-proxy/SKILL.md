@@ -31,8 +31,7 @@ dispositioning after `TYPE: CLOSEOUT`.
 
 Authoring the DIRECTIVE body: Use the `directive-authoring-standard` skill. A judgment fork on `contract: implement` needs a line-start `RULING` / `AC<n> — RULING` marker that admit can see — SOT is that skill's **Judgment marker** section. Prose that merely *is* a fork does not raise.
 
-**Not:** IDE cursor lead · charter-runner tick windows (Opus at path-sim R-admit/R-after
-only) · steady-state orchestration without the operator-proxy bus shape.
+**Not:** IDE cursor lead · steady-state orchestration without the operator-proxy bus shape.
 
 ## ulg-code ops verbs on the operator seat (BINDING — operator 2026-09-29)
 
@@ -169,7 +168,7 @@ separate plane.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
 8. `tool_absent(life) ⇏ operator_gate` — a missing toys tool that ulg-code exposes is called on ulg-code. Verb for a commission is `team_dispatch`, not `request` / `send(to=cursor)`. ¬ park it on the operator in prose.
 9. **Fable** — standing outside check for architecture-suitability; encourage route, ¬ required every DIRECTIVE.
-10. **`cursor/claude-opus-5`** — inform-then-proceed when warranted. Architecture-bind's four-condition trigger is when to **pick** this seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the model card through `max`. ¬ `anthropic/*` API.
+10. **Architecture bind** — `cdp/opus-5.5` for the bind; live-checkout file:line depth is `cursor/grok-4.7` `contract=none` on cursor-sdk. The four-condition trigger is when to **pick** that checkout seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the grok card (`effort` through `xhigh`, card default `fast=true`). ¬ `anthropic/*` API. ¬ `cursor/claude-*`.
 11. **Private operator thread** — dedicated `agent_bus.request` lane (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
 12. **Vision-resident operator.** Field SOT: skill `directive-authoring-standard` D1. Auto refuses `implement`/`investigate` without `vision:`. MAP escalation-only.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
@@ -178,8 +177,8 @@ separate plane.
 16. One live request per private thread — § Interrupt / supersede (SOT). Exceptions: continuity hop skips supersede; `nested_sdk_finished` not a candidate.
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
 18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
-19. **Escalation chain + nesting.** Executor is `cursor-sdk` on lane B. **CDP stuck:** ulg-code `team_dispatch` to nested `cursor-sdk` (`cursor/claude-opus-5` or explicit Other Models pin) — ¬ human. Terra / Other Models only if named. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Hop 5 stays `cdp/fable` under the budget condition: 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Every later hop is nested `cursor-sdk`.
-20. **Mission seat map.** Opus=operator · Fable=advisor (no `cdp/fable` unless Kaywan asked) · Composer=investigate limb · `cursor-sdk`=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify by commissioning a cursor-sdk seat. ¬ park executable ACs.
+19. **Escalation chain + nesting.** Executor is `cursor-sdk` on lane B. **CDP stuck:** ulg-code `team_dispatch` to nested `cursor-sdk` (`cursor/grok-4.7`, `contract=none`) — ¬ human. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Hop 5 is `cdp/opus-5.5`. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Every later hop is nested `cursor-sdk`.
+20. **Mission seat map.** Opus=operator · Fable=advisor (no `cdp/fable` unless Kaywan asked) · `cursor/grok-4.7`=omit-model executor, investigate, and conductor · `cursor/composer-2.5`=mechanical `contract=implement` · `cursor-sdk` lane B=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify by commissioning a cursor-sdk seat. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
 22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only to **instantiate** a live IDE cursor session (or a true operator-only IDE gate: Reload Window / credentials). Human opens Cursor; **IDE seat executes**. `send` the commission first (inv 40). ¬ `only your hand` · ¬ ask the human to run `manage`. (e) life `notify`; absent ⇒ cursor `send`/`request` per inv 8/40. (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
 23. **In-chat delivery.** Retained CSE = live correspondent via `cse_session(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
@@ -210,11 +209,11 @@ When blocked on a fact this seat cannot settle from tools alone:
 |---|---|
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
 | 2 | Consult **cursor** via ulg-code `team_dispatch` (`seat=cursor-sdk`, `contract=none` or `investigate` as the leg requires, `lane=B`) |
-| 2b | **Judgment stuck (this CDP seat unsure)** — ulg-code `team_dispatch` to `cursor-sdk`: default **`cursor/claude-opus-5`** (`contract=none`, live checkout). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). If the named pin is refused, stop and tell Kaywan. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. **`cursor/claude-sonnet-5` — last resort, explicit `model=` pin only:** fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe. `cursor/claude-fable-5{,-1}` **blocked** (cost). |
+| 2b | **Judgment stuck (this CDP seat unsure)** — ulg-code `team_dispatch` to `cursor-sdk`: **`cursor/grok-4.7`** (`contract=none`, live checkout). 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. `cursor/claude-fable-5{,-1}` **blocked** (cost). |
 | 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
-**Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/claude-opus-5 | explicit Other Models}` · `human_principal ⇔ operator_only_gate`.
+**Invariant:** `cdp_seat_stuck ⇒ cursor-sdk cursor/grok-4.7` · `human_principal ⇔ operator_only_gate`.
 
 **Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
 
@@ -248,10 +247,7 @@ Express intent; cursor picks the substrate path.
 
 | Intent | Express it as |
 |---|---|
-| Progress under charter-runner | Mint/stamp friction or todo with `charter_root` on an **enrolled** root — birth/enroll **before** claiming tick progress |
-| Life→code **direct** (B1) | DIRECTIVE on the request lane — cursor-auto executes under its own lease |
-| Life→code **tick handoff** (B2) | DIRECTIVE that hands the item to the tick — Auto mints/stamps and releases; a handoff that goes quiet instead of admitting is a **cursor-side stall to report**, ¬ an operator fork |
-| Important friction | **Must** auto-belt on the next tick once actionable + stamped + root live — lag is a defect |
+| Life→code | DIRECTIVE on the request lane, commissioned with ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`) |
 
 Lease / nest / release mechanics are cursor's duty (`operator-proxy-substrate`).
 
@@ -489,17 +485,17 @@ The codified sequence for binds too deep for the reasoner alone — premium spen
 
 ### Invocation — commission the idea, ¬ the chain
 
-**Preferred:** sub-PM bind after Composer enumerate — you supply hop 1 + 7 only. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. **Direct:** walk hops when bind *is* the work.
+**Preferred:** sub-PM bind after `cursor/grok-4.7` investigate — you supply hop 1 + 7 only. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. **Direct:** walk hops when bind *is* the work.
 
-### Standing trigger — pick T3 (`cursor/claude-opus-5`) when **all four** hold
+### Standing trigger — pick T3 (`cursor/grok-4.7` `contract=none`) when **all four** hold
 
 1. A cheaper tier already ran and left a residual — the reasoner's `investigate` closeout did not settle it.
 2. The bind needs **live-checkout verification at file:line depth**, which this seat structurally cannot perform (`inline_only`).
 3. The surface is cross-cutting or invariant-touching — ≥3 subsystems, or a prior bind's premise may be false.
 4. The output **gates an implement wave** whose blast radius exceeds the consult cost.
 
-Once hop 4 fires, effort is the model card (`low`→`max`). Prefer `xhigh`; use `max` when the bind gates a **multi-slice** wave. Announce one line —
-model, effort, why. Halt regardless when premium spend is paused. Fewer than four ⇒ do not pick T3; `TYPE: OPERATOR_GATE` with the missing condition named.
+Once hop 4 fires, effort is the grok card (`low`→`xhigh`). Prefer `xhigh` when the bind gates a **multi-slice** wave. Announce one line —
+model, effort, why. Fewer than four ⇒ do not pick T3; `TYPE: OPERATOR_GATE` with the missing condition named.
 
 ### Hops
 
@@ -508,13 +504,13 @@ model, effort, why. Halt regardless when premium spend is paused. Fewer than fou
 | 1 | this seat | DIRECTIVE | Pin the Question **without your hypothesis** (inv 28a); name what a wrong bind would cost |
 | 2 | `cursor-sdk` lane B | — | Executor admit; every later hop is nested `cursor-sdk` (inv 19) |
 | 3 | **`seat=cursor-sdk`** | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
-| 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `none` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
-| 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `none` | **Independent check** — falsify hop 4's load-bearing premises. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Terra only if operator/packet names Other Models. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged when Kaywan asked; update peer disclosure (inv 36). |
-| 6 | **`seat=cursor-sdk` Composer** | `pure-mechanical` | Densify into a Composer-ready orchestrator packet |
+| 4 | `cursor/grok-4.7` `{xhigh}` | `none` | Live-checkout architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
+| 5 | `cdp/opus-5.5` | `none` | **Independent check** — falsify hop 4's load-bearing premises. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
+| 6 | **`seat=cursor-sdk` `cursor/composer-2.5`** | `pure-mechanical` | Densify into an implement-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
 | 8 | `cursor-sdk` composer-2.5 | `implement` | Run the wave |
 
-**Hop 5 not optional** — Fable (default) or explicit Terra. **Hop 6 verbatim** — hop 4 `files_expected` + ACs re-verified.
+**Hop 5 not optional** — `cdp/opus-5.5` (`cdp/fable` only when Kaywan asks). **Hop 6 verbatim** — hop 4 `files_expected` + ACs re-verified.
 
 
 ## Executor ladder (operator sets `density` only)

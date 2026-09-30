@@ -61,9 +61,8 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 ## Autonomous work-item spine — extensions
 
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
-standing default `workflows.check_review.model` (`cursor/claude-fable-5-1` during Fable window)
-or explicit `cursor/gpt-5.6-terra|sol|luna` pin; poll `reply_from_agent` from admit. API
-`role=reviewer` + terra only when **all** reading pre-staged inline (`code-on-api`). Access-only
+standing default `workflows.check_review.model` (`cursor/grok-4.7`); poll `reply_from_agent` from admit. API
+`role=reviewer` only when **all** reading is pre-staged inline (`code-on-api`). Access-only
 REVISE ≠ Gate-6 close.
 
 **Steps 1–2 zoom-out (C2):** recon/investigate packets MUST carry touch-point inventory + class/sibling
