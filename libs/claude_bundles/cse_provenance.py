@@ -2,7 +2,8 @@
 
 The CDP registry owns the durable episode log while callers provide a
 read-only lane-lineage lookup.  Episodes are append-only so rebinding a URL
-cannot erase the evidence for an earlier host or mission.
+cannot erase the evidence for an earlier host or mission; an append that
+restates the latest episode for its URL is a re-observation and writes no row.
 
 Reads go through ``cse_provenance_index`` — a keyed index of the episode rows
 in ``registry.jsonl`` — so request paths (``episodes_for_chat_url``,
@@ -61,9 +62,29 @@ class ProvenanceEpisode:
 
 _EPISODE_FIELDS = frozenset(ProvenanceEpisode.__dataclass_fields__)
 
+# A row whose caller-supplied fields all equal the latest row for the same URL
+# is a re-observation of the binding, not a change to it.  Only these three
+# fields differ between such rows: ``episode_id`` is minted per append,
+# ``observed_at`` is the append time, ``supersedes`` is derived from the latest
+# row.  Every other field reaches a reader (resolve projects it, harvest keys
+# on ``correlation_id``, enrich copies it), so any difference is evidence.
+_REOBSERVATION_FIELDS = frozenset({"episode_id", "observed_at", "supersedes"})
+_BINDING_FIELDS = _EPISODE_FIELDS - _REOBSERVATION_FIELDS
+
 
 def _episode_record(episode: ProvenanceEpisode) -> dict[str, Any]:
     return {"event": "cse.provenance.episode", **asdict(episode)}
+
+
+def _same_binding(prior: ProvenanceEpisode, candidate: ProvenanceEpisode) -> bool:
+    """True when *candidate* restates *prior* on every binding field.
+
+    The comparison target is the latest row for the URL, whatever host wrote
+    it, so a rebind A→B→A differs from B on ``registration_id`` and appends.
+    """
+    return all(
+        getattr(prior, field) == getattr(candidate, field) for field in _BINDING_FIELDS
+    )
 
 
 def _legacy_episode_fields(record: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +136,13 @@ def append_episode(
     ``lane_thread`` is a registry claim; ``lineage`` copies ``parent_thread``
     and ``lane_role`` from an explicit proof writer.  Prior bytes stay immutable
     via ``supersedes`` linkage rather than in-place mutation.
+
+    An unchanged binding writes nothing: when every binding field equals the
+    latest episode for this URL (``_BINDING_FIELDS``), that episode is returned
+    as-is and no row or event is produced.  Callers that re-bind on every
+    execution end, seat ensure, or drain tick therefore cannot amplify the
+    journal (a:36945); a real change — host, lane, state, lineage, correlation,
+    reason — still appends with ``supersedes`` pointing at the latest row.
     """
     normalized = normalize_cse_url(chat_url)
     if not normalized:
@@ -148,6 +176,8 @@ def append_episode(
         association_id=association_id if lineage_state == "proven" else None,
         lineage_observed_at=lineage_observed_at,
     )
+    if superseded is not None and _same_binding(superseded, episode):
+        return superseded
     store.append_log("cse_provenance_episode", _episode_record(episode))
     from claude_bundles import cdp_registry_events
 

@@ -53,7 +53,11 @@ def enrich_request_provenance(
     """Append a supersede-linked enrichment episode when bus lineage is provable.
 
     This module is the only production writer of ``lineage_state=proven``.
-    Prior journal bytes remain immutable; enrichment always appends.
+    Prior journal bytes remain immutable; an overlay appends whenever it
+    differs from the latest episode for the URL — it always does after a
+    registry bind, because ``attribution_source`` alone distinguishes it.  A
+    repeat of an identical overlay (same lineage, same reason) is a
+    re-observation and writes nothing (``cse_provenance.append_episode``).
     """
     if not lane_thread or not chat_url:
         return {"ok": False, "reason": "insufficient_identity"}
