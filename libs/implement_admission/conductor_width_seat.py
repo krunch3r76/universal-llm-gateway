@@ -1,8 +1,9 @@
 """One assignment selects the conductor width seat.
 
-G1, G2, G4, and G3→G5 read ``ACTIVE``. Restoring the prior Fable seat is
-editing ``ACTIVE`` to equal ``RESTORE`` (or ``ACTIVE = RESTORE``). There is
-no second switch, env var, or todo attr.
+G1, G2, G4, G3→G5, path-sim Q, the hop-5 check, and the dispatch-kernel
+width cell read ``ACTIVE``. Restoring the prior Fable seat is editing
+``ACTIVE`` to equal ``RESTORE`` (or ``ACTIVE = RESTORE``). There is no
+second switch, env var, or todo attr.
 """
 
 from __future__ import annotations
