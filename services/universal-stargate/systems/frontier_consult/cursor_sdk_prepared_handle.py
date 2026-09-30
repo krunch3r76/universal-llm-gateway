@@ -65,6 +65,8 @@ class PreparedCursorSdkHandle:
     consume_branch: str | None = None
     consume_activation: dict[str, str] | None = None
     consume_reason: str | None = None
+    #: Wire knobs the caller sent, before policy defaults are filled.
+    requested_model_knobs: dict[str, str] | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -138,6 +140,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "consume_branch": handle.consume_branch,
         "consume_activation": handle.consume_activation,
         "consume_reason": handle.consume_reason,
+        "requested_model_knobs": handle.requested_model_knobs,
     }
 
 
@@ -196,4 +199,5 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         consume_branch=data.get("consume_branch"),
         consume_activation=data.get("consume_activation"),
         consume_reason=data.get("consume_reason"),
+        requested_model_knobs=data.get("requested_model_knobs"),
     )

@@ -130,3 +130,15 @@ async def test_commission_receives_orientation_prefixed_prompt(
     prompt = captured["prompt_override"]
     assert prompt.startswith("ORIENTATION BLOCK")
     assert "TYPE: CONTINUITY_HANDOFF" in prompt
+    # 16:49Z arm path: purpose is the wire field. session=/job= TypeError
+    # before the relay (a:37026) and never reach status:armed.
+    assert captured["purpose"] == "operator-proxy"
+    assert "session" not in captured
+    assert "job" not in captured
+    import inspect
+
+    from services.git_integration_worker.cursor_auto.cdp_escalation import (
+        commission_cdp_escalation,
+    )
+
+    inspect.signature(commission_cdp_escalation).bind(_job(), **captured)

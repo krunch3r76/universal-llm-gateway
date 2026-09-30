@@ -1426,9 +1426,44 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        conductor_has_live_nested,
+    )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _is_conductor_row,
         maybe_fire_conductor_hop_reactor,
     )
+
+    parked_parent = await asyncio.to_thread(
+        ledger.find_park_parent_any_status, child_id=dispatch_id
+    )
+    if parked_parent is not None:
+        parent_id, _parent_repo, parent_status = parked_parent
+        if parent_status in ("completed", "failed", "cancelled"):
+            def _load_parent_row() -> dict | None:
+                with ledger._connect() as conn:
+                    row = conn.execute(
+                        "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                        (parent_id,),
+                    ).fetchone()
+                if row is None:
+                    return None
+                return {k: row[k] for k in row.keys()}
+
+            parent_dict = await asyncio.to_thread(_load_parent_row)
+            if (
+                parent_dict
+                and _is_conductor_row(parent_dict)
+                and not conductor_has_live_nested(dispatch_id=parent_id)
+            ):
+                try:
+                    await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "conductor hop reactor failed parent dispatch_id=%s",
+                        parent_id,
+                    )
+                await asyncio.to_thread(ledger.clear_park_child, parent_id=parent_id)
 
     try:
         await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)

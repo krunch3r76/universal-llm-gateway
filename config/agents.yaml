@@ -316,20 +316,20 @@ profiles:
 #   web-consult / web-implement → web-anthropic; cursor-consult / cursor-implement → cursor.
 #   Web consult shorthand: team_dispatch(op="handoff", seat="web-anthropic", job="confer") → web-anthropic + operator push.
 #   Cursor consult: team_dispatch(op="handoff", seat="cursor") → cursor IDE mailbox.
-#   Judgment omit-model: workflows.auto_judgment.model is cursor/grok-4.7.
-#     team_dispatch generate with model omitted resolves that id for every
-#     contract (Stargate does not split by contract). Auto-lane judgment
-#     contracts (answer, confer, ask, verify, execute, propagate) resolve the
-#     same model; omit-effort is contract_effort high; fast=true is the grok
-#     card default. Never Composer for judgment.
-#   Bound implement (Auto lane): contract=implement → workflows.mechanical_implement
-#     (cursor/composer-2.5). Pass explicit model=cursor/composer-2.5 when a
-#     team_dispatch implement must stay on Composer — omit-model follows
-#     auto_judgment. Packet must be dense. cursor-sdk is platform=sdk on the
-#     Cursor subscription, NOT an Anthropic-API generate lane.
+#   Omit-model (Stargate generate): contract=implement or mechanical →
+#     workflows.mechanical_implement (cursor/composer-2.5). Every other
+#     omit-model contract → workflows.auto_judgment (cursor/grok-4.7).
+#     Judgment contracts (answer, confer, ask, verify, execute, propagate,
+#     conductor, none, sketch, …) stay on grok; omit-effort follows
+#     contract_effort (high for those judgment jobs except conductor/seed/
+#     freeform). fast=true is the grok card default when the knob is omitted.
+#   Bound implement (Auto lane): same Composer slot as mechanical_implement;
+#     packet must be dense. cursor-sdk is platform=sdk on the Cursor
+#     subscription, NOT an Anthropic-API generate lane.
 #   Recon+investigate: contract=investigate|seed|recon → workflows.investigate
-#     (cursor/grok-4.7). investigate and seed omit-effort are xhigh; recon is
-#     medium. fast=true is the grok card default. Returns facts + OPEN FORK
+#     (cursor/grok-4.7). investigate omit-effort is high; seed omit-effort is
+#     low; recon omit-effort is medium. conductor and freeform omit-effort
+#     are low. fast=true is the grok card default. Returns facts + OPEN FORK
 #     lines, never a bind. Ranking/bind → CDP (cdp/fable, cdp/opus-5).
 #   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", seat="cursor", contract="implement") →
 #     cursor from any dispatching seat; packet + acceptance criteria required. Use only

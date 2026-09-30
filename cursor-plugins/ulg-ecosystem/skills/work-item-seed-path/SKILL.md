@@ -345,11 +345,17 @@ team_dispatch(
   lane="B",
   source_ref="todo:{slug}",      # ¬ packet_path (refused on this contract)
   model_knobs={"fast":"true"},
-  dispatch_thread_id="{root}",   # continuity root with turns — or pending-empty child of root
+  dispatch_thread_id="{root}",   # shape 1 when root is not an operator lane; else shape 2 child
 )
 ```
 
 `dispatch_thread_id ∈ {continuity root with turns, pending-empty child of root}`.
+Shape 1: a continuity root that is not an operator lane. When that root is an
+operator lane, the admit 422s `conductor_summoning_operator_lane`. Shape 2 for
+an operator-lane commissioning thread: pre-create a pending-empty child
+(`bus_lifecycle_state=pending`, `turn_count=0`, `parent_thread=<lane>`,
+`cse_registration_id` null) and pass that child as `dispatch_thread_id` and
+`reuse_thread`.
 Todo shape the materializer reads (canonical keys, G1-skip stamps, entry gate):
 `conductor` § Admit from an existing plan.
 Forbid lifecycle-null pre-create (422 `conductor_coord_split_refused`). Resume

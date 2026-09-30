@@ -1710,6 +1710,31 @@ class CursorDispatchLedger:
             return None
         return row["dispatch_id"], row["source_repo"]
 
+    def find_park_parent_any_status(
+        self, *, child_id: str
+    ) -> tuple[str, str | None, str] | None:
+        """Return ``(parent_id, source_repo, status)`` for any parent with ``park_child``."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT dispatch_id, source_repo, status FROM cursor_sdk_dispatches "
+                "WHERE park_child_dispatch_id=? "
+                "ORDER BY CASE status WHEN ? THEN 0 ELSE 1 END, terminal_at DESC "
+                "LIMIT 1",
+                (child_id, _STATUS_PARKED_WAITING),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["dispatch_id"], row["source_repo"], str(row["status"] or "")
+
+    def clear_park_child(self, *, parent_id: str) -> None:
+        """Clear ``park_child_dispatch_id`` without changing parent ``status``."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET park_child_dispatch_id=NULL "
+                "WHERE dispatch_id=?",
+                (parent_id,),
+            )
+
     def list_nested_children(self, *, parent_dispatch_id: str) -> list[str]:
         """Return dispatch ids admitted with ``nest_under=parent_dispatch_id``."""
         with self._connect() as conn:
@@ -2435,6 +2460,25 @@ class CursorDispatchLedger:
                 self.restore_from_park(parent_id=dispatch_id)
             if key:
                 lease_keys.add(key)
+        with self._connect() as conn:
+            stale_park_rows = conn.execute(
+                "SELECT dispatch_id, park_child_dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE status IN ('completed','failed','cancelled') "
+                "AND park_child_dispatch_id IS NOT NULL"
+            ).fetchall()
+        for stale in stale_park_rows:
+            parent_id = stale["dispatch_id"]
+            child_id = stale["park_child_dispatch_id"]
+            if not child_id:
+                continue
+            with self._connect() as conn:
+                child = conn.execute(
+                    "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (child_id,),
+                ).fetchone()
+            if child is not None and child["status"] not in _STATUS_TERMINAL:
+                self.mark_terminal(dispatch_id=child_id, terminal_status="failed")
+            self.clear_park_child(parent_id=parent_id)
         with self._connect() as conn:
             for row in conn.execute(
                 "SELECT DISTINCT lease_key, source_repo FROM cursor_sdk_dispatches "

@@ -81,13 +81,13 @@ async def prepare_cursor_sdk_generate(
     subject: str | None,
     caller_agent: str | None,
     contract: Literal[
-    "sketch",
-    "implement",
-    "wrap",
-    "conductor",
-    "pure-mechanical",
-    "none",
-],
+        "sketch",
+        "implement",
+        "wrap",
+        "conductor",
+        "pure-mechanical",
+        "none",
+    ],
     packet_path: str | None,
     message_text: str | None,
     reuse_thread: str | None = None,
@@ -173,6 +173,7 @@ async def prepare_cursor_sdk_generate(
         role,
         model=model,
         request_id=request_id,
+        job=contract,
     )
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
@@ -573,4 +574,5 @@ async def prepare_cursor_sdk_generate(
         force=force,
         force_reason=force_reason,
         hop_park_release=hop_park_release,
+        requested_model_knobs=dict(model_knobs or {}),
     )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -282,6 +283,100 @@ async def maybe_fire_conductor_park_harvest(*, dispatch_id: str) -> bool:
     return await fire_park_harvest(row)
 
 
+def _fetch_thread_turns(thread_id: str) -> list[dict[str, Any]] | None:
+    """Sync GET /turns?thread=<id>; None on transport/parse failure."""
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=2.0) as client:
+            resp = client.get(
+                "/turns",
+                params={"thread": thread_id},
+                headers=headers,
+            )
+        if resp.status_code >= 400:
+            return None
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return None
+        turns = payload.get("turns")
+        if not isinstance(turns, list):
+            return None
+        return [t for t in turns if isinstance(t, dict)]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def resolve_consult_summoning_watermark_at_instant(
+    *,
+    thread_id: str,
+    closeout_instant: str,
+) -> int | None:
+    """Latest turn at or before ``closeout_instant``; 0 when empty at that instant."""
+    turns = _fetch_thread_turns(thread_id)
+    if turns is None:
+        return None
+    if not turns:
+        return 0
+    try:
+        anchor = datetime.fromisoformat(closeout_instant.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    best = 0
+    for turn in turns:
+        turn_number = turn.get("turn_number")
+        created_at = turn.get("created_at")
+        if not isinstance(turn_number, int) or not created_at:
+            continue
+        try:
+            ts = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if ts <= anchor and turn_number > best:
+            best = turn_number
+    return best
+
+
+def _maybe_retry_summoning_watermark(
+    *,
+    dispatch_id: str,
+    rec: dict[str, Any],
+) -> dict[str, Any] | None:
+    """One-shot closeout-anchored watermark stamp via ``merge_record_json``."""
+    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
+    if not summoning_id:
+        return None
+    if isinstance(rec.get("consult_summoning_after_turn"), int):
+        return rec
+    stamp_err = rec.get("consult_summoning_stamp_error")
+    if not isinstance(stamp_err, dict):
+        return rec
+    closeout_instant = stamp_err.get("closeout_instant")
+    if not isinstance(closeout_instant, str) or not closeout_instant.strip():
+        return rec
+    watermark = resolve_consult_summoning_watermark_at_instant(
+        thread_id=summoning_id,
+        closeout_instant=closeout_instant,
+    )
+    if watermark is None:
+        return rec
+    patch = {"consult_summoning_after_turn": watermark}
+    ledger = CursorDispatchLedger.instance()
+    ledger.merge_record_json(dispatch_id=dispatch_id, patch=patch)
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return rec
+    try:
+        merged = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        return rec
+    return merged if isinstance(merged, dict) else rec
+
+
 def reply_arrived_on_thread(
     *,
     thread_id: str,
@@ -357,16 +452,28 @@ def consult_pending_continue_owed(
             conn, predecessor_id=dispatch_id, record_json=record_json
         ):
             return False
-    thread_id = str(row.get("thread_id") or "")
-    closeout_turn = rec.get("closeout_turn")
-    if not thread_id or not isinstance(closeout_turn, int):
-        return False
     snapshot = reply_fn or (
         lambda tid, turn, agent: reply_arrived_on_thread(
             thread_id=tid, after_turn=turn, from_agent=agent
         )
     )
-    if not snapshot(thread_id, closeout_turn, "web-anthropic"):
+    worker_reply = False
+    thread_id = str(row.get("thread_id") or "")
+    closeout_turn = rec.get("closeout_turn")
+    if thread_id and isinstance(closeout_turn, int):
+        worker_reply = snapshot(thread_id, closeout_turn, "web-anthropic")
+
+    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
+    summoning_reply = False
+    if summoning_id:
+        if not isinstance(rec.get("consult_summoning_after_turn"), int):
+            rec = _maybe_retry_summoning_watermark(
+                dispatch_id=dispatch_id, rec=rec
+            ) or rec
+        watermark = rec.get("consult_summoning_after_turn")
+        if isinstance(watermark, int):
+            summoning_reply = snapshot(summoning_id, watermark, "web-anthropic")
+    if not worker_reply and not summoning_reply:
         return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         conductor_has_live_nested,

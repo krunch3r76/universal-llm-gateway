@@ -186,12 +186,12 @@ separate plane.
 25. **Bus recency ≠ liveness** — fleet gate attestation authoritative when `fleet_gate_applied: true`; on dispatch lanes `wait.producer.state` (O14 D2, pinned `execution_id`) beats thread recency / unrelated closeout subjects. `in_flight` is the only occupied reading (`liveness_reason` `admit_grace` or `witness_live`). `unknown` is cannot-tell (`no_liveness_signal`) or a dead stream with no terminal write (`stream_dead_no_terminal`) — do not treat either as live and do not treat either as a finished producer.
 26. **Pre-wake observation** — life `fs` fleet-idle JSON; ¬ `agent_bus.request`.
 27. **Staleness vs failure** — read `staleness_rule`; snapshot for occupancy, busy_status for restart safety.
-28. **Mentor, ¬ investigator.** Commission **`seat=cursor-sdk` `job=investigate`** (`cursor/grok-4.7` xhigh fast) for substrate unknowns; adjudicate returned trace, ¬ originate hypothesis. Loop (judgment_required): (a) unanchored ask, (b) challenge chain, (c) withhold held answer, (d) max 2 rounds. `mechanical ⇒ ¬mentor_loop`.
+28. **Mentor, ¬ investigator.** Commission **`seat=cursor-sdk` `job=investigate`** (`cursor/grok-4.7` high fast) for substrate unknowns; adjudicate returned trace, ¬ originate hypothesis. Loop (judgment_required): (a) unanchored ask, (b) challenge chain, (c) withhold held answer, (d) max 2 rounds. `mechanical ⇒ ¬mentor_loop`.
 29. **Roadmap mutable — INSERT STEPS (a)–(e).** cortex roadmap editable via life `fs`; workspaces roadmap via cursor-auto. ¬ charter G-rows.
 30. **Streaming stop only for continuity or true close.** `end(CSE identity) ⇔ continuity_handoff ∨ MISSION_CLOSEOUT`. **Tab ⟂ stream ⟂ lane** (`decision:cse-tab-decoupled-from-session`) — PARK / WAITING / stand-down may end the **stream** without ending CSE or bus lane; ¬ hop or re-stream to keep a tab warm. **Leg** = DISPOSITION/landed row — do **not** emit MISSION_CLOSEOUT; stream MAY park. **Episode close** = residual gate + MISSION_CLOSEOUT + debrief with stream-end sentence. **Continuity** = hop (MCP-refresh / successor); old identity breaks after successor confirmed. **Cursor backstop:** MISSION_CLOSEOUT + live_cse=0 + no stream-end pager ⇒ `cse-stream-stop`. **Continuity autonomous:** non-operator_gate residual ⇒ cursor fires hop promptly — hop ≠ tab-keepalive. **Episodic amendment:** exit = normal terminal; idle-hold = exception within episode. **Persistent carve-out:** MISSION_CLOSEOUT only for arc end or forced refresh; completed unit = Leg. **Going-quiet ≡ stream-stop** — report WAITING / PARK; continue the **lane**, not the generate. **Mechanisability:** arm Monitor + `send_later` at first dispatch; re-arm every turn. Wake bounds silence. Apply deciding-moment test.
 31. **Agent substrate yours to author.** Rules/skills in scope when blocked. (a) plugin edit + install same commission. (b) cursor-sdk-only sparingly. (c) Customize per-slug sync; activation deferred to next window.
 32. **Verification ∈ mission.** Claims at close must be verified in-mission — insert row at max+1 if needed. Residual gate makes deferral legal, not right.
-33. **Ask the executor** via `contract: confer` — perspective worth having. Prefer pattern B over external observer (todo:mission-observer-seat parked). **Challenge-seeking** (want pushback / mentor inv 28 challenge chain): wire `desired_model=grok-4.7` + `desired_effort=xhigh` — ¬ leave effort at medium/high when the point is to be challenged.
+33. **Ask the executor** via `contract: confer` — perspective worth having. Prefer pattern B over external observer (todo:mission-observer-seat parked). **Challenge-seeking** (want pushback / mentor inv 28 challenge chain): wire `desired_model=grok-4.7` + `desired_effort=high` — ¬ leave effort at medium when the point is to be challenged.
 34. **Outside break-in — advisory.** Reviewer may post `TYPE: BREAK_IN` without asking — advisory only. Requires live CSE. May return `NO_BREAK_IN`. Complements inv 33 confer.
 35. **Observed vs derived.** Status/rank/liveness claims need substrate quote. Positional implication is derived, not observed.
 36. **Peer disclosure (BINDING).** `∀ ≥2 advisors on same fork: each packet names peers` at commission. Standing claim until fork closes.
@@ -495,7 +495,7 @@ The codified sequence for binds too deep for the reasoner alone — premium spen
 3. The surface is cross-cutting or invariant-touching — ≥3 subsystems, or a prior bind's premise may be false.
 4. The output **gates an implement wave** whose blast radius exceeds the consult cost.
 
-Once hop 4 fires, effort is the grok card (`low`→`xhigh`). Prefer `xhigh` when the bind gates a **multi-slice** wave. Announce one line —
+Once hop 4 fires, effort is the grok card (`low`→`xhigh`). Prefer `high` when the bind gates a **multi-slice** wave. Announce one line —
 model, effort, why. Fewer than four ⇒ do not pick T3; `TYPE: OPERATOR_GATE` with the missing condition named.
 
 ### Hops
@@ -505,7 +505,7 @@ model, effort, why. Fewer than four ⇒ do not pick T3; `TYPE: OPERATOR_GATE` wi
 | 1 | this seat | DIRECTIVE | Pin the Question **without your hypothesis** (inv 28a); name what a wrong bind would cost |
 | 2 | `cursor-sdk` lane B | — | Executor admit; every later hop is nested `cursor-sdk` (inv 19) |
 | 3 | **`seat=cursor-sdk`** | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
-| 4 | `cursor/grok-4.7` `{xhigh}` | `none` | Live-checkout architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
+| 4 | `cursor/grok-4.7` `{high}` | `none` | Live-checkout architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
 | 5 | `cdp/opus-5.5` | `none` | **Independent check** — falsify hop 4's load-bearing premises. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
 | 6 | **`seat=cursor-sdk` `cursor/composer-2.5`** | `pure-mechanical` | Densify into an implement-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |

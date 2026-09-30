@@ -115,6 +115,37 @@ def _terminal_row(
     return {k: row[k] for k in row.keys()}
 
 
+@pytest.mark.asyncio
+async def test_watchdog_successor_body_carries_model_knobs() -> None:
+    ledger = CursorDispatchLedger.instance()
+    knobs = {"effort": "low", "fast": "true"}
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"model_knobs": knobs},
+        terminal_at_offset_s=-200.0,
+    )
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.hop_owed",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog._backoff_elapsed",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            AsyncMock(return_value=(True, {"dispatch_id": "succ-1"})),
+        ) as post_mock,
+    ):
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-watchdog-1")
+    assert ok is True
+    body = post_mock.await_args.args[0]
+    assert body["model_knobs"] == knobs
+    assert body["hop_reason"] == "watchdog"
+
+
 def test_watchdog_candidate_false_before_grace() -> None:
     ledger = CursorDispatchLedger.instance()
     _terminal_row(ledger, closeout_tokens=["ROW_HOP"], terminal_at_offset_s=-30.0)

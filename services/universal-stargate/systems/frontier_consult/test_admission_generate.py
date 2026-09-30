@@ -56,9 +56,7 @@ def test_g4_role_cursor_sdk_rejected_on_generate() -> None:
 
 
 def test_g4b_seat_cursor_sdk_admitted_on_generate() -> None:
-    resolve_auto_seat_generate_target(
-        "cursor-sdk", model=None, request_id="req-g4b"
-    )
+    resolve_auto_seat_generate_target("cursor-sdk", model=None, request_id="req-g4b")
 
 
 def test_conductor_omit_model_resolves_profile_default() -> None:
@@ -106,6 +104,28 @@ def test_omit_model_without_packet_kind_resolves_judgment_default() -> None:
         request_id="req-omit-none",
     )
     assert resolved == "cursor/grok-4.7"
+
+
+def test_omit_model_by_job() -> None:
+    _, _, _, implement = resolve_auto_seat_generate_target(
+        "cursor-sdk", model=None, request_id="req-impl", job="implement"
+    )
+    _, _, _, mechanical = resolve_auto_seat_generate_target(
+        "cursor-sdk", model=None, request_id="req-mech", job="mechanical"
+    )
+    _, _, _, conductor = resolve_auto_seat_generate_target(
+        "cursor-sdk", model=None, request_id="req-cond", job="conductor"
+    )
+    _, _, _, pinned = resolve_auto_seat_generate_target(
+        "cursor-sdk",
+        model="cursor/grok-4.7",
+        request_id="req-pin",
+        job="implement",
+    )
+    assert implement == "cursor/composer-2.5"
+    assert mechanical == "cursor/composer-2.5"
+    assert conductor == "cursor/grok-4.7"
+    assert pinned == "cursor/grok-4.7"
 
 
 def test_explicit_composer_with_conductor_packet_kind() -> None:

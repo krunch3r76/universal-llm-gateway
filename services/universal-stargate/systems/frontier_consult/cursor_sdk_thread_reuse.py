@@ -113,6 +113,17 @@ CONDUCTOR_COORD_SPLIT_HINT = (
     "lifecycle_state=pending and turn_count==0 and pass that id; or re-admit "
     "with reuse_thread=<work thread>. Lifecycle-null empty threads are refused."
 )
+CONDUCTOR_SUMMONING_OPERATOR_LANE_CODE = "conductor_summoning_operator_lane"
+CONDUCTOR_SUMMONING_OPERATOR_LANE_HINT = (
+    "Pre-create a pending-empty child with parent_thread=<lane>, then pass it "
+    "as dispatch_thread_id and reuse_thread."
+)
+_OPERATOR_LANE_PROBE_MISS = (
+    "operator-lane summon check skipped: probe_thread returned None"
+)
+_OPERATOR_LANE_REGISTRY_UNREADABLE = (
+    "operator-lane summon check skipped: sessions registry unreadable"
+)
 
 
 def _is_continuity_root(payload: dict[str, Any]) -> bool:
@@ -201,6 +212,87 @@ async def refuse_conductor_coord_split(
     if _is_pending_empty_child(payload) or _is_continuity_root(payload):
         return
     raise _conductor_coord_split_error(request_id)
+
+
+def _conductor_operator_lane_error(request_id: str):
+    """Build the 422 for an operator-lane summon thread."""
+    from .admission import FrontierEndpointError
+
+    return FrontierEndpointError(
+        request_id=request_id,
+        field="dispatch_thread_id",
+        reason=CONDUCTOR_SUMMONING_OPERATOR_LANE_HINT,
+        status_code=422,
+        code=CONDUCTOR_SUMMONING_OPERATOR_LANE_CODE,
+        details={"hint": CONDUCTOR_SUMMONING_OPERATOR_LANE_HINT},
+    )
+
+
+def _registration_id(payload: dict[str, Any]) -> str:
+    raw = payload.get("cse_registration_id")
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _row_purpose(row: dict[str, Any]) -> str:
+    raw = row.get("purpose")
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
+
+
+async def refuse_conductor_operator_lane_summon(
+    *,
+    request_id: str,
+    contract: str | None,
+    dispatch_thread_id: str | None,
+) -> str | None:
+    """Return a skip warning, or raise when the summon thread is an operator lane.
+
+    Applies to ``contract=conductor`` whether or not the caller set
+    ``reuse_thread``. A missing probe or an unreadable sessions registry warns
+    and admits. Review purpose admits. Operator-proxy purpose refuses, as does
+    a purposeless row whose ``ids.lane_thread`` equals the probed thread.
+    """
+    if (contract or "").strip().lower() != "conductor":
+        return None
+    if not isinstance(dispatch_thread_id, str) or not dispatch_thread_id.strip():
+        return None
+    probed = dispatch_thread_id.strip()
+    payload = await probe_thread(probed)
+    if payload is None:
+        return _OPERATOR_LANE_PROBE_MISS
+    reg_id = _registration_id(payload)
+    if not reg_id:
+        return None
+    try:
+        from claude_bundles.cdp_registry_store import load_sessions_read
+
+        read = load_sessions_read()
+    except Exception:
+        return _OPERATOR_LANE_REGISTRY_UNREADABLE
+    if not read.present:
+        return (
+            "operator-lane summon check skipped: sessions registry not observed "
+            f"{read.miss_label()}"
+        )
+    from claude_bundles.cse_session_common import find_session_by_registration
+    from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
+
+    found = find_session_by_registration(read.data, reg_id)
+    if found is None:
+        return None
+    _key, row = found
+    purpose = _row_purpose(row)
+    if purpose:
+        if is_operator_proxy_mission_purpose(purpose):
+            raise _conductor_operator_lane_error(request_id)
+        return None
+    lane_thread = str((row.get("ids") or {}).get("lane_thread") or "").strip()
+    if lane_thread == probed:
+        raise _conductor_operator_lane_error(request_id)
+    return None
 
 
 async def resolve_cursor_sdk_thread_targets(

@@ -54,13 +54,9 @@ def test_wire_map_auto_by_contract():
         resolve_desired_model("auto", contract="none")["resolved_model_id"]
         == "cursor/grok-4.7"
     )
-    assert (
-        resolve_desired_model("opus-5")["rejected"] is True
-    )
+    assert resolve_desired_model("opus-5")["rejected"] is True
     assert resolve_desired_model("opus-5")["resolved_model_id"] is None
-    assert (
-        resolve_desired_model("cursor/claude-opus-5")["rejected"] is True
-    )
+    assert resolve_desired_model("cursor/claude-opus-5")["rejected"] is True
     effort = resolve_desired_effort("bogus")
     assert effort["clamped"] and effort["resolved_effort"] == "medium"
     assert resolve_contract_disposition("implement")["disposition_hint"] == (
@@ -790,7 +786,7 @@ def test_process_job_explicit_grok_pin_omit_effort_nests_xhigh(
     submit.assert_awaited_once()
     model_knobs = submit.await_args.kwargs["model_knobs"]
     assert model_knobs is not None
-    assert model_knobs.get("effort") == "xhigh"
+    assert model_knobs.get("effort") == "high"
 
 
 def test_hop_reasoning_effort_auto_is_unpinned() -> None:
