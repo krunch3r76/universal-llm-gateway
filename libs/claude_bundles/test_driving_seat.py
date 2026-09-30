@@ -361,6 +361,7 @@ def test_ensure_emits_recensus_joined_only_on_recovered_retry(
     def fail_once_then_relaunch(registration_id: str, **kwargs: object) -> object:
         calls["n"] += 1
         if calls["n"] == 1:
+            reg._release_driver_lock(registration_id)
             raise reg.SeatContended(
                 f"registration {registration_id!r} is 'allocating', not dormant",
                 retryable=True,
