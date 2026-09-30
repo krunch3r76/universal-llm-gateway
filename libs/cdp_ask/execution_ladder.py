@@ -141,9 +141,18 @@ async def guard_execution(
         )
     except Exception as exc:  # noqa: BLE001 — task boundary
         logger.exception("execution %s failed", execution_id)
-        await store.mark_terminal(
+        # Through the ladder, not straight to terminal: a host that died under
+        # the turn surfaces here as a raised Page.evaluate error, and that is
+        # the resume case (a:36948 acceptance #4, 2026-09-30).
+        record = await store.get(execution_id)
+        await finish_execution(
+            store,
             execution_id,
-            status="failed",
-            error=str(exc),
-            stall_stage="mark_terminal",
+            {
+                "ok": False,
+                "status": "failed",
+                "error": str(exc),
+                "registration_id": record.registration_id if record else None,
+                "stall_stage": "mark_terminal",
+            },
         )

@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -838,9 +839,16 @@ async def run_execution(
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         return payload
     finally:
-        if retain_host or (teardown_check is not None and teardown_check()):
+        escaped = sys.exc_info()[1]
+        if (
+            retain_host
+            or (teardown_check is not None and teardown_check())
+            or (escaped is not None and is_host_lost_error(str(escaped)))
+        ):
             # Process teardown: Chrome stays up with the row still in flight,
             # so the successor process re-attaches by chat_url (a:36948 req 1).
+            # Host loss raised mid-turn: keep the row (its chat_url is the
+            # resume address) for execution_ladder's host_lost branch.
             pass
         elif not await abort_check():
             if not registration_has_wake_debt(reg.registration_id):
