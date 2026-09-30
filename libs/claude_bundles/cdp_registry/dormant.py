@@ -98,9 +98,17 @@ def host_protection_reason(row: dict[str, Any], *, registration_id: str) -> str 
 def dormant_candidate_reason(
     row: dict[str, Any], *, registration_id: str
 ) -> str | None:
-    """Return why a live row cannot go dormant, or None when it may."""
+    """Return why a live row cannot go dormant, or None when it may.
+
+    An allocating row is mid-relaunch: this process holds its driver lock until
+    Chrome answers. Parking it would kill the listener and drop that lock, so
+    the reason is ``allocating`` rather than ``driver_attached`` (which ignores
+    the in-process holder).
+    """
     if row.get("status") == STATUS_DORMANT:
         return "already_dormant"
+    if row.get("status") == "allocating":
+        return "allocating"
     protection = host_protection_reason(row, registration_id=registration_id)
     if protection is not None:
         return protection
@@ -125,8 +133,12 @@ def make_dormant(
 ) -> DormantSeat | None:
     """Kill the owned Chrome and park the row as dormant; None when refused.
 
-    Refusal is a normal outcome (debt, an attached driver, or no bound URL) and
-    leaves the row exactly as it was.
+    Refusal is a normal outcome (an allocating relaunch, debt, an attached
+    driver, or no bound URL) and leaves the row exactly as it was. The
+    allocating check runs again under ``ports.lock``: the pre-lock snapshot can
+    still be a lock-free active seat that a relaunch flips before this caller
+    takes the lock. That re-check is a status compare only — the lock is not
+    re-entrant — and it does not kill, write, or release the driver lock.
     """
     listen = is_listening or cdp_lane.is_listening
     # Debt and lock probes run before ports.lock: both read other registry files
@@ -146,6 +158,15 @@ def make_dormant(
         active = _store.load_active()
         row = active.get(registration_id)
         if row is None or row.get("status") == STATUS_DORMANT:
+            return None
+        # Status compare only. dormant_candidate_reason takes other locks, and
+        # ports.lock is not re-entrant. A relaunch can flip a lock-free active
+        # snapshot to allocating between the pre-check and this re-read.
+        if row.get("status") == "allocating":
+            _store.append_log(
+                "dormant_refused",
+                {"registration_id": registration_id, "reason": "allocating"},
+            )
             return None
         port = row.get("port")
         if isinstance(port, int) and listen(port):
