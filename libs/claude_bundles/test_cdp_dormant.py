@@ -770,3 +770,114 @@ def test_dormant_double_relaunch_one_proceeds(
         if json.loads(line).get("event") == "allocating"
     )
     assert after - before == 1
+
+
+def test_make_dormant_refuses_allocating_row_during_relaunch(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch_fn that parks the in-flight row must not steal the relaunch lock."""
+    url = "https://claude.ai/cowork/cse_alloc_refuse"
+    seat = _seat(chat_url=url)
+    reg.make_dormant(seat.registration_id, is_listening=lambda _p: False)
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", killed.append)
+    during: dict[str, Any] = {}
+
+    def launch(port: int, profile: Path) -> int:
+        assert reg.process_holds_driver_lock(seat.registration_id)
+        during["refused"] = reg.make_dormant(
+            seat.registration_id, is_listening=lambda _p: True
+        )
+        during["status"] = _row(seat.registration_id)["status"]
+        during["lock"] = reg.process_holds_driver_lock(seat.registration_id)
+        profile.mkdir(parents=True, exist_ok=True)
+        return 4242
+
+    woken = reg.relaunch_dormant(
+        seat.registration_id,
+        launch_chrome=launch,
+        is_listening=lambda _p: False,
+    )
+    assert during["refused"] is None
+    assert during["status"] == "allocating"
+    assert during["lock"] is True
+    assert killed == []
+    assert woken.registration_id == seat.registration_id
+    assert _row(seat.registration_id)["status"] == "active"
+
+
+def test_make_dormant_refuses_allocating_on_locked_reread(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-lock active snapshot; the locked re-read is already allocating.
+
+    A dormant pre-lock snapshot returns ``already_dormant`` before ``ports.lock``
+    and would pass on unfixed code. The snapshot that reaches the lock is a
+    lock-free active row that still has ``chat_url``.
+    """
+    url = "https://claude.ai/cowork/cse_locked_reread"
+    seat = _seat(chat_url=url)
+    prior = _row(seat.registration_id)
+    assert prior["status"] == "active"
+    assert str(prior.get("chat_url") or "").strip()
+    assert not reg.process_holds_driver_lock(seat.registration_id)
+    assert (
+        reg.dormant_candidate_reason(prior, registration_id=seat.registration_id)
+        is None
+    )
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", killed.append)
+    real_load = reg._store.load_active
+    calls = {"n": 0}
+
+    def wrapped() -> dict[str, Any]:
+        data = real_load()
+        calls["n"] += 1
+        if calls["n"] != 1:
+            return data
+        snapshot = {
+            rid: (dict(row) if isinstance(row, dict) else row)
+            for rid, row in data.items()
+        }
+        reg._claim_driver_lock(seat.registration_id)
+        stored = {
+            rid: (dict(row) if isinstance(row, dict) else row)
+            for rid, row in data.items()
+        }
+        stored[seat.registration_id]["status"] = "allocating"
+        reg._store.write_active(stored)
+        return snapshot
+
+    monkeypatch.setattr(reg._store, "load_active", wrapped)
+    assert (
+        reg.make_dormant(seat.registration_id, is_listening=lambda _p: True) is None
+    )
+    assert calls["n"] >= 2
+    assert killed == []
+    assert _row(seat.registration_id)["status"] == "allocating"
+    assert reg.process_holds_driver_lock(seat.registration_id)
+
+
+def test_make_dormant_parks_active_row_held_by_this_process(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The in-process holder of an active seat can still park it."""
+    url = "https://claude.ai/cowork/cse_owner_park"
+    seat = reg.register_lane(
+        holder="owner",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.bind_session_address(seat.registration_id, chat_url=url)
+    assert reg.process_holds_driver_lock(seat.registration_id)
+    assert _row(seat.registration_id)["status"] == "active"
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", killed.append)
+
+    parked = reg.make_dormant(seat.registration_id, is_listening=lambda _p: True)
+    assert parked is not None
+    assert parked.chat_url == url
+    assert _row(seat.registration_id)["status"] == "dormant"
+    assert killed == [seat.port]
+    assert not reg.process_holds_driver_lock(seat.registration_id)
