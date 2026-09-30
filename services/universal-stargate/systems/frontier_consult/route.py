@@ -185,10 +185,22 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # Inline prompt (SF1): bypass thread latch — prefer over bus-turn-only dispatch.
     prompt: str | None = None
     sidecar_ref: str | None = None
-    # When set and packet_path is absent (contract=implement|wrap), the server
+    # When set and packet_path is absent (job=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
-    job: str | None = None
+    job: Literal[
+        "freeform",
+        "mechanical",
+        "sketch",
+        "implement",
+        "wrap",
+        "conductor",
+        "code-review",
+        "delivery-review",
+        "check-review",
+        "confer",
+        "investigate",
+    ]
     reuse_thread: str | None = None
     split_thread: bool = False
     density_triage: DensityTriage | None = None
@@ -337,7 +349,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     model: str | None = None
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
-    job: str | None = None
+    job: Literal["freeform", "mechanical", "sketch", "implement"]
     prompt: str | None = None
     sidecar_ref: str | None = None
     auto_review_child: bool | None = None

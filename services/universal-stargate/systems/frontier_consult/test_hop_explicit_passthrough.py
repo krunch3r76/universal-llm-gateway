@@ -17,7 +17,7 @@ def test_team_dispatch_generate_body_accepts_hop_triplet() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="9964",
         seat="cursor-sdk",
         lane="B",
@@ -35,7 +35,7 @@ def test_team_dispatch_generate_body_accepts_park_harvest_reason() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="9964",
         seat="cursor-sdk",
         lane="B",
@@ -52,7 +52,7 @@ def test_team_dispatch_generate_body_rejects_partial_hop_triplet() -> None:
     with pytest.raises(ValidationError):
         TeamDispatchGenerateBody(
             op="generate",
-            contract="none",
+            job="freeform",
             dispatch_thread_id="9964",
             seat="cursor-sdk",
             lane="B",

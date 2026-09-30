@@ -842,7 +842,7 @@ def test_team_dispatch_generate_body_accepts_purpose() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="6451",
         model="cdp/opus-5",
         prompt="heal",
@@ -856,7 +856,7 @@ def test_team_dispatch_generate_body_accepts_parent_thread() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="6451",
         model="cdp/opus-5-high",
         prompt="navigator doorbell",
@@ -870,7 +870,7 @@ def test_team_dispatch_generate_body_purpose_optional() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="6451",
         model="cdp/opus-5",
         prompt="consult",
@@ -1329,7 +1329,7 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="11165",
         model="cdp/opus-5-high",
         prompt="navigator doorbell",
@@ -1403,7 +1403,7 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="6451",
         model="cdp/fable",
         prompt="consult",
@@ -1576,7 +1576,7 @@ async def test_cdp_admit_registers_dispatch_link_row(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id=str(thread_id),
         model="cdp/fable",
         prompt="consult",

@@ -37,7 +37,7 @@ def test_wrap_body_rejects_packet_path() -> None:
         TeamDispatchGenerateBody(
             op="generate",
             role="cursor-sdk",
-            contract="wrap",
+            job="wrap",
             source_ref="todo:slug",
             packet_path="tmp/reviews/packet.md",
         )
@@ -49,7 +49,7 @@ def test_wrap_body_requires_source_ref() -> None:
         TeamDispatchGenerateBody(
             op="generate",
             role="cursor-sdk",
-            contract="wrap",
+            job="wrap",
         )
 
 
@@ -59,7 +59,7 @@ def test_wrap_body_rejects_gating_misleading_knobs() -> None:
         TeamDispatchGenerateBody(
             op="generate",
             role="cursor-sdk",
-            contract="wrap",
+            job="wrap",
             source_ref="todo:slug",
             density_triage="judgment_required",
         )
@@ -70,7 +70,7 @@ def test_wrap_body_allows_absent_dispatch_thread_id() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:slug",
     )
     assert body.dispatch_thread_id is None
@@ -94,7 +94,7 @@ async def test_wrap_happy_path_returns_200_without_sdk(
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:generate-wrap-contract",
     )
     response = Response()
@@ -134,7 +134,7 @@ async def test_wrap_does_not_spawn_composer(
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:slug",
     )
     response = Response()
@@ -167,7 +167,7 @@ async def test_wrap_gated_source_ref_returns_422(
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:not-ready",
     )
     result = await team_dispatch(body, Response())
@@ -200,7 +200,7 @@ async def test_wrap_decision_not_asserted_returns_422(
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:unratified",
     )
     result = await team_dispatch(body, Response())
@@ -218,7 +218,7 @@ async def test_wrap_role_not_admitted_for_non_sdk_role() -> None:
         op="generate",
         role="reviewer",
         dispatch_thread_id="thread:arc",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:slug",
     )
     result = await team_dispatch(body, Response())
@@ -247,7 +247,7 @@ async def test_wrap_packet_scheme_source_ref_allowed(
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="packet:tmp/reviews/existing-packet.md",
     )
     response = Response()
@@ -263,7 +263,7 @@ async def test_wrap_route_defensive_packet_path_rejection() -> None:
     body = TeamDispatchGenerateBody.model_construct(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:slug",
         packet_path="tmp/reviews/packet.md",
     )

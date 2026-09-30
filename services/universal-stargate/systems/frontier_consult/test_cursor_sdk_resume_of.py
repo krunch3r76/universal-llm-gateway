@@ -25,7 +25,7 @@ from systems.frontier_consult.route import TeamDispatchGenerateBody, team_dispat
 def test_team_dispatch_generate_body_accepts_resume_of() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="none",
+        job="freeform",
         dispatch_thread_id="9964",
         seat="cursor-sdk",
         reuse_thread="9964",
@@ -72,7 +72,7 @@ async def test_team_dispatch_resume_of_without_reuse_thread_returns_422(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="9964",
-        contract="implement",
+        job="implement",
         packet_path="tmp/reviews/packet.md",
         resume_of="parent-disp",
     )
@@ -104,7 +104,7 @@ async def test_team_dispatch_resume_of_omits_lane_still_admits(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="9964",
-        contract="implement",
+        job="implement",
         packet_path="tmp/reviews/packet.md",
         resume_of="parent-disp",
         reuse_thread="9964",

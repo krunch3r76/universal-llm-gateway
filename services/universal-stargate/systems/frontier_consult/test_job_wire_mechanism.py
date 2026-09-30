@@ -16,6 +16,7 @@ import pytest
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from fastapi import Response
 from job_vocab import HYPOTHESIZE_ON_JOBS, job_record
+from pydantic import ValidationError
 
 from systems.frontier_consult.admission import FrontierEndpointError
 from systems.frontier_consult.cdp_generate_worker import run_cdp_worker
@@ -236,6 +237,38 @@ def test_stargate_intake_refuses_omitted_job_and_consult() -> None:
     assert to_thread.value.code == "job_not_admitted"
 
 
+def test_validating_constructor_rejects_omitted_and_consult() -> None:
+    with pytest.raises(ValidationError) as omitted:
+        TeamDispatchGenerateBody(
+            op="generate",
+            role="gatherer",
+            dispatch_thread_id="dt-1",
+            prompt="hello",
+        )
+    assert any(err["loc"] == ("job",) for err in omitted.value.errors())
+
+    with pytest.raises(ValidationError) as consult:
+        TeamDispatchGenerateBody(
+            op="generate",
+            role="gatherer",
+            dispatch_thread_id="dt-1",
+            prompt="hello",
+            job="consult",  # type: ignore[arg-type]
+        )
+    assert any(err["loc"] == ("job",) for err in consult.value.errors())
+
+    with pytest.raises(ValidationError) as to_thread:
+        TeamDispatchToThreadBody(
+            op="to_thread",
+            role="gatherer",
+            dispatch_thread_id="dt-1",
+            thread="867",
+            prompt="hello",
+            job="consult",  # type: ignore[arg-type]
+        )
+    assert any(err["loc"] == ("job",) for err in to_thread.value.errors())
+
+
 @pytest.mark.asyncio
 async def test_route_passes_job_and_refuses_omitted_and_consult(
     monkeypatch: pytest.MonkeyPatch,
@@ -252,7 +285,7 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     monkeypatch.setattr(intake, "reject_unsupported_packet_inputs", _wrap)
 
     consult = await team_dispatch(
-        TeamDispatchGenerateBody(
+        TeamDispatchGenerateBody.model_construct(
             op="generate",
             role="gatherer",
             dispatch_thread_id="dt-1",
@@ -268,7 +301,7 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     assert seen == ["consult"]
 
     omitted = await team_dispatch(
-        TeamDispatchGenerateBody(
+        TeamDispatchGenerateBody.model_construct(
             op="generate",
             role="gatherer",
             dispatch_thread_id="dt-1",
@@ -282,7 +315,7 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     assert seen == ["consult", None]
 
     to_thread = await team_dispatch(
-        TeamDispatchToThreadBody(
+        TeamDispatchToThreadBody.model_construct(
             op="to_thread",
             role="gatherer",
             dispatch_thread_id="dt-1",
