@@ -216,6 +216,9 @@ def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
     Emits ``giw.resume.store.owner.resolved`` when a store path is located.
     A missing store returns ``parent_id`` and does not emit. A store outside
     every lineage HOME also returns ``parent_id`` with ``mode=external``.
+    A store under the parent HOME when the lineage walk returns no owner is
+    ``rescanned`` or ``home_contained``; ``external`` remains the
+    outside-every-HOME case.
     """
     ledger = CursorDispatchLedger.instance()
     parent = load_parent_row(ledger, parent_id=parent_id)
@@ -229,7 +232,18 @@ def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
         ledger, start_id=parent_id, store_dir=store_dir.resolve()
     )
     if owner is None:
-        mode = "external"
+        contained = False
+        try:
+            home = cursor_home.dispatch_home_path(parent_id).resolve()
+            contained = store_dir.resolve().is_relative_to(home)
+        except OSError:
+            contained = False
+        if not contained:
+            mode = "external"
+        elif rescanned:
+            mode = "rescanned"
+        else:
+            mode = "home_contained"
         owner_id = parent_id
     elif rescanned:
         mode = "rescanned"
