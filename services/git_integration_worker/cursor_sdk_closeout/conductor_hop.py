@@ -632,6 +632,7 @@ async def post_conductor_hop_team_dispatch(
             resp = await client.post(endpoint, json=wire_body)
     except httpx.HTTPError as exc:
         logger.warning("conductor hop team_dispatch transport error: %s", exc)
+        ledger.release_stop_service(stop_id, admit_dispatch_id)
         return False, {"error": str(exc), "reason": "stargate_unreachable"}
     try:
         payload = resp.json()
@@ -640,6 +641,8 @@ async def post_conductor_hop_team_dispatch(
     if not isinstance(payload, dict):
         payload = {"error": "non_object_response"}
     if resp.status_code >= 400 or payload.get("error"):
+        # A refused admit created no row; keep the slot open for the retry.
+        ledger.release_stop_service(stop_id, admit_dispatch_id)
         return False, {
             "status_code": resp.status_code,
             "error": payload,

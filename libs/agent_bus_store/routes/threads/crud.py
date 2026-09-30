@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from openapi_mcp.binding import x_mcp
 
 from ...db import (
@@ -46,7 +47,12 @@ def _raise_enrollment_denied(exc: BaseException) -> None:
     openapi_extra=x_mcp("create_thread", tool="agent_bus"),
 )
 async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
-    """Create one thread using explicit or auto-generated thread identifiers."""
+    """Create one thread using explicit or auto-generated thread identifiers.
+
+    A retry carrying the same ``idempotency_key`` answers **200** with the
+    thread the first call created plus ``idempotent_replay: true``; a fresh
+    create answers 201. Keyless creates never collide.
+    """
     if body.id is not None:
         body.id = normalize_thread_id(body.id)
     try:
@@ -57,6 +63,7 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
             tags=body.tags,
             lifecycle_state=body.lifecycle_state,
             enroll_charter_runner=body.enroll_charter_runner,
+            idempotency_key=body.idempotency_key,
         )
     except (EnrollmentTagError, ThreadClassificationError) as exc:
         _raise_enrollment_denied(exc)
@@ -66,6 +73,10 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Thread {body.id} already exists",
         )
+    if row.get("idempotent_replay"):
+        replay = _thread_detail(row).model_dump(mode="json")
+        replay["idempotent_replay"] = True
+        return JSONResponse(status_code=status.HTTP_200_OK, content=replay)
     return _thread_detail(row)
 
 

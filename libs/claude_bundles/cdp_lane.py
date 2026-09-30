@@ -103,11 +103,19 @@ def chrome_display_env(display: str | None = None) -> dict[str, str]:
     Clears inherited ``XAUTHORITY`` then sets the cookie from
     ``resolve_display_auth`` (per-display → flat → live Xvfb ``-auth``). Pins
     ``LC_ALL=C`` so listen-timeout log tokens stay English (Opus F6).
+
+    Drops ``WAYLAND_DISPLAY`` / ``XDG_SESSION_TYPE``: with them inherited from
+    the cdp-ask unit, Chrome auto-selected the Wayland backend and every seat
+    became a client of the desktop compositor, dying together on each output
+    reconfiguration (a:36969, seven kill batches on 2026-09-29). Paired with
+    ``--ozone-platform=x11`` in ``chrome_launch_argv``.
     """
     from claude_bundles.cdp_display_auth import apply_display_auth_env
 
     display_val = cdp_display(display)
     env = dict(os.environ)
+    env.pop("WAYLAND_DISPLAY", None)
+    env.pop("XDG_SESSION_TYPE", None)
     apply_display_auth_env(env, display_val)
     env.setdefault("LC_ALL", "C")
     env.setdefault("LANG", "C")
@@ -195,6 +203,9 @@ def chrome_launch_argv(port: int, profile: Path) -> list[str]:
         f"--remote-debugging-port={port}",
         "--remote-allow-origins=*",
         f"--user-data-dir={profile}",
+        # Seats live on the X display cdp_display() names, never on the
+        # compositor's Wayland socket (a:36969; see chrome_display_env).
+        "--ozone-platform=x11",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-features=OptimizationGuideOnDeviceModel",

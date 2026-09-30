@@ -7,10 +7,19 @@ of its wall time between POSTs (model thinking, tool planning), so
 
 This module gates MCP (and reports honest busy for ``busy_status``) on:
 1. ``cdp_ask`` drain-state — recorded executions
-2. MCP ``/active-work`` — in-flight HTTP plus a short life-tools activity TTL
+2. MCP ``/active-work`` ``life_hot`` — a short life-tools activity TTL
 
 Either signal alone is enough to defer. MCP probe failure is best-effort when
 cdp_ask answered; when cdp_ask is unconfigured, MCP failure fails closed.
+
+MCP's own ``busy`` bit (``in_flight > 0 or life_hot``) is **not** consumed.
+``in_flight`` is the target's request state, and the request asking to restart
+is one of those requests: a seat calling ``manage(sync_restart, mcp)`` through
+the MCP tool held the gate ``busy`` on an idle server and had to force
+(a:36950). Open HTTP requests are already the container's SIGTERM drain's job
+(``middleware/drain.py``); the gate covers what that drain cannot see —
+recorded CDP work and a Cowork turn between POSTs. ``in_flight`` stays in the
+payload as a diagnostic.
 """
 
 from __future__ import annotations
@@ -57,6 +66,19 @@ def _cdp_busy(detail: dict[str, Any]) -> bool:
         return True
 
 
+def _mcp_session_hot(detail: dict[str, Any]) -> bool:
+    """True when a life-surface ``tools/call`` landed inside the activity TTL.
+
+    Reads ``life_hot`` only — never ``busy`` / ``in_flight`` (request state that
+    counts the caller's own restart request; a:36950). A payload without
+    ``life_hot`` is an older MCP build: fail closed on its ``busy`` bit.
+    """
+    life_hot = detail.get("life_hot")
+    if isinstance(life_hot, bool):
+        return life_hot
+    return bool(detail.get("busy", True))
+
+
 class McpBusyProbe:
     """Composite busy probe for recorded CDP work and MCP activity."""
 
@@ -96,7 +118,7 @@ class McpBusyProbe:
                     raise
             else:
                 detail["mcp"] = mcp_work.detail
-                if mcp_work.busy:
+                if _mcp_session_hot(mcp_work.detail):
                     busy = True
                     detail["busy_reasons"].append("mcp_session_hot")
 
@@ -104,14 +126,13 @@ class McpBusyProbe:
         summary_bits: list[str] = []
         if "cdp_ask_live" in detail["busy_reasons"]:
             cdp = detail.get("cdp_ask") or {}
-            summary_bits.append(
-                f"cdp_ask running={cdp.get('running_count')}"
-            )
+            summary_bits.append(f"cdp_ask running={cdp.get('running_count')}")
         if "mcp_session_hot" in detail["busy_reasons"]:
             mcp = detail.get("mcp") or {}
             summary_bits.append(
-                f"mcp in_flight={mcp.get('in_flight')} "
-                f"life_idle_s={mcp.get('life_idle_s')}"
+                f"mcp life_idle_s={mcp.get('life_idle_s')} "
+                f"ttl_s={mcp.get('life_activity_ttl_s')} "
+                f"(in_flight={mcp.get('in_flight')} diagnostic)"
             )
         if summary_bits:
             detail["active_count"] = 1

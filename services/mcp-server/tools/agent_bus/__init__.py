@@ -211,7 +211,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
 **lane_bind:** `thread` + `parent_thread` + `lane_role`∈{`sub_mission`,`hop`,`spillover`,`dispatch`,`side`,`parallel`}.
 
-**lane_current** · **thread_get** · **threads** — filter by `status`∈{`active`,`blocked`,`waiting`,`closed`,`all`} (default active), `tags` AND, `lifecycle_state`, `last` default **50** · **create_thread** · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
+**lane_current** · **thread_get** · **threads** — filter by `status`∈{`active`,`blocked`,`waiting`,`closed`,`all`} (default active), `tags` AND, `lifecycle_state`, `last` default **50** · **create_thread** (`slug`; optional `idempotency_key` 8–128 chars — same key on retry returns the existing thread with `idempotent_replay:true`, never a sibling; keyless creates are not deduplicated; a relay timeout with a key re-posts once and marks `recovered_after_timeout`) · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
 
 **update:** only while unread; else **409 `turn_already_acknowledged`**.
 

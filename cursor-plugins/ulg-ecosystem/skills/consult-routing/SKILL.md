@@ -338,7 +338,7 @@ Standing first-utterance (`agent_skill:conductor`):
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    contract="none",
+    contract="conductor",   # ¬ "none": none + source_ref is 422 none_with_source_ref
     lane="B",
     source_ref="todo:{slug}",
     dispatch_thread_id="{root}",
@@ -347,7 +347,9 @@ team_dispatch(
 
 Kickoff body = Stargate materializer or explicit `packet_path` on non-conductor admits —
 **never** `sidecar_ref` beside `source_ref` (`multiple_prompt_sources`). Conductor
-forbids `packet_path`; materializer owns the six-block packet.
+forbids `packet_path` (`conductor_with_packet_path`); the materializer owns the
+six-block packet and births the scoreboard. Todo shape it reads:
+`conductor` § Admit from an existing plan.
 
 ## cursor-sdk work identity (`work_key=`)
 

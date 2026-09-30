@@ -152,7 +152,7 @@ Commissions go through ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk
 
 `cursor-auto`, `cursor_request`, and `operator_request` are deprecated. Toys still exposes `cursor_request` and `operator_request`. They are not a commission path, including when `team_dispatch` is refused. A refuse comes back verbatim. No fallback procedure. `cursor-auto` is not a bus address.
 
-Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls included; do not query `suggestion_orientation` while a:36837 stands), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
+Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls including off-topic yields), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
 
 Poll a ulg-code `team_dispatch` with that response's `poll_hint` `tool=wait`: `arguments_json` unchanged, worker thread not the parent. `completion` and `from_agent` stay what the hint says (`first_reply_from`, `cursor-sdk` for this seat). `wait_seconds` stays what the hint says, including 0. Do not rewrite it into `job_state`. Do not promote 0 to 60. `job_state` is the poll_hint of deprecated `agent_bus.request`. Point: `agent-bus-discipline` § cursor-sdk closeout polling.
 

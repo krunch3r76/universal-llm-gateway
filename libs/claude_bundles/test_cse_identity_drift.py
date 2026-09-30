@@ -46,8 +46,8 @@ def test_registration_drift_fields_byte_identical_across_call_sites() -> None:
     )
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
-            "claude_bundles.cse_provenance_resolve.read_episodes",
-            lambda: [episode],
+            "claude_bundles.cse_provenance_resolve.episodes_for_chat_url",
+            lambda _chat_url: [episode],
         )
         mp.setattr(
             "claude_bundles.cse_provenance_resolve.is_row_present",

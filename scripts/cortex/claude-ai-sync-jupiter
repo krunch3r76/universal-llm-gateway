@@ -23,9 +23,9 @@
 #   # --all --replace is refused unless --force-replace-all (never the default)
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector   # probe / first add / vortex rename
-#   scripts/cortex/claude-ai-sync-jupiter refresh-connector  # operator restore (default)
+#   scripts/cortex/claude-ai-sync-jupiter refresh-connector  # one connector (default: toys)
 #   scripts/cortex/claude-ai-sync-jupiter set-tool-permissions
-#   scripts/cortex/claude-ai-sync-jupiter refresh-connector
+#   scripts/cortex/claude-ai-sync-jupiter refresh-operator-connectors  # toys + ulg-code allowlist
 #   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --uuid UUID --prompt-file …
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask --uuid … --prompt-file …
@@ -103,6 +103,7 @@ usage() {
   echo "Commands: ensure-chrome | status | preflight | diagnose-upload-menu |"
   echo "          loaded-skills | dump-skills | recon | reconcile | upload | uninstall |"
   echo "          restore-connector | set-tool-permissions | refresh-connector |"
+  echo "          refresh-operator-connectors |"
   echo "          project-chrome | project-ask |"
   echo "          register-lane | deregister-lane | list-lanes"
   echo ""
@@ -462,7 +463,28 @@ case "$cmd" in
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     remote_py scripts/cortex/restore_claude_mcp_connector.py \
       --force-reconnect "$@"
-    remote_py scripts/cortex/set_claude_tool_permissions.py "$@"
+    # --add-only and --force-reconnect belong to the restore script. The
+    # permission script selects life-blanket vs code-ops from the URL.
+    perm_args=()
+    for a in "$@"; do
+      case "$a" in
+        --force-reconnect|--add-only) ;;
+        *) perm_args+=("$a") ;;
+      esac
+    done
+    remote_py scripts/cortex/set_claude_tool_permissions.py \
+      ${perm_args[@]+"${perm_args[@]}"}
+    ;;
+  refresh-operator-connectors)
+    # Life first. Code uses --add-only so this refresh cannot Remove toys.
+    "$0" refresh-connector \
+      --mcp-url "https://mcp.k-1.me/mcp/life" \
+      --connector-name toys
+    "$0" refresh-connector \
+      --mcp-url "https://mcp.k-1.me/mcp/code" \
+      --connector-name ulg-code \
+      --add-only \
+      --timeout 90
     ;;
   project-chrome)
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"

@@ -1,9 +1,13 @@
 """Sealed execution and restart-drain read models for the cdp-ask satellite.
 
-The execution store supplies recorded pending/running records.  This module
-joins those records with cached occupancy only when a caller explicitly asks
-for a read model, keeping stream admission independent from browser sensing.
-No function in this module performs Chrome or registry census I/O.
+The execution store supplies recorded pending/running records for admission.
+The restart-drain read model derives ``busy`` from the registry rows' durable
+``execution_state`` (``claude_bundles.cdp_registry.execution_state``) handed
+in by the caller — the same file the next cdp_ask process and the manage
+witness read — so memory that a recycle erases never decides a recycle.
+This module joins those inputs with cached occupancy only when a caller
+explicitly asks for a read model. No function here performs Chrome or
+registry census I/O.
 """
 
 from __future__ import annotations
@@ -46,8 +50,15 @@ _ADMISSION_COUNT_SCOPE = ADMISSION_COUNT_SCOPE
 _REGISTRY_CAPACITY_SCOPE = (
     "active+retained registry Chrome hosts (ports/profiles), this host"
 )
-_EFFECTIVE_COUNT_SCOPE = "restart-drain recorded execution count; NOT admission"
+_EFFECTIVE_COUNT_SCOPE = (
+    "restart-drain in-flight count: registry execution_state rows + unseated "
+    "pending executions; NOT admission"
+)
+_IN_FLIGHT_COUNT_SCOPE = (
+    "registry active.json rows whose execution_state is seated/streaming, this host"
+)
 _REGISTRY_SOURCE = "cse-session-registry"
+_BUSY_SOURCE = "cdp-registry active.json execution_state"
 
 
 class OccupancyProvider(Protocol):
@@ -203,13 +214,69 @@ def admission_projection(
     return payload, decl
 
 
+def in_flight_summary(
+    in_flight: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flatten ``in_flight_rows`` output into drain rows and witness holders."""
+    out: list[dict[str, Any]] = []
+    for rid, row in in_flight.items():
+        entry = row.get("execution_state") or {}
+        out.append(
+            {
+                "registration_id": rid,
+                "execution_id": entry.get("execution_id"),
+                "state": entry.get("state"),
+                "kind": entry.get("kind") or "execution",
+                "started_at": entry.get("started_at"),
+                "holder": row.get("holder"),
+                "purpose": row.get("purpose"),
+                "chat_url": row.get("chat_url"),
+                "port": row.get("port"),
+                "row_status": row.get("status"),
+            }
+        )
+    return out
+
+
+def holders_from_in_flight(in_flight: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Census-shaped holders (``kind``/``op_id``/``subject_preview``) for the witness."""
+    holders: list[dict[str, Any]] = []
+    for item in in_flight:
+        eid = str(item.get("execution_id") or "").strip()
+        if not eid:
+            continue
+        subject = " ".join(
+            str(item[k]).strip() for k in ("holder", "purpose") if item.get(k)
+        )
+        rec: dict[str, Any] = {
+            "kind": str(item.get("kind") or "execution"),
+            "op_id": eid,
+        }
+        if subject:
+            rec["subject_preview"] = subject
+        holders.append(rec)
+    return holders
+
+
 def drain_projection(
     rows: list[dict[str, Any]],
     execution_ids: list[str],
     occupancy: OccupancyProvider | None,
+    *,
+    in_flight: list[dict[str, Any]] | None = None,
+    unseated_pending: list[str] | None = None,
+    registry_error: str | None = None,
 ) -> dict[str, Any]:
-    """Build restart state from recorded executions plus diagnostic occupancy."""
+    """Build restart state: ``busy`` from durable in-flight rows, occupancy as diagnostics.
+
+    ``in_flight`` is ``in_flight_summary(in_flight_rows(active.json))``;
+    ``unseated_pending`` names this process's executions admitted before their
+    row exists. ``registry_error`` set means the row set could not be read —
+    busy fail-closed, reason ``registry_unreadable``.
+    """
     payload, _ = admission_projection(rows, execution_ids)
+    in_flight = list(in_flight or [])
+    unseated = list(unseated_pending or [])
     occupancy_data = (
         occupancy.snapshot()
         if occupancy is not None
@@ -236,13 +303,24 @@ def drain_projection(
         live_cse_target_count = live_cse_count
     live_port_count = occupancy_data.get("live_port_count")
     registry_capacity_count = occupancy_data.get("registry_capacity_count")
-    running_count = len(execution_ids)
-    effective = running_count
-    busy_reason = "execution" if running_count > 0 else "idle"
+    effective = len(in_flight) + len(unseated)
+    if registry_error is not None:
+        busy_reason = "registry_unreadable"
+    elif in_flight:
+        busy_reason = "in_flight_recorded"
+    elif unseated:
+        busy_reason = "unseated_pending"
+    else:
+        busy_reason = "idle"
     payload.update(
         {
-            "busy": running_count > 0,
+            "busy": busy_reason != "idle",
             "drain_busy_reason": busy_reason,
+            "busy_source": _BUSY_SOURCE,
+            "registry_error": registry_error,
+            "in_flight": in_flight,
+            "unseated_pending": unseated,
+            "holders": holders_from_in_flight(in_flight),
             "occupancy_freshness": freshness,
             "occupancy_source": occupancy_data.get("source"),
             "occupancy_error": occupancy_data.get("error"),
@@ -300,15 +378,31 @@ def drain_projection(
     )
     payload.update(
         QualifiedScalar(
+            value=len(in_flight),
+            scope=_IN_FLIGHT_COUNT_SCOPE,
+            authority=AuthorityClass.RECORDED,
+        ).emit("in_flight_count")
+    )
+    payload.update(
+        QualifiedScalar(
             value=occupancy_data.get("observation_age_s"),
             scope="age of the latest CDP occupancy observation, this host",
             authority=AuthorityClass.OBSERVED,
         ).emit("occupancy_age_s")
     )
     decl = SurfaceDecl(_DRAIN_STATE_SNAPSHOT)
+    decl.transcript(
+        "in_flight", reason="registry execution_state in-flight rows verbatim"
+    )
+    decl.transcript(
+        "unseated_pending", reason="execution ids admitted before a row exists"
+    )
+    decl.transcript("holders", reason="census-shaped holders derived from in_flight")
     for name, reason in {
-        "busy": "derived from pending/running execution rows",
+        "busy": "derived: in_flight rows or unseated pending non-empty, or registry unreadable",
         "drain_busy_reason": "derived drain-state reason",
+        "busy_source": "authority the busy flag derives from",
+        "registry_error": "last registry read error, else null",
         "occupancy_freshness": "projection freshness state",
         "occupancy_source": "projection source label",
         "occupancy_error": "last projection sensor error",

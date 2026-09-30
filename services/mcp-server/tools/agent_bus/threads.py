@@ -88,8 +88,16 @@ def _create_thread_impl(
     lifecycle_state: str | None = None,
     thread_id: str | None = None,
     enroll_charter_runner: bool = False,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
-    """Create a thread without a turn via POST /threads."""
+    """Create a thread without a turn via POST /threads.
+
+    ``idempotency_key`` makes the create retry-safe: the store answers a
+    repeated key with the thread it already made (``idempotent_replay``). On a
+    relay timeout the created id may be hidden from the caller, so this path
+    re-posts once with the same key (safe: replay, not a sibling); without a
+    key it lists exact-slug matches as ``possible_created_threads`` instead.
+    """
     payload: dict[str, Any] = {"slug": slug}
     if summary is not None:
         payload["summary"] = summary
@@ -101,21 +109,87 @@ def _create_thread_impl(
         payload["id"] = thread_id
     if enroll_charter_runner:
         payload["enroll_charter_runner"] = True
+    if idempotency_key is not None:
+        payload["idempotency_key"] = idempotency_key
     result = relay("agent-bus", "POST", "/threads", body=payload)
+    recovered = False
+    if _is_relay_timeout(result):
+        result, recovered = _recover_create_after_timeout(
+            result, payload=payload, slug=slug, idempotency_key=idempotency_key
+        )
     if isinstance(result, dict) and "error" in result:
         structured = _structured_relay_error(result, op="create_thread")
         if structured is not None:
             return structured
-        return {"error": f"agent-bus error creating thread: {result['error']}"}
+        out = {"error": f"agent-bus error creating thread: {result['error']}"}
+        if "possible_created_threads" in result:
+            out["possible_created_threads"] = result["possible_created_threads"]
+            out["fix_hint"] = result.get("fix_hint", "")
+        return out
     created_id = result.get("id", "") if isinstance(result, dict) else ""
-    logger.info("agent_bus create_thread: thread=%s slug=%s", created_id, slug)
+    if recovered and isinstance(result, dict):
+        result["recovered_after_timeout"] = True
+    logger.info(
+        "agent_bus create_thread: thread=%s slug=%s replay=%s",
+        created_id,
+        slug,
+        bool(isinstance(result, dict) and result.get("idempotent_replay")),
+    )
     record(
         "mcp.agentbus.thread.created",
         thread=created_id,
         slug=slug,
         via="create_thread",
+        idempotent_replay=bool(
+            isinstance(result, dict) and result.get("idempotent_replay")
+        ),
     )
     return result
+
+
+def _is_relay_timeout(result: Any) -> bool:
+    return (
+        isinstance(result, dict)
+        and "error" in result
+        and "status_code" not in result
+        and "timed out" in str(result.get("error", ""))
+    )
+
+
+def _recover_create_after_timeout(
+    timeout_result: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    slug: str,
+    idempotency_key: str | None,
+) -> tuple[dict[str, Any], bool]:
+    """Surface a create that committed behind a client timeout (a:36915).
+
+    Keyed: one re-POST — the store replays the existing thread or, if the
+    first insert never landed, creates it now. Keyless: exact-slug listing
+    only; re-posting would mint the sibling the friction describes.
+    """
+    if idempotency_key is not None:
+        retry = relay("agent-bus", "POST", "/threads", body=payload)
+        if isinstance(retry, dict) and "error" not in retry:
+            return retry, True
+        return timeout_result, False
+    listing = relay(
+        "agent-bus", "GET", f"/threads?{urlencode({'query': slug, 'limit': '5'})}"
+    )
+    rows = listing.get("threads", []) if isinstance(listing, dict) else []
+    matches = [
+        {"id": r.get("id"), "created_at": r.get("created_at")}
+        for r in rows
+        if isinstance(r, dict) and r.get("slug") == slug
+    ]
+    out = dict(timeout_result)
+    out["possible_created_threads"] = matches
+    out["fix_hint"] = (
+        "The create may have committed before the timeout. Pass idempotency_key "
+        "on create_thread so a retry returns the existing thread instead of a sibling."
+    )
+    return out, False
 
 
 def _threads_dispatch(
@@ -137,7 +211,9 @@ def _threads_dispatch(
     )
 
 
-def _enrich_with_cursor_auto_job(detail: dict[str, Any], *, thread: str) -> dict[str, Any]:
+def _enrich_with_cursor_auto_job(
+    detail: dict[str, Any], *, thread: str
+) -> dict[str, Any]:
     """Attach live non-terminal cursor-auto phase onto an already-fetched thread.
 
     Load-bearing delivery for claimed-gate observability: a seat that already
@@ -226,6 +302,7 @@ def _create_thread_dispatch(
     lifecycle_state: str | None = None,
     thread_id: str | None = None,
     enroll_charter_runner: bool = False,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     if not slug:
         return {"error": "create_thread requires: slug"}
@@ -236,6 +313,7 @@ def _create_thread_dispatch(
         lifecycle_state=lifecycle_state,
         thread_id=thread_id,
         enroll_charter_runner=enroll_charter_runner,
+        idempotency_key=idempotency_key,
     )
 
 

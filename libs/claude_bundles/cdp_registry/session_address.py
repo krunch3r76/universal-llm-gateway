@@ -18,6 +18,13 @@ from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 from claude_bundles.cse_url import normalize_cse_url
 
+from .attachment_journal import (
+    append_attachment_journal,
+    assert_attachment_unique,
+    fold_attachment_journal,
+    has_attachment_observed,
+    host_listable_ids_for_norm_url,
+)
 from .models import (
     _CAPACITY_STATUSES,
     _HOST_LISTABLE_STATUSES,
@@ -35,7 +42,7 @@ def attachment_for_chat_url(chat_url: str) -> Registration | None:
     if not norm:
         return None
     active = _store.load_active()
-    matches = _store._host_listable_ids_for_norm_url(active, norm)
+    matches = host_listable_ids_for_norm_url(active, norm)
     if len(matches) > 1:
         raise ProtocolError(
             code="attachment.conflict",
@@ -64,19 +71,19 @@ def backfill_attachment_from_chat_url(
         return {"dry_run": dry_run, "skipped": "not_cse_url"}
     if dry_run:
         return {"dry_run": True, "would_bind": registration_id, "chat_url": url}
-    if _store._has_attachment_observed(registration_id, url):
-        _store.fold_attachment_journal()
+    if has_attachment_observed(registration_id, url):
+        fold_attachment_journal()
         return {
             "dry_run": False,
             "registration_id": registration_id,
             "idempotent": True,
         }
-    _store.append_attachment_journal(
+    append_attachment_journal(
         registration_id=registration_id,
         chat_url=url,
         attach_proof="backfill_url_bound",
     )
-    _store.fold_attachment_journal()
+    fold_attachment_journal()
     return {"dry_run": False, "registration_id": registration_id, "bound": True}
 
 
@@ -144,7 +151,7 @@ def bind_session_address(
                 execution_id=execution_id,
             )
             return True
-        _store.assert_attachment_unique(active, url, registration_id=registration_id)
+        assert_attachment_unique(active, url, registration_id=registration_id)
         updated["chat_url"] = url
         if execution_id:
             updated["execution_id"] = execution_id

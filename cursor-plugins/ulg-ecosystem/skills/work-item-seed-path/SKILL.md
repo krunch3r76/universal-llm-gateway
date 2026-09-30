@@ -337,16 +337,19 @@ First codework utterance after S4a mint:
 
 ```text
 team_dispatch(
+  op="generate",
   seat="cursor-sdk",
-  contract="none",
+  contract="conductor",          # materializer — ¬ "none" (none + source_ref is 422 none_with_source_ref)
   lane="B",
-  source_ref="todo:{slug}",
+  source_ref="todo:{slug}",      # ¬ packet_path (refused on this contract)
   model_knobs={"fast":"true"},
   dispatch_thread_id="{root}",   # continuity root with turns — or pending-empty child of root
 )
 ```
 
 `dispatch_thread_id ∈ {continuity root with turns, pending-empty child of root}`.
+Todo shape the materializer reads (canonical keys, G1-skip stamps, entry gate):
+`conductor` § Admit from an existing plan.
 Forbid lifecycle-null pre-create (422 `conductor_coord_split_refused`). Resume
 after terminal: `reuse_thread=<work thread>` — do not re-pass the work thread as
 `dispatch_thread_id` without `reuse_thread=`.

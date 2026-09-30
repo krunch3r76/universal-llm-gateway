@@ -354,6 +354,29 @@ def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     assert body["generation_options"][
         "idempotency_key"
     ] == build_conductor_hop_idempotency_key("pred-hop-1")
+
+
+def test_hop_wire_body_is_a_legal_stargate_generate() -> None:
+    """Contract: the hop body plus the reserved dispatch_id must validate.
+
+    Stargate's generate model forbids extra keys. Two fields the hop sender
+    added without a matching field (``packet_kind``, then ``dispatch_id``)
+    each stopped every conductor at its first hop with a 400.
+    """
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger, closeout_tokens=["ROW_HOP"], summoning_thread_id="13511"
+    )
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    wire = dict(body)
+    wire["dispatch_id"] = "hop-admit-reserved-1"
+    parsed = TeamDispatchGenerateBody.model_validate(wire)
+    assert parsed.dispatch_id == "hop-admit-reserved-1"
+    assert parsed.hop_from == "pred-hop-1"
+    assert parsed.dispatch_thread_id == "13511"
     assert body["hop_seq"] == 2
     assert body["hop_reason"] == "planned"
     assert body["hop_from"] == "pred-hop-1"

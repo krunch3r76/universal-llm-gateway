@@ -1,4 +1,12 @@
-"""In-memory execution store for execution records, TTL cleanup, and boot recovery.
+"""In-memory execution store — the process-local projection of durable execution state.
+
+The authority for *what an execution is doing* is ``execution_state`` on the
+registry row (``claude_bundles.cdp_registry.execution_state``); this store is
+the fast in-process view of it. Every lifecycle transition here writes through
+to that row (seated → streaming → settled), and ``adopt`` rebuilds a record
+from the row at boot so the next process serves ``running`` for work the
+previous process admitted (a:36948). Nothing in this module is the drain's
+busy source: ``drain_state_snapshot`` reads the row set.
 
 Admission reads remain limited to recorded pending/running executions. Browser
 attachment occupancy is supplied by the separate asynchronous projection.
@@ -52,6 +60,18 @@ class ExecutionRecord:
     liveness_observed_at: float | None = None
     parent_thread: str | None = None
     mission_kind: str | None = None
+    # Last state written through to the registry row; gates repeat stamps so a
+    # liveness sample does not take ports.lock every second.
+    durable_state: str | None = None
+    resume_attempts: int = 0
+    resumed: bool = False
+
+
+_SETTLED_BY_STATUS: dict[str, str] = {
+    "completed": "finished",
+    "failed": "failed",
+    "aborted": "aborted",
+}
 
 
 class ExecutionStore:
@@ -74,6 +94,10 @@ class ExecutionStore:
         self._stop_ack_task: asyncio.Task[None] | None = None
         self._deregister: DeregisterFn | None = None
         self._occupancy: Any | None = None
+        # Set once by ``stop()``: task cancellations after this point are the
+        # process going down, not an operator abort — rows stay in flight for
+        # the successor to hydrate (a:36948 requirement 1).
+        self.shutting_down = False
 
     def bind_deregister(self, fn: DeregisterFn) -> None:
         self._deregister = fn
@@ -96,6 +120,7 @@ class ExecutionStore:
             await self._occupancy.start()
 
     async def stop(self) -> None:
+        self.shutting_down = True
         if self._occupancy is not None:
             await self._occupancy.stop()
         if self._stop_ack_task is not None:
@@ -139,6 +164,66 @@ class ExecutionStore:
             if stargate:
                 self._by_stargate[stargate] = execution_id
         return record
+
+    async def adopt(
+        self,
+        *,
+        execution_id: str,
+        registration_id: str,
+        holder: str,
+        purpose: str | None,
+        parent_thread: str | None,
+        mission_kind: str | None,
+        started_at: float,
+        durable_state: str,
+    ) -> ExecutionRecord:
+        """Rebuild a running record from a registry row's in-flight ``execution_state``.
+
+        Boot-time only: the row is the record of an execution the previous
+        process admitted. The record starts ``running`` with no task; the
+        resume path attaches one.
+        """
+        now = time.time()
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            status="running",
+            created_at=float(started_at),
+            updated_at=now,
+            registration_id=registration_id,
+            holder=holder,
+            purpose=purpose,
+            parent_thread=parent_thread,
+            mission_kind=mission_kind,
+            durable_state=durable_state,
+            resumed=True,
+        )
+        async with self._lock:
+            self._records[execution_id] = record
+        return record
+
+    async def _write_through(
+        self,
+        rec: ExecutionRecord,
+        state: str,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        """Stamp *state* on the record's registry row unless already recorded."""
+        if not rec.registration_id or rec.durable_state == state:
+            return
+        from claude_bundles.cdp_registry.execution_state import set_execution_state
+
+        rec.durable_state = state
+        try:
+            await asyncio.to_thread(
+                set_execution_state,
+                rec.registration_id,
+                execution_id=rec.execution_id,
+                state=state,  # type: ignore[arg-type]
+                reason=reason,
+            )
+        except Exception:  # noqa: BLE001 — a failed stamp must not kill the execution
+            rec.durable_state = None
 
     async def get(self, execution_id: str) -> ExecutionRecord | None:
         token = (execution_id or "").strip()
@@ -241,11 +326,41 @@ class ExecutionStore:
         return seal(payload, decl)
 
     async def drain_state_snapshot(self) -> dict[str, Any]:
-        """Return cached browser occupancy plus recorded execution drain state."""
-        from cdp_ask.work_projection import drain_projection
+        """Return restart-drain state; ``busy`` derives from the registry rows.
+
+        The in-flight set is ``in_flight_rows(active.json)`` — the same file
+        the next process and the manage witness read — plus this process's
+        executions that have no row yet (``unseated_pending``: admitted seconds
+        ago, before ``register_lane`` returned). Memory never decides busy on
+        its own.
+        """
+        from claude_bundles.cdp_registry.execution_state import in_flight_rows
+        from claude_bundles.cdp_registry_store import load_active
+
+        from cdp_ask.work_projection import drain_projection, in_flight_summary
 
         rows, execution_ids = await self._active_rows_snapshot()
-        return drain_projection(rows, execution_ids, self._occupancy)
+        try:
+            active = await asyncio.to_thread(load_active)
+            in_flight = in_flight_summary(in_flight_rows(active))
+            registry_error: str | None = None
+        except Exception as exc:  # noqa: BLE001 — unreadable registry is a fail-closed busy
+            in_flight = []
+            registry_error = f"{type(exc).__name__}: {exc}"
+        async with self._lock:
+            unseated = [
+                rec.execution_id
+                for rec in self._records.values()
+                if rec.status in {"pending", "running"} and not rec.registration_id
+            ]
+        return drain_projection(
+            rows,
+            execution_ids,
+            self._occupancy,
+            in_flight=in_flight,
+            unseated_pending=unseated,
+            registry_error=registry_error,
+        )
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:
         async with self._lock:
@@ -265,7 +380,9 @@ class ExecutionStore:
                 return
             rec.registration_id = registration_id
             rec.updated_at = time.time()
+            rec.durable_state = None
         self.request_occupancy_refresh()
+        await self._write_through(rec, "seated")
 
     async def update_ladder(
         self,
@@ -313,6 +430,8 @@ class ExecutionStore:
             rec.tool_pause = tool_pause
             rec.liveness_observed_at = liveness_observed_at
             rec.updated_at = time.time()
+        if streaming is True and rec.durable_state == "seated":
+            await self._write_through(rec, "streaming")
 
     async def mark_terminal(
         self,
@@ -346,6 +465,9 @@ class ExecutionStore:
             rec.tool_pause = None
             rec.liveness_observed_at = None
         self.request_occupancy_refresh()
+        await self._write_through(
+            rec, _SETTLED_BY_STATUS.get(status, "failed"), reason=error
+        )
 
     async def mark_awaiting_wake(
         self,
@@ -368,6 +490,7 @@ class ExecutionStore:
             rec.stop = None
             rec.tool_pause = None
             rec.liveness_observed_at = None
+        await self._write_through(rec, "awaiting_wake")
 
     async def request_abort(self, execution_id: str) -> ExecutionRecord | None:
         async with self._lock:

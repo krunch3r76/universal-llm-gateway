@@ -44,6 +44,7 @@ from cdp_ask.page_liveness import (
 from cdp_ask.unverifiable import (
     converse_fail_error,
     converse_stall_stage,
+    is_host_lost_error,
     is_unverifiable_stall,
 )
 
@@ -156,21 +157,25 @@ def _latch_streaming_attachment(
     execution_id: str = "",
 ) -> None:
     """Append ``attachment_observed`` on first streaming sample, then fold."""
-    from claude_bundles import cdp_registry_store as store
+    from claude_bundles.cdp_registry.attachment_journal import (
+        append_attachment_journal,
+        fold_attachment_journal,
+        has_attachment_observed,
+    )
 
     raw = (url or "").strip()
     if not raw or _CSE_URL_MARKER not in raw:
         return
-    if store._has_attachment_observed(registration_id, raw):
-        store.fold_attachment_journal()
+    if has_attachment_observed(registration_id, raw):
+        fold_attachment_journal()
         return
-    store.append_attachment_journal(
+    append_attachment_journal(
         registration_id=registration_id,
         chat_url=raw,
         attach_proof="streaming",
         execution_id=execution_id or None,
     )
-    store.fold_attachment_journal()
+    fold_attachment_journal()
 
 
 def _wrap_harvest_with_address(
@@ -585,8 +590,13 @@ async def run_execution(
     abort_check: Callable[[], Awaitable[bool]],
     on_registered: Callable[[str], None] | None = None,
     ladder: LadderCallbacks | None = None,
+    teardown_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    """Run one registry-backed project-ask and return a terminal-shaped result dict."""
+    """Run one registry-backed project-ask and return a terminal-shaped result dict.
+
+    *teardown_check* reports whether the owning process is shutting down; a
+    cancellation under teardown keeps the Chrome host for the successor.
+    """
     holder = req.holder.strip() or "cdp-ask-satellite"
     prompts = await asyncio.to_thread(resolve_prompt, req)
     reg = await asyncio.to_thread(bind_execution_lane, req, holder=holder)
@@ -723,7 +733,9 @@ async def run_execution(
                 satellite_execution_id=_compose_witness_satellite_id(
                     fail_error, execution_id
                 ),
-            ):
+            ) or (not conv_ok and is_host_lost_error(fail_error)):
+                # Host loss keeps the row: execution_ladder parks it dormant and
+                # resumes by chat_url instead of terminalizing (a:36969).
                 retain_host = True
             _persist_session_address(
                 reg.registration_id,
@@ -813,7 +825,7 @@ async def run_execution(
                 satellite_execution_id=_compose_witness_satellite_id(
                     result.error, execution_id
                 ),
-            ):
+            ) or is_host_lost_error(result.error):
                 retain_host = True
         elif result.archive_uri and ladder and ladder.on_archiving:
             await ladder.on_archiving()
@@ -826,7 +838,9 @@ async def run_execution(
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         return payload
     finally:
-        if retain_host:
+        if retain_host or (teardown_check is not None and teardown_check()):
+            # Process teardown: Chrome stays up with the row still in flight,
+            # so the successor process re-attaches by chat_url (a:36948 req 1).
             pass
         elif not await abort_check():
             if not registration_has_wake_debt(reg.registration_id):

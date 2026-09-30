@@ -337,7 +337,7 @@ async def execute(
             )
 
         case "busy_status":
-            return await _busy_status(ctl)
+            return await _busy_status(ctl, service=service)
 
         case "restart_intent_status":
             return await _restart_intent_status(ctl, params)
@@ -733,7 +733,7 @@ def _whoami() -> dict[str, Any]:
     }
 
 
-async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
+async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str, Any]:
     """Per-service busy read model + process-level busy snapshot (no mutation).
 
     Reports, for every restart-eligible service, whether it is busy and whether a
@@ -741,10 +741,19 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
     ``run_gated`` uses, but WITHOUT acquiring any restart slot. The ``process``
     block surfaces the quit-guard accounting (``ManageShutdownGate``) so a UI can
     also reflect "the manage host itself is busy".
+
+    ``service`` scopes the probe to one service and returns the compact
+    ``busy_service_scope`` projection (no ``active_work``); unscoped keeps the
+    full fleet payload for callers that depend on it.
     """
     from .controller.busy_work_summary import format_active_work_summary
 
-    report = await ctl.restart_gate.busy_report(sorted(SYNC_RESTART_SERVICES))
+    if service and service not in SYNC_RESTART_SERVICES:
+        raise ValueError(
+            f"busy_status service must be one of: {', '.join(sorted(SYNC_RESTART_SERVICES))}"
+        )
+    targets = [service] if service else sorted(SYNC_RESTART_SERVICES)
+    report = await ctl.restart_gate.busy_report(targets)
     now = datetime.now(UTC)
     store = ctl.restart_intent_store
     store.sweep_expired_windows(now=now)
@@ -759,6 +768,17 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
         entry["restart_window"] = store.restart_window_for_service(service, now=now)
         entry["active_work_summary"] = format_active_work_summary(
             entry.get("active_work")
+        )
+    if service:
+        from .controller.busy_service_scope import project_service_busy
+
+        identity = _whoami()
+        return project_service_busy(
+            service,
+            report[service],
+            as_of=now.isoformat(),
+            manage_pid=identity["pid"],
+            manage_process_start_time=identity["process_start_time"],
         )
     extra = ("build_image",) if ctl.build_running else ()
     snap = ctl.shutdown_gate.snapshot(extra_activities=extra)

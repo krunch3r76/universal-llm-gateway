@@ -50,6 +50,7 @@ def _append_standdown_token(
     detail: str | None,
 ) -> None:
     from claude_bundles import cdp_registry_store as store
+    from claude_bundles.cdp_registry.attachment_journal import fold_attachment_journal
 
     url = (chat_url or "").strip()
     if not url:
@@ -64,7 +65,7 @@ def _append_standdown_token(
                 "pasted_at": time.time(),
             },
         )
-        store.fold_attachment_journal()
+        fold_attachment_journal()
         return
     if envelope != "stand_down":
         return
@@ -83,7 +84,7 @@ def _append_standdown_token(
             "error": err or det or "unreachable",
         },
     )
-    store.fold_attachment_journal()
+    fold_attachment_journal()
 
 
 def _idempotency_key(req: PasteRequest, *, target_registration_id: str) -> str:

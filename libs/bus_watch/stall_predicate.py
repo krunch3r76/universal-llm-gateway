@@ -20,6 +20,31 @@ from bus_watch.park_harvest import (
 )
 from bus_watch.stall_pop import format_producer_terminal_reason
 
+# A linked producer past admit grace with no heartbeat, or one with an explicit
+# dead-stream witness, never seated. That is one terminal outcome for the watch,
+# not a stall to keep re-popping through (a:36907: two pops, verdict flapping
+# stalled → unknown_producer → stalled on a CDP generate that never seated).
+_DEAD_PRODUCER_LIVENESS = frozenset({"no_liveness_signal", "stream_dead_no_terminal"})
+PRODUCER_DEAD_REASON = "producer_dead_never_seated"
+
+
+def producer_dead_reason(producer: dict[str, Any] | None) -> str | None:
+    """Terminal reason for a linked producer that shows no liveness, else None."""
+    if not producer or producer.get("state") != "unknown":
+        return None
+    liveness = str(producer.get("liveness_reason") or "")
+    if liveness not in _DEAD_PRODUCER_LIVENESS:
+        return None
+    return (
+        f"{PRODUCER_DEAD_REASON} liveness_reason={liveness} "
+        f"execution_id={producer.get('execution_id')}"
+    )
+
+
+def is_terminal_stall_reason(reason: str) -> bool:
+    """True when a stall reason ends the watch rather than continuing the poll."""
+    return reason.startswith(PRODUCER_DEAD_REASON)
+
 
 def live_sdk_on_thread(
     *,
@@ -59,7 +84,9 @@ def stall_predicate(
     if "DONE" in closeout_tokens and not mission_open(scoreboard_body=scoreboard_body):
         return False, ""
 
-    open_mission = mission_open(scoreboard_body=scoreboard_body) if scoreboard_body else True
+    open_mission = (
+        mission_open(scoreboard_body=scoreboard_body) if scoreboard_body else True
+    )
     live = live_sdk_on_thread(
         thread_id=thread_id,
         probe_fn=probe_fn,
@@ -82,9 +109,9 @@ def stall_predicate(
         except (TypeError, ValueError):
             turn_count_i = None
 
-    park_context = parked_or_none_next_admit(body=closeout_body) or parked_or_none_next_admit(
-        body=scoreboard_body
-    )
+    park_context = parked_or_none_next_admit(
+        body=closeout_body
+    ) or parked_or_none_next_admit(body=scoreboard_body)
     if park_context:
         return True, "park_harvest_stall"
 
@@ -92,16 +119,17 @@ def stall_predicate(
     if producer_state == "terminal":
         return True, format_producer_terminal_reason(producer)
 
+    no_progress_reason = producer_dead_reason(producer) or "predicate_unmet_no_progress"
     if status == "predicate_unmet" and predicate_unmet_slices >= 2:
         if producer_state == "in_flight" and not producer_grace_expired:
             return False, ""
         if last_turn_count is None or turn_count_i == last_turn_count:
-            return True, "predicate_unmet_no_progress"
+            return True, no_progress_reason
 
     if open_mission and not live and not owed and not scoreboard_body:
         if status == "predicate_unmet" and predicate_unmet_slices >= 2:
             if producer_state == "in_flight" and not producer_grace_expired:
                 return False, ""
-            return True, "predicate_unmet_no_progress"
+            return True, no_progress_reason
 
     return False, ""

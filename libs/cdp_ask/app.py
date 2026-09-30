@@ -41,6 +41,8 @@ from cdp_ask.cse_session_models import (
 )
 from cdp_ask.cse_session_paste import execute_paste
 from cdp_ask.cse_session_provenance import resolve_public_provenance
+from cdp_ask.execution_ladder import finish_execution, guard_execution
+from cdp_ask.execution_resume import hydrate_in_flight, spawn_resume
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import execute_followup
 from cdp_ask.followup_events import (
@@ -57,13 +59,11 @@ from cdp_ask.models import (
     FollowupProjectAskResponse,
     SubmitProjectAskRequest,
     SubmitProjectAskResponse,
-    classify_stall_stage,
 )
 from cdp_ask.occupancy_projection import CdpOccupancyProjection
 from cdp_ask.page_liveness import LadderCallbacks
 from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
 from cdp_ask.runner import (
-    HarvestRootMismatchError,
     peek_harvest_root_health,
     refresh_harvest_root_health,
     run_execution,
@@ -180,11 +180,21 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         await asyncio.to_thread(verify_harvest_root)
         await asyncio.to_thread(refresh_harvest_root_health)
         await asyncio.to_thread(refresh_health_projections)
+        # Durable in-flight rows first: boot_reconcile then refuses their hosts
+        # as already_live_execution instead of orphaning them (a:36948).
+        adopted = await hydrate_in_flight(execution_store)
+        if adopted:
+            logger.warning(
+                "boot adopted in-flight executions: %s",
+                [rec.execution_id for rec in adopted],
+            )
         reaped = await execution_store.boot_reconcile()
         if reaped:
             logger.warning("boot reconcile reaped orphaned lanes: %s", reaped)
         await execution_store.start()
         await registry_hygiene.start()
+        for rec in adopted:
+            await spawn_resume(execution_store, rec, trigger="boot")
         refresh_flag = os.environ.get("CDP_ASK_TREE_STATE_REFRESH", "1").strip().lower()
         if refresh_flag not in ("0", "false", "no"):
             _tree_refresh_task = asyncio.create_task(_tree_state_refresh_loop())
@@ -553,64 +563,20 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             abort_check=_abort_check,
         )
 
-        async def _runner() -> None:
-            try:
-                payload = await run_execution(
-                    req,
-                    execution_id=record.execution_id,
-                    abort_check=_abort_check,
-                    on_registered=_sync_registered,
-                    ladder=ladder,
-                )
-                if payload.get("awaiting_wake_debt") and payload.get("ok"):
-                    await execution_store.mark_awaiting_wake(
-                        record.execution_id,
-                        result=payload,
-                    )
-                    return
-                status = (
-                    "aborted"
-                    if payload.get("status") == "aborted"
-                    else ("completed" if payload.get("ok") else "failed")
-                )
-                stall = payload.get("stall_stage")
-                if status == "failed" and not stall:
-                    stall = classify_stall_stage(payload.get("error"))
-                await execution_store.mark_terminal(
-                    record.execution_id,
-                    status=status,
-                    result=payload,
-                    error=payload.get("error"),
-                    stall_stage=stall if status == "failed" else None,
-                )
-            except asyncio.CancelledError:
-                await execution_store.mark_terminal(
-                    record.execution_id,
-                    status="aborted",
-                    error="cancelled",
-                    stall_stage="mark_terminal",
-                )
-                raise
-            except HarvestRootMismatchError as exc:
-                logger.exception(
-                    "execution %s harvest root mismatch", record.execution_id
-                )
-                await execution_store.mark_terminal(
-                    record.execution_id,
-                    status="failed",
-                    error=str(exc),
-                    stall_stage="mark_terminal",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("execution %s failed", record.execution_id)
-                await execution_store.mark_terminal(
-                    record.execution_id,
-                    status="failed",
-                    error=str(exc),
-                    stall_stage="mark_terminal",
-                )
+        async def _run() -> None:
+            payload = await run_execution(
+                req,
+                execution_id=record.execution_id,
+                abort_check=_abort_check,
+                on_registered=_sync_registered,
+                ladder=ladder,
+                teardown_check=lambda: execution_store.shutting_down,
+            )
+            await finish_execution(execution_store, record.execution_id, payload)
 
-        task = asyncio.create_task(_runner())
+        task = asyncio.create_task(
+            guard_execution(execution_store, record.execution_id, _run)
+        )
         await execution_store.attach_task(record.execution_id, task)
 
         return SubmitProjectAskResponse(

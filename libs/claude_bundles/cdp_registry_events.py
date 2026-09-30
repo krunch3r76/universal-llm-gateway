@@ -269,6 +269,34 @@ def cdp_port_relaunched(
 
 
 @event_factory
+def cdp_execution_state_changed(
+    *,
+    registration_id: str,
+    execution_id: str,
+    state: str,
+    previous_state: str | None,
+    kind: str,
+    reason: str | None,
+    chat_url: str | None,
+) -> Event:
+    """Durable ``execution_state`` on a registry row changed (advisory mirror, not the record)."""
+    return Event(
+        signal="cdp.execution.state_changed",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "execution_id": execution_id,
+            "state": state,
+            "previous_state": previous_state,
+            "kind": kind,
+            "reason": reason,
+            "chat_url": chat_url,
+        },
+    )
+
+
+@event_factory
 def cdp_port_dormant_reclaimed(*, registration_ids: list[str], trigger: str) -> Event:
     """Dormant rows dropped past TTL or over the row cap."""
     return Event(

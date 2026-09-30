@@ -119,7 +119,10 @@ async def _open_connectors_panel(page: Page) -> Page:
 
     await _ensure_settings_open(page)
 
-    if "customize-connectors" not in page.url:
+    if (
+        "customize/connectors" not in page.url
+        and "customize-connectors" not in page.url
+    ):
         await page.evaluate(
             "() => { window.location.hash = 'settings/customize-connectors'; "
             "window.dispatchEvent(new HashChangeEvent('hashchange')); }"
@@ -159,6 +162,12 @@ async def _row_matching(page: Page, *needles: str):
         row = page.locator("tr").filter(has_text=re.compile(re.escape(needle), re.I))
         if await row.count():
             return row.first
+        # Yours list: the connector name is a span, and the URL is not on the row.
+        if needle.startswith("http"):
+            continue
+        label = page.get_by_text(needle, exact=True)
+        if await label.count() and await label.first.is_visible():
+            return label.first
     return None
 
 

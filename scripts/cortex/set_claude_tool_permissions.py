@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Set Claude's life-connector tool policy through the authenticated Jupiter tab.
+"""Repair claude.ai Customize radios for the toys and ulg-code connectors.
 
-The script targets only the named ``toys`` connector and its ``Other tools``
-permission group. It reads the current policy, changes it only when necessary,
-then reloads the page to verify that the setting persisted and tools remain
-available.
+Callers are ``claude-ai-sync-jupiter set-tool-permissions`` and
+``refresh-connector``. ``toys`` on ``/mcp/life`` gets the Other-tools blanket
+set to Always allow. ``ulg-code`` on ``/mcp/code`` gets the ops allowlist in
+``claude_code_tool_permissions``: Manage Services, Observability, and Team
+Dispatch stay Always allow, and every other tool radio is Blocked. The script
+reloads and checks the saved control before it prints a status.
 """
 
 from __future__ import annotations
@@ -21,9 +23,9 @@ if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
-from playwright.async_api import Page  # noqa: E402
-
+from claude_code_tool_permissions import apply_code_ops, resolve_policy  # noqa: E402
 from claude_settings_page import pick_claude_settings_page  # noqa: E402
+from playwright.async_api import Page  # noqa: E402
 
 DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/life"
 DEFAULT_CONNECTOR_NAME = "toys"
@@ -81,7 +83,10 @@ async def _open_connectors_panel(page: Page) -> Page:
         await page.wait_for_timeout(2000)
 
     await _ensure_settings_open(page)
-    if "customize-connectors" not in page.url:
+    if (
+        "customize/connectors" not in page.url
+        and "customize-connectors" not in page.url
+    ):
         await page.evaluate(
             "() => { window.location.hash = 'settings/customize-connectors'; "
             "window.dispatchEvent(new HashChangeEvent('hashchange')); }"
@@ -120,6 +125,13 @@ async def _row_matching(page: Page, *needles: str):
         row = page.locator("tr").filter(has_text=re.compile(re.escape(needle), re.I))
         if await row.count():
             return row.first
+        # The Yours list is not a table. The connector name is its own element,
+        # and the MCP URL is not shown until the detail opens.
+        if needle.startswith("http"):
+            continue
+        label = page.get_by_text(needle, exact=True)
+        if await label.count() and await label.first.is_visible():
+            return label.first
     return None
 
 
@@ -131,6 +143,12 @@ async def _open_connector_detail(
     body = await page.locator("body").inner_text()
     if connector_name in body and mcp_url in body:
         return page
+    # Discover hides custom connectors. Yours is the list that names them.
+    if connector_name not in body:
+        yours = page.get_by_text("Yours", exact=True)
+        if await yours.count() and await yours.first.is_visible():
+            await yours.first.click(force=True)
+            await page.wait_for_timeout(1500)
 
     row = await _row_matching(page, connector_name, mcp_url, host)
     if row is None:
@@ -204,14 +222,31 @@ async def set_tool_permissions(
     mcp_url: str,
     connector_name: str,
     timeout_s: float,
+    policy: str | None = None,
 ) -> str:
-    """Set and reload-verify the toys Other tools policy through Jupiter CDP."""
+    """Apply the connector tool policy and return changed or already_set.
+
+    ``policy`` None selects from the URL and connector name. Life repair
+    checks the Other-tools blanket and returns one status word. Code-ops
+    repair returns a second line, ``code-ops allow=<n> blocked=<n>``. The
+    Jupiter page is reloaded on the connector detail before the status returns.
+    """
     playwright, _browser, _context, page = await connect_cdp(cdp_url)
     timeout_ms = int(timeout_s * 1000)
     page.set_default_timeout(timeout_ms)
     try:
+        selected = resolve_policy(mcp_url, connector_name, policy)
         page = await _open_connectors_panel(page)
         page = await _open_connector_detail(page, connector_name, mcp_url)
+
+        async def reopen() -> Page:
+            nonlocal page
+            page = await _open_connectors_panel(page)
+            page = await _open_connector_detail(page, connector_name, mcp_url)
+            return page
+
+        if selected == "code-ops":
+            return await apply_code_ops(page, reopen=reopen)
         result = await _set_permission_group(page)
         await _verify_persisted(page)
         return result
@@ -220,7 +255,11 @@ async def set_tool_permissions(
 
 
 def main() -> int:
-    """Parse CLI arguments, run the permission repair, and print its status."""
+    """Parse CLI arguments, run the permission repair, and print its status.
+
+    Stdout is the status word the wrapper quotes. Code-ops adds a second line
+    with the allow and blocked counts after the reload check succeeds.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--cdp-url",
@@ -228,7 +267,14 @@ def main() -> int:
     )
     parser.add_argument("--mcp-url", default=DEFAULT_MCP_URL)
     parser.add_argument("--connector-name", default=DEFAULT_CONNECTOR_NAME)
-    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument(
+        "--policy",
+        choices=("life-blanket", "code-ops"),
+        default=None,
+        help="Override URL-based policy. life-blanket is toys; "
+        "code-ops is the ulg-code allowlist.",
+    )
     args = parser.parse_args()
 
     try:
@@ -238,6 +284,7 @@ def main() -> int:
                 mcp_url=args.mcp_url,
                 connector_name=args.connector_name,
                 timeout_s=args.timeout,
+                policy=args.policy,
             )
         )
     except Exception as exc:

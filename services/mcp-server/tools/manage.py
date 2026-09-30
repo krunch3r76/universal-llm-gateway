@@ -291,13 +291,21 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              sync_restart. Ops-only via TUI for
                                              pip/Dockerfile changes (--no-cache).
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
-          busy_status   (no service needed) — per-service busy read model: for
-                                             each service {busy, restart_would_defer,
-                                             active_work, active_work_summary,
-                                             restart_intent, restart_window} plus
-                                             top-level restart_windows {open: [...]}
-                                             and a process block {manage_inflight,
-                                             activities}. active_work_summary is a
+          busy_status   (service?)          — per-service busy read model.
+                                             service= : one probe, compact
+                                             {busy, as_of, source, scope, epoch,
+                                             determination, restart_would_defer,
+                                             holder, lane, restart_intent,
+                                             restart_window} — no active_work.
+                                             Use for the dispatch-kernel gate.
+                                             Omit service= for the full fleet
+                                             payload: per service {busy,
+                                             restart_would_defer, active_work,
+                                             active_work_summary, restart_intent,
+                                             restart_window} plus restart_windows
+                                             {open: [...]} and process
+                                             {manage_inflight, activities}.
+                                             active_work_summary is a
                                              one-line holder description (prefer it
                                              when diagnosing busy=true — e.g. cursor-sdk
                                              dispatch id + model + subject).

@@ -292,6 +292,14 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         ),
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
+        (
+            "- Before you author any `prompt=` or packet body a nested seat will act "
+            "on (investigate/confer legs, CDP ask/review gates), Use the "
+            "retrieval-before-authoring skill — one `rag` search per scope, yields "
+            "and nulls in the leg's report. prompt-expand does not run on this "
+            "contract; materialized `source_ref` legs carry no authored prose and "
+            "are exempt."
+        ),
         "- Forward-only score mutation; journal every tip write.",
         '- lane="B" — pass explicitly on nested mechanical legs.',
         (
@@ -379,6 +387,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `work-item-seed-path` skill",
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
+            "Use the `retrieval-before-authoring` skill (before authoring a nested prompt)",
             f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
             f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]
