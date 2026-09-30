@@ -552,6 +552,102 @@ def test_three_threads_winner_failure_launches_twice(
     assert oks[0] == oks[1]
 
 
+def test_rollback_between_wait_observations_launches_twice(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = "parent-between"
+    entered = threading.Event()
+    release = threading.Event()
+    second_launch = threading.Event()
+    launches: list[int] = []
+    from claude_bundles.cdp_registry import lifecycle as registry_lifecycle
+
+    def launch(port: int, profile: Path) -> int:
+        profile.mkdir(parents=True, exist_ok=True)
+        launches.append(port)
+        if len(launches) == 1:
+            entered.set()
+            assert release.wait(timeout=5)
+            return 1
+        second_launch.set()
+        return 1
+
+    monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", launch)
+    barrier = threading.Barrier(2)
+    gate = threading.Lock()
+    winner_id: list[str] = []
+    rolled = {"done": False}
+    hook_finished = threading.Event()
+
+    def hook(registration_id: str) -> None:
+        with gate:
+            if not winner_id:
+                winner_id.append(registration_id)
+            winner = winner_id[0]
+        if registration_id != winner or hook_finished.is_set():
+            return
+        assert entered.wait(timeout=5)
+        barrier.wait(timeout=5)
+        with gate:
+            if not rolled["done"]:
+                registry_lifecycle._rollback_allocating(registration_id)
+                rolled["done"] = True
+        hook_finished.set()
+
+    monkeypatch.setattr(registry_lifecycle, "_between_wait_observations", hook)
+    start = threading.Barrier(3)
+    results: list[BaseException | None] = []
+
+    def run() -> None:
+        start.wait(timeout=5)
+        try:
+            bind_execution_lane(_parent_request(parent), holder="op")
+            results.append(None)
+        except BaseException as exc:
+            results.append(exc)
+
+    threads = [threading.Thread(target=run, daemon=True) for _ in range(3)]
+    try:
+        for thread in threads:
+            thread.start()
+        assert hook_finished.wait(timeout=5)
+        assert second_launch.wait(timeout=5)
+    finally:
+        release.set()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert len(launches) == 2
+    assert len(results) == 3
+
+
+def test_second_reentry_raises_joined_reentry_exhausted(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claude_bundles.cdp_registry import lifecycle as registry_lifecycle
+
+    reserve_calls: list[bool] = []
+
+    def forbid_reserve(**_kwargs: object) -> tuple[dict[str, object], bool]:
+        reserve_calls.append(True)
+        raise AssertionError("reserve_allocating_row called")
+
+    monkeypatch.setattr(registry_lifecycle, "reserve_allocating_row", forbid_reserve)
+    with pytest.raises(reg.JoinedReentryExhausted):
+        registry_lifecycle._wait_for_joined_row(
+            {"registration_id": "missing-joined-row"},
+            holder="op",
+            purpose="operator-proxy",
+            mission_kind="root",
+            parent_thread="parent-reentry",
+            listen=lambda _port: False,
+            launch_fn=lambda _port, _profile: 1,
+            joined=None,
+            reentry=True,
+        )
+    assert reserve_calls == []
+
+
 @pytest.mark.asyncio
 async def test_run_execution_bind_yields_the_event_loop(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch

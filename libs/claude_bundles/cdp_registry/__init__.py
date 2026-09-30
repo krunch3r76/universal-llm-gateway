@@ -51,6 +51,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "RegistryBusyError": (".models", "RegistryBusyError"),
     "SeatContended": (".models", "SeatContended"),
     "RegistryError": (".models", "RegistryError"),
+    "JoinedReentryExhausted": (".models", "JoinedReentryExhausted"),
     "RegistryExhaustedError": (".models", "RegistryExhaustedError"),
     "STALE_ACTIVE_TTL_S": (".models", "STALE_ACTIVE_TTL_S"),
     "STATUS_DORMANT": (".models", "STATUS_DORMANT"),

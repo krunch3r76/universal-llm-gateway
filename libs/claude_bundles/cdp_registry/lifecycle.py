@@ -6,6 +6,7 @@ import contextlib
 import os
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from .hygiene import reclaim_best_effort, reclaim_profile_for_detached_row
 from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
+    JoinedReentryExhausted,
     Registration,
     RegistryError,
     SeatContended,
@@ -294,6 +296,10 @@ def _mint_after_join(
     return _finish_reserved_launch(row, launch=True, launch_fn=launch_fn)
 
 
+# Test seam only: called with the joined registration_id between the two wait reads.
+_between_wait_observations: Callable[[str], None] | None = None
+
+
 def _wait_for_joined_row(
     row: dict[str, Any],
     *,
@@ -304,20 +310,26 @@ def _wait_for_joined_row(
     listen: _ListenFn,
     launch_fn: _LaunchFn,
     joined: list | None,
+    reentry: bool = False,
 ) -> Registration:
     """Poll until the joined row leaves ``allocating``. No deadline.
 
-    The wait does not hold ``ports_lock``, does not take a blocking flock,
-    and does not raise ``LaneError``. ``_LAUNCH_WAIT_S`` stays inside
-    ``_launch_chrome`` only.
+    The same iteration reads the driver lock before the status. Both reads
+    stay outside ``ports_lock``. A nested re-entry raises
+    ``JoinedReentryExhausted`` instead of reserving or waiting again.
+    The wait does not take a blocking flock and does not raise ``LaneError``.
+    ``_LAUNCH_WAIT_S`` stays inside ``_launch_chrome`` only.
     """
     registration_id = str(row["registration_id"])
     while True:
-        current = _store.load_active().get(registration_id)
-        status = current.get("status") if isinstance(current, dict) else None
         held = process_holds_driver_lock(registration_id) or is_driver_lock_held(
             registration_id
         )
+        observer = _between_wait_observations
+        if observer is not None:
+            observer(registration_id)
+        current = _store.load_active().get(registration_id)
+        status = current.get("status") if isinstance(current, dict) else None
         if status == "allocating" and held:
             time.sleep(cdp_lane._POLL_MS / 1000)
             continue
@@ -325,6 +337,11 @@ def _wait_for_joined_row(
             if joined is not None:
                 joined.append(registration_id)
             return _row_to_registration(current)
+        if reentry:
+            raise JoinedReentryExhausted(
+                f"registration {registration_id!r} joined re-entry exhausted "
+                f"(status={status!r})"
+            )
         if status == "allocating":
             return _mint_after_join(
                 holder=holder,
@@ -355,6 +372,7 @@ def _wait_for_joined_row(
             listen=listen,
             launch_fn=launch_fn,
             joined=joined,
+            reentry=True,
         )
 
 

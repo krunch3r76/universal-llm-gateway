@@ -47,6 +47,10 @@ class RegistryError(RuntimeError):
     """Base exception for failures while allocating, attaching, or managing CDP registry hosts and persistent rows."""
 
 
+class JoinedReentryExhausted(RegistryError):  # noqa: N818 — spec-bound name, not an Error suffix
+    """Raised when a nested join wait would reserve or wait a second time."""
+
+
 class RegistryBusyError(RegistryError):
     """Raised when a second driver attempts to attach a registration already held by another driver."""
 
