@@ -21,6 +21,7 @@ from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
     probe_thread,
+    refuse_conductor_operator_lane_summon,
     resolve_cursor_sdk_thread_targets,
 )
 from .dispatch_thread_context import resolve_generate_prompt_resolution
@@ -243,6 +244,7 @@ async def dispatch_cursor_sdk_generate_route(
 
     role = seat
     try:
+        operator_lane_summon_warning: str | None = None
         source_ref = getattr(body, "source_ref", None)
         if body.job == "wrap":
             if getattr(body, "packet_path", None) is not None:
@@ -320,6 +322,11 @@ async def dispatch_cursor_sdk_generate_route(
             and source_ref
             and not getattr(body, "packet_path", None)
         ):
+            operator_lane_summon_warning = await refuse_conductor_operator_lane_summon(
+                request_id=request_id,
+                contract=body.contract,
+                dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
+            )
             loop = asyncio.get_running_loop()
             gen_opts = getattr(body, "generation_options", None) or {}
             raw_summon = gen_opts.get("summon_mode")
@@ -528,6 +535,10 @@ async def dispatch_cursor_sdk_generate_route(
             transcript_id=getattr(body, "transcript_id", None),
         )
         if isinstance(result, dict):
+            if operator_lane_summon_warning:
+                result["warnings"] = list(result.get("warnings") or []) + [
+                    operator_lane_summon_warning
+                ]
             split_warning = consolidation_split_warning(
                 reuse_thread=reuse_thread,
                 parent_dispatch_thread_id=parent_dispatch_thread_id,

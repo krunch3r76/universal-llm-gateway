@@ -440,15 +440,20 @@ team_dispatch(
   job=conductor,
   lane="B",
   source_ref="todo:{slug}",
-  dispatch_thread_id="{root}",   # continuity root with turns, or pending-empty work child
+  dispatch_thread_id="{root}",   # shape 1 when root is not an operator lane; else shape 2 child
 )
 ```
 
 First-utterance **mint** only. Harvested score / `NEXT_ADMIT: none` is the
 rematerialize trap (§ Liaison-decide), not this recipe.
 
-`{root}` = continuity root that already has turns, **or** a
-`lifecycle_state=pending` ∧ `turn_count==0` child of that root. Lifecycle-null
+`{root}` = continuity root that already has turns and is not an operator lane
+(shape 1), **or** a `lifecycle_state=pending` ∧ `turn_count==0` child of that
+root. When that root is an operator lane, the admit 422s
+`conductor_summoning_operator_lane`. Shape 2: the caller pre-creates a
+pending-empty child (`bus_lifecycle_state=pending`, `turn_count=0`,
+`parent_thread=<lane>`, `cse_registration_id` null) and passes that child as
+`dispatch_thread_id` and `reuse_thread`. Lifecycle-null
 pre-create 422s (`conductor_coord_split_refused`). Resume-after-terminal:
 `reuse_thread=<work thread>`. Receipt quotes the **admitted** thread +
 `branch_current=cursor-sdk/lane-{that id}` + `dispatch_id` + `scoreboard_uri`.
@@ -792,7 +797,12 @@ stamp neither; let G1 fire. Attach recipe: `work-item-seed-path` § S3 / S5.
 
 ### `dispatch_thread_id` shapes
 
-§ First-utterance spawn. The 422 `conductor_coord_split_refused` repeats the
+§ First-utterance spawn. Shape 1 keeps a continuity root that is not an
+operator lane. When that root is an operator lane, the admit 422s
+`conductor_summoning_operator_lane`. Shape 2: pre-create a pending-empty child
+(`bus_lifecycle_state=pending`, `turn_count=0`, `parent_thread=<lane>`,
+`cse_registration_id` null) and pass that child as `dispatch_thread_id` and
+`reuse_thread`. The 422 `conductor_coord_split_refused` repeats the
 three legal shapes in `details.hint` — read the payload before probing threads.
 
 ### Preflight gate (dispatch-kernel "agent_bus + stargate + GIW up")
