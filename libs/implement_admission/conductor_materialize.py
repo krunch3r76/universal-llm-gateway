@@ -27,6 +27,7 @@ from implement_admission.conductor_score_journal import (
 )
 from implement_admission.conductor_summon import resolve_summon_mode
 from implement_admission.conductor_width_seat import (
+    ACTIVE,
     ConductorWidthSeat,
     g3_g5_score_ratify_clause,
 )
@@ -37,16 +38,25 @@ from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
 _CONDUCTOR_USE_LINE = (
     "Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows."
 )
-_SCORE_PLAY_SEAT_LINES = (
-    "- Enumerate · implement · drive: `cursor/grok-4.7` — `effort=high`, "
-    "`fast=false`; same slug as the ticker successor.",
-    "- Intelligence (architecture, ranking, fork resolution): CDP "
-    "`cdp/opus-5`, `cdp/fable`.",
-    "- The house driver enumerates and does not rank rival designs — write "
-    "`OPEN FORK:` and stop.",
-    "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
-    "was underspecified.",
-)
+
+
+def score_play_seat_lines() -> tuple[str, ...]:
+    """Seat lines for packet invariants, filled from ACTIVE at render time.
+
+    Width rows follow the one assignment. Bind and review stay on Opus 5.5,
+    so a packet cannot keep offering Fable after ACTIVE moves.
+    """
+    return (
+        "- Enumerate · implement · drive: `cursor/grok-4.7` — `effort=high`, "
+        "`fast=false`; same slug as the ticker successor.",
+        "- Intelligence (architecture, ranking, fork resolution): CDP "
+        f"`{ACTIVE.model}` at reasoning_effort={ACTIVE.reasoning_effort} "
+        "for G1, G2, G4, and G3→G5. Bind/review stays `cdp/opus-5.5`.",
+        "- The house driver enumerates and does not rank rival designs — write "
+        "`OPEN FORK:` and stop.",
+        "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
+        "was underspecified.",
+    )
 
 
 def hop_invariant_g3_g5_fragment(
@@ -318,7 +328,7 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
 def _render_invariants(ctx: ConductorMaterializeContext) -> str:
     lines = [
         _CONDUCTOR_USE_LINE,
-        *list(_SCORE_PLAY_SEAT_LINES),
+        *list(score_play_seat_lines()),
         "- DONE is rendered from witnesses; you hang witnesses, you do not write DONE.",
         (
             "- The continuity card ## Skills lists slugs. After resume, read that section "
@@ -383,7 +393,9 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
         ]
     else:
         g3_g5_lines = [
-            "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).",
+            "G3→G5 default: in-process CDP score-ratify "
+            f"({g3_g5_score_ratify_clause()}) "
+            "(do-not-fight / likely-optimal).",
             "Explicit see-score: ROW_PINNED at G3 + ping.",
         ]
     ac = [

@@ -69,6 +69,7 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
     assert "SCORE_RESURFACE" in preamble
     assert ACTIVE.model in preamble
+    assert f"reasoning_effort={ACTIVE.reasoning_effort}" in preamble
     assert "cdp/fable-5.1" not in preamble
     assert "summoning bus thread 9638" in preamble
     assert "never this leftover worker thread" in preamble

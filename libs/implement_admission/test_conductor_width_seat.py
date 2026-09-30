@@ -73,3 +73,13 @@ def test_render_restore_and_active_width_seat() -> None:
         assert "cdp/fable-5.1" not in rendered
         assert "reasoning_effort=max" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
+
+
+def test_default_render_reads_active_constant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Production render with no seat argument reads the ACTIVE assignment."""
+    import implement_admission.conductor_width_seat as seat_mod
+
+    monkeypatch.setattr(seat_mod, "ACTIVE", RESTORE)
+    rendered = hop_invariant_g3_g5_fragment()
+    assert "cdp/fable-5.1" in rendered
+    assert "reasoning_effort=high" in rendered

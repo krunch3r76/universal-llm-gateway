@@ -206,8 +206,8 @@ _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
 
 _CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE = (
     "CONDUCTOR AWAY SCORE-RATIFY (mandatory): At G3→G5 fire in-process CDP "
-    "score-ratify (do-not-fight / likely-optimal); explicit see-score = "
-    "ROW_PINNED at G3 + ping. This is not CONFIRM_PENDING — record "
+    "score-ratify ({width_clause}) (do-not-fight / likely-optimal); explicit "
+    "see-score = ROW_PINNED at G3 + ping. This is not CONFIRM_PENDING — record "
     "likely-optimal / not on the score; do not reopen the mission."
 )
 
@@ -720,7 +720,11 @@ def resolve_prompt_preamble(
                 )
             )
         else:
-            parts.append(_CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE)
+            parts.append(
+                _CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE.format(
+                    width_clause=g3_g5_score_ratify_clause(),
+                )
+            )
         if thread_id:
             effective_hop_seq = hop_seq if hop_seq is not None else 1
             if hop_from:
