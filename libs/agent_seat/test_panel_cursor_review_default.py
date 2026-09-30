@@ -16,17 +16,17 @@ from agent_seat.panel_dispatch import (
 pytestmark = pytest.mark.offline
 
 
-def test_default_panel_reviewer_is_cursor_fable() -> None:
-    assert ("reviewer", "cursor/claude-fable-5-1") in DEFAULT_PANEL_MEMBERS
+def test_default_panel_reviewer_is_cdp_opus() -> None:
+    assert ("reviewer", "cursor/grok-4.7") in DEFAULT_PANEL_MEMBERS
 
 
 def test_build_body_uses_seat_for_cursor_reviewer() -> None:
     body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="reviewer", model="cursor/claude-fable-5-1"),
+        spec=PanelMemberSpec(role="reviewer", model="cursor/grok-4.7"),
         dispatch_thread_id="t1",
     )
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == "cursor/claude-fable-5-1"
+    assert body["model"] == "cursor/grok-4.7"
     assert body["lane"] == "A"
     assert "role" not in body
 
@@ -34,7 +34,7 @@ def test_build_body_uses_seat_for_cursor_reviewer() -> None:
 def test_cursor_reviewer_omits_reasoning_effort() -> None:
     """BIND_B: panel fan-out must not forward effort onto cursor-sdk members."""
     body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="reviewer", model="cursor/claude-fable-5-1"),
+        spec=PanelMemberSpec(role="reviewer", model="cursor/grok-4.7"),
         dispatch_thread_id="t1",
         reasoning_effort="high",
     )
@@ -63,6 +63,6 @@ def test_default_panel_has_two_distinct_identities() -> None:
         m.role: effective_model_for_member(m) for m in members
     }
     labels = panel_identity_labels(member_models)
-    assert any(label.startswith("claude-fable-5-1@") for label in labels)
+    assert any("grok-4.7@" in label for label in labels)
     assert any(label.startswith("grok-4.7@") for label in labels)
     assert len(labels) >= 2

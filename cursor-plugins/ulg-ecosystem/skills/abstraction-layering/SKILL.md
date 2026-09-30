@@ -276,7 +276,7 @@ record harvest on sidecar **R1**.
 | Posture | Do |
 |---|---|
 | Conductor / unattended | **Fire G6** — latency is not a skip; poll/hop+watcher until R1 harvest |
-| CDP stall / empty FAILED | **HARD STOP** past G6 — ¬ land (G7) until harvest (`conductor` a:32226) |
+| CDP consult refused or failed | Escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool. ¬ land (G7) on an empty harvest |
 
 Recipe: `consult-routing` § M3 pre-go-live · M4 S1.
 

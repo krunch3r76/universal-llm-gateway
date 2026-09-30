@@ -278,21 +278,14 @@ per-G-row one. Default posture once running:
   (`op=generate`, `purpose=review`, `model` in `cdp/opus-5` | `cdp/opus-5.5` |
   `cdp/fable`, `contract=none`, no other keys). That bound is the bridge
   process for the filtered seat; it is not a server-side identity check on
-  `/mcp/code`. When Opus returns `stall_stage=completed_without_proof`, the
-  CDP worker retries `cdp/fable` once, resets the inflight clock, and posts
-  that verdict on the original execution id only when the fable body is
-  non-empty — the retry is not a second operator or conductor step. Latency while CDP is
-  healthy is not a skip — poll / hop+watcher / `PARKED_TRANSPORT` until harvest.
-  CDP down or stall (`Chrome on :9225 did not reach CDP`, empty body,
-  `stall_stage=mark_terminal`) ≡ **no harvest** ≡ **HARD STOP** — restore the
-  ask lane or explicit operator rebind; ¬ label DEFERRED/transport-debt and
-  continue; ¬ Composer/self substitute. **Exception:** `body_len=0` with
-  `stall_stage=mark_terminal` and an undelivered skill chip is a delivery
-  failure, not a review verdict, and it does not consume the second-strike
-  stop. Retry that review once, naming the missing slugs in the prompt. If
-  the body is still empty, `git_land` the lane that holds the commits and
-  close `land_disposition: landed`. Do not `PARKED_TRANSPORT`. Do not discard
-  that lane. Optional Sidecar overlays that the
+  `/mcp/code`.   A consult already admitted and still healthy is not a skip — poll until harvest.
+  CDP consult refused or failed (including `X display exhausted`, `Chrome on :9225 did not reach CDP`, empty body,
+  `stall_stage=mark_terminal`, `stall_stage=completed_without_proof`): do not wait and do not retry the CDP pool.
+  Choose at once by the question and record `cdp_fail_route` on the scoreboard row.
+  `nested-grok`: nested `team_dispatch` `seat=cursor-sdk` `model=cursor/grok-4.7` `contract=none` `model_knobs={"effort":"xhigh"}`.
+  `operator`: post the question and its context on this worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply.
+  Do not label DEFERRED and continue. Do not substitute Composer. Do not `PARKED_TRANSPORT` on this failure. Do not discard the lane.
+  Optional Sidecar overlays that the
   scoreboard marks non-blocking remain commentary only — they do not replace
   the gated after-ship picker. Does not replace path-sim R-after (Grok).
   **Reader (BINDING):** `fired(gate) ⇒ reader = summoning-thread lead at harvest`.
@@ -616,9 +609,7 @@ Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` 
 `Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
 field under profile **`cdp_fable_legs_arc`** no longer caps legs: the ≤1
 `cdp/fable-5.1` leg-per-arc allowance is removed, and G4 reads ACTIVE.
-Empty / `FAILED body_len=0` leg ⇒ record
-`attempt=<execution_id>` on the row; one retry allowed; second empty ⇒ HARD
-STOP or operator pin — never a silent substitute to another width model. Field-level
+Empty / `FAILED body_len=0` leg ⇒ record `cdp_fail_route` on the scoreboard row and escalate at once. Do not retry the CDP pool. `nested-grok` or `operator` as in the after-ship gate above. Field-level
 content and the why-a-cold-successor-needs-it column:
 `cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the
@@ -993,7 +984,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Nest 422 then in-seat G5 absorb | `PARKED_TRANSPORT` + persist; fix wire and re-nest under live `dispatch_id` |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire Opus after-ship / Fable Skeptic and never read it | Summoning-thread lead quotes the harvest; unread ⇒ ¬ DONE |
-| Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | **HARD STOP** — restore CDP + harvest, or operator-explicit seat rebind; ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Cursor/Composer silent substitute (a:32146 · a:32226 · 9638 hop3 · 10013) |
+| Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | Escalate at once. Record `cdp_fail_route` on the scoreboard: `nested-grok` or `operator`. Do not wait and do not retry the CDP pool. ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Composer substitute |
 | Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
 | Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = ACTIVE on the spec; code review stays `cdp/opus-5.5` on the lane branch diff, before land (G6) |
 | Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |

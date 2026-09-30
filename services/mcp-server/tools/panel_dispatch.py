@@ -181,8 +181,8 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         """Run the consensus-steelman panel member dispatches (Phase 2 helper).
 
         **When ``consensus_disposition=panel``** on a material decision: admits
-        the default ≥2-family roster (``skeptic`` → grok/xai,
-        ``reviewer`` → cursor/gpt-5.6-terra on cursor-sdk) via
+        the default ≥2-family roster (``skeptic`` → xai/grok-4.7,
+        ``reviewer`` → cursor/grok-4.7) via
         ``team_dispatch(op=generate)``.
         Optional ``include_synthesizer`` adds the gemini tiebreaker (inline-only).
 

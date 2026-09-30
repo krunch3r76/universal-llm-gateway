@@ -163,7 +163,7 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 | Element | Value |
 |---|---|
 | Default reviewer | **`cdp/opus-5`** · `purpose=review` · `reasoning_effort="high"` — delivery critique over staged diff/closeout |
-| Escalation | `cursor/grok-4.7` `contract=none` when the CDP review lane is unavailable. `cdp/fable` only when Kaywan asks |
+| Escalation | CDP review refused or failed: do not wait and do not retry the CDP pool. Conductor records `cdp_fail_route` on the scoreboard. `nested-grok`: `cursor/grok-4.7` `contract=none` `model_knobs={"effort":"xhigh"}`. `operator`: question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread (`CONSULT_PENDING` watches it). `cdp/fable` only when Kaywan asks |
 | Fire | `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` — queues behind the live holder, ¬ contend |
 | Deliver | `cse_session(op=followup)` into the attached CSE |
 | Log | NOTE on the **MONITOR sibling** — silence on the watched lane |

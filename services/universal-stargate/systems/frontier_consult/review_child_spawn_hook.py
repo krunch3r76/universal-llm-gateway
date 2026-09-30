@@ -33,8 +33,9 @@ from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_
 
 logger = get_logger(__name__)
 
-# Prefer cursor/* Anthropic-family over anthropic/* API (house rule).
-_OPENAI_EXECUTOR_ALTERNATE = "cursor/claude-opus-5"
+# OpenAI-family executors need a reviewer whose identity is not theirs.
+# cursor/grok-4.7 is the in-use cursor seat; cursor/claude-* is not spent.
+_OPENAI_EXECUTOR_ALTERNATE = "cursor/grok-4.7"
 _GENERATE_OP = "generate"
 _CURSOR_SDK_ROLE = "cursor-sdk"
 _REVIEWER_ROLE = "reviewer"

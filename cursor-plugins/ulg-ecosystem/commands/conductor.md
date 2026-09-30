@@ -119,7 +119,7 @@ Use-line. If `CURSOR_LANE_B_SCOPE_REFUSED`: **¬ omit `lane=`** — fix the todo
 `files_expected` paths (repo-relative), then re-admit (skill § Gotchas). After
 admit, confirm `busy_status.active_by_lane` matches the bound regime.
 
-If explicit `claude-opus-5` pin: announce inform-then-proceed trigger line. Post root CHECKPOINT with
+Post root CHECKPOINT with
 `execution_id` / `dispatch_id` / worker thread / queue holder if queued / **model**.
 
 ### 6 — Hand back
