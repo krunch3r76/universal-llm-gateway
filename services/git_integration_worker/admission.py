@@ -33,7 +33,10 @@ from services.git_integration_worker import (
 )
 from services.git_integration_worker import git_worker_drain_events as drain_events
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
-from services.git_integration_worker.drain_progress import OccupancyProgressTracker
+from services.git_integration_worker.drain_progress import (
+    OccupancyProgressTracker,
+    cursor_auto_occupancy_holds_drain,
+)
 
 logger = get_logger(__name__)
 
@@ -276,6 +279,13 @@ class WorkAdmissionController:
                 job_id=op_id, intent_id=drain_intent
             ):
                 continue
+            # Stale claimed auto rows must not be the sole pending_drain
+            # holder. Fresh heartbeats still count. Do not skip continuity
+            # hops here — queue health's serial_occupant skip is projection
+            # only and must not hide a fresh hop from drain accounting.
+            # This filter does not arm SIGTERM.
+            if not cursor_auto_occupancy_holds_drain(auto_op):
+                continue
             ops.append(auto_op)
             seen.add(op_id)
         return ops
@@ -404,6 +414,20 @@ class WorkAdmissionController:
 
         task.add_done_callback(_on_done)
         return task
+
+    def cancel_tracked_task(self, op_id: str) -> bool:
+        """Cancel one fire-and-forget task by the op_id it was spawned with.
+
+        Does not signal the process. A finished task is left alone.
+        """
+        name = f"tracked-{op_id}"
+        cancelled = False
+        for task in list(self._tracked_tasks):
+            if task.get_name() != name or task.done():
+                continue
+            task.cancel()
+            cancelled = True
+        return cancelled
 
     def drain_state(self) -> dict[str, Any]:
         """One-shot snapshot for Phase-2's final epoch-check before SIGTERM."""

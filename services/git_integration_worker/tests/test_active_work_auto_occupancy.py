@@ -214,3 +214,55 @@ def test_drain_belt_requires_amber_and_stalled() -> None:
     waiter.enqueued_at = waiter.enqueued_at - 200.0
     assert claimed.status == "claimed"
     assert drain_belt_fires(controller) is True
+
+
+def test_stale_auto_heartbeat_drops_active_count_fresh_row_remains() -> None:
+    """heartbeat_age_s above HEARTBEAT_TTL_S does not keep active_count at 1.
+
+    A row inside the TTL still counts. No SIGTERM is armed from the stall.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from services.git_integration_worker.cursor_auto.job_ledger import (
+        AutoJobLedger,
+        get_ledger,
+    )
+    from services.git_integration_worker.drain_progress import HEARTBEAT_TTL_S
+
+    AutoJobLedger.reset_for_tests()
+    reset_queue_for_tests(durable=True)
+    queue = get_queue()
+
+    def _enq(thread: str):
+        return queue.enqueue(
+            thread_id=thread,
+            turn_number=1,
+            subject=thread,
+            body="contract: propagate\n",
+            from_agent="cursor-auto",
+            to_agent="cursor",
+            desired_model="auto",
+            desired_effort="medium",
+            contract="propagate",
+        )
+
+    stale_job = _enq("stale-hb")
+    fresh_job = _enq("fresh-hb")
+    stale = queue.claim_job(stale_job.job_id)
+    fresh = queue.claim_job(fresh_job.job_id)
+    assert stale is not None and fresh is not None
+    old = (datetime.now(UTC) - timedelta(seconds=HEARTBEAT_TTL_S + 5)).isoformat()
+    with get_ledger()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_auto_jobs SET last_heartbeat_at=? WHERE job_id=?",
+            (old, stale.job_id),
+        )
+    controller = _controller()
+    ops = controller.active_ops()
+    ids = {op.get("op_id") for op in ops}
+    assert stale.job_id not in ids
+    assert fresh.job_id in ids
+    assert controller.active_count() == 1
+    queue.mark_done(fresh.job_id)
+    assert controller.active_count() == 0
+    assert controller.active_ops() == []

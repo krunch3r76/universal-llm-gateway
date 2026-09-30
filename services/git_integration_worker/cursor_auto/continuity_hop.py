@@ -8,6 +8,7 @@ A handoff has no ACs; routing it as ``contract: implement`` is a category error.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -54,6 +55,9 @@ from services.git_integration_worker.cursor_auto.queue import (
 )
 from services.git_integration_worker.cursor_auto.reflex_events import (
     emit_cdp_effort_bind,
+)
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    format_exception_reason,
 )
 from services.git_integration_worker.cursor_auto.wire_map import (
     admit_effort_override_rule_line,
@@ -224,6 +228,25 @@ def _enqueue_deferred_non_hop_leg(
     return sibling.job_id
 
 
+def _fail_hop_if_still_claimed(
+    queue: AutoJobQueue, job_id: str, reason: str
+) -> None:
+    """Drop a hop claim when the worker task dies before a terminal post.
+
+    ``post_terminal_status`` already mark_dones on the armed and commission-
+    failed paths. A TypeError or cancellation after the admit report never
+    reaches that post, and ``create_tracked_task`` only drops the handle.
+    """
+    current = queue.get(job_id)
+    if current is None or current.status != "claimed":
+        return
+    queue.mark_done(
+        job_id,
+        failed=True,
+        terminal_reason=reason or "continuity_hop_failed",
+    )
+
+
 async def complete_continuity_hop(
     job: AutoJob,
     *,
@@ -273,7 +296,10 @@ async def complete_continuity_hop(
         job,
         model=model,
         reasoning_effort=str(wire_effort) if wire_effort else None,
-        session="operator-proxy", job="freeform",
+        # Wire field is ``purpose``. ``job`` is the AutoJob positional; the
+        # relay body already sends ``"job": "freeform"``. Passing either name
+        # as a keyword TypeErrors before the 20s relay timeout (a:37026).
+        purpose="operator-proxy",
         mission_kind="hop",
         parent_thread=str(job.thread_id),
         prompt_override=prepend_orientation(job.body, orientation.get("block")),
@@ -432,8 +458,26 @@ async def run_continuity_hop_concurrent(
             job.job_id,
         )
         return {"ok": False, "reason": "hop_not_queued"}
-    return await complete_continuity_hop(
-        claimed,
-        queue=queue,
-        incumbent=incumbent,
-    )
+    try:
+        return await complete_continuity_hop(
+            claimed,
+            queue=queue,
+            incumbent=incumbent,
+        )
+    except asyncio.CancelledError:
+        _fail_hop_if_still_claimed(
+            queue, claimed.job_id, "continuity_hop_task_cancelled"
+        )
+        raise
+    except Exception as exc:
+        reason = format_exception_reason(exc)
+        _fail_hop_if_still_claimed(queue, claimed.job_id, reason)
+        logger.exception(
+            "continuity hop task failed job=%s: %s", claimed.job_id, exc
+        )
+        return {
+            "ok": False,
+            "failed": True,
+            "reason": reason,
+            "job_id": claimed.job_id,
+        }

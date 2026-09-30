@@ -57,6 +57,9 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.queue_health_events import (
     emit_execution_mode_declared,
 )
+from services.git_integration_worker.cursor_auto.release_claimed import (
+    release_claimed_auto_job,
+)
 from services.git_integration_worker.cursor_auto.static_pin_refusal import (
     assess_static_pin_refusal,
 )
@@ -205,6 +208,32 @@ async def job_state(
         include_terminal=include_terminal,
     )
     return job_state_response(job_id=job_id, thread_id=thread_id, view=view)
+
+
+class ReleaseClaimedBody(BaseModel):
+    """Body for releasing one claimed cursor-auto job. Not park, not force."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    reason: str = Field(min_length=1)
+
+
+@router.post("/jobs/{job_id}/release")
+async def release_claimed_cursor_auto_job(
+    job_id: str, body: ReleaseClaimedBody, request: Request
+):
+    """Fail one claimed auto job and drop it from active_ops.
+
+    ``cancel_discard`` stays on the park route. A missing park row is still
+    404. This handler does not force-restart git_integration_worker.
+    """
+    controller = getattr(request.app.state, "admission_controller", None)
+    result = release_claimed_auto_job(
+        job_id,
+        reason=body.reason,
+        controller=controller,
+    )
+    return JSONResponse(status_code=200 if result.get("ok") else 404, content=result)
 
 
 @router.post("/enqueue")

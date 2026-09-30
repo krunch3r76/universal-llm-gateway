@@ -7,6 +7,7 @@ from services.git_integration_worker.drain_progress import (
     HEARTBEAT_TTL_S,
     STALL_WINDOW_S,
     OccupancyProgressTracker,
+    cursor_auto_occupancy_holds_drain,
     heartbeat_fresh,
     is_progress,
     occupancy_op_ids,
@@ -104,6 +105,23 @@ def test_tracker_completed_unconsumed_past_grace() -> None:
     t.note_completed(1.0)
     assert not t.stalled([], now_mono=10.0)
     assert t.stalled([], now_mono=1.0 + COMPLETED_UNCONSUMED_GRACE_S)
+
+
+def test_stale_auto_heartbeat_does_not_hold_drain_fresh_does() -> None:
+    """Past HEARTBEAT_TTL_S drops the row. Inside TTL, and a missing age, hold.
+
+    The predicate does not arm SIGTERM — stall stays on OccupancyProgressTracker.
+    """
+    assert not cursor_auto_occupancy_holds_drain(
+        {"kind": "cursor-auto", "heartbeat_age_s": HEARTBEAT_TTL_S + 1}
+    )
+    assert cursor_auto_occupancy_holds_drain(
+        {"kind": "cursor-auto", "heartbeat_age_s": HEARTBEAT_TTL_S}
+    )
+    assert cursor_auto_occupancy_holds_drain(
+        {"kind": "cursor-auto", "heartbeat_age_s": 1.0}
+    )
+    assert cursor_auto_occupancy_holds_drain({"kind": "cursor-auto"})
 
 
 def test_occupancy_op_ids_skips_missing() -> None:

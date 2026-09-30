@@ -253,3 +253,84 @@ def test_mark_parked_discard_omits_resume_retain(tmp_path: Path) -> None:
 def test_park_preflight_cancel_still_refuses_idle() -> None:
     pre = preflight_park("missing", mode="cancel")
     assert pre.refusal is ParkRefusal.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_release_claimed_auto_job_fails_one_id_park_still_404(
+    tmp_path: Path, events: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release verb terminalizes one claimed auto job. cancel_discard stays 404
+    when that id is not a park row. The verb does not SIGTERM GIW."""
+    import os
+
+    from services.git_integration_worker.cursor_auto.queue import (
+        get_queue,
+        reset_queue_for_tests,
+    )
+    from services.git_integration_worker.cursor_auto.release_claimed import (
+        release_claimed_auto_job,
+    )
+    from services.git_integration_worker.cursor_sdk_park_http import park_one_dispatch
+
+    killed: list[Any] = []
+    belt: list[Any] = []
+    monkeypatch.setattr(os, "kill", lambda *args, **kwargs: killed.append(args))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.auto_worker_loop.request_giw_belt_exit",
+        lambda **kwargs: belt.append(kwargs),
+    )
+    reset_queue_for_tests(durable=False)
+    queue = get_queue()
+
+    def _enq(thread: str):
+        return queue.enqueue(
+            thread_id=thread,
+            turn_number=1,
+            subject=thread,
+            body="TYPE: DIRECTIVE\n",
+            from_agent="web-anthropic",
+            to_agent="cursor",
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+        )
+
+    target = _enq("release-target")
+    other = _enq("release-other")
+    claimed = queue.claim_job(target.job_id)
+    kept = queue.claim_job(other.job_id)
+    assert claimed is not None and kept is not None
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="w",
+        pid=2876571,
+        worker_started_at="b",
+    )
+    result = release_claimed_auto_job(
+        claimed.job_id,
+        reason="a37026_release_claimed",
+        queue=queue,
+        controller=controller,
+    )
+    assert result["ok"] is True
+    assert result["status"] == "failed"
+    assert result["terminal_reason"] == "a37026_release_claimed"
+    stored = queue.get(claimed.job_id)
+    assert stored is not None and stored.status == "failed"
+    assert kept.status == "claimed"
+    ops = controller.active_ops()
+    assert claimed.job_id not in {op.get("op_id") for op in ops}
+    assert any(op.get("op_id") == kept.job_id for op in ops)
+    status, body = await park_one_dispatch(
+        dispatch_id=claimed.job_id,
+        intent_id=None,
+        drain_epoch=None,
+        actor="operator",
+        reason="cancel_discard",
+        controller=controller,
+        mode="discard",
+    )
+    assert status == 404
+    assert body["code"] == "CURSOR_PARK_NOT_FOUND"
+    assert killed == []
+    assert belt == []
