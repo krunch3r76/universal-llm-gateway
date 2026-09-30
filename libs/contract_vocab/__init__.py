@@ -9,8 +9,8 @@ from __future__ import annotations
 from contract_vocab.records import (
     CANONICAL_CONTRACTS,
     DEFAULT_CONTRACT,
-    REMOVED_JOB_ALIASES,
     RECORDS,
+    REMOVED_JOB_ALIASES,
     ContractRecord,
     closeout_table,
     code_work_contracts,

@@ -18,9 +18,9 @@ from __future__ import annotations
 from typing import Any
 
 from job_vocab import (
-    SOURCE_REF_JOBS,
-    INLINE_ONLY_JOBS,
     GENERATE_ADMITTED_JOBS,
+    INLINE_ONLY_JOBS,
+    SOURCE_REF_JOBS,
 )
 from universal_logging import get_logger
 

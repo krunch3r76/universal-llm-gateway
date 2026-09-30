@@ -155,7 +155,7 @@ async def fire_window(
     )
     result["packet_path"] = packet_path
     if admission_mode == "handoff":
-        result["executor"] = {"seat": "cursor", "seat": "cursor"}
+        result["executor"] = {"job": "confer", "seat": "cursor"}
     elif admission_mode == "consult":
         role = (consult_role or "judgment_gap").strip().lower() or "judgment_gap"
         result["executor"] = {

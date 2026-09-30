@@ -92,7 +92,11 @@ def render_author_message(bundle: dict[str, Any]) -> str:
         "contract": bundle.get("contract") or "",
         "stage": bundle.get("stage") or "",
         "executor_tier": bundle.get("executor_tier") or "",
-        "elicitation": "" if bundle.get("elicitation") is None else bundle.get("elicitation"),
+        "elicitation": (
+            ""
+            if bundle.get("elicitation") is None
+            else bundle.get("elicitation")
+        ),
     }
     try:
         user = template.format(**ctx)
