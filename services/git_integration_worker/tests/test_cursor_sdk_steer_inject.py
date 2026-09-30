@@ -728,26 +728,27 @@ async def test_preflight_ac7_ambiguous_two_live(
         assert pre.row is None
         assert pre.detail is not None
         assert pre.detail.startswith("ambiguous execution_id")
+
+        status, body = await inject_one_dispatch(
+            dispatch_id="E",
+            directive="nudge",
+            reason="test",
+            actor="cursor",
+            ttl_s=300,
+        )
+        assert status == 409
+        assert body["code"] == "CURSOR_INJECT_NOT_LIVE"
+        assert body["message"].startswith("ambiguous execution_id")
+        assert not deposit_calls
+        from scripts.mcp_bridge_steer_inject import spool_path
+
+        assert not spool_path(spool, "E").is_file()
+        assert not any(
+            ev.signal == "frontier.sdk.steer.inject.requested" for ev in events
+        )
     finally:
         unregister_live_run(dispatch_id="P-r1")
         unregister_live_run(dispatch_id="P-r2")
-
-    status, body = await inject_one_dispatch(
-        dispatch_id="E",
-        directive="nudge",
-        reason="test",
-        actor="cursor",
-        ttl_s=300,
-    )
-    assert status == 409
-    assert body["code"] == "CURSOR_INJECT_NOT_LIVE"
-    assert not deposit_calls
-    from scripts.mcp_bridge_steer_inject import spool_path
-
-    assert not spool_path(spool, "E").is_file()
-    assert not any(
-        ev.signal == "frontier.sdk.steer.inject.requested" for ev in events
-    )
 
 
 def test_preflight_ac8_cancelled_parent(ledger_env: Any) -> None:
