@@ -513,10 +513,10 @@ def test_drain_parks_when_probe_succeeds_with_empty_list(
     assert _row(seat.registration_id)["status"] == "dormant"
 
 
-def test_boot_adopt_demotes_identified_operator_proxy_to_retained(
+def test_boot_adopt_keeps_identified_operator_proxy_active(
     isolated_registry: Path,
 ) -> None:
-    """Identified operator-proxy with reachable CSE adopts as retained (drainable)."""
+    """Restart keeps a reachable operator-proxy seat active; drain parks idle."""
     from claude_bundles import boot_lane_readoption as blr
 
     url = "https://claude.ai/cowork/cse_boot_keep"
@@ -524,13 +524,13 @@ def test_boot_adopt_demotes_identified_operator_proxy_to_retained(
     blr.boot_adopt_lane(
         seat.registration_id, prior_status="active", cse_affinity="bound_present"
     )
-    assert _row(seat.registration_id)["status"] == "retained"
+    assert _row(seat.registration_id)["status"] == "active"
     assert not reg.is_driver_lock_held(seat.registration_id)
 
     result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
     assert result.dormant == []
     assert result.protected[seat.registration_id] == "cdp_port_unreachable"
-    assert _row(seat.registration_id)["status"] == "retained"
+    assert _row(seat.registration_id)["status"] == "active"
     assert _row(seat.registration_id)["chat_url"] == url
 
 
