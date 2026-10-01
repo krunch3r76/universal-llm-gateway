@@ -72,13 +72,19 @@ _SYNC_RESTART_SLUG_RE = re.compile(
 )
 _FILE_FIELDS = ("files_created", "files_modified", "files_deleted")
 
-_GIW_LIVENESS_URL = os.environ.get(
-    "GIT_INTEGRATION_WORKER_LIVENESS_URL",
-    "http://127.0.0.1:8091/api/v1/git/cursor-auto/liveness",
+_GIW_BASE_URL = os.environ.get(
+    "GIT_INTEGRATION_WORKER_URL",
+    "http://127.0.0.1:8091",
 )
-_GIW_QUEUE_URL = os.environ.get(
-    "GIT_INTEGRATION_WORKER_QUEUE_URL",
-    "http://127.0.0.1:8091/api/v1/git/cursor-auto/queue",
+# Occupancy kinds that survive the Auto arm. A row of any other kind, or a
+# snapshot that is not a drain-state body, fail-closes the gate.
+_SURVIVING_OCCUPANCY_KINDS = frozenset(
+    {
+        "cursor_sdk",
+        "cowork_cse",
+        "git_integrate",
+        "prompt_expand_consume",
+    }
 )
 
 _context: tuple[ServiceController, EventBus | None] | None = None
@@ -116,7 +122,7 @@ def _probe_client_visible_row(row: PropagationRow) -> dict[str, Any] | None:
     from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
     from implement_admission.propagation_close_surfaces import resolve_close_surfaces
 
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         _fetch_cortex_api_health,
     )
 
@@ -146,7 +152,7 @@ def _probe_client_visible_row(row: PropagationRow) -> dict[str, Any] | None:
 
 
 def _probe_served_artifact_row(row: PropagationRow) -> dict[str, Any] | None:
-    from services.git_integration_worker.cursor_auto.propagation_served_artifact import (
+    from services.git_integration_worker.relay.propagation_served_artifact import (
         probe_served_artifact,
         served_artifact_descriptor,
     )
@@ -172,7 +178,7 @@ def _build_proof_probe_registry() -> dict[tuple[str, str], ProbeCallable]:
     manage slug — so unwired services fail loud at dispatch instead of
     eternal ``submitted`` / ``proof: null``.
     """
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_live_probeable_services,
     )
 
@@ -402,17 +408,41 @@ def plan_propagation(worker_turns: list[dict[str, Any]]) -> PropagationPlan | No
     )
 
 
-def giw_i2_clear(*, queue_snapshot: dict[str, Any] | None = None) -> tuple[bool, str]:
-    """Return whether GIW restart is permitted under I2 (no in-flight closeout relay)."""
-    snapshot = queue_snapshot if queue_snapshot is not None else _fetch_json(_GIW_QUEUE_URL)
-    if snapshot is None:
-        return False, "i2_queue_unreachable"
-    claimed = int(snapshot.get("claimed") or 0)
-    pending = int(snapshot.get("pending") or 0)
-    if claimed > 0:
+def _fetch_drain_state(*, timeout_s: float = 3.0) -> dict[str, Any] | None:
+    """GET drain-state through ``transport_utils``. None when the probe fails."""
+    from transport_utils import make_sync_client
+
+    try:
+        with make_sync_client(_GIW_BASE_URL, timeout=timeout_s) as client:
+            resp = client.get("/api/v1/git/admin/drain-state")
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) else None
+    except (httpx.HTTPError, ValueError, OSError):
+        return None
+
+
+def giw_i2_clear(*, drain_snapshot: dict[str, Any] | None = None) -> tuple[bool, str]:
+    """Return whether GIW restart is permitted under I2 (no in-flight closeout relay).
+
+    Fail-closed: absent snapshot, unreachable probe, ``probe_error``, or an
+    unknown occupancy kind ⇒ ``(False, i2_drain_state_unreachable)``. A row
+    whose ``kind`` is in the surviving set ⇒ ``(False, i2_inflight_closeout)``.
+    """
+    snapshot = drain_snapshot if drain_snapshot is not None else _fetch_drain_state()
+    if snapshot is None or snapshot.get("probe_error"):
+        return False, "i2_drain_state_unreachable"
+    ops = snapshot.get("active_ops")
+    if not isinstance(ops, list):
+        return False, "i2_drain_state_unreachable"
+    for op in ops:
+        if not isinstance(op, dict):
+            return False, "i2_drain_state_unreachable"
+        kind = op.get("kind")
+        if kind not in _SURVIVING_OCCUPANCY_KINDS:
+            return False, "i2_drain_state_unreachable"
         return False, "i2_inflight_closeout"
-    if pending > 0:
-        return False, "i2_pending_closeout"
     return True, "ok"
 
 
@@ -428,14 +458,14 @@ def row_may_fire_at_harvest(row: OpenPropagationProjection) -> tuple[bool, str]:
 def giw_restart_precondition(
     row: OpenPropagationProjection,
     *,
-    queue_snapshot: dict[str, Any] | None = None,
+    drain_snapshot: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """GIW rows require explicit relay-loss hazard plus I2 before harvest may fire."""
     if row.service != "git_integration_worker":
         return True, "ok"
     if not (row.hazard or "").strip():
         return False, "giw_requires_relay_loss_hazard"
-    return giw_i2_clear(queue_snapshot=queue_snapshot)
+    return giw_i2_clear(drain_snapshot=drain_snapshot)
 
 
 def _fetch_json(url: str, *, timeout_s: float = 3.0) -> dict[str, Any] | None:
@@ -453,7 +483,7 @@ def _fetch_json(url: str, *, timeout_s: float = 3.0) -> dict[str, Any] | None:
 
 def probe_process_live(service: str) -> dict[str, Any] | None:
     """Fetch health/liveness JSON for proof-of-live closure."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         probe_process_live as _probe,
     )
 
@@ -507,7 +537,7 @@ def proof_matches(
     authority_identity: dict[str, Any] | None = None,
 ) -> bool:
     """Close predicate: identity-aware proof via shared propagation_probe helper."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         proof_observed,
     )
 
@@ -586,7 +616,7 @@ async def execute_propagation_plan(
         if open_row_in_harvest_fire_set(row.defer_reason)
         and not _pending_activation_row(row)
     ]
-    queue_snapshot = _fetch_json(_GIW_QUEUE_URL)
+    drain_snapshot = _fetch_drain_state()
 
     closed: list[dict[str, Any]] = []
     remaining: list[dict[str, Any]] = []
@@ -674,7 +704,7 @@ async def execute_propagation_plan(
             continue
 
         may_fire, window_reason = row_may_fire_at_harvest(row)
-        i2_ok, i2_reason = giw_restart_precondition(row, queue_snapshot=queue_snapshot)
+        i2_ok, i2_reason = giw_restart_precondition(row, drain_snapshot=drain_snapshot)
         if not may_fire or not i2_ok:
             defer = i2_reason if not i2_ok else window_reason
             set_defer_reason(row.row_id, defer)

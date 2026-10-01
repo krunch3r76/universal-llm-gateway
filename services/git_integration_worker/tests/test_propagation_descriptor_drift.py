@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.propagation_descriptor_drift import (
+from services.git_integration_worker.relay.propagation_descriptor_drift import (
     check_descriptor_drift,
 )
 
@@ -73,7 +73,7 @@ def test_fleet_check_invokes_descriptor_drift_gate(
 
     def _track(**_kwargs):
         calls.append("descriptor_drift")
-        from services.git_integration_worker.cursor_auto.propagation_descriptor_drift import (
+        from services.git_integration_worker.relay.propagation_descriptor_drift import (
             DescriptorDriftResult,
         )
 

@@ -334,7 +334,7 @@ def test_lane_a_capture_commits_ahead_absent_without_admit_head(
     Fails before the DOOR-1 fix: len(commits_between(admit_head=None)) launders
     into present 0 and the plane gate demotes tip-on-master to NOT landed.
     """
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         PlaneObservation,
         apply_landed_admit_gate,
         parse_capture_plane_keys,

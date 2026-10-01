@@ -32,7 +32,7 @@ from services.git_integration_worker.cursor_auto.queue import (
     get_queue,
     reset_queue_for_tests,
 )
-from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
+from services.git_integration_worker.relay.terminal_post_outcome import (
     STATUS_REPORT_UNDELIVERED,
     terminal_post_delivered,
     terminal_post_permanent_reject,

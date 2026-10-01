@@ -86,7 +86,7 @@ def test_health_json_pid_binds_strong_process_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """MCP /health pid matches GIW identity shape for strong_process_identity."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_identity,
         strong_process_identity,
     )

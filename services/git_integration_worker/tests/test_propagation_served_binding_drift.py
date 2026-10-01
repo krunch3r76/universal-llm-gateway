@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from openapi_mcp.codegen import ManifestCheckResult
 
-from services.git_integration_worker.cursor_auto.propagation_served_binding_drift import (
+from services.git_integration_worker.relay.propagation_served_binding_drift import (
     check_served_binding_drift,
 )
 

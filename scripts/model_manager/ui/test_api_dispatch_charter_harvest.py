@@ -59,7 +59,7 @@ async def test_readiness_proven_false_when_wait_healthy_times_out() -> None:
     from implement_admission.propagation_row import PropagationRow
 
     from scripts.model_manager.ui.api_dispatch import sync_restart_charter_harvest
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         attest_authority_identity,
         proof_observed,
     )

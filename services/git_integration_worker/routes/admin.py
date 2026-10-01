@@ -10,8 +10,11 @@ NEVER gated by the drain itself.
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Any
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from universal_logging import get_logger
@@ -22,6 +25,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/git/admin", tags=["git-admin"])
+_PROCESS_STARTED_MONO = time.monotonic()
 
 
 @router.get("/lease-snapshot", summary="Write-lease holder and queue depth.")
@@ -193,6 +197,26 @@ async def drain_state(request: Request) -> dict[str, Any]:
     """
     controller = _controller(request)
     return controller.drain_state()
+
+
+@router.get("/liveness", summary="Process identity for code-ref proof.")
+async def worker_liveness(request: Request) -> dict[str, Any]:
+    """Identity snapshot: ``code_version``, ``pid``, and ``uptime_s``.
+
+    ``uptime_s`` is seconds since this worker process started. A missing
+    number is treated by process-live settle as "not the outgoing generation",
+    so the field is always present.
+    """
+    started = getattr(request.app.state, "worker_started_at", None)
+    if isinstance(started, (int, float)):
+        uptime_s = round(time.monotonic() - float(started), 3)
+    else:
+        uptime_s = round(time.monotonic() - _PROCESS_STARTED_MONO, 3)
+    return {
+        "code_version": resolve_code_version(),
+        "pid": os.getpid(),
+        "uptime_s": uptime_s,
+    }
 
 
 @router.post(

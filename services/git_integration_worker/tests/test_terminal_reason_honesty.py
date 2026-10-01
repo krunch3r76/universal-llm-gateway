@@ -30,7 +30,7 @@ from services.git_integration_worker.cursor_auto.queue import (
     get_queue,
     reset_queue_for_tests,
 )
-from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
+from services.git_integration_worker.relay.terminal_post_outcome import (
     TERMINAL_REASON_BUS_TRANSPORT,
     terminal_reason_for_status,
 )

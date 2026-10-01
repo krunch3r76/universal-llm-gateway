@@ -8,7 +8,7 @@ from pathlib import Path
 from implement_admission.closeout_models import observed_process_verification
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
-from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+from services.git_integration_worker.relay.closeout_plane_probe import (
     annotate_checkpoint_claim_discrepancy,
     annotate_status_claim_discrepancy,
     checkpoint_dispositions_equivalent,
@@ -16,18 +16,18 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     merge_plane_register_markers,
     status_dispositions_equivalent,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+from services.git_integration_worker.relay.closeout_relay_common import (
     resolve_measurement_status,
     resolve_measurement_status_from_wrapper,
     resolve_relay_status,
 )
-from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+from services.git_integration_worker.relay.closeout_status_polarity import (
     classify_status_incomplete_class,
     merge_plane_legend_markers,
     resolve_status_disagreement_authority,
     status_claim_is_polysemous_partial_legend,
 )
-from services.git_integration_worker.cursor_auto.lane_a_status import (
+from services.git_integration_worker.relay.lane_a_status import (
     extract_status_claim,
 )
 from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (

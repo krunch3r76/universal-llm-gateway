@@ -99,7 +99,7 @@ def test_expired_kill_boundary_budget_terminalizes_without_reset(
 
     unreachable_probe = {"probe_reachable": False}
     with patch(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         return_value=unreachable_probe,
     ):
         validation_id = mint_pending_validation_for_intent(
@@ -168,7 +168,7 @@ def test_activation_verify_invokes_settle_with_validation_ids(
             _capture_settle,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+            "services.git_integration_worker.relay.propagation_probe.probe_process_live",
             return_value={"probe_reachable": False},
         ),
     ):
@@ -267,7 +267,7 @@ def test_mint_activation_validation_refuses_foreign_bound_pending(
     """Same-intent reuse must not return a pending already bound to another row."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         lambda _service: {"probe_reachable": False},
     )
     store = RestartIntentStore(db_path=tmp_path / "intents.db")
@@ -422,7 +422,7 @@ def test_out_of_band_start_reconciles_pending_activation(tmp_path, monkeypatch) 
     """A new pid plus observed code_version closes a pending activation row."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         lambda _service: {"probe_reachable": False},
     )
     from scripts.model_manager.ui.controller.git_worker_activation_verify import (

@@ -197,7 +197,7 @@ def resolve_lane_b_landed_head(
     if not lane_head_sha:
         return lane_head_sha, commits_ahead, None
 
-    from services.git_integration_worker.cursor_auto.closeout_capture_head_recover import (
+    from services.git_integration_worker.relay.closeout_capture_head_recover import (
         recover_capture_head,
     )
 

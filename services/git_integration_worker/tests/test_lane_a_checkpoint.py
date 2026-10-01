@@ -802,7 +802,7 @@ def test_compute_checkpoint_committed_senior_to_cortex_offgit(
 
 def test_specimen_2_checkpoint_claim_vs_infra_authored_cortex() -> None:
     """Specimen 2 — agent §2 claim nothing_authored vs infra authored_cortex measurement."""
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         annotate_checkpoint_claim_discrepancy,
         merge_plane_discrepancy_markers,
     )
@@ -828,7 +828,7 @@ def test_specimen_2_checkpoint_claim_vs_infra_authored_cortex() -> None:
 
 
 def test_checkpoint_claim_discrepancy_silent_when_equivalent() -> None:
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         annotate_checkpoint_claim_discrepancy,
     )
 
@@ -845,7 +845,7 @@ def test_checkpoint_claim_discrepancy_silent_when_table_cell_carries_field_prefi
     None
 ):
     """7065#98 — relay table may echo ``checkpoint_claim:`` inside the Value cell."""
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         annotate_checkpoint_claim_discrepancy,
     )
     from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
@@ -870,7 +870,7 @@ def test_checkpoint_claim_discrepancy_silent_when_table_cell_carries_field_prefi
 
 def test_checkpoint_dispositions_equivalent_authored_cortex_digest_optional() -> None:
     """7065#239 — authored_cortex URI±digest does not emit defect marker."""
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         checkpoint_dispositions_equivalent,
     )
 
@@ -884,7 +884,7 @@ def test_checkpoint_dispositions_equivalent_authored_cortex_digest_optional() ->
 
 def test_checkpoint_dispositions_equivalent_committed_short_sha_and_pending() -> None:
     """7065#223 — committed short SHA and pending prose normalize before compare."""
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         checkpoint_dispositions_equivalent,
     )
 

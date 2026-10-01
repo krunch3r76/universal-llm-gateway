@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+from services.git_integration_worker.relay.closeout_status_polarity import (
     annotate_status_claim_discrepancy,
     merge_plane_discrepancy_markers,
     status_claim_is_polysemous_partial_legend,

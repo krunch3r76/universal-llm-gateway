@@ -158,7 +158,7 @@ def _run_check(
         print(f"tier-m: {msg}", file=sys.stderr)
     if tier_m.exit_code != 0:
         exit_code = 1
-    from services.git_integration_worker.cursor_auto.propagation_descriptor_drift import (
+    from services.git_integration_worker.relay.propagation_descriptor_drift import (
         check_descriptor_drift,
     )
 
@@ -170,7 +170,7 @@ def _run_check(
     if drift.exit_code != 0:
         exit_code = 1
     if include_served_binding_drift:
-        from services.git_integration_worker.cursor_auto.propagation_served_binding_drift import (
+        from services.git_integration_worker.relay.propagation_served_binding_drift import (
             check_served_binding_drift,
         )
 

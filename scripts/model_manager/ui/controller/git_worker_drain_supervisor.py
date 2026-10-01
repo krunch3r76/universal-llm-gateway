@@ -1059,12 +1059,6 @@ def build_git_worker_drain_supervisor(
             resp.raise_for_status()
             return resp.json()
 
-    async def _liveness_state() -> dict[str, Any]:
-        async with make_async_client(worker_url, timeout=10.0) as client:
-            resp = await client.get("/api/v1/git/cursor-auto/liveness")
-            resp.raise_for_status()
-            return resp.json()
-
     async def _cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
         async with make_async_client(worker_url, timeout=10.0) as client:
             resp = await client.post(
@@ -1110,7 +1104,7 @@ def build_git_worker_drain_supervisor(
         cancel_drain=_cancel_drain,
         deadline_s=deadline_s,
         idle_escalate_s=idle_escalate_s,
-        liveness_state=_liveness_state if idle_escalate_s is not None else None,
+        liveness_state=None,
         park_for_restart=_park_for_restart if park_first else None,
         process_absent=process_absent,
         read_pid=read_pid,

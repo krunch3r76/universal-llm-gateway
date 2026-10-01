@@ -25,7 +25,7 @@ from charter_runner_store.propagation_ledger import list_open_rows, upsert_open_
 from charter_runner_store.propagation_liveness import CodeRefLiveness
 from charter_runner_store.propagation_terminal import default_probe, settle_open_row
 from charter_runner_store.propagation_validation import current_validation
-from services.git_integration_worker.cursor_auto.propagation_probe import (
+from services.git_integration_worker.relay.propagation_probe import (
     strong_process_identity,
 )
 

@@ -72,7 +72,7 @@ def test_unsupported_proof_class_fails_loud_not_echo() -> None:
 
 def test_process_live_registry_excludes_unprobeable() -> None:
     """M2: unsatisfiable (slug, process_live) pairs are not registered."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_live_probeable_services,
     )
 
@@ -111,7 +111,7 @@ def test_process_live_registry_excludes_unprobeable() -> None:
 
 def test_process_live_registry_unlocks_when_fetcher_added(monkeypatch) -> None:
     """M2: oracle is fetcher-map derived — adding a fetcher unlocks advertisement."""
-    from services.git_integration_worker.cursor_auto import propagation_probe
+    from services.git_integration_worker.relay import propagation_probe
 
     monkeypatch.setitem(
         propagation_probe.PROCESS_LIVE_FETCHERS,
@@ -144,7 +144,7 @@ def test_served_artifact_dispatch_populates_fingerprint(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.propagation_served_artifact.probe_served_artifact",
+        "services.git_integration_worker.relay.propagation_served_artifact.probe_served_artifact",
         _fake_probe,
     )
     row = PropagationRow(
@@ -270,10 +270,42 @@ def test_plan_propagation_none_without_actions() -> None:
     assert plan_propagation([_closeout_turn()]) is None
 
 
-def test_giw_i2_clear_when_queue_has_claimed_jobs() -> None:
-    ok, reason = giw_i2_clear(queue_snapshot={"claimed": 1, "pending": 0})
+def test_giw_i2_clear_when_surviving_dispatch_is_live() -> None:
+    ok, reason = giw_i2_clear(
+        drain_snapshot={"active_ops": [{"kind": "cursor_sdk", "op_id": "d1"}]}
+    )
     assert ok is False
     assert reason == "i2_inflight_closeout"
+
+
+def test_giw_i2_clear_unreachable_snapshot() -> None:
+    with patch(
+        "scripts.model_manager.ui.controller.charter_runner.propagation_execute._fetch_drain_state",
+        return_value=None,
+    ):
+        ok, reason = giw_i2_clear()
+    assert ok is False
+    assert reason == "i2_drain_state_unreachable"
+
+
+def test_giw_i2_clear_probe_error() -> None:
+    ok, reason = giw_i2_clear(drain_snapshot={"probe_error": "timeout"})
+    assert ok is False
+    assert reason == "i2_drain_state_unreachable"
+
+
+def test_giw_i2_clear_unknown_kind() -> None:
+    ok, reason = giw_i2_clear(
+        drain_snapshot={"active_ops": [{"kind": "not-a-surviving-kind"}]}
+    )
+    assert ok is False
+    assert reason == "i2_drain_state_unreachable"
+
+
+def test_giw_i2_clear_empty_ops() -> None:
+    ok, reason = giw_i2_clear(drain_snapshot={"active_ops": []})
+    assert ok is True
+    assert reason == "ok"
 
 
 def test_proof_matches_code_version() -> None:

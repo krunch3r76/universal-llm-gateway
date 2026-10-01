@@ -292,7 +292,7 @@ def test_mcp_service_path_mint_contradicted_when_smoke_fails(monkeypatch) -> Non
 
 
 def test_compose_proof_process_live_giw_is_process_identity_not_openapi():
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         IDENTIFIER_FIELDS,
     )
 

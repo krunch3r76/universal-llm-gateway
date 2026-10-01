@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from services.git_integration_worker.cursor_auto.nested_poll_row import (
+from services.git_integration_worker.relay.nested_poll_row import (
     resolve_nested_poll_row,
 )
 
@@ -21,7 +21,7 @@ def test_follow_resume_child_when_parent_cancelled(
         dispatch_status_by_thread=lambda thread_id: child,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.nested_poll_row._park_resume_child",
+        "services.git_integration_worker.relay.nested_poll_row._park_resume_child",
         lambda dispatch_id: child["dispatch_id"],
     )
     row = resolve_nested_poll_row(

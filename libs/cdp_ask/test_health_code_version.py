@@ -29,7 +29,7 @@ def test_health_carries_code_version(tmp_path, monkeypatch) -> None:
 @pytest.mark.offline
 def test_health_pid_binds_strong_process_identity(tmp_path, monkeypatch) -> None:
     """cdp-ask /health pid matches GIW identity shape for strong_process_identity."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_identity,
         strong_process_identity,
     )

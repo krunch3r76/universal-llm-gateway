@@ -12,7 +12,7 @@ from services.git_integration_worker.cursor_auto.handler_propagation import (
     execution_for_manage_deferred,
     restart_intent_persisted,
 )
-from services.git_integration_worker.cursor_auto.manage_sock import sync_restart_service
+from services.git_integration_worker.relay.manage_sock import sync_restart_service
 
 
 def _exec(
@@ -422,7 +422,7 @@ def test_sync_restart_service_forwards_propagate_row_identity() -> None:
         return {"status": "ok"}
 
     with patch(
-        "services.git_integration_worker.cursor_auto.manage_sock.call_manage",
+        "services.git_integration_worker.relay.manage_sock.call_manage",
         _call,
     ):
         sync_restart_service(
@@ -448,7 +448,7 @@ def test_sync_restart_service_forwards_caller_job_id() -> None:
         return {"status": "ok"}
 
     with patch(
-        "services.git_integration_worker.cursor_auto.manage_sock.call_manage",
+        "services.git_integration_worker.relay.manage_sock.call_manage",
         _call,
     ):
         sync_restart_service(

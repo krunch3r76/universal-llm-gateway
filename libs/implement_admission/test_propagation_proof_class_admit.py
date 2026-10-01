@@ -70,7 +70,7 @@ def test_legal_proof_classes_cortex_api_includes_served_artifact():
 
 def test_legal_proof_classes_unprobeable_excludes_process_live():
     """M2: process_live not legal when probe has no fetcher for the slug."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         PROCESS_LIVE_EXCLUDED_SERVICES,
         process_live_probeable_services,
     )
@@ -94,7 +94,7 @@ def test_unknown_proof_class_names_legal_set_for_service():
 
 def test_legal_proof_classes_probeable_includes_process_live():
     """M2: fetcher map keys keep process_live legal (oracle, not a frozen deny list)."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_live_probeable_services,
     )
 

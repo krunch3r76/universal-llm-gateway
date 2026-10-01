@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+from services.git_integration_worker.relay.closeout_plane_probe import (
     inject_qualified_land_disposition,
 )
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (

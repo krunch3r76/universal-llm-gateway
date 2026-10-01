@@ -79,7 +79,6 @@ def test_defer_increments_count_and_last_deferred_at(store: TriggerStore) -> Non
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     with _patch_fleet(busy):
         begin_idle_pass()
@@ -99,13 +98,11 @@ def test_defer_resets_on_successful_claim(store: TriggerStore) -> None:
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     idle = FleetIdleSnapshot(
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     with _patch_fleet(busy):
         begin_idle_pass()
@@ -129,7 +126,6 @@ def test_undetermined_verdict_distinct_from_busy(store: TriggerStore) -> None:
         verdict=FleetVerdict.UNDETERMINED,
         dispatch_idle=False,
         tick_empty=False,
-        cursor_auto_idle=True,
         tick_undetermined=True,
     )
     with _patch_fleet(undetermined):
@@ -148,7 +144,6 @@ def test_defer_threshold_emits_degraded_without_cancel(store: TriggerStore) -> N
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     emitted: list[tuple[str, dict]] = []
 
@@ -182,7 +177,6 @@ def test_coalesce_records_skipped_periods(store: TriggerStore) -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     with _patch_fleet(idle):
         begin_idle_pass()
@@ -215,7 +209,6 @@ def test_route_exposes_defer_fields(
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     with _patch_fleet(busy):
         begin_idle_pass()
@@ -243,7 +236,6 @@ def test_defer_bumps_fire_at_by_interval(store: TriggerStore) -> None:
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     with _patch_fleet(busy):
         begin_idle_pass()

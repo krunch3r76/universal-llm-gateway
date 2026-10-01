@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
-from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+from services.git_integration_worker.relay.closeout_status_polarity import (
     classify_status_incomplete_class,
 )
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet

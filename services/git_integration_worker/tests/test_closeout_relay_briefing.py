@@ -14,7 +14,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_briefing import 
     clamp_relay_body,
     finalize_relay_payload,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+from services.git_integration_worker.relay.closeout_relay_common import (
     CloseoutRelayPayload,
     build_ac_verdict_cell,
     status_from_section2,
@@ -22,7 +22,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
 )
-from services.git_integration_worker.cursor_auto.lane_a_status import (
+from services.git_integration_worker.relay.lane_a_status import (
     extract_status_claim,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
@@ -97,7 +97,7 @@ def test_synthesized_6294_fixture_body_under_2048() -> None:
 
 
 def test_before_after_body_size_observation() -> None:
-    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    from services.git_integration_worker.relay.closeout_relay_common import (
         strip_machine_tail,
         unclassified_relay_prefix,
     )
@@ -157,7 +157,7 @@ def test_status_from_section2_survives_clamp() -> None:
 
 
 def test_fence_violation_survives_clamp() -> None:
-    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    from services.git_integration_worker.relay.closeout_relay_effects import (
         amend_effects_underclaim,
     )
 
@@ -601,7 +601,7 @@ _ROW11_FENCED_EVIDENCE_BLOCK = (
 
 def test_row11_fenced_evidence_appendix_does_not_zero_ac_verdict() -> None:
     """AC-ellipsis — large ### evidence (full) appendix must not collapse ac_verdict to …."""
-    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    from services.git_integration_worker.relay.closeout_relay_effects import (
         _extract_table_cell,
     )
 
@@ -650,10 +650,10 @@ status: complete
 
 def test_row11_fenced_control_rows_do_not_override_authored_fields() -> None:
     """AC-1/7 — quoted relay rows stay inert while fenced evidence remains extractable."""
-    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+    from services.git_integration_worker.relay.closeout_relay_cortex_fields import (
         extract_field_section,
     )
-    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    from services.git_integration_worker.relay.closeout_relay_effects import (
         _extract_table_cell,
         amend_effects_underclaim,
     )
@@ -780,7 +780,7 @@ def _finalize_clamped_checkpoint_payload(claim: str) -> CloseoutRelayPayload:
 
 def test_preclamp_checkpoint_claim_silence_when_display_truncates_identical() -> None:
     """MUST silence — clamp mid-cuts display; authored claim equals measurement."""
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         annotate_checkpoint_claim_discrepancy,
     )
     from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
@@ -830,7 +830,7 @@ def test_preclamp_checkpoint_claim_fires_when_authored_diverges_after_cut() -> N
     The rejected comparator branch (strip mid-cut ``…``, compare prefixes) would
     silence this pair because the truncated display forms are identical.
     """
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         annotate_checkpoint_claim_discrepancy,
     )
     from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (

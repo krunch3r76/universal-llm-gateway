@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+from services.git_integration_worker.relay.closeout_plane_probe import (
     PlaneObservation,
     annotate_checkpoint_claim_discrepancy,
     annotate_plane_discrepancy,
@@ -27,7 +27,7 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     render_plane_headline,
     strip_plane_line,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+from services.git_integration_worker.relay.closeout_relay_common import (
     strip_projected_closeout_envelope,
 )
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (

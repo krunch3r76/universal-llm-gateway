@@ -12,7 +12,7 @@ from services.git_integration_worker.cursor_auto.handler_propagation import (
     execution_for_manage_deferred,
     execution_terminal_proof_fields,
 )
-from services.git_integration_worker.cursor_auto.propagation_probe import (
+from services.git_integration_worker.relay.propagation_probe import (
     AGE_FIELDS,
     IDENTIFIER_FIELDS,
     proof_observed,

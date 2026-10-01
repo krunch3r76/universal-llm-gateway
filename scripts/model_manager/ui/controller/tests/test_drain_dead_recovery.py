@@ -27,7 +27,7 @@ from scripts.model_manager.ui.controller.restart_intent_states import (
 )
 from scripts.model_manager.ui.controller.restart_intent_store import RestartIntentStore
 from scripts.model_manager.ui.model.service_state import ServiceStatus
-from services.git_integration_worker.cursor_auto.propagation_probe import (
+from services.git_integration_worker.relay.propagation_probe import (
     resolve_identity_measurement,
 )
 

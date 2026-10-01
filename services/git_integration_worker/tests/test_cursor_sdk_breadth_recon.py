@@ -14,7 +14,7 @@ from implement_admission.closeout_models import (
 from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
     finalize_relay_payload,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+from services.git_integration_worker.relay.closeout_relay_common import (
     CloseoutRelayPayload,
 )
 from services.git_integration_worker.cursor_sdk_breadth_recon import (
