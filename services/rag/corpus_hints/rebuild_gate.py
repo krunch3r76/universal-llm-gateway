@@ -225,9 +225,7 @@ class HintRebuildGate:
                     continue
 
                 self._surface_deferred()
-                if self._pending is not None and (
-                    included or _can_merge(self._pending, request)
-                ):
+                if self._pending is not None and _can_merge(self._pending, request):
                     current = (
                         self._pending if included else widen(self._pending, request)
                     )
@@ -296,7 +294,11 @@ class HintRebuildGate:
                 task.uncancel()
         try:
             async with cond:
+                if self._pending is None and self._leader is not None:
+                    self._pending = self._leader
+                    self._dirty = True
                 self._running = False
+                self._leader = None
                 self._error = None
                 self._surface_deferred()
                 cond.notify_all()

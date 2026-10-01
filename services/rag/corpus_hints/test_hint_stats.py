@@ -603,6 +603,132 @@ async def test_unequal_boosts_and_blocklists_run_separately() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_follow_up_worker_does_not_drop_leader_scopes() -> None:
+    """Leader cancelled while the post-merge follow-up worker runs must not let a
+    merged waiter complete as a narrower scope-only success."""
+    first_scan_entered = asyncio.Event()
+    release_first_scan = asyncio.Event()
+    follow_up_entered = asyncio.Event()
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(request: HintRebuildRequest) -> dict[str, str]:
+        calls.append(request)
+        if len(calls) == 1:
+            first_scan_entered.set()
+            await release_first_scan.wait()
+            return {name: "hint" for name in (request.configured_scopes or {})}
+        if len(calls) == 2:
+            follow_up_entered.set()
+            await asyncio.Event().wait()
+        return {name: "hint" for name in (request.configured_scopes or {})}
+
+    gate = HintRebuildGate()
+    both = _rebuild_request(scope=None)
+    leader = asyncio.create_task(gate.run(both, worker))
+    await first_scan_entered.wait()
+    follower = asyncio.create_task(gate.run(_rebuild_request(scope="beta"), worker))
+    await _wait_until(lambda: gate._dirty and gate._pending is not None)
+    release_first_scan.set()
+    await _wait_until(follow_up_entered.is_set)
+    leader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await leader
+    result = await asyncio.wait_for(follower, timeout=2)
+    assert set(result) == {"alpha", "beta"}
+    assert len(calls) >= 2
+    assert calls[-1].scope is None
+    assert set(calls[-1].configured_scopes or {}) == {"alpha", "beta"}
+    assert gate._error is None
+
+
+@pytest.mark.asyncio
+async def test_included_waiter_refuses_deferred_unequal_pending() -> None:
+    """An included waiter must not adopt a deferred union whose scoring differs."""
+    default_scan_entered = asyncio.Event()
+    release_default_scan = asyncio.Event()
+    admin_scan_entered = asyncio.Event()
+    release_admin_scan = asyncio.Event()
+    admin_follow_up_entered = asyncio.Event()
+    admin_worker_calls = 0
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(request: HintRebuildRequest) -> dict[str, str]:
+        nonlocal admin_worker_calls
+        calls.append(request)
+        if request.entity_boost_hyphen == 1.3:
+            if len([c for c in calls if c.entity_boost_hyphen == 1.3]) == 1:
+                default_scan_entered.set()
+                await release_default_scan.wait()
+            return {
+                name: "default-hint"
+                for name in (request.configured_scopes or {"alpha", "beta"})
+            }
+        admin_worker_calls += 1
+        if admin_worker_calls == 1:
+            admin_scan_entered.set()
+            await release_admin_scan.wait()
+            return {"gamma": "admin-first", "delta": "admin-first"}
+        if admin_worker_calls == 2:
+            admin_follow_up_entered.set()
+            await asyncio.Event().wait()
+        merged = request.configured_scopes or {}
+        if request.scope:
+            merged = {request.scope: merged.get(request.scope, [])}
+        return {name: "admin-hint" for name in merged}
+
+    extended_scopes = {
+        "alpha": ["/data/alpha"],
+        "beta": ["/data/beta"],
+        "gamma": ["/data/gamma"],
+        "delta": ["/data/delta"],
+    }
+    gate = HintRebuildGate()
+    default_union = _rebuild_request(scope=None, configured_scopes=extended_scopes)
+    default_waiter = _rebuild_request(scope="beta", configured_scopes=extended_scopes)
+    admin_leader_req = _rebuild_request(
+        scope="gamma",
+        configured_scopes=extended_scopes,
+        entity_boost_hyphen=9.0,
+        extra_blocklist=frozenset({"custom"}),
+    )
+    admin_waiter_req = _rebuild_request(
+        scope="delta",
+        configured_scopes=extended_scopes,
+        entity_boost_hyphen=9.0,
+        extra_blocklist=frozenset({"custom"}),
+    )
+
+    default_leader = asyncio.create_task(gate.run(default_union, worker))
+    await default_scan_entered.wait()
+    parked_waiter = asyncio.create_task(gate.run(default_waiter, worker))
+    await _wait_until(lambda: gate._dirty and gate._pending is not None)
+    parked_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await parked_waiter
+    default_leader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await default_leader
+
+    admin_leader = asyncio.create_task(gate.run(admin_leader_req, worker))
+    await admin_scan_entered.wait()
+    admin_waiter = asyncio.create_task(gate.run(admin_waiter_req, worker))
+    await _wait_until(lambda: gate._dirty and gate._pending is not None)
+    release_admin_scan.set()
+    await _wait_until(admin_follow_up_entered.is_set)
+    admin_leader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await admin_leader
+
+    result = await asyncio.wait_for(admin_waiter, timeout=2)
+    assert set(result.keys()) & {"gamma", "delta"} == {"gamma", "delta"}
+    assert "alpha" not in result
+    assert gate._error is None
+    assert not any(
+        c.entity_boost_hyphen == 1.3 and c.scope is None for c in calls[-3:]
+    )
+
+
+@pytest.mark.asyncio
 async def test_column_and_prefix_scans_are_not_merged() -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
