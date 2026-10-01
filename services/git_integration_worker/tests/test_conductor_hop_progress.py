@@ -23,12 +23,14 @@ def _sig(
     witnessed_done: tuple[str, ...] = (),
     lane_tip: str | None = None,
     next_admit: str | None = None,
+    scoreboard_tip: str | None = None,
 ) -> HopProgressSignature:
     return HopProgressSignature(
         entry_gate=entry_gate,
         witnessed_done=frozenset(witnessed_done),
         lane_tip=lane_tip,
         next_admit=next_admit,
+        scoreboard_tip=scoreboard_tip,
     )
 
 
@@ -96,6 +98,23 @@ def test_next_admit_on_both_sides_proves_loop() -> None:
     assert signature_can_prove_loop(both, both) is True
 
 
+def test_scoreboard_tip_move_is_advance() -> None:
+    """13713 shape: the fold stood still while the conductor rewrote the tip."""
+    newer = _sig(entry_gate="G2", witnessed_done=("G1",), scoreboard_tip="69ea17fb")
+    older = _sig(entry_gate="G2", witnessed_done=("G1",), scoreboard_tip="ba556e0a")
+    assert signature_advanced(newer, older) is True
+
+
+def test_scoreboard_tip_absent_on_one_side_is_not_advance() -> None:
+    """A missing tip is unknown, not movement — same rule as the lane tip."""
+    assert signature_advanced(_sig(scoreboard_tip="69ea17fb"), _sig()) is False
+
+
+def test_scoreboard_tip_on_both_sides_proves_loop() -> None:
+    both = _sig(scoreboard_tip="69ea17fb")
+    assert signature_can_prove_loop(both, both) is True
+
+
 def test_empty_fold_cannot_prove_crash() -> None:
     assert signature_can_prove_crash(_sig()) is False
 
@@ -138,7 +157,8 @@ def test_signature_for_row_reads_stamps_without_touching_the_fold() -> None:
         "source_repo": "/nonexistent-repo",
         "record_json": (
             '{"hop_entry_gate":"G1","hop_witnessed_done":[],'
-            '"hop_lane_tip":"cd5cf10a","hop_next_admit":"harvest G1"}'
+            '"hop_lane_tip":"cd5cf10a","hop_next_admit":"harvest G1",'
+            '"hop_scoreboard_tip":"ba556e0a"}'
         ),
     }
     signature = progress_signature_for_row(row)
@@ -146,15 +166,20 @@ def test_signature_for_row_reads_stamps_without_touching_the_fold() -> None:
     assert signature.witnessed_done == frozenset()
     assert signature.lane_tip == "cd5cf10a"
     assert signature.next_admit == "harvest G1"
+    assert signature.scoreboard_tip == "ba556e0a"
 
 
 def test_historical_signature_does_not_live_read_lane_tip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unstamped priors stay tip-less even when git would return today's head."""
+    """Unstamped priors stay tip-less (lane and scoreboard) even when a live read would answer."""
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress.read_lane_tip",
         lambda **_kwargs: "d34aacd2deadbeef",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress.read_scoreboard_tip",
+        lambda **_kwargs: "69ea17fb8a01eb5f",
     )
     row = {
         "work_key": "todo:conductor-hop-wait-protocol",
@@ -166,3 +191,5 @@ def test_historical_signature_does_not_live_read_lane_tip(
     historical = progress_signature_for_row(row, live=False)
     assert live.lane_tip == "d34aacd2deadbeef"
     assert historical.lane_tip is None
+    assert live.scoreboard_tip == "69ea17fb8a01eb5f"
+    assert historical.scoreboard_tip is None

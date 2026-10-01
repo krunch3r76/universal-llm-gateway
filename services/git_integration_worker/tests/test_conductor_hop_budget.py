@@ -45,6 +45,16 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     CursorDispatchLedger._instance = None
 
 
+@pytest.fixture(autouse=True)
+def _no_live_scoreboard_tip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the live tip read off the real cortex root; stamps still win."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress.read_scoreboard_tip",
+        lambda *, slug: None,
+        raising=False,
+    )
+
+
 def _req(**overrides: object) -> CursorDispatchRequest:
     base = {
         "thread_id": "9964",
@@ -772,3 +782,176 @@ def test_h1_lane_tip_move_breaks_crash_streak() -> None:
     )
     assert verdict.park is False
     assert verdict.backoff_s == 120.0
+
+
+# --- a:32502 / worker 13713 (2026-10-01): progress the fold could not see ---
+
+
+def test_a32502_13713_new_bind_each_hop_does_not_park() -> None:
+    """Replay of 13713's three ledger stamps plus their scoreboard tip shas.
+
+    The fold read the G-ladder for an R-row mission and stayed at G2/{G1} on
+    every hop; the lane tip was unreadable after hop 1 because the branch had
+    been archived at closeout; no NEXT_ADMIT was stamped. Each hop hung a new
+    R-row bind, so the scoreboard tip moved every hop. That movement is
+    progress and must not park the mission.
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {
+                "hop_entry_gate": "G2",
+                "hop_witnessed_done": ["G1"],
+                "hop_lane_tip": "a6ce58e82263778f704d2b5324efe33da1321ea5",
+                "hop_scoreboard_tip": "56ea5c726f07541c6e6a104080607951b04a308b",
+            },
+            {
+                "hop_entry_gate": "G2",
+                "hop_witnessed_done": ["G1"],
+                "hop_scoreboard_tip": "ba556e0a852421f18a801f998a5f35839f7a962a",
+            },
+            {
+                "hop_entry_gate": "G2",
+                "hop_witnessed_done": ["G1"],
+                "hop_scoreboard_tip": "69ea17fb8a01eb5f4455a4a4f1878dd348ac214f",
+            },
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+    assert verdict.ok is True
+
+
+def test_static_scoreboard_tip_with_frozen_fold_still_parks() -> None:
+    """Guard: a tip that never moved is a bound signal, so a real loop still parks."""
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {
+                "hop_entry_gate": "G2",
+                "hop_witnessed_done": ["G1"],
+                "hop_scoreboard_tip": "69ea17fb8a01eb5f4455a4a4f1878dd348ac214f",
+            }
+            for _ in range(3)
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
+
+
+def test_budget_authority_patch_carries_scoreboard_tip() -> None:
+    """The snapshot stamps the tip sha so a prior hop is reconstructed from it."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        build_budget_authority_patch,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="authority-tip-1",
+        hop_seq=1,
+        hop_from="spawn",
+        hop_reason="spawn",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_entry_gate": "G2",
+            "hop_witnessed_done": ["G1"],
+            "hop_scoreboard_tip": "ba556e0a852421f18a801f998a5f35839f7a962a",
+        },
+    )
+    patch_body = build_budget_authority_patch(row)
+    assert patch_body["hop_scoreboard_tip"] == "ba556e0a852421f18a801f998a5f35839f7a962a"
+
+
+# --- mission cap: only rows that owe a hop are budgeted ---
+
+
+def _chain_at_cap(ledger: CursorDispatchLedger, *, last_tokens: list[str]) -> dict:
+    for idx in range(1, 4):
+        _admit_and_terminal(
+            ledger,
+            dispatch_id=f"cap-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"cap-{idx - 1}",
+            hop_reason="planned" if idx > 1 else "spawn",
+            closeout_tokens=["ROW_HOP"],
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    return _admit_and_terminal(
+        ledger,
+        dispatch_id="cap-4",
+        hop_seq=4,
+        hop_from="cap-3",
+        hop_reason="planned",
+        closeout_tokens=last_tokens,
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+    )
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["DONE", "ROW_PINNED", "OPERATOR_GATE", "HOLD_MERGE", "CONSULT_PENDING"],
+)
+def test_mission_cap_never_parks_a_designed_stop(token: str) -> None:
+    """A designed stop owes no hop; the cap must not add a second lock to it.
+
+    Sixteen ``hop_budget_mission_cap`` parks landed on DONE / ROW_PINNED /
+    OPERATOR_GATE rows in the week to 2026-10-01, each paging and each needing
+    a hand ``hop_park_release`` on top of the designed stop.
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=[token])
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({token}),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.ok is True
+    assert verdict.park is False
+    assert verdict.reason is None
+
+
+def test_mission_cap_still_parks_a_planned_hop_at_cap() -> None:
+    """Guard: the cap still binds the rows that do owe a hop."""
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=["ROW_HOP"])
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_MISSION_CAP
+
+
+def test_mission_cap_skips_restart_park_rows() -> None:
+    """A GIW restart park and its resume child are one hop, not two.
+
+    Worker 13618 carried six restart-park parents among fifteen rows; counting
+    them charged every restart against the mission cap twice.
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=["ROW_HOP"])
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='park_for_restart' "
+            "WHERE dispatch_id IN ('cap-1', 'cap-2')"
+        )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is False
+    assert verdict.ok is True

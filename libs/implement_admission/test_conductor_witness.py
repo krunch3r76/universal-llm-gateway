@@ -818,3 +818,91 @@ def test_b0_five_column_tip_folds_status_and_reads_stops(tmp_path: Path) -> None
     assert fold.row_status["G3"] == "OPEN"
     assert fold.blocked_rows.get("G4") == "ROW_PINNED"
     assert "| G5 | Implement | agent | OPEN | |" in fold.folded_body
+
+
+class _CardOnlyCortex(_StubCortex):
+    """Production-shaped reader: the Card projection carries no ``attributes``."""
+
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003
+        if kwargs.get("intent", "card") == "card":
+            return {"id": entity_id, "type": "todo", "summary_row": "S4a identity."}
+        return super().entity_get(entity_id, **kwargs)
+
+
+def _r_row_tip(bind_uri: str) -> str:
+    return (
+        "# Scoreboard — todo:slug\n\n"
+        "- **Entry gate:** R1\n\n"
+        "## Gated deliverables\n\n"
+        "| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n"
+        "| R1 | First acceptance row. | — | OPEN | witness hung |\n"
+        "| R2 | Second acceptance row. | — | OPEN | |\n"
+        "| R3 | Third acceptance row. | — | OPEN | |\n\n"
+        "## Sidecars\n\n"
+        "| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        f"| R1-BIND | {bind_uri} | bind witness |\n"
+        "| R1-LAND | a6ce58e82263778f704d2b5324efe33da1321ea5 | lane commit, not on master |\n"
+        "| R2-BIND | (pending) | bind witness slot |\n"
+    )
+
+
+def test_rows_in_tip_reads_only_the_gated_table() -> None:
+    tip = _r_row_tip("cortex://notes/system/scoreboards/slug-r1-bind.md")
+    from implement_admission.conductor_witness import rows_in_tip
+
+    assert rows_in_tip(tip) == ("R1", "R2", "R3")
+    assert rows_in_tip("no table here") == ()
+
+
+def test_fold_r_row_mission_follows_tip_rows_when_card_lacks_attributes(
+    tmp_path: Path,
+) -> None:
+    """Worker 13713 (2026-10-01): three hops hung R1/R2/R3 binds and were parked
+    for "no progress" because the fold asked the Card for rows, got none, and
+    folded the G-ladder — R-BIND witnesses were never read.
+    """
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    bind_rel = "notes/system/scoreboards/slug-r1-bind.md"
+    (files_root / bind_rel).write_text("# R1 bind\n\nVERDICT: BIND\n", encoding="utf-8")
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(
+        _r_row_tip(f"cortex://{bind_rel}"), encoding="utf-8"
+    )
+    deps = FoldDeps(
+        cortex=_CardOnlyCortex(attrs={"density_triage": "judgment_required"}),
+        bus=_StubBus(),
+        git=_StubGit(landed=False),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert tuple(fold.row_status) == ("R1", "R2", "R3")
+    assert fold.witnessed_done == frozenset({"R1"})
+    assert fold.row_status["R1"] == "DONE"
+    assert fold.entry_gate == "R2"
+
+
+def test_fold_all_g_tip_keeps_ladder_semantics(tmp_path: Path) -> None:
+    """A sparse board that lists only some G rows still folds as the G-ladder."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n"
+        "| G3 | Densify | plan | OPEN | |\n"
+        "| G5 | Implement | agent | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    deps = FoldDeps(
+        cortex=_CardOnlyCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert tuple(fold.row_status) == ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
