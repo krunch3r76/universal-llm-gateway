@@ -575,9 +575,7 @@ def _migrate_parked_waiting_status(conn: sqlite3.Connection) -> None:
     if not needs_status and not needs_col:
         return
     if needs_col and not needs_status:
-        conn.execute(
-            "ALTER TABLE cursor_sdk_dispatches ADD COLUMN park_child_dispatch_id TEXT"
-        )
+        _add_column_if_missing(conn, cols, "park_child_dispatch_id", "TEXT")
         return
     has_source_ref = "source_ref" in cols
     source_ref_select = "source_ref" if has_source_ref else "NULL"
@@ -645,12 +643,11 @@ def _migrate_parked_waiting_status(conn: sqlite3.Connection) -> None:
 def _migrate_lease_key_column(conn: sqlite3.Connection) -> None:
     """Add explicit ``lease_key`` column; backfill from ``source_repo``."""
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")}
-    if "lease_key" not in cols:
-        conn.execute("ALTER TABLE cursor_sdk_dispatches ADD COLUMN lease_key TEXT")
-        conn.execute(
-            "UPDATE cursor_sdk_dispatches SET lease_key=source_repo "
-            "WHERE source_repo IS NOT NULL AND lease_key IS NULL"
-        )
+    _add_column_if_missing(conn, cols, "lease_key", "TEXT")
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET lease_key=source_repo "
+        "WHERE source_repo IS NOT NULL AND lease_key IS NULL"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued_lease "
         "ON cursor_sdk_dispatches(lease_key, worker_instance, status) "
@@ -821,8 +818,7 @@ def _migrate_park_columns(conn: sqlite3.Connection) -> None:
         "park_resumed_by",
         "park_expires_at",
     ):
-        if col not in cols:
-            conn.execute(f"ALTER TABLE cursor_sdk_dispatches ADD COLUMN {col} TEXT")
+        _add_column_if_missing(conn, cols, col, "TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_park_open "
         "ON cursor_sdk_dispatches(park_kind) "
@@ -843,9 +839,7 @@ def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
     if not needs_cancelled and not needs_fingerprint:
         return
     if needs_fingerprint and not needs_cancelled:
-        conn.execute(
-            "ALTER TABLE cursor_sdk_dispatches ADD COLUMN work_fingerprint TEXT"
-        )
+        _add_column_if_missing(conn, cols, "work_fingerprint", "TEXT")
         rows = conn.execute(
             "SELECT dispatch_id, thread_id, packet_path, record_json, read_only "
             "FROM cursor_sdk_dispatches"
@@ -1026,7 +1020,8 @@ def _add_column_if_missing(
 
     Concurrent first-touch of a fresh DB races the PRAGMA snapshot: two
     connections both observe the column missing and both ALTER. The loser
-    raises ``duplicate column name``; that is success, not a failed mint.
+    raises ``duplicate column name`` (``source_repo``, ``lease_key``, park
+    columns); that is success, not a failed mint.
     """
     if name in cols:
         return
