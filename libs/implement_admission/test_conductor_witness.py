@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ import pytest
 from implement_admission.conductor_materialize import materialize_conductor
 from implement_admission.conductor_score_io import _parse_journal
 from implement_admission.conductor_score_journal import (
+    birth_scoreboard,
+    forward_mutate_tip,
     load_journal,
     read_tip,
     walk_journal_to_tip,
@@ -946,3 +949,266 @@ def test_mixed_g_and_r_tip_keeps_g4_verdict_check(tmp_path: Path) -> None:
     assert tuple(fold.row_status) == ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
     assert "G4" not in fold.witnessed_done
     assert fold.row_status["G4"] != "DONE"
+
+
+_REROUTE_RATIFY = "VERDICT: RATIFY\n"
+_G4_CLEAR = "G4 clears G5.\n"
+_G4_WITHHOLD = "Verdict: G4 **does not** clear G5.\nAC-7 | **FAIL**\n"
+
+
+def _sha_file(files_root: Path, rel: str, body: str) -> tuple[str, str]:
+    path = files_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return f"cortex://{rel}", hashlib.sha256(body.encode()).hexdigest()
+
+
+def _sidecar(artifact_id: str, uri: str, digest: str) -> str:
+    return f"| {artifact_id} | `{uri}` `sha256:{digest}` | review |\n"
+
+
+def _gated_tip(*, g4_stops: str, g6_stops: str, sidecars: str) -> str:
+    return (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Status | Stops |\n|---|---|---|---|\n"
+        "| G1 | frame | OPEN | |\n"
+        "| G2 | rival | OPEN | |\n"
+        "| G3 | spec | OPEN | |\n"
+        "| G4 | skeptic | OPEN | " + g4_stops + " |\n"
+        "| G5 | implement | OPEN | |\n"
+        "| G6 | review | OPEN | " + g6_stops + " |\n"
+        "| G7 | land | OPEN | |\n\n"
+        "## Sidecars\n\n"
+        "| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + sidecars
+    )
+
+
+def _reroute_deps(tmp_path: Path) -> FoldDeps:
+    return FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(landed=False),
+        source_ref="todo:reroute-verdict",
+        summon_mode="attended",
+        summoning_thread_id="13691",
+        repo=tmp_path / "repo",
+    )
+
+
+def test_g6_reroute_prefers_stamped_route_and_journal_names_it(tmp_path: Path) -> None:
+    """Two G6 artifacts: the Stops route wins, and the journal delta names it.
+
+    The operator artifact is listed first so document order cannot govern.
+    """
+    files_root = tmp_path / "cortex"
+    nested_uri, nested_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-nested-grok.md",
+        _REROUTE_RATIFY + "nested-grok\n",
+    )
+    operator_uri, operator_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-operator.md",
+        _REROUTE_RATIFY + "operator\n",
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="cdp_fail_route=nested-grok",
+        sidecars=(
+            _sidecar("G6-REVIEW-operator", operator_uri, operator_sha)
+            + _sidecar("G6-REVIEW-nested-grok", nested_uri, nested_sha)
+        ),
+    )
+    slug = "reroute-verdict-prefer"
+    birth_scoreboard(slug, scoreboard_body=tip, files_root=files_root)
+    fold = fold_scoreboard(
+        slug, deps=_reroute_deps(tmp_path), files_root=files_root, write_journal=True
+    )
+    assert fold is not None
+    assert fold.witnesses["G6"] is not None
+    assert fold.witnesses["G6"].detail == nested_uri
+    assert (
+        fold.witnesses["G6"].source
+        == "witness:BIND:G6-REVIEW-nested-grok:route=nested-grok"
+    )
+    journal = load_journal(slug, files_root=files_root)
+    fold_records = [row for row in journal if row.get("reason") == "witness_fold"]
+    assert fold_records
+    assert "G6 OPEN→DONE [route=nested-grok]" in str(fold_records[-1].get("delta"))
+
+
+def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> None:
+    """Fold, then a conductor posts a late G6 artifact, then fold again.
+
+    Interleaving: the first fold sees only the stamped route's artifact. The
+    conductor then appends a torn ``G6-REVIEW-opera`` line and a complete
+    commentary artifact. The second fold still binds the stamped URI. A later
+    Stops change to ``operator`` is the only thing that switches the witness.
+    """
+    files_root = tmp_path / "cortex"
+    nested_uri, nested_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-keep-nested.md",
+        _REROUTE_RATIFY + "keep-nested\n",
+    )
+    operator_uri, operator_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-keep-operator.md",
+        _REROUTE_RATIFY + "keep-operator\n",
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="cdp_fail_route=nested-grok",
+        sidecars=_sidecar("G6-REVIEW-nested-grok", nested_uri, nested_sha),
+    )
+    slug = "reroute-verdict-interleave"
+    birth_scoreboard(slug, scoreboard_body=tip, files_root=files_root)
+    deps = _reroute_deps(tmp_path)
+    first = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=True)
+    assert first is not None
+    assert first.witnesses["G6"] is not None
+    assert first.witnesses["G6"].detail == nested_uri
+    current = read_tip(slug, files_root=files_root)
+    assert current is not None
+    partial = "| G6-REVIEW-opera\n"
+    posted = current[0] + partial + _sidecar(
+        "G6-REVIEW-operator", operator_uri, operator_sha
+    )
+    mutated = forward_mutate_tip(
+        slug,
+        next_body=posted,
+        seat="conductor",
+        dispatch_id=None,
+        reason="post second G6 artifact",
+        rows=("G6",),
+        delta="commentary artifact posted",
+        files_root=files_root,
+    )
+    assert mutated.rejected_reason is None
+    second = fold_scoreboard(
+        slug, deps=deps, files_root=files_root, write_journal=True
+    )
+    assert second is not None
+    assert second.witnesses["G6"] is not None
+    assert second.witnesses["G6"].detail == nested_uri
+    assert second.witnesses["G6"].detail != operator_uri
+    stamped = read_tip(slug, files_root=files_root)
+    assert stamped is not None
+    switched = stamped[0].replace(
+        "cdp_fail_route=nested-grok", "cdp_fail_route=operator", 1
+    )
+    switched_write = forward_mutate_tip(
+        slug,
+        next_body=switched,
+        seat="conductor",
+        dispatch_id=None,
+        reason="route stamp changed",
+        rows=("G6",),
+        delta="cdp_fail_route=operator",
+        files_root=files_root,
+    )
+    assert switched_write.rejected_reason is None
+    third = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=False)
+    assert third is not None
+    assert third.witnesses["G6"] is not None
+    assert third.witnesses["G6"].detail == operator_uri
+    assert (
+        third.witnesses["G6"].source
+        == "witness:BIND:G6-REVIEW-operator:route=operator"
+    )
+
+
+def test_g6_stamped_route_does_not_accept_r1_or_other_route(tmp_path: Path) -> None:
+    """A route stamp must not fall through to R1 or the other route's artifact."""
+    files_root = tmp_path / "cortex"
+    r1_uri, r1_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-r1.md",
+        _REROUTE_RATIFY + "legacy-r1\n",
+    )
+    operator_uri, operator_sha = _sha_file(
+        files_root,
+        "notes/system/reviews/g6-other-route.md",
+        _REROUTE_RATIFY + "other\n",
+    )
+    tip = _gated_tip(
+        g4_stops="",
+        g6_stops="cdp_fail_route=nested-grok",
+        sidecars=(
+            _sidecar("R1", r1_uri, r1_sha)
+            + _sidecar("G6-REVIEW-operator", operator_uri, operator_sha)
+        ),
+    )
+    witnesses = row_witnesses(
+        "reroute-verdict-no-fallback",
+        tip_body=tip,
+        deps=_reroute_deps(tmp_path),
+        files_root=files_root,
+    )
+    assert witnesses.get("G6") is None
+
+
+def test_g4_stamped_route_ignores_clearing_commentary(tmp_path: Path) -> None:
+    """G4 with a route stamp does not take a clearing plain G4 body."""
+    files_root = tmp_path / "cortex"
+    clear_uri, clear_sha = _sha_file(
+        files_root, "notes/system/reviews/g4-clear.md", _G4_CLEAR
+    )
+    hold_uri, hold_sha = _sha_file(
+        files_root, "notes/system/reviews/g4-hold.md", _G4_WITHHOLD
+    )
+    tip = _gated_tip(
+        g4_stops="cdp_fail_route=nested-grok",
+        g6_stops="",
+        sidecars=(
+            _sidecar("G4", clear_uri, clear_sha)
+            + _sidecar("G4-REVIEW-nested-grok", hold_uri, hold_sha)
+        ),
+    )
+    witnesses = row_witnesses(
+        "reroute-verdict-g4",
+        tip_body=tip,
+        deps=_reroute_deps(tmp_path),
+        files_root=files_root,
+    )
+    assert witnesses.get("G4") is None
+
+    clear_routed_uri, clear_routed_sha = _sha_file(
+        files_root, "notes/system/reviews/g4-routed-clear.md", _G4_CLEAR + "routed\n"
+    )
+    governed = _gated_tip(
+        g4_stops="cdp_fail_route=nested-grok",
+        g6_stops="",
+        sidecars=(
+            _sidecar("G4", clear_uri, clear_sha)
+            + _sidecar("G4-REVIEW-operator", clear_uri, clear_sha)
+            + _sidecar("G4-REVIEW-nested-grok", clear_routed_uri, clear_routed_sha)
+        ),
+    )
+    governed_witnesses = row_witnesses(
+        "reroute-verdict-g4-govern",
+        tip_body=governed,
+        deps=_reroute_deps(tmp_path),
+        files_root=files_root,
+    )
+    assert governed_witnesses["G4"] is not None
+    assert governed_witnesses["G4"].detail == clear_routed_uri
+    assert (
+        governed_witnesses["G4"].source
+        == "witness:BIND:G4-REVIEW-nested-grok:route=nested-grok"
+    )
+
+
+def test_run_to_completion_names_route_on_artifact_and_stops() -> None:
+    """U8 map: Run to completion → reference-run-to-completion.md."""
+    skill = (
+        Path(__file__).resolve().parents[2]
+        / "cursor-plugins/ulg-ecosystem/skills/conductor/reference-run-to-completion.md"
+    )
+    text = skill.read_text(encoding="utf-8")
+    assert "G6-REVIEW-nested-grok" in text
+    assert "G6-REVIEW-operator" in text
+    assert "G4-REVIEW-nested-grok" in text
+    assert "cdp_fail_route=<route>" in text
+    assert "witness:BIND:" in text

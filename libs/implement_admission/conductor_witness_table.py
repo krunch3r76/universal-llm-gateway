@@ -21,7 +21,12 @@ from implement_admission.conductor_score_journal import (
     is_g_ladder_rows,
     load_journal,
 )
-from implement_admission.conductor_score_table import SCOREBOARD_ROW_ID
+from implement_admission.conductor_score_table import (
+    SCOREBOARD_ROW_ID,
+    cell,
+    row_id_in,
+    stops_index,
+)
 from implement_admission.conductor_witness_types import (
     FoldDeps,
     Witness,
@@ -61,6 +66,37 @@ _G6_STANDALONE_VERDICT_RE = re.compile(
     r"(?m)^VERDICT:\s*(?P<raw>.+?)\s*$",
     re.IGNORECASE,
 )
+# Skill cdp_fail_route vocabulary. U3 stamps hop_reason=cdp_probe_indeterminate
+# (a different fact) and does not name which verdict governs.
+_CDP_FAIL_ROUTE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])cdp_fail_route=(?P<route>nested-grok|operator)"
+    r"(?![A-Za-z0-9_-])"
+)
+
+
+def _cdp_fail_route(tip_body: str, row_id: str) -> str | None:
+    """Route named in one Gated row's Stops cell, if it is a known token."""
+    column = stops_index(tip_body)
+    for line in (tip_body or "").splitlines():
+        if row_id_in(line) != row_id.upper():
+            continue
+        match = _CDP_FAIL_ROUTE_RE.search(cell(line, column))
+        return match.group("route") if match else None
+    return None
+
+
+def _gated_review_keys(
+    row_id: str, legacy: tuple[str, ...], route: str | None
+) -> tuple[str, ...]:
+    """Legacy ids, or only ``<row>-REVIEW-<route>`` once a route is stamped.
+
+    A stamped route does not fall through to the legacy id. That id is the
+    consult that failed, and treating it as the witness would let the
+    commentary verdict govern.
+    """
+    if route is None:
+        return legacy
+    return (f"{row_id}-REVIEW-{route}",)
 
 
 def _first_resolving_artifact(
@@ -69,8 +105,18 @@ def _first_resolving_artifact(
     *,
     files_root: Path,
     repo: Path | None,
+    route: str | None = None,
 ) -> tuple[str | None, str | None]:
-    for key in keys:
+    """First resolving artifact. A route keeps only ``*-REVIEW-<route>``.
+
+    Other ids in ``keys`` are commentary for that fold. They do not resolve
+    the row, including when they appear earlier in the tip.
+    """
+    chosen = keys
+    if route:
+        suffix = f"-REVIEW-{route}"
+        chosen = tuple(key for key in keys if key.endswith(suffix))
+    for key in chosen:
         uri = artifacts.get(key)
         if uri and _uri_resolves(uri, files_root=files_root, repo=repo):
             return key, uri
@@ -440,15 +486,27 @@ def _row_witnesses_g_ladder(
     if g3_id and g3_uri:
         witnesses["G3"] = Witness(row="G3", source=f"artifact:{g3_id}", detail=g3_uri)
 
-    g4_uri = artifacts.get("G4")
+    g4_route = _cdp_fail_route(tip_body, "G4")
+    g4_id, g4_uri = _first_resolving_artifact(
+        artifacts,
+        _gated_review_keys("G4", ("G4",), g4_route),
+        files_root=files_root,
+        repo=repo,
+        route=g4_route,
+    )
     g4_stops = stops_block_reason(tip_body, "G4")
     if (
         g4_stops is None
+        and g4_id
         and g4_uri
-        and _uri_resolves(g4_uri, files_root=files_root, repo=repo)
         and _g4_body_clears(g4_uri, files_root=files_root)
     ):
-        witnesses["G4"] = Witness(row="G4", source="artifact:G4", detail=g4_uri)
+        g4_source = (
+            f"witness:{_WITNESS_KIND_BIND}:{g4_id}:route={g4_route}"
+            if g4_route
+            else "artifact:G4"
+        )
+        witnesses["G4"] = Witness(row="G4", source=g4_source, detail=g4_uri)
 
     g4_blocked = g4_stops is not None or (bool(g4_uri) and witnesses["G4"] is None)
     summon = (deps.summon_mode or "").strip().lower().replace("-", "_")
@@ -494,8 +552,13 @@ def _row_witnesses_g_ladder(
                 )
 
     if witnesses.get("G5") is not None:
+        g6_route = _cdp_fail_route(tip_body, "G6")
         g6_id, g6_uri = _first_resolving_artifact(
-            artifacts, _G6_REVIEW_ARTIFACT_IDS, files_root=files_root, repo=repo
+            artifacts,
+            _gated_review_keys("G6", _G6_REVIEW_ARTIFACT_IDS, g6_route),
+            files_root=files_root,
+            repo=repo,
+            route=g6_route,
         )
         if (
             g6_id
@@ -507,9 +570,12 @@ def _row_witnesses_g_ladder(
                 artifact_id=g6_id,
             )
         ):
-            witnesses["G6"] = Witness(
-                row="G6", source=f"artifact:{g6_id}", detail=g6_uri
+            g6_source = (
+                f"witness:{_WITNESS_KIND_BIND}:{g6_id}:route={g6_route}"
+                if g6_route
+                else f"artifact:{g6_id}"
             )
+            witnesses["G6"] = Witness(row="G6", source=g6_source, detail=g6_uri)
 
     land_sha = artifacts.get(_land_artifact_key("G7"))
     if (

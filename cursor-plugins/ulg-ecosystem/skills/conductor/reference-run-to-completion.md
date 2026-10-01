@@ -71,6 +71,7 @@ per-G-row one. Default posture once running:
   Choose at once by the question and record `cdp_fail_route` on the scoreboard row.
   `nested-grok`: nested `team_dispatch` `seat=cursor-sdk` `model=cursor/grok-4.7` `job=freeform` `model_knobs={"effort":"xhigh"}`.
   `operator`: post the question and its context on this worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply.
+  Name that route in the artifact id (`G4-REVIEW-nested-grok`, `G4-REVIEW-operator`, `G6-REVIEW-nested-grok`, `G6-REVIEW-operator`) and in the Gated row's Stops cell as `cdp_fail_route=<route>`. The fold records `witness:BIND:<id>:route=<route>` for the artifact that matches the stamp. A second verdict on the same gate is commentary unless that Stops stamp changes later.
   Do not label DEFERRED and continue. Do not substitute Composer. Do not `PARKED_TRANSPORT` on this failure. Do not discard the lane.
   Optional Sidecar overlays that the
   scoreboard marks non-blocking remain commentary only — they do not replace

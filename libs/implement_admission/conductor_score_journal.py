@@ -30,10 +30,6 @@ _CLOSED_ROW_RE = re.compile(
     rf"^\|\s*({SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
 )
-_ROW_STATUS_RE = re.compile(
-    rf"^\|\s*({SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*(?P<status>[A-Za-z_()]+)",
-    re.MULTILINE,
-)
 STATUS_VOCABULARY: frozenset[str] = frozenset(
     {"OPEN", "DONE", "CLAIMED", "WIP", "RETRACTED"}
 )
@@ -257,10 +253,16 @@ def closed_rows_in_tip(
 
 
 def _row_status(body: str, gid: str) -> str | None:
-    for match in _ROW_STATUS_RE.finditer(body):
-        if match.group(1).upper() == gid.upper():
-            return match.group("status").strip().upper()
-    return None
+    """Status cell for one row, located from the table header.
+
+    The old column-count regex treated a 4-column Stops word as the status.
+    A G6 row whose Stops cell is ``cdp_fail_route=nested-grok`` then failed
+    the rewind guard (``rewind closed row: G6``) and the witness-fold journal
+    never landed.
+    """
+    from implement_admission.conductor_witness_types import row_status_in_tip
+
+    return row_status_in_tip(body, gid)
 
 
 def reject_rewind_closed_row(
