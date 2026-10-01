@@ -63,7 +63,6 @@ def render_attestation_block(
                 f"verdict: {snap.verdict.value}",
                 f"dispatch_idle: {str(snap.dispatch_idle).lower()}",
                 f"tick_empty: {str(snap.tick_empty).lower()}",
-                f"cursor_auto_idle: {str(snap.cursor_auto_idle).lower()}",
                 f"cdp_lane_idle: {str(snap.cdp_lane_idle).lower()}",
                 f"grace_s: {_grace_s(row)}",
                 f"attested_at_utc: {stamp}",

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 
 from claude_bundles import cdp_registry_events as events
@@ -22,8 +19,6 @@ from claude_bundles.cse_session_obligations import (
     stamp_session_ids,
     sweep_wake_owed_ttl,
 )
-from services.git_integration_worker.cursor_auto.cse_wake_delivery import pay_wake_unit
-from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 pytestmark = pytest.mark.offline
 
@@ -148,70 +143,6 @@ def test_ac2_ep15_fixture_alarm_before_diagnose(isolated_obligations: Path) -> N
     assert float(ob["alarm"]["fired_at"]) < EP15_DIAGNOSE_TS
 
 
-def test_ac3_failed_followup_leaves_obligation_open(
-    isolated_obligations: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """AC3: failed followup does not discharge wake_owed; bus WAKE degrades."""
-    stamp_session_ids(lane_thread="6655", registration_id="reg-6655")
-    append_session_transition_locked(
-        {
-            "event_id": "protocol.parked:6655:9",
-            "event": "cdp.protocol.parked",
-            "ts": 1000.0,
-            "payload": {
-                "thread": "6655",
-                "turn_id": 9,
-                "parked_ts": 1000.0,
-                "obligation_id": "wake:6655:9",
-                "wake_channel": "chat_delivery",
-                "fallback": "bus_wake+pager",
-                "cse_registration_id": "reg-6655",
-                "skipped": False,
-            },
-        }
-    )
-
-    def _fail_post(method: str, url: str, *, json=None, timeout: float):
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        resp.content = b'{"ok": false, "error": "send_unverified"}'
-        resp.json.return_value = {"ok": False, "error": "send_unverified"}
-        resp.text = ""
-        return resp
-
-    job = AutoJob(
-        job_id="j1",
-        thread_id="6655",
-        turn_number=8,
-        subject="s",
-        body="b",
-        from_agent="web-anthropic",
-        to_agent="cursor-auto",
-        contract="answer",
-        desired_model="auto",
-        desired_effort="medium",
-    )
-    monkeypatch.setenv("PROJECT_ASK_URL", "http://127.0.0.1:9191")
-    with patch(
-        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
-        return_value={"ok": True, "status_code": 200},
-    ):
-        unit = asyncio.run(
-            pay_wake_unit(
-                job,
-                dispatch_id="auto-x",
-                request_turn="8",
-                closeout_status="complete",
-                post=_fail_post,
-            )
-        )
-    assert unit["followup_ok"] is False
-    assert unit["code"].startswith("csr.wake.")
-    assert unit["wake_ok"] is True
-    sessions = load_sessions()
-    ob = get_open_wake_owed(sessions, thread="6655")
-    assert ob is not None
-    assert ob["status"] in ("open", "alarmed")
 
 
 def test_ac4_wake_delivered_idempotent(isolated_obligations: Path) -> None:

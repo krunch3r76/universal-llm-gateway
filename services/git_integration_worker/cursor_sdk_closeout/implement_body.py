@@ -30,7 +30,7 @@ from implement_admission.propagation_row import (
 )
 from implement_admission.spec import WorkOutcome
 
-from services.git_integration_worker.cursor_auto.episode_residue import (
+from services.git_integration_worker.relay.episode_residue import (
     propagation_residue_for_finalize,
     resolve_propagation_for_finalize,
 )
@@ -275,7 +275,7 @@ def build_implement_closeout_body(
         )
     )
     _ = plan_verdict
-    from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    from services.git_integration_worker.relay.closeout_status_polarity import (
         classify_status_incomplete_class,
     )
 

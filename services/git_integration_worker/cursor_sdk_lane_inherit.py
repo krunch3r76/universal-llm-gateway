@@ -14,29 +14,16 @@ def thread_has_inheritor(
     *,
     completing_dispatch_id: str | None = None,
 ) -> bool:
-    """True when another Auto job or SDK dispatch still owns ``thread_id``.
+    """True when another SDK dispatch still owns ``thread_id``.
 
-    The completing Auto job is still ``claimed`` at closeout; one live Auto
-    job is not an inheritor. Two or more queued/claimed Auto jobs are.
-    A different admitted/running SDK dispatch on the same thread is — including
-    ``read_only=1`` dispatches standing in the lane worktree.
+    A different admitted/running SDK dispatch on the same thread is an
+    inheritor — including ``read_only=1`` dispatches standing in the lane
+    worktree.
     """
     if not thread_id.strip():
         return False
-    if _live_auto_count(thread_id) >= 2:
-        return True
     return _other_live_sdk_dispatch(
         thread_id, completing_dispatch_id=completing_dispatch_id
-    )
-
-
-def _live_auto_count(thread_id: str) -> int:
-    from services.git_integration_worker.cursor_auto.queue import get_queue
-
-    return sum(
-        1
-        for job in get_queue().list_open_jobs()
-        if job.thread_id == thread_id and job.status in {"queued", "claimed"}
     )
 
 

@@ -45,7 +45,7 @@ class TierMDriftReport:
 
 
 def _manifest_rows():
-    from services.git_integration_worker.cursor_auto.tier_m_manifest import (
+    from services.git_integration_worker.relay.tier_m_manifest import (
         DEFAULT_MANIFEST,
     )
 

@@ -930,51 +930,6 @@ def test_g3a_deviations_conserved_across_work_outcome_split(tmp_path: Path) -> N
         assert capture_status is not None
 
 
-def test_g3b_closeout_pipeline_tolerates_omitted_work_outcome() -> None:
-    """G3b — Stargate trigger + relay tolerate closeout JSON omitting work_outcome."""
-    from unittest.mock import MagicMock, patch
-
-    from implement_admission.closeout_models import ImplementCloseout
-    from systems.frontier_consult.closeout_reply import trigger_closeout_from_turn
-
-    from services.git_integration_worker.cursor_auto.closeout_relay import (
-        synthesize_section2,
-    )
-
-    legacy_payload = {
-        "schema_version": 1,
-        "status": "complete",
-        "summary": "dispatch legacy: no work_outcome field",
-        "source_ref": "todo:capture-status-work-outcome-split",
-        "capture_status": "complete",
-        "deviations": [],
-    }
-    assert "work_outcome" not in legacy_payload
-    parsed = ImplementCloseout.model_validate(legacy_payload)
-    assert parsed.work_outcome is None
-
-    with patch(
-        "systems.frontier_consult.closeout_reply.run_implement_closeout_pipeline",
-        new=MagicMock(return_value={"ok": True}),
-    ) as pipeline_mock:
-        result = trigger_closeout_from_turn(
-            thread_id="6588",
-            body=json.dumps(legacy_payload),
-            tags=["contract:implement"],
-        )
-    assert result == {"ok": True}
-    pipeline_mock.assert_called_once()
-    closeout_arg = pipeline_mock.call_args[0][0]
-    assert "work_outcome" not in closeout_arg
-
-    synthesized = synthesize_section2(
-        wrapper_text=json.dumps(legacy_payload),
-        sidecar_text=None,
-        dispatch_id="legacy-no-work-outcome",
-    )
-    assert synthesized is not None
-    assert "work_outcome" not in synthesized
-    assert "capture_status=complete" in synthesized
 
 
 # --- todo:success-shaped-silence G₁ three-trace pins (round-1 specimens) ---

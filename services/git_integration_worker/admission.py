@@ -40,10 +40,8 @@ logger = get_logger(__name__)
 _TICKET_PENDING = "pending"
 _TICKET_RUNNING = "running"
 
-# Relay tickets are minted by the cursor-auto caller *before* it POSTs the nested
-# dispatch, so this route is the one admission path whose ticket can outlive the
-# work it reserved: a submission that never reaches the worker leaves no ledger
-# row to retire it. See ``_leaked_relay_op_ids``.
+# Relay tickets on this route can be reserved before a ledger row exists. An
+# aged pending ticket with no row must not wedge ``active_count``.
 _RELAY_ROUTE = "cursor-auto/nested"
 _RELAY_LEAK_GRACE_S_DEFAULT = 900.0
 
@@ -178,19 +176,11 @@ class WorkAdmissionController:
 
     # --------------------------------------------------------------- counting
     def _leaked_relay_op_ids(self) -> list[str]:
-        """Relay tickets whose nested dispatch never reached the ledger.
+        """Pending relay tickets past grace with no ledger row.
 
-        ``submit_nested_dispatch`` reserves its ticket *before* POSTing, so this
-        is the one admission path whose reservation can outlive the work: a
-        submission rejected pre-admission (``CURSOR_WORKTREE_MINT_FAILED``) or
-        lost in transport leaves no row to retire it, and the ticket then counts
-        toward ``active_count`` forever — wedging drain convergence, which no
-        operator surface can clear because ``force`` is barred on this worker.
-
-        Absence of a ledger row — not age alone — is the leak signature. A queued
-        or running nested dispatch always has one under the same ``dispatch_id``,
-        so this never reaps live work. The grace period only covers the window
-        between the caller's reservation and the worker's ledger insert.
+        Absence of a ledger row — not age alone — is the leak signature. A
+        queued or running dispatch under the same id is never reaped. The grace
+        period covers the window between reservation and the ledger insert.
         """
         now = datetime.now(UTC)
         grace_s = _relay_leak_grace_s()
@@ -258,32 +248,6 @@ class WorkAdmissionController:
                 continue
             ops.append(proj)
             seen.add(dispatch_id)
-        from services.git_integration_worker.cursor_auto.drain_parked_nested import (
-            waiting_park_resume_for_intent,
-        )
-        from services.git_integration_worker.cursor_auto.queue import get_queue
-
-        drain_intent = self._intent_id if self._draining else None
-        for auto_op in get_queue().claimed_occupancy_ops():
-            op_id = str(auto_op["op_id"])
-            if op_id in seen:
-                continue
-            # Parked nested SDK waits for post-restart resume_of — omit from
-            # drain occupancy only (intent may have been replaced). Resumed
-            # + terminal child also yields (765c56f3 after -r1 CLOSEOUT).
-            # 9470 still counts a live nested SDK.
-            if drain_intent and waiting_park_resume_for_intent(
-                job_id=op_id, intent_id=drain_intent
-            ):
-                continue
-            # Claimed cursor-auto rows stay occupancy for the life of the
-            # claim. Heartbeat age is stall telemetry only — concurrent and
-            # hop rows are not bumped after mark_claimed, so age is time
-            # since claim and must not drop the row. Fail-on-death and the
-            # release verb are the exits. Do not skip continuity hops here;
-            # queue health's serial_occupant skip is projection only.
-            ops.append(auto_op)
-            seen.add(op_id)
         return ops
 
     def active_count(self) -> int:

@@ -1,10 +1,8 @@
-"""agent_bus ``hop`` — mechanical continuity-hop request-surface verb.
+"""agent_bus ``hop`` — continuity hop via ``team_dispatch`` generate.
 
 Authors a ``TYPE: CONTINUITY_HANDOFF`` body from ``hop_handoff``, then
-delegates to ``_request_impl`` with ``continuity_hop=True`` so GIW admit
-takes the existing hop path (no supersede, orientation prepend, CDP
-commission). Not a contract token — handler short-circuits on the
-structural flag before contract grading.
+relays ``op=generate`` through ``frontier._relay`` for a ``cdp/…`` successor.
+Not a contract token.
 """
 
 from __future__ import annotations
@@ -19,13 +17,14 @@ from hop_handoff import (
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
-from .request import _request_impl, _resolve_hop_seat_request_refusal
+from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
 
 _VERB_SOURCE = "agent-bus-hop-verb"
+_SUCCESSOR_MODEL = "cdp/opus-5"
 
 
-def _hop_dispatch(
+async def _hop_dispatch(
     *,
     thread: str | int | None = None,
     reason: str = "",
@@ -41,15 +40,14 @@ def _hop_dispatch(
     """Validate + dispatch ``agent_bus.hop``.
 
     ``thread`` is required (a hop is always on an existing private lane).
-    ``reason`` becomes the body ``trigger:`` line. The verb reports
-    *armed* (``auto_handler_status``) — never ``status:done``. The successor
+    ``reason`` becomes the body ``trigger:`` line. The verb reports the
+    successor ``execution_id`` — never ``status:done``. The successor
     selection key is ``successor_birth_id`` on the structural hop body
     (echoed onto the registration stamp). When the seated CSE calls
     ``agent_bus.hop`` via MCP, the return is the predecessor's receipt and
-    must not be read as the caller's own id. The cadence path
-    (``hop_cadence.py``) enqueues continuity hops without an MCP return —
-    it delivers no predecessor receipt to any caller.
+    must not be read as the caller's own id.
     """
+    del desired_model, after_turn  # signature retained; not a wire field
     if isinstance(thread, int):
         thread = str(thread)
     thread_id = (thread or "").strip()
@@ -97,41 +95,39 @@ def _hop_dispatch(
         occupy_target=(cse_chat_url or "").strip() or None,
         superseded_registration_id=cse_registration_id,
     )
-    hop_subject = (subject or "").strip() or (
-        f"CONTINUITY HANDOFF — hop (thread {thread_id})"
-    )
-    result = _request_impl(
-        new_slug=None,
-        thread=thread_id,
-        to="cursor",
-        subject=hop_subject,
-        body=full_body,
-        from_agent=from_agent,
-        tags=None,
-        sidecar_content=None,
-        sidecar_slug=None,
-        desired_model=desired_model or "auto",
-        desired_effort=desired_effort or "auto",
-        contract="answer",
-        require_attended=False,
-        request_id=rid_intake.request_id,
-        after_turn=after_turn,
-        cse_chat_url=cse_chat_url,
-        cse_registration_id=cse_registration_id,
-        continuity_hop=True,
-        allow_long_body=True,
-        enqueue_body=full_body,
+    body: dict[str, Any] = {
+        "op": "generate",
+        "model": _SUCCESSOR_MODEL,
+        "prompt": full_body,
+        "job": "freeform",
+        "purpose": "operator-proxy",
+        "parent_thread": thread_id,
+        "dispatch_thread_id": thread_id,
+        "caller_agent": from_agent,
+    }
+    effort = (desired_effort or "").strip()
+    if effort and effort != "auto":
+        body["reasoning_effort"] = effort
+
+    from tools.frontier import _relay
+
+    result = await _relay(
+        endpoint="/api/v1/team/dispatch",
+        body=body,
+        record_prefix="mcp.agentbus.hop.dispatch",
     )
     if isinstance(result, dict) and "error" in result:
         return result
+    execution_id = str(result.get("execution_id") or "") if isinstance(result, dict) else ""
     record(
         "mcp.agentbus.hop.posted",
         thread=thread_id,
         reason=trigger,
-        auto_handler_status=str(result.get("auto_handler_status") or ""),
+        execution_id=execution_id,
     )
-    stamped = dict(result)
+    stamped = dict(result) if isinstance(result, dict) else {"result": result}
     stamped["continuity_hop"] = True
+    stamped["execution_id"] = execution_id
     birth_id = parse_successor_birth_id(full_body)
     stamped["successor"] = {
         "handle": "successor_birth_id",
@@ -145,8 +141,7 @@ def _hop_dispatch(
         "note": (
             "when this seated CSE calls agent_bus.hop via MCP, this return "
             "is the predecessor's receipt — successor_birth_id names the "
-            "successor, not the caller; the cadence path delivers no such "
-            "return"
+            "successor, not the caller"
         ),
     }
     return stamped

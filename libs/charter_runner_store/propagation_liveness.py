@@ -44,7 +44,7 @@ class CodeRefLiveness:
 
 
 def _default_probe_cited(service: str) -> tuple[dict[str, Any] | None, str | None]:
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         probe_process_live_cited,
     )
 

@@ -71,7 +71,6 @@ def build_observation_payload(
         "fleet_verdict": snapshot.verdict.value,
         "dispatch_idle": snapshot.dispatch_idle,
         "tick_empty": snapshot.tick_empty,
-        "cursor_auto_idle": snapshot.cursor_auto_idle,
         "cdp_lane_idle": snapshot.cdp_lane_idle,
         "dispatch_undetermined": snapshot.dispatch_undetermined,
         "tick_undetermined": snapshot.tick_undetermined,

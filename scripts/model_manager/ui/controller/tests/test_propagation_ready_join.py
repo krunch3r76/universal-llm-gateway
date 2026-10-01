@@ -24,7 +24,7 @@ def test_ready_join_skipped_for_non_cdp_services() -> None:
 def test_ready_join_returns_when_probe_ready() -> None:
     payload = {"status": "ok", "code_version": "sha", "pid": 42}
     with patch(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         return_value=payload,
     ):
         result = ready_join_for_settle("cdp_ask", ready_timeout_s=1.0)
@@ -35,7 +35,7 @@ def test_ready_join_returns_when_probe_ready() -> None:
 def test_ready_join_timeout_defers_with_distinct_token(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     with patch(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         return_value=None,
     ):
         result = ready_join_for_settle(
@@ -85,7 +85,7 @@ def test_ready_join_marks_ready_wait_while_polling(tmp_path, monkeypatch) -> Non
         return {"status": "ok", "code_version": sha, "pid": 1}
 
     with patch(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         side_effect=_probe,
     ):
         result = ready_join_for_settle(
@@ -101,7 +101,7 @@ def test_ready_join_marks_ready_wait_while_polling(tmp_path, monkeypatch) -> Non
 def test_ready_join_does_not_spawn_background_thread() -> None:
     before = {t.ident for t in threading.enumerate()}
     with patch(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         return_value={"status": "ok"},
     ):
         ready_join_for_settle("cdp_ask", ready_timeout_s=0.01)

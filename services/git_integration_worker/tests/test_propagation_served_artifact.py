@@ -7,8 +7,8 @@ from charter_runner_store.propagation_terminal import settle_open_row
 from deploy_identity.code_ref_relation import code_ref_relation_from_observed
 from implement_admission.propagation_row import PropagationRow
 
-from services.git_integration_worker.cursor_auto.propagation_probe import proof_observed
-from services.git_integration_worker.cursor_auto.propagation_served_artifact import (
+from services.git_integration_worker.relay.propagation_probe import proof_observed
+from services.git_integration_worker.relay.propagation_served_artifact import (
     SERVED_ARTIFACT_DESCRIPTORS,
     served_artifact_observed,
 )

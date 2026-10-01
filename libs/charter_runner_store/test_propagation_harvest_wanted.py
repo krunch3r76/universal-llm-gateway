@@ -22,9 +22,6 @@ from charter_runner_store.propagation_ledger import (
     upsert_open_rows,
 )
 from charter_runner_store.propagation_outcomes import propagation_outcomes_path
-from services.git_integration_worker.cursor_auto.handler_propagation import (
-    execution_for_manage_deferred,
-)
 from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
     ProbeDispatchResult,
     install_propagation_context,
@@ -54,20 +51,6 @@ def test_mark_harvest_wanted_persists_marker(tmp_path, monkeypatch) -> None:
     assert row.defer_reason == DEFER_HARVEST_WANTED
 
 
-def test_execution_for_manage_deferred_without_intent_is_harvest_wanted(
-    tmp_path, monkeypatch
-) -> None:
-    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    row = _mcp_row()
-    row_id = upsert_open_rows([row])[0]
-    result = execution_for_manage_deferred(
-        row,
-        row_id=row_id,
-        manage_result={"status": "deferred", "state": "busy", "reason": "cdp_ask_live"},
-    )
-    assert result["status"] == "harvest_wanted"
-    assert "charter tick will consume" in result["next"].lower()
-    assert list_open_rows()[0].defer_reason == DEFER_HARVEST_WANTED
 
 
 def test_try_claim_for_consumption_exactly_once(tmp_path, monkeypatch) -> None:

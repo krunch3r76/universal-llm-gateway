@@ -9,7 +9,7 @@ from charter_runner_store.propagation_ledger import (
 from charter_runner_store.propagation_terminal import settle_open_row
 from implement_admission.propagation_row import PropagationRow
 
-from services.git_integration_worker.cursor_auto.propagation_proof_reconcile import (
+from services.git_integration_worker.relay.propagation_proof_reconcile import (
     reconcile_unsupported_proof_class,
 )
 

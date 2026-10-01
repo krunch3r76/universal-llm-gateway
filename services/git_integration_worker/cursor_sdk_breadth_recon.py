@@ -7,11 +7,11 @@ import re
 
 from implement_admission.closeout_models import EffectsManifest
 
-from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+from services.git_integration_worker.relay.closeout_relay_common import (
     CloseoutRelayPayload,
     merge_relay_notes,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+from services.git_integration_worker.relay.closeout_relay_cortex_fields import (
     extract_field_section,
 )
 from services.git_integration_worker.cursor_sdk_subagent_capture import (
@@ -161,7 +161,7 @@ def amend_breadth_recon_gaps(
     )
     if deviation is None:
         return CloseoutRelayPayload(body=body, status=status, source=source)
-    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    from services.git_integration_worker.relay.closeout_relay_effects import (
         _append_deviation_tokens,
     )
 

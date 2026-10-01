@@ -1,0 +1,55 @@
+# Per-verb tools/list orientation. SOT for scripts/gen-mcp-verb-orientation.
+# Slug slate is the G1 binder list. cursor_only rows are emitted as fs reads
+# through emit_workspaces_fs_read. shared_sync rows are agent_skill: URIs.
+# Do not add manage, observability, or tool_search as skill slugs — those
+# names are verbs, not keys under config/skills.yaml skills:.
+
+verbs:
+  team_dispatch:
+    cursor_only:
+      - dispatch-workflow
+      - consult-routing
+      - handoff-packet-authoring
+      - conductor
+      - work-item-seed-path
+      - path-sim
+      - claude-ai-cdp-navigation
+      - operator-proxy-substrate
+    shared_sync:
+      - cdp-operator-proxy
+      - directive-authoring-standard
+      - dispatch-shape
+      - consult-posture
+  manage:
+    cursor_only:
+      - service-lifecycle
+      - ulg-architecture
+      - pre-deploy-gate-discipline
+      - mcp-surface-change
+    shared_sync:
+      - landed-not-live
+  observability:
+    cursor_only:
+      - debug-with-events
+      - ulg-architecture
+      - mcp-tool-loop-trace-matrix
+    shared_sync:
+      - event-instrumentation-discipline
+      - completion-provenance-discipline
+  agent_bus_read:
+    cursor_only:
+      - agent-bus-multitask
+      - cursor-sdk-thread-consolidation
+    shared_sync:
+      - agent-bus-discipline
+      - dispatch-shape
+      - handoff-pickup
+      - checkpoint-discipline
+      - dispatch-report-discipline
+  tool_search:
+    cursor_only:
+      - mcp-surface-change
+      - add-mcp-tool
+      - pipeline-substrate-capabilities
+    shared_sync:
+      - dispatch-shape

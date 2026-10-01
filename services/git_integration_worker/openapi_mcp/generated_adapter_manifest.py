@@ -76,9 +76,6 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /api/v1/git/admin/dispatch-status": "3faaefdaeb84ea5cbf6799432f23a4027108e21d5b0c95782bcd39a5bc9a5151",
     "GET /api/v1/git/admin/drain-state": "61b348f13c41e2159d14ac253069fc20ac3f8adc77fde502d0aac2cc9b7fba44",
     "GET /api/v1/git/admin/lease-snapshot": "ac1d5249fdbe3097061158331be0e60129f9a4aa6451ee470cf2351db6022ec4",
-    "GET /api/v1/git/cursor-auto/job-state": "db4171d6debd8575dc1233ab3df051a46ce985996c94976085210af5bd4e7de1",
-    "GET /api/v1/git/cursor-auto/liveness": "ee720a15ca65ebce8692a88c485e6e41f9ab8debb21ed34c75e7ed4b5f78858d",
-    "GET /api/v1/git/cursor-auto/queue": "05da0900e4cfa39ca0ee7e7ec879b0ce3dd95d63b492168be3c31ef748d83724",
     "GET /api/v1/git/reachable": "f8768ad0aaac86d697463c04d7be35375b2731cc218bfd555b350cb0bfb16c3d",
     "GET /health": "5f4895dbe10f8bab0b97a798718236e7aa9bdf31b005093f009344ad42b23936",
     "POST /api/v1/cursor/branch-discharge": "1795f9ddd26b59147abc55390e10f80b464f914e59b0c04327facce713c30f9d",
@@ -88,6 +85,5 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "POST /api/v1/cursor/park-for-restart": "116a176ae0192ffa42a7748de0379cfa6e4e722e8842687c62d125ddbc093bac",
     "POST /api/v1/git/admin/begin-drain": "d485177474bfc0fa35078924cc201bad2bcd70b3f42db1b376d61e9e2b9e0bd3",
     "POST /api/v1/git/admin/cancel-drain": "ae603ef3f2fd2abe62a2412fe3a3fabb7adff561b2535b0da6467f400999bd96",
-    "POST /api/v1/git/cursor-auto/enqueue": "e26a01c79ccbfd77c050f3d11a6a875d0afd4a2ca25b37e06613aec874f89dfd",
     "POST /api/v1/triggers/{trigger_id}/revoke": "9240662daadef7bc6b2255fbcab6755107ef7171d3a157f7ecab01ce3cfff76d",
 }

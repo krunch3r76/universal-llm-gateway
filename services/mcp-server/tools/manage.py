@@ -412,6 +412,14 @@ def register_manage_tools(mcp: FastMCP) -> None:
         call should not hang or die with transport error. During the ~30s restart
         window other calls may get -32099 with data.reason="server_restarting"
         and Retry-After: 30 — retry or use wait_healthy(service="mcp").
+        «verb-orientation:manage»
+        Depth: `agent_skill:landed-not-live`.
+        cursor_only (fs, not on the Customize loader):
+        - `service-lifecycle` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md")
+        - `ulg-architecture` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")
+        - `pre-deploy-gate-discipline` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/pre-deploy-gate-discipline/SKILL.md")
+        - `mcp-surface-change` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/mcp-surface-change/SKILL.md")
+        «/verb-orientation:manage»
         """
         if action == "rebuild" and service in {"gateway", "mcp"}:
             heavy = (

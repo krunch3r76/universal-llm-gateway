@@ -58,7 +58,7 @@ def mint_pending_validation_for_intent(
     Returns the validation id. Side effect: ledger INSERT/supersede and a
     pre-restart process-liveness probe.
     """
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         probe_process_live,
     )
 

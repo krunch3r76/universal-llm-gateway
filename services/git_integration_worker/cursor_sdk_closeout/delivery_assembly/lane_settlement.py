@@ -184,7 +184,7 @@ def settle_lane_and_dispatch_fields(
                 commits_ahead=state.commits_ahead,
             )
             # landed@local-master — ancestry probe + G₂ meter; unknown stays None.
-            from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+            from services.git_integration_worker.relay.closeout_plane_probe import (
                 probe_three_planes,
             )
 
@@ -314,7 +314,7 @@ def settle_lane_and_dispatch_fields(
             if meter_pair is not None:
                 capture_commits_ahead, capture_commits_ahead_unfiltered = meter_pair
         if lane_b_lane != "B" and capture_commits_ahead is not None:
-            from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+            from services.git_integration_worker.relay.closeout_plane_probe import (
                 probe_three_planes,
             )
             from services.git_integration_worker.cursor_sdk_deliverables_expected import (

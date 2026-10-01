@@ -22,7 +22,7 @@ Neither skill is the protocol SOT; both are seat-facing digests.
 
 ## When
 
-Authoring / admitting / debugging an operator-proxy DIRECTIVE from the cursor or `cursor-auto`
+Authoring / admitting / debugging an operator-proxy DIRECTIVE from the cursor
 side · chaining a nested `cursor-sdk` hop under a live lease (`nest_under`) · diagnosing a
 `status:blocked` admit (auth-gate budget, scope token, `vision:`) · standing up a CDP boot packet
 that must deliver Claude skill chips · reasoning about supersede revert honesty, relay-trust
@@ -33,8 +33,8 @@ there and none of these recipes are executable from that surface.
 
 ## Nesting + lease — mechanism behind `cdp-operator-proxy` inv 19
 
-The whole ladder runs as **`cursor-sdk` nested dispatches**, because CDP Opus dispatches *through*
-`cursor-auto`. Chained dispatches MUST carry `nest_under` = the live lease holder's
+The whole ladder runs as **`cursor-sdk` nested dispatches** via `team_dispatch`.
+Chained dispatches MUST carry `nest_under` = the live lease holder's
 `dispatch_id`; a hop treated as fresh top-level **contends** with the shared-checkout lease
 instead of parking under it.
 
@@ -45,9 +45,9 @@ instead of parking under it.
 | Depth cap | LIFO park stack, hard cap **depth 10** → 422 `CURSOR_NEST_DEPTH_EXCEEDED` |
 
 **Tick-background host:** when **manage** admits a background `cursor-sdk` poll window so the
-IDE / Cowork session may close, that host holds the lease — Opus→cursor-auto implement dispatches
-during that window are nested under the tick holder. Cowork-attended `request` *without* a tick
-background host is the case where `cursor-auto` is top-level.
+IDE / Cowork session may close, that host holds the lease — Opus implement
+dispatches during that window are nested under the tick holder via `team_dispatch`.
+Cowork-attended work *without* a tick background host is top-level `cursor-sdk`.
 
 Composes: `lean-context-dispatch-first` · `anthropic-dispatch-authorization` ·
 `cdp-operator-proxy` inv 13.
@@ -72,7 +72,7 @@ Operator-facing signals + `auth_gate_ack:` grammar: `cdp-operator-proxy` § Auth
 
 ## Supersede mechanism (BINDING)
 
-**One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread supersedes the *first eligible predecessor*, queued or claimed — it does not append. Candidate: claimed ∧ ¬`nested_sdk_finished`, else oldest queued peer. Claimed arm: `run_cancel` (process stop) or `pre_register_live_run` (displacement without process-stop). Queued arm: `queue_withdraw` (`terminal_status=displaced_queued`) before claim. In neither case do both run. Exceptions: continuity hop skips supersede; claimed + `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester**. **The hazard inverted.** Old text: a queued predecessor was safe from re-issue and both would run. Live path: re-issuing against a still-queued predecessor *destroys* it before it does any work. **Wait** under backlog survives — not to avoid a dual run, but to avoid killing a job that was about to start. A seat that reasons from the old rationale will make the wrong call at exactly the moment it matters. A populated `superseded` block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw`. `superseded: null` means no eligible predecessor was found — it no longer implies "the predecessor is queued and survives." Parallel asks need separate lanes or one bundled DIRECTIVE. Full seat-facing text + **Provenance (source-read)** table: `cdp-operator-proxy` § Interrupt / supersede (`queue.py:198-215`, `supersede.py:123-156`, `cursor_sdk_supersede.py:156-158`, `routes/cursor_auto.py:311-328`).
+**One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread supersedes the *first eligible predecessor*, queued or claimed — it does not append. Candidate: claimed ∧ ¬`nested_sdk_finished`, else oldest queued peer. Claimed arm: `run_cancel` (process stop) or `pre_register_live_run` (displacement without process-stop). Queued arm: `queue_withdraw` (`terminal_status=displaced_queued`) before claim. In neither case do both run. Exceptions: continuity hop skips supersede; claimed + `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester**. **The hazard inverted.** Old text: a queued predecessor was safe from re-issue and both would run. Live path: re-issuing against a still-queued predecessor *destroys* it before it does any work. **Wait** under backlog survives — not to avoid a dual run, but to avoid killing a job that was about to start. A seat that reasons from the old rationale will make the wrong call at exactly the moment it matters. A populated `superseded` block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw`. `superseded: null` means no eligible predecessor was found — it no longer implies "the predecessor is queued and survives." Parallel asks need separate lanes or one bundled DIRECTIVE. Full seat-facing text + **Provenance (source-read)** table: `cdp-operator-proxy` § Interrupt / supersede (`cursor_sdk_supersede.py`).
 
 | # | Step | Evidence |
 |---|---|---|
@@ -106,8 +106,8 @@ ack.
 
 ## GIW drain vs CLOSEOUT relay (mechanism)
 
-`git_integration_worker` hosts **cursor-auto**, the **AutoJobQueue**, and the
-**poll→relay loop**. Any drain / restart of the **queue-owning process**
+`git_integration_worker` hosts the **poll→relay loop** for `cursor-sdk` dispatches.
+Any drain / restart of the **dispatch-owning process**
 (`git_integration_worker`, including manage-driven lifecycle refresh — not only
 operator-initiated GIW restarts) risks losing in-flight Auto work unless the
 durable job ledger terminalizes it: open jobs (`queued`/`claimed`) must land
@@ -121,7 +121,7 @@ contract: never place a GIW restart AC inside a DIRECTIVE whose §2 CLOSEOUT is
 awaited — use a `contract: propagate` restart-only DIRECTIVE, or defer to RESIDUE
 and fire propagate separately.
 
-The relay-trust gate itself is **bus-only** — it blocks cursor-auto admission, not restarts.
+The relay-trust gate itself is **bus-only** — it blocks admission, not restarts.
 `contract: propagate` mints propagation ledger rows and coordinates drain-gated `sync_restart`
 via manage.sock. **mcp force carve-out:** when the operator-proxy CSE is the sole
 `cdp_ask_live` blocker, a propagation row MAY set `force: true` (mcp only) — seat discipline
@@ -140,14 +140,14 @@ in CLI project-ask / `cse_session(followup)` bodies. Prose `Use the … skill` a
 is **silently skipped**, and the inline body in the prompt is the fail-closed delivery path.
 `operator-proxy-substrate` is itself `cursor_only` — never chip it to a CDP boot.
 
-## cursor-auto ↔ tick mechanics
+## Tick mechanics
 
 | Path | Mechanism |
 |---|---|
-| Life→code **direct** (B1) | cursor-auto executes / nests a specialist under its own lease (`nest_under` when the gate is held) |
-| Life→code **tick handoff** (B2) | Auto mints/stamps → **releases** the lease → tick admits the worker; if Auto still holds the gate the tick worker MUST `nest_under=holder_dispatch_id` — silence ⇒ **25956 stall** |
+| Life→code **direct** (B1) | `team_dispatch` (`seat=cursor-sdk`) executes / nests a specialist under its own lease (`nest_under` when the gate is held) |
+| Life→code **tick handoff** (B2) | the admitting seat mints/stamps → **releases** the lease → tick admits the worker; if the gate is still held the tick worker MUST `nest_under=holder_dispatch_id` — silence ⇒ **25956 stall** |
 | Auto holds `cursor_sdk_gate` | Further SDK work uses `nest_under` = holder; ¬ fresh top-level contend |
-| Kernel implement while tick held / no root | cursor-auto nested implement **off-tick**; birth/enroll before claiming tick progress |
+| Kernel implement while tick held / no root | nested `team_dispatch` implement **off-tick**; birth/enroll before claiming tick progress |
 | Enrolled progress | Mint/stamp friction or todo with `charter_root` on an **enrolled** root → tick reconcile → `enroll_rows` → kernel admit |
 
 **Forbidden:** Auto improvising tip enqueue; `enroll_rows` onto throwaway
@@ -247,7 +247,7 @@ text-similarity classification** — the diagnosis-churn classifier is already f
 tick** with a memoized observation JSON plus cooldown and adaptive backoff (two consecutive
 nulls lengthen, a consumed break-in shortens), under one constraint: **the seat under review
 must not own its reviewer's cadence**, which rules out Cowork Upcoming self-schedule and
-cursor-auto in-mission fire. Hold S1 until ≥3 fires produce consumption data; that data also
+in-mission fire by the seat under review. Hold S1 until ≥3 fires produce consumption data; that data also
 feeds the `todo:mission-observer-seat` reopen criterion without reopening it.
 
 ## Admit-gate enforcement — scope, vision, fix hints
@@ -271,8 +271,8 @@ Do not weaken a hint to a bare token name.
 
 | Doc claim | Code |
 |---|---|
-| §2 inline `scope:` is a first-class scope token | `services/git_integration_worker/cursor_auto/directive.py` — `_SCOPE_FIELD_RE` ("must match has_actionable_scope") |
-| Blocked payloads point at the tier-M DIRECTIVE template | `services/git_integration_worker/cursor_auto/fix_hints.py` — `TIER_M_TEMPLATE_REF = "cdp-operator-proxy §2 (tier-M DIRECTIVE template)"` |
+| §2 inline `scope:` is a first-class scope token | admit `has_actionable_scope` (repo `scope:` field, or tier-M `tool_op:` + `effects_expected:`) |
+| Blocked payloads point at the tier-M DIRECTIVE template | `cdp-operator-proxy` §2 (tier-M DIRECTIVE template) |
 
 `TIER_M_TEMPLATE_REF` names the **shared** slug by design: the hint is read by the operator seat,
 which can only load `cdp-operator-proxy`. Do not repoint it here.
@@ -288,5 +288,5 @@ lane.
 The legal move is **`TYPE: OPERATOR_GATE`** — one line naming the open question plus corpus URIs —
 to the operator's private request lane when known, else the standing root. Parking an
 operator-doctrine question that way is **compliant**, not a stall. Execution is unchanged:
-cursor-auto still executes every resulting write behind the shared-checkout lease. Full statement:
+cursor-sdk still executes every resulting write behind the shared-checkout lease. Full statement:
 `cdp-operator-proxy` inv 13.

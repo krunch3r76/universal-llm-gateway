@@ -49,7 +49,6 @@ class FleetIdleSnapshot:
     verdict: FleetVerdict
     dispatch_idle: bool
     tick_empty: bool
-    cursor_auto_idle: bool
     dispatch_undetermined: bool = False
     tick_undetermined: bool = False
     tick_empty_strict: bool = True
@@ -105,7 +104,6 @@ def eval_fleet_idle(
         dispatch_undetermined=snapshot.dispatch_undetermined,
         tick_empty=effective_tick_empty,
         tick_undetermined=snapshot.tick_undetermined,
-        cursor_auto_idle=snapshot.cursor_auto_idle,
         cdp_lane_idle=snapshot.cdp_lane_idle,
         cdp_undetermined=snapshot.cdp_undetermined,
     )
@@ -126,19 +124,17 @@ def eval_fleet_idle(
 
 
 class DefaultFleetIdleReader:
-    """Production reader: dispatch ledger + cursor-auto queue + charter ledger."""
+    """Production reader: dispatch ledger + charter ledger."""
 
     def read(self) -> FleetIdleSnapshot:
         dispatch_idle, dispatch_undetermined = _dispatch_idle()
         tick_empty, tick_empty_strict, tick_undetermined = _charter_tick_empty()
-        auto_idle = _cursor_auto_idle()
         cdp_lane_idle, cdp_undetermined = _cdp_lane_idle()
         verdict = _compose_verdict(
             dispatch_idle=dispatch_idle,
             dispatch_undetermined=dispatch_undetermined,
             tick_empty=tick_empty,
             tick_undetermined=tick_undetermined,
-            cursor_auto_idle=auto_idle,
             cdp_lane_idle=cdp_lane_idle,
             cdp_undetermined=cdp_undetermined,
         )
@@ -146,7 +142,6 @@ class DefaultFleetIdleReader:
             verdict=verdict,
             dispatch_idle=dispatch_idle,
             tick_empty=tick_empty,
-            cursor_auto_idle=auto_idle,
             dispatch_undetermined=dispatch_undetermined,
             tick_undetermined=tick_undetermined,
             tick_empty_strict=tick_empty_strict,
@@ -161,13 +156,12 @@ def _compose_verdict(
     dispatch_undetermined: bool,
     tick_empty: bool,
     tick_undetermined: bool,
-    cursor_auto_idle: bool,
     cdp_lane_idle: bool = True,
     cdp_undetermined: bool = False,
 ) -> FleetVerdict:
     if dispatch_undetermined or tick_undetermined or cdp_undetermined:
         return FleetVerdict.UNDETERMINED
-    if not dispatch_idle or not tick_empty or not cursor_auto_idle:
+    if not dispatch_idle or not tick_empty:
         return FleetVerdict.BUSY
     if not cdp_lane_idle:
         return FleetVerdict.BUSY
@@ -193,18 +187,11 @@ def _dispatch_idle() -> tuple[bool, bool]:
         return False, True
 
 
-def _cursor_auto_idle() -> bool:
-    from services.git_integration_worker.cursor_auto.queue import get_queue
-
-    claimed = int(get_queue().snapshot().get("claimed") or 0)
-    return claimed == 0
-
-
 def _cdp_lane_idle() -> tuple[bool, bool]:
     """Return (idle, undetermined) for live CDP operator-proxy sessions.
 
     A session already running on the lane makes the fleet busy even when the
-    dispatch/tick/cursor-auto probes read quiet — the operator-proxy seat is
+    dispatch/tick probes read quiet — the operator-proxy seat is
     typically parked in Cowork converse with nothing dispatched. ``active-work``
     is the one surface every launch path lands on (trigger service, Stargate
     ``cdp_generate``, CDP model endpoint), so it sees sessions this service did

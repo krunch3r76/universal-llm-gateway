@@ -61,7 +61,7 @@ def try_close_on_version_satisfaction(
     relation = satisfaction.relation
 
     if satisfaction.case == "exact_match":
-        from services.git_integration_worker.cursor_auto.propagation_probe import (
+        from services.git_integration_worker.relay.propagation_probe import (
             proof_identity_attestation,
         )
 

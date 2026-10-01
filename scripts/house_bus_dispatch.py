@@ -1,4 +1,7 @@
-"""Agent-bus + cursor-auto dispatch helpers for house orchestration watchers."""
+"""Agent-bus helpers for house orchestration watchers.
+
+Code work is ``team_dispatch``. This module posts the bus turn only.
+"""
 
 from __future__ import annotations
 
@@ -12,10 +15,6 @@ import yaml
 
 _AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
-_GIW_BASE = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip("/")
-_AUTO_ENQUEUE = f"{_GIW_BASE}/api/v1/git/cursor-auto/enqueue"
-_AUTO_LIVENESS = f"{_GIW_BASE}/api/v1/git/cursor-auto/liveness"
-_LANE_TAG = "lane:cursor-auto"
 _HOUSE_TAG = "house-orchestration-watcher"
 
 
@@ -71,9 +70,9 @@ def dispatch_cursor_eval(
     from_agent: str = "cursor",
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Write cursor-auto request turn + enqueue when GIW handler is live."""
+    """Write the house-watcher bus turn. Code work is team_dispatch, not an enqueue."""
     token = bus_token()
-    tags = [_LANE_TAG, _HOUSE_TAG]
+    tags = [_HOUSE_TAG]
     send_payload: dict[str, Any] = {
         "thread": str(thread),
         "from": from_agent,
@@ -91,53 +90,12 @@ def dispatch_cursor_eval(
 
     thread_obj = send_result.get("thread") or {}
     turn_obj = send_result.get("turn") or {}
-    thread_id = str(thread_obj.get("id") or thread)
-    turn_number = int(turn_obj.get("turn_number") or after_turn + 1)
-
-    enqueue_payload: dict[str, Any] = {
-        "thread_id": thread_id,
-        "turn_number": turn_number,
-        "subject": subject,
-        "body": body,
-        "from_agent": from_agent,
-        "to_agent": "cursor",
-        "desired_model": "auto",
-        "desired_effort": "auto",
-        "contract": contract,
-        "require_attended": False,
-    }
-    if workspace:
-        enqueue_payload["workspace"] = workspace
-    if request_id:
-        enqueue_payload["request_id"] = request_id
-
-    auto_handler_status = "no-auto-handler"
-    job_admission: dict[str, Any] | None = None
-    enqueue_result: dict[str, Any] = {}
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            live_resp = client.get(_AUTO_LIVENESS)
-            live = live_resp.json() if live_resp.status_code == 200 else {}
-            if live.get("live"):
-                enq_resp = client.post(_AUTO_ENQUEUE, json=enqueue_payload)
-                enqueue_result = enq_resp.json() if enq_resp.content else {}
-                # Relay what the worker minted; a hardcoded status here would
-                # restate the handler heartbeat as a job verdict.
-                auto_handler_status = str(
-                    enqueue_result.get("auto_handler_status") or "enqueue_failed"
-                )
-                job_admission = enqueue_result.get("job_admission")
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        enqueue_result = {"error": str(exc)}
-
     return {
         "thread": thread_obj,
         "turn": turn_obj,
-        "auto_handler_status": auto_handler_status,
-        "job_admission": job_admission,
-        "enqueue": enqueue_result,
         "contract": contract,
         "workspace": workspace,
+        "request_id": request_id,
     }
 
 
