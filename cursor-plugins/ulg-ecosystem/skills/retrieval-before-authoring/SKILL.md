@@ -12,7 +12,7 @@ About to author a prompt, packet, or outbound prose another agent or human will 
 
 ## Refuse
 
-Author from priors without retrieve. Filing an off-topic yield as a scope mis-map — dense retrieval never returns zero chunks; judge fit, report null.
+Author from priors without retrieve. Filing an off-topic yield as a scope mis-map — dense retrieval never returns zero chunks; judge fit, report null. Reading a non-ok status, `scope_catalog_unavailable`, `retrieval_unavailable`, or `weak_match: null` with basis `none` as an empty corpus.
 
 ## Steps
 
@@ -34,24 +34,33 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
    Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance.
 
 3. **Call shape.** Use `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')`.
-   Falsifier: on that step: wrong op or scope omitted from the call.
+   Falsifier: on that step: wrong op, scope omitted, or `top_k` other than 10.
 
-4. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job; report nulls with hits; do not file an off-topic yield as a mis-map.
+4. **Read the signals.** Read `weak_match` with `rerank_status` and `weak_match_basis`. A null `weak_match` whose basis is `none` is not a weak corpus. Any `status` other than `ok`, or reason `scope_catalog_unavailable` or `retrieval_unavailable`, is a transport failure: retry once with fresh query text and report the failure, never as a null yield.
+
+| envelope | read it as |
+|---|---|
+| `weak_match: false`, basis `cross_encoder`, `rerank_status: ok` | scored; top score cleared the threshold |
+| `weak_match: null`, basis `none`, `rerank_status: skipped_small_set` | not scored; the null is not evidence |
+
+   Falsifier: on that step: treated basis `none` or a non-ok status as an empty scope.
+
+5. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job; report nulls with hits; do not file an off-topic yield as a mis-map.
    Falsifier: on that step: re-queried a null scope same job, omitted nulls from the report, or filed off-topic chunks as a scope defect.
 
-5. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk. A prompt that commissions a change ends with this block, in full; conductor commissions (packets that say "Use the conductor skill") are the exception:
+6. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk. A prompt that commissions a change ends with this block, in full; conductor commissions (packets that say "Use the conductor skill") are the exception:
 
 **Before you post.** For each change, name the input or state where it breaks (service down, concurrency, partial failure, wrong ordering, install or staging path) and the test that covers it. Change only what the brief names; anything else you think should change goes in the review request as a proposal, not in the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once the request is posted, stop committing.
 
    Falsifier: on that step: audience named but genre omitted, or constraint-heavy compliance prose, or a change-commissioning prompt without the block, or with it paraphrased or pointed to.
    Specimen: rag-quality branch 861a74a6 widened the stale-catalog window without checking the rag-down path, G6 12286#1504.
 
-6. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
+7. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
    Falsifier: on that step: inference laundered as a corpus citation.
 
-7. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment.
+8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment.
    Falsifier: on that step: dispatch without the report bundle.
 
 ## Falsifier
 
-This body failed if retrieval was skipped, null scopes were hidden, or an LLM packet cited human-writing scopes as model-execution guidance.
+This body failed if retrieval was skipped, a transport failure was reported as a null yield, null scopes were hidden, or an LLM packet cited human-writing scopes as model-execution guidance.

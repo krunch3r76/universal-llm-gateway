@@ -4,11 +4,10 @@ Pure functions with no pipeline dependencies — used by the
 ``rag_rerank_assemble_v1`` handler for both cross-encoder and generative paths.
 
 Key function: ``apply_bounded_movement``
-    Enforces the rank-movement cap that keeps reranking a *final adjustment*
-    rather than a full reorder.  A chunk can shift at most ``max_movement``
-    positions (default 3) from its pre-rerank position, regardless of how high
-    its reranker score is.  This prevents a marginally relevant chunk from
-    leapfrogging a stronger retrieval result.
+    Places chunks left to right inside a ±``max_movement`` window of their
+    prior index (default 3; confidence other than "high" caps the window at
+    2).  Each slot takes the highest final score that can sit there without
+    stranding another chunk outside its window.
 
 ``aggregate_window_scores`` and ``build_windows`` are used only by the
     generative (sliding-window LLM) path.  The cross-encoder path skips windowing
@@ -123,62 +122,73 @@ def aggregate_window_scores(
     return llm_scores, confidence_map
 
 
+def _window_feasible(
+    remaining: set[int],
+    start: int,
+    windows: list[tuple[int, int]],
+    n: int,
+) -> bool:
+    """True when earliest-deadline placement can fill every later slot."""
+    pool = set(remaining)
+    for pos in range(start, n):
+        eligible = [i for i in pool if windows[i][0] <= pos <= windows[i][1]]
+        if not eligible:
+            return False
+        pick = min(eligible, key=lambda i: (windows[i][1], i))
+        pool.remove(pick)
+    return True
+
+
 def apply_bounded_movement(
     chunks: list[ChunkData],
     final_scores: dict[str, float],
     max_movement: int,
     confidence_map: dict[str, str] | None = None,
 ) -> list[ChunkData]:
-    """Sort by final_scores with bounded rank movement from prior order.
+    """Reorder by final score without leaving a chunk's movement window.
 
-    Each chunk can move at most ``max_movement`` positions from its prior
-    rank.  Movements > 2 require LLM confidence = "high".
+    Each chunk may move at most ``max_movement`` positions from its prior
+    index. Confidence other than ``high`` caps that at 2. Within those
+    windows the order is the best available: each slot takes the highest
+    final score that is allowed there and still leaves a feasible assignment
+    for the rest. A collision used to walk outside the window and could put
+    the lowest score in rank 1; this placement never does that.
     """
     n = len(chunks)
-    prior_rank = {c["content_hash"][:8]: i for i, c in enumerate(chunks)}
-    scored = sorted(
-        chunks,
-        key=lambda c: final_scores.get(c["content_hash"][:8], 0.0),
-        reverse=True,
-    )
-
+    if n <= 1:
+        return list(chunks)
     if confidence_map is None:
         confidence_map = {}
 
-    result: list[ChunkData | None] = [None] * n
-    placed: set[int] = set()
-    placed_chunks: set[str] = set()
-
-    for c in scored:
-        cid = c["content_hash"][:8]
-        old_pos = prior_rank.get(cid, n - 1)
-        new_pos = scored.index(c)
-
-        movement = abs(new_pos - old_pos)
+    windows: list[tuple[int, int]] = []
+    for i, chunk in enumerate(chunks):
+        cid = chunk["content_hash"][:8]
         conf = confidence_map.get(cid, "medium")
-        effective_max = max_movement if conf == "high" else min(max_movement, 2)
+        limit = max_movement if conf == "high" else min(max_movement, 2)
+        windows.append((max(0, i - limit), min(n - 1, i + limit)))
 
-        if movement > effective_max:
-            direction = 1 if new_pos > old_pos else -1
-            new_pos = old_pos + direction * effective_max
-            new_pos = max(0, min(n - 1, new_pos))
+    def _score(index: int) -> float:
+        cid = chunks[index]["content_hash"][:8]
+        return final_scores.get(cid, 0.0)
 
-        while new_pos in placed and new_pos < n - 1:
-            new_pos += 1
-        while new_pos in placed and new_pos > 0:
-            new_pos -= 1
-
-        if new_pos not in placed:
-            result[new_pos] = c
-            placed.add(new_pos)
-            placed_chunks.add(cid)
-
-    remaining = [c for c in chunks if c["content_hash"][:8] not in placed_chunks]
-    for i in range(n):
-        if result[i] is None and remaining:
-            result[i] = remaining.pop(0)
-
-    return [c for c in result if c is not None]
+    remaining = set(range(n))
+    order: list[int] = []
+    for pos in range(n):
+        eligible = [i for i in remaining if windows[i][0] <= pos <= windows[i][1]]
+        eligible.sort(key=lambda i: (-_score(i), i))
+        chosen: int | None = None
+        for cand in eligible:
+            if _window_feasible(remaining - {cand}, pos + 1, windows, n):
+                chosen = cand
+                break
+        if chosen is None:
+            raise RuntimeError(
+                "bounded movement has no chunk allowed at this slot; "
+                "windows must contain each prior index"
+            )
+        order.append(chosen)
+        remaining.remove(chosen)
+    return [chunks[i] for i in order]
 
 
 WEAK_MATCH_THRESHOLD_DEFAULT = 0.3
@@ -227,3 +237,66 @@ def relevance_summary(
     else:
         summary["weak_match"] = None
     return summary
+
+
+def resolve_rerank_mode(options: dict[str, Any] | None) -> str:
+    """Return the rerank mode, defaulting to ``cross_encoder`` when unset.
+
+    The direct ``rag-context`` pipeline relies on this default. The rewrite
+    pipeline sets ``rerank_mode: generative`` explicitly so its LLM windows
+    are not silently switched when the default changed to match the docstring.
+    """
+    effective = options or {}
+    return str(effective.get("rerank_mode", "cross_encoder"))
+
+
+def rerank_skip_status(enabled: bool, n_chunks: int, mode: str) -> str | None:
+    """Return why this set should not be scored, or None when scoring should run.
+
+    ``disabled`` covers a turned-off reranker and an empty candidate list.
+    ``skipped_small_set`` covers three or fewer chunks in any mode other than
+    ``cross_encoder``: reordering cannot matter and a generative window is not
+    worth the call. Cross-encoder mode returns None for those small sets so
+    the caller still scores them and can emit a real ``weak_match``.
+    """
+    if not enabled or n_chunks <= 0:
+        return "disabled"
+    if n_chunks <= 3 and mode != "cross_encoder":
+        return "skipped_small_set"
+    return None
+
+
+def generative_rerank_status(n_windows: int, n_failures: int) -> str:
+    """Status string for a generative rerank after its windows have run.
+
+    Every window failing is ``error`` because the fused order is then
+    prior-only. A positive failure count below that is
+    ``partial_window_failures:<n>``. Zero failures is ``ok``.
+    """
+    if n_windows > 0 and n_failures >= n_windows:
+        return "error"
+    if n_failures > 0:
+        return f"partial_window_failures:{n_failures}"
+    return "ok"
+
+
+def annotate_relevance(
+    summary: dict[str, Any],
+    *,
+    rerank_status: str,
+    weak_match_basis: str,
+    rerank_error: str | None = None,
+) -> dict[str, Any]:
+    """Copy a relevance summary and name what ``weak_match`` is based on.
+
+    ``weak_match`` keeps the meaning ``relevance_summary`` gave it.
+    ``weak_match_basis`` is ``cross_encoder`` only when those scores exist;
+    ``none`` means a null ``weak_match`` is not evidence the corpus is weak.
+    ``rerank_error`` is set only on a named fallback or request failure.
+    """
+    annotated = dict(summary)
+    annotated["rerank_status"] = rerank_status
+    annotated["weak_match_basis"] = weak_match_basis
+    if rerank_error:
+        annotated["rerank_error"] = rerank_error
+    return annotated

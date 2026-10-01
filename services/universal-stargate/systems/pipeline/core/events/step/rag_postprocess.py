@@ -135,17 +135,20 @@ def RagRerankCompleted(  # noqa: N802
     windows_evaluated: int,
     max_rank_movement_observed: int,
     total_rerank_seconds: float,
+    rerank_status: str,
 ) -> Event:
-    """Emitted after LLM reranking completes (or is skipped when disabled).
+    """Emitted after reranking completes, is skipped, or degrades.
 
     Payload:
-        rerank_enabled: True if LLM reranking was performed
+        rerank_enabled: True if a reranker score was applied to the order
         model_id: Model used for reranking (None if skipped)
         chunks_input: Number of candidate chunks considered for reranking
         chunks_output: Final chunk count after reranking
         windows_evaluated: Number of sliding windows processed by LLM
         max_rank_movement_observed: Largest rank position change in this execution
         total_rerank_seconds: Wall-clock time for the reranking phase
+        rerank_status: ok, skipped_small_set, disabled,
+            fallback_score_count_mismatch, partial_window_failures:<n>, or error
     """
     return Event(
         signal="pipeline.rag.rerank.completed",
@@ -160,6 +163,7 @@ def RagRerankCompleted(  # noqa: N802
             "windows_evaluated": windows_evaluated,
             "max_rank_movement_observed": max_rank_movement_observed,
             "total_rerank_seconds": total_rerank_seconds,
+            "rerank_status": rerank_status,
         },
     )
 

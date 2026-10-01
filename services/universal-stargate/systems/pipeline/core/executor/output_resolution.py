@@ -156,8 +156,9 @@ def extract_retrieval_metadata(
 
     Scope fields (resolved scope, confidence, chunk count, rejection) come from
     the ``rag_multi_retrieve_v1`` step; per-chunk relevance (``chunks[]`` score
-    rows, ``weak_match``, ``top_relevance``) is merged from the
-    ``rag_rerank_assemble_v1`` step when the pipeline has one.
+    rows, ``weak_match``, ``top_relevance``, ``rerank_status``,
+    ``weak_match_basis``) is merged from the ``rag_rerank_assemble_v1`` step
+    when the pipeline has one.
     """
     retrieve_step_id: str | None = None
     rerank_step_id: str | None = None
@@ -201,6 +202,9 @@ def extract_retrieval_metadata(
     rejection_reason = step_json.get("scope_rejection_reason")
     if isinstance(rejection_reason, str) and rejection_reason:
         metadata["scope_rejection_reason"] = rejection_reason
+    retrieval_rejection = step_json.get("retrieval_rejection_reason")
+    if isinstance(retrieval_rejection, str) and retrieval_rejection:
+        metadata["retrieval_rejection_reason"] = retrieval_rejection
     scope_source = step_json.get("scope_source")
     if isinstance(scope_source, str) and scope_source:
         metadata["scope_source"] = scope_source
@@ -210,7 +214,15 @@ def extract_retrieval_metadata(
     return metadata
 
 
-_RELEVANCE_KEYS = ("chunks", "weak_match", "top_relevance", "weak_match_threshold")
+_RELEVANCE_KEYS = (
+    "chunks",
+    "weak_match",
+    "top_relevance",
+    "weak_match_threshold",
+    "rerank_status",
+    "weak_match_basis",
+    "rerank_error",
+)
 
 
 def _relevance_fields(
