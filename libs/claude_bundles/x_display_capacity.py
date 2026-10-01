@@ -48,12 +48,7 @@ _X_EXHAUSTED_SCOPE = (
     "True when observed headroom is below one multiprocess Chrome budget; "
     "None when x_clients is unobserved"
 )
-_X_MAX_SCOPE = "configured X MaxClients (CDP_X_MAX_CLIENTS, else :1 → 128, else 64)"
-# Desktop Xwayland :1 is started with no -maxclients (server default 256).
-# The 64 gate was refusing mints while that server still had room. Temporary
-# until dormant seats keep the client count down. Xvfb :2/:3 stay at 64
-# because those servers are launched with -maxclients 64.
-_DISPLAY_MAX_CLIENTS = {":1": 128}
+_X_MAX_SCOPE = "configured X MaxClients (CDP_X_MAX_CLIENTS when set, else default 64)"
 _X_BUDGET_SCOPE = "unix clients reserved for one multiprocess Chrome (CDP_X_CHROME_CLIENT_BUDGET, default 8)"
 
 
@@ -106,25 +101,13 @@ def _cdp_display() -> str:
     return cdp_display()
 
 
-def _display_key(display: str) -> str:
-    """Normalize ``:1``, ``1``, and ``:1.0`` to ``:1``."""
-    text = display.strip()
-    if not text.startswith(":"):
-        text = f":{text}"
-    return text.split(".", 1)[0]
-
-
-def _max_clients(display: str | None = None) -> int:
+def _max_clients() -> int:
     raw = os.environ.get("CDP_X_MAX_CLIENTS", "").strip()
     if raw:
         with contextlib.suppress(ValueError):
             value = int(raw)
             if value > 0:
                 return value
-    if display is not None:
-        pinned = _DISPLAY_MAX_CLIENTS.get(_display_key(display))
-        if pinned is not None:
-            return pinned
     return X_MAX_CLIENTS_DEFAULT
 
 
@@ -152,7 +135,7 @@ def probe_x_display(
     ``/proc/net/unix``. Unreadable procfs yields ``x_exhausted=None`` (unobserved).
     """
     resolved_display = display if display is not None else _cdp_display()
-    cap = _max_clients(resolved_display) if max_clients is None else max_clients
+    cap = _max_clients() if max_clients is None else max_clients
     budget = _chrome_budget() if chrome_budget is None else chrome_budget
     if count is None:
         observed = count_x11_unix_clients(resolved_display, proc_net_unix=proc_net_unix)
@@ -283,6 +266,7 @@ def require_chrome_headroom(
     chrome_budget: int | None = None,
     proc_net_unix: Path | None = None,
     reserved_chromes: int = 0,
+    after_drain: bool = False,
 ) -> dict[str, Any]:
     """Refuse mint when observed X headroom cannot host one more Chrome.
 
@@ -317,6 +301,7 @@ def require_chrome_headroom(
                     x_headroom=snap["x_headroom"],
                     x_chrome_client_budget=budget,
                     x_reserved_chromes=reserved,
+                    after_drain=after_drain,
                 )
             )
         raise XDisplayCapacityError(exhausted_message(snap))
@@ -377,6 +362,7 @@ def attach_x_display_capacity(payload: dict[str, Any], decl: SurfaceDecl) -> Non
     model visible on the same snapshot so callers stop treating stream slots as
     window-mint room.
     """
-    payload.update(x_display_wire_fields(probe_x_display()))
-    decl.plain("x_display", reason="CDP_DISPLAY / DISPLAY / :2 for this mint host")
+    snap = probe_x_display()
+    payload.update(x_display_wire_fields(snap))
+    decl.plain("x_display", reason=str(snap["x_display"]))
     decl.plain("x_probe", reason="proc_net_unix | injected | unavailable")

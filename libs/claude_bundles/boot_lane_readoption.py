@@ -289,16 +289,18 @@ def _adopted_status(row: Mapping[str, Any], cse_affinity: CseAffinity) -> str:
     """Choose boot-adopt status without restoring a driver lock.
 
     Operator-proxy / mission / blank-purpose hosts with a reachable CSE page
-    keep ``active`` so a ``cdp_ask`` restart does not demote a live seat into
-    the drainable set. Ask hosts and hosts with no CSE stay ``retained`` —
-    drain parking and leaked-Chrome release depend on that demotion.
+    keep ``active`` so a ``cdp_ask`` restart does not demote a live seat.
+    Idle parking of those purposes is the drain predicate, not this status.
+    Ask hosts and hosts with no CSE stay ``retained``.
     ``active`` here is reservation, not a claimed driver: the lock stays off.
     """
-    from claude_bundles.cdp_registry.dormant_drain import _idle_reachable_protects
+    from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 
-    if cse_affinity in _REACHABLE_CSE_AFFINITIES and _idle_reachable_protects(
-        dict(row)
-    ):
+    purpose = row.get("purpose")
+    blank_or_seated = purpose is None or not str(purpose).strip()
+    if not blank_or_seated:
+        blank_or_seated = is_operator_proxy_mission_purpose(str(purpose))
+    if cse_affinity in _REACHABLE_CSE_AFFINITIES and blank_or_seated:
         return "active"
     return ADOPT_STATUS
 
