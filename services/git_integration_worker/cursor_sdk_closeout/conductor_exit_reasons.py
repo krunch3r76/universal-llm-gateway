@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 CONDUCTOR_ROW_PINNED = "conductor_row_pinned"
@@ -14,6 +15,7 @@ _LIVE_NEST = frozenset({"queued", "admitted", "running", "parked_waiting"})
 _HOST_RUNNING = frozenset({"pending", "running"})
 SKIP_GATE_LIVE_EXTERNAL = "live_external_gate"
 SKIP_GATE_PROBE_INDETERMINATE = "probe_indeterminate"
+HOP_CDP_PROBE_INDETERMINATE_AT_KEY = "hop_cdp_probe_indeterminate_at"
 
 
 def _record_data_from_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -83,22 +85,118 @@ def read_external_gate_lane_snapshot() -> dict[str, Any]:
     return read_cdp_lane_snapshot_brief()
 
 
+def closeout_harvest_owed_from_row(row: dict[str, Any]) -> bool:
+    """True when the closeout body or stamp still owes a CDP harvest."""
+    rec = _record_data_from_row(row)
+    closeout_body = str(rec.get("closeout_body") or "").strip()
+    if closeout_body:
+        from bus_watch.park_harvest import harvest_still_owed
+
+        return harvest_still_owed(body=closeout_body)
+    return rec.get("closeout_harvest_owed") is True
+
+
+def cdp_ask_health_red() -> bool:
+    """True when a cdp-ask ``/health`` probe reports not ok.
+
+    Config misses and transport faults are not red. An empty lane snapshot
+    is already the fail-closed signal for a down process; red is the explicit
+    unhealthy observation the watchdog treats like that empty snapshot.
+    """
+    try:
+        from scripts.model_manager.ui.controller.service_config import (
+            cdp_ask_url_config,
+        )
+        from scripts.model_manager.ui.model.cdp_ask_status import (
+            observe_cdp_ask_health,
+        )
+    except Exception:
+        return False
+    cfg = cdp_ask_url_config()
+    if cfg is None:
+        return False
+    host, port, _base = cfg
+    try:
+        observation = observe_cdp_ask_health(host, port)
+    except Exception:
+        return False
+    return not observation.ok
+
+
+def _external_gate_snap() -> dict[str, Any]:
+    try:
+        snap = read_external_gate_lane_snapshot()
+    except Exception:
+        return {}
+    return snap if isinstance(snap, dict) else {}
+
+
+def _live_gate_blocks(row: dict[str, Any], snap: dict[str, Any]) -> bool:
+    rec = _record_data_from_row(row)
+    exclude = rec.get("cdp_execution_id") or row.get("execution_id")
+    exclude_id = str(exclude).strip() if exclude else None
+    return live_external_gate_for_lane(
+        snap,
+        mission_lane_from_conductor_row(row),
+        exclude_execution_id=exclude_id,
+    )
+
+
+def cdp_probe_indeterminate_withholds(row: dict[str, Any]) -> bool:
+    """Harvest is owed and the probe is empty or cdp-ask health is red.
+
+    A live gate stream stays a hard block. G4 and G6 are unchanged; this only
+    names the indeterminate wait the watchdog may end.
+    """
+    if not closeout_harvest_owed_from_row(row):
+        return False
+    snap = _external_gate_snap()
+    if _live_gate_blocks(row, snap):
+        return False
+    if not snap:
+        return True
+    return cdp_ask_health_red()
+
+
+def cdp_probe_indeterminate_watchdog_due(
+    row: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> bool:
+    """True after the row has been terminal longer than twice reactor grace.
+
+    One-shot: ``hop_cdp_probe_indeterminate_at`` suppresses a second admit.
+    The reactor still answers ``probe_indeterminate`` immediately.
+    """
+    rec = _record_data_from_row(row)
+    if isinstance(rec.get(HOP_CDP_PROBE_INDETERMINATE_AT_KEY), (int, float)):
+        return False
+    if not cdp_probe_indeterminate_withholds(row):
+        return False
+    from services.git_integration_worker.cursor_sdk_park import _terminal_epoch
+
+    terminal = _terminal_epoch(row)
+    if terminal is None:
+        return False
+    now_ts = time.time() if now is None else now
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        load_hop_budget_config,
+    )
+
+    grace = load_hop_budget_config().reactor_grace_s
+    return (now_ts - terminal) > (2 * grace)
+
+
 def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
     """Occupancy probe for ``hop_owed`` (P1.2 / P1.4).
 
     Returns ``(verdict, skip_gate)`` where *skip_gate* is set when the reactor
     must not POST a successor. Probe fails open when no gate is owed
     (``closeout_harvest_owed`` false); fails closed when harvest is owed and
-    the snap is empty/indeterminate.
+    the snap is empty/indeterminate. The watchdog, not this verdict, ends
+    that wait after twice the reactor grace.
     """
-    rec = _record_data_from_row(row)
-    closeout_body = str(rec.get("closeout_body") or "").strip()
-    if closeout_body:
-        from bus_watch.park_harvest import harvest_still_owed
-
-        harvest_owed = harvest_still_owed(body=closeout_body)
-    else:
-        harvest_owed = rec.get("closeout_harvest_owed") is True
+    harvest_owed = closeout_harvest_owed_from_row(row)
     lane = mission_lane_from_conductor_row(row)
     try:
         snap = read_external_gate_lane_snapshot()
@@ -110,6 +208,7 @@ def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
         return "indeterminate_open", None
     if not harvest_owed:
         return "clear", None
+    rec = _record_data_from_row(row)
     exclude = rec.get("cdp_execution_id") or row.get("execution_id")
     if live_external_gate_for_lane(snap, lane, exclude_execution_id=exclude):
         return "live", SKIP_GATE_LIVE_EXTERNAL

@@ -270,6 +270,8 @@ def _hop_skip_gate(
     if ext_gate == SKIP_GATE_LIVE_EXTERNAL:
         return SKIP_GATE_LIVE_EXTERNAL
     if ext_gate == SKIP_GATE_PROBE_INDETERMINATE:
+        # Stay fail-closed on this pass. The watchdog admits once the row has
+        # been terminal longer than twice the reactor grace.
         return SKIP_GATE_PROBE_INDETERMINATE
     if not hop_owed(row, closeout_tokens=closeout_tokens):
         status = str(row.get("status") or "")
@@ -438,8 +440,14 @@ def hop_owed(
     row: dict[str, Any],
     *,
     closeout_tokens: frozenset[str] | None = None,
+    ignore_probe_indeterminate: bool = False,
 ) -> bool:
-    """Predicate from bind §2.6 item 3 (row must already be terminal)."""
+    """Predicate from bind §2.6 item 3 (row must already be terminal).
+
+    ``ignore_probe_indeterminate`` is the watchdog's double-grace path. The
+    reactor leaves it false, so an empty CDP probe still withholds immediately.
+    A live external gate is never ignored.
+    """
     status = str(row.get("status") or "")
     if status not in ("completed", "failed", "cancelled"):
         return False
@@ -463,7 +471,9 @@ def hop_owed(
     if not budget_ok_for_hop(row, closeout_tokens=tokens):
         return False
     ext_verdict, _ext_gate = external_gate_hop_verdict(row)
-    if ext_verdict in {"live", "indeterminate_closed"}:
+    if ext_verdict == "live":
+        return False
+    if ext_verdict == "indeterminate_closed" and not ignore_probe_indeterminate:
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):

@@ -301,6 +301,161 @@ def test_watchdog_candidate_only_latest_terminal_row_on_thread() -> None:
     assert conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S) == ["pred-new"]
 
 
+def _live_external_gate_snap(*, parent_thread: str = "9638") -> dict:
+    return {
+        "observed_at": "2026-09-05T00:00:00+00:00",
+        "rows": [
+            {
+                "execution_id": "exec-ext-gate",
+                "parent_thread": parent_thread,
+                "stream_state": "running",
+                "purpose": "operator-proxy",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_cdp_probe_indeterminate_admits_once_after_double_grace() -> None:
+    """D2: empty snapshot withholds inside 2× grace, then admits once."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"closeout_harvest_owed": True},
+        terminal_at_offset_s=-200.0,
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-cdp-probe"}))
+    snap = patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    )
+    poster = patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+        post,
+    )
+    with snap, poster:
+        early = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert early is False
+    post.assert_not_called()
+
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"hop_last_terminal_at": time.time() - (2 * _GRACE_S + 30)},
+    )
+    with snap, poster:
+        first = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+        second = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert first is True
+    assert second is False
+    assert post.await_count == 1
+    assert post.await_args.args[0]["hop_reason"] == "cdp_probe_indeterminate"
+    with ledger._connect() as conn:
+        stored = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    record = json.loads(stored["record_json"])
+    assert isinstance(record.get("hop_cdp_probe_indeterminate_at"), (int, float))
+
+
+@pytest.mark.asyncio
+async def test_cdp_probe_indeterminate_live_gate_still_blocks() -> None:
+    """D2: a live external gate stream is not released by the double-grace admit."""
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"closeout_harvest_owed": True},
+        terminal_at_offset_s=-(2 * _GRACE_S + 30),
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "should-not-fire"}))
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_live_external_gate_snap(),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            post,
+        ),
+    ):
+        fired = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-watchdog-1")
+    assert fired is False
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cdp_probe_health_red_admits_once_after_double_grace() -> None:
+    """D2: red cdp-ask health is the same one-shot admit as an empty snapshot."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"closeout_harvest_owed": True},
+        terminal_at_offset_s=-200.0,
+    )
+    clear_snap = {"observed_at": "2026-09-05T00:00:00+00:00", "rows": []}
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-health-red"}))
+    patches = (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=clear_snap,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            post,
+        ),
+    )
+    with patches[0], patches[1], patches[2]:
+        early = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert early is False
+    post.assert_not_called()
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"hop_last_terminal_at": time.time() - (2 * _GRACE_S + 30)},
+    )
+    with patches[0], patches[1], patches[2]:
+        first = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+        second = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert first is True
+    assert second is False
+    assert post.await_count == 1
+    assert post.await_args.args[0]["hop_reason"] == "cdp_probe_indeterminate"
+
+
+def test_cdp_probe_watchdog_candidate_follows_double_grace() -> None:
+    """Sweep candidates stay empty until twice the reactor grace."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"closeout_harvest_owed": True},
+        terminal_at_offset_s=-200.0,
+    )
+    snap = patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    )
+    with snap:
+        assert conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S) == []
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"hop_last_terminal_at": time.time() - (2 * _GRACE_S + 30)},
+    )
+    with snap:
+        assert conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S) == [
+            dispatch_id
+        ]
+
+
 @pytest.mark.asyncio
 async def test_maybe_fire_watchdog_posts_with_watchdog_reason() -> None:
     ledger = CursorDispatchLedger.instance()
