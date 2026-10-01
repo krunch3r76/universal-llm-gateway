@@ -1,11 +1,23 @@
-"""Witnessed DONE fold — scoreboard Status is a projection, not self-authored."""
+"""Witnessed DONE fold — scoreboard Status is a projection, not self-authored.
+
+The fold renders each row's Status from hung witnesses. Which rows exist is
+read from the tip's own ``## Gated deliverables`` table first: a mission born
+with acceptance rows (R1…Rn) must be folded against those rows, and the Card
+projection the fold used to ask the work item for them carries no
+``attributes`` (``cortex_store.card.get_entity_card``), which folded every
+R-row mission as the G-ladder and left its R-BIND witnesses unread (worker
+13713, 2026-10-01). The work item (full projection) is the fallback, the
+G-ladder the last resort.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
+    G_ROWS,
     forward_mutate_tip,
     read_tip,
     resolve_scoreboard_rows,
@@ -62,6 +74,7 @@ __all__ = [
     "resolve_entry_gate_from_fold",
     "row_status_in_tip",
     "row_witnesses",
+    "rows_in_tip",
 ]
 
 
@@ -89,15 +102,65 @@ def _missing_witness_message(row_id: str, *, stops: str | None = None) -> str:
     return f"witness missing for {row_id}"
 
 
+def rows_in_tip(tip_body: str) -> tuple[str, ...]:
+    """Row ids the scoreboard tip itself declares, in table order.
+
+    Only the ``## Gated deliverables`` table is read: the Sidecars table
+    carries artifact ids such as ``R3-BIND`` that are not rows. Returns an
+    empty tuple when the tip has no such table, so callers can fall back.
+    """
+    rows: list[str] = []
+    in_gated = False
+    for line in (tip_body or "").splitlines():
+        if line.startswith("## Gated deliverables"):
+            in_gated = True
+            continue
+        if line.startswith("## "):
+            in_gated = False
+        if not in_gated:
+            continue
+        row_id = row_id_in(line)
+        if row_id and row_id not in rows:
+            rows.append(row_id)
+    return tuple(rows)
+
+
 def _scoreboard_rows(
     slug: str,
     *,
     deps: FoldDeps,
     files_root: Path,
+    tip_body: str = "",
 ) -> tuple[str, ...]:
+    """Rows to fold: the tip's own table, else the work item, else the G-ladder.
+
+    Tip rows are used only when every declared row is an R row. Any G row
+    keeps ``G_ROWS`` so the ladder witnesses (G1 derived_from, G4 withhold/FAIL
+    body, G6 verdict/sha, F1/S7, S4b/S9, L1) still apply — one R row the
+    conductor added must not select the custom-row rules. ``row_id_in`` yields
+    only ``G1``–``G7`` or ``R\\d+``, so a table of other custom ids is not a
+    tip-row set and those ids are not folded. Only a tip with no G/R row table
+    at all consults the work item, and then with the full
+    projection the materializer used at birth (``conductor_materialize``),
+    never the Card, which has no ``attributes``. A cortex read failure, a
+    missing ``attributes`` map, or a non-dict entity degrades to ``G_ROWS``
+    rather than failing the fold. A missing tip is the caller's problem:
+    ``fold_scoreboard`` returns None before this runs.
+    """
+    _ = files_root
+    from_tip = rows_in_tip(tip_body)
+    if from_tip:
+        if any(row_id.startswith("G") for row_id in from_tip):
+            return G_ROWS
+        return from_tip
     source_ref = deps.source_ref or f"todo:{slug}"
-    entity = deps.cortex.entity_get(source_ref, intent="card")
-    attrs = entity.get("attributes") or {}
+    attrs: dict[str, Any] = {}
+    try:
+        entity = deps.cortex.entity_get(source_ref, intent="full")
+        raw_attrs = entity.get("attributes") if isinstance(entity, dict) else None
+        attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
+    except Exception:  # noqa: BLE001 — fold is advisory; G-ladder is the floor
+        attrs = {}
     return resolve_scoreboard_rows(attrs)
 
 
@@ -150,7 +213,7 @@ def fold_scoreboard(
     if prior is None:
         return None
     raw_body = prior[0]
-    rows = _scoreboard_rows(slug, deps=deps, files_root=root)
+    rows = _scoreboard_rows(slug, deps=deps, files_root=root, tip_body=raw_body)
     witnesses = row_witnesses(
         slug,
         tip_body=raw_body,

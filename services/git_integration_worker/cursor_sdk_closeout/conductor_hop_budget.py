@@ -8,6 +8,21 @@ No-progress is judged against the multi-component progress signature in
 that has never accepted a witness returns the same first gate and empty set
 on every hop, which is an unpaid instrument rather than a stalled mission
 (``assertion:32411``).
+
+Budgets apply only to rows that owe a hop — a planned ``ROW_HOP`` or a crash.
+A designed stop that owes no successor (``DONE``, ``ROW_PINNED``,
+``HOLD_MERGE``, ``OPERATOR_GATE``) is never parked by a budget: a park on it
+is a second lock the operator must release by hand (sixteen
+``hop_budget_mission_cap`` parks landed on DONE / ROW_PINNED / OPERATOR_GATE
+rows in the week to 2026-10-01, each paging). ``CONSULT_PENDING`` and
+``PARKED_TRANSPORT`` do admit successors (``consult_pending_continue_owed``,
+``park_harvest_continue_owed``), and those chains' only budget check is this
+function, so the mission cap still applies. An exempt token on the same
+closeout does not cancel that: the early exit requires an exempt token and
+none of those continue-owed tokens. The mission cap counts hop
+attempts, not substrate churn: a row GIW parked for a service restart
+(``park_for_restart`` only) is the same hop as its resume child.
+``cancel_discard`` is a finished attempt and still counts.
 """
 
 from __future__ import annotations
@@ -24,6 +39,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     HOP_ENTRY_GATE_KEY,
     HOP_LANE_TIP_KEY,
     HOP_NEXT_ADMIT_KEY,
+    HOP_SCOREBOARD_TIP_KEY,
     HOP_WITNESSED_DONE_KEY,
     progress_signature_for_row,
     record_data,
@@ -32,11 +48,18 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     signature_can_prove_loop,
     signatures_share_crash_row,
 )
+from services.git_integration_worker.cursor_sdk_park_ledger import PARK_KIND_RESTART
 
 logger = get_logger(__name__)
 
 HOP_PARKED_KEY = "hop_parked"
 HOP_PARK_REASON_KEY = "hop_park_reason"
+# Stops that owe no successor by themselves.
+_CAP_EXEMPT_STOPS = frozenset({"DONE", "ROW_PINNED", "HOLD_MERGE", "OPERATOR_GATE"})
+# Continue-owed stops whose successor is budgeted only by evaluate_hop_budget:
+# consult_pending_continue_owed (CONSULT_PENDING) and park_harvest_continue_owed
+# (PARKED_TRANSPORT). An exempt token on the same closeout must not skip the cap.
+_BUDGET_ONLY_SUCCESSOR_STOPS = frozenset({"CONSULT_PENDING", "PARKED_TRANSPORT"})
 HOP_LAST_TERMINAL_AT_KEY = "hop_last_terminal_at"
 
 _DEFAULT_CRASH_CAP = 3
@@ -206,13 +229,36 @@ def _no_progress_verdict(
     return HopBudgetVerdict(ok=True)
 
 
+def count_hop_attempts(chain: list[dict[str, Any]]) -> int:
+    """Terminal rows that were real hop attempts, for the mission cap.
+
+    A row GIW parked for a service restart (``park_kind=park_for_restart``)
+    was ended by the substrate, not by the mission, and its resume child is
+    the same hop continued. Counting both charges every restart against the
+    cap twice (worker 13618: six of fifteen rows were restart parks), so only
+    those parents are skipped. ``cancel_discard`` and any other ``park_kind``
+    are finished attempts. A missing ``park_kind`` reads as an attempt.
+    """
+    return sum(1 for prior in chain if prior.get("park_kind") != PARK_KIND_RESTART)
+
+
 def evaluate_hop_budget(
     row: dict[str, Any],
     *,
     closeout_tokens: frozenset[str],
     config: HopBudgetConfig | None = None,
 ) -> HopBudgetVerdict:
-    """Return whether the reactor may admit a successor (bind §2.6.6)."""
+    """Return whether the reactor may admit a successor (bind §2.6.6).
+
+    Order matters: an already-parked row stays refused; a closeout that carries
+    an exempt stop (``DONE``, ``ROW_PINNED``, ``HOLD_MERGE``, ``OPERATOR_GATE``)
+    and no continue-owed stop (``CONSULT_PENDING``, ``PARKED_TRANSPORT``) is
+    never parked by a budget. A continue-owed stop falls through to the mission
+    cap even when an exempt token shares the closeout. Only then do the
+    no-progress verdict (planned ``ROW_HOP``) and the crash cap apply.
+    The watchdog calls this before ``hop_owed``, so a budget park on a
+    no-successor stop would page and lock a mission that is merely waiting.
+    """
     cfg = config or load_hop_budget_config()
     work_key = str(row.get("work_key") or "")
     if not work_key:
@@ -226,9 +272,20 @@ def evaluate_hop_budget(
             reason=str(record.get(HOP_PARK_REASON_KEY) or "already_parked"),
         )
 
+    planned = _planned_closeout(row, closeout_tokens=closeout_tokens)
+    # Exempt only when the closeout has no continue-owed token. A shared
+    # CONSULT_PENDING or PARKED_TRANSPORT still owes a successor whose only
+    # budget check is this function.
+    if (
+        not planned
+        and (closeout_tokens & _CAP_EXEMPT_STOPS)
+        and not (closeout_tokens & _BUDGET_ONLY_SUCCESSOR_STOPS)
+    ):
+        return HopBudgetVerdict(ok=True)
+
     dispatch_id = str(row.get("dispatch_id") or "")
     chain = list_mission_terminal_chain(work_key=work_key, exclude_dispatch_id=None)
-    mission_hops = len(chain)
+    mission_hops = count_hop_attempts(chain)
     if cfg.mission_cap > 0 and mission_hops >= cfg.mission_cap:
         return HopBudgetVerdict(
             ok=False,
@@ -236,13 +293,10 @@ def evaluate_hop_budget(
             reason=_PARK_REASON_MISSION_CAP,
         )
 
-    if _planned_closeout(row, closeout_tokens=closeout_tokens):
+    if planned:
         return _no_progress_verdict(
             row, chain=chain, dispatch_id=dispatch_id, config=cfg
         )
-
-    if closeout_tokens & STOP_TOKENS:
-        return HopBudgetVerdict(ok=True)
 
     if not _is_crash(closeout_tokens=closeout_tokens):
         return HopBudgetVerdict(ok=True)
@@ -280,6 +334,12 @@ def evaluate_hop_budget(
 
 
 def prior_record_tokens(row: dict[str, Any]) -> frozenset[str]:
+    """Closeout stop tokens stamped on a prior terminal row, upper-cased.
+
+    Reads ``closeout_stop_tokens`` from the ledger record; an unstamped or
+    malformed record reads as the empty set, which the budget treats as a
+    crash row rather than a designed stop.
+    """
     record = record_data(str(row.get("record_json") or ""))
     raw = record.get("closeout_stop_tokens")
     if isinstance(raw, list):
@@ -299,7 +359,12 @@ def budget_ok_for_hop(
 
 
 def build_budget_authority_patch(row: dict[str, Any]) -> dict[str, Any]:
-    """Snapshot the progress signature onto ``record_json`` at terminal evaluation."""
+    """Snapshot the progress signature onto ``record_json`` at terminal evaluation.
+
+    Every component the no-progress streak later compares is stamped here,
+    including the scoreboard tip sha, so a prior hop is reconstructed from
+    what it recorded rather than from today's state.
+    """
     signature = progress_signature_for_row(row)
     patch: dict[str, Any] = {
         HOP_ENTRY_GATE_KEY: signature.entry_gate,
@@ -310,6 +375,8 @@ def build_budget_authority_patch(row: dict[str, Any]) -> dict[str, Any]:
         patch[HOP_LANE_TIP_KEY] = signature.lane_tip
     if signature.next_admit:
         patch[HOP_NEXT_ADMIT_KEY] = signature.next_admit
+    if signature.scoreboard_tip:
+        patch[HOP_SCOREBOARD_TIP_KEY] = signature.scoreboard_tip
     return patch
 
 
@@ -322,6 +389,7 @@ __all__ = [
     "HopBudgetVerdict",
     "budget_ok_for_hop",
     "build_budget_authority_patch",
+    "count_hop_attempts",
     "evaluate_hop_budget",
     "list_mission_terminal_chain",
     "load_hop_budget_config",

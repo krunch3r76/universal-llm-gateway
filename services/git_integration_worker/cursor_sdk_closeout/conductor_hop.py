@@ -128,18 +128,31 @@ def _scoreboard_text_for_row(row: dict[str, Any]) -> tuple[str, str | None]:
     return body, sha
 
 
+_SCOREBOARD_TABLE_ROW_RE = re.compile(
+    r"^\|\s*(G\d+|R\d+|L\d+)\s*\|",
+    re.MULTILINE,
+)
+
+
 def _first_open_row_in_scoreboard(scoreboard_body: str) -> str | None:
     """First table row whose Status cell is not DONE."""
-    for match in re.finditer(
-        r"^\|\s*(G\d+|R\d+|L\d+)\s*\|",
-        scoreboard_body or "",
-        re.MULTILINE,
-    ):
+    for match in _SCOREBOARD_TABLE_ROW_RE.finditer(scoreboard_body or ""):
         row_id = match.group(1).upper()
         status = (row_status_in_tip(scoreboard_body, row_id) or "OPEN").upper()
         if status != "DONE":
             return row_id
     return None
+
+
+def _row_id_in_scoreboard_table(scoreboard_body: str, row_id: str | None) -> bool:
+    """True when ``row_id`` is the first cell of a table row in the tip body."""
+    if not row_id:
+        return False
+    wanted = row_id.upper()
+    for match in _SCOREBOARD_TABLE_ROW_RE.finditer(scoreboard_body or ""):
+        if match.group(1).upper() == wanted:
+            return True
+    return False
 
 
 def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str | None:
@@ -170,7 +183,11 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                     write_journal=False,
                 )
                 if fold is not None:
-                    return resolve_entry_gate_from_fold(fold)
+                    gate_from_fold = resolve_entry_gate_from_fold(fold)
+                    if gate_from_fold is None:
+                        return None
+                    if _row_id_in_scoreboard_table(scoreboard_body, gate_from_fold):
+                        return gate_from_fold
             except Exception as exc:  # noqa: BLE001 — fold is advisory on hop path
                 logger.warning(
                     "conductor hop entry_gate fold failed slug=%s err=%s",
