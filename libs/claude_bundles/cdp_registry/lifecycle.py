@@ -485,29 +485,43 @@ def reattach(registration_id: str, *, holder: str) -> Registration:
     """
     if not holder or not str(holder).strip():
         raise RegistryError("holder is required")
+    relaunch_from_dormant = False
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(registration_id)
         if row is None:
             raise RegistryError(f"unknown registration_id: {registration_id!r}")
-        if row.get("status") != "active":
+        status = row.get("status")
+        if status == STATUS_DORMANT:
+            if row.get("holder") != holder:
+                raise RegistryError(
+                    f"holder mismatch for {registration_id!r}: "
+                    f"expected {row.get('holder')!r}, got {holder!r}"
+                )
+            relaunch_from_dormant = True
+        elif status != "active":
             raise RegistryError(
                 f"registration {registration_id!r} is {row.get('status')!r}, not active"
             )
-        if row.get("holder") != holder:
-            raise RegistryError(
-                f"holder mismatch for {registration_id!r}: "
-                f"expected {row.get('holder')!r}, got {holder!r}"
-            )
-        _claim_driver_lock(registration_id)
-        if row.get("holder_pid") != os.getpid():
-            row = dict(row)
-            row["holder_pid"] = os.getpid()
-            row["reattached_at"] = time.time()
-            active[registration_id] = row
-            _store.write_active(active)
-            _store.append_log("reattach", row)
-        reg = _row_to_registration(row)
+        else:
+            if row.get("holder") != holder:
+                raise RegistryError(
+                    f"holder mismatch for {registration_id!r}: "
+                    f"expected {row.get('holder')!r}, got {holder!r}"
+                )
+            _claim_driver_lock(registration_id)
+            if row.get("holder_pid") != os.getpid():
+                row = dict(row)
+                row["holder_pid"] = os.getpid()
+                row["reattached_at"] = time.time()
+                active[registration_id] = row
+                _store.write_active(active)
+                _store.append_log("reattach", row)
+            reg = _row_to_registration(row)
+    if relaunch_from_dormant:
+        from .dormant import relaunch_dormant
+
+        return relaunch_dormant(registration_id, holder=holder)
     _events.emit(_events.cdp_port_reattached(reg))
     return reg
 
