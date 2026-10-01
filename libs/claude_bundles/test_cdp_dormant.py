@@ -957,3 +957,119 @@ def test_reserve_allocating_row_strips_seat_keys_from_carry(
     assert "seat_lane" not in row
     assert "seat_bound_at" not in row
     assert "seat_closed_at" not in row
+
+
+def test_drain_live_hosts_to_dormant_filters_by_display(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Display filter skips drain on other displays (R4)."""
+    seat_on_2 = _seat(chat_url="https://claude.ai/cowork/cse_disp2")
+    seat_on_3 = _seat(chat_url="https://claude.ai/cowork/cse_disp3")
+    for seat in (seat_on_2, seat_on_3):
+        reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    active = reg._load_active()
+    active[seat_on_2.registration_id]["display"] = ":2"
+    active[seat_on_3.registration_id]["display"] = ":3"
+    reg._store.write_active(active)
+    _successful_empty_list(monkeypatch)
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True, display=":2")
+    assert result.dormant == [seat_on_2.registration_id]
+    assert _row(seat_on_2.registration_id)["status"] == "dormant"
+    assert _row(seat_on_3.registration_id)["status"] == "retained"
+
+
+def test_reserve_mint_headroom_shortfall_drains_charged_display_once(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First headroom shortfall runs one display-scoped drain; recheck allows mint."""
+    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+    monkeypatch.setattr(reg.cdp_lane, "cdp_display", lambda display=None: ":2")
+    seat_on_2 = _seat(chat_url="https://claude.ai/cowork/cse_mint2")
+    seat_on_3 = _seat(chat_url="https://claude.ai/cowork/cse_mint3")
+    for seat in (seat_on_2, seat_on_3):
+        reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    active = reg._load_active()
+    active[seat_on_2.registration_id]["display"] = ":2"
+    active[seat_on_3.registration_id]["display"] = ":3"
+    reg._store.write_active(active)
+    _successful_empty_list(monkeypatch)
+
+    headroom_calls = 0
+
+    def headroom(**_kwargs: object) -> dict[str, bool]:
+        nonlocal headroom_calls
+        headroom_calls += 1
+        if headroom_calls == 1:
+            raise XDisplayCapacityError("short")
+        return {"x_exhausted": False}
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom", headroom
+    )
+
+    listening_ports = {
+        int(_row(seat_on_2.registration_id)["port"]),
+        int(_row(seat_on_3.registration_id)["port"]),
+    }
+
+    def listen(port: int) -> bool:
+        return port in listening_ports
+
+    row, minted = reserve_allocating_row(
+        holder="mint-after-drain",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="t-drain",
+        listen=listen,
+        launch=True,
+        join=False,
+    )
+    assert minted is True
+    assert row["display"] == ":2"
+    assert _row(seat_on_2.registration_id)["status"] == "dormant"
+    assert _row(seat_on_3.registration_id)["status"] == "retained"
+    assert headroom_calls == 2
+
+
+def test_reserve_mint_headroom_still_short_drains_only_once(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Persistent shortfall raises without a second drain pass."""
+    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+    monkeypatch.setattr(reg.cdp_lane, "cdp_display", lambda display=None: ":2")
+
+    drain_calls: list[str | None] = []
+    real_drain = drain_live_hosts_to_dormant
+
+    def counting_drain(**kwargs: object) -> dormant_drain.DrainResult:
+        drain_calls.append(kwargs.get("display"))  # type: ignore[arg-type]
+        return real_drain(**kwargs)
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.drain_live_hosts_to_dormant",
+        counting_drain,
+    )
+
+    def always_short(**_kwargs: object) -> None:
+        raise XDisplayCapacityError("still short")
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom", always_short
+    )
+
+    with pytest.raises(XDisplayCapacityError, match="still short"):
+        reserve_allocating_row(
+            holder="no-mint",
+            purpose="operator-proxy",
+            mission_kind="root",
+            parent_thread="t-fail",
+            listen=lambda _p: False,
+            launch=True,
+            join=False,
+        )
+    assert drain_calls == [":2"]

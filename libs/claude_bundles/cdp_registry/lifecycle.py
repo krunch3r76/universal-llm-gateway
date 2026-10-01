@@ -127,6 +127,33 @@ def _join_target(active: dict[str, Any], parent: str) -> dict[str, Any] | None:
     )
 
 
+def _mint_headroom_gate(
+    *,
+    display: str,
+    reserved_chromes: int,
+    listen: _ListenFn,
+) -> None:
+    """Refuse or drain once when X headroom is short before minting Chrome."""
+    from claude_bundles.x_display_capacity import (
+        XDisplayCapacityError,
+        require_chrome_headroom,
+    )
+
+    from .dormant_drain import drain_live_hosts_to_dormant
+
+    def _check_headroom() -> None:
+        require_chrome_headroom(
+            display=display,
+            reserved_chromes=reserved_chromes,
+        )
+
+    try:
+        _check_headroom()
+    except XDisplayCapacityError:
+        drain_live_hosts_to_dormant(display=display, is_listening=listen)
+        _check_headroom()
+
+
 def reserve_allocating_row(
     *,
     holder: str,
@@ -153,7 +180,6 @@ def reserve_allocating_row(
     ``carry``. *expect_status* compare-and-set runs before any claim or write.
     """
     from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
-    from claude_bundles.x_display_capacity import require_chrome_headroom
 
     with _store.ports_lock():
         active = _store.load_active()
@@ -187,16 +213,25 @@ def reserve_allocating_row(
                     },
                 )
         resolved_display = cdp_lane.cdp_display()
-        if launch:
-            reserved_chromes = sum(
+        reserved_chromes = (
+            sum(
                 1
                 for row in active.values()
                 if isinstance(row, dict) and row.get("status") == "allocating"
             )
-            require_chrome_headroom(
-                display=resolved_display,
-                reserved_chromes=reserved_chromes,
-            )
+            if launch
+            else 0
+        )
+
+    if launch:
+        _mint_headroom_gate(
+            display=resolved_display,
+            reserved_chromes=reserved_chromes,
+            listen=listen,
+        )
+
+    with _store.ports_lock():
+        active = _store.load_active()
         exclude = _used_ports(active) | _peer_lane_ports()
         port = select_free_registry_port(listen, exclude=exclude)
         if registration_id is None or profile_suffix is None:

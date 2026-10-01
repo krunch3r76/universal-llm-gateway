@@ -207,6 +207,7 @@ def _streaming_protection_reason(
 
 def drain_live_hosts_to_dormant(
     *,
+    display: str | None = None,
     is_listening: _ListenFn | None = None,
     release_unbound: bool = True,
     is_busy: Callable[[str], bool] | None = None,
@@ -219,10 +220,18 @@ def drain_live_hosts_to_dormant(
     caller protect a host whose turn is still running. *now* overrides the
     clock used for the operator-proxy idle-grace check (tests only; omit in
     production so it reads the real clock).
+
+    When *display* is set, only rows whose recorded ``display`` matches are
+    considered; omit *display* to drain across all displays (legacy behavior).
     """
     listen = is_listening or cdp_lane.is_listening
+    display_filter = str(display).strip() if display is not None else None
     result = DrainResult()
     for registration_id, row in list(_store.load_active().items()):
+        if display_filter is not None:
+            row_display = str(row.get("display") or "").strip()
+            if row_display != display_filter:
+                continue
         if row.get("status") not in _DRAINABLE_STATUSES:
             continue
         protection = row_drain_protection(
