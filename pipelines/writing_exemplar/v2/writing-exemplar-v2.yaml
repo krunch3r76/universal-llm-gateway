@@ -1,0 +1,113 @@
+schema_version: 6
+id: en-en-writing-exemplar-v2
+version: "2.0"
+type: writing_exemplar
+description: >
+  Professional speech. Three same-language drafts of the source, then a
+  judge that copies one. No retrieved corpus. Written note, spoken note,
+  said aloud. Facts in the source stay in the source.
+
+output: select
+
+options:
+  timeout_seconds: 600
+
+steps:
+  - name: precise
+    type: generate
+    model_ref: precise
+    prompt_ref: writing_exemplar.v2.precise
+    handler_inputs:
+      text: sourceNs.text
+    handler_outputs:
+      text: precise.json.text
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            text:
+              type: string
+          required:
+            - text
+
+  - name: spoken
+    type: generate
+    model_ref: rewrite
+    prompt_ref: writing_exemplar.v2.spoken
+    handler_inputs:
+      text: sourceNs.text
+    handler_outputs:
+      text: spoken.json.text
+    generation_parameters:
+      temperature: 0.55
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            text:
+              type: string
+          required:
+            - text
+
+  - name: paraphrase
+    type: generate
+    model_ref: rewrite
+    prompt_ref: writing_exemplar.v2.paraphrase
+    handler_inputs:
+      text: sourceNs.text
+    handler_outputs:
+      text: paraphrase.json.text
+    generation_parameters:
+      temperature: 0.55
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            text:
+              type: string
+          required:
+            - text
+
+  - name: judge
+    type: generate
+    model_ref: judge
+    prompt_ref: writing_exemplar.v2.judge
+    handler_inputs:
+      text: sourceNs.text
+      precise: precise.json.text
+      spoken: spoken.json.text
+      paraphrase: paraphrase.json.text
+    handler_outputs:
+      text: judge.json.text
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            text:
+              type: string
+          required:
+            - text
+
+  - name: select
+    type: select_winner
+    from: judge
+    handler_inputs:
+      source: judge.json.text
+    handler_outputs:
+      text: select.text

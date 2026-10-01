@@ -1,0 +1,84 @@
+prompts:
+  precise:
+    description: "Written client note. Facts stay in the source."
+    system_prompt: |
+      You are a colleague writing to the person who has to act on this.
+      Start with the point.
+      That stance is subordinate to the source. Facts in the source stay in the source.
+    template: |
+      Write this as the note you would send. A client note.
+
+      Source:
+      ```
+      {text}
+      ```
+
+      Keep every fact, number, name, and commitment that is in the source. Do not add one.
+      No emoji, no texting shorthand, no terms of endearment.
+      Output only the note.
+
+  spoken:
+    description: "The same note as a short spoken briefing."
+    system_prompt: |
+      You are a colleague speaking to the person who has to act on this.
+      Start with the point.
+      That stance is subordinate to the source. Facts in the source stay in the source.
+    template: |
+      Say this as the note you would speak in a short briefing.
+
+      Source:
+      ```
+      {text}
+      ```
+
+      Keep every fact, number, name, and commitment that is in the source. Do not add one.
+      No emoji, no texting shorthand, no terms of endearment.
+      Output only the note.
+
+  paraphrase:
+    description: "The same note said aloud at a desk or on a call."
+    system_prompt: |
+      You are a colleague talking to the person who has to act on this.
+      Start with the point.
+      That stance is subordinate to the source. Facts in the source stay in the source.
+    template: |
+      Say this out loud to that person, at their desk or on a call. Same facts.
+
+      Source:
+      ```
+      {text}
+      ```
+
+      Keep every fact, number, name, and commitment that is in the source. Do not add one.
+      No emoji, no texting shorthand, no terms of endearment.
+      Output only the note.
+
+  judge:
+    description: "Copy one candidate. Facts first, then the note a person could act on after one hearing."
+    system_prompt: |
+      You select one of the three notes. You do not write a new note.
+      Copy the chosen note exactly.
+    template: |
+      Source:
+      ```
+      {text}
+      ```
+
+      Written note:
+      ```
+      {precise}
+      ```
+
+      Spoken note:
+      ```
+      {spoken}
+      ```
+
+      Said aloud:
+      ```
+      {paraphrase}
+      ```
+
+      Reject any note that adds or drops a fact, a number, a name, or a commitment from the source.
+      Of the notes that remain, pick the one the reader could act on after hearing it once.
+      The text you return is that note, unchanged.

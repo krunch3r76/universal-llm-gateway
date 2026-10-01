@@ -4,3 +4,12 @@ models:
     # made the poetry retrieve→write path work. Not the Gemma-4 A/B
     # branch on en-fa-super-romantic-v2.
     model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-16384-hybrid
+  precise:
+    # Same precision model as the living transformation pipelines.
+    # v1 does not reference this alias.
+    model: ernie-4-5-21b-a3b-pt-q8-0-16384
+  judge:
+    # Gemma instruct setup from the live transformation model card.
+    # profile is required; the id alone is not that setup.
+    model: gemma-4-26b-a4b-it-q4-k-m-16384
+    profile: gemma4-instruct
