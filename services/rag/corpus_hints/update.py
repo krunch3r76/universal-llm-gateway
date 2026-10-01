@@ -6,13 +6,21 @@ to the ``corpus_hints`` table via ``PropertyIndex``. Called by the corpus hints
 CLI, ``rag_service/state.py`` after indexing, the admin articles route and
 vocabulary repair. Emits ``rag_corpus_hints_updated`` or
 ``rag_corpus_hints_skipped`` when an event bus is supplied.
+
+Term statistics and scoring run on a worker thread (``read_corpus_hint_stats``).
+Running that scan on the asyncio thread blocks ``GET /scopes`` for the whole
+rebuild — about 60s on the live index — and scoped search then reports the
+catalog as unavailable. Overlapping callers share one scan: a later request
+dirties the in-flight rebuild and is folded into a single follow-up, so an
+older snapshot cannot commit after a newer one.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+import asyncio
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
@@ -24,6 +32,11 @@ from services.rag.corpus_hints.constants import (
     DEFAULT_MIN_CHUNKS_TOPIC,
     GENERIC_BLOCKLIST,
 )
+from services.rag.corpus_hints.rebuild_gate import (
+    HintRebuildRequest,
+    gate_for,
+)
+from services.rag.corpus_hints.stats_read import CorpusHintStats, read_corpus_hint_stats
 from services.rag.corpus_hints.term_scoring import (
     entity_shape_boost,
     is_structural_noise,
@@ -75,82 +88,77 @@ async def update_corpus_hints(
     Returns:
         Mapping of scope name to comma-joined hint terms; {} when skipped.
     """
-    prefixes = key_prefixes if key_prefixes is not None else DEFAULT_KEY_PREFIXES
-    if property_index.get_total_chunks() == 0:
-        logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")
-        if event_bus is not None:
-            await event_bus.publish_nowait(
-                rag_corpus_hints_skipped(reason="property index has zero chunks")
-            )
-        return {}
-
-    active_blocklist = (
-        blocklist_override if blocklist_override is not None else GENERIC_BLOCKLIST
+    request = HintRebuildRequest(
+        scope=scope,
+        configured_scopes=configured_scopes,
+        key_prefixes=key_prefixes if key_prefixes is not None else DEFAULT_KEY_PREFIXES,
+        names_budget=names_budget,
+        topics_budget=topics_budget,
+        min_chunks_name=min_chunks_name,
+        min_chunks_topic=min_chunks_topic,
+        max_chunks_name=max_chunks_name,
+        max_chunks_topic=max_chunks_topic,
+        min_docs=min_docs,
+        entity_boost_hyphen=entity_boost_hyphen,
+        entity_boost_single=entity_boost_single,
+        extra_blocklist=extra_blocklist,
+        blocklist_override=blocklist_override,
+        event_bus=event_bus,
     )
-    if extra_blocklist:
-        active_blocklist = active_blocklist | extra_blocklist
+    return await gate_for(Path(property_index.db_path)).run(
+        request,
+        lambda current: _rebuild(property_index, current),
+    )
 
-    total_docs = property_index.get_total_docs()
 
+def _read_and_score(
+    db_path: Path,
+    request: HintRebuildRequest,
+) -> tuple[dict[str, str], list[tuple[str, str, float, str]]] | None:
+    """Scan and score off the event loop. None means the index has no chunks."""
+    stats = read_corpus_hint_stats(
+        db_path,
+        configured_scopes=request.configured_scopes,
+        key_prefixes=request.key_prefixes,
+        only_scope=request.scope,
+    )
+    if stats.total_chunks == 0:
+        return None
+    return _score_hint_rows(stats, request)
+
+
+def _score_hint_rows(
+    stats: CorpusHintStats,
+    request: HintRebuildRequest,
+) -> tuple[dict[str, str], list[tuple[str, str, float, str]]]:
+    active_blocklist = (
+        request.blocklist_override
+        if request.blocklist_override is not None
+        else GENERIC_BLOCKLIST
+    )
+    if request.extra_blocklist:
+        active_blocklist = active_blocklist | request.extra_blocklist
     band_limits: dict[str, tuple[int, int]] = {
-        "prop.name@@": (min_chunks_name, max_chunks_name),
-        "prop.topic@@": (min_chunks_topic, max_chunks_topic),
+        "prop.name@@": (request.min_chunks_name, request.max_chunks_name),
+        "prop.topic@@": (request.min_chunks_topic, request.max_chunks_topic),
     }
     budgets: dict[str, int] = {
-        "prop.name@@": names_budget,
-        "prop.topic@@": topics_budget,
+        "prop.name@@": request.names_budget,
+        "prop.topic@@": request.topics_budget,
     }
-
-    scope_prefix_terms: dict[str, dict[str, list[tuple[str, int, int]]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    scope_doc_counts: dict[str, int] = {}
-
-    if configured_scopes is not None:
-        for scope_name, source_prefixes in configured_scopes.items():
-            if scope is not None and scope_name != scope:
-                continue
-            scope_doc_counts[scope_name] = property_index.count_docs_for_prefixes(
-                source_prefixes
-            )
-            for prefix in prefixes:
-                for (
-                    term,
-                    chunk_count,
-                    doc_count,
-                ) in property_index.get_term_counts_for_source_prefixes(
-                    prefix, source_prefixes
-                ):
-                    if term:
-                        scope_prefix_terms[scope_name][prefix].append(
-                            (term, chunk_count, doc_count)
-                        )
-    else:
-        for prefix in prefixes:
-            for (
-                scope_name,
-                term,
-                chunk_count,
-                doc_count,
-            ) in property_index.get_term_counts_by_scope(prefix):
-                if scope is not None and scope_name != scope:
-                    continue
-                if term:
-                    scope_prefix_terms[scope_name][prefix].append(
-                        (term, chunk_count, doc_count)
-                    )
-
     rows_for_db: list[tuple[str, str, float, str]] = []
     result: dict[str, str] = {}
-    for scope_name, prefix_terms in scope_prefix_terms.items():
-        scope_docs = scope_doc_counts.get(scope_name, 0)
-        effective_min_docs = min_docs
+    for scope_name, prefix_terms in stats.scope_prefix_terms.items():
+        scope_docs = stats.scope_doc_counts.get(scope_name, 0)
+        effective_min_docs = request.min_docs
         if scope_docs > 0:
-            effective_min_docs = max(1, min(min_docs, scope_docs))
+            effective_min_docs = max(1, min(request.min_docs, scope_docs))
         winners: list[tuple[str, float, str]] = []
         for prefix, term_counts in prefix_terms.items():
-            min_c, max_c = band_limits.get(prefix, (min_chunks_name, max_chunks_name))
-            budget = budgets.get(prefix, names_budget)
+            min_c, max_c = band_limits.get(
+                prefix, (request.min_chunks_name, request.max_chunks_name)
+            )
+            budget = budgets.get(prefix, request.names_budget)
             scored: list[tuple[str, float, str]] = []
             for term, chunk_count, doc_count in term_counts:
                 if chunk_count < min_c or chunk_count > max_c:
@@ -161,44 +169,61 @@ async def update_corpus_hints(
                     continue
                 if term.lower() in active_blocklist:
                     continue
-                base_score = score_term(chunk_count, doc_count, total_docs)
+                base_score = score_term(chunk_count, doc_count, stats.total_docs)
                 boost = entity_shape_boost(
                     term,
-                    hyphen_boost=entity_boost_hyphen,
-                    single_token_boost=entity_boost_single,
+                    hyphen_boost=request.entity_boost_hyphen,
+                    single_token_boost=request.entity_boost_single,
                 )
-                score = base_score * boost
-                scored.append((term, score, prefix))
-            scored.sort(key=lambda x: (-x[1], x[0]))
+                scored.append((term, base_score * boost, prefix))
+            scored.sort(key=lambda item: (-item[1], item[0]))
             winners.extend(scored[:budget])
-
         seen: set[str] = set()
         deduped_terms: list[str] = []
-        for term, score, prefix in sorted(winners, key=lambda x: (-x[1], x[0])):
+        for term, score, prefix in sorted(winners, key=lambda item: (-item[1], item[0])):
             key = term.lower()
             if key in seen:
                 continue
             seen.add(key)
             deduped_terms.append(term)
             rows_for_db.append((scope_name, term, score, prefix))
-        result[scope_name] = ", ".join(t for t in deduped_terms if t)
+        result[scope_name] = ", ".join(term for term in deduped_terms if term)
+    return result, rows_for_db
 
+
+async def _rebuild(
+    property_index: PropertyIndex,
+    request: HintRebuildRequest,
+) -> dict[str, str]:
+    payload = await asyncio.to_thread(
+        _read_and_score, Path(property_index.db_path), request
+    )
+    if payload is None:
+        logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")
+        bus: Any = request.event_bus
+        if bus is not None:
+            await bus.publish_nowait(
+                rag_corpus_hints_skipped(reason="property index has zero chunks")
+            )
+        return {}
+    result, rows_for_db = payload
+    scope = request.scope
+    configured_scopes = request.configured_scopes
     if scope is not None:
         await property_index.replace_corpus_hints_for_scope(scope, rows_for_db)
     elif configured_scopes is not None:
         for cs_name in configured_scopes:
-            cs_rows = [r for r in rows_for_db if r[0] == cs_name]
+            cs_rows = [row for row in rows_for_db if row[0] == cs_name]
             await property_index.replace_corpus_hints_for_scope(cs_name, cs_rows)
     else:
         await property_index.replace_corpus_hints_rows(rows_for_db)
-
-    if event_bus is not None:
-        update_timestamp = datetime.now(UTC).isoformat()
-        await event_bus.publish_nowait(
+    bus: Any = request.event_bus
+    if bus is not None:
+        await bus.publish_nowait(
             rag_corpus_hints_updated(
                 path=str(property_index.db_path),
                 scopes_updated=sorted(result),
-                timestamp=update_timestamp,
+                timestamp=datetime.now(UTC).isoformat(),
             )
         )
     return result

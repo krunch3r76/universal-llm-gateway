@@ -67,19 +67,31 @@ async def run_scope_freshness_repair(
     no_model_scopes: list[str] = []
     frontier_no_terms: list[str] = []
 
+    # One rebuild for every stale non-union scope. A per-scope loop re-scans
+    # the corpus each time (~2.8s); a single scope still passes scope= so the
+    # scan stays limited to that scope's source prefixes.
+    targets: list[str] = []
     for scope_name in stale_scopes:
-        if scope_name not in cs_map:
+        if scope_name not in cs_map or scope_name in targets:
             continue
         sdef = config.scopes.get(scope_name)  # non-None: cs_map guarantees presence
         if sdef is not None and sdef.is_union:
             continue
+        targets.append(scope_name)
+    if len(targets) == 1:
         await update_corpus_hints(
             property_index,
-            scope=scope_name,
+            scope=targets[0],
             configured_scopes=cs_map,
             event_bus=event_bus,
         )
-        hints_updated.append(scope_name)
+    elif targets:
+        await update_corpus_hints(
+            property_index,
+            configured_scopes={name: cs_map[name] for name in targets},
+            event_bus=event_bus,
+        )
+    hints_updated.extend(targets)
 
     # Only classify scopes that have no existing vocabulary candidates
     # and are not explicitly opting out of classification (vocab_mode=none).
