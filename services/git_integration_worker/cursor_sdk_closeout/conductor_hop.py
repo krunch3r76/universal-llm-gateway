@@ -184,6 +184,8 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                 )
                 if fold is not None:
                     gate_from_fold = resolve_entry_gate_from_fold(fold)
+                    if gate_from_fold is None:
+                        return None
                     if _row_id_in_scoreboard_table(scoreboard_body, gate_from_fold):
                         return gate_from_fold
             except Exception as exc:  # noqa: BLE001 — fold is advisory on hop path

@@ -1039,6 +1039,40 @@ def test_ac7_build_hop_body_refused_when_fold_gate_not_in_tip_table_prose_only(
     assert build_hop_team_dispatch_body(row) is None
 
 
+def test_ac7_none_fold_entry_gate_does_not_fall_through_to_tip_table(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the fold yields no entry gate, do not substitute the first OPEN tip row."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _live_entry_gate_for_row,
+    )
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    body = (
+        "# Scoreboard\n\n"
+        "- **NEXT_ADMIT:** harvest G1\n\n"
+        "| G8 | Land | OPEN |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        body, encoding="utf-8"
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    fold_stub = object()
+    with patch(
+        "implement_admission.conductor_witness.fold_scoreboard",
+        return_value=fold_stub,
+    ):
+        with patch(
+            "implement_admission.conductor_witness.resolve_entry_gate_from_fold",
+            return_value=None,
+        ):
+            assert _live_entry_gate_for_row(row, body) is None
+
+
 def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
