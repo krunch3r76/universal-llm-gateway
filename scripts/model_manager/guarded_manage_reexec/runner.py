@@ -14,13 +14,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from transport_utils import MANAGE_SOCKET
+from universal_event_bus import Event, event_factory
+
 from libs.manage_handover import (
     prove_armed_record,
     read_armed_record,
     remove_armed_record,
 )
-from transport_utils import MANAGE_SOCKET
-from universal_event_bus import Event, event_factory
 
 from .checks import (
     RefuseFinding,

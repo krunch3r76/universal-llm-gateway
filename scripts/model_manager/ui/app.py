@@ -13,12 +13,12 @@ import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
+from deploy_identity.code_version import resolve_code_version
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
-from deploy_identity.code_version import resolve_code_version
 from libs.manage_handover import (
     record_path_from_env,
     remove_armed_record,

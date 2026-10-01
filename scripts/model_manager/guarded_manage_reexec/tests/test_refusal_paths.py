@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from libs.manage_handover import write_armed_record
 from scripts.model_manager.guarded_manage_reexec.checks import (
     collect_refuse_report,
     observe_drain_clear,
@@ -24,7 +25,6 @@ from scripts.model_manager.guarded_manage_reexec.checks import (
 from scripts.model_manager.guarded_manage_reexec.pane import (
     observe_tmux_pane_hosts_manage,
 )
-from libs.manage_handover import write_armed_record
 from scripts.model_manager.guarded_manage_reexec.runner import (
     prove_pickup,
     run_guarded_reexec,
