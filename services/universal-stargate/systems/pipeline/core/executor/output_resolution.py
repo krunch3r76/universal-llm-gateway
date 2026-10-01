@@ -152,18 +152,22 @@ def extract_retrieval_metadata(
     context: PipelineContext,
     steps: list[StepConfig],
 ) -> dict[str, Any] | None:
-    """Compact retrieval scope metadata from the rag_multi_retrieve step.
+    """Compact retrieval metadata for MCP consumers (``include_retrieval_metadata``).
 
-    Surfaces resolved scope, confidence, and chunk count for MCP consumers
-    when ``include_retrieval_metadata`` is set in pipeline options.
+    Scope fields (resolved scope, confidence, chunk count, rejection) come from
+    the ``rag_multi_retrieve_v1`` step; per-chunk relevance (``chunks[]`` score
+    rows, ``weak_match``, ``top_relevance``) is merged from the
+    ``rag_rerank_assemble_v1`` step when the pipeline has one.
     """
     retrieve_step_id: str | None = None
+    rerank_step_id: str | None = None
     pipeline_call_step_id: str | None = None
     for step in steps:
-        if step.type == "rag_multi_retrieve_v1":
+        if step.type == "rag_multi_retrieve_v1" and retrieve_step_id is None:
             retrieve_step_id = step.id
-            break
-        if step.type == "pipeline_call_v1" and pipeline_call_step_id is None:
+        elif step.type == "rag_rerank_assemble_v1" and rerank_step_id is None:
+            rerank_step_id = step.id
+        elif step.type == "pipeline_call_v1" and pipeline_call_step_id is None:
             pipeline_call_step_id = step.id
 
     if retrieve_step_id is not None:
@@ -202,7 +206,23 @@ def extract_retrieval_metadata(
         metadata["scope_source"] = scope_source
     if metadata["resolved_scope"] is None and not metadata["scope_rejected"]:
         return None
+    metadata.update(_relevance_fields(context, rerank_step_id))
     return metadata
+
+
+_RELEVANCE_KEYS = ("chunks", "weak_match", "top_relevance", "weak_match_threshold")
+
+
+def _relevance_fields(
+    context: PipelineContext, rerank_step_id: str | None
+) -> dict[str, Any]:
+    """Per-chunk score rows and the weak-match verdict from the rerank step, if any."""
+    if rerank_step_id is None:
+        return {}
+    output = context.get_output(rerank_step_id)
+    if not isinstance(output, StepOutput) or not isinstance(output.json, dict):
+        return {}
+    return {key: output.json[key] for key in _RELEVANCE_KEYS if key in output.json}
 
 
 def extract_backtranslation_data(

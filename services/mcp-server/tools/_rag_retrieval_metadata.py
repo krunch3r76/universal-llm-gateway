@@ -1,8 +1,19 @@
-"""Extract compact retrieval metadata from rag-context pipeline responses."""
+"""Extract compact retrieval metadata from rag-context pipeline responses.
+
+Called by ``tools/_rag_search_exec.py`` to shape the ``retrieval`` block of the
+``rag_search`` envelope from Stargate's ``pipeline.retrieval`` payload: scope
+resolution fields plus — when the pipeline's rerank step emitted them — the
+per-chunk relevance rows (``chunks[]``) and the ``weak_match`` verdict that let
+an author gate on relevance without reading every chunk.
+"""
 
 from __future__ import annotations
 
 from typing import Any
+
+# Relevance keys pass through verbatim; their shape is owned by
+# ``pipelines/rag/rag_context_v1/rerank_scoring.relevance_summary``.
+_RELEVANCE_KEYS = ("chunks", "weak_match", "top_relevance", "weak_match_threshold")
 
 
 def retrieval_metadata_from_response(
@@ -43,4 +54,7 @@ def envelope_retrieval_fields(
     rejection_reason = retrieval.get("scope_rejection_reason")
     if isinstance(rejection_reason, str) and rejection_reason:
         envelope["retrieval"]["scope_rejection_reason"] = rejection_reason
+    for key in _RELEVANCE_KEYS:
+        if key in retrieval:
+            envelope["retrieval"][key] = retrieval[key]
     return envelope

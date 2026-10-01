@@ -179,3 +179,51 @@ def apply_bounded_movement(
             result[i] = remaining.pop(0)
 
     return [c for c in result if c is not None]
+
+
+WEAK_MATCH_THRESHOLD_DEFAULT = 0.3
+
+
+def relevance_summary(
+    ordered_chunks: list[ChunkData],
+    *,
+    final_scores: dict[str, float] | None = None,
+    ce_scores: dict[str, float] | None = None,
+    weak_match_threshold: float = WEAK_MATCH_THRESHOLD_DEFAULT,
+) -> dict[str, Any]:
+    """Per-chunk score rows in output order plus the weak-match verdict.
+
+    This is what lets an author gate on relevance instead of reading every
+    chunk: ``chunks[]`` rows carry ``rank``, ``chunk_id`` (``content_hash[:8]``),
+    ``source``, the retrieval ``prior_score`` and — when a cross-encoder ran —
+    ``ce_score`` (sigmoid relevance probability, 0–1) and the fused
+    ``final_score``. ``top_relevance`` is the best ``ce_score``; ``weak_match``
+    is ``top_relevance < weak_match_threshold`` and ``None`` when no
+    cross-encoder scored the set (prior scores alone are rank-relative, not a
+    relevance distance). Keys are flattened into the handler's ``StepOutput.json``
+    and surfaced to MCP callers under ``retrieval``.
+    """
+    rows: list[dict[str, Any]] = []
+    for rank, chunk in enumerate(ordered_chunks, start=1):
+        cid = chunk["content_hash"][:8]
+        row: dict[str, Any] = {
+            "rank": rank,
+            "chunk_id": cid,
+            "source": chunk.get("source"),
+            "prior_score": round(float(chunk.get("score", 0.0)), 4),
+        }
+        if ce_scores is not None and cid in ce_scores:
+            row["ce_score"] = round(ce_scores[cid], 4)
+        if final_scores is not None and cid in final_scores:
+            row["final_score"] = round(final_scores[cid], 4)
+        rows.append(row)
+
+    summary: dict[str, Any] = {"chunks": rows}
+    if ce_scores:
+        top = max(ce_scores.values())
+        summary["top_relevance"] = round(top, 4)
+        summary["weak_match"] = top < weak_match_threshold
+        summary["weak_match_threshold"] = weak_match_threshold
+    else:
+        summary["weak_match"] = None
+    return summary

@@ -515,6 +515,40 @@ muddled average that degrades the primary retrieval signal.
 | `scope` | str\|list\|None | Named scope filter: single string, comma-separated string, or list. Call `rag_list_scopes()` for valid names. |
 | `prefix` | str\|list\|None | Source path prefix filter. Mutually exclusive with `scope`. |
 | `mapped` | bool | Default `false`. When `true`, exact `(scope, query)` lookup against `config/mcp/rag_mapped_index.yaml` serves a durable pack body through the identical search envelope; miss (or multi/missing scope) falls through to live `rag-context`. |
+| `search_id` | str\|None | Poll handle from an earlier `in_flight` envelope. When given, every other argument is ignored and the call attaches to that search. |
+
+### Parallel calls and the `in_flight` handle
+
+Parallel `rag_search` calls are safe and are the recommended way to cover several
+concepts (see Query language). Each call is admitted to an in-flight registry on
+the MCP server (`tools/_rag_inflight.py`):
+
+- **Identical requests share one backend search.** Same normalized `query` +
+  `scope`/`prefix` + `top_k` ⇒ one `rag-context` run; later callers attach
+  (`attached: true`) and receive the same result. Re-issuing a search is
+  therefore harmless — it never starts a second backend run.
+- **Every envelope carries `search_id`** (`"rs-…"`), including errors.
+- **Bounded wait.** A call waits up to `MCP_RAG_SEARCH_WAIT_S` (default 90 s,
+  under the 120 s MCP client idle wall). If the search is still running it
+  returns, with no `error` key:
+
+  ```
+  {"status": "in_flight", "pipeline": "rag-context", "search_id": "rs-…",
+   "elapsed_s": 90.2, "wait_budget_s": 90.0, "poll": "<recipe>"}
+  ```
+
+  **A wait that ended is not a failed search.** The backend search continues.
+  Poll with `rag(op="search", arguments='{"search_id": "rs-…"}')` or re-issue
+  the identical call; both attach to the running search.
+- **Result cache.** A finished search is served from cache for
+  `MCP_RAG_SEARCH_RESULT_TTL_S` (default 600 s) as `cache_hit: true`; a failed
+  search is kept 30 s so pollers see the failure, then the key is free again.
+  Unknown/expired `search_id` ⇒ `{"error": "Unknown or expired search_id …"}`.
+- Backend concurrency is capped at `MCP_RAG_SEARCH_WORKERS` (default 8) worker
+  threads; Stargate's model gates queue beyond that.
+
+Events: `mcp.rag.search.attached`, `mcp.rag.search.wait.exceeded`,
+`mcp.rag.search.cache.hit` (alongside the existing `mcp.rag.pipeline.*`).
 
 ### Mapped packs (`mapped=true`)
 
@@ -544,6 +578,7 @@ On success:
 ```
 {"status": "ok", "pipeline": "rag-context", "content_length": <int>,
  "duration_s": <float>, "context": "<assembled context with source labels>",
+ "search_id": "rs-…", ["attached": true], ["cache_hit": true],
  "retrieval": {
    "resolved_scope": "...",
    "scope_confidence": 1.0,
@@ -552,11 +587,28 @@ On success:
    "scope_source": "default_scope" | "classifier" | "user_override" | "prefix_override",
    "auto_classified": false,
    "scope_key": "...",
+   "chunks": [{"rank": 1, "chunk_id": "<content_hash[:8]>", "source": "<path>",
+               "prior_score": 0.91, "ce_score": 0.87, "final_score": 0.89}, ...],
+   "top_relevance": 0.87,
+   "weak_match": false,
+   "weak_match_threshold": 0.3,
    ...
  }}
 ```
 
-- **`retrieval`**: compact scope metadata from the rag-context retrieve step.
+- **`retrieval.chunks[]`**: one row per chunk in `context` order (`rank` 1 =
+  first chunk). `prior_score` is the fused retrieval score (rank-relative, not a
+  distance). `ce_score` is the cross-encoder relevance probability (sigmoid,
+  0–1) for the reranked head (`rerank_max_candidates`, default 14); tail chunks
+  carry `prior_score` only. `final_score` is the fused value that decided the
+  bounded re-order. Gate on `ce_score` / `top_relevance`; do not read
+  `prior_score` as relevance.
+- **`weak_match`**: `true` when `top_relevance < weak_match_threshold`
+  (`pipeline_options.rerank_weak_match_threshold`, default `0.3`) — the whole
+  set is weakly related to the query; cite nothing from it as support without
+  reading it. `null` when no cross-encoder scored the set (≤3 chunks, rerank
+  disabled, or generative rerank mode), in which case only `prior_score` exists.
+- **`retrieval`** (scope fields): compact scope metadata from the rag-context retrieve step.
   `auto_classified` is `true` only when `scope_source=classifier` (LLM scope
   prediction ran). The MCP primary path uses the direct pipeline
   (`scope_source=default_scope` for unscoped calls). Mapped hits use
