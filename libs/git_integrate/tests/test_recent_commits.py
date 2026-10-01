@@ -88,6 +88,22 @@ def test_no_diffs_in_payload(tmp_path: Path) -> None:
         assert "files" not in commit
 
 
+def test_unknown_sha_returns_git_read_failed(tmp_path: Path) -> None:
+    """A well-formed SHA git cannot resolve is a failed read, not an exception."""
+    repo, shas = _repo_with_commits(tmp_path, 1)
+    unknown = "b1c0b8ed"
+    assert not any(sha.startswith(unknown) for sha in shas)
+    result = log_oneline(repo, since=unknown, n=15)
+    assert result["git_read_status"] == "failed"
+    assert result["commits"] is None
+    assert result["head"] == shas[-1]
+    assert result["truncated"] is False
+    assert result["since"] == unknown
+    reason = str(result["git_read_reason"])
+    assert reason.startswith("git log failed:")
+    assert "NameError" not in reason
+
+
 def test_invalid_since_rejected(tmp_path: Path) -> None:
     repo, _shas = _repo_with_commits(tmp_path, 1)
     with pytest.raises(ValueError, match="since must be a git SHA"):
