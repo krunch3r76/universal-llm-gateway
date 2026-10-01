@@ -174,8 +174,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   - **Open mission, no `land_disposition`.** At any stop other than `DONE`,
     do not declare `land_disposition`. The substrate retains the lane for the
     open conductor mission: no discharge, no branch debt, no abandoned mark.
-    It stamps `lane_retained_for_mission` so a later reap still sees the
-    retention after the closeout text is gone. If a line is declared anyway,
+    It stamps disposition reason `retained_for_mission`, which the reap
+    reads, so a later reap still sees the retention after the closeout text
+    is gone. `conductor_mission_open` rereads row key `lane_retained_for_mission`. If a line is declared anyway,
     GIW ignores it while the mission is open. The closeout that carries
     `DONE` is what settles the branch. Nested executor closeouts that end
     `land_disposition: unlanded <tip>` are not conductor rows; they still

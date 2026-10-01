@@ -699,32 +699,42 @@ def test_retained_marker_outlives_closeout_text(tmp_path: Path) -> None:
     assert marked.reason == RETAINED_FOR_MISSION
 
 
-def test_lane_settlement_lookup_exception_does_not_abandon(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_lane_settlement_ledger_read_failure_skips_abandon_and_still_discharges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, discharge_calls: list[dict]
 ) -> None:
-    """A raising retention lookup must not fall through into abandoned."""
-    ledger = CursorDispatchLedger.instance()
-    _admit(ledger, dispatch_id="hop-boom", contract="conductor", work_key="todo:swap")
-    _running(ledger, "hop-boom")
+    """``_load_row`` raising is the real ledger failure.
 
-    def _boom(**_kwargs: object) -> str:
-        raise RuntimeError("lookup failed")
+    ``lane_retention_reason`` swallows it and returns None, which settlement
+    used to read as "abandon". The lookup pair skips that mark and does not
+    write a failure token as a disposition. Branch discharge still runs: a
+    failed read is not a retain.
+    """
+
+    def _boom(_dispatch_id: str) -> dict:
+        raise RuntimeError("ledger down")
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout."
-        "conductor_lane_retention.lane_retention_reason",
+        "conductor_lane_retention._load_row",
         _boom,
     )
     marks = _run_failed_lane_settlement(
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        dispatch_id="hop-boom",
+        dispatch_id="hop-ledger",
         thread_id=_THREAD,
         branch_name=_BRANCH,
-        closeout_text=_HOP_CLOSEOUT,
+        closeout_text="",
     )
     assert marks == []
     assert get_disposition(branch_name=_BRANCH) is None
+    settlement = _settle(
+        dispatch_id="hop-ledger",
+        closeout_text="land_disposition: discard\nland_reason: scratch\n",
+        tmp_path=tmp_path,
+    )
+    assert settlement.outcome == "discharged"
+    assert len(discharge_calls) == 1
 
 
 def test_packet_reference_forbids_land_disposition_before_done() -> None:
