@@ -7,6 +7,7 @@ Not a contract token.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from hop_handoff import (
@@ -21,7 +22,25 @@ from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
 
 _VERB_SOURCE = "agent-bus-hop-verb"
-_SUCCESSOR_MODEL = "cdp/opus-5"
+_DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-extra"
+_HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
+
+
+def resolve_hop_successor_model(desired_model: str) -> str:
+    """Choose the CDP (or other prefixed) model a hop dispatches.
+
+    Empty and ``auto`` stay on ``cdp/opus-5.5-extra``. A slash-prefixed id is
+    sent as given, so ``cdp/opus-5.5-max`` and ``cursor/grok-4.7`` pass through.
+    A bare family such as ``fable-5.1-high`` is prefixed ``cdp/`` because the
+    picker wire is ``cdp/<family>``.
+    """
+    raw = (desired_model or "").strip()
+    if not raw or raw.lower() == "auto":
+        return _DEFAULT_SUCCESSOR_MODEL
+    model = raw if "/" in raw else f"cdp/{raw}"
+    if _HOP_MODEL_ID.fullmatch(model) is None:
+        raise ValueError(model)
+    return model
 
 
 async def _hop_dispatch(
@@ -47,7 +66,7 @@ async def _hop_dispatch(
     ``agent_bus.hop`` via MCP, the return is the predecessor's receipt and
     must not be read as the caller's own id.
     """
-    del desired_model, after_turn  # signature retained; not a wire field
+    del after_turn  # not a dispatch field
     if isinstance(thread, int):
         thread = str(thread)
     thread_id = (thread or "").strip()
@@ -86,6 +105,15 @@ async def _hop_dispatch(
     if seat_refusal is not None:
         return seat_refusal
 
+    try:
+        model = resolve_hop_successor_model(desired_model)
+    except ValueError:
+        record("mcp.agentbus.hop.rejected", reason="model_invalid", thread=thread_id)
+        return {
+            "error": "hop: desired_model is not a model id",
+            "reason": "hop_model_invalid",
+        }
+
     handoff = assess_standing_handoff(thread_id)
     full_body = build_continuity_handoff_body(
         thread_id=thread_id,
@@ -97,7 +125,7 @@ async def _hop_dispatch(
     )
     body: dict[str, Any] = {
         "op": "generate",
-        "model": _SUCCESSOR_MODEL,
+        "model": model,
         "prompt": full_body,
         "job": "freeform",
         "purpose": "operator-proxy",
@@ -128,6 +156,7 @@ async def _hop_dispatch(
     stamped = dict(result) if isinstance(result, dict) else {"result": result}
     stamped["continuity_hop"] = True
     stamped["execution_id"] = execution_id
+    stamped["model"] = model
     birth_id = parse_successor_birth_id(full_body)
     stamped["successor"] = {
         "handle": "successor_birth_id",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,7 @@ from hop_handoff import (
     parse_successor_birth_id,
 )
 
-from tools.agent_bus.hop import _hop_dispatch
+from tools.agent_bus.hop import _hop_dispatch, resolve_hop_successor_model
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
 from tools.agent_bus.request_worker_client import enqueue_auto_job
 
@@ -48,13 +49,67 @@ def test_hop_dispatch_signature_rejects_new_slug() -> None:
 
 
 def test_hop_rejects_missing_thread() -> None:
-    result = _hop_dispatch(reason="mcp-restart-healthy", from_agent="web-anthropic")
+    result = asyncio.run(
+        _hop_dispatch(reason="mcp-restart-healthy", from_agent="web-anthropic")
+    )
     assert result["reason"] == "hop_thread_required"
 
 
 def test_hop_rejects_missing_reason() -> None:
-    result = _hop_dispatch(thread="77", from_agent="web-anthropic")
+    result = asyncio.run(_hop_dispatch(thread="77", from_agent="web-anthropic"))
     assert result["reason"] == "hop_reason_required"
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("desired", "expected"),
+    [
+        ("", "cdp/opus-5.5-extra"),
+        ("auto", "cdp/opus-5.5-extra"),
+        ("cdp/opus-5.5-max", "cdp/opus-5.5-max"),
+        ("fable-5.1-high", "cdp/fable-5.1-high"),
+        ("cursor/grok-4.7", "cursor/grok-4.7"),
+    ],
+)
+def test_resolve_hop_successor_model(desired: str, expected: str) -> None:
+    """Omitted pin is opus-5.5-extra; a bare family is a cdp wire id."""
+    assert resolve_hop_successor_model(desired) == expected
+
+
+def test_resolve_hop_successor_model_rejects_whitespace() -> None:
+    with pytest.raises(ValueError):
+        resolve_hop_successor_model("opus 5")
+
+
+def test_hop_dispatch_sends_caller_model() -> None:
+    """The generate body uses the resolved pin, not a hardcoded opus-5."""
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-1"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="77",
+                reason="context-pressure",
+                from_agent="web-anthropic",
+                desired_model="fable-5.1-high",
+            )
+
+    result = asyncio.run(run())
+    assert result["model"] == "cdp/fable-5.1-high"
+    assert captured["body"]["model"] == "cdp/fable-5.1-high"
+    assert result["continuity_hop"] is True
 
 
 def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
