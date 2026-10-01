@@ -679,3 +679,79 @@ def test_defect_b_cdp_ask_specimen_does_not_read_remote_pid_in_local_proc(
     )
     assert marker["error"] != "proc_start_unavailable"
     assert local_pid in consulted
+
+
+def test_null_pid_remote_timeout_names_fail_class_and_skips_local_proc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    empty_probe = {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((empty_probe, empty_probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    specimen_url = "http://10.0.0.76:8770/health"
+    detail = "health probe failed: TimeoutError"
+
+    def _info(_state: object, service: str) -> ServiceInfo:
+        if service == "cdp_ask":
+            return ServiceInfo(
+                name="cdp-ask",
+                status=ServiceStatus.UNHEALTHY,
+                health_url=specimen_url,
+                detail=detail,
+                fail_class="timeout",
+            )
+        return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
+
+    monkeypatch.setattr(live, "_service_info", _info)
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": None,
+            "granularity_s": 0.01,
+            "clock_domain": "host_proc",
+            "error": "proc_start_unavailable",
+        },
+    )
+    result = live.build_snapshot(tmp_path, SimpleNamespace())
+    cdp = next(row for row in result["services"] if row["service"] == "cdp_ask")
+    assert cdp["status"] == "unhealthy"
+    assert cdp["fail_class"] == "timeout"
+    assert cdp["detail"] == detail
+    assert cdp["pid"] is None
+    marker = cdp["load_marker"]
+    assert marker["value_utc"] is None
+    assert marker["error"] == (
+        f"no pid reported by {specimen_url} (fail_class=timeout); "
+        "local /proc was not read"
+    )
+    assert marker["error"] != "proc_start_unavailable"
+    assert "pid None reported" not in marker["error"]
