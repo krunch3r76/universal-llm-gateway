@@ -311,6 +311,12 @@ def evaluate_hop_budget(
 
 
 def prior_record_tokens(row: dict[str, Any]) -> frozenset[str]:
+    """Closeout stop tokens stamped on a prior terminal row, upper-cased.
+
+    Reads ``closeout_stop_tokens`` from the ledger record; an unstamped or
+    malformed record reads as the empty set, which the budget treats as a
+    crash row rather than a designed stop.
+    """
     record = record_data(str(row.get("record_json") or ""))
     raw = record.get("closeout_stop_tokens")
     if isinstance(raw, list):
