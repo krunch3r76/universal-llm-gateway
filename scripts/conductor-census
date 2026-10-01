@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Print the conductor mission census — one line per mission, read-only.
+
+Usage:
+    scripts/conductor-census            # every mission, text table
+    scripts/conductor-census --open     # hide done / succeeded missions
+    scripts/conductor-census --json     # JSON array for seats that parse
+    scripts/conductor-census --ledger PATH   # another sqlite ledger
+
+Opens the GIW dispatch ledger (``resolve_cursor_sdk_dispatch_ledger_path``:
+``CURSOR_SDK_DISPATCH_LEDGER``, else ``DATA_DIR``, else ``~/.gateway``) with
+``mode=ro`` so a census can never write, migrate or lock the live ledger. The
+read model lives in ``cursor_sdk_closeout.conductor_census``; this launcher
+only resolves ``sys.path`` and the ledger path.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from pathlib import Path
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse flags, open the ledger read-only, print the census; return 0 on success."""
+    parser = argparse.ArgumentParser(
+        description="Conductor mission census (read-only ledger fold)."
+    )
+    parser.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    parser.add_argument(
+        "--open", action="store_true", help="hide done and succeeded missions"
+    )
+    parser.add_argument(
+        "--ledger", default=None, help="sqlite path override (default: the GIW ledger)"
+    )
+    args = parser.parse_args(argv)
+
+    root = _repo_root()
+    for entry in (str(root), str(root / "libs")):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        resolve_cursor_sdk_dispatch_ledger_path,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_census import (
+        census,
+        render_json,
+        render_table,
+    )
+
+    path = (
+        Path(args.ledger).expanduser()
+        if args.ledger
+        else resolve_cursor_sdk_dispatch_ledger_path()
+    )
+    if not path.is_file():
+        print(f"ledger not found: {path}", file=sys.stderr)
+        return 2
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = census(conn, open_only=args.open)
+    finally:
+        conn.close()
+    print(render_json(rows) if args.json else render_table(rows))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
