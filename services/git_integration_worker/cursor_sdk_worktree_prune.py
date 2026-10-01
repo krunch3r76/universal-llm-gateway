@@ -84,6 +84,7 @@ class ReapSweepResult:
     salvage_refused: int = 0
     debts_escalated: int = 0
     debts_reconciled: int = 0
+    dispositions_reconciled: int = 0
     worktrees_reconciled: int = 0
     worktrees_surfaced: int = 0
     registry_ghost_rows: int = 0
@@ -358,6 +359,9 @@ def reap_orphan_worktrees(
     )
     stale_metadata_pruned = _git_worktree_prune(source_repo=source_repo)
     branches_gc = gc_merged_dispatch_branches(source_repo=source_repo)
+    dispositions_reconciled = _reconcile_orphaned_dispositions(
+        source_repo=source_repo
+    )
     debts_reconciled = _reconcile_orphaned_debts(source_repo=source_repo)
     debts_escalated = _escalate_aged_debts()
     return ReapSweepResult(
@@ -369,6 +373,7 @@ def reap_orphan_worktrees(
         salvage_refused=salvage_refused,
         debts_escalated=debts_escalated,
         debts_reconciled=debts_reconciled,
+        dispositions_reconciled=dispositions_reconciled,
         worktrees_reconciled=reconciled,
         worktrees_surfaced=surfaced,
         registry_ghost_rows=ghost_rows,
@@ -419,6 +424,18 @@ def _surface_registry_ghost_rows(
             _GHOST_EMIT_BUDGET,
         )
     return ghosts
+
+
+def _reconcile_orphaned_dispositions(*, source_repo: Path) -> int:
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        reconcile_orphaned_dispositions,
+    )
+
+    try:
+        return reconcile_orphaned_dispositions(source_repo=source_repo)
+    except Exception as exc:
+        logger.warning("orphaned disposition reconcile sweep failed: %s", exc)
+        return 0
 
 
 def _reconcile_orphaned_debts(*, source_repo: Path) -> int:
