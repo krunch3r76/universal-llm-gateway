@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import pytest
 from implement_admission.propagation_row import PropagationRow
 
 from services.git_integration_worker.relay.propagation_probe import (
     IdentityMeasurementError,
+    _fetch_giw_liveness,
     attest_identity_delta,
     process_identity,
     proof_identity_attestation,
@@ -219,8 +221,6 @@ def test_proof_observed_post_restart_boundary_closes_young_process() -> None:
         after,
         settle_not_before_monotonic=settle_not_before,
     )
-
-
 
 
 def test_proof_observed_post_restart_boundary_rejects_outgoing_generation() -> None:
@@ -453,3 +453,20 @@ def test_identity_measurement_malformed_persisted_before_raises() -> None:
                 "code_ref_at_submit": _SHA_A,
             },
         )
+
+
+def test_fetch_giw_liveness_locks_admin_liveness_path() -> None:
+    """G6 finding 4 — GIW process-live probe is /api/v1/git/admin/liveness.
+
+    Breaks when the probe is pointed at a deleted job-state route or /health:
+    propagation then treats a live worker as down, or reads the wrong payload.
+    """
+    with patch(
+        "services.git_integration_worker.relay.propagation_probe._fetch_json",
+        return_value={"status": "ok"},
+    ) as fetch:
+        result = _fetch_giw_liveness()
+    assert result == {"status": "ok"}
+    assert fetch.call_count == 1
+    url = fetch.call_args.args[0]
+    assert urlparse(url).path == "/api/v1/git/admin/liveness"

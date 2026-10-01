@@ -668,6 +668,7 @@ def cdp_display_exhausted(
     x_headroom: int | None,
     x_chrome_client_budget: int,
     x_reserved_chromes: int = 0,
+    after_drain: bool = False,
 ) -> Event:
     """Mint refused because Xvfb/X11 MaxClients cannot host another Chrome."""
     return Event(
@@ -681,6 +682,7 @@ def cdp_display_exhausted(
             "x_headroom": x_headroom,
             "x_chrome_client_budget": x_chrome_client_budget,
             "x_reserved_chromes": x_reserved_chromes,
+            "after_drain": after_drain,
         },
     )
 

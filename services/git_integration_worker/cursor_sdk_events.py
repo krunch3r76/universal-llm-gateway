@@ -3268,6 +3268,49 @@ def FrontierSdkCloseoutRelayed(  # noqa: N802
     )
 
 
+@event_factory
+def FrontierSdkCloseoutLintUnestablished(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    authority: str,
+    projection: str,
+    recovery: str,
+) -> Event:
+    """Attributed python set empty while the range has python or is unresolved."""
+    return Event(
+        signal="frontier.sdk.closeout.lintunestablished",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "authority": authority,
+            "projection": projection,
+            "recovery": recovery,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_sdk_closeout_lint_unestablished(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    authority: str,
+    projection: str,
+    recovery: str,
+) -> None:
+    """Emit when the touched-files lint set is unestablished for this closeout."""
+    _emit(
+        FrontierSdkCloseoutLintUnestablished(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            authority=authority,
+            projection=projection,
+            recovery=recovery,
+        )
+    )
+
+
 def emit_sdk_closeout_relayed(
     *,
     dispatch_id: str,

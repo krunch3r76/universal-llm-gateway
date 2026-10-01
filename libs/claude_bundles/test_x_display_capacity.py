@@ -5,9 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from admission_common.qualified_scalar import SurfaceDecl
 
 from claude_bundles.x_display_capacity import (
+    _X_MAX_SCOPE,
     XDisplayCapacityError,
+    attach_x_display_capacity,
     count_x11_unix_clients,
     display_x11_socket_name,
     exhausted_message,
@@ -88,6 +91,23 @@ def test_require_raises_named_x_error_not_chrome_timeout() -> None:
         require_chrome_headroom(display=":2", count=63, max_clients=64, chrome_budget=8)
     assert "Chrome CDP" in str(caught.value)
     assert "did not reach CDP in" not in str(caught.value)
+
+
+def test_require_exhausted_emits_after_drain_false_without_drain_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles import cdp_registry_events as ev
+
+    captured: list[object] = []
+    monkeypatch.setattr(ev, "emit", lambda event: captured.append(event))
+
+    with pytest.raises(XDisplayCapacityError):
+        require_chrome_headroom(display=":2", count=63, max_clients=64, chrome_budget=8)
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert getattr(event, "signal") == "cdp.display.exhausted"
+    assert event.payload["after_drain"] is False  # type: ignore[attr-defined]
 
 
 def test_require_passes_when_unobserved(tmp_path: Path) -> None:
@@ -175,6 +195,30 @@ def test_wire_fields_qualify_numerics() -> None:
     assert fields["x_exhausted"] is True
     assert fields["x_max_clients_authority"] == "recorded"
     assert fields["x_display"] == ":2"
+
+
+def test_max_clients_default_64_for_desktop_colon_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CDP_X_MAX_CLIENTS", raising=False)
+    snap = probe_x_display(display=":1", count=10)
+    assert snap["x_max_clients"] == 64
+
+
+def test_wire_fields_x_max_scope_no_display_pin() -> None:
+    fields = x_display_wire_fields(probe_x_display(display=":1", count=0))
+    assert fields["x_max_clients_scope"] == _X_MAX_SCOPE
+    assert ":1" not in _X_MAX_SCOPE
+    assert "128" not in _X_MAX_SCOPE
+
+
+def test_attach_x_display_decl_names_resolved_display_only() -> None:
+    decl = SurfaceDecl("active_work_snapshot")
+    payload: dict[str, object] = {}
+    attach_x_display_capacity(payload, decl)
+    assert decl._plain["x_display"] == str(payload["x_display"])
+    assert "DISPLAY" not in decl._plain["x_display"]
+    assert "mint" not in decl._plain["x_display"].lower()
 
 
 def test_reserved_chromes_consumes_one_chrome_budget(tmp_path: Path) -> None:

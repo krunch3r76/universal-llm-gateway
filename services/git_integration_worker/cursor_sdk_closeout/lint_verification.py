@@ -20,9 +20,13 @@ from implement_admission.closeout_models import (
     Verification,
     derived_gate_verification,
     observed_process_verification,
+    unobserved_process_verification,
 )
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+from services.git_integration_worker.cursor_sdk_git_head import (
+    RangePythonCorroboration,
+)
 
 # Cap retained lint streams so a noisy ruff failure cannot inflate closeout JSON.
 # Marker suffix records the cut when either stream exceeds the budget.
@@ -101,8 +105,16 @@ def _ruff_toolchain_identity() -> tuple[str, str]:
 def run_touched_files_lint(
     source_repo: Path,
     change_set: ChangeSet,
+    *,
+    range_corroboration: RangePythonCorroboration,
 ) -> tuple[Verification, str | None]:
     """Run ``ruff check`` on touched ``*.py`` paths from the git change set.
+
+    An empty attributed ``*.py`` list is not "no python files touched" unless
+    ``range_corroboration`` is ``resolved_no_python``. Any other corroboration
+    records ``unobserved`` and does not invoke ruff. State 1 (non-empty
+    attributed ``*.py``) does not read ``range_corroboration`` and does not
+    lint paths from the range.
 
     Each call mints a fresh ``invocation_id`` so this closeout-time process
     cannot be silently conflated with a mid-run agent shell that happened to
@@ -124,14 +136,23 @@ def run_touched_files_lint(
         if path.endswith(".py")
     ]
     if not py_paths:
+        if range_corroboration == "resolved_no_python":
+            return (
+                derived_gate_verification(
+                    command="ruff check (no python files touched)",
+                    exit_code=0,
+                    basis="lint_skipped_no_python",
+                    invocation_id=f"lint-skip:{uuid4().hex}",
+                ),
+                None,
+            )
         return (
-            derived_gate_verification(
-                command="ruff check (no python files touched)",
-                exit_code=0,
-                basis="lint_skipped_no_python",
-                invocation_id=f"lint-skip:{uuid4().hex}",
+            unobserved_process_verification(
+                command="ruff check (lint set unestablished)",
+                invocation_id=f"lint-unestablished:{uuid4().hex}",
+                basis="lint_set_unestablished",
             ),
-            None,
+            "verification:lint_set_unestablished",
         )
     abs_paths = [str(source_repo / path) for path in py_paths]
     command = f"ruff check {len(py_paths)} touched files"

@@ -140,6 +140,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         instruction_profile="mechanical",
         # Operator-verified 2026-09-12 21:50 PT.
         context_window_tokens=200_000,
+        # Live ListModels probe 2026-10-01.
+        probed_at="2026-10-01",
     ),
     "claude-opus-5": ModelCapability(
         knobs={
@@ -339,6 +341,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         instruction_profile="reasoner",
         context_window_tokens=256_000,
+        # Live ListModels probe 2026-10-01.
+        probed_at="2026-10-01",
     ),
     "gemini-3.5-flash": ModelCapability(
         knobs={},

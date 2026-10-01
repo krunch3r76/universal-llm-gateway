@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
+from services.git_integration_worker.cursor_sdk_events import (
+    emit_sdk_closeout_lint_unestablished,
+)
 
 from .. import cortex_body_sources, implement_body
 from ..bus_body_budget import MAX_TURN_BODY_CHARS
@@ -83,6 +86,7 @@ def _assemble_closeout_delivery(
         manifest_git_divergence,
         ambient_movements,
         verification_cs,
+        range_corroboration,
     ) = change_set_resolution.resolve_closeout_change_set(
         source_repo=source_repo,
         binding=binding,
@@ -107,8 +111,17 @@ def _assemble_closeout_delivery(
             repo_change_set=repo_change_set,
             baseline_deviations=baseline_deviations,
             text=text,
+            range_corroboration=range_corroboration,
         )
     )
+    if "verification:lint_set_unestablished" in baseline_deviations:
+        emit_sdk_closeout_lint_unestablished(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            authority="repo_change_set",
+            projection=range_corroboration,
+            recovery="unobserved",
+        )
     capture_status, divergence_reason, deviations, manifest = (
         deviation_folding.fold_closeout_deviations(
             deliverables_expected=deliverables_expected,
