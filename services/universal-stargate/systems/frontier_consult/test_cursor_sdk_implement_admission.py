@@ -25,6 +25,7 @@ from implement_admission.preflight import DecisionNotAssertedError
 from pydantic import ValidationError
 
 from .conftest import dispatch_cursor_sdk_generate_mock
+from .dispatch_thread_context import GeneratePromptResolution
 from .generate_wrap import GenerateWrapResult
 from .route import TeamDispatchGenerateBody, team_dispatch
 
@@ -35,17 +36,23 @@ def _patch_sdk_and_thread_read(
     sdk_return: dict[str, str],
     thread_body: str,
 ) -> tuple[AsyncMock, AsyncMock]:
-    """Patch the SDK orchestrator + dispatch-thread reader on the route module."""
+    """Patch the SDK orchestrator + prompt resolution on the generate route."""
     sdk_mock = dispatch_cursor_sdk_generate_mock(return_value=sdk_return)
-    thread_read = AsyncMock(return_value=thread_body)
+    prompt_resolution = AsyncMock(
+        return_value=GeneratePromptResolution(
+            text=thread_body,
+            prompt_bind_mode="dispatch_thread_latest",
+            prompt_turn_number=1,
+        )
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.generate_wrap.read_latest_dispatch_thread_body",
-        thread_read,
+        "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
+        prompt_resolution,
     )
-    return sdk_mock, thread_read
+    return sdk_mock, prompt_resolution
 
 
 @pytest.mark.asyncio
@@ -112,7 +119,7 @@ async def test_cursor_sdk_residual_packet_skips_dispatch_thread(
     thread_read.assert_not_awaited()
     sdk_mock.assert_awaited_once()
     kwargs = sdk_mock.await_args.kwargs
-    assert kwargs["contract"] == "none"
+    assert kwargs["contract"] == "freeform"
     assert kwargs["packet_path"] == "tmp/reviews/light-packet.md"
     assert kwargs["message_text"] == ""
 
@@ -225,7 +232,12 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
     sdk_mock = dispatch_cursor_sdk_generate_mock(
         return_value={"execution_id": "exec-wrap", "thread_id": "1728"}
     )
-    thread_read = AsyncMock(return_value="should-not-be-read")
+    prompt_resolution = AsyncMock(
+        return_value=GeneratePromptResolution(
+            text="should-not-be-read",
+            prompt_bind_mode="dispatch_thread_latest",
+        )
+    )
     gate_refs: list[str | None] = []
     bridge_refs: list[str] = []
 
@@ -242,8 +254,8 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.generate_wrap.read_latest_dispatch_thread_body",
-        thread_read,
+        "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
+        prompt_resolution,
     )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.prepare_implement_packet", _prepare
@@ -265,7 +277,7 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
         "materialization_mode": "auto",
         "warnings": ["executor-absent"],
     }
-    thread_read.assert_not_awaited()
+    prompt_resolution.assert_not_awaited()
     sdk_mock.assert_awaited_once()
     assert sdk_mock.await_args.kwargs["packet_path"] == (
         "tmp/reviews/first-class-wrap-transport-implement-packet.md"

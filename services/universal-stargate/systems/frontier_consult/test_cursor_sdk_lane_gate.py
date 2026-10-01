@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
@@ -135,5 +133,6 @@ async def test_wrap_omits_lane_still_materializes(
     response = Response()
     result = await team_dispatch(body, response)
     assert response.status_code == 200
-    assert result["contract"] == "wrap"
+    assert result["job"] == "wrap"
+    assert result["status"] == "materialized"
     sdk_mock.assert_not_awaited()

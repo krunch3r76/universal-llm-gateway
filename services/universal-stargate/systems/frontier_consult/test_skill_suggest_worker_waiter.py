@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from .conftest import dispatch_cursor_sdk_generate_mock
-
 from .skill_suggest_dispatch_closeout import (
     fetch_worker_closeout_body,
     map_wait_outcome_to_degraded_reason,

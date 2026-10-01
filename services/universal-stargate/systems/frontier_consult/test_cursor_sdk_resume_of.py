@@ -168,7 +168,10 @@ async def test_worker_packet_dispatch_forwards_resume_of(
 def test_parse_worker_error_surfaces_resume_reason() -> None:
     resp = MagicMock()
     resp.status_code = 422
-    resp.text = '{"code":"CURSOR_RESUME_INELIGIBLE","message":"ineligible","data":{"reason":"thread_mismatch"}}'
+    resp.text = (
+        '{"code":"CURSOR_RESUME_INELIGIBLE","message":"ineligible",'
+        '"data":{"reason":"thread_mismatch"}}'
+    )
     resp.json.return_value = {
         "code": "CURSOR_RESUME_INELIGIBLE",
         "message": "ineligible",
