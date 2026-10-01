@@ -37,8 +37,10 @@ from implement_admission.conductor_witness_defaults import (
 from implement_admission.conductor_witness_table import (
     _G6_REVIEW_ARTIFACT_IDS,
     _artifact_map,
+    _cdp_fail_route,
     _first_resolving_artifact,
     _g6_review_failure_reason,
+    _gated_review_keys,
     _uri_resolves,
     row_witnesses,
 )
@@ -245,11 +247,13 @@ def fold_scoreboard(
 
     if witnesses.get("G6") is None and "G6" in rows:
         artifacts = _artifact_map(raw_body)
+        g6_route = _cdp_fail_route(raw_body, "G6")
         g6_id, g6_uri = _first_resolving_artifact(
             artifacts,
-            _G6_REVIEW_ARTIFACT_IDS,
+            _gated_review_keys("G6", _G6_REVIEW_ARTIFACT_IDS, g6_route),
             files_root=root,
             repo=deps.repo,
+            route=g6_route,
         )
         if g6_id and g6_uri and _uri_resolves(g6_uri, files_root=root, repo=deps.repo):
             block = _g6_review_failure_reason(
@@ -274,6 +278,10 @@ def fold_scoreboard(
             stops = stops_block_reason(raw_body, row_id) if row_id == "G4" else None
             if stops:
                 part = f"{part} [stops: {stops}]"
+            source = sources.get(row_id) or ""
+            marker = ":route="
+            if marker in source:
+                part = f"{part} [route={source.rsplit(marker, 1)[1]}]"
             delta_parts.append(part)
         delta = " ".join(delta_parts) or "witness fold render"
         result = forward_mutate_tip(
