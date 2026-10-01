@@ -12,15 +12,15 @@ import pytest
 from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_home import dispatch_git_identity
+from services.git_integration_worker.cursor_sdk_branch_terminal import (
+    settle_lane_branch,
+)
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     capture_wt_baseline_with_hashes,
     changed_paths,
     prepare_closeout_delivery,
-)
-from services.git_integration_worker.cursor_sdk_branch_terminal import (
-    settle_lane_branch,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
@@ -758,7 +758,7 @@ def test_ac4_wrong_path_refuses_before_add(
     )
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "ac4-path"
-    wt = mint_dispatch_worktree(
+    mint_dispatch_worktree(
         source_repo=source_repo,
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
@@ -929,7 +929,7 @@ def test_ac4_release_wrong_caller_path_refuses(
     )
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "ac4-release"
-    wt = mint_dispatch_worktree(
+    mint_dispatch_worktree(
         source_repo=source_repo,
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
