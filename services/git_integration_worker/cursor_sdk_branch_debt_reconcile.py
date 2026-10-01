@@ -18,6 +18,7 @@ no longer inspect is the one outcome worse than leaving the row open.
 
 from __future__ import annotations
 
+import enum
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,10 +91,57 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def ref_exists(repo: Path, branch_name: str) -> bool:
-    """Return whether ``refs/heads/<branch_name>`` resolves in *repo*."""
+    """Return whether ``refs/heads/<branch_name>`` resolves in *repo*.
+
+    Boolean for branch-debt classify. A non-zero git status is false, including
+    a real git error. Callers that must not treat a git error as absence use
+    ``ref_probe``.
+    """
     return (
         _git(repo, "rev-parse", "--verify", f"refs/heads/{branch_name}").returncode == 0
     )
+
+
+class RefProbeState(enum.Enum):
+    """Whether ``refs/heads/<branch>`` is present, absent, or unverified."""
+
+    PRESENT = "present"
+    ABSENT = "absent"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class RefProbeResult:
+    """``ref_probe`` outcome. ``ERROR`` is a git failure, not a missing ref."""
+
+    state: RefProbeState
+    detail: str = ""
+
+
+def _stderr_is_repo_failure(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return "not a git repository" in lowered or "dubious ownership" in lowered
+
+
+def ref_probe(repo: Path, branch_name: str) -> RefProbeResult:
+    """Classify ``refs/heads/<branch_name>`` as present, absent, or a git error.
+
+    ``git rev-parse --verify`` exits 128 when the ref is missing, when *repo*
+    is not a repository, and on dubious ownership. ``--quiet`` maps only the
+    missing-ref case to exit 1. Any other non-zero status is an error.
+    """
+    ref = f"refs/heads/{branch_name}"
+    try:
+        proc = _git(repo, "rev-parse", "--verify", "--quiet", ref)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return RefProbeResult(state=RefProbeState.ERROR, detail=str(exc))
+    if proc.returncode == 0:
+        return RefProbeResult(state=RefProbeState.PRESENT)
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode == 1 and not _stderr_is_repo_failure(stderr):
+        return RefProbeResult(state=RefProbeState.ABSENT, detail=stderr)
+    detail = stderr or f"git exit {proc.returncode}"
+    return RefProbeResult(state=RefProbeState.ERROR, detail=detail)
 
 
 def commit_exists(repo: Path, sha: str) -> bool:

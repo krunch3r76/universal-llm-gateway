@@ -25,6 +25,7 @@ from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
     list_dispositions,
     mark_lane_b_disposition,
     mark_lane_b_disposition_for_dispatch,
+    reconcile_orphaned_dispositions,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
     mint_dispatch_worktree,
@@ -356,18 +357,110 @@ def test_dead_ref_disposition_reconciled(
         "services.git_integration_worker.cursor_sdk_events.record",
         side_effect=_capture,
     ):
-        reap_orphan_worktrees(
+        reap = reap_orphan_worktrees(
             source_repo=source_repo,
             worktree_root=source_repo.parent / "worktrees",
         )
 
+    assert reap.dispositions_reconciled == 1
     assert get_disposition(branch_name=branch) is None
-    cleared = [e for e in emitted if e.get("signal") == "sdk.lane_b.disposition_cleared"]
+    cleared = [
+        e for e in emitted if e.get("signal") == "sdk.lane_b.disposition_cleared"
+    ]
     assert len(cleared) == 1
     assert cleared[0]["branch"] == branch
     assert cleared[0]["reason"] == "abandoned"
     assert cleared[0]["dispatch_id"] == dispatch_id
     assert cleared[0]["cause"] == "ref_absent"
+
+
+def _capture_events():
+    emitted: list[dict] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append({"signal": signal, **payload})
+
+    return emitted, _capture
+
+
+def test_live_ref_disposition_kept(source_repo: Path) -> None:
+    """A marker whose branch ref still exists is not cleared."""
+    dispatch_id = "live-lane"
+    branch, _ = _create_orphan_branch(
+        source_repo,
+        dispatch_id=dispatch_id,
+        rel_path="live.py",
+        body="live\n",
+    )
+    mark_lane_b_disposition(
+        branch_name=branch,
+        reason="abandoned",
+        dispatch_id=dispatch_id,
+    )
+    emitted, _capture = _capture_events()
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        count = reconcile_orphaned_dispositions(source_repo=source_repo)
+
+    assert count == 0
+    assert get_disposition(branch_name=branch) is not None
+    cleared = [
+        e for e in emitted if e.get("signal") == "sdk.lane_b.disposition_cleared"
+    ]
+    assert cleared == []
+
+
+def test_git_error_keeps_disposition(source_repo: Path, tmp_path: Path) -> None:
+    """A non-git stored repo is a git error: keep the marker, do not clear.
+
+    ``rev-parse --verify`` exits 128 for "not a git repository" and for a
+    missing ref. Clearing on every non-zero status drops the marker when git
+    itself failed.
+    """
+    dispatch_id = "git-err-lane"
+    branch, _ = _create_orphan_branch(
+        source_repo,
+        dispatch_id=dispatch_id,
+        rel_path="err.py",
+        body="err\n",
+    )
+    _git("branch", "-D", branch, cwd=source_repo)
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, resolved_model, status, "
+            "source_repo) VALUES (?, ?, ?, ?, 'completed', ?)",
+            (
+                dispatch_id,
+                f"fp-{dispatch_id}",
+                dispatch_id,
+                "composer-2.5",
+                str(plain),
+            ),
+        )
+    mark_lane_b_disposition(
+        branch_name=branch,
+        reason="abandoned",
+        dispatch_id=dispatch_id,
+    )
+    emitted, _capture = _capture_events()
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        count = reconcile_orphaned_dispositions(source_repo=source_repo)
+
+    assert count == 0
+    assert get_disposition(branch_name=branch) is not None
+    cleared = [
+        e for e in emitted if e.get("signal") == "sdk.lane_b.disposition_cleared"
+    ]
+    assert cleared == []
 
 
 def test_merged_arc_branch_survives_gc(source_repo: Path) -> None:
