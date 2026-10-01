@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from services.rag.corpus_hints.rebuild_gate import reset_hint_rebuild_gates
+from services.rag.corpus_hints.rebuild_gate import (
+    HintRebuildGate,
+    HintRebuildRequest,
+    reset_hint_rebuild_gates,
+    widen,
+)
 from services.rag.corpus_hints.stats_read import CorpusHintStats, read_corpus_hint_stats
 from services.rag.corpus_hints.update import update_corpus_hints
 from services.rag.property_index import PropertyIndex
@@ -25,6 +30,7 @@ from services.rag.property_index import PropertyIndex
 @pytest.fixture(autouse=True)
 def _fresh_hint_rebuild_gate() -> None:
     reset_hint_rebuild_gates()
+
 
 _NAME = "prop.name@@"
 _TOPIC = "prop.topic@@"
@@ -258,8 +264,7 @@ async def test_update_writes_scored_hints_for_configured_scope(
     try:
         conn = idx._ensure_conn()
         conn.executemany(
-            "INSERT INTO properties (key, chunk_id, scope, source)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO properties (key, chunk_id, scope, source) VALUES (?, ?, ?, ?)",
             [
                 (_NAME + "retrieval", "c1", "alpha", "/data/alpha/a.md"),
                 (_NAME + "retrieval", "c2", "alpha", "/data/alpha/b.md"),
@@ -286,7 +291,9 @@ async def test_update_writes_scored_hints_for_configured_scope(
     assert ("retrieval", _NAME) in stored
 
 
-def test_only_scope_term_sql_filters_by_source_prefix(tmp_path: Path, monkeypatch) -> None:
+def test_only_scope_term_sql_filters_by_source_prefix(
+    tmp_path: Path, monkeypatch
+) -> None:
     db_path = tmp_path / "rag_metadata.db"
     _create_properties(db_path)
     seen: list[str] = []
@@ -340,7 +347,9 @@ def test_only_scope_column_sql_filters_by_scope(tmp_path: Path, monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_overlapping_rebuilds_share_one_follow_up(monkeypatch, tmp_path: Path) -> None:
+async def test_overlapping_rebuilds_share_one_follow_up(
+    monkeypatch, tmp_path: Path
+) -> None:
     in_flight = 0
     peak = 0
     calls = 0
@@ -479,3 +488,145 @@ async def test_freshness_repair_batches_stale_scopes(monkeypatch) -> None:
     )
     assert len(calls) == 1
     assert calls[0]["scope"] == "beta"
+
+
+def _rebuild_request(**overrides: object) -> HintRebuildRequest:
+    fields: dict[str, object] = {
+        "scope": "alpha",
+        "configured_scopes": {"alpha": ["/data/alpha"], "beta": ["/data/beta"]},
+        "key_prefixes": ["prop.name@@"],
+        "names_budget": 15,
+        "topics_budget": 12,
+        "min_chunks_name": 2,
+        "min_chunks_topic": 3,
+        "max_chunks_name": 80,
+        "max_chunks_topic": 50,
+        "min_docs": 2,
+        "entity_boost_hyphen": 1.3,
+        "entity_boost_single": 1.2,
+        "extra_blocklist": frozenset(),
+        "blocklist_override": None,
+        "event_bus": None,
+    }
+    fields.update(overrides)
+    return HintRebuildRequest(**fields)  # type: ignore[arg-type]
+
+
+def test_widen_refuses_unequal_scoring_and_scan_mode() -> None:
+    later_boost = _rebuild_request(entity_boost_hyphen=9.0)
+    with pytest.raises(ValueError):
+        widen(_rebuild_request(), later_boost)
+    later_block = _rebuild_request(extra_blocklist=frozenset({"custom"}))
+    with pytest.raises(ValueError):
+        widen(_rebuild_request(), later_block)
+    column = _rebuild_request(scope=None, configured_scopes=None)
+    with pytest.raises(ValueError):
+        widen(_rebuild_request(), column)
+    merged = widen(_rebuild_request(scope="alpha"), _rebuild_request(scope="beta"))
+    assert merged.scope is None
+    assert set(merged.configured_scopes or {}) == {"alpha", "beta"}
+    assert merged.entity_boost_hyphen == 1.3
+
+
+async def _wait_until(predicate, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("timed out waiting for rebuild-gate state")
+        await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_leader_does_not_drop_waiter_follow_up() -> None:
+    """A cancelled runner used to store CancelledError and re-raise it to waiters.
+
+    ``commit`` only catches ``Exception``, so that error dropped the pending
+    union. The waiter must run the union instead of seeing the cancellation.
+    """
+    entered = asyncio.Event()
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(request: HintRebuildRequest) -> dict[str, str]:
+        calls.append(request)
+        if len(calls) == 1:
+            entered.set()
+            await asyncio.Event().wait()
+        return {name: "hint" for name in (request.configured_scopes or {})}
+
+    gate = HintRebuildGate()
+    leader = asyncio.create_task(gate.run(_rebuild_request(scope="alpha"), worker))
+    await entered.wait()
+    follower = asyncio.create_task(gate.run(_rebuild_request(scope="beta"), worker))
+    await _wait_until(lambda: gate._dirty and gate._pending is not None)
+    leader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await leader
+    result = await asyncio.wait_for(follower, timeout=2)
+    assert set(result) == {"alpha", "beta"}
+    assert len(calls) == 2
+    assert calls[1].scope is None
+    assert set(calls[1].configured_scopes or {}) == {"alpha", "beta"}
+    assert gate._error is None
+
+
+@pytest.mark.asyncio
+async def test_unequal_boosts_and_blocklists_run_separately() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(request: HintRebuildRequest) -> dict[str, str]:
+        calls.append(request)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return {"alpha": "hint"}
+
+    gate = HintRebuildGate()
+    first = _rebuild_request()
+    second = _rebuild_request(
+        entity_boost_hyphen=9.0,
+        extra_blocklist=frozenset({"custom"}),
+    )
+    leader = asyncio.create_task(gate.run(first, worker))
+    await entered.wait()
+    follower = asyncio.create_task(gate.run(second, worker))
+    await _wait_until(lambda: bool(gate._cond and gate._cond._waiters))  # type: ignore[attr-defined]
+    assert len(calls) == 1
+    assert gate._pending is None
+    release.set()
+    await asyncio.wait_for(asyncio.gather(leader, follower), timeout=2)
+    assert [call.entity_boost_hyphen for call in calls] == [1.3, 9.0]
+    assert calls[0].extra_blocklist == frozenset()
+    assert calls[1].extra_blocklist == frozenset({"custom"})
+
+
+@pytest.mark.asyncio
+async def test_column_and_prefix_scans_are_not_merged() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(request: HintRebuildRequest) -> dict[str, str]:
+        calls.append(request)
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+        return {"alpha": "hint"}
+
+    gate = HintRebuildGate()
+    column = _rebuild_request(scope=None, configured_scopes=None)
+    prefix = _rebuild_request(scope="alpha")
+    leader = asyncio.create_task(gate.run(column, worker))
+    await entered.wait()
+    follower = asyncio.create_task(gate.run(prefix, worker))
+    await _wait_until(lambda: bool(gate._cond and gate._cond._waiters))  # type: ignore[attr-defined]
+    assert gate._pending is None
+    release.set()
+    await asyncio.wait_for(asyncio.gather(leader, follower), timeout=2)
+    assert len(calls) == 2
+    assert calls[0].configured_scopes is None
+    assert calls[0].scope is None
+    assert calls[1].configured_scopes is not None
+    assert calls[1].scope == "alpha"
