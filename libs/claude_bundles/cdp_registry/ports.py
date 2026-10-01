@@ -35,16 +35,34 @@ def _used_suffixes(active: dict[str, dict[str, Any]]) -> set[str]:
     }
 
 
+def _pin_port_block() -> set[int]:
+    """Standing-pin ports. Unreadable ``pins.toml`` contributes nothing."""
+    try:
+        from claude_bundles.x_display_capacity import pin_ports
+    except Exception:
+        return set()
+    try:
+        return pin_ports()
+    except Exception:
+        return set()
+
+
 def select_free_registry_port(
     is_listening: _ListenFn,
     *,
     exclude: set[int],
     port_range: range | None = None,
 ) -> int:
-    """Return the first port in *port_range* that is not excluded and not listening."""
+    """Return the first port in *port_range* that is not excluded and not listening.
+
+    Ports named in ``pins.toml`` are excluded even when nothing is listening,
+    so a pin that is momentarily down cannot lose its port to a mint.
+    """
     port_range = registry_package().PORT_RANGE if port_range is None else port_range
+    blocked = set(exclude)
+    blocked |= _pin_port_block()
     for port in port_range:
-        if port in exclude:
+        if port in blocked:
             continue
         if not is_listening(port):
             return port

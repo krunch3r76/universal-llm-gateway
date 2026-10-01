@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,10 @@ _X_EXHAUSTED_SCOPE = (
     "True when observed headroom is below one multiprocess Chrome budget; "
     "None when x_clients is unobserved"
 )
-_X_MAX_SCOPE = "configured X MaxClients (CDP_X_MAX_CLIENTS when set, else default 64)"
+_X_MAX_SCOPE = (
+    "X MaxClients belief: live Xvfb -maxclients when readable, else "
+    "CDP_X_MAX_CLIENTS, else default 64; min(live, env) when both are set"
+)
 _X_BUDGET_SCOPE = "unix clients reserved for one multiprocess Chrome (CDP_X_CHROME_CLIENT_BUDGET, default 8)"
 
 
@@ -101,14 +105,171 @@ def _cdp_display() -> str:
     return cdp_display()
 
 
-def _max_clients() -> int:
-    raw = os.environ.get("CDP_X_MAX_CLIENTS", "").strip()
-    if raw:
+_MAXCLIENTS_CACHE_TTL_S = 5.0
+# display -> (id(reader), monotonic, parsed maxclients or None)
+_MAXCLIENTS_CACHE: dict[str, tuple[int, float, int | None]] = {}
+
+
+def _proc_cmdlines(proc_root: Path | None = None) -> list[list[str]] | None:
+    """Argv lists under ``/proc/<pid>/cmdline``. None when procfs cannot be listed.
+
+    A single unreadable pid is skipped. Tests monkeypatch this the same way
+    ``count_x11_unix_clients`` takes an injected unix table.
+    """
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return None
+    found: list[list[str]] = []
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        parts = [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+        if parts:
+            found.append(parts)
+    return found
+
+
+def _argv_maxclients(argv: list[str]) -> int | None:
+    for index, part in enumerate(argv):
+        if part != "-maxclients" or index + 1 >= len(argv):
+            continue
         with contextlib.suppress(ValueError):
-            value = int(raw)
+            value = int(argv[index + 1])
             if value > 0:
                 return value
+        return None
+    return None
+
+
+def _maxclients_in_cmdlines(cmdlines: list[list[str]] | None, display: str) -> int | None:
+    """Parse ``-maxclients`` from an ``Xvfb :<N>`` argv. None if absent or unreadable."""
+    if cmdlines is None:
+        return None
+    from claude_bundles.cdp_lane import _display_key
+
+    try:
+        want = _display_key(display)
+    except (TypeError, ValueError):
+        return None
+    for argv in cmdlines:
+        if not any(Path(part).name == "Xvfb" for part in argv):
+            continue
+        shown = next(
+            (part for part in argv if part.startswith(":") and len(part) > 1),
+            None,
+        )
+        if shown is None:
+            continue
+        try:
+            if _display_key(shown) != want:
+                continue
+        except (TypeError, ValueError):
+            continue
+        return _argv_maxclients(argv)
+    return None
+
+
+def _live_maxclients(display: str) -> int | None:
+    """Live Xvfb ``-maxclients`` for *display*, cached a few seconds per display."""
+    reader = _proc_cmdlines
+    now = time.monotonic()
+    hit = _MAXCLIENTS_CACHE.get(display)
+    if hit is not None and hit[0] == id(reader) and now - hit[1] < _MAXCLIENTS_CACHE_TTL_S:
+        return hit[2]
+    try:
+        cmdlines = reader()
+    except OSError:
+        cmdlines = None
+    value = _maxclients_in_cmdlines(cmdlines, display)
+    _MAXCLIENTS_CACHE[display] = (id(reader), now, value)
+    return value
+
+
+def _env_maxclients() -> int | None:
+    raw = os.environ.get("CDP_X_MAX_CLIENTS", "").strip()
+    if not raw:
+        return None
+    with contextlib.suppress(ValueError):
+        value = int(raw)
+        if value > 0:
+            return value
+    return None
+
+
+def _max_clients(display: str) -> int:
+    """Belief for *display*: min(live, env) when both exist, else live, else env, else 64.
+
+    Unreadable procfs falls through to the env / default. Does not raise.
+    """
+    live = _live_maxclients(display)
+    env = _env_maxclients()
+    if live is not None and env is not None:
+        return min(live, env)
+    if live is not None:
+        return live
+    if env is not None:
+        return env
     return X_MAX_CLIENTS_DEFAULT
+
+
+def _load_pin_lanes() -> dict[str, dict]:
+    """Lanes from ``pins.toml`` via ``standing_pins._load_pins``.
+
+    Missing path, unset ``ULG_REPO``, or malformed TOML yields ``{}`` so mint
+    does not raise. Callers then reserve nothing and do not hide pin ports.
+    """
+    try:
+        from cdp_ask.standing_pins import _load_pins
+
+        loaded = _load_pins()
+    except Exception:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {str(key): row for key, row in loaded.items() if isinstance(row, dict)}
+
+
+def pin_lanes_on_display(display: str, lanes: Mapping[str, Any] | None = None) -> int:
+    """Pin lanes whose ``display`` matches *display*. One Chrome budget each."""
+    from claude_bundles.cdp_lane import _display_key
+
+    rows = _load_pin_lanes() if lanes is None else lanes
+    try:
+        want = _display_key(display)
+    except (TypeError, ValueError):
+        return 0
+    count = 0
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        raw = row.get("display")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            if _display_key(raw) == want:
+                count += 1
+        except (TypeError, ValueError):
+            continue
+    return count
+
+
+def pin_ports(lanes: Mapping[str, Any] | None = None) -> set[int]:
+    """TCP ports named in ``pins.toml``. Empty when the file cannot be read."""
+    rows = _load_pin_lanes() if lanes is None else lanes
+    ports: set[int] = set()
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        port = row.get("port")
+        if isinstance(port, int) and not isinstance(port, bool):
+            ports.add(port)
+    return ports
 
 
 def _chrome_budget() -> int:
@@ -135,7 +296,7 @@ def probe_x_display(
     ``/proc/net/unix``. Unreadable procfs yields ``x_exhausted=None`` (unobserved).
     """
     resolved_display = display if display is not None else _cdp_display()
-    cap = _max_clients() if max_clients is None else max_clients
+    cap = _max_clients(resolved_display) if max_clients is None else max_clients
     budget = _chrome_budget() if chrome_budget is None else chrome_budget
     if count is None:
         observed = count_x11_unix_clients(resolved_display, proc_net_unix=proc_net_unix)
@@ -391,9 +552,14 @@ def require_chrome_headroom(
 
     *reserved_chromes* counts rows already ``allocating`` so two concurrent
     mints cannot both pass a check that only saw the current process table.
-    Values below 0 are treated as 0. ``reserved_chromes == 0`` keeps today's
-    ``headroom < budget`` refusal. Unobserved procfs (``x_exhausted is None``)
-    does not refuse, including when *reserved_chromes* is non-zero.
+    Pin lanes on this display (``pins.toml``) add one Chrome budget each on
+    top of that, so a mint cannot spend the pins' own room. Values below 0
+    are treated as 0.
+
+    Refuse when ``headroom - (reserved_chromes + pin_lanes) * budget < budget``.
+    Equality admits: the last full budget is enough for one mint. Unobserved
+    procfs (``x_exhausted is None``) does not refuse, including when reserves
+    are non-zero. Missing or malformed ``pins.toml`` reserves zero pins.
     """
     snap = probe_x_display(
         display=display,
@@ -405,6 +571,7 @@ def require_chrome_headroom(
     if snap["x_exhausted"] is None:
         return snap
     reserved = reserved_chromes if reserved_chromes > 0 else 0
+    reserved += pin_lanes_on_display(str(snap["x_display"]))
     headroom = snap["x_headroom"]
     budget = int(snap["x_chrome_client_budget"])
     short = isinstance(headroom, int) and headroom - reserved * budget < budget

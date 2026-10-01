@@ -200,9 +200,65 @@ def test_wire_fields_qualify_numerics() -> None:
 def test_max_clients_default_64_for_desktop_colon_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """No live argv and no env → default 64, including desktop ``:1``."""
     monkeypatch.delenv("CDP_X_MAX_CLIENTS", raising=False)
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [],
+    )
     snap = probe_x_display(display=":1", count=10)
     assert snap["x_max_clients"] == 64
+
+
+def test_max_clients_belief_is_min_of_live_argv_and_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Env 256 cannot outvote a live Xvfb that was started at 64."""
+    monkeypatch.setenv("CDP_X_MAX_CLIENTS", "256")
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [["/usr/bin/Xvfb", ":2", "-maxclients", "64"]],
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 64
+    monkeypatch.setenv("CDP_X_MAX_CLIENTS", "32")
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [["Xvfb", ":2", "-maxclients", "256"]],
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 32
+
+
+def test_max_clients_belief_uses_live_argv_when_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CDP_X_MAX_CLIENTS", raising=False)
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [["Xvfb", ":2", "-auth", "/tmp/x", "-maxclients", "256"]],
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 256
+    assert probe_x_display(display=":3", count=0)["x_max_clients"] == 64
+
+
+def test_max_clients_belief_env_when_procfs_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CDP_X_MAX_CLIENTS", "128")
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: None,
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 128
+
+
+def test_proc_cmdlines_unreadable_returns_none(tmp_path: Path) -> None:
+    from claude_bundles.x_display_capacity import (
+        _maxclients_in_cmdlines,
+        _proc_cmdlines,
+    )
+
+    assert _proc_cmdlines(tmp_path / "missing-proc") is None
+    assert _maxclients_in_cmdlines(None, ":2") is None
 
 
 def test_wire_fields_x_max_scope_no_display_pin() -> None:
@@ -375,6 +431,7 @@ def test_admit_display_falls_over_and_launch_env_uses_admitted_display(
         return _Proc()
 
     monkeypatch.setattr(cdp_lane, "_seed_profile", lambda _profile: None)
+    monkeypatch.setattr(cdp_lane, "_seed_lane_session", lambda _port, _pid: None)
     monkeypatch.setattr(cdp_lane, "is_listening", lambda _port: True)
     monkeypatch.setattr(cdp_lane.subprocess, "Popen", _popen)
     monkeypatch.setattr(
@@ -422,8 +479,15 @@ def test_single_candidate_matches_cdp_display_admission(
 
     monkeypatch.delenv("CDP_DISPLAYS", raising=False)
     monkeypatch.setenv("CDP_DISPLAY", ":2")
-    assert cdp_display_candidates() == [cdp_display()]
     assert cdp_display() == ":2"
+    assert cdp_display_candidates() == [":2", ":3"]
+    monkeypatch.setenv("CDP_DISPLAY", ":3")
+    assert cdp_display_candidates() == [":3", ":2"]
+    monkeypatch.setenv("CDP_DISPLAY", ":1")
+    assert cdp_display_candidates() == [":1"]
+    monkeypatch.setenv("CDP_DISPLAY", ":2")
+    monkeypatch.setenv("CDP_DISPLAYS", ":2")
+    assert cdp_display_candidates() == [":2"]
     admitted = admit_display(
         [":2"],
         {},
@@ -453,3 +517,44 @@ def test_admit_display_is_sticky_not_least_loaded() -> None:
         auth_resolves=lambda _display: True,
     )
     assert admitted == ":2"
+
+
+def test_admit_display_reserves_one_budget_per_pin_on_that_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refuse iff ``headroom - pin_count * budget < budget``.
+
+    Four ``:3`` pins at budget 8 consume 32. Headroom 40 leaves 8, and
+    ``8 < 8`` is false, so the mint is admitted. Headroom 39 leaves 7 and
+    is refused. A ``:2`` pin in the same table is not charged to ``:3``.
+    """
+    from claude_bundles.x_display_capacity import admit_display
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._load_pin_lanes",
+        lambda: {
+            "fleet": {"display": ":2", "port": 9222},
+            "messages": {"display": ":3", "port": 9250},
+            "ess": {"display": ":3", "port": 9260},
+            "gopuff": {"display": ":3", "port": 9270},
+            "calendar": {"display": ":3", "port": 9290},
+        },
+    )
+    admitted = admit_display(
+        [":3"],
+        {},
+        counts={":3": 24},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    assert admitted == ":3"
+    with pytest.raises(XDisplayCapacityError):
+        admit_display(
+            [":3"],
+            {},
+            counts={":3": 25},
+            max_clients=64,
+            chrome_budget=8,
+            auth_resolves=lambda _display: True,
+        )

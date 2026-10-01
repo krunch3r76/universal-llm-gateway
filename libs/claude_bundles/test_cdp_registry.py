@@ -13,6 +13,7 @@ import pytest
 
 from claude_bundles import cdp_orphans
 from claude_bundles import cdp_registry as reg
+from claude_bundles.x_display_capacity import _load_pin_lanes as _load_pin_lanes_real
 
 pytestmark = pytest.mark.offline
 
@@ -54,6 +55,7 @@ def _noop_launch(port: int, profile: Path) -> int:
 def test_register_lane_records_display(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("CDP_DISPLAYS", raising=False)
     monkeypatch.setenv("CDP_DISPLAY", ":7")
     r = reg.register_lane(
         holder="display-test",
@@ -409,6 +411,39 @@ def test_second_driver_attach_fails_closed(isolated_registry: Path) -> None:
     assert len(errors) == 1
     assert isinstance(errors[0], reg.RegistryBusyError)
     reg._HELD_LOCKS[r.registration_id] = held_fd
+
+
+def test_select_free_never_returns_a_free_pin_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pin port that is not listening is still withheld. Missing pins do not withhold it."""
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._load_pin_lanes",
+        lambda: {"messages": {"display": ":3", "port": 9250}},
+    )
+    port = reg.select_free_registry_port(
+        lambda _port: False,
+        exclude=set(),
+        port_range=range(9250, 9253),
+    )
+    assert port == 9251
+    assert port != 9250
+
+    monkeypatch.setenv("ULG_REPO", "/tmp/cdp-fallover-no-such-repo")
+    assert _load_pin_lanes_real() == {}
+    monkeypatch.setattr(
+        "cdp_ask.standing_pins._load_pins",
+        lambda: (_ for _ in ()).throw(ValueError("malformed pins")),
+    )
+    assert _load_pin_lanes_real() == {}
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._load_pin_lanes",
+        _load_pin_lanes_real,
+    )
+    open_port = reg.select_free_registry_port(
+        lambda _port: False,
+        exclude=set(),
+        port_range=range(9250, 9253),
+    )
+    assert open_port == 9250
 
 
 def test_select_free_skips_excluded_and_listening() -> None:

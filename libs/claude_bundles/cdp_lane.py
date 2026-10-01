@@ -115,17 +115,35 @@ def cdp_display(display: str | None = None) -> str:
     return _DEFAULT_DISPLAY
 
 
+# Jupiter runs a pair of Xvfb seats. Unset CDP_DISPLAYS falls over to the other.
+_JUPITER_DISPLAY_PAIR = (":2", ":3")
+
+
+def _jupiter_partner(primary: str) -> str | None:
+    if primary == _JUPITER_DISPLAY_PAIR[0]:
+        return _JUPITER_DISPLAY_PAIR[1]
+    if primary == _JUPITER_DISPLAY_PAIR[1]:
+        return _JUPITER_DISPLAY_PAIR[0]
+    return None
+
+
 def cdp_display_candidates() -> list[str]:
     """Ordered mint candidates. First is today's ``cdp_display()``.
 
-    Remaining entries come from ``CDP_DISPLAYS`` (comma list), the single
-    source. Unset ``CDP_DISPLAYS`` yields ``[cdp_display()]`` so a
-    single-display host is unchanged. Not sourced from ``standing_pins``.
+    Explicit ``CDP_DISPLAYS`` (comma list) is authoritative: it is appended
+    after the primary, de-duplicated, and the Jupiter partner is not added.
+
+    When ``CDP_DISPLAYS`` is unset, a primary on the Jupiter pair yields both
+    seats — ``:2`` becomes ``[":2", ":3"]`` and ``:3`` becomes ``[":3", ":2"]``.
+    Any other primary stays ``[primary]``. Not sourced from ``standing_pins``.
     """
     primary = _display_key(cdp_display())
     raw = os.environ.get("CDP_DISPLAYS", "").strip()
     if not raw:
-        return [primary]
+        partner = _jupiter_partner(primary)
+        if partner is None:
+            return [primary]
+        return [primary, partner]
     ordered = [primary]
     seen = {primary}
     for part in raw.split(","):
