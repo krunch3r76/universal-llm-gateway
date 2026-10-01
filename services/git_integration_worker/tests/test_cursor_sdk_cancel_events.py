@@ -6,11 +6,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.git_integration_worker.cursor_auto import supersede as auto_supersede
-from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
-from services.git_integration_worker.cursor_auto.supersede import (
-    supersede_same_thread_inflight,
-)
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_supersede import (
     escalate_supersede_abort,
@@ -127,23 +122,6 @@ def test_escalate_supersede_abort_emits(emitted, monkeypatch):
     assert emitted[0].payload["superseded_by"] == "job-new"
 
 
-def test_pre_register_live_run_supersede_emits(emitted):
-    import asyncio
-
-    queue = AutoJobQueue()
-    old = _enqueue(queue, thread_id="9004", turn_number=1)
-    assert queue.claim_next().job_id == old.job_id
-    new = _enqueue(queue, thread_id="9004", turn_number=2)
-
-    evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue))
-    auto_supersede._PENDING.clear()
-
-    assert evidence["method"] == auto_supersede.PRE_REGISTER_LIVE_RUN
-    assert len(emitted) == 1
-    assert emitted[0].payload["method"] == "pre_register_live_run"
-    assert emitted[0].payload["terminal_status"] == "displaced_pre_live"
-    assert emitted[0].payload["dispatch_id"] == old.job_id
-    assert emitted[0].payload["superseded_by"] == new.job_id
 
 
 def test_operator_cancel_method_accepted(emitted) -> None:

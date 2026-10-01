@@ -7,37 +7,6 @@ from implement_admission.propagation_admit_validation import (
     validate_proof_class,
 )
 from implement_admission.propagation_row import rows_from_parsed_block
-from services.git_integration_worker.cursor_auto.propagate_admission import (
-    admit_propagate_body,
-)
-
-
-def test_mcp_served_artifact_blocked_at_admit_names_legal_classes():
-    body = """\
-TYPE: DIRECTIVE
-contract: propagate
-effects_expected: row persisted
-
-## propagation
-```yaml
-propagation:
-  - service: mcp
-    code_ref: d3e17d54
-    safe_window: standalone_ok
-    proof_class: served_artifact
-```
-"""
-    admission = admit_propagate_body(body)
-    assert not admission.approved
-    assert admission.error is not None
-    assert admission.error["reason"] == "propagation_block_invalid"
-    assert any(
-        "invalid_proof_class:served_artifact" in flag for flag in admission.flags
-    )
-    assert any(
-        "legal for mcp: client_visible, process_live" in flag
-        for flag in admission.flags
-    )
 
 
 def test_rag_served_artifact_admits():

@@ -214,23 +214,12 @@ def _threads_dispatch(
 def _enrich_with_cursor_auto_job(
     detail: dict[str, Any], *, thread: str
 ) -> dict[str, Any]:
-    """Attach live non-terminal cursor-auto phase onto an already-fetched thread.
+    """Return the thread unchanged.
 
-    Load-bearing delivery for claimed-gate observability: a seat that already
-    calls ``thread_get`` before acting must see phase without a second call.
-    Worker unreachable → omit the field (bus metadata still returned).
+    The Auto job-state enrich left with the deleted worker client. ``thread``
+    is accepted so callers keep the same signature.
     """
-    try:
-        from .request_worker_client import fetch_job_state
-
-        probe = fetch_job_state(thread_id=str(thread), include_terminal=False)
-    except Exception as exc:  # noqa: BLE001 — never fail thread_get on Auto probe
-        logger.debug("cursor_auto_job enrich skipped thread=%s: %s", thread, exc)
-        return detail
-    job = probe.get("job") if isinstance(probe, dict) else None
-    if probe.get("found") and isinstance(job, dict):
-        detail = dict(detail)
-        detail["cursor_auto_job"] = job
+    del thread
     return detail
 
 
@@ -276,7 +265,7 @@ def _job_state_dispatch(
     job_id: str = "",
     include_terminal: bool = False,
 ) -> dict[str, Any]:
-    """Keyed cursor-auto job-state probe (same observer view as thread_get)."""
+    """Job-state observer. The Auto worker route is gone; use team_dispatch."""
     lane = str(thread or thread_id or "")
     if isinstance(thread, int) and not lane:
         lane = str(thread)
@@ -285,13 +274,14 @@ def _job_state_dispatch(
             "error": "job_state requires: thread/thread_id and/or job_id",
             "reason": "missing_key",
         }
-    from .request_worker_client import fetch_job_state
-
-    return fetch_job_state(
-        thread_id=lane or None,
-        job_id=job_id or None,
-        include_terminal=bool(include_terminal),
-    )
+    return {
+        "found": False,
+        "error": "auto_job_state_removed",
+        "reason": "use team_dispatch",
+        "thread": lane or None,
+        "job_id": job_id or None,
+        "include_terminal": bool(include_terminal),
+    }
 
 
 def _create_thread_dispatch(

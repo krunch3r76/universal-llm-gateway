@@ -2,15 +2,8 @@
 
 from __future__ import annotations
 
-from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import default_variant, supported_knobs
-from effort_vocabulary import AUTO_EFFORT
 
-from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
-from services.git_integration_worker.cursor_auto.wire_map import (
-    resolve_desired_effort,
-    resolve_desired_model,
-)
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
@@ -49,88 +42,19 @@ def test_gpt_omit_path_context_272k() -> None:
         assert default_variant(model)["context"] == "272k"
 
 
-def test_compose_investigate_sonnet5_knobs() -> None:
-    knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/claude-sonnet-5"},
-        resolve_desired_effort(None, contract="investigate"),
-        contract="investigate",
-    )
-    assert knobs == {
-        "effort": "high",
-        "thinking": "true",
-        "context": "1m",
-    }
 
 
-def test_compose_confer_grok_high_fast_true() -> None:
-    knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.7"},
-        resolve_desired_effort(None, contract="confer"),
-        contract="confer",
-    )
-    assert knobs == {"effort": "high", "fast": "true"}
 
 
-def test_omit_effort_answer_is_high() -> None:
-    effort = resolve_desired_effort(None, contract="answer")
-    assert effort["resolved_effort"] == "high"
-    assert effort["requested"] == AUTO_EFFORT
-    assert effort["clamped"] is False
 
 
-def test_auto_sentinel_equals_omit() -> None:
-    keys = tuple(CANONICAL_CONTRACTS) + ("unknown",)
-    for contract in keys:
-        baseline = resolve_desired_effort(None, contract=contract)
-        assert resolve_desired_effort("auto", contract=contract) == baseline
-        assert resolve_desired_effort("", contract=contract) == baseline
-        assert resolve_desired_effort("AUTO", contract=contract) == baseline
-        assert resolve_desired_effort(" auto ", contract=contract) == baseline
 
 
-def test_omit_effort_residual_contracts_high() -> None:
-    for contract in ("verify", "execute", "propagate"):
-        effort = resolve_desired_effort(None, contract=contract)
-        assert effort["resolved_effort"] == "high"
-        assert effort["requested"] == AUTO_EFFORT
 
 
-def test_omit_effort_implement_mechanical_medium_judgment_high() -> None:
-    mechanical = resolve_desired_effort(None, contract="implement")
-    assert mechanical["resolved_effort"] == "medium"
-    judgment = resolve_desired_effort(
-        None, contract="implement", handoff_contract="none"
-    )
-    assert judgment["resolved_effort"] == "high"
-    pure = resolve_desired_effort(
-        None, contract="implement", handoff_contract="pure-mechanical"
-    )
-    assert pure["resolved_effort"] == "medium"
 
 
-def test_explicit_medium_honored_on_judgment_contract() -> None:
-    effort = resolve_desired_effort("medium", contract="investigate")
-    assert effort["resolved_effort"] == "medium"
-    assert effort["requested"] == "medium"
-    assert effort["notes"] == "honored"
 
 
-def test_compose_investigate_auto_is_grok_high_fast() -> None:
-    model = resolve_desired_model("auto", contract="investigate")
-    assert model["resolved_model_id"] == "cursor/grok-4.7"
-    knobs = compose_model_knobs(
-        model,
-        resolve_desired_effort("auto", contract="investigate"),
-        contract="investigate",
-    )
-    assert knobs == {"effort": "high", "fast": "true"}
 
 
-def test_compose_composer_omit_path_fast_false() -> None:
-    """Implement omit ⇒ medium; Composer has no effort knob; fast=false for cost."""
-    knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/composer-2.5"},
-        resolve_desired_effort(None, contract="implement"),
-        contract="implement",
-    )
-    assert knobs == {"fast": "false"}

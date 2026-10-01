@@ -81,26 +81,8 @@ def test_wire_map_contract_literal_lists_canonical_names() -> None:
     assert "hop" not in block
 
 
-def test_consumer_flag_sets_agree_with_records() -> None:
-    from services.git_integration_worker.cursor_auto.directive import (
-        NESTED_SCOPE_CONTRACTS,
-        VISION_REQUIRED_CONTRACTS,
-    )
-    from services.git_integration_worker.cursor_auto.episode_briefing import (
-        _CODE_WORK_CONTRACTS,
-    )
-    from services.git_integration_worker.cursor_auto.wire_map import _CONTRACTS
-
-    assert NESTED_SCOPE_CONTRACTS == nested_scope_contracts()
-    assert VISION_REQUIRED_CONTRACTS == vision_required_contracts()
-    assert _CODE_WORK_CONTRACTS == code_work_contracts()
-    assert _CONTRACTS == frozenset(CANONICAL_CONTRACTS)
 
 
-def test_handler_nested_contracts_are_nested_scope_plus_confer() -> None:
-    from services.git_integration_worker.cursor_auto.handler import _NESTED_CONTRACTS
-
-    assert _NESTED_CONTRACTS == nested_scope_contracts() | {"confer", "ask", "conductor"}
 
 
 def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None:
@@ -113,14 +95,3 @@ def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None
     assert stale not in disclosure
 
 
-def test_disposition_hints_cover_every_canonical_contract() -> None:
-    from services.git_integration_worker.cursor_auto.wire_map import (
-        resolve_contract_disposition,
-    )
-
-    hinted = {
-        name: resolve_contract_disposition(name)["disposition_hint"]
-        for name in CANONICAL_CONTRACTS
-    }
-    assert set(hinted) == set(CANONICAL_CONTRACTS)
-    assert all(hinted.values())

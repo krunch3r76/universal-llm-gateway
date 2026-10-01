@@ -5,10 +5,8 @@ turn write. Callers (``request.py``, ``hop.py``) attach these onto an otherwise
 successful send so the lane tag survives and the poller sees ``producer=none``.
 
 Also owns the ``job_admission`` projection for the paths that never reach the
-admit ladder at all. GIW's ``cursor_auto.admission_verdict`` is the authority
-for a real verdict; MCP cannot import it across the service boundary
-(``[universal:mcp]``), and on these paths there is no verdict to relay — the
-request never got far enough to create a job.
+admit ladder at all. There is no Auto verdict to relay on these paths — the
+request never created a job.
 """
 
 from __future__ import annotations
@@ -16,8 +14,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-#: Mirrors ``cursor_auto.admission_verdict.ADMISSION_AUTHORITY``.
-_ADMISSION_AUTHORITY = "cursor_auto.admit_gates.blocking_admit_gate"
+#: Retired with the Auto package. Callers that still project an unreached
+#: admission record this constant; it is not a live arm.
+_ADMISSION_AUTHORITY = "admit_gates.blocking_admit_gate"
 _ADMISSION_RECOVERY = "agent_bus_read(job_state)"
 
 

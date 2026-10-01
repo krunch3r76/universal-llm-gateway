@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tail house watcher logs and dispatch cursor-auto investigate on 10223.
+"""Tail house watcher logs and post a bus turn on thread 10223.
 
-No cursor-sdk dispatch — operator bind (house-orchestration-steer).
+Code work is team_dispatch. This watcher does not enqueue.
 
 Arm:
   scripts/watch-supervise.sh start --label house-10223-relay --no-page -- \\
@@ -119,21 +119,15 @@ def _emit_dispatch(
 
     turn_obj = auto_result.get("turn") or {}
     turn_n = turn_obj.get("turn_number")
-    handler = auto_result.get("auto_handler_status")
-    admission = auto_result.get("job_admission") or {}
-    print(
-        f"relay_complete turn={turn_n} auto_handler_status={handler} "
-        f"job_admission={admission.get('outcome')}"
-        f"{'/' + str(admission.get('reason')) if admission.get('reason') else ''}",
-        flush=True,
-    )
+    print(f"relay_complete turn={turn_n} request_id={req_id}", flush=True)
 
     update_body = "\n".join(
         [
             f"**UPDATE** (watcher `{label}`)",
             "",
             f"Trigger: `{trigger_line.strip()}`",
-            f"cursor-auto: turn={turn_n} handler={handler} request_id={req_id}",
+            f"bus turn={turn_n} request_id={req_id}",
+            "Code work is team_dispatch.",
         ]
     )
     try:

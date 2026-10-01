@@ -30,11 +30,6 @@ from services.git_integration_worker.tests.harness_g5_f_collision_cases import (
     provoke_f4,
     provoke_f5,
 )
-from services.git_integration_worker.tests.harness_g5_f_collision_gate_cases import (  # noqa: E402
-    provoke_f6a,
-    provoke_f6b,
-    provoke_f7,
-)
 
 
 def main() -> int:
@@ -45,9 +40,6 @@ def main() -> int:
         ("F-2", provoke_f2),
         ("F-3", provoke_f3),
         ("F-4", provoke_f4),
-        ("F-6a", provoke_f6a),
-        ("F-6b", provoke_f6b),
-        ("F-7", provoke_f7),
     ]
     verdicts: dict[str, str] = {}
     worst = 0

@@ -201,6 +201,13 @@ def register_tool_search_tool(
         Pass keywords; default limit=5. Examples:
           tool_search(query="raw sql")
           tool_search(query="friction")
+        «verb-orientation:tool_search»
+        Depth: `agent_skill:dispatch-shape`.
+        cursor_only (fs, not on the Customize loader):
+        - `mcp-surface-change` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/mcp-surface-change/SKILL.md")
+        - `add-mcp-tool` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/add-mcp-tool/SKILL.md")
+        - `pipeline-substrate-capabilities` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/pipeline-substrate-capabilities/SKILL.md")
+        «/verb-orientation:tool_search»
         """
         return execute_tool_search(query, limit=limit, manifest=manifest)
 

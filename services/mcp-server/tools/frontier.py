@@ -479,7 +479,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **Tool surface:** `mcp` None = per-model default; `False` = inline-only MCP-class. `server_tools` None = all card built-ins; `False` suppress (provider-neutral no-op). xAI: no client MCP. Anthropic: remote connector default when MCP on. `knob_resolution` reports reasoning knob outcome; no default parity claim.
 
-        Depth: `agent_skill:dispatch-workflow` · `agent_skill:consult-routing` · `agent_skill:handoff-packet-authoring` · `agent_skill:conductor`.
+        «verb-orientation:team_dispatch»
+        Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:directive-authoring-standard` · `agent_skill:dispatch-shape` · `agent_skill:consult-posture`.
+        cursor_only (fs, not on the Customize loader):
+        - `dispatch-workflow` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/dispatch-workflow/SKILL.md")
+        - `consult-routing` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md")
+        - `handoff-packet-authoring` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/handoff-packet-authoring/SKILL.md")
+        - `conductor` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/conductor/SKILL.md")
+        - `work-item-seed-path` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/work-item-seed-path/SKILL.md")
+        - `path-sim` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/path-sim/SKILL.md")
+        - `claude-ai-cdp-navigation` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/claude-ai-cdp-navigation/SKILL.md")
+        - `operator-proxy-substrate` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/operator-proxy-substrate/SKILL.md")
+        «/verb-orientation:team_dispatch»
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref

@@ -188,10 +188,9 @@ Binds. Later prose that conflicts with them loses.
 
 ## Seat model (operator 2026-09-11 20:37 PT: "Fable on IDE may not always be practical")
 
-**MCP surfaces (cursor-auto admit):** the attended liaison tab uses **`/mcp/code`**. Code no longer mounts
-the narrow `cursor_request` / `operator_request` tools — repo writes and mechanical work enqueue via
-**`agent_bus(tool="request", to=cursor, …)`** (same GIW admit path). Life Cowork (`/mcp/life`) still mounts
-`cursor_request` for implement/directive lanes because life has no `team_dispatch` generate door.
+**MCP surfaces:** the attended liaison tab uses **`/mcp/code`**. Repo writes and mechanical work
+go through **`team_dispatch`** (`seat=cursor-sdk`, `lane=B`). Life Cowork (`/mcp/life`) still mounts
+`cursor_request` for implement/directive lanes when that surface has no `team_dispatch` generate door.
 
 The liaison mechanics are **model-agnostic** — nothing in the tick loop, digest, resume fence, CHECKPOINT,
 hop, or lock reads the tab model. Pick the IDE tab model in the picker; the discipline that changes is the
@@ -321,7 +320,7 @@ dispatches (`job=implement`, omit `model=`) run **alongside** — they are not F
 | Judgment fork (independent check) | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5.5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
 | Long-context reasoning inside a work tab | `cursor/grok-4.7` (card context `256k`, knob `500k`) | **`cdp/fable`** only when Kaywan asks — never `cursor/claude-*` |
-| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <this tab uuid>` (seals `channel=hop` then keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
+| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <this tab uuid>` (seals `channel=hop` then keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (it does not hop the tab) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
 liaison sends the *wide read* to `cdp/opus-5.5` (`CDP: <trigger> — <why>`, tape cell / CP residue + the decision as

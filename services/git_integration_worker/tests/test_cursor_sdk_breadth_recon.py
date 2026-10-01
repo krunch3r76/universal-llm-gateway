@@ -11,12 +11,6 @@ from implement_admission.closeout_models import (
     SurfaceSection,
 )
 
-from services.git_integration_worker.cursor_auto.closeout_relay_briefing import (
-    finalize_relay_payload,
-)
-from services.git_integration_worker.relay.closeout_relay_common import (
-    CloseoutRelayPayload,
-)
 from services.git_integration_worker.cursor_sdk_breadth_recon import (
     amend_breadth_recon_gaps,
     breadth_recon_deviation,
@@ -140,12 +134,3 @@ def test_amend_breadth_recon_is_advisory_does_not_clamp_status() -> None:
     assert "recon:breadth_explore_not_used" in payload.body
 
 
-def test_finalize_relay_includes_breadth_recon_deviation() -> None:
-    wrapper = json.dumps({"contract": "investigate", "effects_manifest": {}})
-    result = finalize_relay_payload(
-        CloseoutRelayPayload(
-            body="status: complete", status="complete", source="wrapper"
-        ),
-        wrapper_text=wrapper,
-    )
-    assert "recon:breadth_explore_not_used" in result.body

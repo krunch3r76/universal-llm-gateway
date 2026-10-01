@@ -8,6 +8,19 @@ from pathlib import Path
 from implement_admission.closeout_models import observed_process_verification
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
+from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
+    reconcile_structured_with_authored,
+)
+from services.git_integration_worker.cursor_sdk_closeout import (
+    SdkRunOutcome,
+    build_implement_closeout_body,
+)
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
+)
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 from services.git_integration_worker.relay.closeout_plane_probe import (
     annotate_checkpoint_claim_discrepancy,
     annotate_status_claim_discrepancy,
@@ -29,19 +42,6 @@ from services.git_integration_worker.relay.closeout_status_polarity import (
 )
 from services.git_integration_worker.relay.lane_a_status import (
     extract_status_claim,
-)
-from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
-    reconcile_structured_with_authored,
-)
-from services.git_integration_worker.cursor_sdk_closeout import (
-    SdkRunOutcome,
-    build_implement_closeout_body,
-)
-from services.git_integration_worker.cursor_sdk_deliverables import (
-    sidecar_workspaces_ref,
-)
-from services.git_integration_worker.cursor_sdk_stream_capture import (
-    ToolCallObservation,
 )
 
 
@@ -471,22 +471,6 @@ def _sidecar_with_structured_work_json() -> str:
     )
 
 
-def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work() -> (
-    None
-):
-    """6655#2652 live shape — parent ``body_relocated`` stub + sidecar work JSON."""
-    from services.git_integration_worker.cursor_auto.closeout_relay import (
-        select_closeout_relay_payload,
-    )
-
-    payload = select_closeout_relay_payload(
-        sdk_body=_PARENT_RELOCATED_STUB_JSON,
-        sidecar_text=_sidecar_with_structured_work_json(),
-        ledger_status="completed",
-        dispatch_id="auto-91649020500f",
-    )
-    assert payload.source == "section2_sidecar"
-    assert payload.status == "partial:work"
 
 
 def test_resolve_measurement_status_complete_wrapper_does_not_mask_sidecar_work() -> (

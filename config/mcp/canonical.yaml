@@ -1983,10 +1983,9 @@ tools:
     tool: agent_bus_request
     substrate_qualified: user-vortex__agent_bus_request
   fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n\
-    \  ⟹ TurnSendCreated-shaped + auto_handler_status ∈ {auto-handler-live, no-auto-handler,
-    static-pin-refused, enqueue_failed} + job_admission + poll_hint.\n\
-    Injects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write
-    alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\nparent_thread
+    \  ⟹ TurnSendCreated-shaped + poll_hint.\n\
+    Code work is team_dispatch (seat=cursor-sdk or model=cdp/…). ¬ dual-tag lane:life-to-code.\n\
+    parent_thread
     + lane_role are optional birth-binding fields and must be supplied together.\ndesired_model/desired_effort/contract/require_attended?
     are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon;
     execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable
@@ -2096,10 +2095,9 @@ tools:
     tool: cursor_request
     substrate_qualified: user-vortex__cursor_request
   fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped
-    + auto_handler_status ∈ {auto-handler-live, no-auto-handler, static-pin-refused,
-    enqueue_failed} + job_admission + poll_hint.\nDedicated narrow
+    + poll_hint.\nDedicated narrow
     registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\n\
-    Injects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract
+    Code work is team_dispatch (seat=cursor-sdk or model=cdp/…). \ncontract
     ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon|ask. Mutating. Life-only
     callable.\nimplement|investigate DIRECTIVE body requires vision: else admit blocks vision_field_missing
     (pre-model). See agent_skill:cdp-operator-proxy.\n"
@@ -2268,11 +2266,10 @@ tools:
     tool: operator_request
     substrate_qualified: user-vortex__operator_request
   fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped
-    + auto_handler_status ∈ {auto-handler-live, no-auto-handler, static-pin-refused,
-    enqueue_failed} + job_admission + poll_hint.\nRecipient-neutral
+    + poll_hint.\nRecipient-neutral
     approval-gated operator request lane — the operator is a role, not a model.\nparent_thread
-    + lane_role=operator_proxy (both-or-neither) births a parented mission lane.\nInjects
-    lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon.
+    + lane_role=operator_proxy (both-or-neither) births a parented mission lane.\n\
+    Code work is team_dispatch (seat=cursor-sdk or model=cdp/…).\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon.
     Mutating. Life-only callable.\nimplement|investigate DIRECTIVE body requires vision: else
     admit blocks vision_field_missing (pre-model). See agent_skill:mission-operator.\n"
   json_schema:
@@ -2451,14 +2448,12 @@ tools:
   flat_call_shape:
     tool: agent_bus_hop
     substrate_qualified: user-vortex__agent_bus_hop
-  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped + auto_handler_status
-    ∈ {auto-handler-live, no-auto-handler} + job_admission + continuity_hop=true + poll_hint
-    + successor.\n\
-    Authors TYPE: CONTINUITY_HANDOFF via hop_handoff (same author as cadence). Enqueues EnqueueBody.continuity_hop=true
-    — first producer of that wire field.\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS).
+  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped + continuity_hop=true + poll_hint
+    + successor team_dispatch execution_id.\n\
+    Authors TYPE: CONTINUITY_HANDOFF via hop_handoff, then relays op=generate through frontier._relay
+    for a cdp/… successor (default cdp/opus-5).\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS).
     Reports armed, never status:done; successor handle is successor_birth_id on the structural
-    hop body (MCP return is the predecessor's receipt).\nHop-before-healthy degrades (no-auto-handler)
-    rather than arming. Life-callable (mcp_claude). Mutating.\n"
+    hop body (MCP return is the predecessor's receipt).\nLife-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
@@ -2634,7 +2629,7 @@ tools:
     properties:
       id:
         type: string
-        description: "Canonical entity id (e.g. service:cursor-auto). Required unless entity_id=
+        description: "Canonical entity id (e.g. service:git-integration-worker). Required unless entity_id=
           is set."
       entity_id:
         type: string

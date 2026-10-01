@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.queue import reset_queue_for_tests
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
     discharge_discard,
@@ -41,11 +40,9 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("CURSOR_SDK_DISPATCH_ID", raising=False)
     CursorDispatchLedger._instance = None
     reset_occupancy_cache()
-    reset_queue_for_tests(durable=False)
     yield
     CursorDispatchLedger._instance = None
     reset_occupancy_cache()
-    reset_queue_for_tests(durable=False)
 
 
 @pytest.fixture
