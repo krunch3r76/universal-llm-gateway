@@ -157,10 +157,7 @@ def _row_id_in_scoreboard_table(scoreboard_body: str, row_id: str | None) -> boo
 
 
 def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str | None:
-    """Entry gate from scoreboard header, fold, or first OPEN row."""
-    gate = _scoreboard_entry_gate(scoreboard_body)
-    if gate:
-        return gate
+    """Live entry gate: fold first for todo: missions, else header, else first OPEN row."""
     work_key = str(row.get("work_key") or "")
     if work_key.startswith("todo:"):
         slug = work_key.split(":", 1)[1].strip()
@@ -195,6 +192,9 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                     slug,
                     exc,
                 )
+    gate = _scoreboard_entry_gate(scoreboard_body)
+    if gate:
+        return gate
     return _first_open_row_in_scoreboard(scoreboard_body)
 
 
