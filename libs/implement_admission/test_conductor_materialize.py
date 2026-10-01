@@ -176,7 +176,6 @@ def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) ->
     assert "tier table" not in mp.text.lower()
     assert "cursor-model-economics" not in mp.text
     assert ACTIVE.model in mp.text
-    assert "cdp/fable" not in mp.text
     assert "`cursor/grok-4.7`" in mp.text
     assert "`OPEN FORK:`" in mp.text
     assert "score-play" in mp.text
@@ -346,7 +345,6 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     assert "never this worker thread" in mp.text
     assert ACTIVE.model in mp.text
     assert "score-ratify (" + ACTIVE.model in mp.text
-    assert "cdp/fable-5.1" not in mp.text
     assert "A live summoning chat is not a gate." in mp.text
 
 

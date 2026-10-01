@@ -1,9 +1,10 @@
 """One assignment selects the conductor width seat.
 
 G1, G2, G4, G3→G5, path-sim Q, the hop-5 check, and the dispatch-kernel
-width cell read ``ACTIVE``. Restoring the prior Fable seat is editing
-``ACTIVE`` to equal ``RESTORE`` (or ``ACTIVE = RESTORE``). There is no
-second switch, env var, or todo attr.
+width cell read ``ACTIVE``. ``ACTIVE = RESTORE`` ships ``cdp/fable-5.1``.
+Spending Opus again is assigning ``ACTIVE`` a ``ConductorWidthSeat`` with
+``model="cdp/opus-5"`` and ``reasoning_effort="max"``. There is no second
+switch, env var, or todo attr.
 """
 
 from __future__ import annotations
@@ -29,11 +30,8 @@ RESTORE = ConductorWidthSeat(
     reasoning_effort="high",
     effort_when_bind_gates_wave="max",
 )
-ACTIVE = ConductorWidthSeat(
-    model="cdp/opus-5",
-    reasoning_effort="max",
-    effort_when_bind_gates_wave="max",
-)
+# Shipped seat. Assign a different ConductorWidthSeat to spend Opus again.
+ACTIVE = RESTORE
 
 
 def g3_g5_score_ratify_clause(seat: ConductorWidthSeat | None = None) -> str:
