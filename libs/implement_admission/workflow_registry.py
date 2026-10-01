@@ -83,7 +83,7 @@ class WorkflowRegistry:
 
 
 def _valid_models_block_key(bare_id: str) -> bool:
-    return bare_id in CURSOR_MODEL_CAPABILITIES or bare_id == "composer-2.5-fast"
+    return bare_id in CURSOR_MODEL_CAPABILITIES
 
 
 def _workflow_claim_field(entry: Mapping[str, Any]) -> str:
@@ -216,7 +216,7 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
                 bare = bare_id.strip()
                 if not _valid_models_block_key(bare):
                     errors.append(
-                        f"models.{bare} not a known cursor capability or wire id"
+                        f"models.{bare} not a known cursor capability"
                     )
                 if not isinstance(model_entry, dict):
                     errors.append(f"models.{bare} must be a mapping")

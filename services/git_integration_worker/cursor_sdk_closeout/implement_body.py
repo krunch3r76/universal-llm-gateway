@@ -73,7 +73,7 @@ from services.git_integration_worker.cursor_sdk_usage_sidecar import (
 
 from .bus_body_budget import MAX_TURN_BODY_CHARS
 from .closeout_records import SdkRunOutcome
-from .degraded_reasons import _map_closeout_status
+from .degraded_reasons import _map_closeout_status, provider_error_class
 
 
 def build_implement_closeout_body(
@@ -404,6 +404,9 @@ def build_implement_closeout_body(
         payload = closeout.model_dump(mode="json")
         if degraded_reason:
             payload["degraded_reason"] = degraded_reason
+        error_class = provider_error_class(outcome.provider_error or "")
+        if error_class is not None:
+            payload["provider_error_class"] = error_class
         payload["tool_call_count"] = outcome.tool_call_count
         if status_authority_disagreement is not None:
             payload["status_authority_disagreement"] = status_authority_disagreement

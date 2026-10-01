@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from cursor_capabilities import CURSOR_MODEL_CAPABILITIES
+from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, catalog_divergences
 from cursor_sdk.types import (
     ModelParameterDefinition,
     ModelParameterDefinitionValue,
@@ -12,11 +12,12 @@ from cursor_sdk.types import (
     SDKModel,
 )
 
+from services.git_integration_worker import cursor_models as cm_mod
 from services.git_integration_worker.cursor_models import (
     CapabilityDescriptorDrift,
     assert_capability_descriptor_fresh,
     build_model_selection,
-    catalog_divergences,
+    live_admission_error,
     project_live_catalog,
     resolve_cursor,
     validate_knobs,
@@ -177,3 +178,35 @@ def test_assert_capability_descriptor_fresh_raises_on_divergence() -> None:
 )
 def test_assert_capability_descriptor_fresh_live_catalog() -> None:
     assert_capability_descriptor_fresh()
+
+
+def test_card_knob_wire_map_is_single_grok_effort_pair() -> None:
+    assert set(cm_mod._CARD_KNOB_WIRE_ID.keys()) == {("grok-4.7", "effort")}
+    assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
+
+
+def test_live_admission_error_none_when_accepted_values_reordered() -> None:
+    reordered = SDKModel(
+        id="composer-2.5",
+        display_name="composer-2.5",
+        description="composer-2.5",
+        parameters=[
+            ModelParameterDefinition(
+                id="fast",
+                display_name="fast",
+                values=[
+                    ModelParameterDefinitionValue(value="true", display_name="true"),
+                    ModelParameterDefinitionValue(value="false", display_name="false"),
+                ],
+            )
+        ],
+        variants=[
+            ModelVariant(
+                params=[ModelParameterValue(id="fast", value="true")],
+                display_name="default",
+                description="default",
+                is_default=True,
+            )
+        ],
+    )
+    assert live_admission_error("composer-2.5", [reordered]) is None

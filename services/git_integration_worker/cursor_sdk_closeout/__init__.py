@@ -18,6 +18,7 @@ from .degraded_reasons import (
     empty_assistant_turn_reason,
     empty_output_degraded_reason,
     merge_degraded_reasons,
+    provider_error_class,
     provider_error_reason,
 )
 from .deliverable_probe import _files_expected_for_pinning, verify_deliverables
@@ -58,6 +59,7 @@ __all__ = [
     "degraded_implement_reason",
     "empty_output_degraded_reason",
     "empty_assistant_turn_reason",
+    "provider_error_class",
     "provider_error_reason",
     "extract_sdk_git_snapshot",
     "sdk_fs_git_mismatch_reason",

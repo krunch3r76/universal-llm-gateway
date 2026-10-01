@@ -139,6 +139,22 @@ def empty_output_degraded_reason(outcome: SdkRunOutcome) -> str | None:
     return None
 
 
+def provider_error_class(text: str) -> str | None:
+    """Classify provider ``type=status`` ERROR text for closeout and events."""
+    sentence = (text or "").strip()
+    if not sentence:
+        return None
+    if (
+        "Invalid parameters for registry model" in sentence
+        or "AI Model Not Found" in sentence
+    ):
+        return "registry_reject"
+    folded = sentence.casefold()
+    if "usage limit" in folded or "quota" in folded:
+        return "usage_limit"
+    return "unavailable"
+
+
 def provider_error_reason(outcome: SdkRunOutcome) -> str | None:
     """Provider ``type=status`` ERROR text, ahead of a hollow assistant turn.
 

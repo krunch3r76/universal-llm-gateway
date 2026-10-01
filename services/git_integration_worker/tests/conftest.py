@@ -126,6 +126,24 @@ def _pin_isolated_dispatch_ledger_per_test(
 
 
 @pytest.fixture(autouse=True)
+def _cursor_card_probed_at_for_admit_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stamp ``probed_at`` on card entries so admit-path tests stay hermetic."""
+    from dataclasses import replace
+
+    import cursor_capabilities
+    import cursor_capabilities.cursor_capabilities as cap_mod
+
+    stamped: dict[str, cap_mod.ModelCapability] = {}
+    for model_id, cap in cap_mod.CURSOR_MODEL_CAPABILITIES.items():
+        if cap.probed_at is not None or model_id == "claude-sonnet-5-5":
+            stamped[model_id] = cap
+        else:
+            stamped[model_id] = replace(cap, probed_at="test-probe-stamp")
+    monkeypatch.setattr(cap_mod, "CURSOR_MODEL_CAPABILITIES", stamped)
+    monkeypatch.setattr(cursor_capabilities, "CURSOR_MODEL_CAPABILITIES", stamped)
+
+
+@pytest.fixture(autouse=True)
 def _cursor_bus_default_is_test_double(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:

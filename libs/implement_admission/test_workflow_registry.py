@@ -51,6 +51,15 @@ def test_committed_skill_block_is_drift_free() -> None:
     assert verify_workflow_registry_drift(skill) is True
 
 
+def test_valid_models_block_rejects_composer_fast_wire_id() -> None:
+    from cursor_capabilities import canonical_cursor_bare_id
+
+    from implement_admission.workflow_registry import _valid_models_block_key
+
+    assert canonical_cursor_bare_id("cursor/composer-2.5-fast") == "composer-2.5-fast"
+    assert _valid_models_block_key("composer-2.5-fast") is False
+
+
 def test_load_live_registry_slots_and_roaming() -> None:
     reg = load_workflow_registry()
     assert set(reg.workflows) == {
@@ -59,9 +68,7 @@ def test_load_live_registry_slots_and_roaming() -> None:
         "investigate",
         "auto_judgment",
     }
-    assert reg.roaming_bare_models() == frozenset(
-        {"composer-2.5", "composer-2.5-fast", "grok-4.7"}
-    )
+    assert reg.roaming_bare_models() == frozenset({"composer-2.5", "grok-4.7"})
 
 
 def test_parse_raises_on_errors() -> None:

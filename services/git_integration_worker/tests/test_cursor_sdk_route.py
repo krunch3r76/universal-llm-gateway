@@ -202,6 +202,62 @@ def test_dispatch_missing_execution_id_422(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_dispatch_unprobed_model_422_before_launch(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    import cursor_capabilities
+    import cursor_capabilities.cursor_capabilities as cap_mod
+
+    cap = cap_mod.CURSOR_MODEL_CAPABILITIES["composer-2.5"]
+    unprobed = {
+        **cap_mod.CURSOR_MODEL_CAPABILITIES,
+        "composer-2.5": replace(cap, probed_at=None),
+    }
+    monkeypatch.setattr(cap_mod, "CURSOR_MODEL_CAPABILITIES", unprobed)
+    monkeypatch.setattr(cursor_capabilities, "CURSOR_MODEL_CAPABILITIES", unprobed)
+    bridge = MagicMock()
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_sdk.launch_sdk_bridge",
+        bridge,
+    )
+    list_called: list[bool] = []
+
+    def _no_list() -> list[object]:
+        list_called.append(True)
+        return []
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_models.list_live_sdk_models",
+        _no_list,
+    )
+    resp = client.post("/api/v1/cursor/dispatch", json=_dispatch_body())
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["code"] == "CURSOR_MODEL_UNPROBED"
+    assert payload.get("data", {}).get("validation_stage") == "model_registry"
+    bridge.assert_not_called()
+    assert not list_called
+
+
+def test_dispatch_composer_fast_alias_unprobed_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge = MagicMock()
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_sdk.launch_sdk_bridge",
+        bridge,
+    )
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(model="cursor/composer-2.5-fast"),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "CURSOR_MODEL_UNPROBED"
+    bridge.assert_not_called()
+
+
 def test_dispatch_untrusted_model_422(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

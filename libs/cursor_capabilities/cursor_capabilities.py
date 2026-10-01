@@ -49,6 +49,8 @@ class ModelCapability:
     default_variant: Mapping[str, str]
     fixed_params: Mapping[str, str] = field(default_factory=dict)
     instruction_profile: str = "mechanical"
+    # Non-null when a ListModels probe stamped this card entry; admit requires it.
+    probed_at: str | None = None
     # Context window of the served model, when operator-verified. Drives the
     # headless CONTEXT_BUDGET stop. ``None`` means no verified window — callers
     # do not substitute a flat token default.
@@ -94,7 +96,7 @@ def catalog_divergences(
             if live_values is None:
                 errors.append(f"model {model_id!r}: missing knob {knob_name!r}")
                 continue
-            if tuple(live_values) != spec.accepted:
+            if frozenset(live_values) != frozenset(spec.accepted):
                 errors.append(
                     f"model {model_id!r}: knob {knob_name!r} accepted "
                     f"{tuple(live_values)!r} != descriptor {spec.accepted!r}"
@@ -236,6 +238,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": "high",
         },
         instruction_profile="reasoner",
+        probed_at="2026-07-14",
     ),
     # Fable 5.1 (Anthropic launch 2026-09-01, API id claude-fable-5-1) — same
     # knob surface as claude-fable-5; headline $/M unchanged (cache reads only).

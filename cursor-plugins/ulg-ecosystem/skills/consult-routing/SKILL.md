@@ -221,7 +221,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | investigate | cursor-sdk | cursor/grok-4.7 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
-**Roaming bare ids:** `composer-2.5`, `composer-2.5-fast`, `grok-4.7`
+**Roaming bare ids:** `composer-2.5`, `grok-4.7`
 
 **contract_effort** (omit/auto defaults; contract-keyed, not per-workflow):
 

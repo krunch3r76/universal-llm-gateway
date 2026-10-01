@@ -13,7 +13,10 @@ from cursor_capabilities import (
 from fastapi import APIRouter
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_models import project_live_catalog
+from services.git_integration_worker.cursor_models import (
+    list_live_sdk_models,
+    project_live_catalog,
+)
 
 logger = get_logger(__name__)
 
@@ -44,17 +47,10 @@ def _build_catalog_entries(models: list[Any]) -> list[dict[str, Any]]:
     return entries
 
 
-def _list_live_sdk_models() -> list[Any]:
-    """List models via ephemeral bridge — bare ``Client()`` lacks an endpoint."""
-    from cursor_sdk import Cursor
-
-    return Cursor().models.list()
-
-
 @router.get("/catalog", summary="Live Cursor SDK model catalog projection.")
 async def cursor_catalog() -> dict[str, Any]:
     """Project live SDK catalog for Stargate catalog polling."""
-    models = await asyncio.to_thread(_list_live_sdk_models)
+    models = await asyncio.to_thread(list_live_sdk_models)
     entries = _build_catalog_entries(models)
     logger.debug("cursor catalog: %d models", len(entries))
     return {

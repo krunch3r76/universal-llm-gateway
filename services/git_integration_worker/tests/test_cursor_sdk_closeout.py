@@ -1549,6 +1549,70 @@ def test_provider_status_error_outranks_empty_assistant_turn() -> None:
     assert reason.startswith("provider_error:")
 
 
+def test_provider_error_class_specimens() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+        provider_error_class,
+        provider_error_reason,
+    )
+
+    weekly = "Weekly usage limit reached. It resets in 6 days."
+    assert provider_error_class(weekly) == "usage_limit"
+    outcome_weekly = SdkRunOutcome(
+        body="",
+        status="error",
+        duration_ms=1,
+        tool_call_count=0,
+        provider_error=weekly,
+    )
+    reason = provider_error_reason(outcome_weekly)
+    assert reason is not None
+    assert reason.startswith("provider_error:")
+    assert weekly in reason
+
+    registry = (
+        'AI Model Not Found Invalid parameters for registry model: "claude-sonnet-5-5"'
+    )
+    assert provider_error_class(registry) == "registry_reject"
+    assert provider_error_class("Invalid parameters for registry model") == (
+        "registry_reject"
+    )
+    assert provider_error_class("AI Model Not Found") == "registry_reject"
+
+    unavailable = "[unavailable] Error"
+    assert provider_error_class(unavailable) == "unavailable"
+    assert provider_error_class("something else broke") == "unavailable"
+    assert provider_error_class("") is None
+    assert provider_error_class("   ") is None
+
+
+def test_provider_error_class_in_implement_closeout_json() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+        provider_error_reason,
+    )
+
+    weekly = "Weekly usage limit reached. It resets in 6 days."
+    outcome = SdkRunOutcome(
+        body="",
+        status="error",
+        duration_ms=1,
+        tool_call_count=0,
+        provider_error=weekly,
+    )
+    degraded = provider_error_reason(outcome)
+    body = build_implement_closeout_body(
+        dispatch_id="d-pe",
+        outcome=outcome,
+        degraded_reason=degraded,
+        sidecar_ref=sidecar_workspaces_ref("d-pe"),
+        result_bytes=0,
+        thread_id="t-pe",
+        work_item_ref=None,
+    )
+    payload = json.loads(body)
+    assert payload["degraded_reason"].startswith("provider_error:")
+    assert payload["provider_error_class"] == "usage_limit"
+
+
 def test_empty_assistant_turn_maps_failed_with_reason_in_summary() -> None:
     outcome = SdkRunOutcome(
         body="", status="aborted", duration_ms=100, tool_call_count=0

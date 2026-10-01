@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Final
 
 from cursor_capabilities import (
     CURSOR_MODEL_CAPABILITIES,
@@ -76,6 +77,78 @@ def project_live_catalog(models: Sequence[SDKModel]) -> dict[str, dict[str, obje
     return projected
 
 
+def _card_knob_catalog_projection(
+    models: Sequence[SDKModel],
+) -> dict[str, dict[str, object]]:
+    """Project live models with wire ids mapped back to card knob names."""
+    raw = project_live_catalog(models)
+    projected: dict[str, dict[str, object]] = {}
+    for model_id, entry in raw.items():
+        live_knobs = entry.get("knobs")
+        card_knobs: dict[str, tuple[str, ...]] = {}
+        if isinstance(live_knobs, Mapping):
+            for wire_id, values in live_knobs.items():
+                if not isinstance(values, Sequence) or isinstance(values, str):
+                    continue
+                knob = wire_id_to_card_knob(model_id, str(wire_id))
+                card_knobs[knob] = tuple(str(v) for v in values)
+        live_default = entry.get("default_variant")
+        card_default: dict[str, str] = {}
+        if isinstance(live_default, Mapping):
+            for wire_id, value in live_default.items():
+                card_default[wire_id_to_card_knob(model_id, str(wire_id))] = str(
+                    value
+                )
+        projected[model_id] = {
+            "knobs": card_knobs,
+            "default_variant": card_default,
+        }
+    return projected
+
+
+def live_admission_error(bare_id: str, models: Sequence[SDKModel]) -> str | None:
+    """Probe-side divergence for one card id; ``None`` when live matches the card."""
+    capability = CURSOR_MODEL_CAPABILITIES.get(bare_id)
+    if capability is None:
+        return f"model {bare_id!r} not in CURSOR_MODEL_CAPABILITIES"
+    projected = _card_knob_catalog_projection(models)
+    live = projected.get(bare_id)
+    if live is None:
+        return f"missing model {bare_id!r} in live catalog"
+    errors: list[str] = []
+    live_knobs = live.get("knobs")
+    if not isinstance(live_knobs, Mapping):
+        errors.append(f"model {bare_id!r}: live knobs not a mapping")
+        return "; ".join(errors)
+    for knob_name, spec in capability.knobs.items():
+        live_values = live_knobs.get(knob_name)
+        if live_values is None:
+            errors.append(f"model {bare_id!r}: missing knob {knob_name!r}")
+            continue
+        if frozenset(live_values) != frozenset(spec.accepted):
+            errors.append(
+                f"model {bare_id!r}: knob {knob_name!r} accepted "
+                f"{tuple(live_values)!r} != descriptor {spec.accepted!r}"
+            )
+    live_default = live.get("default_variant")
+    if not isinstance(live_default, Mapping):
+        errors.append(f"model {bare_id!r}: live default_variant not a mapping")
+    elif dict(live_default) != dict(capability.default_variant):
+        errors.append(
+            f"model {bare_id!r}: default_variant "
+            f"{dict(live_default)!r} != descriptor "
+            f"{dict(capability.default_variant)!r}"
+        )
+    return "; ".join(errors) if errors else None
+
+
+def list_live_sdk_models() -> Sequence[SDKModel]:
+    """List models via ``Cursor().models.list()`` (catalog route entry point)."""
+    from cursor_sdk import Cursor
+
+    return Cursor().models.list()
+
+
 def assert_capability_descriptor_fresh(
     *,
     list_models: Callable[[], Sequence[SDKModel]] | None = None,
@@ -122,11 +195,22 @@ def validate_knobs(config: CursorSdkModelConfig, overrides: Mapping[str, str]) -
 
 # Live ListModels names this knob reasoning_effort. Sending effort makes the
 # SDK status ERROR: Invalid parameters for registry model "grok-4.7".
-_PARAM_WIRE_ID = {("grok-4.7", "effort"): "reasoning_effort"}
+_CARD_KNOB_WIRE_ID: Final[dict[tuple[str, str], str]] = {
+    ("grok-4.7", "effort"): "reasoning_effort",
+}
 
 
-def _wire_param_id(model_id: str, name: str) -> str:
-    return _PARAM_WIRE_ID.get((model_id, name), name)
+def card_knob_wire_id(model_id: str, knob_name: str) -> str:
+    """Map a card knob name to the wire parameter id (identity when unmapped)."""
+    return _CARD_KNOB_WIRE_ID.get((model_id, knob_name), knob_name)
+
+
+def wire_id_to_card_knob(model_id: str, wire_id: str) -> str:
+    """Inverse of ``card_knob_wire_id`` for one model."""
+    for (mid, knob), mapped in _CARD_KNOB_WIRE_ID.items():
+        if mid == model_id and mapped == wire_id:
+            return knob
+    return wire_id
 
 
 def selected_context_window_tokens(
@@ -164,7 +248,7 @@ def build_model_selection(
     validate_knobs(config, knob_overrides)
     params: list[ModelParameterValue] = []
     for spec in config.params:
-        wire_id = _wire_param_id(config.model_id, spec.name)
+        wire_id = card_knob_wire_id(config.model_id, spec.name)
         if spec.name in knob_overrides:
             params.append(
                 ModelParameterValue(id=wire_id, value=knob_overrides[spec.name])

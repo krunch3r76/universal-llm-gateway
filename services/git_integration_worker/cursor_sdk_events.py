@@ -309,6 +309,7 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     sdk_run_id: str | None = None,
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
+    provider_error_class: str | None = None,
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
@@ -340,6 +341,8 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
         payload["sdk_agent_id"] = sdk_agent_id
     if degraded_reasons is not None:
         payload["degraded_reasons"] = degraded_reasons
+    if provider_error_class is not None:
+        payload["provider_error_class"] = provider_error_class
     if asked_by is not None:
         payload["asked_by"] = asked_by
     if purpose is not None:
@@ -554,6 +557,7 @@ def emit_sdk_worker_completed(
     sdk_run_id: str | None = None,
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
+    provider_error_class: str | None = None,
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
@@ -586,6 +590,7 @@ def emit_sdk_worker_completed(
             sdk_run_id=sdk_run_id,
             sdk_agent_id=sdk_agent_id,
             degraded_reasons=degraded_reasons,
+            provider_error_class=provider_error_class,
             asked_by=asked_by,
             purpose=purpose,
             story_id=story_id,

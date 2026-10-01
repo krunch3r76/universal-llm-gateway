@@ -87,6 +87,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     format_delivery_fallback_body,
     merge_degraded_reasons,
     prepare_closeout_delivery_async,
+    provider_error_class,
     provider_error_reason,
     read_post_wait_snapshot,
     resolve_completion_outcome,
@@ -675,7 +676,7 @@ def _reject_pre_admission(
     )
     emit_git_worker_dispatch_rejected(envelope)
     log_dispatch_rejection(envelope)
-    content_data = extra_data if extra_data is not None else None
+    content_data = {**(extra_data or {}), "validation_stage": validation_stage}
     return JSONResponse(
         status_code=http_status,
         content=error_envelope(
@@ -1986,6 +1987,7 @@ async def _deliver_sdk_closeout(
     completed_reasons = list(
         merge_degraded_reasons(degraded_reason, *outcome.degraded_reasons)
     )
+    captured_provider_error_class = provider_error_class(outcome.provider_error or "")
     envelope_request_id = request_id_from_dispatch_id(req.dispatch_id)
     from systems.frontier_consult.story_wire import build_association_envelope
 
@@ -2089,6 +2091,7 @@ async def _deliver_sdk_closeout(
             sdk_run_id=outcome.sdk_run_id,
             sdk_agent_id=outcome.sdk_agent_id,
             degraded_reasons=completed_reasons,
+            provider_error_class=captured_provider_error_class,
             **association_fields,
         )
         turn_number = extract_turn_number(bus_result.body)
@@ -2178,6 +2181,7 @@ async def _deliver_sdk_closeout(
         sdk_run_id=outcome.sdk_run_id,
         sdk_agent_id=outcome.sdk_agent_id,
         degraded_reasons=completed_reasons,
+        provider_error_class=captured_provider_error_class,
         **association_fields,
     )
     await _terminate_link(
@@ -3138,6 +3142,35 @@ async def admit_cursor_dispatch(
             detail_summary=str(exc),
             invalid_fields=["model"],
             validation_stage="model_resolution",
+        )
+    from cursor_capabilities import CURSOR_MODEL_CAPABILITIES
+
+    card_entry = CURSOR_MODEL_CAPABILITIES.get(config.model_id)
+    if card_entry is None:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_MODEL_UNPROBED",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                f"cursor model {config.model_id!r} is absent from "
+                "CURSOR_MODEL_CAPABILITIES"
+            ),
+            invalid_fields=["model"],
+            validation_stage="model_registry",
+        )
+    if card_entry.probed_at is None:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_MODEL_UNPROBED",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                f"cursor model {config.model_id!r} has no ListModels probe stamp "
+                "(probed_at is unset)"
+            ),
+            invalid_fields=["model"],
+            validation_stage="model_registry",
         )
     try:
         _resolve_prompt(

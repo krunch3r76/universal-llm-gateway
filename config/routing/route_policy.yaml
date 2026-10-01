@@ -118,7 +118,6 @@ workflows:
 # workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
 models:
   composer-2.5:      {roaming: true}
-  composer-2.5-fast: {roaming: true}
   grok-4.7:          {roaming: true}
 
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
