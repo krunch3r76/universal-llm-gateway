@@ -382,7 +382,7 @@ MCP `project_ask` is removed. Submit via CLI; poll via `poll_hint` / `agent_bus.
 scripts/cortex/claude-ai-sync-jupiter project-ask \
   --register --purpose ask \
   --converse --no-uuid \
-  --model <ACTIVE CLI id> \
+  --model opus-5 \
   --prompt-file tmp/reviews/path-sim-{slug}-r-prompt.md \
   --out-dir <mcp-data>/notes/system/threads/path-sim-{slug}-r-harvest
 ```
