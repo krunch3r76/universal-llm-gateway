@@ -186,13 +186,17 @@ def reserve_allocating_row(
                         "registration_id": registration_id,
                     },
                 )
+        resolved_display = cdp_lane.cdp_display()
         if launch:
             reserved_chromes = sum(
                 1
                 for row in active.values()
                 if isinstance(row, dict) and row.get("status") == "allocating"
             )
-            require_chrome_headroom(reserved_chromes=reserved_chromes)
+            require_chrome_headroom(
+                display=resolved_display,
+                reserved_chromes=reserved_chromes,
+            )
         exclude = _used_ports(active) | _peer_lane_ports()
         port = select_free_registry_port(listen, exclude=exclude)
         if registration_id is None or profile_suffix is None:
@@ -205,7 +209,7 @@ def reserve_allocating_row(
             "profile": str(cdp_lane.profile_for(profile_suffix)),
             "holder": holder,
             "purpose": purpose,
-            "display": cdp_lane.cdp_display(),
+            "display": resolved_display,
             "mission_kind": mission_kind,
             "parent_thread": parent_thread,
             "status": "allocating",

@@ -65,14 +65,88 @@ def test_select_free_port_exhausted():
         cdp_lane.select_free_port(lambda p: True, exclude=set())
 
 
-def test_cdp_display_prefers_cdp_display(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cdp_display_prefers_cdp_display(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
+
     monkeypatch.delenv("CDP_DISPLAY", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
     assert cdp_lane.cdp_display() == ":2"
-    monkeypatch.setenv("DISPLAY", ":5")
-    assert cdp_lane.cdp_display() == ":5"
-    monkeypatch.setenv("CDP_DISPLAY", ":2")
-    assert cdp_lane.cdp_display() == ":2"
+
+    monkeypatch.setenv("DISPLAY", ":1")
+    resolved = cdp_lane.cdp_display()
+    assert resolved == ":2"
+
+    monkeypatch.setenv("CDP_DISPLAY", ":7")
+    assert cdp_lane.cdp_display() == ":7"
+
+    gateway = tmp_path / ".gateway" / "cdp-xvfb"
+    auth2 = gateway / "2" / "Xauthority"
+    auth2.parent.mkdir(parents=True)
+    auth2.write_bytes(b"\0")
+    monkeypatch.setattr(cdp_lane.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.Path.home", staticmethod(lambda: tmp_path)
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.discover_live_xvfb_auth",
+        lambda _d: None,
+    )
+
+    monkeypatch.delenv("CDP_DISPLAY", raising=False)
+    monkeypatch.setenv("DISPLAY", ":1")
+    resolved = cdp_lane.cdp_display()
+    assert resolved == ":2"
+    assert cdp_lane.chrome_display_env()["DISPLAY"] == resolved
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setattr(reg._store, "REGISTRY_DIR", root)
+    monkeypatch.setattr(reg._store, "REGISTRY_LOG", root / "registry.jsonl")
+    monkeypatch.setattr(reg._store, "ACTIVE_JSON", root / "active.json")
+    monkeypatch.setattr(reg._store, "PORTS_LOCK", root / "ports.lock")
+    monkeypatch.setattr(reg._store, "REGISTRATIONS_DIR", regs)
+    monkeypatch.setattr(reg, "REGISTRY_DIR", root)
+    monkeypatch.setattr(reg, "REGISTRY_LOG", root / "registry.jsonl")
+    monkeypatch.setattr(reg, "ACTIVE_JSON", root / "active.json")
+    monkeypatch.setattr(reg, "PORTS_LOCK", root / "ports.lock")
+    monkeypatch.setattr(reg, "REGISTRATIONS_DIR", regs)
+    monkeypatch.setattr(reg, "_HELD_LOCKS", {})
+    monkeypatch.setattr(reg, "PORT_RANGE", range(9223, 9226))
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    monkeypatch.setattr(
+        reg.cdp_lane,
+        "profile_for",
+        lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
+    )
+
+    headroom_displays: list[str | None] = []
+
+    def _headroom_spy(**kwargs: object) -> dict[str, object]:
+        headroom_displays.append(kwargs.get("display"))  # type: ignore[arg-type]
+        return {"x_exhausted": False}
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom",
+        _headroom_spy,
+    )
+
+    row, minted = reserve_allocating_row(
+        holder="display-unify",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="t1",
+        listen=lambda _port: False,
+    )
+    assert minted is True
+    assert headroom_displays[-1] == resolved
+    assert row["display"] == resolved
+    assert cdp_lane.chrome_display_env()["DISPLAY"] == resolved
 
 
 def test_chrome_display_env_binds_per_display_xvfb_auth(

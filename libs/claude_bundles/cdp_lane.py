@@ -64,6 +64,8 @@ _POLL_MS = 250
 # Jupiter standing default is Xvfb :2 (jupiter-cdp-xvfb@2.service).
 # Xwayland :1 remains for legacy/attended cosmic-comp glances; MaxClients is per-server.
 _DEFAULT_DISPLAY = ":2"
+# Inherited DISPLAY=:1 (cosmic/Xwayland unit env) maps to the CDP Xvfb seat (:2).
+_INHERITED_DISPLAY_REMAP = {":1": ":2"}
 
 
 def _display_digit(display: str) -> str:
@@ -85,16 +87,30 @@ def xauthority_for_display(display: str) -> Path:
     return per_display_auth_path(display)
 
 
+def _display_key(display: str) -> str:
+    text = display.strip()
+    if not text.startswith(":"):
+        text = f":{text}"
+    return text.split(".", 1)[0]
+
+
 def cdp_display(display: str | None = None) -> str:
-    """X display for CDP Chrome (explicit *display* > ``CDP_DISPLAY`` > ``DISPLAY`` > ``:2``)."""
+    """X display for CDP Chrome (explicit *display* > ``CDP_DISPLAY`` > ``DISPLAY`` > ``:2``).
+
+    When only ``DISPLAY`` is set, ``:1`` remaps to ``:2`` so CDP mint uses the Xvfb seat
+    while the cdp-ask unit may inherit cosmic's ``DISPLAY=:1``.
+    """
     if display is not None:
         val = display.strip()
         if val:
             return val
-    for key in ("CDP_DISPLAY", "DISPLAY"):
-        val = os.environ.get(key, "").strip()
-        if val:
-            return val
+    cdp_val = os.environ.get("CDP_DISPLAY", "").strip()
+    if cdp_val:
+        return cdp_val
+    inherited = os.environ.get("DISPLAY", "").strip()
+    if inherited:
+        key = _display_key(inherited)
+        return _INHERITED_DISPLAY_REMAP.get(key, key)
     return _DEFAULT_DISPLAY
 
 
