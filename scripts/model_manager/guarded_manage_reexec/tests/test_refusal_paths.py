@@ -7,6 +7,7 @@ happy-path coverage.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
@@ -526,7 +527,7 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
         if cmd[:2] == ["tmux", "split-window"]:
             write_armed_record(
                 record_path,
-                pid=4242,
+                pid=os.getpid(),
                 code_version="deadbeef",
                 process_start_time=later,
             )
@@ -535,6 +536,8 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
             state["down"] = True
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if cmd[:2] == ["tmux", "send-keys"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
 
@@ -561,13 +564,16 @@ def test_arm_then_quit_proof_satisfied(tmp_path: Any) -> None:
     """Armed record before quit; successor binds and passes pickup proof."""
     store = _store(tmp_path)
     record_path = tmp_path / "manage.armed.json"
-    state = {"down": False}
+    state = {"down": False, "successor_visible": False}
     later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
         if method == "whoami":
             if state["down"]:
+                if not state["successor_visible"]:
+                    state["successor_visible"] = True
+                    return {"status": "error", "reason": "manage_sock_missing"}
                 return {
                     "pid": 10,
                     "code_version": "deadbeef",
@@ -602,13 +608,17 @@ def test_arm_then_quit_proof_satisfied(tmp_path: Any) -> None:
         if cmd[:2] == ["tmux", "split-window"]:
             write_armed_record(
                 record_path,
-                pid=4242,
+                pid=os.getpid(),
                 code_version="deadbeef",
                 process_start_time=later,
             )
             return subprocess.CompletedProcess(cmd, 0, stdout="%42\n", stderr="")
         if cmd[:2] == ["tmux", "send-keys"] and cmd[4] == "q":
             state["down"] = True
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
 
@@ -619,6 +629,7 @@ def test_arm_then_quit_proof_satisfied(tmp_path: Any) -> None:
         intent_db=store._db_path,  # noqa: SLF001
         armed_record_path=record_path,
         run_cmd=run_cmd,
+        kill_pid_fn=lambda _pid: None,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
         quit_timeout_s=0.2,
         boot_timeout_s=0.5,
