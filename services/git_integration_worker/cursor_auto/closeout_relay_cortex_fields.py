@@ -277,16 +277,27 @@ def _line_field_heading_candidate(stripped_line: str, field: str) -> bool:
     parsed = _plain_field_match(stripped_line)
     if parsed is not None and parsed[0] == field:
         return True
-    for match in _INLINE_CODE_FIELD_RE.finditer(stripped_line):
-        segment = match.group(1).strip()
-        if _authored_label_matches_field(segment, field):
-            return True
-        if ":" in segment:
+    decoration_stripped = stripped_line
+    while True:
+        nxt = _LEADING_DECORATION_RE.sub("", decoration_stripped, count=1).lstrip()
+        if nxt == decoration_stripped:
+            break
+        decoration_stripped = nxt
+    for match in _INLINE_CODE_FIELD_RE.finditer(decoration_stripped):
+        raw_segment = match.group(1)
+        segment = raw_segment.strip()
+        if ":" in raw_segment:
+            if _authored_label_matches_field(segment, field):
+                return True
             prefix = segment.split(":", 1)[0].strip()
             if _authored_label_matches_field(prefix, field):
                 return True
+        elif _authored_label_matches_field(segment, field) and match.start() == 0:
+            return True
     for pattern in (_EMBEDDED_BOLD_FIELD_COLON_RE, _EMBEDDED_BOLD_HEADING_ONLY_RE):
-        for match in pattern.finditer(stripped_line):
+        for match in pattern.finditer(decoration_stripped):
+            if pattern is _EMBEDDED_BOLD_HEADING_ONLY_RE and match.start() != 0:
+                continue
             heading = _normalize_field_heading(match.group("heading"))
             if _heading_matches_field(heading, field, exact_only=True):
                 return True
