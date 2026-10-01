@@ -9,15 +9,15 @@ parking a host never costs the session.
 Operator-proxy/mission rows sitting plain ``active`` (the ordinary in-progress
 state, not merely ``retained``) previously had no path into this sweep at all —
 a seat that never cycled through dormancy could hold its Chrome open
-indefinitely. ``_idle_reachable_protects`` now bounds that protection with a
-grace window instead of granting it unconditionally.
+indefinitely. ``_idle_reachable_protects`` no longer shields identified
+operator-proxy / mission hosts when idle; only missing or blank purpose still
+fail-closes to protect.
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -59,21 +59,6 @@ def operator_idle_grace_s() -> float:
             if value > 0:
                 return value
     return _DEFAULT_OPERATOR_IDLE_GRACE_S
-
-
-def _last_activity_at(row: dict[str, Any]) -> float | None:
-    """Best-effort last-touched signal for a registry row.
-
-    No per-turn heartbeat exists on a registry row today. Fall back through
-    the newest lifecycle-transition timestamp present: a relaunch or a prior
-    dormancy episode is closer to real activity than mint time; a row that
-    has never gone dormant only carries ``started_at``.
-    """
-    for key in ("relaunched_from_dormant_at", "dormant_at", "started_at"):
-        value = row.get(key)
-        if isinstance(value, (int, float)):
-            return float(value)
-    return None
 
 
 @dataclass
@@ -127,28 +112,19 @@ def _ensure_chat_url(registration_id: str, row: dict[str, Any]) -> bool:
 def _idle_reachable_protects(row: dict[str, Any], *, now: float | None = None) -> bool:
     """True when an idle reachable CSE page must keep its Chrome.
 
-    Operator-proxy / mission seats live between tool calls, so idle alone is
-    not a death warrant — but the protection is bounded, not unconditional.
-    Past ``operator_idle_grace_s()`` since the row's own last-activity signal
-    (``_last_activity_at`` — a lifecycle-timestamp proxy, since no true
-    per-turn heartbeat exists, sized generously to avoid false-positiving a
-    seat mid-dispatch), the row is drainable like any other. Purpose missing
-    or blank still fail-closes to protect — absence of that signal is the
-    class that produced this arc. One-shot ``ask`` hosts stay drainable when
-    idle so leaked Chromes still park.
+    Purpose missing or blank still fail-closes to protect — absence of that
+    signal is the class that produced this arc. Identified operator-proxy /
+    mission hosts drain when idle (no grace window). One-shot ``ask`` hosts
+    stay drainable when idle so leaked Chromes still park. *now* is retained
+    for call-site compatibility; idle protection no longer depends on age.
     """
+    _ = now
     purpose = row.get("purpose")
     if purpose is None or not str(purpose).strip():
         return True
-    if not is_operator_proxy_mission_purpose(str(purpose)):
+    if is_operator_proxy_mission_purpose(str(purpose)):
         return False
-    last_activity = _last_activity_at(row)
-    if last_activity is None:
-        # No lifecycle timestamp at all on a live row is itself a surprise;
-        # fail closed (protect) rather than treat an unknown age as ancient.
-        return True
-    ts = time.time() if now is None else now
-    return (ts - last_activity) < operator_idle_grace_s()
+    return False
 
 
 def row_drain_protection(
@@ -198,10 +174,9 @@ def _streaming_protection_reason(
     that killing the host is safe; probe every attached CSE page and fail
     closed when liveness is unavailable.
 
-    A successful idle probe is not an unconditional drain warrant for
-    operator-proxy / mission (or blank-purpose) seats — those hosts sit idle
-    between tool calls — but it is a *bounded* one past the idle grace
-    window; see ``_idle_reachable_protects``. One-shot ``ask`` hosts still
+    A successful idle probe is not a drain warrant for blank-purpose seats
+    (fail-closed protect); identified operator-proxy / mission hosts drain
+    when idle — see ``_idle_reachable_protects``. One-shot ``ask`` hosts still
     return ``None`` when idle so hygiene can park them.
 
     Probe-source failure is not an empty page list. A wedged, silent, or

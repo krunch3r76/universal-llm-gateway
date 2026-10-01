@@ -273,10 +273,10 @@ def test_drain_keeps_streaming_cse_open_for_monitoring(
     assert _row(seat.registration_id)["status"] == "retained"
 
 
-def test_drain_protects_idle_operator_proxy_with_reachable_page(
+def test_drain_parks_idle_operator_proxy_with_reachable_page(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Harvest-triple idle is not a drain warrant for an operator-proxy seat."""
+    """Harvest-triple idle drains an identified operator-proxy seat."""
     url = "https://claude.ai/cowork/cse_stream_stopped"
     seat = _seat(chat_url=url)
     reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
@@ -301,9 +301,8 @@ def test_drain_protects_idle_operator_proxy_with_reachable_page(
     result = drain_live_hosts_to_dormant(
         is_listening=lambda _p: True,
     )
-    assert result.dormant == []
-    assert result.protected[seat.registration_id] == "reachable_operator_seat"
-    assert _row(seat.registration_id)["status"] == "retained"
+    assert result.dormant == [seat.registration_id]
+    assert _row(seat.registration_id)["status"] == "dormant"
 
 
 def test_drain_parks_idle_ask_host_when_stream_stops(
@@ -514,10 +513,10 @@ def test_drain_parks_when_probe_succeeds_with_empty_list(
     assert _row(seat.registration_id)["status"] == "dormant"
 
 
-def test_boot_adopt_preserves_active_for_reachable_operator(
+def test_boot_adopt_demotes_identified_operator_proxy_to_retained(
     isolated_registry: Path,
 ) -> None:
-    """A listening operator CSE must not become drainable on cdp_ask restart."""
+    """Identified operator-proxy with reachable CSE adopts as retained (drainable)."""
     from claude_bundles import boot_lane_readoption as blr
 
     url = "https://claude.ai/cowork/cse_boot_keep"
@@ -525,16 +524,13 @@ def test_boot_adopt_preserves_active_for_reachable_operator(
     blr.boot_adopt_lane(
         seat.registration_id, prior_status="active", cse_affinity="bound_present"
     )
-    assert _row(seat.registration_id)["status"] == "active"
+    assert _row(seat.registration_id)["status"] == "retained"
     assert not reg.is_driver_lock_held(seat.registration_id)
 
     result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
     assert result.dormant == []
-    # "active" is now in-scope for the sweep (previously skipped by status
-    # alone); an unreachable port still fails closed to "protected", so the
-    # row is never wrongly dormanted either way.
     assert result.protected[seat.registration_id] == "cdp_port_unreachable"
-    assert _row(seat.registration_id)["status"] == "active"
+    assert _row(seat.registration_id)["status"] == "retained"
     assert _row(seat.registration_id)["chat_url"] == url
 
 
@@ -580,11 +576,7 @@ def test_boot_adopted_host_without_cse_is_drainable(
 def test_drain_parks_idle_active_operator_proxy_past_grace_window(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A plain-``active`` operator-proxy seat, idle past the grace window, drains.
-
-    Before this change, ``_DRAINABLE_STATUSES`` excluded ``active`` entirely —
-    a seat that never cycled through dormancy had no path into this sweep.
-    """
+    """A plain-``active`` operator-proxy seat, idle well after mint, drains."""
     url = "https://claude.ai/cowork/cse_active_stale"
     seat = _seat(chat_url=url)
     # No deregister_lane call — the row stays plain "active", not "retained".
@@ -614,10 +606,10 @@ def test_drain_parks_idle_active_operator_proxy_past_grace_window(
     assert _row(seat.registration_id)["status"] == "dormant"
 
 
-def test_drain_protects_active_operator_proxy_within_grace_window(
+def test_drain_parks_idle_active_operator_proxy_within_former_grace_window(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The same shape, checked before the grace window elapses, is untouched."""
+    """Idle operator-proxy drains even inside the old ``operator_idle_grace_s`` window."""
     url = "https://claude.ai/cowork/cse_active_hot"
     seat = _seat(chat_url=url)
     monkeypatch.setattr(
@@ -641,9 +633,39 @@ def test_drain_protects_active_operator_proxy_within_grace_window(
     within_grace = started_at + 5.0
 
     result = drain_live_hosts_to_dormant(is_listening=lambda _p: True, now=within_grace)
-    assert result.dormant == []
-    assert result.protected[seat.registration_id] == "reachable_operator_seat"
-    assert _row(seat.registration_id)["status"] == "active"
+    assert result.dormant == [seat.registration_id]
+    assert _row(seat.registration_id)["status"] == "dormant"
+
+
+def test_drain_parks_idle_active_mission_within_former_grace_window(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Idle mission purpose drains on the same rule as operator-proxy."""
+    url = "https://claude.ai/cowork/cse_active_mission_hot"
+    seat = _seat(purpose="mission", chat_url=url)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://active-mission-hot",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+    started_at = _row(seat.registration_id)["started_at"]
+    within_grace = started_at + dormant_drain.operator_idle_grace_s() / 2
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True, now=within_grace)
+    assert result.dormant == [seat.registration_id]
+    assert _row(seat.registration_id)["status"] == "dormant"
 
 
 def test_drain_protects_streaming_active_operator_proxy_regardless_of_age(
@@ -678,12 +700,20 @@ def test_drain_protects_streaming_active_operator_proxy_regardless_of_age(
     assert _row(seat.registration_id)["status"] == "active"
 
 
-def test_idle_reachable_protects_fails_closed_with_no_timestamp(
+def test_idle_reachable_protects_blank_purpose_without_timestamp(
     isolated_registry: Path,
 ) -> None:
-    """A live row with no lifecycle timestamp at all protects rather than guesses."""
-    row: dict[str, object] = {"purpose": "operator-proxy"}
+    """Missing purpose still fail-closes to protect regardless of age."""
+    row: dict[str, object] = {}
     assert dormant_drain._idle_reachable_protects(row, now=1_000_000.0) is True
+
+
+def test_idle_reachable_protects_operator_proxy_without_timestamp_drains(
+    isolated_registry: Path,
+) -> None:
+    """Identified operator-proxy without lifecycle timestamps does not keep Chrome."""
+    row: dict[str, object] = {"purpose": "operator-proxy"}
+    assert dormant_drain._idle_reachable_protects(row, now=1_000_000.0) is False
 
 
 def test_drain_binds_a_probed_url_before_parking(
@@ -852,9 +882,7 @@ def test_make_dormant_refuses_allocating_on_locked_reread(
         return snapshot
 
     monkeypatch.setattr(reg._store, "load_active", wrapped)
-    assert (
-        reg.make_dormant(seat.registration_id, is_listening=lambda _p: True) is None
-    )
+    assert reg.make_dormant(seat.registration_id, is_listening=lambda _p: True) is None
     assert calls["n"] >= 2
     assert killed == []
     assert _row(seat.registration_id)["status"] == "allocating"
