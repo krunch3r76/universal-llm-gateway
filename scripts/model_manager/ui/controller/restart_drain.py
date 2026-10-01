@@ -609,17 +609,26 @@ class RestartDrainGate:
                     restart_in_progress=in_progress
                 )
                 continue
-            if work.busy:
+            from services.git_integration_worker.drain_progress import (
+                reclassify_dead_heartbeat_work,
+            )
+
+            busy, detail = reclassify_dead_heartbeat_work(
+                work.detail, busy=work.busy
+            )
+            if busy:
                 determination = "busy"
+            elif detail.get("determination") == "dead_heartbeat":
+                determination = "dead_heartbeat"
             elif in_progress:
                 determination = "in_progress"
             else:
                 determination = "idle"
             report[service] = {
-                "busy": work.busy,
-                "restart_would_defer": work.busy or in_progress,
+                "busy": busy,
+                "restart_would_defer": busy or in_progress,
                 "determination": determination,
-                "active_work": work.detail,
+                "active_work": detail,
             }
         return report
 
@@ -886,6 +895,7 @@ async def run_gated_stargate_idle_drain_supervised(
     reason: str,
     code_ref: str = "HEAD",
     row_id: str | None = None,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Arm a durable restart intent when Stargate active-work reports busy."""
     outcome = await gate.evaluate("stargate", force=True, supervised_drain=True)
@@ -911,6 +921,7 @@ async def run_gated_stargate_idle_drain_supervised(
             action=action,
             deadline_at=deadline_at,
             reason=reason,
+            caller_agent=caller_agent,
         )
         validation_id = mint_activation_validation(
             store, intent, code_ref=code_ref, row_id=row_id
@@ -941,6 +952,7 @@ async def run_gated_self_holder_drain_supervised(
     caller_dispatch_id: str,
     code_ref: str = "HEAD",
     row_id: str | None = None,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Arm a durable restart intent when the sole busy holder is the caller dispatch."""
     work = await gate.probe(service)
@@ -977,6 +989,7 @@ async def run_gated_self_holder_drain_supervised(
             action=action,
             deadline_at=deadline_at,
             reason=reason,
+            caller_agent=caller_agent,
         )
         validation_id = mint_activation_validation(
             store, intent, code_ref=code_ref, row_id=row_id
@@ -1000,6 +1013,7 @@ async def run_gated_drain_supervised(
     code_ref: str = "HEAD",
     row_id: str | None = None,
     park_live: bool = False,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Arm a durable git-worker drain intent and return the deferred 202 envelope.
 
@@ -1030,6 +1044,7 @@ async def run_gated_drain_supervised(
             deadline_at=deadline_at,
             reason=reason,
             park_live=park_live,
+            caller_agent=caller_agent,
         )
         validation_id = mint_activation_validation(
             store, intent, code_ref=code_ref, row_id=row_id
@@ -1050,6 +1065,7 @@ async def run_gated_drain_supervised_blocking(
     store: Any,
     supervisor: Any,
     reason: str,
+    caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Await supervised drain to a terminal intent status before returning to fleet."""
     outcome = await gate.evaluate(service, force=True, supervised_drain=True)
@@ -1072,7 +1088,11 @@ async def run_gated_drain_supervised_blocking(
     ).isoformat()
     try:
         intent = store.create_intent(
-            service=service, action=action, deadline_at=deadline_at, reason=reason
+            service=service,
+            action=action,
+            deadline_at=deadline_at,
+            reason=reason,
+            caller_agent=caller_agent,
         )
     except Exception:
         await gate.release(service)
