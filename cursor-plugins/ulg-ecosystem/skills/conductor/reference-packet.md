@@ -171,6 +171,16 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
     exit; the substrate admits the successor immediately. Nobody consulted;
     not a page; not visible in the liaison register. Seventh token in
     `STOP_TOKENS`; new class `CHAIN_STOPS`.
+  - **Open mission, no `land_disposition`.** At any stop other than `DONE`,
+    do not declare `land_disposition`. The substrate retains the lane for the
+    open conductor mission: no discharge, no branch debt, no abandoned mark.
+    It stamps disposition reason `retained_for_mission`, which the reap
+    reads, so a later reap still sees the retention after the closeout text
+    is gone. `conductor_mission_open` rereads row key `lane_retained_for_mission`. If a line is declared anyway,
+    GIW ignores it while the mission is open. The closeout that carries
+    `DONE` is what settles the branch. Nested executor closeouts that end
+    `land_disposition: unlanded <tip>` are not conductor rows; they still
+    declare it.
   - Also: `CONFIRM_PENDING` · `DONE` (stop token only — not row Status)
 - **`CONSULT_PENDING` wait:** the generate session waits or hands off — it does
   not end. `agent_bus.wait` until `archive_uri` or `from=web-anthropic` harvest

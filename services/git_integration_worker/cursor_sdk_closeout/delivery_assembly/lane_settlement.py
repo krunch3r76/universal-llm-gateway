@@ -237,7 +237,7 @@ def settle_lane_and_dispatch_fields(
                         lane_b_commits_ahead = tip_ahead
             if outcome.status != "finished" and not state.safe_to_delete:
                 from services.git_integration_worker.cursor_sdk_closeout.conductor_lane_retention import (
-                    lane_retention_reason,
+                    lane_retention_lookup,
                 )
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
                     mark_lane_b_disposition,
@@ -247,13 +247,31 @@ def settle_lane_and_dispatch_fields(
                 # still owns (its own crashed hop, or a nested limb) must not
                 # mark that branch abandoned: the reap would remove the
                 # worktree under the mission (a:37043, worker 13713 hop 3).
-                retained = lane_retention_reason(
-                    dispatch_id=dispatch_id,
-                    thread_id=thread_id,
-                    closeout_text=closeout_text,
-                    branch_name=record.branch_name,
-                )
-                if retained is None:
+                # A ledger read that fails does not raise: lane_retention_reason
+                # returns None, which is also the "may abandon" answer. The
+                # lookup pair distinguishes them. Falling through to abandoned
+                # on a failed read is how a partial failure deletes the lane.
+                # The failure token is not a disposition reason.
+                lookup_ok = True
+                try:
+                    retained, lookup_ok = lane_retention_lookup(
+                        dispatch_id=dispatch_id,
+                        thread_id=thread_id,
+                        closeout_text=closeout_text,
+                        branch_name=record.branch_name,
+                    )
+                except Exception as exc:  # noqa: BLE001 — do not abandon on a failed read
+                    from universal_logging import get_logger
+
+                    get_logger(__name__).warning(
+                        "lane retention lookup failed; not marking abandoned "
+                        "dispatch_id=%s err=%s",
+                        dispatch_id,
+                        exc,
+                    )
+                    lookup_ok = False
+                    retained = None
+                if lookup_ok and retained is None:
                     mark_lane_b_disposition(
                         branch_name=record.branch_name,
                         reason="abandoned",

@@ -15,12 +15,16 @@ failed or cancelled marked the shared branch abandoned. Worker 13713 lost
 This module answers one question for the settlement paths: is this lane still
 owned by an open mission? Callers are
 ``cursor_sdk_branch_terminal.settle_lane_branch`` (skips discharge and debt),
-``delivery_assembly.lane_settlement`` (skips the abandoned mark), and
+``delivery_assembly.lane_settlement`` (``lane_retention_lookup``; skips the
+abandoned mark, including when the ledger read failed), and
 ``routes.cursor_sdk._mark_lane_b_abandon_disposition`` (the failed-terminal
-mark that ``gc_merged_dispatch_branches`` deletes on). Only a conductor
+mark that ``gc_merged_dispatch_branches`` deletes on). A retain also stamps
+``lane_retained_for_mission`` on the owning row and a
+``retained_for_mission`` disposition the reap does not delete. Only a conductor
 closeout that carries ``DONE``, or a closeout with no open conductor above it
 on this branch, settles the branch. A nested limb's own lane branch is not
-the ancestor's and settles. Reads the dispatch ledger; writes nothing.
+the ancestor's and settles. Reads the dispatch ledger; the marker write is
+the one mutation.
 """
 
 from __future__ import annotations
@@ -38,8 +42,18 @@ from services.git_integration_worker.cursor_sdk_conductor_identity import (
 logger = get_logger(__name__)
 
 RETAINED_FOR_MISSION = "retained_for_mission"
+_RETAINED_MARKER_KEY = "lane_retained_for_mission"
 _LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
 _MAX_NEST_WALK = 12
+
+
+class _LedgerReadError(Exception):
+    """A ledger read inside the retention walk failed.
+
+    Not a retention reason. ``lane_retention_lookup`` surfaces it as
+    ``lookup_ok=False``. ``lane_retention_reason`` collapses it to None so
+    route abandon and branch discharge keep their existing None contract.
+    """
 
 
 def _load_row(dispatch_id: str) -> dict[str, Any] | None:
@@ -112,6 +126,10 @@ def conductor_mission_open(
     tokens = closeout_stop_tokens(row, closeout_text)
     if "DONE" in tokens:
         return None
+    if not tokens:
+        marker = _record(row).get(_RETAINED_MARKER_KEY)
+        if isinstance(marker, str) and marker:
+            return marker
     label = ",".join(sorted(tokens)) if tokens else "crash"
     return f"conductor_mission_open:{label}"
 
@@ -126,6 +144,157 @@ def _branch_is_row_lane(row: dict[str, Any], branch_name: str | None) -> bool:
     from services.git_integration_worker.cursor_sdk_worktree import lane_branch_name
 
     return lane_branch_name(thread_id) == branch_name
+
+
+def _persist_retained_marker(*, dispatch_id: str, branch_name: str, reason: str) -> None:
+    """Stamp the retention where a later reap can see it without the closeout text."""
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={_RETAINED_MARKER_KEY: reason},
+        )
+    except Exception as exc:  # noqa: BLE001 — the decision already stands
+        logger.warning(
+            "lane retention marker write failed dispatch=%s err=%s", dispatch_id, exc
+        )
+    try:
+        from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+            mark_lane_b_disposition,
+        )
+
+        mark_lane_b_disposition(
+            branch_name=branch_name,
+            reason=RETAINED_FOR_MISSION,
+            dispatch_id=dispatch_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — record stamp is the other copy
+        logger.warning(
+            "lane retention disposition write failed branch=%s err=%s",
+            branch_name,
+            exc,
+        )
+
+
+def _clear_retained_marker(*, dispatch_id: str, branch_name: str) -> None:
+    """DONE on this lane releases the marker the reap was honoring."""
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={_RETAINED_MARKER_KEY: None},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "lane retention marker clear failed dispatch=%s err=%s", dispatch_id, exc
+        )
+    try:
+        from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+            clear_disposition,
+        )
+
+        clear_disposition(branch_name=branch_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "lane retention disposition clear failed branch=%s err=%s",
+            branch_name,
+            exc,
+        )
+
+
+def _retention_walk(
+    *,
+    dispatch_id: str,
+    thread_id: str | None = None,
+    closeout_text: str | None = None,
+    branch_name: str | None = None,
+) -> str | None:
+    """Walk ``nest_under`` and return the retain reason, or None when it may settle.
+
+    Raises ``_LedgerReadError`` when a ledger read fails. A missing row or a
+    ``branch_name`` that matches no open conductor's lane returns None.
+    """
+    _ = thread_id
+    try:
+        row = _load_row(dispatch_id)
+    except Exception as exc:  # noqa: BLE001 — callers map this to None
+        logger.warning(
+            "lane retention: ledger read failed dispatch=%s err=%s", dispatch_id, exc
+        )
+        raise _LedgerReadError from exc
+    if row is None:
+        return None
+    tokens = closeout_stop_tokens(row, closeout_text)
+    if (
+        "DONE" in tokens
+        and is_conductor_dispatch_row(row)
+        and _branch_is_row_lane(row, branch_name)
+    ):
+        _clear_retained_marker(dispatch_id=dispatch_id, branch_name=branch_name or "")
+    reason = conductor_mission_open(row, closeout_text=closeout_text, closing=True)
+    if reason and _branch_is_row_lane(row, branch_name):
+        _persist_retained_marker(
+            dispatch_id=dispatch_id, branch_name=branch_name or "", reason=reason
+        )
+        return reason
+    seen: set[str] = {dispatch_id}
+    parent_id = str(_record(row).get("nest_under") or "").strip()
+    hops = 0
+    while parent_id and parent_id not in seen and hops < _MAX_NEST_WALK:
+        seen.add(parent_id)
+        hops += 1
+        try:
+            parent = _load_row(parent_id)
+        except Exception as exc:  # noqa: BLE001 — same posture as above
+            logger.warning(
+                "lane retention: ledger read failed dispatch=%s err=%s", parent_id, exc
+            )
+            raise _LedgerReadError from exc
+        if parent is None:
+            break
+        parent_reason = conductor_mission_open(parent, closeout_text=None)
+        if parent_reason and _branch_is_row_lane(parent, branch_name):
+            nested = f"nested_under_open_conductor:{parent_id}:{parent_reason}"
+            _persist_retained_marker(
+                dispatch_id=parent_id,
+                branch_name=branch_name or "",
+                reason=nested,
+            )
+            return nested
+        parent_id = str(_record(parent).get("nest_under") or "").strip()
+    return None
+
+
+def lane_retention_lookup(
+    *,
+    dispatch_id: str,
+    thread_id: str | None = None,
+    closeout_text: str | None = None,
+    branch_name: str | None = None,
+) -> tuple[str | None, bool]:
+    """``(reason, lookup_ok)`` for the abandoned-mark path.
+
+    ``lookup_ok`` is False only when a ledger read failed. The reason is then
+    None and is not a disposition value: the caller skips the abandoned mark
+    and does not treat the failure as retain. A missing row is
+    ``(None, True)`` — the read answered, and the branch may settle.
+    """
+    try:
+        reason = _retention_walk(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            closeout_text=closeout_text,
+            branch_name=branch_name,
+        )
+    except _LedgerReadError:
+        return None, False
+    return reason, True
 
 
 def lane_retention_reason(
@@ -145,45 +314,22 @@ def lane_retention_reason(
     rows and ``branch_name``. Never raises — a ledger that cannot be read
     settles as before (returns None) and logs a warning. A missing row or a
     ``branch_name`` that matches no open conductor's lane also returns None.
+    Callers that must tell a failed read from "may settle" use
+    ``lane_retention_lookup``.
     """
-    _ = thread_id
-    try:
-        row = _load_row(dispatch_id)
-    except Exception as exc:  # noqa: BLE001 — settlement must not fail on this
-        logger.warning(
-            "lane retention: ledger read failed dispatch=%s err=%s", dispatch_id, exc
-        )
-        return None
-    if row is None:
-        return None
-    reason = conductor_mission_open(row, closeout_text=closeout_text, closing=True)
-    if reason and _branch_is_row_lane(row, branch_name):
-        return reason
-    seen: set[str] = {dispatch_id}
-    parent_id = str(_record(row).get("nest_under") or "").strip()
-    hops = 0
-    while parent_id and parent_id not in seen and hops < _MAX_NEST_WALK:
-        seen.add(parent_id)
-        hops += 1
-        try:
-            parent = _load_row(parent_id)
-        except Exception as exc:  # noqa: BLE001 — same posture as above
-            logger.warning(
-                "lane retention: ledger read failed dispatch=%s err=%s", parent_id, exc
-            )
-            return None
-        if parent is None:
-            break
-        parent_reason = conductor_mission_open(parent, closeout_text=None)
-        if parent_reason and _branch_is_row_lane(parent, branch_name):
-            return f"nested_under_open_conductor:{parent_id}:{parent_reason}"
-        parent_id = str(_record(parent).get("nest_under") or "").strip()
-    return None
+    reason, _lookup_ok = lane_retention_lookup(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        closeout_text=closeout_text,
+        branch_name=branch_name,
+    )
+    return reason
 
 
 __all__ = [
     "RETAINED_FOR_MISSION",
     "closeout_stop_tokens",
     "conductor_mission_open",
+    "lane_retention_lookup",
     "lane_retention_reason",
 ]

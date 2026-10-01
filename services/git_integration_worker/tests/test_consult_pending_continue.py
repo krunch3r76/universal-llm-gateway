@@ -119,6 +119,32 @@ def test_consult_pending_continue_owed_false_without_reply() -> None:
     assert not consult_pending_continue_owed(row, reply_fn=lambda *_: False)
 
 
+def test_consult_pending_continue_rejects_done_in_body() -> None:
+    """A consult continue whose closeout body says stop: DONE is not owed.
+
+    The stamp still lists only CONSULT_PENDING. The body is the contradiction.
+    """
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="pred-consult-done")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_body": _CLOSEOUT + "\nstop: DONE\n",
+            "closeout_turn": 3,
+            "closeout_stop_tokens": ["CONSULT_PENDING"],
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        raw = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    row = {k: raw[k] for k in raw.keys()}
+    assert not consult_pending_continue_owed(row, reply_fn=lambda *_: True)
+
+
 @pytest.mark.asyncio
 async def test_fire_consult_pending_continue_stamps_key() -> None:
     ledger = CursorDispatchLedger.instance()
