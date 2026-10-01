@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -256,6 +256,125 @@ def require_cdp_display_reachable(
     except DisplayAuthError as exc:
         raise XDisplayCapacityError(str(exc)) from exc
     return display_val
+
+
+def _display_auth_resolves(display: str) -> bool:
+    """True when per-display → flat → live Xvfb ``-auth`` yields a cookie path."""
+    from claude_bundles.cdp_display_auth import DisplayAuthError, resolve_display_auth
+
+    try:
+        resolved = resolve_display_auth(display)
+    except DisplayAuthError:
+        return False
+    return resolved.path is not None
+
+
+def _reserved_on_display(display: str, reserved_by_display: Mapping[str, int]) -> int:
+    from claude_bundles.cdp_lane import _display_key
+
+    key = _display_key(display)
+    for raw, count in reserved_by_display.items():
+        try:
+            if _display_key(str(raw)) != key:
+                continue
+            return count if count > 0 else 0
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _emit_display_fallover(
+    *,
+    admitted: str,
+    skipped: list[str],
+    candidates: list[str],
+) -> None:
+    with contextlib.suppress(Exception):
+        from claude_bundles import cdp_registry_events as _events
+
+        _events.emit(
+            _events.cdp_port_display_fallover(
+                admitted=admitted,
+                skipped=skipped,
+                candidates=candidates,
+            )
+        )
+
+
+def admit_display(
+    candidates: list[str],
+    reserved_by_display: Mapping[str, int],
+    *,
+    counts: Mapping[str, int] | None = None,
+    max_clients: int | None = None,
+    chrome_budget: int | None = None,
+    proc_net_unix: Path | None = None,
+    auth_resolves: Callable[[str], bool] | None = None,
+) -> str:
+    """Return the first candidate with headroom and a resolvable XAUTHORITY.
+
+    Sticky order, not least-loaded. Raises ``XDisplayCapacityError`` naming
+    every candidate's counts when none admits.
+
+    A sole candidate that has headroom but no resolvable XAUTHORITY is still
+    returned. Single-display hosts then fail inside ``_launch_chrome`` via
+    ``require_cdp_display_reachable``, which is today's refusal. With another
+    candidate left, missing auth skips this display.
+    """
+    from claude_bundles.cdp_lane import _display_key
+
+    normalized: list[str] = []
+    for raw in candidates:
+        item = str(raw).strip()
+        if not item:
+            continue
+        if not item.startswith(":"):
+            item = f":{item}"
+        key = _display_key(item)
+        if key not in normalized:
+            normalized.append(key)
+    if not normalized:
+        raise XDisplayCapacityError("X display fallover exhausted: no candidates")
+
+    failures: list[str] = []
+    skipped: list[str] = []
+    for index, display in enumerate(normalized):
+        reserved = _reserved_on_display(display, reserved_by_display)
+        count = counts.get(display) if counts is not None else None
+        try:
+            snap = require_chrome_headroom(
+                display=display,
+                count=count,
+                max_clients=max_clients,
+                chrome_budget=chrome_budget,
+                proc_net_unix=proc_net_unix,
+                reserved_chromes=reserved,
+            )
+        except XDisplayCapacityError as exc:
+            failures.append(str(exc))
+            skipped.append(display)
+            continue
+        resolves = (
+            bool(auth_resolves(display))
+            if auth_resolves is not None
+            else _display_auth_resolves(display)
+        )
+        if resolves:
+            if skipped:
+                _emit_display_fallover(
+                    admitted=display, skipped=skipped, candidates=normalized
+                )
+            return display
+        if index == len(normalized) - 1 and not skipped:
+            # Sole candidate: defer auth to launch (single-display today).
+            return display
+        clients = snap.get("x_clients")
+        cap = snap.get("x_max_clients")
+        failures.append(
+            f"X display {display}: {clients} of {cap} clients, no resolvable XAUTHORITY"
+        )
+        skipped.append(display)
+    raise XDisplayCapacityError("X display fallover exhausted: " + "; ".join(failures))
 
 
 def require_chrome_headroom(

@@ -1250,7 +1250,9 @@ def test_reserve_post_drain_joins_allocating_instead_of_second_mint(
         reg._claim_driver_lock(peer_id)
         return dormant_drain.DrainResult()
 
-    monkeypatch.setattr(life, "_mint_headroom_gate", lambda **_kw: drain_then_seed_peer())
+    monkeypatch.setattr(
+        life, "_mint_headroom_gate", lambda **_kw: drain_then_seed_peer()
+    )
 
     row, minted = life.reserve_allocating_row(
         holder="join-after-drain",
@@ -1266,3 +1268,29 @@ def test_reserve_post_drain_joins_allocating_instead_of_second_mint(
     active = reg._load_active()
     assert len(active) == 1
     assert peer_id in active
+
+
+def test_relaunch_dormant_rewrites_display_to_admitted_candidate(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Display is placement. Relaunch may move the row onto another display."""
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_display_move")
+    assert _row(seat.registration_id)["display"] == ":2"
+    reg.make_dormant(seat.registration_id, is_listening=lambda _port: False)
+    monkeypatch.setattr(reg.cdp_lane, "cdp_display_candidates", lambda: [":2", ":3"])
+
+    def _admit(candidates: list[str], reserved: dict[str, int]) -> str:
+        assert candidates[0] == ":2"
+        assert ":3" in candidates
+        return ":3"
+
+    monkeypatch.setattr("claude_bundles.x_display_capacity.admit_display", _admit)
+    relaunched = reg.relaunch_dormant(
+        seat.registration_id,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _port: False,
+    )
+    row = _row(seat.registration_id)
+    assert row["display"] == ":3"
+    assert row["chat_url"] == "https://claude.ai/cowork/cse_display_move"
+    assert relaunched.display == ":3"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,43 @@ __all__ = [
     "make_dormant",
     "reclaim_dormant_rows",
     "relaunch_dormant",
+    "reserved_chromes_by_display",
 ]
+
+
+def reserved_chromes_by_display(active: Mapping[str, Any]) -> dict[str, int]:
+    """Count ``allocating`` rows per existing ``display`` field.
+
+    Display is placement. Rows with no display are not charged to a candidate.
+    """
+    counts: dict[str, int] = {}
+    for row in active.values():
+        if not isinstance(row, dict) or row.get("status") != "allocating":
+            continue
+        raw = str(row.get("display") or "").strip()
+        if not raw:
+            continue
+        key = cdp_lane._display_key(raw)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _place_display(registration_id: str, display: str) -> None:
+    """Rewrite the row's display to the display relaunch actually admitted."""
+    placed = display.strip()
+    if not placed:
+        return
+    with _store.ports_lock():
+        active = _store.load_active()
+        current = active.get(registration_id)
+        if not isinstance(current, dict):
+            return
+        if str(current.get("display") or "") == placed:
+            return
+        updated = dict(current)
+        updated["display"] = placed
+        active[registration_id] = updated
+        _store.write_active(active)
 
 
 def list_dormant() -> list[DormantSeat]:
@@ -256,14 +293,24 @@ def relaunch_dormant(
         expect_status="dormant",
         launch=True,
     )
+    launched_display = str(reserved.get("display") or "").strip()
     try:
-        chrome_pid = launch_fn(int(reserved["port"]), Path(str(reserved["profile"])))
+        with cdp_lane.launch_display(launched_display or None):
+            chrome_pid = launch_fn(
+                int(reserved["port"]), Path(str(reserved["profile"]))
+            )
         activated = activate_allocating_row(
             registration_id, chrome_pid, log_event="relaunch"
         )
     except Exception:
         _restore_dormant(registration_id, row)
         raise
+    # Display is placement; chat URL stays the identity. Reserve writes the
+    # admitted display; this rewrite covers a row that still names the old one.
+    _place_display(registration_id, launched_display)
+    placed = _store.load_active().get(registration_id)
+    if isinstance(placed, dict):
+        activated = placed
 
     reg = _row_to_registration(activated)
     from claude_bundles.what_is_running_view import OPERATOR_PURPOSES

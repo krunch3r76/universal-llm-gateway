@@ -335,3 +335,121 @@ def test_allocate_port_for_profile_still_calls_headroom(
     assert called
     assert port == 9333
     assert reused is False
+
+
+def test_admit_display_falls_over_and_launch_env_uses_admitted_display(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Injected {:2: 57, :3: 22} admits :3; Chrome env DISPLAY is that display."""
+    from claude_bundles import cdp_lane
+    from claude_bundles import cdp_registry_events as ev
+    from claude_bundles.cdp_display_auth import DisplayAuth
+    from claude_bundles.x_display_capacity import admit_display
+
+    fallovers: list[object] = []
+
+    def _capture(event: object) -> None:
+        if getattr(event, "signal", None) == "cdp.port.display_fallover":
+            fallovers.append(event)
+
+    monkeypatch.setattr(ev, "emit", _capture)
+    admitted = admit_display(
+        [":2", ":3"],
+        {},
+        counts={":2": 57, ":3": 22},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    assert admitted == ":3"
+    assert fallovers
+    assert fallovers[0].payload["admitted"] == ":3"  # type: ignore[attr-defined]
+
+    captured: dict[str, object] = {}
+
+    class _Proc:
+        pid = 7
+
+    def _popen(*_args: object, **kwargs: object) -> _Proc:
+        captured["env"] = kwargs.get("env")
+        return _Proc()
+
+    monkeypatch.setattr(cdp_lane, "_seed_profile", lambda _profile: None)
+    monkeypatch.setattr(cdp_lane, "is_listening", lambda _port: True)
+    monkeypatch.setattr(cdp_lane.subprocess, "Popen", _popen)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.resolve_display_auth",
+        lambda display, **_kwargs: DisplayAuth(
+            path=tmp_path / "Xauthority", source="per_display", required=True
+        ),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_cdp_display_reachable",
+        lambda **_kwargs: ":3",
+    )
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    cdp_lane._launch_chrome(9223, profile, display=admitted)
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["DISPLAY"] == ":3"
+
+
+def test_admit_display_names_every_exhausted_candidate() -> None:
+    from claude_bundles.x_display_capacity import admit_display
+
+    with pytest.raises(XDisplayCapacityError) as caught:
+        admit_display(
+            [":2", ":3"],
+            {},
+            counts={":2": 57, ":3": 60},
+            max_clients=64,
+            chrome_budget=8,
+            auth_resolves=lambda _display: True,
+        )
+    message = str(caught.value)
+    assert ":2" in message
+    assert ":3" in message
+    assert "57" in message
+    assert "60" in message
+
+
+def test_single_candidate_matches_cdp_display_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_lane import cdp_display, cdp_display_candidates
+    from claude_bundles.x_display_capacity import admit_display
+
+    monkeypatch.delenv("CDP_DISPLAYS", raising=False)
+    monkeypatch.setenv("CDP_DISPLAY", ":2")
+    assert cdp_display_candidates() == [cdp_display()]
+    assert cdp_display() == ":2"
+    admitted = admit_display(
+        [":2"],
+        {},
+        counts={":2": 56},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    snap = require_chrome_headroom(
+        display=cdp_display(), count=56, max_clients=64, chrome_budget=8
+    )
+    assert admitted == ":2"
+    assert snap["x_display"] == admitted
+    assert snap["x_exhausted"] is False
+
+
+def test_admit_display_is_sticky_not_least_loaded() -> None:
+    """:2 still has a full Chrome budget; do not jump to the emptier :3."""
+    from claude_bundles.x_display_capacity import admit_display
+
+    admitted = admit_display(
+        [":2", ":3"],
+        {},
+        counts={":2": 56, ":3": 0},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    assert admitted == ":2"

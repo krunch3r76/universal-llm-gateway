@@ -217,7 +217,8 @@ def reserve_allocating_row(
                 },
             )
 
-    resolved_display = cdp_lane.cdp_display()
+    from .dormant import reserved_chromes_by_display
+
     while True:
         with _store.ports_lock():
             active = _store.load_active()
@@ -227,11 +228,22 @@ def reserve_allocating_row(
                     return target, False
             _expect_status_ok(active)
             reserved_chromes = _count_allocating(active) if launch else 0
+            reserved_map = reserved_chromes_by_display(active) if launch else {}
+
+        candidates = cdp_lane.cdp_display_candidates()
+        if launch and len(candidates) > 1:
+            # Ordered fallover before port selection. A single candidate keeps
+            # today's drain-then-recheck gate below instead of refusing first.
+            from claude_bundles.x_display_capacity import admit_display
+
+            resolved_display = admit_display(candidates, reserved_map)
+        else:
+            resolved_display = candidates[0]
 
         if launch:
             _mint_headroom_gate(
                 display=resolved_display,
-                reserved_chromes=reserved_chromes,
+                reserved_chromes=int(reserved_map.get(resolved_display, 0)),
                 listen=listen,
             )
 
@@ -312,9 +324,11 @@ def _finish_reserved_launch(
     """Launch outside the ports lock, then flip the reserved row to active."""
     registration_id = str(row["registration_id"])
     chrome_pid: int | None = None
+    display = str(row.get("display") or "").strip() or None
     try:
         if launch:
-            chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
+            with cdp_lane.launch_display(display):
+                chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
         row = activate_allocating_row(registration_id, chrome_pid)
     except Exception:
         _rollback_allocating(registration_id)

@@ -29,6 +29,7 @@ consumers treat a missing release as UNKNOWN and re-probe ground truth.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import fcntl
 import json
 import os
@@ -112,6 +113,48 @@ def cdp_display(display: str | None = None) -> str:
         key = _display_key(inherited)
         return _INHERITED_DISPLAY_REMAP.get(key, key)
     return _DEFAULT_DISPLAY
+
+
+def cdp_display_candidates() -> list[str]:
+    """Ordered mint candidates. First is today's ``cdp_display()``.
+
+    Remaining entries come from ``CDP_DISPLAYS`` (comma list), the single
+    source. Unset ``CDP_DISPLAYS`` yields ``[cdp_display()]`` so a
+    single-display host is unchanged. Not sourced from ``standing_pins``.
+    """
+    primary = _display_key(cdp_display())
+    raw = os.environ.get("CDP_DISPLAYS", "").strip()
+    if not raw:
+        return [primary]
+    ordered = [primary]
+    seen = {primary}
+    for part in raw.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if not item.startswith(":"):
+            item = f":{item}"
+        key = _display_key(item)
+        if key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    return ordered
+
+
+# Admitted display for a 2-arg ``_launch_chrome`` call. Optional argument wins.
+_LAUNCH_DISPLAY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cdp_launch_display", default=None
+)
+
+
+@contextlib.contextmanager
+def launch_display(display: str | None) -> Iterator[None]:
+    """Bind the display ``_launch_chrome`` uses when its argument is omitted."""
+    token = _LAUNCH_DISPLAY.set(display)
+    try:
+        yield
+    finally:
+        _LAUNCH_DISPLAY.reset(token)
 
 
 def chrome_display_env(display: str | None = None) -> dict[str, str]:
@@ -387,9 +430,20 @@ def _allocate_port_for_profile(
         return existing, True
     if not launch:
         raise LaneError(f"no live Chrome for profile '{suffix}' and launch=False")
-    from claude_bundles.x_display_capacity import require_chrome_headroom
+    from claude_bundles.cdp_registry.dormant import reserved_chromes_by_display
+    from claude_bundles.cdp_registry_store import load_active
+    from claude_bundles.x_display_capacity import admit_display
 
-    require_chrome_headroom()
+    active: dict[str, object] = {}
+    with contextlib.suppress(Exception):
+        loaded = load_active()
+        if isinstance(loaded, dict):
+            active = loaded
+    # Fallover is before port selection. The 2-arg call keeps launch doubles
+    # working; ``launch_display`` threads the admitted display into Chrome.
+    display = admit_display(
+        cdp_display_candidates(), reserved_chromes_by_display(active)
+    )
     # Cross-exclude registry-reserved ports (F3 / thread 5262) so the legacy
     # intent allocator and cdp_registry cannot TOCTOU-collide on the same port.
     exclude = set(held_ports())
@@ -398,7 +452,8 @@ def _allocate_port_for_profile(
 
         exclude |= used_ports_snapshot()
     port = select_free_port(is_listening, exclude=exclude)
-    _launch_chrome(port, profile)
+    with launch_display(display):
+        _launch_chrome(port, profile)
     return port, False
 
 
@@ -440,8 +495,13 @@ def _kill_lane_chrome(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
 
 
-def _launch_chrome(port: int, profile: Path) -> int:
-    """Launch a detached Chrome (the warm resource) and wait until it listens."""
+def _launch_chrome(port: int, profile: Path, display: str | None = None) -> int:
+    """Launch a detached Chrome (the warm resource) and wait until it listens.
+
+    *display* is the admitted candidate. Omitted, the ``launch_display``
+    context (set before port selection) wins, then ``cdp_display()``.
+    Headroom is not probed here — fallover already ran.
+    """
     from claude_bundles.x_display_capacity import (
         XDisplayCapacityError,
         chrome_cdp_log_path,
@@ -452,7 +512,8 @@ def _launch_chrome(port: int, profile: Path) -> int:
         require_cdp_display_reachable,
     )
 
-    display_val = cdp_display()
+    chosen = display if display is not None else _LAUNCH_DISPLAY.get()
+    display_val = cdp_display(chosen)
     env = chrome_display_env(display_val)
     require_cdp_display_reachable(env=env)
     _seed_profile(profile)
