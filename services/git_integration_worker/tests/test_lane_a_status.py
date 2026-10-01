@@ -419,12 +419,18 @@ def test_extract_status_claim_from_table_and_legacy_status() -> None:
 
 
 def test_call_order_reconcile_before_envelope_measurement() -> None:
-    """file:line proof — reconcile inverts primary; B2 reads machine_status not capped primary."""
+    """file:line proof — reconcile inverts primary; B2 reads machine_status not capped primary.
+
+    Breaks when the proof still names the pre-move Auto path: 9f38d5202 relocated
+    closeout_relay_common under relay/, and a missing file drops the 13518
+    strings (machine_status, resolve_measurement_status_from_wrapper, §2 claim)
+    without anyone deleting them.
+    """
     reconcile_path = Path(
         "services/git_integration_worker/cursor_sdk_authored_status_reconcile.py"
     )
     closeout_path = Path(
-        "services/git_integration_worker/cursor_auto/closeout_relay_common.py"
+        "services/git_integration_worker/relay/closeout_relay_common.py"
     )
     reconcile_text = reconcile_path.read_text(encoding="utf-8")
     common_text = closeout_path.read_text(encoding="utf-8")
@@ -469,8 +475,6 @@ def _sidecar_with_structured_work_json() -> str:
         "**deltas_to_spec:** none\n\n"
         f"## structured_closeout_full\n\n{structured}"
     )
-
-
 
 
 def test_resolve_measurement_status_complete_wrapper_does_not_mask_sidecar_work() -> (
