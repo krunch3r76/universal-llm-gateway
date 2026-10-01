@@ -6,12 +6,18 @@ to the ``corpus_hints`` table via ``PropertyIndex``. Called by the corpus hints
 CLI, ``rag_service/state.py`` after indexing, the admin articles route and
 vocabulary repair. Emits ``rag_corpus_hints_updated`` or
 ``rag_corpus_hints_skipped`` when an event bus is supplied.
+
+Term statistics are read on a worker thread (``read_corpus_hint_stats``).
+Running that scan on the asyncio thread blocks ``GET /scopes`` for the whole
+rebuild — about 60s on the live index — and scoped search then reports the
+catalog as unavailable.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -24,6 +30,7 @@ from services.rag.corpus_hints.constants import (
     DEFAULT_MIN_CHUNKS_TOPIC,
     GENERIC_BLOCKLIST,
 )
+from services.rag.corpus_hints.stats_read import read_corpus_hint_stats
 from services.rag.corpus_hints.term_scoring import (
     entity_shape_boost,
     is_structural_noise,
@@ -76,7 +83,16 @@ async def update_corpus_hints(
         Mapping of scope name to comma-joined hint terms; {} when skipped.
     """
     prefixes = key_prefixes if key_prefixes is not None else DEFAULT_KEY_PREFIXES
-    if property_index.get_total_chunks() == 0:
+    # Off the event loop: this scan is the multi-ten-second stall behind
+    # GET /scopes timeouts. Writes below stay on the property-index sequencer.
+    stats = await asyncio.to_thread(
+        read_corpus_hint_stats,
+        Path(property_index.db_path),
+        configured_scopes=configured_scopes,
+        key_prefixes=prefixes,
+        only_scope=scope,
+    )
+    if stats.total_chunks == 0:
         logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")
         if event_bus is not None:
             await event_bus.publish_nowait(
@@ -90,7 +106,9 @@ async def update_corpus_hints(
     if extra_blocklist:
         active_blocklist = active_blocklist | extra_blocklist
 
-    total_docs = property_index.get_total_docs()
+    total_docs = stats.total_docs
+    scope_prefix_terms = stats.scope_prefix_terms
+    scope_doc_counts = stats.scope_doc_counts
 
     band_limits: dict[str, tuple[int, int]] = {
         "prop.name@@": (min_chunks_name, max_chunks_name),
@@ -100,45 +118,6 @@ async def update_corpus_hints(
         "prop.name@@": names_budget,
         "prop.topic@@": topics_budget,
     }
-
-    scope_prefix_terms: dict[str, dict[str, list[tuple[str, int, int]]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    scope_doc_counts: dict[str, int] = {}
-
-    if configured_scopes is not None:
-        for scope_name, source_prefixes in configured_scopes.items():
-            if scope is not None and scope_name != scope:
-                continue
-            scope_doc_counts[scope_name] = property_index.count_docs_for_prefixes(
-                source_prefixes
-            )
-            for prefix in prefixes:
-                for (
-                    term,
-                    chunk_count,
-                    doc_count,
-                ) in property_index.get_term_counts_for_source_prefixes(
-                    prefix, source_prefixes
-                ):
-                    if term:
-                        scope_prefix_terms[scope_name][prefix].append(
-                            (term, chunk_count, doc_count)
-                        )
-    else:
-        for prefix in prefixes:
-            for (
-                scope_name,
-                term,
-                chunk_count,
-                doc_count,
-            ) in property_index.get_term_counts_by_scope(prefix):
-                if scope is not None and scope_name != scope:
-                    continue
-                if term:
-                    scope_prefix_terms[scope_name][prefix].append(
-                        (term, chunk_count, doc_count)
-                    )
 
     rows_for_db: list[tuple[str, str, float, str]] = []
     result: dict[str, str] = {}
