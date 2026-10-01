@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     prepare_closeout_delivery,
@@ -71,7 +73,16 @@ def test_conductor_g3_pin_without_s4b_not_degraded() -> None:
     assert reason is None
 
 
-def test_prepare_closeout_delivery_conductor_g1_pin_missing_s4b(tmp_path: Path) -> None:
+def test_prepare_closeout_delivery_conductor_g1_pin_missing_s4b(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # residue_actions loads the live skill catalog. A clean worktree lacks
+    # gitignored local skill SOTs, so catalog validation raises before this
+    # test can see the closeout grade. The grade is the assertion.
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.episode_residue._claude_ai_slugs",
+        lambda: frozenset(),
+    )
     outcome = SdkRunOutcome(
         body=_G1_PIN_NO_S4B,
         status="finished",

@@ -117,10 +117,13 @@ def giw_client(
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     monkeypatch.setattr(route_mod, "_CONFIG", worker_cfg)
+    # Admit forwards resolved_model (c55517d9e). The old one-arg lambda
+    # raised TypeError and the hop never reached the ledger assertions.
+    # Sibling admit stubs accept *args/**kwargs for the same reason.
     monkeypatch.setattr(
         route_mod,
         "validate_dispatch_context",
-        lambda _repo: {"setting_sources": ["projectSettings"]},
+        lambda *_a, **_k: {"setting_sources": ["projectSettings"]},
     )
 
     async def _noop_acquire(**kwargs: object) -> str:
@@ -296,10 +299,13 @@ async def test_probe2_two_row_mechanical_conductor_mission(
             await maybe_fire_conductor_hop_reactor(dispatch_id=predecessor_id)
 
     rows = _ledger_rows_for_thread(_THREAD_ID)
+    # Old filter required record_json.packet_kind. _migrate_packet_kind_to_contract
+    # pops that key on connect, so both admitted rows (contract=conductor) matched
+    # nothing. Identity is the SQL contract column, same as is_conductor_dispatch_row.
     conductor_rows = [
         r
         for r in rows
-        if json.loads(r.get("record_json") or "{}").get("packet_kind") == "conductor"
+        if str(r.get("contract") or "").lower() == "conductor"
     ]
     assert len(conductor_rows) == 2, (
         f"expected two conductor ledger rows, got {len(conductor_rows)}"
