@@ -1017,6 +1017,76 @@ def test_ac7_build_hop_body_refused_when_scoreboard_next_admit_land(
     assert build_hop_team_dispatch_body(row) is None
 
 
+def test_ac7_build_hop_body_refused_when_fold_gate_not_in_tip_table_prose_only(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Synthetic G_ROWS fold gate must not beat a tip table row (G1 prose only)."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    body = (
+        "# Scoreboard\n\n"
+        "Resume at G1 when the ladder opens.\n\n"
+        "- **NEXT_ADMIT:** git_land · sidecar L1\n\n"
+        "| G8 | Land | OPEN |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        body, encoding="utf-8"
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    assert build_hop_team_dispatch_body(row) is None
+
+
+def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real gated-deliverables rows keep the fold entry gate (land admit ≠ that gate)."""
+    from implement_admission.conductor_witness import (
+        fold_scoreboard,
+        resolve_entry_gate_from_fold,
+    )
+
+    from services.git_integration_worker.cursor_sdk_nested_witness import (
+        fold_deps_with_ledger,
+    )
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    body = (
+        "# Scoreboard\n\n"
+        "- **NEXT_ADMIT:** git_land\n\n"
+        "## Gated deliverables\n\n"
+        "| ID | Deliverable | Status |\n|---|---|---|\n"
+        "| G1 | Architecture | OPEN |\n"
+        "| G2 | Frame | OPEN |\n"
+        "| G3 | Plan | OPEN |\n"
+        "| G4 | Skeptic | OPEN |\n"
+        "| G5 | Implement | OPEN |\n"
+        "| G6 | Review | OPEN |\n"
+        "| G7 | Verify | OPEN |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        body, encoding="utf-8"
+    )
+    fold = fold_scoreboard(
+        "conductor-hop-fixture",
+        deps=fold_deps_with_ledger(
+            _WORK_KEY,
+            repo=tmp_path / "repo",
+        ),
+        write_journal=False,
+    )
+    assert fold is not None
+    assert resolve_entry_gate_from_fold(fold) == "G1"
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    assert build_hop_team_dispatch_body(row) is not None
+
+
 def test_ac7_stale_scoreboard_harvest_does_not_block_row_hop(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
