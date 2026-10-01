@@ -83,6 +83,8 @@ def range_python_corroboration(
                 str(source_repo),
                 "diff",
                 "--name-only",
+                "-z",
+                "--no-renames",
                 f"{admit_head}..{closeout_head}",
             ],
             capture_output=True,
@@ -91,7 +93,7 @@ def range_python_corroboration(
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return "unresolved"
-    for chunk in proc.stdout.splitlines():
+    for chunk in proc.stdout.split(b"\0"):
         if not chunk:
             continue
         name = chunk.decode("utf-8", errors="replace")

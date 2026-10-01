@@ -286,3 +286,36 @@ def test_ac9_unattributed_lane_py_is_state3(
         tmp_path, change_set, range_corroboration=corroboration
     )
     _assert_state3(row, deviation)
+
+
+def test_quoted_non_ascii_py_is_not_a_passed_skip(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "config", "core.quotePath", "true")
+    admit = _commit(tmp_path, "README.md", "# base\n")
+    closeout = _commit(tmp_path, "café.py", "value = 1\n")
+    corroboration = range_python_corroboration(
+        tmp_path, admit_head=admit, closeout_head=closeout
+    )
+    assert corroboration == "resolved_has_python"
+    row, deviation = run_touched_files_lint(
+        tmp_path, _EMPTY, range_corroboration=corroboration
+    )
+    assert not (row.exit_code == 0 and row.basis == "lint_skipped_no_python")
+    _assert_state3(row, deviation)
+    renamed = _commit(tmp_path, "plain.py", "value = 2\n")
+    _git(tmp_path, "mv", "plain.py", "plain.txt")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "peer",
+        "GIT_AUTHOR_EMAIL": "peer@example.com",
+        "GIT_COMMITTER_NAME": "peer",
+        "GIT_COMMITTER_EMAIL": "peer@example.com",
+    }
+    _git(tmp_path, "commit", "-m", "rename away from py", env=env)
+    after_rename = _git(tmp_path, "rev-parse", "HEAD")
+    assert (
+        range_python_corroboration(
+            tmp_path, admit_head=renamed, closeout_head=after_rename
+        )
+        == "resolved_has_python"
+    )
