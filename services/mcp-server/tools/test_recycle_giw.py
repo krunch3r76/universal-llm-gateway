@@ -84,15 +84,6 @@ def test_wedged_queue_claim_next_is_never_invoked(monkeypatch) -> None:
     recycle_giw.register_recycle_giw_tools(recorder)  # type: ignore[arg-type]
     calls: list[str] = []
 
-    def _boom(*_args, **_kwargs):
-        calls.append("claim_next")
-        raise AssertionError("AutoJobQueue.claim_next must not run on recycle_giw")
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.queue.AutoJobQueue.claim_next",
-        _boom,
-        raising=False,
-    )
     monkeypatch.setattr(
         recycle_giw,
         "_call_manage",

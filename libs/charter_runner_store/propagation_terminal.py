@@ -124,7 +124,7 @@ def _proof_matches_projection(
     settle_not_before_monotonic: float | None = None,
     before: dict[str, Any] | None = None,
 ) -> bool:
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         proof_observed,
     )
 
@@ -173,7 +173,7 @@ def settle_open_row(
     unreachable_defer_reason: str = _DEFER_AFTER_DRAIN,
 ) -> SettleResult:
     """Close or fail one open row from a client-reachable liveness probe."""
-    from services.git_integration_worker.cursor_auto.propagation_proof_reconcile import (
+    from services.git_integration_worker.relay.propagation_proof_reconcile import (
         reconcile_unsupported_proof_class,
     )
     from implement_admission.propagation_close_surfaces import resolve_close_surfaces

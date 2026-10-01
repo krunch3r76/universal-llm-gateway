@@ -1,18 +1,7 @@
-"""agent_bus ``request`` — life-callable Cursor Auto admit channel.
+"""agent_bus ``request`` — bus turn on an existing or new lane.
 
-Writes a send-equivalent turn (injecting ``lane:cursor-auto``), probes a live
-Auto handler, enqueues when armed, and returns ``{thread, turn,
-auto_handler_status, job_admission, poll_hint}``. Distinct from ``send`` and
-from ``lane:life-to-code``.
-
-Two projections, kept apart. ``auto_handler_status`` is the Auto handler's
-heartbeat (scope: the handler; freshness: at probe). ``job_admission`` is the
-admit-gate verdict for this request (scope: this ``request_id``; freshness: at
-admission), minted by GIW and relayed here — never restated. Conflating them is
-the defect this surface was built to close.
-
-Sender wire discipline (harvest-restart-propagation I3): enqueue JSON fields added
-by MCP must remain optional-with-default — never rename or remove existing keys.
+Writes a send-equivalent turn and returns ``{thread, turn, poll_hint}``.
+The Auto enqueue arm is not on this path.
 """
 
 from __future__ import annotations
@@ -28,24 +17,13 @@ from .lane_provenance import observe_unparented_birth
 from .park_hint import build_poll_hint as _build_poll_hint
 from .park_hint import is_chat_delivery_capable
 from .request_cse_bind import maybe_bind_thread_cse
-from .request_failure import (
-    annotate_poll_hint_no_producer,
-    build_enqueue_failure,
-    build_job_admission_unreached,
-    enqueue_failure_reason,
-    error_class_from_enqueue,
-    error_class_from_liveness,
-)
 from .request_intake import (
     resolve_checkout_lane,
     resolve_contract_intake,
     resolve_request_id_intake,
     stamp_contract_deprecation,
 )
-from .request_worker_client import enqueue_auto_job, probe_auto_liveness
 from .send import _send_dispatch
-
-_LANE_TAG = "lane:cursor-auto"
 
 
 def _resolve_hop_seat_request_refusal(
@@ -94,7 +72,7 @@ def _merge_lane_tags(tags: list[str] | None) -> list[str]:
     merged: list[str] = []
     seen: set[str] = set()
     stamped = append_bus_lifecycle_tags(list(tags or []), bus_lifecycle="persistent")
-    for t in stamped + [_LANE_TAG]:
+    for t in stamped:
         if t not in seen:
             merged.append(t)
             seen.add(t)
@@ -134,7 +112,7 @@ def _request_impl(
     allow_long_body: bool = False,
     enqueue_body: str | None = None,
 ) -> dict[str, Any]:
-    """Write turn via send path, then arm/enqueue Auto when live."""
+    """Write turn via send path. The Auto enqueue arm is gone."""
     from pager_notify.so_what import resolve_so_what_summary
 
     from .lifecycle import _update_thread_impl
@@ -222,144 +200,7 @@ def _request_impl(
         continuity_hop=continuity_hop,
     )
 
-    admission_scope = (
-        f"request_id:{request_id}" if request_id else f"thread:{thread_id}"
-    )
-    liveness = probe_auto_liveness()
-    if not liveness.get("live"):
-        reason = str(liveness.get("reason", "no_live_handler"))
-        attempts = int(liveness.get("attempts", 1))
-        elapsed_s = float(liveness.get("elapsed_s", 0.0))
-        error_class = error_class_from_liveness(liveness)
-        record(
-            "mcp.agentbus.request.degraded",
-            thread=thread_id,
-            turn_number=turn_number,
-            reason=reason,
-            error_class=error_class,
-            elapsed_s=elapsed_s,
-            attempts=attempts,
-        )
-        degraded = {
-            "thread": thread_obj,
-            "turn": turn_obj,
-            "auto_handler_status": "no-auto-handler",
-            "job_admission": build_job_admission_unreached(
-                reason=reason,
-                scope=admission_scope,
-            ),
-            "poll_hint": annotate_poll_hint_no_producer(
-                _build_poll_hint(
-                    thread_id=thread_id,
-                    after_turn=turn_number,
-                    from_agent=from_agent,
-                )
-            ),
-            "liveness": liveness,
-            "enqueue_failure": build_enqueue_failure(
-                reason=reason,
-                attempts=attempts,
-                error_class=error_class,
-                elapsed_s=elapsed_s,
-            ),
-            "tags": merged_tags,
-            "sidecar_uri": sidecar_uri,
-            "sidecar_sha256": sidecar_sha256,
-        }
-        if request_id:
-            degraded["request_id"] = request_id
-        return degraded
-
     capture_identity = is_chat_delivery_capable(from_agent) or continuity_hop
-    auto_job_body = body if enqueue_body is None else enqueue_body
-    enq = enqueue_auto_job(
-        thread_id=thread_id,
-        turn_number=turn_number,
-        subject=subject,
-        body=auto_job_body,
-        from_agent=from_agent,
-        to_agent=to,
-        desired_model=desired_model,
-        desired_effort=desired_effort,
-        contract=contract,
-        require_attended=require_attended,
-        request_id=request_id,
-        cse_chat_url=cse_chat_url if capture_identity else None,
-        cse_registration_id=cse_registration_id if capture_identity else None,
-        escalation=escalation,
-        continuity_hop=continuity_hop,
-        lane=lane,
-        workspace=workspace,
-        prompt_uri=prompt_uri,
-        advisor_brief=advisor_brief,
-        work_key=work_key,
-    )
-    if not enq.get("ok"):
-        reason = enqueue_failure_reason(enq)
-        attempts = int(liveness.get("attempts", 1))
-        elapsed_s = float(liveness.get("elapsed_s", 0.0))
-        error_class = error_class_from_enqueue(enq)
-        record(
-            "mcp.agentbus.request.degraded",
-            thread=thread_id,
-            turn_number=turn_number,
-            reason=reason,
-            error_class=error_class,
-            elapsed_s=elapsed_s,
-            attempts=attempts,
-        )
-        result = {
-            "thread": thread_obj,
-            "turn": turn_obj,
-            "auto_handler_status": "no-auto-handler",
-            "job_admission": enq.get("job_admission")
-            or build_job_admission_unreached(
-                reason=reason,
-                scope=admission_scope,
-            ),
-            "poll_hint": annotate_poll_hint_no_producer(
-                _build_poll_hint(
-                    thread_id=thread_id,
-                    after_turn=turn_number,
-                    from_agent=from_agent,
-                )
-            ),
-            "enqueue": enq,
-            "enqueue_failure": build_enqueue_failure(
-                reason=reason,
-                attempts=attempts,
-                error_class=error_class,
-                elapsed_s=elapsed_s,
-            ),
-            "liveness": liveness,
-            "tags": merged_tags,
-            "sidecar_uri": sidecar_uri,
-            "sidecar_sha256": sidecar_sha256,
-        }
-        if request_id:
-            result["request_id"] = request_id
-        return result
-
-    auto_handler_status = str(enq.get("auto_handler_status") or "auto-handler-live")
-    # The admit-ladder verdict is GIW's to mint; MCP promotes it beside the
-    # handler heartbeat so a caller's first read answers both questions.
-    job_admission = enq.get("job_admission") or build_job_admission_unreached(
-        reason="worker_projection_absent",
-        scope=admission_scope,
-    )
-    posted_kw: dict[str, Any] = {
-        "thread": thread_id,
-        "turn_number": turn_number,
-        "auto_handler_status": auto_handler_status,
-        "job_admission_outcome": str(job_admission.get("outcome") or ""),
-        "desired_model": desired_model,
-        "contract": contract,
-    }
-    if lane:
-        posted_kw["lane"] = lane
-    if request_id:
-        posted_kw["request_id"] = request_id
-    record("mcp.agentbus.request.posted", **posted_kw)
     side_effect_failures: list[dict[str, str]] = []
     if (
         capture_identity
@@ -374,7 +215,7 @@ def _request_impl(
                 chat_url=cse_chat_url,
                 registration_id=cse_registration_id,
             )
-        except Exception as exc:  # noqa: BLE001 — post-enqueue advisory, not the receipt
+        except Exception as exc:  # noqa: BLE001 — post-write advisory, not the receipt
             side_effect_failures.append(_side_effect_failure("stamp_session_ids", exc))
         from .cse_provenance_enrich import enrich_request_provenance
 
@@ -384,42 +225,28 @@ def _request_impl(
                 chat_url=cse_chat_url,
                 registration_id=cse_registration_id,
             )
-        except Exception as exc:  # noqa: BLE001 — post-enqueue advisory, not the receipt
+        except Exception as exc:  # noqa: BLE001 — post-write advisory, not the receipt
             side_effect_failures.append(
                 _side_effect_failure("enrich_request_provenance", exc)
             )
-    # Promote lane discriminant out of the double-nested HTTP body so a
-    # caller of agent_bus.request need not dig to enqueue.enqueue.* —
-    # same keys remain beside superseded on the worker body for parity.
-    enqueue_body = enq.get("enqueue") if isinstance(enq.get("enqueue"), dict) else {}
-    lane_pending = enqueue_body.get("same_thread_pending")
-    lane_claimed = enqueue_body.get("same_thread_claimed")
-    if lane_pending is not None or lane_claimed is not None:
-        enq = dict(enq)
-        if lane_pending is not None:
-            enq["same_thread_pending"] = lane_pending
-        if lane_claimed is not None:
-            enq["same_thread_claimed"] = lane_claimed
+    record(
+        "mcp.agentbus.request.posted",
+        thread=thread_id,
+        turn_number=turn_number,
+        contract=contract,
+    )
     result = {
         "thread": thread_obj,
         "turn": turn_obj,
-        "auto_handler_status": auto_handler_status,
-        "job_admission": job_admission,
         "poll_hint": _build_poll_hint(
             thread_id=thread_id,
             after_turn=turn_number,
             from_agent=from_agent,
-            job_id=str(enqueue_body["job_id"]) if enqueue_body.get("job_id") else None,
         ),
-        "enqueue": enq,
         "tags": merged_tags,
         "sidecar_uri": sidecar_uri,
         "sidecar_sha256": sidecar_sha256,
     }
-    if lane_pending is not None:
-        result["same_thread_pending"] = lane_pending
-    if lane_claimed is not None:
-        result["same_thread_claimed"] = lane_claimed
     if request_id:
         result["request_id"] = request_id
     if lane:
@@ -427,8 +254,6 @@ def _request_impl(
     if side_effect_failures:
         result["side_effect_failures"] = side_effect_failures
     return result
-
-
 def _request_dispatch(
     *,
     new_slug: str | None = None,
@@ -482,8 +307,7 @@ def _request_dispatch(
     (pass ``B``). Omit is not that default: empty ``files_expected`` + omit
     selects Lane A (``select_lane`` ``opt_out``). ``parent_thread`` +
     ``lane_role`` may atomically bind a newly minted
-    bus-thread lane; both must be supplied together. Distinct from tag
-    ``lane:cursor-auto``. Invalid values reject 422 ``request_lane_invalid``
+    bus-thread lane; both must be supplied together. Invalid values reject 422 ``request_lane_invalid``
     before the turn is written.
 
     ``prompt_uri`` / ``advisor_brief``: sealed advisor brief for CDP escalation.

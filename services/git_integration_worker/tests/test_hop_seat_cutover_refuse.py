@@ -3,27 +3,12 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from claude_bundles.hop_seat_cutover import (
-    effective_seated_at_after_hop,
     refuse_cadence_hop_for_live_seat,
     resolve_request_refusal,
     successor_confirm_active,
-)
-
-from services.git_integration_worker.cursor_auto.hop_cadence import (
-    build_cadence_hop_body,
-    fire_hop_for_decision,
-)
-from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
-    reconcile_succession_confirmations,
-)
-from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
-    HopDecision,
-    advance_registration_on_confirm,
-    evaluate_watch,
 )
 
 
@@ -78,24 +63,6 @@ def test_confirm_false_when_membership_empty_despite_pending_keys():
     assert successor_confirm_active(row, snap) is False
 
 
-def test_effective_seated_at_prefers_post_hop_reset_over_stale_registry():
-    """Would fail before fix: registry started_at kept age above threshold after hop."""
-    now = 2_000_000.0
-    row = {
-        "thread_id": "6885",
-        "registration_id": "reg-live",
-        "seated_at": now - 100.0,
-        "last_hop_at": now - 2000.0,
-    }
-
-    def _registry_started(_reg: str | None) -> float | None:
-        return now - 5_000.0
-
-    seated = effective_seated_at_after_hop(row, registry_started_at=_registry_started)
-    assert seated == now - 100.0
-    decision = evaluate_watch(row, now=now, threshold=1500.0, cool=1800.0)
-    assert decision.action == "skip"
-    assert decision.reason == "below_threshold"
 
 
 def test_refuse_cadence_hop_while_same_registration_still_running():
@@ -272,200 +239,11 @@ def test_resolve_request_refusal_envelope_protocol_error_shape():
     assert data["signal"] == "cdp_ask_active_work_membership"
 
 
-def test_build_cadence_hop_body_superseded_registration_id_line():
-    decision = HopDecision(
-        "6885",
-        "fire",
-        "age_threshold_met",
-        age_s=2000.0,
-        threshold_s=1500.0,
-    )
-    body = build_cadence_hop_body(
-        decision,
-        registration_id="reg-incumbent",
-        chat_url="https://claude.ai/cowork/cse_incumbent1",
-    )
-    lines = body.splitlines()
-    assert any(line == "superseded_registration_id: reg-incumbent" for line in lines)
-    assert any(line == "parent_thread: 6885" for line in lines)
-    assert any(line.startswith("occupy_target:") for line in lines)
-    assert not any(line.startswith("you_are:") for line in lines)
-    assert not any(line.startswith("registration_id:") for line in lines)
-    birth_lines = [line for line in lines if line.startswith("successor_birth_id:")]
-    assert len(birth_lines) == 1
-    assert birth_lines[0].split(":", 1)[1].strip()
 
 
-def test_registration_advanced_once_on_confirm():
-    row = {
-        "thread_id": "6885",
-        "registration_id": "reg-old",
-        "successor_execution_id": "stargate-uuid",
-        "pending_satellite_execution_id": "satellite-live",
-        "superseded_registration_id": "reg-old",
-        "superseded_execution_id": "exec-incumbent-old",
-        "predecessor_verdict": "incumbent_recorded",
-    }
-    watches = {"6885": dict(row)}
-    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
-
-    with (
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-            side_effect=lambda path=None: watches,
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-            side_effect=lambda data, path=None: watches.update(data) or None,
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-        ) as confirmed_mock,
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
-        ) as advanced_mock,
-    ):
-        result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
-        assert len(result["confirmations"]) == 1
-        assert confirmed_mock.call_count == 1
-        assert advanced_mock.call_count == 1
-        advanced_kwargs = advanced_mock.call_args.kwargs
-        assert advanced_kwargs["prior_registration_id"] == "reg-old"
-        assert advanced_kwargs["new_registration_id"] == "reg-new"
-        assert advanced_kwargs["superseding_execution_id"] == "satellite-live"
-        assert advanced_kwargs["superseded_execution_id"] == "exec-incumbent-old"
-        assert watches["6885"]["registration_id"] == "reg-new"
-        assert (
-            watches["6885"]["succession_confirm_record"]["prior_registration_id"]
-            == "reg-old"
-        )
-
-        confirmed_mock.reset_mock()
-        advanced_mock.reset_mock()
-        result2 = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
-        assert result2["confirmations"] == []
-        assert confirmed_mock.call_count == 0
-        assert advanced_mock.call_count == 0
 
 
-def test_confirm_posts_seat_registration_stamp_echoing_birth_id():
-    birth = "d" * 32
-    row = {
-        "thread_id": "6885",
-        "registration_id": "reg-old",
-        "successor_execution_id": "stargate-uuid",
-        "pending_satellite_execution_id": "satellite-live",
-        "superseded_registration_id": "reg-old",
-        "superseded_execution_id": "exec-incumbent-old",
-        "predecessor_verdict": "incumbent_recorded",
-        "successor_birth_id": birth,
-    }
-    watches = {"6885": dict(row)}
-    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
-    posted: list[tuple[str, str]] = []
-
-    with (
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-            side_effect=lambda path=None: watches,
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-            side_effect=lambda data, path=None: watches.update(data) or None,
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
-        ),
-    ):
-        reconcile_succession_confirmations(
-            snapshot_reader=lambda: snap,
-            stamp_poster=lambda thread_id, body: posted.append((thread_id, body)),
-        )
-    assert len(posted) == 1
-    thread_id, stamp = posted[0]
-    assert thread_id == "6885"
-    assert stamp.startswith("TYPE: SEAT_REGISTRATION\n")
-    assert f"successor_birth_id: {birth}" in stamp
-    assert "registration_id: reg-new" in stamp
-    assert "execution_id: satellite-live" in stamp
 
 
-def test_advance_registration_on_confirm_unit():
-    row = {
-        "registration_id": "reg-old",
-        "superseded_execution_id": "exec-incumbent",
-    }
-    aw_row = {
-        "registration_id": "reg-new",
-        "execution_id": "exec-1",
-        "status": "running",
-        "chat_url": "https://claude.ai/cowork/cse_successor",
-    }
-    updated, transition = advance_registration_on_confirm(
-        row,
-        matched_key="exec-1",
-        active_work_row=aw_row,
-        now=time.time(),
-        prior_registration_id="reg-old",
-    )
-    assert transition == ("reg-old", "reg-new")
-    assert updated["registration_id"] == "reg-new"
-    assert updated["chat_url"] == "https://claude.ai/cowork/cse_successor"
-    updated2, transition2 = advance_registration_on_confirm(
-        updated,
-        matched_key="exec-1",
-        active_work_row=aw_row,
-        now=time.time(),
-        prior_registration_id="reg-old",
-    )
-    assert transition2 is None
-    assert updated2["registration_id"] == "reg-new"
 
 
-@pytest.mark.asyncio
-async def test_fire_hop_refuses_repeat_while_registration_streams():
-    """Fails before change: cadence re-commissions against a live incumbent seat."""
-    decision = HopDecision(
-        "6885",
-        "fire",
-        "age_threshold_met",
-        age_s=2000.0,
-        threshold_s=1500.0,
-    )
-    row = {
-        "registration_id": "reg-live",
-        "last_hop_at": time.time() - 100.0,
-        "from_agent": "web-anthropic",
-    }
-    queue = MagicMock()
-    job = MagicMock(job_id="job-hop")
-    queue.enqueue.return_value = job
-    snap = _snap(registration_id="reg-live")
-
-    with (
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence.read_cdp_lane_snapshot",
-            return_value=snap,
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence.run_continuity_hop_concurrent",
-            new_callable=AsyncMock,
-            return_value={"ok": True, "execution_id": "exec-new"},
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.hop_cadence.emit_cadence_refuse",
-        ),
-    ):
-        outcome = await fire_hop_for_decision(
-            decision,
-            queue=queue,
-            row=row,
-            snapshot_reader=lambda: snap,
-        )
-
-    assert outcome["ok"] is False
-    assert outcome["reason"] == "seat_live_refuse_at_request"
-    queue.enqueue.assert_not_called()

@@ -70,9 +70,9 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         auto-approve reads. For post/reply/update/close/delete_* use agent_bus.
 
         Operations (identical semantics to the matching agent_bus ops):
-          thread_get   (thread, include_resume?)  — single ThreadDetail (+ cursor_auto_job when a non-terminal Auto job is on the lane; spine=root threads include resume_envelope only when include_resume=true)
+          thread_get   (thread, include_resume?)  — single ThreadDetail (spine=root threads include resume_envelope only when include_resume=true)
           threads      (status?, tags?, lifecycle_state?, last?, has_unread?, query?)
-          job_state    (thread|thread_id?, job_id?, include_terminal?)  — keyed cursor-auto phase+clocks
+          job_state    (thread|thread_id?, job_id?, include_terminal?)  — Auto job-state route removed; found=false, reason=auto_job_state_removed. Code work is team_dispatch.
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
           get          (thread, turn_number)  — turn_number may be int or "latest"
@@ -82,6 +82,12 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
 
         Note: mark_read=true mutates per-turn read pointers, not thread/turn
         content; it is permitted here as a read-cursor side effect.
+        «verb-orientation:agent_bus_read»
+        Depth: `agent_skill:agent-bus-discipline` · `agent_skill:dispatch-shape` · `agent_skill:handoff-pickup` · `agent_skill:checkpoint-discipline` · `agent_skill:dispatch-report-discipline`.
+        cursor_only (fs, not on the Customize loader):
+        - `agent-bus-multitask` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/agent-bus-multitask/SKILL.md")
+        - `cursor-sdk-thread-consolidation` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/cursor-sdk-thread-consolidation/SKILL.md")
+        «/verb-orientation:agent_bus_read»
         """
         from ._agent_tools import (
             dispatch_arguments_error,

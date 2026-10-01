@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -151,40 +150,3 @@ def _cursor_bus_default_is_test_double(
     if skip_cursor_bus_hermetic_for_node(request.node.nodeid):
         return
     install_cursor_bus_hermetic(monkeypatch)
-
-
-@pytest.fixture(autouse=True)
-def _hop_orientation_bus_stub(monkeypatch: pytest.MonkeyPatch):
-    """Keep hop tests off the network — orientation fetches lane turns for real."""
-    from services.git_integration_worker.cursor_auto import hop_orientation
-
-    monkeypatch.setattr(
-        hop_orientation, "fetch_thread_turns", AsyncMock(return_value=[])
-    )
-
-
-@pytest.fixture(autouse=True)
-def _cursor_auto_admit_bus_stubs(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-):
-    """Keep cursor-auto admit tests hermetic after thread-status gate landed."""
-    if "cursor_auto" not in request.node.nodeid:
-        yield
-        return
-    import services.git_integration_worker.cursor_sdk_events as cursor_sdk_events
-    from services.git_integration_worker.cursor_auto import admit_gates
-
-    monkeypatch.setattr(
-        admit_gates,
-        "fetch_thread_status",
-        AsyncMock(return_value="active"),
-    )
-    monkeypatch.setattr(
-        admit_gates,
-        "fetch_thread_turns",
-        AsyncMock(return_value=[]),
-    )
-    prior_publisher = cursor_sdk_events._uds_publisher
-    cursor_sdk_events._uds_publisher = None
-    yield
-    cursor_sdk_events._uds_publisher = prior_publisher

@@ -21,13 +21,11 @@ from .worker_http import (
     _DEFAULT_BACKOFF_S,
     _DEFAULT_MAX_ATTEMPTS,
     _DEFAULT_TOTAL_BUDGET_S,
-    _auto_url,
     _worker_base_url,
 )
 
 # Re-export for callers that imported URL helpers from this module.
 __all__ = [
-    "_auto_url",
     "_worker_base_url",
     "enqueue_auto_job",
     "fetch_job_state",
@@ -74,38 +72,9 @@ def _probe_auto_liveness_once(
     base_url: str | None,
     timeout_s: float,
 ) -> tuple[dict[str, Any], Exception | None]:
-    """Single HTTP GET to the worker liveness endpoint."""
-    url = _auto_url("/liveness", base_url=base_url)
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            resp = client.get(url)
-        if resp.status_code != 200:
-            return (
-                {
-                    "live": False,
-                    "reason": "liveness_http_error",
-                    "status_code": resp.status_code,
-                },
-                None,
-            )
-        data = resp.json()
-        return (
-            {
-                "live": bool(data.get("live")),
-                "liveness": data,
-                "reason": "ok" if data.get("live") else "no_live_handler",
-            },
-            None,
-        )
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        return (
-            {
-                "live": False,
-                "reason": "liveness_unreachable",
-                "error": str(exc),
-            },
-            exc,
-        )
+    """The Auto liveness route is removed. Code work is team_dispatch."""
+    del base_url, timeout_s
+    return ({"live": False, "reason": "auto_arm_removed"}, None)
 
 
 def probe_auto_liveness(
@@ -222,14 +191,10 @@ def enqueue_auto_job(
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
-    """POST admit-on-request enqueue to the Auto worker.
-
-    ``lane`` is optional GIW checkout isolation (``A``|``B``). I3: omit the
-    JSON key when unset so older GIW receivers keep ``select_lane`` defaults.
-    ``workspace`` is optional satellite repo name; omit for hub ULG.
-    """
-    url = _auto_url("/enqueue", base_url=base_url)
-    payload = {
+    """The Auto enqueue route is removed. Code work is team_dispatch."""
+    return {
+        "ok": False,
+        "reason": "auto_arm_removed",
         "thread_id": str(thread_id),
         "turn_number": int(turn_number),
         "subject": subject,
@@ -240,53 +205,16 @@ def enqueue_auto_job(
         "desired_effort": desired_effort,
         "contract": contract,
         "require_attended": bool(require_attended),
+        "escalation": escalation,
+        "request_id": request_id,
+        "cse_chat_url": cse_chat_url,
+        "cse_registration_id": cse_registration_id,
+        "continuity_hop": bool(continuity_hop),
+        "lane": lane,
+        "workspace": workspace,
+        "prompt_uri": prompt_uri,
+        "advisor_brief": advisor_brief,
+        "work_key": work_key,
+        "base_url": base_url,
+        "timeout_s": timeout_s,
     }
-    if escalation:
-        payload["escalation"] = escalation
-    if request_id:
-        payload["request_id"] = request_id
-    if cse_chat_url:
-        payload["cse_chat_url"] = cse_chat_url
-    if cse_registration_id:
-        payload["cse_registration_id"] = cse_registration_id
-    if continuity_hop:
-        payload["continuity_hop"] = True
-    if lane:
-        payload["lane"] = lane
-    if workspace:
-        payload["workspace"] = workspace
-    if prompt_uri:
-        payload["prompt_uri"] = prompt_uri
-    if advisor_brief:
-        payload["advisor_brief"] = advisor_brief
-    if work_key:
-        payload["work_key"] = work_key
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            resp = client.post(url, json=payload)
-        data = resp.json() if resp.content else {}
-        # Relay both projections the worker minted; never restate them here.
-        # Hardcoding the status was how the admit verdict got dropped on the
-        # floor while the envelope still read as success.
-        relayed = {
-            "auto_handler_status": str(
-                data.get("auto_handler_status") or "no-auto-handler"
-            ),
-            "job_admission": data.get("job_admission"),
-        }
-        if resp.status_code == 200 and data.get("ok"):
-            return {"ok": True, **relayed, "enqueue": data}
-        return {
-            "ok": False,
-            **relayed,
-            "enqueue": data,
-            "status_code": resp.status_code,
-        }
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        return {
-            "ok": False,
-            "auto_handler_status": "no-auto-handler",
-            "job_admission": None,
-            "reason": "enqueue_unreachable",
-            "error": str(exc),
-        }

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
-from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+from services.git_integration_worker.relay.closeout_plane_probe import (
     probe_three_planes,
 )
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger

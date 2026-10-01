@@ -11,7 +11,7 @@ from implement_admission.propagation_row import PropagationRow
 from scripts.model_manager.ui.controller.service_ctl.authority_identity import (
     normalize_authority_value,
 )
-from services.git_integration_worker.cursor_auto.propagation_probe import (
+from services.git_integration_worker.relay.propagation_probe import (
     attest_authority_identity,
     attest_identity_delta,
     proof_observed,

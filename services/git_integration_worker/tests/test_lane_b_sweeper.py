@@ -53,10 +53,6 @@ def patch_ledger(
         "services.git_integration_worker.lane_b_sweeper.SeatWriteLedger.instance",
         lambda: ledger,
     )
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.SeatWriteLedger.instance",
-        lambda: ledger,
-    )
     return ledger
 
 

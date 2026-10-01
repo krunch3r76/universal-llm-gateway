@@ -204,6 +204,13 @@ def register_event_tools(mcp: FastMCP) -> None:
         Example:
           observability(operation="recent-failures", params={"limit": 20})
           observability(operation="pipeline-trace", params={"execution_id": "abc123"})
+        «verb-orientation:observability»
+        Depth: `agent_skill:event-instrumentation-discipline` · `agent_skill:completion-provenance-discipline`.
+        cursor_only (fs, not on the Customize loader):
+        - `debug-with-events` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/debug-with-events/SKILL.md")
+        - `ulg-architecture` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/ulg-architecture/SKILL.md")
+        - `mcp-tool-loop-trace-matrix` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/mcp-tool-loop-trace-matrix/SKILL.md")
+        «/verb-orientation:observability»
         """
         if operation not in _VALID_OPERATIONS:
             return {

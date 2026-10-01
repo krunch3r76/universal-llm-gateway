@@ -593,7 +593,7 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
   summoning thread as a report. The report is not a stop. A human gate is
   only an explicit see-score or `OPERATOR_GATE`.
-- `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
+- No live summoning chat = confer-and-finish via `team_dispatch` (Q2 unchanged).
 - `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
   explicit, **or** when the summoning IDE is liaison (human not in that chat).
   No pager only when the live summoning chat **is the human operator**.
@@ -899,7 +899,7 @@ Lane-B `conductor` conductor missions receive a **seat-identity preamble** from
 GIW `resolve_prompt_preamble` when the dispatch is a genuine conductor packet:
 either **`packet_path`** is set (IDE `team_dispatch`) **or** the body carries the
 mandatory literal line ``Use the conductor skill — …`` (message-body
-``COMMISSION_CONDUCTOR`` via `cursor_request` → cursor-auto — no `packet_path`).
+``COMMISSION_CONDUCTOR`` via `team_dispatch` — no `packet_path`).
 The preamble names your own GIW **`dispatch_id`** (short ledger id — **not** the
 Stargate execution UUID on bus `to:`) and the two nesting paths:
 

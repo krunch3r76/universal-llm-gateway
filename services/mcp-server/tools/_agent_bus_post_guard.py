@@ -127,17 +127,14 @@ def reconcile_send_arguments(
     if raw_to.lower() in SEND_NON_ADDRESSABLE_TO:
         return args, {
             "error": (
-                "send: to='cursor-auto' is not a bus address — cursor-auto is the Auto "
-                "executor role (and a valid turn author), not a mailbox. A turn sent "
-                "there reaches no inbox and arms nothing. To arm cursor-auto use "
-                "agent_bus(tool='request', to='cursor', ...) which probes handler "
-                "liveness and returns auto_handler_status + job_admission + "
-                "poll_hint. To reach an attended "
-                "cursor seat use send with to='cursor'."
+                "send: that recipient is not a bus address — a retired executor "
+                "role is not a mailbox. A turn sent there reaches no inbox and "
+                "arms nothing. Code work is team_dispatch. "
+                "To reach an attended cursor seat use send with to='cursor'."
             ),
             "reason": "send_to_cursor_auto_not_addressable",
             "provided": raw_to,
-            "suggestion": "use_request_to_arm_auto_or_send_to_cursor",
+            "suggestion": "use_team_dispatch_or_send_to_cursor",
         }
     return args, None
 

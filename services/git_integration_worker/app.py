@@ -24,26 +24,6 @@ from universal_logging import get_logger
 from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.background_supervisor import supervise
 from services.git_integration_worker.config import WorkerConfig, load_config
-from services.git_integration_worker.cursor_auto.auto_worker_loop import (
-    auto_concurrent_worker_loop,
-    auto_worker_loop,
-    drain_blocks_new_auto_claims,
-    orphan_scanner_loop,
-)
-from services.git_integration_worker.cursor_auto.closeout_outbox import (
-    CloseoutOutboxStore,
-)
-from services.git_integration_worker.cursor_auto.execute_runner import (
-    clear_tool_op_invoker,
-)
-from services.git_integration_worker.cursor_auto.execute_tool_op_invoker import (
-    register_production_invoker,
-)
-from services.git_integration_worker.cursor_auto.hop_cadence import hop_cadence_loop
-from services.git_integration_worker.cursor_auto.job_reconcile import (
-    shutdown_auto_jobs,
-)
-from services.git_integration_worker.cursor_auto.queue import set_drain_claim_gate
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -65,9 +45,6 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
 )
 from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
 from services.git_integration_worker.routes.admin import router as admin_router
-from services.git_integration_worker.routes.cursor_auto import (
-    router as cursor_auto_router,
-)
 from services.git_integration_worker.routes.cursor_catalog import (
     router as cursor_catalog_router,
 )
@@ -126,7 +103,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # before any per-dispatch HOME swap, so the cursor_sdk_dispatches table
     # exists regardless of which dispatch op touches the ledger first.
     ledger = CursorDispatchLedger.instance()
-    CloseoutOutboxStore.instance()
     # Worker generation identity: fresh uuid + wall-clock boot ts per process.
     # Drain events carry these so a Phase-2 manage supervisor can detect a
     # stale-epoch event emitted by a prior worker generation across a restart.
@@ -140,7 +116,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_started_at=worker_boot_ts,
     )
     app.state.admission_controller = controller
-    set_drain_claim_gate(lambda: drain_blocks_new_auto_claims(controller))
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()
@@ -148,20 +123,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Bind-first: persistence reconcile/replay must not hold the health port
     # off the wire (2026-08-03 boot hang — unbounded pre-yield work).
     schedule_startup_persistence(app)
-    register_production_invoker()
     app.state.shutting_down = False
     supervise(app, "stale_lease_sweeper", lambda: stale_lease_sweeper(app))
-    # Respawn the lane loop: its absence deregisters the cursor-auto handler and
-    # parks every agent_bus.request, including the propagate repair path.
-    supervise(app, "cursor_auto_worker", lambda: auto_worker_loop(app), restart=True)
-    supervise(
-        app,
-        "cursor_auto_concurrent_worker",
-        lambda: auto_concurrent_worker_loop(app),
-        restart=True,
-    )
-    supervise(app, "cursor_auto_orphan_scanner", lambda: orphan_scanner_loop(app))
-    supervise(app, "cursor_auto_hop_cadence", lambda: hop_cadence_loop(app))
     supervise(app, "ulg_story_projector", lambda: ulg_story_projector_loop(app))
     supervise(app, "trigger_fire_loop", lambda: trigger_fire_loop(app))
     supervise(app, "lane_b_sweeper", lambda: lane_b_sweeper_loop(app))
@@ -196,15 +159,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         app.state.shutting_down = True
-        clear_tool_op_invoker()
-        await shutdown_auto_jobs(app)
         for attr in (
             "startup_persistence_task",
             "stale_lease_sweeper",
-            "cursor_auto_worker",
-            "cursor_auto_concurrent_worker",
-            "cursor_auto_orphan_scanner",
-            "cursor_auto_hop_cadence",
             "ulg_story_projector",
             "trigger_fire_loop",
             "lane_b_sweeper",
@@ -276,7 +233,6 @@ def create_app() -> FastAPI:
     app.include_router(cursor_sdk_router)
     app.include_router(cursor_sdk_tail_router)
     app.include_router(cursor_catalog_router)
-    app.include_router(cursor_auto_router)
     app.include_router(admin_router)
     app.include_router(triggers_router)
     return app

@@ -24,7 +24,7 @@ _NEW_ROW = "row-new-propagate"
 
 def _mute_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        "services.git_integration_worker.relay.propagation_probe.probe_process_live",
         lambda _service: {"probe_reachable": False},
     )
 

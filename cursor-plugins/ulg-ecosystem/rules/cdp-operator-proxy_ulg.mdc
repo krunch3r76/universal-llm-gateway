@@ -9,7 +9,6 @@ trigger_match_terms:
   - DIRECTIVE
   - CLOSEOUT
   - DISPOSITION
-  - cursor-auto
   - assumed_state
   - operator proxy
   - propagate
@@ -46,7 +45,7 @@ trigger_match_terms:
 
 **Streaming stop (BINDING — inv 30):** `end(CSE identity) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT`. **Tab ⟂ stream ⟂ lane** (`decision:cse-tab-decoupled-from-session`) — PARK / WAITING / stand-down may end the **stream** without ending CSE or bus lane; ¬ hop or re-stream to keep a tab warm. A leg DISPOSITION does **not** authorize `MISSION_CLOSEOUT`. **Persistent-lane carve-out:** on `bus_lifecycle:persistent` + long-lived operator, `MISSION_CLOSEOUT` only for true mission/arc end or forced CSE refresh — a landed roadmap row / work-unit complete is a Leg (do **not** emit MISSION_CLOSEOUT; stream MAY park). **Going-quiet ≡ stream-stop** on that lane (report WAITING / PARK; continue the **lane**, not the generate). **Self-scheduled wake:** arm **both** Monitor + `send_later` at **first dispatch** with work in flight; re-arm `send_later` every turn; tear down at true close. Wake bounds silence — does **not** prevent stopping. Wake notification is **not** the user (gates stay open). Monitor timeout ambiguity UNRESOLVED (armed 3600000 / reported 1800000 / docs say ignored when persistent). Reliability unprobed-from-cursor-sdk — not a hard SLA. Guide: `cortex://notes/system/specs/cdp-seat-wake-heartbeat.md`. First-dispatch inject: mission briefing (`operator_proxy_wake_brief`). Skill § Self-scheduled wake. Episodic exit-as-default is **not** retired. Unexpected stop ⇒ awareness `notify` tag `cse-stream-stop` (cursor fires if operator seat already quiet).
 
-**Mission default (BINDING):** CDP Opus mission launch (`session=operator-proxy, job=freeform|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; IF6 = CLI `scripts/cortex/claude-ai-sync-jupiter project-ask`) ⇒ **Opus = operator · Fable = advisor · Composer = investigate limb · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → **`seat=cursor-sdk` `job=investigate`** (inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
+**Mission default (BINDING):** CDP Opus mission launch (`session=operator-proxy, job=freeform|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; IF6 = CLI `scripts/cortex/claude-ai-sync-jupiter project-ask`) ⇒ **Opus = operator · Fable = advisor · Composer = investigate limb · cursor-sdk = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → **`seat=cursor-sdk` `job=investigate`** (inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
 **Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only).
 
@@ -58,7 +57,7 @@ trigger_match_terms:
 
 **Session abort (BINDING):** IDE/cursor lead **¬** cancel cursor-sdk dispatches or kill in-flight executions without **explicit operator authorization** for that session — poll, read closeout, paste status into live CDP converse; operator supersedes on private lane. MCP `project_ask` abort is gone. Rule: `in-flight-work-guard_ulg.mdc`.
 
-**Operator restart (BINDING):** while Auto can claim, `agent_bus.request` with `contract: propagate` — cursor-auto mints propagation rows and coordinates drain-gated `sync_restart` (not tier-M `execute` + `manage.*`). **Auto wedged ⇒ `send(to=cursor)`** attended IDE (inv 40) — `propagate` enqueues on the broken slot. Skill § Blocked → ask ladder.
+**Operator restart (BINDING):** this seat runs `manage` `sync_restart` directly (never `force` on `git_integration_worker`). Propagation rows are `team_dispatch` with `contract: propagate`, not tier-M `execute` + `manage.*`. **Wedged drain ⇒ `send(to=cursor)`** attended IDE (inv 40). Skill § Blocked → ask ladder.
 
 **Autonomy default (BINDING — inv 39):** `recovery_path=human` / manage outside `VALID_SERVICES` / no supervisor ⇒ implement autonomous recovery. ¬ operator-only gate · ¬ `TYPE: OPERATOR_GATE` · ¬ wake. tmux `0:0` is a seat recipe, not a human terminal.
 
@@ -70,7 +69,7 @@ trigger_match_terms:
 
 - Cowork holds operator seat driving cursor via `agent_bus.request`
 - Authoring or reviewing `TYPE: DIRECTIVE` / `TYPE: DISPOSITION` turns
-- cursor-auto nested dispatch arcs (5867-class dogfood)
+- cursor-sdk nested dispatch arcs (5867-class dogfood)
 - Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
 - Life missing a code-seat tool (`manage`, reload, …) — commission **cursor** (`request` if Auto can claim; `send(to=cursor)` if Auto is wedged — inv 40); ¬ park on the human
 - **CSE stream stopped / mid-mission idle** — this rule (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
