@@ -1693,6 +1693,43 @@ def emit_sdk_lane_b_disposition_marked(
 
 
 @event_factory
+def SdkLaneBDispositionCleared(  # noqa: N802
+    branch: str,
+    reason: str,
+    dispatch_id: str,
+    cause: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.disposition_cleared",
+        payload={
+            "branch": branch,
+            "reason": reason,
+            "dispatch_id": dispatch_id,
+            "cause": cause,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_disposition_cleared(
+    *,
+    branch: str,
+    reason: str,
+    dispatch_id: str,
+    cause: str,
+) -> None:
+    """Emit when a stale disposition marker is cleared because the ref is gone."""
+    _emit(
+        SdkLaneBDispositionCleared(
+            branch=branch,
+            reason=reason,
+            dispatch_id=dispatch_id,
+            cause=cause,
+        )
+    )
+
+
+@event_factory
 def SdkLaneBOrphanAged(  # noqa: N802
     branch: str,
     tip_sha: str,

@@ -163,6 +163,51 @@ def branch_name_for_dispatch(dispatch_id: str) -> str:
     return branch_name_for_lane(dispatch_id)
 
 
+def _dispatch_source_repo(dispatch_id: str) -> str | None:
+    """Return ``source_repo`` from the dispatch row, if any."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    value = row["source_repo"]
+    if value is None:
+        return None
+    return str(value)
+
+
+def reconcile_orphaned_dispositions(*, source_repo: Path) -> int:
+    """Clear disposition rows whose branch ref is absent in the resolved repo."""
+    from services.git_integration_worker import cursor_sdk_branch_debt_reconcile
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_disposition_cleared,
+    )
+
+    sweep_repo = source_repo.resolve()
+    count = 0
+    for row in list_dispositions():
+        stored = _dispatch_source_repo(row.dispatch_id)
+        repo = Path(stored).resolve() if stored and stored.strip() else sweep_repo
+        if not repo.is_dir():
+            continue
+        if cursor_sdk_branch_debt_reconcile.ref_exists(repo, row.branch_name):
+            continue
+        clear_disposition(branch_name=row.branch_name)
+        emit_sdk_lane_b_disposition_cleared(
+            branch=row.branch_name,
+            reason=row.reason,
+            dispatch_id=row.dispatch_id,
+            cause="ref_absent",
+        )
+        count += 1
+    return count
+
+
 def mark_lane_b_disposition_for_dispatch(
     *,
     dispatch_id: str,

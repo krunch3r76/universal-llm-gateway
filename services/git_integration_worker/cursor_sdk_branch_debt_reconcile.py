@@ -89,7 +89,8 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _ref_exists(repo: Path, branch_name: str) -> bool:
+def ref_exists(repo: Path, branch_name: str) -> bool:
+    """Return whether ``refs/heads/<branch_name>`` resolves in *repo*."""
     return (
         _git(repo, "rev-parse", "--verify", f"refs/heads/{branch_name}").returncode == 0
     )
@@ -115,7 +116,7 @@ def _tag_orphan_tip(repo: Path, branch_name: str, sha: str) -> str | None:
 def _classify(*, repo: Path, debt: BranchDebt) -> DebtVerdict:
     """Grade one open debt by the tip evidence that survives it."""
     branch = debt.branch_name
-    if _ref_exists(repo, branch):
+    if ref_exists(repo, branch):
         return DebtVerdict(
             branch=branch,
             verdict=VERDICT_LIVE,

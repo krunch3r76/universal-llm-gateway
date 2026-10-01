@@ -33,6 +33,7 @@ from services.git_integration_worker.cursor_sdk_worktree import (
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     gc_merged_dispatch_branches,
     prune_dispatch_worktree,
+    reap_orphan_worktrees,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     register_dispatch_worktree,
@@ -326,6 +327,47 @@ def test_mark_for_dispatch_skips_safe_to_delete(
     )
     assert result is None
     assert list_dispositions() == []
+
+
+def test_dead_ref_disposition_reconciled(
+    source_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale marker on a deleted branch is cleared by the reap sweep (shape C)."""
+    monkeypatch.setenv("CURSOR_SDK_LANE_B_ORPHAN_VISIBILITY_TTL_S", "999999999")
+    dispatch_id = "dead-lane"
+    branch, _ = _create_orphan_branch(
+        source_repo,
+        dispatch_id=dispatch_id,
+        rel_path="dead.py",
+        body="dead\n",
+    )
+    mark_lane_b_disposition(
+        branch_name=branch,
+        reason="abandoned",
+        dispatch_id=dispatch_id,
+    )
+    _git("branch", "-D", branch, cwd=source_repo)
+    emitted: list[dict] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append({"signal": signal, **payload})
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        side_effect=_capture,
+    ):
+        reap_orphan_worktrees(
+            source_repo=source_repo,
+            worktree_root=source_repo.parent / "worktrees",
+        )
+
+    assert get_disposition(branch_name=branch) is None
+    cleared = [e for e in emitted if e.get("signal") == "sdk.lane_b.disposition_cleared"]
+    assert len(cleared) == 1
+    assert cleared[0]["branch"] == branch
+    assert cleared[0]["reason"] == "abandoned"
+    assert cleared[0]["dispatch_id"] == dispatch_id
+    assert cleared[0]["cause"] == "ref_absent"
 
 
 def test_merged_arc_branch_survives_gc(source_repo: Path) -> None:
