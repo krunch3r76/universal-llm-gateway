@@ -122,14 +122,3 @@ def test_classify_observed_home_kind_fingerprint() -> None:
     assert classify_observed_home_kind("/home/io") == "operator"
 
 
-def test_l2_absent_cse_names_observed_home_kind() -> None:
-    from services.git_integration_worker.cursor_auto.l2_orientation import (
-        format_cse_state_section,
-        read_cse_state,
-    )
-
-    cse = read_cse_state(thread_id="nonexistent-thread-xyz")
-    assert cse.absent is True
-    assert cse.observed_home_kind in {"dispatch", "operator"}
-    rendered = format_cse_state_section(cse)
-    assert f"observed_home_kind={cse.observed_home_kind}" in rendered

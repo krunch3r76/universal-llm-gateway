@@ -281,7 +281,7 @@ Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y
 - **This seat closes verification on-seat (`lead_seats` config)** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
 Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: skill `lead-seat-boot` § Surface gate + skill `consult-routing`."""
 
-# Life MCP (`/mcp/life`) — quality_gate is code-surface overflow only; verify via cursor-auto.
+# Life MCP (`/mcp/life`) — quality_gate is code-surface overflow only; verify via team_dispatch.
 _SEAT_CAPABILITY_VERIFY_BLOCK_LIFE = """\
 ## Seat capability verify — life MCP (probe before refusing)
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row for **this endpoint** — `/mcp/life` does not expose `quality_gate` (code-surface overflow only).

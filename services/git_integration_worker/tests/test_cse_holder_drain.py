@@ -13,7 +13,6 @@ from services.git_integration_worker.cse_session_holders import (
     ensure_schema,
     upsert_holder,
 )
-from services.git_integration_worker.cursor_auto.queue import reset_queue_for_tests
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 
 _CSE_URL = "https://claude.ai/cowork/cse_drain1"
@@ -23,10 +22,8 @@ _CSE_URL = "https://claude.ai/cowork/cse_drain1"
 def _reset_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     CursorDispatchLedger._instance = None
-    reset_queue_for_tests(durable=False)
     yield
     CursorDispatchLedger._instance = None
-    reset_queue_for_tests(durable=False)
 
 
 @pytest.fixture

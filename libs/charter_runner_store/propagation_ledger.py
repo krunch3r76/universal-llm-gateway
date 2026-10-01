@@ -511,7 +511,7 @@ def close_row(
         if own_conn:
             db.close()
         return
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         IdentityMeasurementError,
         resolve_identity_measurement,
     )

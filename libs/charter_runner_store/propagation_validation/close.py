@@ -78,7 +78,7 @@ def _is_head_token(code_ref: str) -> bool:
 
 
 def _process_live_probeable_services() -> frozenset[str]:
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_live_probeable_services,
     )
 

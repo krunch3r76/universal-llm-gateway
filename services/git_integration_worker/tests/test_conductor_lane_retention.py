@@ -404,7 +404,7 @@ def _run_failed_lane_settlement(
     closeout_text: str,
 ) -> list[dict]:
     """Drive the abandoned-mark branch of lane settlement without a git repo."""
-    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    from services.git_integration_worker.relay.closeout_plane_probe import (
         PlaneObservation,
     )
     from services.git_integration_worker.cursor_sdk_capture_binding import (
@@ -450,7 +450,7 @@ def _run_failed_lane_settlement(
         lambda *_args, **_kwargs: (None, None, None),
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.closeout_plane_probe.probe_three_planes",
+        "services.git_integration_worker.relay.closeout_plane_probe.probe_three_planes",
         lambda *_args, **_kwargs: PlaneObservation(
             head_sha=_TIP,
             branch=branch_name,

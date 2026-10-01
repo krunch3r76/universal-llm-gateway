@@ -75,7 +75,7 @@ _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
 
 def _process_identity_fields_clause() -> str:
     """Identity fields attestation uses — derived from probe oracle, not hand-copied."""
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         IDENTIFIER_FIELDS,
     )
 

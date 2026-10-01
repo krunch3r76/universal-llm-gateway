@@ -93,17 +93,6 @@ def test_manage_recycle_source_bypasses_auto_queue() -> None:
 
 def test_execute_recycle_giw_does_not_call_claim_next(monkeypatch) -> None:
     """api_dispatch.recycle_giw arms drain in the manage process, not claim_next."""
-    calls: list[str] = []
-
-    def _boom(*_args, **_kwargs):
-        calls.append("claim_next")
-        raise AssertionError("claim_next must not run on recycle_giw")
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.queue.AutoJobQueue.claim_next",
-        _boom,
-        raising=False,
-    )
 
     async def _drain(*_args, **_kwargs):
         return {"status": "deferred", "restart_intent_id": "intent-test"}
@@ -127,4 +116,3 @@ def test_execute_recycle_giw_does_not_call_claim_next(monkeypatch) -> None:
     assert result["status"] == "deferred"
     assert result["recycle"] is True
     assert result["service"] == "git_integration_worker"
-    assert calls == []

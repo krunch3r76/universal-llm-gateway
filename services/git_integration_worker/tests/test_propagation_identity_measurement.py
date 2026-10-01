@@ -14,7 +14,7 @@ from charter_runner_store.propagation_ledger import (
 )
 from implement_admission.propagation_row import PropagationRow
 
-from services.git_integration_worker.cursor_auto.propagation_probe import (
+from services.git_integration_worker.relay.propagation_probe import (
     IdentityMeasurementError,
 )
 

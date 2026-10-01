@@ -109,17 +109,9 @@ def _emit_overlap_findings(view: dict[str, Any]) -> None:
     except Exception:
         emit = None  # type: ignore[assignment]
         cdp_occupancy_overlap = None  # type: ignore[assignment]
-    try:
-        from services.git_integration_worker.cursor_auto.hop_cadence_events import (
-            emit_overlap,
-        )
-    except Exception:
-        emit_overlap = None  # type: ignore[assignment]
     for finding in findings:
         lane = str(finding.get("lane") or "")
         execs = [str(x) for x in (finding.get("execution_ids") or [])]
-        if emit_overlap is not None:
-            emit_overlap(lane=lane, execution_ids=execs)
         if emit is not None and cdp_occupancy_overlap is not None:
             emit(cdp_occupancy_overlap(lane=lane, execution_ids=execs))
 

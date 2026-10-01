@@ -63,7 +63,6 @@ def _idle_snapshot() -> FleetIdleSnapshot:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
         cdp_lane_idle=True,
     )
 
@@ -91,7 +90,6 @@ def test_fleet_idle_attestation_includes_probe_fields(store: TriggerStore) -> No
     assert "verdict: idle" in block
     assert "dispatch_idle: true" in block
     assert "tick_empty: true" in block
-    assert "cursor_auto_idle: true" in block
     assert "cdp_lane_idle: true" in block
     assert "grace_s: 45" in block
     assert "attested_at_utc: 2026-07-31T19:30:00Z" in block

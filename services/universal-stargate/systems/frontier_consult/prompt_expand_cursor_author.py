@@ -178,7 +178,7 @@ async def _poll_author_terminal(
 ) -> dict[str, Any]:
     """Prefer in-process ``poll_dispatch_terminal_with_liveness``; else HTTP."""
     try:
-        from services.git_integration_worker.cursor_auto.nested_sdk import (
+        from services.git_integration_worker.relay.dispatch_poll import (
             poll_dispatch_terminal_with_liveness,
         )
         from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -275,7 +275,7 @@ async def author_task_prime_async(
         )
         return None
 
-    from services.git_integration_worker.cursor_auto.nested_sdk import (
+    from services.git_integration_worker.relay.dispatch_poll import (
         fetch_sdk_closeout_body,
     )
     from services.git_integration_worker.cursor_sdk_deliverables import (

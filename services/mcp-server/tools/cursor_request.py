@@ -1,12 +1,13 @@
-"""Narrow cursor-auto request lane — dedicated MCP tool for approval gating.
+"""Narrow request lane — dedicated MCP tool for approval gating.
 
 The web-claude MCP harness gates tool approval at *registered-tool* granularity,
 not at the ``arguments.tool`` sub-op level. Because the unified ``agent_bus``
 tool bundles destructive ops (``delete_thread``, ``close``, ``triage``) with
 ``request``, an operator cannot write an allow-by-name rule that covers only
-the sanctioned unattended cursor-auto lane. This module registers
+the request op. This module registers
 ``cursor_request``, exposing ONLY the ``request`` op and delegating to
 ``_request_dispatch`` — no logic is duplicated.
+Code work is ``team_dispatch`` (``seat=cursor-sdk`` or ``model=cdp/…``).
 
 Registered on the life MCP surface only (paired ``operator_request``); code AutoJob
 admit uses ``agent_bus(tool="request")``.
@@ -145,7 +146,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
 **Life coding aperture:** coding interest → `contract=ask` first (omit `desired_model`/`escalation`/`workspace` unless satellite). ¬ sequential `fs`/`rag` as unknown-loci hunter — use `cursor_request(ask|recon)`. In-seat `answer` executes nothing — re-issue `ask`. Index: `document:life-coding-playbook`.
 
-**CDP window (web-anthropic):** life ¬`team_dispatch` — commission cursor-auto via this tool; Auto fires `team_dispatch(model=cdp/opus-5, …)` on **same** private request lane. ¬ mint second private request lane. ¬ `cse_session(followup)` for Customize skill refresh. CLOSEOUT quotes `execution_id` + `poll_hint`.
+**CDP window (web-anthropic):** life code work is `team_dispatch` (`seat=cursor-sdk` or `model=cdp/opus-5`) on **same** private request lane. ¬ mint second private request lane. ¬ `cse_session(followup)` for Customize skill refresh. CLOSEOUT quotes `execution_id` + `poll_hint`.
 
 **Conductor commission:** `investigate` + `lane=B` — packet/nest table: `agent_skill:conductor`.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from services.git_integration_worker.cursor_auto.episode_residue import (
+from services.git_integration_worker.relay.episode_residue import (
     compose_closeout_body,
     residue_for_closeout,
     resolve_relay_residue,
@@ -398,7 +398,7 @@ def test_structured_charter_runner_store_mints_giw_row():
 
 
 def test_obligation_deployment_state_counts_only_sync_restart():
-    from services.git_integration_worker.cursor_auto.episode_residue import (
+    from services.git_integration_worker.relay.episode_residue import (
         obligation_deployment_state_from_wrapper,
     )
 

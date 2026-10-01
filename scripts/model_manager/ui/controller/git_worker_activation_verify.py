@@ -231,7 +231,7 @@ async def run_activation_verify(
     )
     idle_deadline = settle_mono + idle_timeout_s
     last_class = _observation_class(validation.pre_observation)
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         IdentityMeasurementError,
         probe_process_live,
     )
@@ -261,7 +261,7 @@ async def run_activation_verify(
                     code_ref_relation_from_observed,
                 )
 
-                from services.git_integration_worker.cursor_auto.propagation_probe import (
+                from services.git_integration_worker.relay.propagation_probe import (
                     resolve_identity_measurement,
                 )
 

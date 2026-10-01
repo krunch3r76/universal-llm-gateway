@@ -70,7 +70,7 @@ def legal_proof_classes(service: str) -> frozenset[str]:
     legal: set[str] = set()
     # Lazy import: avoid libs→services cycle at module load; oracle SoT is the
     # fetcher map in propagation_probe (6907 item-2 adds unlock advertisement).
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         process_live_probeable_services,
     )
 
