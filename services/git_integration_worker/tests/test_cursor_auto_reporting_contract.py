@@ -192,6 +192,17 @@ def test_reporting_contract_failure_paths_and_brief_boundary() -> None:
     assert "**BRIEF BOUNDARY**" in message
 
 
+def test_reporting_contract_leadin_tells_executor_to_do_the_block() -> None:
+    """'end with this block' reads as paste-into-closeout; the lead-in must not."""
+    assert "end with this block" not in REPORTING_CONTRACT_BLOCK
+    assert (
+        "the executor does what this block says before posting its review "
+        "request or closeout"
+        in REPORTING_CONTRACT_BLOCK
+    )
+    assert REPORTING_CONTRACT_BLOCK.count(_FAILURE_PATHS_BLOCK) == 1
+
+
 def test_reporting_contract_failure_paths_na_on_read_only() -> None:
     message = build_sdk_message(
         "TYPE: DIRECTIVE\nscope: foo\nQuestion?", contract="investigate"

@@ -565,6 +565,24 @@ def test_lane_b_failure_paths_block_idempotent_when_existing_text_has_it() -> No
     )
     assert text.count("**Before you post.**") == 0
     assert (text + packet).count("**Before you post.**") == 1
+    assert text.count(_FAILURE_PATHS_BLOCK) == 0
+    assert (text + packet).count(_FAILURE_PATHS_BLOCK) == 1
+
+
+def test_lane_b_failure_paths_marker_paraphrase_still_appends_full_block() -> None:
+    """Marker plus different text is not the block; the paraphrase must not win."""
+    packet = "**Before you post.** Run the tests.\n\nbody"
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        existing_text=packet,
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert packet.count(_FAILURE_PATHS_BLOCK) == 0
+    assert text.count(_FAILURE_PATHS_BLOCK) == 1
+    assert (text + packet).count(_FAILURE_PATHS_BLOCK) == 1
 
 
 def test_lane_b_failure_paths_block_absent_without_worktree() -> None:

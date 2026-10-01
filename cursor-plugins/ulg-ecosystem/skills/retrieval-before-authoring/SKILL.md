@@ -39,7 +39,7 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 4. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job; report nulls with hits; do not file an off-topic yield as a mis-map.
    Falsifier: on that step: re-queried a null scope same job, omitted nulls from the report, or filed off-topic chunks as a scope defect.
 
-5. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk. A prompt that commissions a change ends with this block, in full:
+5. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk. A prompt that commissions a change ends with this block, in full; conductor commissions (packets that say "Use the conductor skill") are the exception:
 
 **Before you post.** For each change, name the input or state where it breaks (service down, concurrency, partial failure, wrong ordering, install or staging path) and the test that covers it. Change only what the brief names; anything else you think should change goes in the review request as a proposal, not in the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once the request is posted, stop committing.
 

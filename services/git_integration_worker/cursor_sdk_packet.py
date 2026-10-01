@@ -119,7 +119,6 @@ _FAILURE_PATHS_BLOCK = (
     "the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once "
     "the request is posted, stop committing."
 )
-_FAILURE_PATHS_MARKER = "**Before you post.**"
 
 _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
     "CONDUCTOR SEAT IDENTITY (mandatory): Your GIW dispatch_id is {dispatch_id}. "
@@ -590,7 +589,8 @@ def _append_failure_paths_block(
 
     Same gate as the worktree cwd warning. ``stop committing`` would cut a
     conductor's run-to-completion land, so conductor packets skip the block.
-    Idempotent when ``existing_text`` or *parts* already contain the marker.
+    Idempotent only when ``existing_text`` or *parts* already contain the full
+    block. A marker paraphrase does not suppress it.
     """
     if lane != "B" or not lane_worktree:
         return
@@ -600,9 +600,9 @@ def _append_failure_paths_block(
         existing_text=existing_text,
     ):
         return
-    if _FAILURE_PATHS_MARKER in (existing_text or ""):
+    if _FAILURE_PATHS_BLOCK in (existing_text or ""):
         return
-    if any(_FAILURE_PATHS_MARKER in part for part in parts):
+    if any(_FAILURE_PATHS_BLOCK in part for part in parts):
         return
     parts.append(_FAILURE_PATHS_BLOCK)
 

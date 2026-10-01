@@ -30,7 +30,8 @@ _WRITE_COMMISSION_CHECKLIST = """\
 """
 
 _WRITE_COMMISSION_BLOCK = (
-    "\nWrite commissions end with this block, in full:\n\n" + _FAILURE_PATHS_BLOCK + "\n"
+    "\nOn a write commission, the executor does what this block says before "
+    "posting its review request or closeout:\n\n" + _FAILURE_PATHS_BLOCK + "\n"
 )
 
 _REPORTING_CONTRACT_TEMPLATE = """\

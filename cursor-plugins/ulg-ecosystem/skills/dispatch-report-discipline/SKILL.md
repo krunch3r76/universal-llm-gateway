@@ -109,7 +109,7 @@ commissioned to write.
 
 ### 12. FAILURE PATHS AND BRIEF BOUNDARY
 
-On a write commission, end with this block, in full:
+On a write commission, the executor does what this block says before posting its review request or closeout:
 
 **Before you post.** For each change, name the input or state where it breaks (service down, concurrency, partial failure, wrong ordering, install or staging path) and the test that covers it. Change only what the brief names; anything else you think should change goes in the review request as a proposal, not in the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once the request is posted, stop committing.
 
