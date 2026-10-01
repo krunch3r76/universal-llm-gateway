@@ -126,8 +126,13 @@ def test_census_lists_every_mission_with_state_and_release() -> None:
     assert parked.state == "budget_parked"
     assert parked.stop == "ROW_HOP"
     assert "hop_budget_no_progress_cap" in parked.reason
-    assert '"hop_park_release": true' in parked.release
-    assert 'reuse_thread="13713"' in parked.release
+    assert parked.release == _release(
+        work_key="todo:cdp-display-seat-swap",
+        thread_id="13713",
+        dispatch_thread_id="13707",
+        model="cursor/grok-4.7",
+        extra='generation_options={"hop_park_release": true}',
+    )
     assert parked.summoning_thread_id == "13707"
     assert parked.seconds_in_state is not None and parked.seconds_in_state > 250
 
@@ -225,7 +230,16 @@ def test_restart_park_row_names_the_resume_call() -> None:
         rows = census(conn)
     assert rows[0].state == "restart_parked"
     assert "d4bbdc67" in rows[0].reason
-    assert 'resume_of="parked-1"' in rows[0].release
+    assert rows[0].release == (
+        "GIW resumes it after the restart drains; else "
+        + _release(
+            work_key="todo:lane-b-git-integrity",
+            thread_id="13691",
+            dispatch_thread_id="13707",
+            model="cursor/grok-4.7",
+            extra='resume_of="parked-1"',
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -268,6 +282,320 @@ def test_classify_designed_stops_and_crashes(
     if expected_state == "hop_owed" and record.get("hop_admit_error"):
         assert "503" in entry.reason
         assert "CURSOR_LANE_PIN_FAILED" in entry.reason
+
+
+def _release(
+    *,
+    work_key: str,
+    thread_id: str,
+    dispatch_thread_id: str,
+    extra: str = "",
+    model: str = "grok-4.7",
+    knobs: str = '{"effort":"high"}',
+) -> str:
+    tail = f", {extra}" if extra else ""
+    return (
+        'team_dispatch(op="generate", seat="cursor-sdk", contract="conductor", '
+        f'source_ref="{work_key}", lane="B", reuse_thread="{thread_id}", '
+        f'dispatch_thread_id="{dispatch_thread_id}", model="{model}", '
+        f"model_knobs={knobs}{tail})"
+    )
+
+
+def test_release_uses_summoning_thread_model_and_knobs() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "park-1",
+            "thread_id": "13713",
+            "work_key": "todo:ordinary",
+            "status": "completed",
+            "resolved_model": "grok-4.7",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {
+                    "summoning_thread_id": "13707",
+                    "model": "cursor/grok-4.7",
+                    "model_knobs": {"effort": "xhigh", "fast": "true"},
+                    "closeout_stop_tokens": ["ROW_HOP"],
+                    "hop_parked": True,
+                }
+            ),
+        }
+    )
+    assert row.release == _release(
+        work_key="todo:ordinary",
+        thread_id="13713",
+        dispatch_thread_id="13707",
+        model="cursor/grok-4.7",
+        knobs='{"effort":"xhigh","fast":"true"}',
+        extra='generation_options={"hop_park_release": true}',
+    )
+
+
+def test_release_on_operator_proxy_lane_uses_worker_thread() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "park-12286",
+            "thread_id": "13724",
+            "work_key": "todo:from-operator",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {
+                    "summoning_thread_id": "12286",
+                    "closeout_stop_tokens": ["ROW_HOP"],
+                    "hop_parked": True,
+                }
+            ),
+        }
+    )
+    assert row.release == _release(
+        work_key="todo:from-operator",
+        thread_id="13724",
+        dispatch_thread_id="13724",
+        extra='generation_options={"hop_park_release": true}',
+    )
+
+
+def test_nested_wait_release_is_none() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "nest-1",
+            "thread_id": "50",
+            "work_key": "todo:nest",
+            "status": "parked_waiting",
+            "record_json": "{}",
+        }
+    )
+    assert row.state == "nested_wait"
+    assert row.release == "none (the nest closing resumes the parent)"
+
+
+def test_succeeded_requires_successor_row() -> None:
+    present = classify_mission_row(
+        {
+            "dispatch_id": "pred",
+            "thread_id": "7",
+            "work_key": "todo:chain",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {"closeout_stop_tokens": ["ROW_HOP"], "hop_successor": "succ"}
+            ),
+        },
+        known_dispatch_ids={"pred", "succ"},
+    )
+    assert present.state == "succeeded"
+    assert present.release == "none (follow the successor row)"
+
+    missing = classify_mission_row(
+        {
+            "dispatch_id": "pred",
+            "thread_id": "7",
+            "work_key": "todo:chain",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {"closeout_stop_tokens": ["ROW_HOP"], "hop_successor": "ghost"}
+            ),
+        },
+        known_dispatch_ids={"pred"},
+    )
+    assert missing.state == "hop_owed"
+    assert missing.release == (
+        "hop reactor / watchdog admits the successor; else "
+        + _release(
+            work_key="todo:chain",
+            thread_id="7",
+            dispatch_thread_id="7",
+            extra='resume_of="pred"',
+        )
+    )
+
+
+def test_released_budget_park_is_not_budget_parked() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "rel-1",
+            "thread_id": "9",
+            "work_key": "todo:released",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {
+                    "closeout_stop_tokens": ["ROW_HOP"],
+                    "hop_parked": True,
+                    "hop_park_released_at": "2026-10-01T00:00:00+00:00",
+                }
+            ),
+        }
+    )
+    assert row.state == "hop_owed"
+    assert row.release == (
+        "hop reactor / watchdog admits the successor; else "
+        + _release(
+            work_key="todo:released",
+            thread_id="9",
+            dispatch_thread_id="9",
+            extra='resume_of="rel-1"',
+        )
+    )
+
+
+def test_resumed_restart_park_does_not_promise_giw_resume() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "parked-resumed",
+            "thread_id": "11",
+            "work_key": "todo:resumed",
+            "status": "cancelled",
+            "park_kind": "park_for_restart",
+            "park_resumed_by": "child-1",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": "{}",
+        }
+    )
+    assert row.state == "silent"
+    assert row.release == (
+        "watchdog re-admits (budgeted); else "
+        + _release(
+            work_key="todo:resumed",
+            thread_id="11",
+            dispatch_thread_id="11",
+            extra='resume_of="parked-resumed"',
+        )
+    )
+
+
+def test_cancel_discard_is_finished_with_no_release() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "disc-1",
+            "thread_id": "12",
+            "work_key": "todo:discarded",
+            "status": "cancelled",
+            "park_kind": "cancel_discard",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": "{}",
+        }
+    )
+    assert row.state == "done"
+    assert row.release == "none"
+
+
+def test_restart_park_past_expiry_does_not_promise_auto_resume() -> None:
+    expired = (datetime.now(UTC) - timedelta(seconds=10)).isoformat()
+    row = classify_mission_row(
+        {
+            "dispatch_id": "parked-exp",
+            "thread_id": "13",
+            "work_key": "todo:expired-park",
+            "status": "cancelled",
+            "park_kind": "park_for_restart",
+            "park_intent_id": "intent-exp",
+            "park_expires_at": expired,
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": "{}",
+        }
+    )
+    assert row.state == "restart_parked"
+    assert "window closed" in row.reason
+    assert row.release == _release(
+        work_key="todo:expired-park",
+        thread_id="13",
+        dispatch_thread_id="13",
+        extra='resume_of="parked-exp"',
+    )
+
+
+def test_hop_owed_permanent_admit_error_does_not_promise_retry() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "bad-400",
+            "thread_id": "14",
+            "work_key": "todo:permanent",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {
+                    "closeout_stop_tokens": ["ROW_HOP"],
+                    "hop_admit_error": {
+                        "last_error": "bad request",
+                        "last_status_code": 400,
+                        "retryable": False,
+                        "attempts": 1,
+                    },
+                }
+            ),
+        }
+    )
+    assert row.state == "hop_owed"
+    assert row.release == (
+        "admit refusal is not retryable; else "
+        + _release(
+            work_key="todo:permanent",
+            thread_id="14",
+            dispatch_thread_id="14",
+            extra='resume_of="bad-400"',
+        )
+    )
+
+
+def test_transport_park_armed_despite_stale_harvest_false() -> None:
+    row = classify_mission_row(
+        {
+            "dispatch_id": "tp-1",
+            "thread_id": "15",
+            "work_key": "todo:transport",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {
+                    "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+                    "closeout_harvest_owed": False,
+                    "hop_park_harvest_fired_at": "2026-10-01T00:00:00+00:00",
+                    "closeout_turn": 3,
+                }
+            ),
+        }
+    )
+    assert row.state == "transport_parked"
+    assert row.release == (
+        "a web-anthropic reply on thread 15 after turn 3 (park_harvest_continue); else "
+        + _release(
+            work_key="todo:transport",
+            thread_id="15",
+            dispatch_thread_id="15",
+            extra='resume_of="tp-1"',
+        )
+    )
+
+
+def test_admitted_successor_with_null_stamps_is_latest(tmp_path) -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        dispatch_id="pred-null",
+        thread_id="70",
+        work_key="todo:null-stamps",
+        record_patch={"closeout_stop_tokens": ["ROW_HOP"], "hop_successor": "succ-null"},
+    )
+    _admit(
+        ledger,
+        dispatch_id="succ-null",
+        thread_id="70",
+        work_key="todo:null-stamps",
+        terminal_status=None,
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET terminal_at=NULL, started_at=NULL, "
+            "queued_at=NULL WHERE dispatch_id='succ-null'"
+        )
+        rows = census(conn)
+    assert len(rows) == 1
+    assert rows[0].dispatch_id == "succ-null"
+    assert rows[0].state == "live"
 
 
 def test_renderers_carry_the_release_call() -> None:

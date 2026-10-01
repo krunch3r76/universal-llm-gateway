@@ -45,6 +45,11 @@ CENSUS_STATES: tuple[str, ...] = (
 
 _LIVE = frozenset({"queued", "admitted", "running"})
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
+_DEFAULT_MODEL = "grok-4.7"
+_DEFAULT_KNOBS = {"effort": "high"}
+# Summoning on the operator-proxy lane trips live_external_gate and sends
+# consults into the operator CSE. Re-summon on the worker thread instead.
+_OPERATOR_PROXY_LANES = frozenset({"12286"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,19 +104,46 @@ def _parse_instant(value: Any) -> datetime | None:
     return parsed
 
 
+def _dispatch_thread_id(thread_id: str, summoning: str | None) -> str:
+    if summoning and summoning not in _OPERATOR_PROXY_LANES:
+        return summoning
+    return thread_id
+
+
+def _model_and_knobs(
+    row: dict[str, Any], record: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    model = str(record.get("model") or row.get("resolved_model") or _DEFAULT_MODEL)
+    knobs = record.get("model_knobs")
+    if not isinstance(knobs, dict) or not knobs:
+        knobs = dict(_DEFAULT_KNOBS)
+    return model, knobs
+
+
 def _admit_call(
-    *, work_key: str, thread_id: str, extra: str = ""
+    *,
+    work_key: str,
+    thread_id: str,
+    dispatch_thread_id: str,
+    model: str,
+    knobs: dict[str, Any],
+    extra: str = "",
 ) -> str:
     tail = f", {extra}" if extra else ""
+    knobs_s = json.dumps(knobs, sort_keys=True, separators=(",", ":"))
     return (
         'team_dispatch(op="generate", seat="cursor-sdk", contract="conductor", '
         f'source_ref="{work_key}", lane="B", reuse_thread="{thread_id}", '
-        f'dispatch_thread_id="{thread_id}"{tail})'
+        f'dispatch_thread_id="{dispatch_thread_id}", model="{model}", '
+        f"model_knobs={knobs_s}{tail})"
     )
 
 
 def classify_mission_row(
-    row: dict[str, Any], *, now: datetime | None = None
+    row: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    known_dispatch_ids: set[str] | None = None,
 ) -> MissionCensusRow:
     """Fold one latest conductor ledger row into its census row.
 
@@ -131,6 +163,9 @@ def classify_mission_row(
     tokens = _tokens(record)
     stop = ",".join(sorted(tokens))
     successor = str(record.get("hop_successor") or "").strip() or None
+    successor_known = bool(
+        successor and known_dispatch_ids is not None and successor in known_dispatch_ids
+    )
     terminal_at = row.get("terminal_at")
     started_at = row.get("started_at") or row.get("queued_at")
     since_raw = terminal_at if status in _TERMINAL else started_at
@@ -154,8 +189,15 @@ def classify_mission_row(
             release=release,
         )
 
+    model, knobs = _model_and_knobs(row, record)
+    dispatch_thread = _dispatch_thread_id(thread_id, summoning)
     resume = _admit_call(
-        work_key=work_key, thread_id=thread_id, extra=f'resume_of="{dispatch_id}"'
+        work_key=work_key,
+        thread_id=thread_id,
+        dispatch_thread_id=dispatch_thread,
+        model=model,
+        knobs=knobs,
+        extra=f'resume_of="{dispatch_id}"',
     )
 
     if status in _LIVE:
@@ -166,7 +208,21 @@ def classify_mission_row(
             "parent parked while a nested child runs",
             "none (the nest closing resumes the parent)",
         )
+    if row.get("park_kind") == "cancel_discard":
+        return _row(
+            "done",
+            "cancel_discard finished the dispatch; no resume",
+            "none",
+        )
     if row.get("park_kind") == "park_for_restart" and not row.get("park_resumed_by"):
+        expires = _parse_instant(row.get("park_expires_at"))
+        if expires is not None and expires <= now_dt:
+            return _row(
+                "restart_parked",
+                f"GIW park_for_restart (intent {row.get('park_intent_id') or '?'}); "
+                "auto-resume window closed",
+                resume,
+            )
         return _row(
             "restart_parked",
             f"GIW park_for_restart (intent {row.get('park_intent_id') or '?'}); "
@@ -181,12 +237,15 @@ def classify_mission_row(
             _admit_call(
                 work_key=work_key,
                 thread_id=thread_id,
+                dispatch_thread_id=dispatch_thread,
+                model=model,
+                knobs=knobs,
                 extra='generation_options={"hop_park_release": true}',
             ),
         )
     if "DONE" in tokens:
         return _row("done", "mission closed by its conductor", "none")
-    if successor:
+    if successor_known:
         return _row(
             "succeeded",
             f"successor {successor} admitted",
@@ -223,9 +282,9 @@ def classify_mission_row(
             f"(consult_pending_continue); else {resume}",
         )
     if "PARKED_TRANSPORT" in tokens:
-        armed = record.get("hop_park_harvest_fired_at")
+        armed = bool(record.get("hop_park_harvest_fired_at"))
         harvest_owed = record.get("closeout_harvest_owed") is True
-        if harvest_owed:
+        if armed or harvest_owed:
             closeout_turn = record.get("closeout_turn")
             where = f"thread {thread_id} after turn {closeout_turn}"
             return _row(
@@ -244,10 +303,14 @@ def classify_mission_row(
         if isinstance(admit_error, dict):
             err = admit_error.get("last_error") or admit_error.get("error") or ""
             code = admit_error.get("last_status_code") or admit_error.get("status_code")
+            if admit_error.get("retryable") is False:
+                release = f"admit refusal is not retryable; else {resume}"
+            else:
+                release = f"fix the refusal, then the watchdog retries; else {resume}"
             return _row(
                 "hop_owed",
                 f"successor admit refused ({code}): {str(err)[:160]}",
-                f"fix the refusal, then the watchdog retries; else {resume}",
+                release,
             )
         return _row(
             "hop_owed",
@@ -271,7 +334,7 @@ def latest_mission_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Latest conductor ledger row per (work_key, thread_id), oldest mission first."""
     cursor = conn.execute(
         "SELECT * FROM cursor_sdk_dispatches WHERE lower(contract)='conductor' "
-        "ORDER BY COALESCE(terminal_at, started_at, queued_at)"
+        "ORDER BY rowid"
     )
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     for raw in cursor.fetchall():
@@ -296,10 +359,14 @@ def census(
     what still owes something. Rows that fail to classify never abort the
     census: they fall back to the ``silent`` state with the exception text.
     """
+    known = {
+        str(item[0])
+        for item in conn.execute("SELECT dispatch_id FROM cursor_sdk_dispatches")
+    }
     rows: list[MissionCensusRow] = []
     for raw in latest_mission_rows(conn):
         try:
-            entry = classify_mission_row(raw, now=now)
+            entry = classify_mission_row(raw, now=now, known_dispatch_ids=known)
         except Exception as exc:  # noqa: BLE001 — a census must not die on one row
             entry = MissionCensusRow(
                 work_key=str(raw.get("work_key") or ""),
