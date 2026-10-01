@@ -63,6 +63,7 @@ def test_model_capability_frozen_round_trip() -> None:
         fixed_params=cap.fixed_params,
         instruction_profile=cap.instruction_profile,
         context_window_tokens=cap.context_window_tokens,
+        probed_at=cap.probed_at,
     )
     assert round_trip == cap
     assert cap.context_window_tokens == 200_000
