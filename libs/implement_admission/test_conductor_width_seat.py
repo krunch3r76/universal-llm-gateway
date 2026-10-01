@@ -1,4 +1,4 @@
-"""Width-seat rendering: ACTIVE is the Fable restore seat."""
+"""Width-seat rendering: ACTIVE is the shipped width seat; RESTORE is Fable."""
 
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ _OPUS_SUBSTITUTE = ConductorWidthSeat(
 
 @pytest.mark.offline
 def test_render_restore_and_active_width_seat() -> None:
-    """ACTIVE is RESTORE, so production renders Fable at reasoning_effort=high."""
-    assert ACTIVE is RESTORE
-    assert ACTIVE.model == "cdp/fable-5.1"
+    """Production ACTIVE renders cdp/opus-5.5 at reasoning_effort=high."""
+    assert ACTIVE is not RESTORE
+    assert ACTIVE.model == "cdp/opus-5.5"
     assert ACTIVE.reasoning_effort == "high"
     assert ACTIVE.effort_when_bind_gates_wave == "max"
 
@@ -58,10 +58,27 @@ def test_render_restore_and_active_width_seat() -> None:
     )
 
     for rendered in (active_clause, active_hop, active_attended, *active_materialize):
+        assert "cdp/opus-5.5" in rendered
+        assert "reasoning_effort=high" in rendered
+        assert "effort_when_bind_gates_wave=max" in rendered
+        assert "cdp/fable-5.1" not in rendered
+
+    restore_clause = g3_g5_score_ratify_clause(RESTORE)
+    restore_hop, restore_attended = _render_templates(restore_clause)
+    restore_materialize = (
+        hop_invariant_g3_g5_fragment(RESTORE),
+        attended_g3_g5_task_sentence(RESTORE),
+    )
+
+    for rendered in (
+        restore_clause,
+        restore_hop,
+        restore_attended,
+        *restore_materialize,
+    ):
         assert "cdp/fable-5.1" in rendered
         assert "reasoning_effort=high" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
-        assert "cdp/opus-5" not in rendered
 
 
 @pytest.mark.offline
@@ -79,7 +96,7 @@ def test_explicit_opus_seat_renders_without_editing_active() -> None:
         assert "cdp/fable-5.1" not in rendered
         assert "reasoning_effort=max" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
-    assert ACTIVE is RESTORE
+    assert ACTIVE.model == "cdp/opus-5.5"
 
 
 def test_default_render_reads_active_constant(monkeypatch: pytest.MonkeyPatch) -> None:
