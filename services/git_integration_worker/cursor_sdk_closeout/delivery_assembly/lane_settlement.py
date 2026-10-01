@@ -234,16 +234,29 @@ def settle_lane_and_dispatch_fields(
                         lane_b_head_sha = tip_sha
                         lane_b_commits_ahead = tip_ahead
             if outcome.status != "finished" and not state.safe_to_delete:
+                from services.git_integration_worker.cursor_sdk_closeout.conductor_lane_retention import (
+                    lane_retention_reason,
+                )
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
                     mark_lane_b_disposition,
                 )
 
-                mark_lane_b_disposition(
-                    branch_name=record.branch_name,
-                    reason="abandoned",
+                # A failed or cancelled run on a lane an open conductor mission
+                # still owns (its own crashed hop, or a nested limb) must not
+                # mark that branch abandoned: the reap would remove the
+                # worktree under the mission (a:37043, worker 13713 hop 3).
+                retained = lane_retention_reason(
                     dispatch_id=dispatch_id,
-                    tip_sha=state.head_sha,
+                    thread_id=thread_id,
+                    closeout_text=closeout_text,
                 )
+                if retained is None:
+                    mark_lane_b_disposition(
+                        branch_name=record.branch_name,
+                        reason="abandoned",
+                        dispatch_id=dispatch_id,
+                        tip_sha=state.head_sha,
+                    )
     reported_lane = binding.lane if binding is not None else None
     isolation_mat: bool | None = None
     escalation_harvest: str = "none"

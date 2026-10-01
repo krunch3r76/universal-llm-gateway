@@ -271,11 +271,39 @@ def settle_lane_branch(
 ) -> LaneBranchSettlement:
     """Discharge the lane branch on declaration, else record the debt.
 
+    A branch still owned by an open conductor mission is neither discharged
+    nor charged: the mission's next hop, nested limb, or crash-resume runs on
+    it, so settlement waits for the closeout that carries ``DONE``
+    (``conductor_lane_retention``). That outcome is ``retained_for_mission``.
+
     Never raises into the closeout path: a settle failure must not cost the
     caller its closeout, so anything unexpected degrades to a logged no-op.
     """
     if not branch_name:
         return LaneBranchSettlement(outcome="no_branch")
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_lane_retention import (
+        RETAINED_FOR_MISSION,
+        lane_retention_reason,
+    )
+
+    retained = lane_retention_reason(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        closeout_text=closeout_text,
+    )
+    if retained:
+        logger.info(
+            "lane_b branch retained for open conductor mission branch=%s "
+            "dispatch_id=%s reason=%s",
+            branch_name,
+            dispatch_id,
+            retained,
+        )
+        return LaneBranchSettlement(
+            outcome=RETAINED_FOR_MISSION,
+            branch=branch_name,
+            detail=retained,
+        )
     try:
         return _settle(
             source_repo=source_repo,
