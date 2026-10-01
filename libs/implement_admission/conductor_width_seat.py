@@ -1,8 +1,8 @@
 """One assignment selects the conductor width seat.
 
 G1, G2, G4, G3→G5, path-sim Q, the hop-5 check, and the dispatch-kernel
-width cell read ``ACTIVE``. Shipped ``ACTIVE`` is ``cdp/opus-5`` at
-``reasoning_effort="max"`` (``effort_when_bind_gates_wave="max"``).
+width cell read ``ACTIVE``. Shipped ``ACTIVE`` is ``cdp/opus-5.5`` at
+``reasoning_effort="extra"`` (CDP picker token; ``effort_when_bind_gates_wave="max"``).
 ``ACTIVE = RESTORE`` returns width rows to ``cdp/fable-5.1``. There is no
 second switch, env var, or todo attr.
 """
@@ -32,8 +32,8 @@ RESTORE = ConductorWidthSeat(
 )
 # Shipped seat. ACTIVE = RESTORE returns to cdp/fable-5.1.
 ACTIVE = ConductorWidthSeat(
-    model="cdp/opus-5",
-    reasoning_effort="max",
+    model="cdp/opus-5.5",
+    reasoning_effort="extra",
     effort_when_bind_gates_wave="max",
 )
 
