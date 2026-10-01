@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from services.git_integration_worker.cursor_sdk_nested_witness import (
+    _DISPATCH_ON_THREAD_RE,
     _nested_child_has_commits,
     nested_implement_has_commits,
     nested_parent_with_commits,
@@ -17,6 +18,16 @@ from services.git_integration_worker.cursor_sdk_nested_witness import (
 )
 
 pytestmark = pytest.mark.offline
+
+_RETRY_DISPATCH_ID = "bd8e467f-0c5c-4631-80f8-a13f6548eaba-r1"
+
+
+def test_dispatch_on_thread_re_captures_retry_suffix() -> None:
+    tip = f"hop 1 dispatch `{_RETRY_DISPATCH_ID}` on thread 14076."
+    match = _DISPATCH_ON_THREAD_RE.search(tip)
+    assert match is not None
+    assert match.group(1) == _RETRY_DISPATCH_ID
+    assert match.group(2) == "14076"
 
 
 def test_nested_child_has_commits_from_closeout_body() -> None:

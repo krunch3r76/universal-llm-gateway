@@ -366,7 +366,7 @@ def _repo_head_full_sha(repo: Path) -> str | None:
 
 def _conductor_dispatch_id(tip_body: str) -> str | None:
     match = re.search(
-        r"conductor dispatch_id[^:`]*[`\"]?([0-9a-f-]{8,})[`\"]?",
+        r"conductor dispatch_id[^:`]*[`\"]?([0-9a-f-]{7,}[0-9a-f](?:-r\d+)?)[`\"]?",
         tip_body,
         re.IGNORECASE,
     )

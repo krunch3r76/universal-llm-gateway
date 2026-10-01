@@ -20,6 +20,7 @@ from implement_admission.conductor_witness_table import (
     _G2_ARTIFACT_IDS,
     _G3_ARTIFACT_IDS,
     _artifact_map,
+    _conductor_dispatch_id,
     _first_resolving_artifact,
     _g4_body_clears,
     _g6_review_failure_reason,
@@ -30,6 +31,14 @@ from implement_admission.degraded_reasons import (
 )
 
 pytestmark = pytest.mark.offline
+
+_RETRY_DISPATCH_ID = "bd8e467f-0c5c-4631-80f8-a13f6548eaba-r1"
+
+
+def test_conductor_dispatch_id_captures_retry_suffix() -> None:
+    tip = f"conductor dispatch_id `{_RETRY_DISPATCH_ID}`\n"
+    assert _conductor_dispatch_id(tip) == _RETRY_DISPATCH_ID
+
 
 _SLUG = "conductor-hop-wait-protocol-fixture"
 _SOURCE_REF = "todo:conductor-hop-wait-protocol"

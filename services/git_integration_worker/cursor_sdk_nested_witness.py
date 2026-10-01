@@ -20,8 +20,9 @@ _MAX_NEST_WALK = 12
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
+_DISPATCH_ID_CAPTURE = r"[0-9a-f-]{7,}[0-9a-f](?:-r\d+)?"
 _DISPATCH_ON_THREAD_RE = re.compile(
-    r"dispatch\s+`([0-9a-f-]{8,})`\s+on thread\s+(\d+)",
+    rf"dispatch\s+`({_DISPATCH_ID_CAPTURE})`\s+on thread\s+(\d+)",
     re.IGNORECASE,
 )
 
