@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Lane-B hub checkout guard (reference-transaction, prepared phase only).
+set -euo pipefail
+
+state="${1:-}"
+if [[ "${state}" != "prepared" ]]; then
+  exit 0
+fi
+
+if [[ -z "${CURSOR_SDK_DISPATCH_ID:-}" ]]; then
+  exit 0
+fi
+
+hook_dir="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "${hook_dir}/../../.." && pwd)"
+export PYTHONPATH="${root}:${root}/libs:${root}/services/universal-stargate${PYTHONPATH:+:${PYTHONPATH}}"
+
+if [[ -x "${HOME}/.venvs/universal/bin/python" ]]; then
+  py="${HOME}/.venvs/universal/bin/python"
+else
+  py="python3"
+fi
+
+exec "${py}" -m services.git_integration_worker.lane_b_reference_transaction_hook "${state}"

@@ -719,3 +719,228 @@ def test_lane_b_commit_refusal_blocks_shipped_grade(
         str(token).startswith("divergence:lane_b_commit_refused")
         for token in payload.get("deviations") or []
     )
+
+
+def test_ac4_identity_match_commits(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "ac4-ok"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    assert record is not None
+    (wt / "good.py").write_text("ok\n", encoding="utf-8")
+    result = commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=record.branch_name,
+    )
+    assert result.committed
+    assert result.head_sha
+
+
+def test_ac4_wrong_path_refuses_before_add(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[dict[str, str]] = []
+
+    def _capture(**kwargs: str) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events."
+        "emit_sdk_lane_capture_refused",
+        _capture,
+    )
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "ac4-path"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    assert record is not None
+    wrong = source_repo / "wrong_tree"
+    wrong.mkdir()
+    dirty = source_repo / "stay_dirty.py"
+    dirty.write_text("dirty\n", encoding="utf-8")
+    result = salvage_commit(
+        wrong,
+        message="must refuse",
+        dispatch_id=dispatch_id,
+        branch_name=record.branch_name,
+    )
+    assert result.refused
+    assert not result.committed
+    assert dirty.read_text(encoding="utf-8") == "dirty\n"
+    assert captured
+
+
+def test_ac4_hub_staged_index_refuses(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[dict[str, str]] = []
+
+    def _capture(**kwargs: str) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events."
+        "emit_sdk_lane_capture_refused",
+        _capture,
+    )
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "ac4-hub"
+    mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    assert record is not None
+    staged = source_repo / "staged.py"
+    staged.write_text("staged\n", encoding="utf-8")
+    _git("add", "staged.py", cwd=source_repo)
+    index_before = _git("diff", "--cached", "--name-only", cwd=source_repo).stdout
+    result = salvage_commit(
+        source_repo,
+        message="hub refuse",
+        dispatch_id=dispatch_id,
+        branch_name=record.branch_name,
+    )
+    assert result.refused
+    index_after = _git("diff", "--cached", "--name-only", cwd=source_repo).stdout
+    assert index_before == index_after
+    assert captured
+
+
+def test_ac4_wrong_head_branch_refuses(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[dict[str, str]] = []
+
+    def _capture(**kwargs: str) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events."
+        "emit_sdk_lane_capture_refused",
+        _capture,
+    )
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "ac4-branch"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    assert record is not None
+    _git("checkout", "--detach", "HEAD", cwd=wt)
+    (wt / "wrong_branch.py").write_text("x\n", encoding="utf-8")
+    result = salvage_commit(
+        wt,
+        message="wrong head",
+        dispatch_id=dispatch_id,
+        branch_name=record.branch_name,
+    )
+    assert result.refused
+    assert captured
+
+
+def test_ac4_settle_write_tree_mismatch_skips_commit(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.lane_settlement import (
+        settle_lane_and_dispatch_fields,
+    )
+
+    captured: list[dict[str, str]] = []
+
+    def _capture(**kwargs: str) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_lane_capture_refused",
+        _capture,
+    )
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "ac4-settle"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    assert record is not None
+    wrong = tmp_path / "lease_tree"
+    wrong.mkdir()
+    (wt / "real.py").write_text("real\n", encoding="utf-8")
+    binding = _lane_b_binding(_cfg(source_repo, worktree_root), wrong)
+    baseline = capture_wt_baseline_with_hashes(wt) or {}
+    change_set, _untracked = changed_paths(wt, baseline)
+    deviations: list[str] = []
+    settled = settle_lane_and_dispatch_fields(
+        binding=binding,
+        dispatch_id=dispatch_id,
+        write_tree=wrong,
+        receipt_tree=source_repo,
+        repo_change_set=change_set,
+        outcome=_outcome(),
+        deviations=deviations,
+        divergence_reason=None,
+        baseline=baseline,
+        files_untracked_or_ignored=(),
+        offgit_uris=(),
+        thread_id="t-ac4",
+        gate_d_created_rels=(),
+    )
+    assert captured
+    out_deviations = settled[12]
+    assert any(
+        token.startswith("divergence:lane_b_commit_refused") for token in out_deviations
+    )
+    head = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
+    log = _git("log", "-1", "--oneline", cwd=wt).stdout
+    assert "real.py" not in log or head == _git("rev-parse", record.branch_name, cwd=source_repo).stdout.strip()
+
+
+def test_ac4_release_wrong_caller_path_refuses(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.cursor_sdk_worktree_release import (
+        release_lane_worktree,
+    )
+
+    captured: list[dict[str, str]] = []
+
+    def _capture(**kwargs: str) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events."
+        "emit_sdk_lane_capture_refused",
+        _capture,
+    )
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "ac4-release"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    (source_repo / "hub_dirty.py").write_text("keep\n", encoding="utf-8")
+    result = release_lane_worktree(
+        source_repo=source_repo,
+        worktree_path=source_repo,
+        dispatch_id=dispatch_id,
+        reason="test",
+    )
+    assert not result.released
+    assert result.salvage_refused
+    assert captured

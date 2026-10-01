@@ -82,6 +82,90 @@ def _truncate(text: str, *, limit: int = _ERROR_LIMIT) -> str:
     return "…" + collapsed[-limit:]
 
 
+def _show_toplevel(repo_or_wt: Path) -> Path | None:
+    proc = subprocess.run(
+        ["git", "-C", str(repo_or_wt.resolve()), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.strip()
+    return Path(raw).resolve() if raw else None
+
+
+def _abbrev_ref(repo_or_wt: Path) -> str | None:
+    proc = subprocess.run(
+        ["git", "-C", str(repo_or_wt.resolve()), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    branch = proc.stdout.strip()
+    if not branch or branch == "HEAD":
+        return None
+    return branch
+
+
+def _emit_capture_refused(
+    *,
+    dispatch_id: str,
+    worktree_path: Path,
+    branch_name: str | None,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_capture_refused,
+    )
+
+    try:
+        emit_sdk_lane_capture_refused(
+            dispatch_id=dispatch_id,
+            worktree_path=str(worktree_path.resolve()),
+            branch_name=branch_name or "",
+        )
+    except Exception:
+        pass
+
+
+def _salvage_identity_refusal(
+    wt: Path,
+    *,
+    dispatch_id: str,
+    branch_name: str | None,
+) -> str | None:
+    """Return a refusal token when a registry row exists and identity checks fail."""
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        lookup_dispatch_worktree,
+    )
+
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    if record is None:
+        return None
+
+    wt_res = wt.resolve()
+    record_wt = record.worktree_path.resolve()
+    if wt_res != record_wt:
+        return "worktree_path_mismatch"
+    if branch_name is not None and branch_name != record.branch_name:
+        return "branch_name_mismatch"
+    toplevel = _show_toplevel(wt)
+    if toplevel is None or toplevel != wt_res:
+        return "toplevel_mismatch"
+    if record.source_repo:
+        hub = Path(record.source_repo).expanduser().resolve()
+        if wt_res == hub:
+            return "hub_worktree"
+    head_branch = _abbrev_ref(wt)
+    if head_branch != record.branch_name:
+        return "head_branch_mismatch"
+    return None
+
+
 def _rev_parse(repo_or_wt: Path, ref: str) -> str | None:
     proc = subprocess.run(
         ["git", "-C", str(repo_or_wt.resolve()), "rev-parse", ref],
@@ -202,6 +286,7 @@ def salvage_commit(
     thread_id: str | None = None,
     packet_text: str | None = None,
     respect_skill_scope: bool = False,
+    branch_name: str | None = None,
 ) -> SalvageResult:
     """Commit all dirty paths in the worktree; no-op when clean.
 
@@ -214,6 +299,28 @@ def salvage_commit(
     head = _rev_parse(wt, "HEAD")
     if not is_worktree_dirty(wt):
         return SalvageResult(committed=False, head_sha=head)
+
+    identity_reason = _salvage_identity_refusal(
+        wt, dispatch_id=dispatch_id, branch_name=branch_name
+    )
+    if identity_reason is not None:
+        _emit_capture_refused(
+            dispatch_id=dispatch_id,
+            worktree_path=wt,
+            branch_name=branch_name,
+        )
+        logger.error(
+            "lane_b salvage identity refused path=%s dispatch_id=%s reason=%s",
+            wt,
+            dispatch_id,
+            identity_reason,
+        )
+        return SalvageResult(
+            committed=False,
+            head_sha=head,
+            refused=True,
+            error=_truncate(f"lane_b_identity: {identity_reason}"),
+        )
 
     from services.git_integration_worker.giw_f821_gate import run_giw_subtree_f821_check
 
@@ -303,7 +410,6 @@ def commit_on_terminal(
     *packet_text* scopes that path in. Mint-time skill-tree copies are not
     packet work (friction a:36881).
     """
-    _ = branch_name
     message = f"cursor-sdk: lane-b terminal {dispatch_id}"
     return salvage_commit(
         worktree_path,
@@ -311,6 +417,7 @@ def commit_on_terminal(
         dispatch_id=dispatch_id,
         packet_text=packet_text,
         respect_skill_scope=True,
+        branch_name=branch_name,
     )
 
 
