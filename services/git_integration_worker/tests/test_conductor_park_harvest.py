@@ -194,7 +194,7 @@ CONSULT_PENDING
 execution_id: exec-abc
 poll_hint: wait
 """
-    row = _terminal_row(
+    _terminal_row(
         ledger,
         req,
         closeout_body=omitted_next,

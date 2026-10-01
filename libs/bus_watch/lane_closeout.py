@@ -91,8 +91,9 @@ def file_closeout_friction(
     worker_turn: int,
 ) -> tuple[str | None, str | None]:
     """File friction for a terminal closeout; return ``(friction_id, friction_error)``."""
-    from bus_watch.friction_rows import row_id as friction_row_id
     from substrate_friction_file import file_friction
+
+    from bus_watch.friction_rows import row_id as friction_row_id
 
     owner = friction_owner_from_closeout(worker_text)
     note = friction_note_from_closeout(worker_text)
