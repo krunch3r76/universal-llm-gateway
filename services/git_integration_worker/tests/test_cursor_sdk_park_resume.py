@@ -569,6 +569,26 @@ def test_peer_ignores_park_already_named_by_resume_of(tmp_path: Path) -> None:
     assert _row("plain-after") is not None
 
 
+def test_giw_park_resume_admit_leaves_stamp_to_mark_park_resumed(
+    tmp_path: Path,
+) -> None:
+    """GIW auto-resume still stamps only after its route returns success.
+
+    ``ledger.admit`` of a ``giw_park_resume`` child must not write
+    ``park_resumed_by``. A post-admit refusal (drain) would otherwise close
+    the park onto a child the route did not accept.
+    """
+    _seed_parked("p-giw", thread_id="7120", tmp_path=tmp_path, work_key=_WORK_KEY)
+    child = build_park_resume_request(
+        load_park_row(dispatch_id="p-giw"), attempt=1, code_version="v"
+    )
+    assert child.admitted_via == "giw_park_resume"
+    _admit_on_key(child, work_key=_WORK_KEY, caller_agent=child.caller_agent or "cursor")
+    assert _row(child.dispatch_id) is not None
+    assert _row(child.dispatch_id)["resume_of"] == "p-giw"
+    assert _row("p-giw")["park_resumed_by"] is None
+
+
 def test_cancel_discard_does_not_reserve_the_work_key(tmp_path: Path) -> None:
     _seed_parked(
         "p-disc",

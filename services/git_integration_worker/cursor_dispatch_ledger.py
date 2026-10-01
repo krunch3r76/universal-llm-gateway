@@ -775,11 +775,11 @@ def _stamp_hand_park_resume(
     """Close an open restart-park hold when a hand ``resume_of`` admits.
 
     GIW auto-resume stamps ``park_resumed_by`` from ``mark_park_resumed`` after
-    its own admit. A caller admit never reached that stamp, so the cancelled
-    parent kept the work key and later plain admits 409'd. This UPDATE shares
-    the child admit transaction; a later conflict rolls it back.
-    ``mark_park_resumed`` stays the GIW path and no-ops once this child id is
-    already written.
+    its own admit returns success. This helper is the hand-admit path only;
+    the caller skips ``admitted_via=giw_park_resume`` so a post-admit refusal
+    does not close the park. A caller admit never reached the GIW stamp, so
+    the cancelled parent kept the work key and later plain admits 409'd. This
+    UPDATE shares the child admit transaction; a later conflict rolls it back.
     """
     conn.execute(
         "UPDATE cursor_sdk_dispatches SET park_resumed_by=? "
@@ -1223,8 +1223,9 @@ class CursorDispatchLedger:
         raises ``SourceRefConflict`` without inserting. Lineage exemptions:
         ``nest_under == holder``, terminal ``resume_of`` / ``hop_from`` same key.
         A hand ``resume_of`` of an open ``park_for_restart`` row stamps
-        ``park_resumed_by`` in that same transaction. The SELECT and INSERT
-        share ``BEGIN IMMEDIATE``.
+        ``park_resumed_by`` in that same transaction. ``giw_park_resume``
+        does not; ``mark_park_resumed`` still stamps that path after success.
+        The SELECT and INSERT share ``BEGIN IMMEDIATE``.
 
         Nest park: when ``nest_under`` names the live write-lease holder for
         ``lease_key``, that parent is moved to ``parked_waiting`` and the
@@ -1417,7 +1418,10 @@ class CursorDispatchLedger:
                                 holder_thread_id=peer["thread_id"],
                             ),
                         )
-            if req.resume_of:
+            if req.resume_of and req.admitted_via != "giw_park_resume":
+                # GIW stamps in mark_park_resumed after the route returns
+                # success. Stamping here would close the park on a post-admit
+                # refusal (drain) onto a child the route did not accept.
                 _stamp_hand_park_resume(
                     conn, parent_id=req.resume_of, child_id=req.dispatch_id
                 )
