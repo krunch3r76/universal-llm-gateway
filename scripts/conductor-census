@@ -4,6 +4,7 @@
 Usage:
     scripts/conductor-census            # every mission, text table
     scripts/conductor-census --open     # hide done / succeeded missions
+    scripts/conductor-census --days N   # done/succeeded older than N days → stale
     scripts/conductor-census --json     # JSON array for seats that parse
     scripts/conductor-census --ledger PATH   # another sqlite ledger
 
@@ -17,7 +18,6 @@ only resolves ``sys.path`` and the ledger path.
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -36,6 +36,12 @@ def main(argv: list[str] | None = None) -> int:
         "--open", action="store_true", help="hide done and succeeded missions"
     )
     parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="relabel done/succeeded rows older than N days as stale",
+    )
+    parser.add_argument(
         "--ledger", default=None, help="sqlite path override (default: the GIW ledger)"
     )
     args = parser.parse_args(argv)
@@ -49,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_census import (
         census,
+        open_census_connection,
+        operator_lanes_from_sessions,
         render_json,
         render_table,
     )
@@ -61,10 +69,21 @@ def main(argv: list[str] | None = None) -> int:
     if not path.is_file():
         print(f"ledger not found: {path}", file=sys.stderr)
         return 2
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    sessions = None
     try:
-        rows = census(conn, open_only=args.open)
+        from claude_bundles.cdp_registry_store import load_sessions
+
+        sessions = load_sessions()
+    except Exception:
+        sessions = None
+    conn = open_census_connection(path)
+    try:
+        rows = census(
+            conn,
+            open_only=args.open,
+            days=args.days,
+            operator_lanes=operator_lanes_from_sessions(sessions),
+        )
     finally:
         conn.close()
     print(render_json(rows) if args.json else render_table(rows))

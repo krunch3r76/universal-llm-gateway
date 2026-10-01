@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 CENSUS_STATES: tuple[str, ...] = (
@@ -41,6 +42,7 @@ CENSUS_STATES: tuple[str, ...] = (
     "hop_owed",
     "crashed",
     "silent",
+    "stale",
 )
 
 _LIVE = frozenset({"queued", "admitted", "running"})
@@ -50,6 +52,8 @@ _DEFAULT_KNOBS = {"effort": "high"}
 # Summoning on the operator-proxy lane trips live_external_gate and sends
 # consults into the operator CSE. Re-summon on the worker thread instead.
 _OPERATOR_PROXY_LANES = frozenset({"12286"})
+_FINISHED_STATES = frozenset({"done", "succeeded"})
+_DAY_S = 86400.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +78,7 @@ class MissionCensusRow:
     seconds_in_state: float | None
     successor: str | None
     release: str
+    stacked_parks: int = 0
 
 
 def _record(row: dict[str, Any]) -> dict[str, Any]:
@@ -104,8 +109,69 @@ def _parse_instant(value: Any) -> datetime | None:
     return parsed
 
 
-def _dispatch_thread_id(thread_id: str, summoning: str | None) -> str:
-    if summoning and summoning not in _OPERATOR_PROXY_LANES:
+def _record_is_partial(raw: Any) -> bool:
+    """True when ``record_json`` is a torn write, not an empty or finished object.
+
+    A census that runs while GIW is inserting must not treat the unfinished
+    last row as a mission. Empty text is a finished row with no stamps.
+    """
+    if raw is None:
+        return False
+    text = str(raw)
+    if not text.strip():
+        return False
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    return not isinstance(data, dict)
+
+
+def operator_lanes_from_sessions(sessions: dict[str, Any] | None) -> frozenset[str]:
+    """Operator-proxy lane threads from the sessions registry, plus the known floor.
+
+    Stargate refuses a conductor summon onto these threads
+    (``conductor_summoning_operator_lane``). A review-purpose row is not one.
+    An unreadable registry leaves the floor (``12286``) so that lane still
+    fails closed.
+    """
+    lanes = set(_OPERATOR_PROXY_LANES)
+    if not isinstance(sessions, dict):
+        return frozenset(lanes)
+    from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
+
+    for row in sessions.values():
+        if not isinstance(row, dict):
+            continue
+        purpose = str(row.get("purpose") or "").strip()
+        ids = row.get("ids") if isinstance(row.get("ids"), dict) else {}
+        lane = str(ids.get("lane_thread") or "").strip()
+        if lane and purpose and is_operator_proxy_mission_purpose(purpose):
+            lanes.add(lane)
+    return frozenset(lanes)
+
+
+def open_census_connection(path: Path) -> sqlite3.Connection:
+    """Open a ledger for census without a write lock or a schema change.
+
+    ``mode=ro`` cannot take a reserved lock. ``query_only`` refuses writes
+    even if a caller later forgets. No ``journal_mode`` pragma: that can
+    rewrite the file.
+    """
+    uri = f"file:{Path(path).resolve()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=0.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+def _dispatch_thread_id(
+    thread_id: str,
+    summoning: str | None,
+    operator_lanes: frozenset[str] | None = None,
+) -> str:
+    lanes = operator_lanes if operator_lanes is not None else _OPERATOR_PROXY_LANES
+    if summoning and summoning not in lanes:
         return summoning
     return thread_id
 
@@ -144,6 +210,7 @@ def classify_mission_row(
     *,
     now: datetime | None = None,
     known_dispatch_ids: set[str] | None = None,
+    operator_lanes: frozenset[str] | None = None,
 ) -> MissionCensusRow:
     """Fold one latest conductor ledger row into its census row.
 
@@ -190,7 +257,7 @@ def classify_mission_row(
         )
 
     model, knobs = _model_and_knobs(row, record)
-    dispatch_thread = _dispatch_thread_id(thread_id, summoning)
+    dispatch_thread = _dispatch_thread_id(thread_id, summoning, operator_lanes)
     resume = _admit_call(
         work_key=work_key,
         thread_id=thread_id,
@@ -339,6 +406,8 @@ def latest_mission_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     for raw in cursor.fetchall():
         row = {k: raw[k] for k in raw.keys()}
+        if _record_is_partial(row.get("record_json")):
+            continue
         key = (
             str(row.get("work_key") or row.get("source_ref") or ""),
             str(row.get("thread_id") or ""),
@@ -347,11 +416,34 @@ def latest_mission_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
+def _stacked_open_parks(conn: sqlite3.Connection, thread_id: str) -> int:
+    """Unreleased parks on one worker thread, including rows older than the latest."""
+    count = 0
+    cursor = conn.execute(
+        "SELECT park_kind, park_resumed_by, record_json FROM cursor_sdk_dispatches "
+        "WHERE thread_id=?",
+        (thread_id,),
+    )
+    for raw in cursor.fetchall():
+        row = {k: raw[k] for k in raw.keys()}
+        if _record_is_partial(row.get("record_json")):
+            continue
+        if row.get("park_kind") == "park_for_restart" and not row.get("park_resumed_by"):
+            count += 1
+            continue
+        record = _record(row)
+        if record.get("hop_parked") is True and not record.get("hop_park_released_at"):
+            count += 1
+    return count
+
+
 def census(
     conn: sqlite3.Connection,
     *,
     now: datetime | None = None,
     open_only: bool = False,
+    days: int | None = None,
+    operator_lanes: frozenset[str] | None = None,
 ) -> list[MissionCensusRow]:
     """Every conductor mission the ledger knows, one row each, newest state first.
 
@@ -366,7 +458,12 @@ def census(
     rows: list[MissionCensusRow] = []
     for raw in latest_mission_rows(conn):
         try:
-            entry = classify_mission_row(raw, now=now, known_dispatch_ids=known)
+            entry = classify_mission_row(
+                raw,
+                now=now,
+                known_dispatch_ids=known,
+                operator_lanes=operator_lanes,
+            )
         except Exception as exc:  # noqa: BLE001 — a census must not die on one row
             entry = MissionCensusRow(
                 work_key=str(raw.get("work_key") or ""),
@@ -381,7 +478,22 @@ def census(
                 seconds_in_state=None,
                 successor=None,
                 release="inspect the ledger row",
+                stacked_parks=0,
             )
+        parks = _stacked_open_parks(conn, entry.thread_id)
+        if parks >= 2:
+            entry = replace(
+                entry,
+                stacked_parks=parks,
+                reason=f"{entry.reason}; stacked parks on lane: {parks}",
+            )
+        if (
+            days is not None
+            and entry.state in _FINISHED_STATES
+            and entry.seconds_in_state is not None
+            and entry.seconds_in_state > days * _DAY_S
+        ):
+            entry = replace(entry, state="stale")
         if open_only and entry.state in {"done", "succeeded"}:
             continue
         rows.append(entry)
@@ -430,6 +542,8 @@ __all__ = [
     "census",
     "classify_mission_row",
     "latest_mission_rows",
+    "open_census_connection",
+    "operator_lanes_from_sessions",
     "render_json",
     "render_table",
 ]
