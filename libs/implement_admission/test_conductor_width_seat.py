@@ -83,7 +83,7 @@ def test_render_restore_and_active_width_seat() -> None:
 
 @pytest.mark.offline
 def test_explicit_opus_seat_renders_without_editing_active() -> None:
-    """A passed-in Opus seat renders while ACTIVE stays the Fable assignment."""
+    """A passed-in cdp/opus-5 seat renders while ACTIVE stays cdp/opus-5.5."""
     clause = g3_g5_score_ratify_clause(_OPUS_SUBSTITUTE)
     hop, attended = _render_templates(clause)
     materialize = (
