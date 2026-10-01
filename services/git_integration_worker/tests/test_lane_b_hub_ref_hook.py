@@ -12,6 +12,9 @@ from services.git_integration_worker.cursor_sdk_hub_land_scope import (
     ff_only_onto_hub_master,
 )
 from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
+from services.git_integration_worker.lane_b_reference_transaction_hook import (
+    HOOK_POLICY_REFUSE_EXIT,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -111,18 +114,8 @@ def test_worker_ff_land_without_dispatch_id_allowed(
 
 
 def test_hub_checkout_dash_b_refused_with_dispatch_id(
-    source_repo: Path, monkeypatch: pytest.MonkeyPatch
+    source_repo: Path,
 ) -> None:
-    captured: list[dict[str, str]] = []
-
-    def _capture(**kwargs: str) -> None:
-        captured.append(kwargs)
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_events."
-        "emit_sdk_lane_hub_checkout_refused",
-        _capture,
-    )
     env = _dispatch_env("hook-checkout-b")
     before = _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env)
     assert before.stdout.strip() == "master"
@@ -139,18 +132,8 @@ def test_hub_checkout_dash_b_refused_with_dispatch_id(
 
 
 def test_git_c_hub_checkout_refused_from_lane_cwd(
-    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    source_repo: Path, tmp_path: Path
 ) -> None:
-    captured: list[dict[str, str]] = []
-
-    def _capture(**kwargs: str) -> None:
-        captured.append(kwargs)
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_events."
-        "emit_sdk_lane_hub_checkout_refused",
-        _capture,
-    )
     worktree_root = tmp_path / "worktrees"
     wt = mint_dispatch_worktree(
         source_repo=source_repo,
@@ -172,18 +155,8 @@ def test_git_c_hub_checkout_refused_from_lane_cwd(
 
 
 def test_non_ff_cursor_sdk_ref_update_refused_on_hub(
-    source_repo: Path, monkeypatch: pytest.MonkeyPatch
+    source_repo: Path,
 ) -> None:
-    captured: list[dict[str, str]] = []
-
-    def _capture(**kwargs: str) -> None:
-        captured.append(kwargs)
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_events."
-        "emit_sdk_lane_hub_checkout_refused",
-        _capture,
-    )
     branch = "cursor-sdk/lane-force"
     tip = _git(source_repo, "rev-parse", "HEAD").stdout.strip()
     _git(source_repo, "branch", branch, tip)
@@ -250,9 +223,155 @@ def test_hub_refuse_emits_signal_in_process(
         dispatch_id="hook-emit",
         repo=source_repo,
     )
-    assert code == 1
+    assert code == HOOK_POLICY_REFUSE_EXIT
     assert captured
     assert captured[0]["dispatch_id"] == "hook-emit"
+
+
+def test_git_branch_cursor_sdk_refused_on_hub(source_repo: Path) -> None:
+    env = _dispatch_env("hook-git-branch")
+    branch = "cursor-sdk/lane-branch-cmd"
+    create = _git(source_repo, "branch", branch, env=env)
+    assert create.returncode != 0
+    show = _git(source_repo, "show-ref", "--verify", f"refs/heads/{branch}", env=env)
+    assert show.returncode != 0
+
+
+def test_hub_master_fast_forward_with_dispatch_id(source_repo: Path) -> None:
+    env = _dispatch_env("hook-ff-master")
+    before = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    (source_repo / "ff_master.py").write_text("ff\n", encoding="utf-8")
+    _git(source_repo, "add", "ff_master.py", env=env)
+    commit = _git(source_repo, "commit", "-m", "ff on master", env=env)
+    assert commit.returncode == 0
+    after = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    assert after != before
+    assert _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env).stdout.strip() == "master"
+
+
+def test_checkout_existing_branch_allowed_with_dispatch_id(
+    source_repo: Path,
+) -> None:
+    branch = "feature-existing"
+    tip = _git(source_repo, "rev-parse", "HEAD").stdout.strip()
+    _git(source_repo, "branch", branch, tip)
+    env = _dispatch_env("hook-checkout-existing")
+    checkout = _git(source_repo, "checkout", branch, env=env)
+    assert checkout.returncode == 0
+    assert (
+        _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env).stdout.strip()
+        == branch
+    )
+
+
+def test_checkout_detach_allowed_with_dispatch_id(source_repo: Path) -> None:
+    env = _dispatch_env("hook-detach")
+    checkout = _git(source_repo, "checkout", "--detach", env=env)
+    assert checkout.returncode == 0
+    head = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    sym = _git(source_repo, "symbolic-ref", "-q", "HEAD", env=env)
+    assert sym.returncode != 0
+    assert len(head) == 40
+
+
+def _init_repo_symlink_hook(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo-symlink"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "seed")
+    tracked = _HOOKS_DIR / "reference-transaction"
+    link = repo / ".git" / "hooks" / "reference-transaction"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    link.symlink_to(tracked)
+    return repo
+
+
+def test_symlink_hook_install_lane_commit_and_hub_refuse(
+    tmp_path: Path,
+) -> None:
+    source_repo = _init_repo_symlink_hook(tmp_path)
+    worktree_root = tmp_path / "worktrees-symlink"
+    dispatch_id = "hook-symlink-lane"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    env = _dispatch_env(dispatch_id)
+    (wt / "symlink_lane.py").write_text("x\n", encoding="utf-8")
+    assert _git(wt, "add", "symlink_lane.py", env=env).returncode == 0
+    assert _git(wt, "commit", "-m", "symlink hook lane", env=env).returncode == 0
+
+    env_hub = _dispatch_env("hook-symlink-refuse")
+    assert (
+        _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env_hub).stdout.strip()
+        == "master"
+    )
+    blocked = _git(
+        source_repo,
+        "checkout",
+        "-B",
+        "cursor-sdk/lane-symlink-block",
+        env=env_hub,
+    )
+    assert blocked.returncode != 0
+    assert (
+        _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env_hub).stdout.strip()
+        == "master"
+    )
+
+
+def test_hook_internal_error_fail_open_lane_commit(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    hook_dir = tmp_path / "fail-open-hooks"
+    hook_dir.mkdir()
+    fake_py = hook_dir / "fake-python"
+    fake_py.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    fake_py.chmod(0o755)
+    hook = hook_dir / "reference-transaction"
+    hook.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+state="${{1:-}}"
+if [[ "${{state}}" != "prepared" ]]; then exit 0; fi
+if [[ -z "${{CURSOR_SDK_DISPATCH_ID:-}}" ]]; then exit 0; fi
+rc=0
+"{fake_py}" -m services.git_integration_worker.lane_b_reference_transaction_hook "${{state}}" || rc=$?
+if [[ "${{rc}}" -eq 0 ]]; then exit 0; fi
+if [[ "${{rc}}" -eq 2 ]]; then exit 1; fi
+echo "reference-transaction hook internal error (exit ${{rc}}); allowing transaction" >&2
+exit 0
+""",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+    repo = tmp_path / "repo-fail-open"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / "f").write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "f")
+    _git(repo, "commit", "-m", "seed")
+    _git(repo, "config", "core.hooksPath", str(hook_dir))
+    worktree_root = tmp_path / "wt-fail-open"
+    dispatch_id = "hook-fail-open"
+    wt = mint_dispatch_worktree(
+        source_repo=repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    env = _dispatch_env(dispatch_id)
+    (wt / "fail_open.py").write_text("ok\n", encoding="utf-8")
+    assert _git(wt, "add", "fail_open.py", env=env).returncode == 0
+    assert _git(wt, "commit", "-m", "fail open lane", env=env).returncode == 0
 
 
 def test_failed_hub_checkout_emit_does_not_allow_checkout(

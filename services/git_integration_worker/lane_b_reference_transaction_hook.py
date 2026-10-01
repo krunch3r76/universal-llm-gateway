@@ -1,8 +1,8 @@
 """Hub ``reference-transaction`` hook logic (Lane-B git integrity B2).
 
 Invoked from ``hooks/reference-transaction`` during the ``prepared`` phase only.
-Refuses hub checkouts that move ``HEAD`` off ``master`` or force-move
-``refs/heads/cursor-sdk/*`` while ``CURSOR_SDK_DISPATCH_ID`` is set.
+While ``CURSOR_SDK_DISPATCH_ID`` is set in the hub worktree, refuses ref creates
+and non-fast-forward updates under ``refs/heads/*`` (git 2.43 prepared stdin).
 """
 
 from __future__ import annotations
@@ -14,10 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _ZERO_OID = "0" * 40
-_CURSOR_SDK_BRANCH_PREFIX = "refs/heads/cursor-sdk/"
-_MASTER_SYMREF = "refs/heads/master"
+_REFS_HEADS_PREFIX = "refs/heads/"
+_HEAD_REF = "HEAD"
 _DISPATCH_ENV = "CURSOR_SDK_DISPATCH_ID"
 _GIT_TIMEOUT_S = 30.0
+
+# Distinct exit status for policy refusal; the bash wrapper maps this to hook exit 1.
+HOOK_POLICY_REFUSE_EXIT = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,13 +72,6 @@ def is_ancestor(repo: Path, *, oldrev: str, newrev: str) -> bool:
     return proc.returncode == 0
 
 
-def head_symref(repo: Path) -> str | None:
-    proc = _git_capture(repo, "symbolic-ref", "-q", "HEAD")
-    if proc.returncode != 0:
-        return None
-    return proc.stdout.strip() or None
-
-
 def refuse_reason(
     repo: Path,
     *,
@@ -89,34 +85,22 @@ def refuse_reason(
     if toplevel != hub.resolve():
         return None
 
-    sym = head_symref(toplevel)
-    on_master = sym == _MASTER_SYMREF
-
     for upd in updates:
-        if upd.ref_name == "HEAD":
-            if upd.newrev.startswith("ref: ") and upd.newrev[5:] != _MASTER_SYMREF:
-                return upd
+        if upd.ref_name == _HEAD_REF:
+            # Detach / direct OID updates: 2.43 residual — not a refuse signal.
             continue
 
-        if not upd.ref_name.startswith(_CURSOR_SDK_BRANCH_PREFIX):
+        if not upd.ref_name.startswith(_REFS_HEADS_PREFIX):
             continue
 
         if upd.newrev == _ZERO_OID:
             continue
 
         if upd.oldrev == _ZERO_OID:
-            if on_master:
-                return upd
-            continue
+            return upd
 
         if not is_ancestor(toplevel, oldrev=upd.oldrev, newrev=upd.newrev):
             return upd
-
-    if on_master:
-        for upd in updates:
-            if upd.ref_name == _MASTER_SYMREF and upd.oldrev != _ZERO_OID:
-                if not is_ancestor(toplevel, oldrev=upd.oldrev, newrev=upd.newrev):
-                    return upd
 
     return None
 
@@ -128,7 +112,7 @@ def run_reference_transaction_hook(
     dispatch_id: str | None,
     repo: Path | None = None,
 ) -> int:
-    """Hook entry: return process exit code (0 allow, non-zero refuse)."""
+    """Hook entry: return process exit code (0 allow, HOOK_POLICY_REFUSE_EXIT refuse)."""
     if state != "prepared":
         return 0
     if not (dispatch_id or "").strip():
@@ -156,7 +140,7 @@ def run_reference_transaction_hook(
     except Exception:
         pass
 
-    return 1
+    return HOOK_POLICY_REFUSE_EXIT
 
 
 def main() -> int:
