@@ -171,6 +171,59 @@ def test_busy_socket_handler_exits_and_returns() -> None:
         and isinstance(node.args[1], ast.Attribute)
     }
     assert "_park_for_handover" in armed_timer_targets
+    armed_returns = [
+        node
+        for node in ast.walk(ast.Module(body=armed_body, type_ignores=[]))
+        if isinstance(node, ast.Return)
+    ]
+    assert armed_returns, "armed busy handler must return after scheduling park"
+
+
+def _loop_call_names(node: ast.AST) -> set[str]:
+    loop_names = {
+        "reconcile_pending_restart_intents",
+        "DigestTickLoop",
+        "CharterRunnerTickLoop",
+        "StargateHealthRestart",
+    }
+    names: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            if isinstance(sub.func, ast.Name) and sub.func.id in loop_names:
+                names.add(sub.func.id)
+            if isinstance(sub.func, ast.Attribute) and sub.func.attr in loop_names:
+                names.add(sub.func.attr)
+    return names
+
+
+def _start_bound_loops_calls(node: ast.AST) -> list[ast.Call]:
+    return [
+        sub
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "_start_bound_loops"
+    ]
+
+
+def _try_has_start_before_bound_loops(try_node: ast.Try) -> bool:
+    start_seen = False
+    for stmt in try_node.body:
+        for sub in ast.walk(stmt):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "start"
+            ):
+                start_seen = True
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "_start_bound_loops"
+            ):
+                if not start_seen:
+                    return False
+    return start_seen
 
 
 @pytest.mark.offline
@@ -186,28 +239,35 @@ def test_bound_loops_only_in_start_bound_loops() -> None:
         "StargateHealthRestart",
     }
 
-    def _calls_in(node: ast.AST) -> set[str]:
-        names: set[str] = set()
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.Call):
-                if isinstance(sub.func, ast.Name) and sub.func.id in loop_names:
-                    names.add(sub.func.id)
-                if isinstance(sub.func, ast.Attribute) and sub.func.attr in loop_names:
-                    names.add(sub.func.attr)
-        return names
+    assert loop_names <= _loop_call_names(start_fn)
+    assert _loop_call_names(on_mount) == set(), (
+        f"on_mount must not start loops: {_loop_call_names(on_mount)}"
+    )
 
-    assert loop_names <= _calls_in(start_fn)
-    on_mount_loops = _calls_in(on_mount) - {"StargateHealthRestart"}
-    assert on_mount_loops == set(), f"on_mount must not start loops: {on_mount_loops}"
-
-    for fn_name in ("_retry_api_server", "_park_for_handover"):
+    for fn_name in ("on_mount", "_retry_api_server", "_park_for_handover"):
         fn_node = methods[fn_name]
-        bound_calls = {
-            n.func.attr
-            for n in ast.walk(fn_node)
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-        }
-        assert "_start_bound_loops" in bound_calls
+        assert _loop_call_names(fn_node) == set(), (
+            f"{fn_name} must not call loop names directly"
+        )
+        for handler in ast.walk(fn_node):
+            if not isinstance(handler, ast.ExceptHandler):
+                continue
+            if isinstance(handler.type, ast.Name) and handler.type.id == (
+                "ManageSocketBusyError"
+            ):
+                assert _start_bound_loops_calls(handler) == []
+                assert any(isinstance(n, ast.Return) for n in handler.body)
+
+        for try_node in ast.walk(fn_node):
+            if not isinstance(try_node, ast.Try):
+                continue
+            if not _start_bound_loops_calls(try_node):
+                continue
+            assert _try_has_start_before_bound_loops(try_node), (
+                f"{fn_name} must call .start() before _start_bound_loops in try"
+            )
+            for handler in try_node.handlers:
+                assert _start_bound_loops_calls(handler) == []
 
 
 @pytest.mark.offline

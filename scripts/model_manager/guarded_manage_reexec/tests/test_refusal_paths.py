@@ -558,6 +558,84 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
     assert result.reason == "successor_bind_not_observed"
     assert result.executed is True
     assert elapsed < 5.0
+    assert result.checks.get("successor_pane_id") == "%42"
+    assert result.checks.get("record_pid") == os.getpid()
+
+
+def test_quit_sock_still_up_tears_down_successor(tmp_path: Any) -> None:
+    """Incumbent sock stays up after q ⇒ quit + successor teardown."""
+    store = _store(tmp_path)
+    record_path = tmp_path / "manage.armed.json"
+    tmux_log: list[list[str]] = []
+    killed_pids: list[int] = []
+    later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        tmux_log.append(cmd)
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            write_armed_record(
+                record_path,
+                pid=os.getpid(),
+                code_version="deadbeef",
+                process_start_time=later,
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="%77\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    def kill_pid(pid: int) -> None:
+        killed_pids.append(pid)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        armed_record_path=record_path,
+        run_cmd=run_cmd,
+        kill_pid_fn=kill_pid,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        quit_timeout_s=0.2,
+        boot_timeout_s=0.2,
+    )
+    assert result.status == "quit"
+    assert result.reason == "quit_sock_still_up"
+    assert result.executed is True
+    assert any(
+        c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%77" for c in tmux_log
+    )
+    assert os.getpid() in killed_pids
+    assert result.checks.get("successor_pane_id") == "%77"
+    assert result.checks.get("record_pid") == os.getpid()
 
 
 def test_arm_then_quit_proof_satisfied(tmp_path: Any) -> None:
@@ -643,6 +721,8 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
     store = _store(tmp_path)
     record_path = tmp_path / "manage.armed.json"
     sends: list[list[str]] = []
+    tmux_log: list[list[str]] = []
+    killed_pids: list[int] = []
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
@@ -669,12 +749,13 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        tmux_log.append(cmd)
         if cmd[:2] == ["tmux", "display-message"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
         if cmd[:2] == ["tmux", "split-window"]:
             write_armed_record(
                 record_path,
-                pid=4242,
+                pid=os.getpid(),
                 code_version="wrongversion",
                 process_start_time="2026-08-11T00:00:00+00:00",
             )
@@ -686,6 +767,9 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
 
+    def kill_pid(pid: int) -> None:
+        killed_pids.append(pid)
+
     result = run_guarded_reexec(
         target_ref="deadbeef",
         dry_run=False,
@@ -693,10 +777,16 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
         intent_db=store._db_path,  # noqa: SLF001
         armed_record_path=record_path,
         run_cmd=run_cmd,
+        kill_pid_fn=kill_pid,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
         boot_timeout_s=0.5,
     )
     assert result.status == "refused"
+    assert "code_version_mismatch" in result.reason
     assert result.reason.startswith("successor_proof_failed:")
     assert result.executed is False
     assert not any(len(c) > 4 and c[4] == "q" for c in sends)
+    assert any(
+        c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%42" for c in tmux_log
+    )
+    assert os.getpid() in killed_pids

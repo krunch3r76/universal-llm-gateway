@@ -27,6 +27,7 @@ from .checks import (
     RefuseFinding,
     collect_refuse_report,
     observe_drain_clear,
+    observe_manage_inflight,
     observe_nonterminal_intents,
 )
 from .client import call_manage
@@ -99,6 +100,18 @@ def ManageReexecProof(status: str, reason: str) -> Event:  # noqa: N802
         signal="manage.reexec.proof",
         payload={"status": status, "reason": reason},
     )
+
+
+def _publish_reexec(event: Event) -> None:
+    """Best-effort UDS publish; silent on failure (sync runner has no EventBus)."""
+    from scripts.model_manager.observation_event import _emit_sync
+
+    payload = dict(event.payload) if isinstance(event.payload, dict) else {}
+    _emit_sync(event.signal, payload, role=event.role, scope=event.scope)
+
+
+def _emit_refused(reason: str) -> None:
+    _publish_reexec(ManageReexecRefused(reason=reason))
 
 
 def _default_run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -230,7 +243,9 @@ def run_guarded_reexec(
     tree_contains_fn: TreeContainsFn | None = None,
     intent_wait_s: float = 600.0,
     inflight_wait_s: float = 120.0,
+    max_start_attempts: int | None = None,
 ) -> GuardedReexecResult:
+    del max_start_attempts  # CLI compat; arm-then-quit uses a single successor spawn.
     """Run refuse/arm/quit/proof path; dry_run never spawns a successor."""
     manage_call = manage_call or call_manage
     run_cmd = run_cmd or _default_run
@@ -249,6 +264,7 @@ def run_guarded_reexec(
 
     whoami_before = manage_call("whoami", {}, sock_path=sock_path)
     if whoami_before.get("status") == "error":
+        _emit_refused("whoami_unobservable_before")
         return GuardedReexecResult(
             status="refused",
             reason="whoami_unobservable_before",
@@ -402,6 +418,8 @@ def run_guarded_reexec(
 
     if report.refused:
         reason = ";".join(f.reason for f in report.findings) or "refused"
+        if not dry_run:
+            _emit_refused(reason)
         return _refused_result(
             dry_run=dry_run,
             reason=reason,
@@ -430,6 +448,7 @@ def run_guarded_reexec(
         stop_payload = run_giw_paired_stop(manage_call, manage_pid=manage_pid_i or 0)
         giw_paired = {"stop": stop_payload}
         if stop_payload.get("status") == "refused":
+            _emit_refused("giw_claimed_occupants")
             return GuardedReexecResult(
                 status="refused",
                 reason="giw_claimed_occupants",
@@ -453,6 +472,7 @@ def run_guarded_reexec(
         hold_after if hold_after.get("status") != "error" else {}
     )
     if drain is not None:
+        _emit_refused("drain_not_clear_after_pause")
         return GuardedReexecResult(
             status="refused",
             reason="drain_not_clear_after_pause",
@@ -474,6 +494,7 @@ def run_guarded_reexec(
     t_arm_start = time.monotonic()
 
     def _refuse_after_arm(reason: str) -> GuardedReexecResult:
+        _emit_refused(reason)
         _teardown_successor(
             pane_id=successor_pane_id,
             record_path=record_path,
@@ -516,6 +537,11 @@ def run_guarded_reexec(
         boot_timeout_s=boot_timeout_s,
     )
     if not armed_ok:
+        if record is not None:
+            record_pid_val = record.get("pid")
+            record_pid = (
+                int(record_pid_val) if isinstance(record_pid_val, int) else None
+            )
         reason = arm_detail if arm_detail == "successor_not_armed" else arm_detail
         return _refuse_after_arm(reason)
 
@@ -523,20 +549,33 @@ def run_guarded_reexec(
     record_pid_val = record.get("pid")
     record_pid = int(record_pid_val) if isinstance(record_pid_val, int) else None
 
+    _publish_reexec(
+        ManageReexecArmed(
+            pane_id=successor_pane_id or "",
+            record_path=str(record_path),
+        )
+    )
+
     intent_finding = observe_nonterminal_intents(store)
     if intent_finding is not None:
         return _refuse_after_arm("nonterminal_restart_intent")
 
-    _busy()
+    busy_recheck = _busy()
+    if busy_recheck.get("status") == "error":
+        return _refuse_after_arm("busy_status_unobservable")
+    inflight_recheck, _, _, _ = observe_manage_inflight(busy_recheck)
+    if inflight_recheck is not None:
+        return _refuse_after_arm(inflight_recheck.reason)
+
     hold_recheck = _hold()
-    drain_before_quit = observe_drain_clear(
-        hold_recheck if hold_recheck.get("status") != "error" else {}
-    )
+    if hold_recheck.get("status") == "error":
+        return _refuse_after_arm("hold_status_unobservable")
+    drain_before_quit = observe_drain_clear(hold_recheck)
     if drain_before_quit is not None:
         return _refuse_after_arm("drain_not_clear_before_quit")
 
     _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
-    ManageReexecQuitCommitted(tmux_target=tmux_effective)
+    _publish_reexec(ManageReexecQuitCommitted(tmux_target=tmux_effective))
 
     if not _wait_sock(
         sock_path, manage_call=manage_call, timeout_s=quit_timeout_s, want_up=False
@@ -548,6 +587,9 @@ def run_guarded_reexec(
             run_cmd=run_cmd,
             kill_pid_fn=kill_pid_fn,
         )
+        _publish_reexec(
+            ManageReexecProof(status="quit", reason="quit_sock_still_up")
+        )
         return GuardedReexecResult(
             status="quit",
             reason="quit_sock_still_up",
@@ -557,7 +599,10 @@ def run_guarded_reexec(
             executed=True,
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
-            checks={"successor_pane_id": successor_pane_id},
+            checks={
+                "successor_pane_id": successor_pane_id,
+                "record_pid": record_pid,
+            },
         )
 
     if not _wait_sock(
@@ -566,6 +611,11 @@ def run_guarded_reexec(
         timeout_s=boot_timeout_s,
         want_up=True,
     ):
+        _publish_reexec(
+            ManageReexecProof(
+                status="proof-failed", reason="successor_bind_not_observed"
+            )
+        )
         return GuardedReexecResult(
             status="proof-failed",
             reason="successor_bind_not_observed",
@@ -591,7 +641,7 @@ def run_guarded_reexec(
         before=whoami_before, after=whoami_after, target_ref=target_ref
     )
     status = "proof-satisfied" if (version_ok and start_ok) else "proof-failed"
-    ManageReexecProof(status=status, reason=proof_reason)
+    _publish_reexec(ManageReexecProof(status=status, reason=proof_reason))
     return GuardedReexecResult(
         status=status,
         reason=proof_reason,
