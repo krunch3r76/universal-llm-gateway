@@ -944,6 +944,60 @@ def test_mission_cap_still_parks_continue_owed_stops(token: str) -> None:
     assert verdict.reason == _PARK_REASON_MISSION_CAP
 
 
+def test_mission_cap_parks_consult_pending_with_row_pinned() -> None:
+    """{CONSULT_PENDING, ROW_PINNED} at the cap still parks.
+
+    ``consult_pending_continue_owed`` does not reject ``ROW_PINNED``, and
+    ``mission_open_for_row`` rejects only ``DONE``, so an exempt token in the
+    same closeout must not skip the mission cap.
+    """
+    ledger = CursorDispatchLedger.instance()
+    tokens = ["CONSULT_PENDING", "ROW_PINNED"]
+    row = _chain_at_cap(ledger, last_tokens=tokens)
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(tokens),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is True
+    assert verdict.ok is False
+    assert verdict.reason == _PARK_REASON_MISSION_CAP
+
+
+def test_mission_cap_parks_parked_transport_with_operator_gate() -> None:
+    """{PARKED_TRANSPORT, OPERATOR_GATE} at the cap still parks.
+
+    ``park_harvest_continue_owed`` requires ``PARKED_TRANSPORT`` and does not
+    reject ``OPERATOR_GATE``. That successor's only budget check is
+    ``evaluate_hop_budget``.
+    """
+    ledger = CursorDispatchLedger.instance()
+    tokens = ["PARKED_TRANSPORT", "OPERATOR_GATE"]
+    row = _chain_at_cap(ledger, last_tokens=tokens)
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(tokens),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is True
+    assert verdict.ok is False
+    assert verdict.reason == _PARK_REASON_MISSION_CAP
+
+
+def test_mission_cap_row_pinned_alone_still_exits_early() -> None:
+    """{ROW_PINNED} alone owes no successor and must not park at the cap."""
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=["ROW_PINNED"])
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_PINNED"}),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.ok is True
+    assert verdict.park is False
+    assert verdict.reason is None
+
+
 def test_mission_cap_still_parks_a_planned_hop_at_cap() -> None:
     """Guard: the cap still binds the rows that do owe a hop."""
     ledger = CursorDispatchLedger.instance()

@@ -17,7 +17,9 @@ is a second lock the operator must release by hand (sixteen
 rows in the week to 2026-10-01, each paging). ``CONSULT_PENDING`` and
 ``PARKED_TRANSPORT`` do admit successors (``consult_pending_continue_owed``,
 ``park_harvest_continue_owed``), and those chains' only budget check is this
-function, so the mission cap still applies. The mission cap counts hop
+function, so the mission cap still applies. An exempt token on the same
+closeout does not cancel that: the early exit requires an exempt token and
+none of those continue-owed tokens. The mission cap counts hop
 attempts, not substrate churn: a row GIW parked for a service restart
 (``park_for_restart`` only) is the same hop as its resume child.
 ``cancel_discard`` is a finished attempt and still counts.
@@ -52,9 +54,12 @@ logger = get_logger(__name__)
 
 HOP_PARKED_KEY = "hop_parked"
 HOP_PARK_REASON_KEY = "hop_park_reason"
-# Stops that owe no successor. CONSULT_PENDING and PARKED_TRANSPORT are absent
-# on purpose: those chains still pass through the mission cap.
+# Stops that owe no successor by themselves.
 _CAP_EXEMPT_STOPS = frozenset({"DONE", "ROW_PINNED", "HOLD_MERGE", "OPERATOR_GATE"})
+# Continue-owed stops whose successor is budgeted only by evaluate_hop_budget:
+# consult_pending_continue_owed (CONSULT_PENDING) and park_harvest_continue_owed
+# (PARKED_TRANSPORT). An exempt token on the same closeout must not skip the cap.
+_BUDGET_ONLY_SUCCESSOR_STOPS = frozenset({"CONSULT_PENDING", "PARKED_TRANSPORT"})
 HOP_LAST_TERMINAL_AT_KEY = "hop_last_terminal_at"
 
 _DEFAULT_CRASH_CAP = 3
@@ -245,10 +250,11 @@ def evaluate_hop_budget(
 ) -> HopBudgetVerdict:
     """Return whether the reactor may admit a successor (bind §2.6.6).
 
-    Order matters: an already-parked row stays refused; a designed stop that
-    owes no successor (``DONE``, ``ROW_PINNED``, ``HOLD_MERGE``,
-    ``OPERATOR_GATE``) is never parked by a budget; ``CONSULT_PENDING`` and
-    ``PARKED_TRANSPORT`` fall through to the mission cap. Only then do the
+    Order matters: an already-parked row stays refused; a closeout that carries
+    an exempt stop (``DONE``, ``ROW_PINNED``, ``HOLD_MERGE``, ``OPERATOR_GATE``)
+    and no continue-owed stop (``CONSULT_PENDING``, ``PARKED_TRANSPORT``) is
+    never parked by a budget. A continue-owed stop falls through to the mission
+    cap even when an exempt token shares the closeout. Only then do the
     no-progress verdict (planned ``ROW_HOP``) and the crash cap apply.
     The watchdog calls this before ``hop_owed``, so a budget park on a
     no-successor stop would page and lock a mission that is merely waiting.
@@ -267,8 +273,14 @@ def evaluate_hop_budget(
         )
 
     planned = _planned_closeout(row, closeout_tokens=closeout_tokens)
-    # Continue-owed stops (CONSULT_PENDING, PARKED_TRANSPORT) stay under the cap.
-    if not planned and closeout_tokens & _CAP_EXEMPT_STOPS:
+    # Exempt only when the closeout has no continue-owed token. A shared
+    # CONSULT_PENDING or PARKED_TRANSPORT still owes a successor whose only
+    # budget check is this function.
+    if (
+        not planned
+        and (closeout_tokens & _CAP_EXEMPT_STOPS)
+        and not (closeout_tokens & _BUDGET_ONLY_SUCCESSOR_STOPS)
+    ):
         return HopBudgetVerdict(ok=True)
 
     dispatch_id = str(row.get("dispatch_id") or "")
