@@ -89,7 +89,7 @@ async def test_team_dispatch_resume_of_without_reuse_thread_returns_422(
 async def test_team_dispatch_resume_of_omits_lane_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = dispatch_cursor_sdk_generate_mock(
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
         return_value={"execution_id": "exec-resume", "thread_id": "9964"}
     )
     monkeypatch.setattr(

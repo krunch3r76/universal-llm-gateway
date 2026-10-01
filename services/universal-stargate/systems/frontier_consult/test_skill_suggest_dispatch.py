@@ -36,7 +36,7 @@ from .skill_suggest_worker_waiter import WorkerWaitOutcome
 def _patch_dispatch(**kwargs: object):
     return patch(
         "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-        new=dispatch_cursor_sdk_generate_mock(**kwargs),
+        new=dispatch_cursor_sdk_generate_mock(autospec=True, **kwargs),
     )
 
 

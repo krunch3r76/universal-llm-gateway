@@ -77,7 +77,7 @@ async def test_team_dispatch_omitted_lane_returns_422() -> None:
 async def test_team_dispatch_nest_under_omits_lane_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = dispatch_cursor_sdk_generate_mock(
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
         return_value={"execution_id": "exec-nest", "thread_id": "t1"}
     )
     monkeypatch.setattr(
@@ -112,7 +112,7 @@ async def test_team_dispatch_nest_under_omits_lane_still_admits(
 async def test_wrap_omits_lane_still_materializes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = dispatch_cursor_sdk_generate_mock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,

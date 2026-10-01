@@ -37,7 +37,7 @@ def _patch_sdk_and_thread_read(
     thread_body: str,
 ) -> tuple[AsyncMock, AsyncMock]:
     """Patch the SDK orchestrator + prompt resolution on the generate route."""
-    sdk_mock = dispatch_cursor_sdk_generate_mock(return_value=sdk_return)
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, return_value=sdk_return)
     prompt_resolution = AsyncMock(
         return_value=GeneratePromptResolution(
             text=thread_body,
@@ -160,7 +160,7 @@ async def test_cursor_sdk_residual_unresolved_packet_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Missing packet_path on light generate → 422 packet_path_unresolved."""
-    sdk_mock = dispatch_cursor_sdk_generate_mock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
@@ -230,6 +230,7 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
 ) -> None:
     """AC-1: bare source_ref materializes and dispatches with the bridge packet_path."""
     sdk_mock = dispatch_cursor_sdk_generate_mock(
+        autospec=True,
         return_value={"execution_id": "exec-wrap", "thread_id": "1728"}
     )
     prompt_resolution = AsyncMock(
@@ -292,7 +293,7 @@ async def test_cursor_sdk_implement_gated_source_ref_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-3: bridge gated → 422 generate_source_ref_gated; SDK not awaited."""
-    sdk_mock = dispatch_cursor_sdk_generate_mock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
@@ -327,7 +328,7 @@ async def test_cursor_sdk_implement_decision_not_asserted_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-3a: un-ratified decision on materialization sub-path → 422."""
-    sdk_mock = dispatch_cursor_sdk_generate_mock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
 
     def _raise_decision(**kwargs: object) -> GenerateWrapResult:  # noqa: ARG001
         raise DecisionNotAssertedError()

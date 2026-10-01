@@ -50,7 +50,7 @@ async def test_team_dispatch_cloud_role_cursor_model_rejects_before_dispatch(
 async def test_cursor_sdk_role_with_cursor_model_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = dispatch_cursor_sdk_generate_mock(
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
         return_value={"execution_id": "exec-1", "thread_id": "t1"}
     )
     monkeypatch.setattr(

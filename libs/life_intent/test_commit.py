@@ -174,7 +174,8 @@ async def test_prepare_recon_handle_passes_contract_none() -> None:
 
     with patch(
         "systems.frontier_consult.cursor_sdk_generate_prepare.prepare_cursor_sdk_generate",
-        new=AsyncMock(spec=prepare_cursor_sdk_generate, return_value=_FakeHandle()),
+        autospec=True,
+        return_value=_FakeHandle(),
     ) as prepare:
         handle = await _prepare_recon_handle(
             request_id="req-recon",

@@ -322,7 +322,7 @@ async def test_dispatch_idle_timeout_degraded_reason() -> None:
         ),
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new=dispatch_cursor_sdk_generate_mock(
+            new=dispatch_cursor_sdk_generate_mock(autospec=True,
                 return_value={
                     "execution_id": "exec-idle-d",
                     "thread_id": "2111",
@@ -393,7 +393,7 @@ async def test_dispatch_ledger_absent_probe_fail_is_worker_unreachable() -> None
         ),
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new=dispatch_cursor_sdk_generate_mock(
+            new=dispatch_cursor_sdk_generate_mock(autospec=True,
                 return_value={
                     "execution_id": "exec-u",
                     "thread_id": "2111",

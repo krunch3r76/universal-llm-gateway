@@ -630,7 +630,7 @@ def _install_route_stubs(
 
     from .conftest import dispatch_cursor_sdk_generate_mock
 
-    dispatch_mock = dispatch_cursor_sdk_generate_mock(
+    dispatch_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
         return_value={"status": "admitted"},
     )
 
