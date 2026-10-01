@@ -769,12 +769,39 @@ def _resume_parent_work_key_exempt(conn: sqlite3.Connection, *, resume_of: str) 
     return str(data.get("bridge_death_degraded_reason") or "") == "bridge_read_timeout"
 
 
-# A restart park keeps its ``work_key`` reserved until auto-resume so a foreign
-# implement cannot take the lineage (spec D5.4b). ``cancel_discard`` is not that
-# window: the row is dead, and reserving the key re-admits the same pin into a 409.
+def _stamp_hand_park_resume(
+    conn: sqlite3.Connection, *, parent_id: str, child_id: str
+) -> None:
+    """Close an open restart-park hold when a hand ``resume_of`` admits.
+
+    GIW auto-resume stamps ``park_resumed_by`` from ``mark_park_resumed`` after
+    its own admit. A caller admit never reached that stamp, so the cancelled
+    parent kept the work key and later plain admits 409'd. This UPDATE shares
+    the child admit transaction; a later conflict rolls it back.
+    ``mark_park_resumed`` stays the GIW path and no-ops once this child id is
+    already written.
+    """
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET park_resumed_by=? "
+        "WHERE dispatch_id=? AND park_kind='park_for_restart' "
+        "AND park_resumed_by IS NULL "
+        "AND (park_expires_at IS NULL OR park_expires_at > ?)",
+        (child_id, parent_id, _now()),
+    )
+
+
+# A restart park keeps its ``work_key`` until a resume child exists (spec D5.4b).
+# ``park_resumed_by`` is the stamp; a row with ``resume_of`` pointing here is the
+# same fact when a hand admit landed before that column was written.
+# ``cancel_discard`` is not that window: the row is dead, and reserving the key
+# re-admits the same pin into a 409.
 _OPEN_PARK_ROW_SQL = (
     "(park_kind='park_for_restart' AND park_resumed_by IS NULL "
-    "AND (park_expires_at IS NULL OR park_expires_at > ?))"
+    "AND (park_expires_at IS NULL OR park_expires_at > ?) "
+    "AND NOT EXISTS ("
+    "SELECT 1 FROM cursor_sdk_dispatches AS park_resume_child "
+    "WHERE park_resume_child.resume_of = cursor_sdk_dispatches.dispatch_id"
+    "))"
 )
 
 
@@ -1195,7 +1222,9 @@ class CursorDispatchLedger:
         ``work_key`` and status in ``{queued,admitted,running,parked_waiting}``
         raises ``SourceRefConflict`` without inserting. Lineage exemptions:
         ``nest_under == holder``, terminal ``resume_of`` / ``hop_from`` same key.
-        The SELECT and INSERT share ``BEGIN IMMEDIATE``.
+        A hand ``resume_of`` of an open ``park_for_restart`` row stamps
+        ``park_resumed_by`` in that same transaction. The SELECT and INSERT
+        share ``BEGIN IMMEDIATE``.
 
         Nest park: when ``nest_under`` names the live write-lease holder for
         ``lease_key``, that parent is moved to ``parked_waiting`` and the
@@ -1388,6 +1417,10 @@ class CursorDispatchLedger:
                                 holder_thread_id=peer["thread_id"],
                             ),
                         )
+            if req.resume_of:
+                _stamp_hand_park_resume(
+                    conn, parent_id=req.resume_of, child_id=req.dispatch_id
+                )
             if content_wf and not force:
                 fp_peer = conn.execute(
                     "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
