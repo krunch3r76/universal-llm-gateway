@@ -12,6 +12,7 @@ import pytest
 from claude_bundles import cdp_registry as reg
 from claude_bundles.cdp_registry import dormant_drain
 from claude_bundles.cdp_registry.dormant_drain import drain_live_hosts_to_dormant
+from claude_bundles.cdp_registry.models import dormant_max_rows, dormant_ttl_s
 
 pytestmark = pytest.mark.offline
 
@@ -211,6 +212,54 @@ def test_reclaim_dormant_rows_by_ttl_and_cap(isolated_registry: Path) -> None:
 
     aged = reg.reclaim_dormant_rows(ttl_s=0, max_rows=8)
     assert len(aged) == 1
+
+
+def test_dormant_defaults_and_reclaim_hermetic(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Env unset → 24h / 16-row defaults; hygiene reclaim marks cap/TTL rows released."""
+    monkeypatch.delenv("CDP_DORMANT_TTL_S", raising=False)
+    monkeypatch.delenv("CDP_DORMANT_MAX_ROWS", raising=False)
+
+    assert dormant_ttl_s() == 86400
+    assert dormant_max_rows() == 16
+
+    now = 3_000_000.0
+    aged = _seat(chat_url="https://claude.ai/cowork/cse_def_ttl")
+    reg.make_dormant(aged.registration_id, is_listening=lambda _p: False)
+    active = reg._load_active()
+    aged_row = dict(active[aged.registration_id])
+    aged_row["dormant_at"] = now - dormant_ttl_s() - 1.0
+    active[aged.registration_id] = aged_row
+    reg._store.write_active(active)
+
+    over_age = reg.reclaim_dormant_rows(now=now)
+    assert over_age == [aged.registration_id]
+    assert _row(aged.registration_id)["status"] == "released"
+    assert _row(aged.registration_id)["dormant_reclaim_reason"] == "ttl"
+
+    cap_ids: list[str] = []
+    base = 4_000_000.0
+    for index in range(17):
+        seat = _seat(chat_url=f"https://claude.ai/cowork/cse_def_cap{index}")
+        reg.make_dormant(seat.registration_id, is_listening=lambda _p: False)
+        cap_ids.append(seat.registration_id)
+
+    active = reg._load_active()
+    for offset, rid in enumerate(cap_ids):
+        row = dict(active[rid])
+        row["dormant_at"] = base + float(offset)
+        active[rid] = row
+    reg._store.write_active(active)
+
+    cap_now = base + 100.0
+    over_cap = reg.reclaim_dormant_rows(now=cap_now)
+    assert len(over_cap) == 1
+    assert over_cap[0] == cap_ids[0]
+    assert _row(over_cap[0])["status"] == "released"
+    assert _row(over_cap[0])["dormant_reclaim_reason"] == "over_cap"
+    for rid in cap_ids[1:]:
+        assert _row(rid)["status"] == "dormant"
 
 
 def _successful_empty_list(monkeypatch: pytest.MonkeyPatch) -> None:
