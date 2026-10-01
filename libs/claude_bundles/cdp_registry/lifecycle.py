@@ -141,17 +141,18 @@ def _mint_headroom_gate(
 
     from .dormant_drain import drain_live_hosts_to_dormant
 
-    def _check_headroom() -> None:
+    def _check_headroom(*, after_drain: bool = False) -> None:
         require_chrome_headroom(
             display=display,
             reserved_chromes=reserved_chromes,
+            after_drain=after_drain,
         )
 
     try:
-        _check_headroom()
+        _check_headroom(after_drain=False)
     except XDisplayCapacityError:
         drain_live_hosts_to_dormant(display=display, is_listening=listen)
-        _check_headroom()
+        _check_headroom(after_drain=True)
 
 
 def reserve_allocating_row(

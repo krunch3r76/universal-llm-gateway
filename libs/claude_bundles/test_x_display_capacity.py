@@ -93,6 +93,23 @@ def test_require_raises_named_x_error_not_chrome_timeout() -> None:
     assert "did not reach CDP in" not in str(caught.value)
 
 
+def test_require_exhausted_emits_after_drain_false_without_drain_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles import cdp_registry_events as ev
+
+    captured: list[object] = []
+    monkeypatch.setattr(ev, "emit", lambda event: captured.append(event))
+
+    with pytest.raises(XDisplayCapacityError):
+        require_chrome_headroom(display=":2", count=63, max_clients=64, chrome_budget=8)
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert getattr(event, "signal") == "cdp.display.exhausted"
+    assert event.payload["after_drain"] is False  # type: ignore[attr-defined]
+
+
 def test_require_passes_when_unobserved(tmp_path: Path) -> None:
     snap = require_chrome_headroom(display=":2", proc_net_unix=tmp_path / "missing")
     assert snap["x_exhausted"] is None

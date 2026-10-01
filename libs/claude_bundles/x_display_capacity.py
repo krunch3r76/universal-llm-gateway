@@ -266,6 +266,7 @@ def require_chrome_headroom(
     chrome_budget: int | None = None,
     proc_net_unix: Path | None = None,
     reserved_chromes: int = 0,
+    after_drain: bool = False,
 ) -> dict[str, Any]:
     """Refuse mint when observed X headroom cannot host one more Chrome.
 
@@ -300,6 +301,7 @@ def require_chrome_headroom(
                     x_headroom=snap["x_headroom"],
                     x_chrome_client_budget=budget,
                     x_reserved_chromes=reserved,
+                    after_drain=after_drain,
                 )
             )
         raise XDisplayCapacityError(exhausted_message(snap))

@@ -1073,3 +1073,58 @@ def test_reserve_mint_headroom_still_short_drains_only_once(
             join=False,
         )
     assert drain_calls == [":2"]
+
+
+def test_mint_headroom_recheck_emits_after_drain_true(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After one drain pass, a still-short recheck tags cdp.display.exhausted."""
+    from claude_bundles import cdp_registry_events as ev
+    from claude_bundles.cdp_registry.lifecycle import reserve_allocating_row
+    from claude_bundles.x_display_capacity import XDisplayCapacityError, probe_x_display
+
+    monkeypatch.setattr(reg.cdp_lane, "cdp_display", lambda display=None: ":2")
+
+    exhausted = probe_x_display(display=":2", count=63, max_clients=64, chrome_budget=8)
+
+    def always_exhausted(**_kwargs: object) -> dict[str, object]:
+        return dict(exhausted)
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.probe_x_display", always_exhausted
+    )
+
+    display_events: list[object] = []
+
+    def capture_emit(event: object) -> None:
+        if getattr(event, "signal", None) == "cdp.display.exhausted":
+            display_events.append(event)
+
+    monkeypatch.setattr(ev, "emit", capture_emit)
+
+    drain_calls: list[str | None] = []
+
+    def counting_drain(**kwargs: object) -> dormant_drain.DrainResult:
+        drain_calls.append(kwargs.get("display"))  # type: ignore[arg-type]
+        return dormant_drain.DrainResult()
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.drain_live_hosts_to_dormant",
+        counting_drain,
+    )
+
+    with pytest.raises(XDisplayCapacityError):
+        reserve_allocating_row(
+            holder="no-mint",
+            purpose="operator-proxy",
+            mission_kind="root",
+            parent_thread="t-after-drain-event",
+            listen=lambda _p: False,
+            launch=True,
+            join=False,
+        )
+
+    assert drain_calls == [":2"]
+    assert len(display_events) == 2
+    assert display_events[0].payload["after_drain"] is False  # type: ignore[attr-defined]
+    assert display_events[1].payload["after_drain"] is True  # type: ignore[attr-defined]
