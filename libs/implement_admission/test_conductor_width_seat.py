@@ -35,19 +35,19 @@ def _render_templates(seat_clause: str) -> tuple[str, str]:
     return hop, attended
 
 
-_OPUS_SUBSTITUTE = ConductorWidthSeat(
-    model="cdp/opus-5",
-    reasoning_effort="max",
+_OPUS_55 = ConductorWidthSeat(
+    model="cdp/opus-5.5",
+    reasoning_effort="high",
     effort_when_bind_gates_wave="max",
 )
 
 
 @pytest.mark.offline
 def test_render_restore_and_active_width_seat() -> None:
-    """Production ACTIVE renders cdp/opus-5.5 at reasoning_effort=high."""
+    """Production ACTIVE renders cdp/opus-5 at reasoning_effort=max."""
     assert ACTIVE is not RESTORE
-    assert ACTIVE.model == "cdp/opus-5.5"
-    assert ACTIVE.reasoning_effort == "high"
+    assert ACTIVE.model == "cdp/opus-5"
+    assert ACTIVE.reasoning_effort == "max"
     assert ACTIVE.effort_when_bind_gates_wave == "max"
 
     active_clause = g3_g5_score_ratify_clause()
@@ -58,8 +58,9 @@ def test_render_restore_and_active_width_seat() -> None:
     )
 
     for rendered in (active_clause, active_hop, active_attended, *active_materialize):
-        assert "cdp/opus-5.5" in rendered
-        assert "reasoning_effort=high" in rendered
+        assert "cdp/opus-5," in rendered
+        assert "cdp/opus-5.5" not in rendered
+        assert "reasoning_effort=max" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
         assert "cdp/fable-5.1" not in rendered
 
@@ -82,21 +83,21 @@ def test_render_restore_and_active_width_seat() -> None:
 
 
 @pytest.mark.offline
-def test_explicit_opus_seat_renders_without_editing_active() -> None:
-    """A passed-in cdp/opus-5 seat renders while ACTIVE stays cdp/opus-5.5."""
-    clause = g3_g5_score_ratify_clause(_OPUS_SUBSTITUTE)
+def test_explicit_opus_55_seat_renders_without_editing_active() -> None:
+    """A passed-in cdp/opus-5.5 seat renders while ACTIVE stays cdp/opus-5."""
+    clause = g3_g5_score_ratify_clause(_OPUS_55)
     hop, attended = _render_templates(clause)
     materialize = (
-        hop_invariant_g3_g5_fragment(_OPUS_SUBSTITUTE),
-        attended_g3_g5_task_sentence(_OPUS_SUBSTITUTE),
+        hop_invariant_g3_g5_fragment(_OPUS_55),
+        attended_g3_g5_task_sentence(_OPUS_55),
     )
     for rendered in (clause, hop, attended, *materialize):
-        assert "cdp/opus-5" in rendered
-        assert "cdp/opus-5.5" not in rendered
+        assert "cdp/opus-5.5" in rendered
         assert "cdp/fable-5.1" not in rendered
-        assert "reasoning_effort=max" in rendered
+        assert "reasoning_effort=high" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
-    assert ACTIVE.model == "cdp/opus-5.5"
+    assert ACTIVE.model == "cdp/opus-5"
+    assert ACTIVE.reasoning_effort == "max"
 
 
 def test_default_render_reads_active_constant(monkeypatch: pytest.MonkeyPatch) -> None:

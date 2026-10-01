@@ -1,12 +1,10 @@
 """One assignment selects the conductor width seat.
 
 G1, G2, G4, G3→G5, path-sim Q, the hop-5 check, and the dispatch-kernel
-width cell read ``ACTIVE``. Shipped ``ACTIVE`` is ``cdp/opus-5.5`` at
-``reasoning_effort="high"`` (``effort_when_bind_gates_wave="max"``).
-``ACTIVE = RESTORE`` returns width rows to ``cdp/fable-5.1`` when Kaywan
-asks. Spending a different Opus tier is assigning ``ACTIVE`` another
-``ConductorWidthSeat`` (e.g. ``model="cdp/opus-5"``,
-``reasoning_effort="max"``). There is no second switch, env var, or todo attr.
+width cell read ``ACTIVE``. Shipped ``ACTIVE`` is ``cdp/opus-5`` at
+``reasoning_effort="max"`` (``effort_when_bind_gates_wave="max"``).
+``ACTIVE = RESTORE`` returns width rows to ``cdp/fable-5.1``. There is no
+second switch, env var, or todo attr.
 """
 
 from __future__ import annotations
@@ -32,10 +30,10 @@ RESTORE = ConductorWidthSeat(
     reasoning_effort="high",
     effort_when_bind_gates_wave="max",
 )
-# Shipped seat. ACTIVE = RESTORE returns to cdp/fable-5.1 when Kaywan asks.
+# Shipped seat. ACTIVE = RESTORE returns to cdp/fable-5.1.
 ACTIVE = ConductorWidthSeat(
-    model="cdp/opus-5.5",
-    reasoning_effort="high",
+    model="cdp/opus-5",
+    reasoning_effort="max",
     effort_when_bind_gates_wave="max",
 )
 
