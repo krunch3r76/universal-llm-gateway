@@ -238,6 +238,20 @@ def _merge_current_status_slot(
     return merged
 
 
+def _entity_attributes_for_card(raw: object) -> dict[str, object] | None:
+    """Non-empty attributes object from the card identity fetch.
+
+    The column is already selected. Empty and non-object values stay
+    ``None`` so a card with no attributes does not grow by a blob.
+    ``status_summary`` remains the type-specific projection.
+    """
+    if not isinstance(raw, dict):
+        raw = json_decode(raw if isinstance(raw, str) else None)
+    if isinstance(raw, dict) and raw:
+        return raw
+    return None
+
+
 def get_entity_card(
     conn: sqlite3.Connection,
     *,
@@ -407,6 +421,7 @@ def get_entity_card(
         id=str(e["id"]),
         type=str(e["type"]),
         name=str(e["name"]),
+        attributes=_entity_attributes_for_card(e.get("attributes")),
         summary_row=adapter.summary_row(dict(e)),
         status_summary=adapter.status_summary(dict(e)),
         top_k_assertions=top_k_for_card,

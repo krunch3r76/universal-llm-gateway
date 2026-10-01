@@ -233,6 +233,9 @@ class EntityCard(BaseModel):
     id: str
     type: str
     name: str
+    # Identity column the card fetch already selects. status_summary is a
+    # type-specific projection and does not replace this object.
+    attributes: dict[str, Any] | None = None
     summary_row: str | None = None
     status_summary: dict[str, Any] | None = None
     top_k_assertions: list[CardAssertion] = Field(default_factory=list)
