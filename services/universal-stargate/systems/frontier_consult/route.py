@@ -253,7 +253,13 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (
         Literal[
-            "spawn", "planned", "crash", "silent", "watchdog", "park_harvest"
+            "spawn",
+            "planned",
+            "crash",
+            "silent",
+            "watchdog",
+            "park_harvest",
+            "cdp_probe_indeterminate",
         ]
         | None
     ) = None
