@@ -226,9 +226,7 @@ class HintRebuildGate:
 
                 self._surface_deferred()
                 if self._pending is not None and _can_merge(self._pending, request):
-                    current = (
-                        self._pending if included else widen(self._pending, request)
-                    )
+                    current = widen(self._pending, request)
                     self._pending = None
                     self._dirty = False
                 elif self._pending is not None:

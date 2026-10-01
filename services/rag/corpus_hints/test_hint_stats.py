@@ -613,14 +613,18 @@ async def test_cancel_during_follow_up_worker_does_not_drop_leader_scopes() -> N
 
     async def worker(request: HintRebuildRequest) -> dict[str, str]:
         calls.append(request)
+        if request.scope is not None:
+            names = [request.scope]
+        else:
+            names = list(request.configured_scopes or {})
         if len(calls) == 1:
             first_scan_entered.set()
             await release_first_scan.wait()
-            return {name: "hint" for name in (request.configured_scopes or {})}
+            return {name: "hint" for name in names}
         if len(calls) == 2:
             follow_up_entered.set()
             await asyncio.Event().wait()
-        return {name: "hint" for name in (request.configured_scopes or {})}
+        return {name: "hint" for name in names}
 
     gate = HintRebuildGate()
     both = _rebuild_request(scope=None)
@@ -639,6 +643,146 @@ async def test_cancel_during_follow_up_worker_does_not_drop_leader_scopes() -> N
     assert calls[-1].scope is None
     assert set(calls[-1].configured_scopes or {}) == {"alpha", "beta"}
     assert gate._error is None
+
+
+@pytest.mark.asyncio
+async def test_served_waiter_not_handed_cancelled_runner_scan() -> None:
+    cs = {
+        "alpha": ["/a"],
+        "beta": ["/b"],
+        "gamma": ["/g"],
+    }
+    evs: list[asyncio.Event] = []
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(req: HintRebuildRequest) -> dict[str, str]:
+        ev = asyncio.Event()
+        evs.append(ev)
+        calls.append(req)
+        await ev.wait()
+        if req.scope is not None:
+            scope_names = [req.scope]
+        else:
+            scope_names = list(req.configured_scopes or {})
+        return {n: "h" for n in scope_names}
+
+    gate = HintRebuildGate()
+    a = asyncio.create_task(
+        gate.run(
+            _rebuild_request(
+                scope="alpha",
+                configured_scopes=cs,
+                entity_boost_hyphen=9.0,
+            ),
+            worker,
+        )
+    )
+    await _wait_until(lambda: len(calls) == 1)
+    leader = asyncio.create_task(
+        gate.run(_rebuild_request(scope="gamma", configured_scopes=cs), worker)
+    )
+    await _wait_until(lambda: len(gate._cond._waiters) == 1)  # type: ignore[union-attr]
+    x = asyncio.create_task(
+        gate.run(_rebuild_request(scope="alpha", configured_scopes=cs), worker)
+    )
+    await _wait_until(lambda: len(gate._cond._waiters) == 2)  # type: ignore[union-attr]
+    evs[0].set()
+    await a
+    await _wait_until(lambda: len(calls) == 2)
+    w = asyncio.create_task(
+        gate.run(_rebuild_request(scope="beta", configured_scopes=cs), worker)
+    )
+    await _wait_until(lambda: gate._dirty)
+    evs[1].set()
+    await _wait_until(lambda: len(calls) == 3)
+    evs[2].set()
+    assert set(await leader) == {"beta", "gamma"}
+    await _wait_until(lambda: len(calls) == 4)
+    assert calls[3].scope == "alpha" and not w.done()
+    x.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await x
+    for _ in range(50):
+        for ev in evs:
+            ev.set()
+        await asyncio.sleep(0)
+    assert "beta" in await asyncio.wait_for(w, 2)
+
+
+@pytest.mark.asyncio
+async def test_included_waiter_refuses_restored_pending_with_unequal_scoring() -> None:
+    """Finding-1 schedule with admin-scoring X; pins claim hunk at rebuild_gate.py:228."""
+    cs = {
+        "alpha": ["/a"],
+        "beta": ["/b"],
+        "gamma": ["/g"],
+    }
+    evs: list[asyncio.Event] = []
+    calls: list[HintRebuildRequest] = []
+
+    async def worker(req: HintRebuildRequest) -> dict[str, str]:
+        ev = asyncio.Event()
+        evs.append(ev)
+        calls.append(req)
+        await ev.wait()
+        if req.scope is not None:
+            scope_names = [req.scope]
+        else:
+            scope_names = list(req.configured_scopes or {})
+        return {n: "h" for n in scope_names}
+
+    gate = HintRebuildGate()
+    a = asyncio.create_task(
+        gate.run(
+            _rebuild_request(
+                scope="alpha",
+                configured_scopes=cs,
+                entity_boost_hyphen=9.0,
+                extra_blocklist=frozenset({"custom"}),
+            ),
+            worker,
+        )
+    )
+    await _wait_until(lambda: len(calls) == 1)
+    leader = asyncio.create_task(
+        gate.run(_rebuild_request(scope="gamma", configured_scopes=cs), worker)
+    )
+    await _wait_until(lambda: len(gate._cond._waiters) == 1)  # type: ignore[union-attr]
+    x = asyncio.create_task(
+        gate.run(
+            _rebuild_request(
+                scope="alpha",
+                configured_scopes=cs,
+                entity_boost_hyphen=9.0,
+                extra_blocklist=frozenset(),
+            ),
+            worker,
+        )
+    )
+    await _wait_until(lambda: len(gate._cond._waiters) == 2)  # type: ignore[union-attr]
+    evs[0].set()
+    await a
+    await _wait_until(lambda: len(calls) == 2)
+    w = asyncio.create_task(
+        gate.run(_rebuild_request(scope="beta", configured_scopes=cs), worker)
+    )
+    await _wait_until(lambda: gate._dirty)
+    evs[1].set()
+    await _wait_until(lambda: len(calls) == 3)
+    evs[2].set()
+    assert set(await leader) == {"beta", "gamma"}
+    await _wait_until(lambda: len(calls) == 4)
+    assert calls[3].scope == "alpha" and not w.done()
+    x.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await x
+    for _ in range(50):
+        for ev in evs:
+            ev.set()
+        await asyncio.sleep(0)
+    result = await asyncio.wait_for(w, 2)
+    assert "beta" in result
+    assert "alpha" not in result
 
 
 @pytest.mark.asyncio
