@@ -30,7 +30,7 @@ related_skills:
 
 # Conductor — cursor-sdk as mission operator
 
-Index and before-acting kernel. **SDK seats** (`stage_dispatch_skills`) receive **only this file** — act from the kernel below and the step falsifiers. Flat `reference-*.md` files beside this skill in plugin SoT carry the full master text where the install copies them (IDE checkout / local plugin tree); they are not mounted on SDK dispatch.
+Index and before-acting kernel. Flat `reference-*.md` files beside this file carry the full master text; install copies them into the plugin tree, and the cursor-sdk dispatch HOME copies that tree, so SDK seats have them. Read one when a step needs it; where absent (Customize), act from the kernel and step falsifiers.
 
 ## Before acting (kernel)
 
