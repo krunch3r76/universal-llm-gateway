@@ -36,6 +36,7 @@ def test_thread_get_happy_path() -> None:
 
 
 def test_thread_get_includes_live_cursor_auto_job_phase() -> None:
+    """Auto-arm removal: a live job probe is not attached as cursor_auto_job."""
     detail = {
         "id": "7052",
         "slug": "private-lane",
@@ -65,11 +66,9 @@ def test_thread_get_includes_live_cursor_auto_job_phase() -> None:
     ):
         result = _thread_get_impl(thread="7052")
 
-    assert result["cursor_auto_job"]["lifecycle_phase"] == "admitted"
-    assert result["cursor_auto_job"]["dispatch_id"] is None
+    assert "cursor_auto_job" not in result
     assert result["id"] == "7052"
-    probe.assert_called_once()
-    assert probe.call_args.kwargs["thread_id"] == "7052"
+    probe.assert_not_called()
 
 
 def test_thread_get_missing_thread_structured_error() -> None:

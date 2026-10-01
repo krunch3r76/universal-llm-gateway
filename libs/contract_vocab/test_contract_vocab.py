@@ -71,20 +71,6 @@ def test_handwritten_prose_sites_name_every_canonical_contract() -> None:
         assert not missing, f"{rel} missing {missing}"
 
 
-def test_wire_map_contract_literal_lists_canonical_names() -> None:
-    text = (
-        _REPO / "services/git_integration_worker/cursor_auto/wire_map.py"
-    ).read_text(encoding="utf-8")
-    block = text.split("Contract = Literal[", 1)[1].split("]", 1)[0]
-    for name in CANONICAL_CONTRACTS:
-        assert f'"{name}"' in block
-    assert "hop" not in block
-
-
-
-
-
-
 def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None:
     disclosure = vision_required_admit_disclosure()
     wire = vision_required_admit_disclosure(wire_style=True)
@@ -93,5 +79,3 @@ def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None
         assert name in wire
     stale = "contract ∈ {implement, investigate}"
     assert stale not in disclosure
-
-

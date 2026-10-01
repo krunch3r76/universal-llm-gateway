@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC
@@ -1018,10 +1019,30 @@ def _migrate_packet_kind_to_contract(conn: sqlite3.Connection) -> None:
         )
 
 
+def _add_column_if_missing(
+    conn: sqlite3.Connection, cols: set[str], name: str, decl: str
+) -> None:
+    """Add a ledger column once.
+
+    Concurrent first-touch of a fresh DB races the PRAGMA snapshot: two
+    connections both observe the column missing and both ALTER. The loser
+    raises ``duplicate column name``; that is success, not a failed mint.
+    """
+    if name in cols:
+        return
+    try:
+        conn.execute(f"ALTER TABLE cursor_sdk_dispatches ADD COLUMN {name} {decl}")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
+    cols.add(name)
+
+
 class CursorDispatchLedger:
     """Durable singleton; survives worker restart. DB methods are sync (F1)."""
 
     _instance: CursorDispatchLedger | None = None
+    _instance_lock = threading.Lock()
 
     def __init__(self) -> None:
         # Live in-process task handles (NOT persistable): dispatch_id -> Task.
@@ -1035,47 +1056,18 @@ class CursorDispatchLedger:
                 r["name"]
                 for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
             }
-            if "caller_agent" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN caller_agent TEXT"
-                )
-            if "wt_baseline" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN wt_baseline TEXT"
-                )
-            if "contract" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN contract TEXT"
-                )
-            if "source_repo" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_repo TEXT"
-                )
-            if "read_only" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches "
-                    "ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0"
-                )
-            if "worker_instance" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN worker_instance TEXT"
-                )
-            if "queued_at" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN queued_at TEXT"
-                )
-            if "source_ref" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN source_ref TEXT"
-                )
-            if "work_key" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN work_key TEXT"
-                )
-            if "resume_of" not in cols:
-                conn.execute(
-                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN resume_of TEXT"
-                )
+            _add_column_if_missing(conn, cols, "caller_agent", "TEXT")
+            _add_column_if_missing(conn, cols, "wt_baseline", "TEXT")
+            _add_column_if_missing(conn, cols, "contract", "TEXT")
+            _add_column_if_missing(conn, cols, "source_repo", "TEXT")
+            _add_column_if_missing(
+                conn, cols, "read_only", "INTEGER NOT NULL DEFAULT 0"
+            )
+            _add_column_if_missing(conn, cols, "worker_instance", "TEXT")
+            _add_column_if_missing(conn, cols, "queued_at", "TEXT")
+            _add_column_if_missing(conn, cols, "source_ref", "TEXT")
+            _add_column_if_missing(conn, cols, "work_key", "TEXT")
+            _add_column_if_missing(conn, cols, "resume_of", "TEXT")
             for col, decl in (
                 ("identity_class", "TEXT"),
                 ("work_key_seq", "INTEGER"),
@@ -1084,11 +1076,7 @@ class CursorDispatchLedger:
                 ("hop_from", "TEXT"),
                 ("nest_under", "TEXT"),
             ):
-                if col not in cols:
-                    conn.execute(
-                        f"ALTER TABLE cursor_sdk_dispatches ADD COLUMN {col} {decl}"
-                    )
-                    cols.add(col)
+                _add_column_if_missing(conn, cols, col, decl)
             _migrate_packet_kind_to_contract(conn)
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
@@ -1152,9 +1140,15 @@ class CursorDispatchLedger:
 
     @classmethod
     def instance(cls) -> CursorDispatchLedger:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+        inst = cls._instance
+        if inst is not None:
+            return inst
+        with cls._instance_lock:
+            inst = cls._instance
+            if inst is None:
+                inst = cls()
+                cls._instance = inst
+            return inst
 
     @staticmethod
     def fingerprint(req: CursorDispatchRequest) -> str:

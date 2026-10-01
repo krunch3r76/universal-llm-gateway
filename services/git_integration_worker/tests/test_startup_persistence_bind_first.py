@@ -39,6 +39,7 @@ async def test_schedule_startup_persistence_does_not_await_bundle() -> None:
 
 @pytest.mark.asyncio
 async def test_run_startup_persistence_marks_done_on_success() -> None:
+    """Ledger reconcile plus the key probe; Auto replay and auto-job reconcile are gone."""
     app = SimpleNamespace(state=SimpleNamespace())
     with (
         patch(
@@ -46,18 +47,11 @@ async def test_run_startup_persistence_marks_done_on_success() -> None:
             new_callable=AsyncMock,
         ) as ledger,
         patch(
-            "services.git_integration_worker.startup_persistence.startup_closeout_outbox_replay",
-            new_callable=AsyncMock,
-        ) as replay,
-        patch(
-            "services.git_integration_worker.startup_persistence.startup_auto_job_reconcile",
-            new_callable=AsyncMock,
-        ) as jobs,
+            "services.git_integration_worker.cursor_sdk_key_entitlement.probe_configured_keys",
+            return_value=[],
+        ) as keys,
     ):
         await run_startup_persistence(app)
     ledger.assert_awaited_once_with(app)
-    replay.assert_awaited_once_with(app)
-    jobs.assert_awaited_once_with(app)
+    keys.assert_called_once_with()
     assert app.state.startup_persistence_done is True
-
-
