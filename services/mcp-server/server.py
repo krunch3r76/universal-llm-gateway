@@ -55,6 +55,7 @@ from fs_impl import fs_impl
 from tool_error_enricher import register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_tools import JsonArgStr
+from tools._overflow_dispatch import call_overflow_tool
 from tools.cursor_bridge import register_cursor_bridge_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from universal_logging import get_logger
@@ -383,7 +384,7 @@ def _build_server(
         arguments: JSON-encoded object string (e.g. '{"query": "...", "scope": "research"}')
 
         Operations:
-          search            (query, scope?, prefix?, top_k?|limit?, mapped?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k; mapped=true does exact (scope,query) durable-pack lookup via config/mcp/rag_mapped_index.yaml (identical envelope) with live rag-context fallback on miss. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
+          search            (query, scope?, prefix?, top_k?|limit?, mapped?, search_id?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k; mapped=true does exact (scope,query) durable-pack lookup via config/mcp/rag_mapped_index.yaml (identical envelope) with live rag-context fallback on miss. Parallel calls are safe: identical requests share one backend search and every envelope carries search_id; a call that outlives the wait budget returns status="in_flight" (not an error) — poll with search_id. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
           recon             (label, themes, top_k?, durable_sink?) — labeled per-theme recon with durable sidecar persistence via DurableSink
           list_mapped       ()                                  — URI-safe catalog of mapped pack keys + activate recipe
           list_scopes       ()                                  — list scopes with prefixes and coverage
@@ -430,10 +431,7 @@ def _build_server(
             if args is None:
                 return dispatch_arguments_error(arguments, example='{"query": "..."}')
 
-            result = fn(**args)
-            if asyncio.iscoroutine(result):
-                result = await result
-            return result
+            return await call_overflow_tool(fn, args)
         except Exception as exc:
             err = str(exc) or type(exc).__name__
             return _tool_error_envelope("rag", op, exc)
@@ -515,9 +513,7 @@ def _build_server(
             )
             return {"tool": tool, "result": preflight}
         try:
-            result = fn(**parsed)
-            if asyncio.iscoroutine(result):
-                result = await result
+            result = await call_overflow_tool(fn, parsed)
         except Exception as exc:
             envelope = _tool_error_envelope(
                 tool, str(parsed.get("op") or "") or None, exc

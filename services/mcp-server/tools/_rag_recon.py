@@ -44,13 +44,13 @@ def _run_theme_search(
         envelope_retrieval_fields,
         retrieval_metadata_from_response,
     )
-    from .rag import (
-        _HTTP_BUFFER_S,
-        _RERANK_MODEL_DEFAULT,
-        _extract_content,
-        _normalize_scope_override,
-        _pipeline_call,
+    from ._rag_search_exec import (
+        HTTP_BUFFER_S,
+        RERANK_MODEL_DEFAULT,
+        extract_content,
+        pipeline_call,
     )
+    from .rag import _normalize_scope_override
 
     scope_override: str | list[str]
     if len(scopes) == 1:
@@ -66,21 +66,21 @@ def _run_theme_search(
         "rag_max_chunks": top_k,
         "include_retrieval_metadata": True,
     }
-    rerank_model = pipeline_options.get("rerank_model", _RERANK_MODEL_DEFAULT)
+    rerank_model = pipeline_options.get("rerank_model", RERANK_MODEL_DEFAULT)
     pipeline_timeout = rag_pipeline_timeout(rerank_model)
     pipeline_options["timeout_seconds"] = pipeline_timeout
 
     try:
-        result = _pipeline_call(
+        result = pipeline_call(
             "rag-context",
             [{"role": "user", "content": query}],
             pipeline_options=pipeline_options,
-            timeout=pipeline_timeout + _HTTP_BUFFER_S,
+            timeout=pipeline_timeout + HTTP_BUFFER_S,
         )
     except Exception as exc:  # noqa: BLE001 — per-theme envelope
         return {"error": str(exc) or type(exc).__name__}
 
-    content = _extract_content(result) if result else ""
+    content = extract_content(result) if result else ""
     retrieval_fields = envelope_retrieval_fields(
         retrieval_metadata_from_response(result),
     )

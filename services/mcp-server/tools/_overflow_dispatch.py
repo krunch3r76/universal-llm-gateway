@@ -9,14 +9,39 @@ overflow tool; TypeError enrichment covers any remaining boundary cases.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 _UNEXPECTED_KWARG_RE = re.compile(r"unexpected keyword argument '([^']+)'")
 
 
+async def call_overflow_tool(fn: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
+    """Invoke a registry tool function from ``server.rag`` / ``server.dispatch``
+    without blocking the event loop.
+
+    ``overflow_registry`` holds raw ``FunctionTool.fn`` callables, most of them
+    synchronous and I/O-bound (``rag_search`` blocks on Stargate for up to
+    minutes). Calling them inline froze the single uvicorn loop — every tool on
+    both surfaces, and every new TLS handshake, waited behind one search; four
+    "parallel" searches ran strictly one after another. Coroutine functions are
+    awaited directly; sync functions run on the default thread pool with the
+    caller's ``contextvars`` (request profile) copied in.
+    """
+    if inspect.iscoroutinefunction(fn):
+        return await fn(**kwargs)
+    result = await asyncio.to_thread(fn, **kwargs)
+    if asyncio.iscoroutine(result):
+        return await result
+    return result
+
+
 def tool_schema_has_nested_arguments(schema: dict[str, Any] | None) -> bool:
+    """True when *schema* describes an ``op`` + ``arguments`` domain tool, i.e. one
+    whose per-op parameters travel inside a nested JSON string."""
     props = (schema or {}).get("properties", {}) or {}
     return "op" in props and "arguments" in props
 
@@ -39,6 +64,8 @@ def nested_arguments_dispatch_error(
     op: str,
     flat_keys: list[str],
 ) -> dict[str, Any]:
+    """Build the ``DispatchShapeError`` envelope that names the misplaced top-level
+    keys and shows the corrected nested-``arguments`` call for *tool*/*op*."""
     keys = ", ".join(flat_keys[:5])
     inner_example = (
         '{"message_id": "<msg-id>"}'
@@ -73,6 +100,8 @@ def preflight_nested_op_dispatch(
     parsed: dict[str, Any],
     schema: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
+    """Return a shape-error envelope before the tool runs when op parameters were
+    placed at dispatch top level; ``None`` when the payload is well-formed."""
     if not tool_schema_has_nested_arguments(schema):
         return None
     flat = flat_op_args_in_dispatch_payload(parsed)
@@ -88,6 +117,8 @@ def enrich_type_error_for_nested_op(
     exc: BaseException,
     schema: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
+    """Translate an ``unexpected keyword argument`` TypeError raised by a nested-op
+    tool into the shape-error envelope; ``None`` for any other exception."""
     if not isinstance(exc, TypeError):
         return None
     if not tool_schema_has_nested_arguments(schema):

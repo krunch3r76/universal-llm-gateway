@@ -26,6 +26,13 @@ from ._rag_http import (
 from ._rag_http import (
     rag_post as _rag_post_http,
 )
+from ._rag_inflight import (
+    SearchInFlightError,
+    UnknownSearchError,
+    admit_search,
+    attach_search,
+    search_key,
+)
 from ._rag_mapped import (
     LIST_MAPPED_ACTIVATION_NOTE,
     list_mapped_entries,
@@ -37,19 +44,25 @@ from ._rag_retrieval_metadata import (
     envelope_retrieval_fields,
     retrieval_metadata_from_response,
 )
+from ._rag_search_exec import (
+    HTTP_BUFFER_S,
+    RERANK_MODEL_DEFAULT,
+    STARGATE_URL,
+    extract_content,
+    handle_pipeline_error,
+    pipeline_call,
+    run_rag_search,
+    unscoped_scope_note,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
-STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-# Default rerank/answer model names used by the rag-context and rag-answer pipelines.
-# Override via env vars when pipelines are reconfigured to use different models.
-_RERANK_MODEL_DEFAULT = os.environ.get("RAG_RERANK_MODEL", "qwen3_9b")
+# Default answer model used by the rag-answer pipelines; override via env when
+# the pipelines are reconfigured to use a different model.
 _ANSWER_MODEL_DEFAULT = os.environ.get("RAG_ANSWER_MODEL", "phi4")
-# Extra seconds added to the httpx client timeout beyond the pipeline wall-clock.
-_HTTP_BUFFER_S = 10.0
 _SCOPES_TIMEOUT = 15.0
 # Direct RAG REST API calls (no model inference — retrieval + ranking only).
 _RAG_API_TIMEOUT = 30.0
@@ -58,28 +71,6 @@ _CURSOR_PREVIEW_SNIPPET_CHARS = max(
     100, int(os.getenv("MCP_RAG_PREVIEW_SNIPPET_CHARS", "300"))
 )
 _CURSOR_DETAIL_MAX_CHUNKS = max(1, int(os.getenv("MCP_RAG_DETAIL_MAX_CHUNKS", "20")))
-
-
-def _pipeline_call(
-    model: str,
-    messages: list[dict[str, Any]],
-    *,
-    pipeline_options: dict[str, Any] | None = None,
-    timeout: float,
-) -> dict[str, Any]:
-    """POST to Stargate /v1/chat/completions. Raises httpx errors on failure."""
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-    }
-    if pipeline_options:
-        body["pipeline_options"] = pipeline_options
-
-    url = "/v1/chat/completions"
-    with make_sync_client(STARGATE_URL, timeout=timeout) as client:
-        resp = client.post(url, json=body)
-        resp.raise_for_status()
-        return resp.json()
 
 
 def _rag_call(path: str, *, timeout: float) -> dict[str, Any]:
@@ -92,85 +83,22 @@ def rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, An
     return _rag_post_http(STARGATE_URL, path, body, timeout=timeout)
 
 
-def _handle_pipeline_error(
-    exc: BaseException,
-    pipeline: str,
-    t0: float,
-    user_message: str,
-) -> dict[str, str]:
-    """Log, record mcp.rag.pipeline.failed, and return error dict for HTTPX pipeline failures."""
-    extra: dict[str, Any] = {}
-    surfaced_message = user_message
-    if isinstance(exc, httpx.TimeoutException):
-        duration = monotonic_now() - t0
-        error_type = "timeout"
-        log_message = f"Pipeline timed out after {duration:.1f}s: {exc}"
-        extra["duration_s"] = round(duration, 3)
-    elif isinstance(exc, httpx.ConnectError):
-        error_type = str(exc)
-        log_message = f"Stargate connection failed: {exc}"
-    elif isinstance(exc, httpx.HTTPStatusError):
-        error_type = f"{exc.response.status_code}"
-        log_message = f"Pipeline HTTP error: {exc}"
-        try:
-            payload = exc.response.json()
-        except ValueError:
-            payload = None
-        if isinstance(payload, dict):
-            nested = payload.get("detail", payload.get("error", {}))
-            if isinstance(nested, dict) and nested.get("message"):
-                surfaced_message = str(nested["message"])
-            elif isinstance(nested, str) and nested.strip():
-                surfaced_message = nested
-    else:
-        error_type = str(exc)
-        log_message = f"Pipeline request error: {exc}"
-
-    logger.warning(log_message, exc_info=True)
-    record("mcp.rag.pipeline.failed", pipeline=pipeline, error=error_type, **extra)
-    return {"error": surfaced_message}
-
-
-def _extract_content(response: dict[str, Any]) -> str:
-    """Extract message content from an OpenAI-format chat completions response.
-
-    Args:
-        response: Raw dict from the chat completions API.
-
-    Returns:
-        Content string from the first choice's message, or empty string if absent.
-    """
-    choices = response.get("choices", [])
-    if not choices:
-        return ""
-    return choices[0].get("message", {}).get("content", "")
-
-
-_SCOPE_NOTE_CLASSIFIER = (
-    "Auto-scope-classified search (no scope= given). ~68 scopes exist. "
-    "Before concluding absence-of-evidence, call rag(op='list_scopes') and "
-    "re-search with an explicit scope= over relevant domains."
-)
-_SCOPE_NOTE_DEFAULT = (
-    "Broad default-scope search (no scope= given). ~68 scopes exist. "
-    "Before concluding absence-of-evidence, call rag(op='list_scopes') and "
-    "re-search with an explicit scope= over relevant domains."
-)
-_ZERO_RESULT_UNSCOPED_CAVEAT = (
-    "Auto-scoped ≠ corpus-wide. Before concluding absence-of-evidence, "
-    "call rag(op='list_scopes') and re-search with an explicit scope=."
-)
-
-
-def _unscoped_scope_note(retrieval_fields: dict[str, Any]) -> str | None:
-    """Return scope advisory text for unscoped calls based on ``scope_source``."""
-    retrieval = retrieval_fields.get("retrieval", {})
-    scope_source = retrieval.get("scope_source", "default_scope")
-    if scope_source == "classifier":
-        return _SCOPE_NOTE_CLASSIFIER
-    if scope_source == "default_scope":
-        return _SCOPE_NOTE_DEFAULT
-    return None
+def _attach_rag_search(search_id: str) -> dict[str, Any]:
+    """Serve a ``search_id`` poll: the finished envelope, ``in_flight`` again, or
+    an ``error`` envelope when the handle was never issued or has expired."""
+    try:
+        ticket = attach_search(search_id)
+    except UnknownSearchError:
+        return {
+            "error": (
+                f"Unknown or expired search_id {search_id!r}; "
+                "re-issue the original search."
+            )
+        }
+    try:
+        return ticket.stamp(ticket.wait())
+    except SearchInFlightError as pending:
+        return pending.envelope()
 
 
 def _normalize_scope_override(
@@ -404,6 +332,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
         mapped: bool = False,
+        search_id: str | None = None,
     ) -> dict[str, Any]:
         """PRIMARY (and only) agent surface for MCP RAG retrieval. Returns raw
         context chunks with source labels for the agent to cite, gate (lawyer-stance),
@@ -417,6 +346,12 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         IMPORTANT: query must be natural language. Boolean operators (OR, AND)
         degrade dense retrieval — use parallel calls per concept instead.
+
+        Parallel calls are safe: identical requests share one backend search, and
+        every envelope carries ``search_id``. A call that outlives the wait budget
+        (``MCP_RAG_SEARCH_WAIT_S``, default 90 s) returns ``status: "in_flight"``
+        with ``search_id`` — the search is still running, not failed. Poll with
+        ``search_id=`` (or re-issue the identical call); neither starts a new search.
 
         Call rag_list_scopes() for the current set of valid scope names.
         Scope-first discipline: unscoped searches use the direct pipeline's
@@ -444,18 +379,27 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 Mutually exclusive with scope.
             mapped: When True, try exact (scope, query) durable-pack lookup
                 first; on miss, run live rag-context.
+            search_id: Poll handle from an earlier ``in_flight`` envelope. When
+                given, every other argument is ignored and the call attaches to
+                that search (result, still ``in_flight``, or ``error`` if the
+                handle is unknown/expired).
 
         Returns:
             On success: {"status": "ok", "pipeline": "rag-context",
                          "content_length": <int>, "duration_s": <float>,
                          "context": "<assembled context with source labels>",
+                         "search_id": "rs-…", ["attached": true], ["cache_hit": true],
                          "retrieval": {resolved_scope, scope_confidence,
                                        chunks_found, scope_rejected,
                                        scope_source, auto_classified, ...}}
             Unscoped calls also include ``scope_note`` when scope_source is
             ``default_scope`` or ``classifier``.
-            On error:   {"error": "<message>"} (+ ``scope_note`` when unscoped)
+            Still running: {"status": "in_flight", "search_id", "elapsed_s",
+                            "wait_budget_s", "poll"} — not an error.
+            On error:   {"error": "<message>", "search_id"?} (+ ``scope_note`` when unscoped)
         """
+        if search_id:
+            return _attach_rag_search(search_id)
         if mapped:
             hit = resolve_mapped_pack(query, scope)
             if hit is not None:
@@ -487,95 +431,20 @@ def register_rag_tools(mcp: FastMCP) -> None:
             pipeline_options["rag_max_chunks"] = top_k
         pipeline_options["include_retrieval_metadata"] = True
 
-        record_args: dict[str, Any] = {
-            "pipeline": "rag-context",
-            "query": query,
-            "scope": scope,
-        }
-        if prefixes is not None:
-            record_args["prefix"] = prefixes
-        t0 = monotonic_now()
-        record("mcp.rag.pipeline.called", **record_args)
-
-        rerank_model = pipeline_options.get("rerank_model", _RERANK_MODEL_DEFAULT)
-        pipeline_timeout = rag_pipeline_timeout(rerank_model)
-        pipeline_options["timeout_seconds"] = pipeline_timeout
-
-        try:
-            result = _pipeline_call(
-                "rag-context",
-                [{"role": "user", "content": query}],
-                pipeline_options=pipeline_options,
-                timeout=pipeline_timeout + _HTTP_BUFFER_S,
-            )
-        except httpx.TimeoutException as e:
-            user_message = "Pipeline timed out. The query may be too complex."
-            return _handle_pipeline_error(e, "rag-context", t0, user_message)
-        except httpx.ConnectError as e:
-            user_message = "Pipeline not available. Stargate may not be running."
-            return _handle_pipeline_error(e, "rag-context", t0, user_message)
-        except httpx.HTTPStatusError as e:
-            user_message = (
-                f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            )
-            return _handle_pipeline_error(e, "rag-context", t0, user_message)
-        except httpx.RequestError as e:
-            user_message = f"Pipeline request failed: {e}"
-            return _handle_pipeline_error(e, "rag-context", t0, user_message)
-
-        content = _extract_content(result) if result else ""
-        duration = monotonic_now() - t0
-        retrieval_fields = envelope_retrieval_fields(
-            retrieval_metadata_from_response(result),
-        )
-        scope_note = _unscoped_scope_note(retrieval_fields) if unscoped else None
-
-        if not content:
-            record(
-                "mcp.rag.pipeline.completed",
-                pipeline="rag-context",
-                duration_s=round(duration, 3),
-                empty=True,
-                query=query,
+        def _start() -> dict[str, Any]:
+            return run_rag_search(
+                query,
                 scope=scope,
-                prefix=prefixes,
+                prefixes=prefixes,
+                pipeline_options=pipeline_options,
+                unscoped=unscoped,
             )
-            zero_note = _ZERO_RESULT_UNSCOPED_CAVEAT if unscoped else None
-            error = "Pipeline returned empty results."
-            if zero_note:
-                error = f"{error} {zero_note}"
-            return {
-                "error": error,
-                **({"zero_result_caveat": zero_note} if zero_note else {}),
-                **({"scope_note": scope_note} if scope_note else {}),
-                **retrieval_fields,
-            }
 
-        logger.info(
-            "rag_search: query=%r scope=%s prefix=%s → %d chars in %.1fs",
-            query,
-            scope,
-            prefixes,
-            len(content),
-            duration,
-        )
-        record(
-            "mcp.rag.pipeline.completed",
-            pipeline="rag-context",
-            duration_s=round(duration, 3),
-            content_length=len(content),
-            scope=scope,
-            prefix=prefixes,
-        )
-        return {
-            "status": "ok",
-            "pipeline": "rag-context",
-            "content_length": len(content),
-            "duration_s": round(duration, 3),
-            "context": content,
-            **({"scope_note": scope_note} if scope_note else {}),
-            **retrieval_fields,
-        }
+        ticket = admit_search(search_key(query, pipeline_options), _start)
+        try:
+            return ticket.stamp(ticket.wait())
+        except SearchInFlightError as pending:
+            return pending.envelope()
 
     @mcp.tool(title="RAG: Answer (DEBUG ONLY)")
     def rag_answer(
@@ -643,7 +512,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             record_args["prefix"] = prefixes
         record("mcp.rag.pipeline.called", **record_args)
 
-        rerank_model = pipeline_options.get("rerank_model", _RERANK_MODEL_DEFAULT)
+        rerank_model = pipeline_options.get("rerank_model", RERANK_MODEL_DEFAULT)
         answer_model = pipeline_options.get("model", _ANSWER_MODEL_DEFAULT)
         pipeline_timeout = rag_pipeline_timeout(
             rerank_model
@@ -651,33 +520,33 @@ def register_rag_tools(mcp: FastMCP) -> None:
         pipeline_options["timeout_seconds"] = pipeline_timeout
 
         try:
-            result = _pipeline_call(
+            result = pipeline_call(
                 pipeline,
                 [{"role": "user", "content": question}],
                 pipeline_options=pipeline_options,
-                timeout=pipeline_timeout + _HTTP_BUFFER_S,
+                timeout=pipeline_timeout + HTTP_BUFFER_S,
             )
         except httpx.TimeoutException as e:
             user_message = "Pipeline timed out. The question may be too complex — try without deep=True."
-            return _handle_pipeline_error(e, pipeline, t0, user_message)
+            return handle_pipeline_error(e, pipeline, t0, user_message)
         except httpx.ConnectError as e:
             user_message = "Pipeline not available. Stargate may not be running."
-            return _handle_pipeline_error(e, pipeline, t0, user_message)
+            return handle_pipeline_error(e, pipeline, t0, user_message)
         except httpx.HTTPStatusError as e:
             user_message = (
                 f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
             )
-            return _handle_pipeline_error(e, pipeline, t0, user_message)
+            return handle_pipeline_error(e, pipeline, t0, user_message)
         except httpx.RequestError as e:
             user_message = f"Pipeline request failed: {e}"
-            return _handle_pipeline_error(e, pipeline, t0, user_message)
+            return handle_pipeline_error(e, pipeline, t0, user_message)
 
-        content = _extract_content(result) if result else ""
+        content = extract_content(result) if result else ""
         duration = monotonic_now() - t0
         retrieval_fields = envelope_retrieval_fields(
             retrieval_metadata_from_response(result),
         )
-        scope_note = _unscoped_scope_note(retrieval_fields) if unscoped else None
+        scope_note = unscoped_scope_note(retrieval_fields) if unscoped else None
 
         if not content:
             record(
