@@ -158,11 +158,71 @@ status: complete
     assert "resolved=cursor/grok-4.7" in payload.body
 
 
+_FAILURE_PATHS_BLOCK = (
+    "**Before you post.** For each change, name the input or state where it breaks "
+    "(service down, concurrency, partial failure, wrong ordering, install or staging "
+    "path) and the test that covers it. Change only what the brief names; anything "
+    "else you think should change goes in the review request as a proposal, not in "
+    "the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once "
+    "the request is posted, stop committing."
+)
+
+_FAILURE_PATHS_ITEM = (
+    "on a write commission; read-only episodes: N/A (rule 11)"
+)
+
+
 def test_reporting_contract_block_is_deliverable_text() -> None:
     assert REPORTING_CONTRACT_BLOCK.startswith("## REPORTING CONTRACT")
     assert "READ-ONLY TASKS STAY READ-ONLY" in REPORTING_CONTRACT_BLOCK
     assert "completion-provenance-discipline" in REPORTING_CONTRACT_BLOCK
     assert "positional implication" in REPORTING_CONTRACT_BLOCK
+
+
+def test_reporting_contract_failure_paths_and_brief_boundary() -> None:
+    assert f"**FAILURE PATHS** — {_FAILURE_PATHS_ITEM}" in REPORTING_CONTRACT_BLOCK
+    assert f"**BRIEF BOUNDARY** — {_FAILURE_PATHS_ITEM}" in REPORTING_CONTRACT_BLOCK
+    assert REPORTING_CONTRACT_BLOCK.count(_FAILURE_PATHS_BLOCK) == 1
+    assert "11. READ-ONLY TASKS STAY READ-ONLY" in REPORTING_CONTRACT_BLOCK
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\nDo work.", contract="implement"
+    )
+    assert _FAILURE_PATHS_BLOCK in message
+    assert "**FAILURE PATHS**" in message
+    assert "**BRIEF BOUNDARY**" in message
+
+
+def test_reporting_contract_leadin_tells_executor_to_do_the_block() -> None:
+    """'end with this block' reads as paste-into-closeout; the lead-in must not."""
+    assert "end with this block" not in REPORTING_CONTRACT_BLOCK
+    assert (
+        "the executor does what this block says before posting its review "
+        "request or closeout"
+        in REPORTING_CONTRACT_BLOCK
+    )
+    assert REPORTING_CONTRACT_BLOCK.count(_FAILURE_PATHS_BLOCK) == 1
+
+
+def test_reporting_contract_failure_paths_na_on_read_only() -> None:
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\nQuestion?", contract="investigate"
+    )
+    assert f"**FAILURE PATHS** — {_FAILURE_PATHS_ITEM}" in message
+    assert f"**BRIEF BOUNDARY** — {_FAILURE_PATHS_ITEM}" in message
+    assert _FAILURE_PATHS_BLOCK in message
+
+
+def test_reporting_contract_failure_paths_omitted_for_conductor() -> None:
+    """Conductor jobs are nested (``_NESTED_CONTRACTS``) and reach ``build_sdk_message``."""
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\nDrive every G-row.",
+        contract="conductor",
+    )
+    assert "**Before you post.**" not in message
+    assert "**FAILURE PATHS**" not in message
+    assert "**BRIEF BOUNDARY**" not in message
+    assert "## REPORTING CONTRACT (mandatory)" in message
+    assert "READ-ONLY TASKS STAY READ-ONLY" in message
 
 
 def test_reporting_contract_enumerates_every_projector_field() -> None:

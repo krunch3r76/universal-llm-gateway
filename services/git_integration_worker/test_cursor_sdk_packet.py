@@ -399,6 +399,16 @@ def test_continuity_root_thread_id_absent_by_default() -> None:
 
 _LANE_B_WORKTREE_PATH = "/x/ulg-arc-worktrees/universal-llm-gateway/lane-12494"
 
+# Verbatim failure-paths block (431 bytes). Assert the whole string.
+_FAILURE_PATHS_BLOCK = (
+    "**Before you post.** For each change, name the input or state where it breaks "
+    "(service down, concurrency, partial failure, wrong ordering, install or staging "
+    "path) and the test that covers it. Change only what the brief names; anything "
+    "else you think should change goes in the review request as a proposal, not in "
+    "the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once "
+    "the request is posted, stop committing."
+)
+
 
 def test_lane_b_worktree_preamble_present_when_path_set() -> None:
     text = resolve_prompt_preamble(
@@ -468,6 +478,121 @@ def test_lane_b_worktree_preamble_idempotent_when_packet_has_block() -> None:
     # so the prompt the worker concatenates still contains the block once.
     assert text.count("LANE-B WORKTREE (mandatory)") == 0
     assert (text + packet).count("LANE-B WORKTREE (mandatory)") == 1
+
+
+def test_lane_b_failure_paths_block_on_implement() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert _FAILURE_PATHS_BLOCK in text
+    assert text.count(_FAILURE_PATHS_BLOCK) == 1
+
+
+def test_lane_b_failure_paths_block_on_freeform() -> None:
+    """Live freeform token is ``freeform`` (``contract_is_freeform``).
+
+    Retired ``none`` no longer takes this early return (524fe6299); that call
+    still receives ``LANE-B BRANCH CONTRACT``.
+    """
+    text = resolve_prompt_preamble(
+        handoff_contract=None,
+        prompt_preamble=None,
+        inferred_contract="freeform",
+        lane="B",
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert _FAILURE_PATHS_BLOCK in text
+    assert text.count(_FAILURE_PATHS_BLOCK) == 1
+    assert "LANE-B BRANCH CONTRACT" not in text
+
+
+def test_lane_b_failure_paths_block_absent_on_conductor() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="conductor",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id="d-conductor",
+        has_packet_path=True,
+        existing_text="Use the conductor skill\n\nmission body",
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert "**Before you post.**" not in text
+    assert "CONDUCTOR SEAT IDENTITY" in text
+
+
+def test_lane_b_failure_paths_block_on_nested_non_conductor_limb() -> None:
+    """Writable nest_under limb: the shape ``submit_nested_dispatch`` admits.
+
+    Implement maps to ``handoff_contract=pure-mechanical`` (``wire_map``).
+    The POST carries ``message`` (``has_packet_path`` false) and ``lane=B``
+    (``resolve_nested_checkout_lane`` implement-class). ``_resolve_prompt``
+    passes ``ctx.dispatch_workspace`` as ``lane_worktree`` when the wire lane
+    is B. A nest child inherits the parent workspace (AC-S2.7) rather than
+    minting a second tree, so the path is set. Read-only limbs omit ``lane``
+    and therefore have no ``lane_worktree``; this test is the writable limb.
+    """
+    text = resolve_prompt_preamble(
+        handoff_contract="pure-mechanical",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+        dispatch_id="auto-child",
+        has_packet_path=False,
+        existing_text=(
+            "Nested cursor-sdk dispatch from cursor-auto (operator proxy).\n"
+            "contract=implement\n"
+        ),
+    )
+    assert _FAILURE_PATHS_BLOCK in text
+    assert text.count(_FAILURE_PATHS_BLOCK) == 1
+
+
+def test_lane_b_failure_paths_block_idempotent_when_existing_text_has_it() -> None:
+    packet = _FAILURE_PATHS_BLOCK + "\n\nbody"
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        existing_text=packet,
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert text.count("**Before you post.**") == 0
+    assert (text + packet).count("**Before you post.**") == 1
+    assert text.count(_FAILURE_PATHS_BLOCK) == 0
+    assert (text + packet).count(_FAILURE_PATHS_BLOCK) == 1
+
+
+def test_lane_b_failure_paths_marker_paraphrase_still_appends_full_block() -> None:
+    """Marker plus different text is not the block; the paraphrase must not win."""
+    packet = "**Before you post.** Run the tests.\n\nbody"
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        existing_text=packet,
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert packet.count(_FAILURE_PATHS_BLOCK) == 0
+    assert text.count(_FAILURE_PATHS_BLOCK) == 1
+    assert (text + packet).count(_FAILURE_PATHS_BLOCK) == 1
+
+
+def test_lane_b_failure_paths_block_absent_without_worktree() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+    )
+    assert "**Before you post.**" not in text
 
 
 def test_lane_b_worktree_path_matches_lane_worktree_dir(tmp_path: Path) -> None:

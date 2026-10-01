@@ -14,6 +14,26 @@ _LANE_B_CHECKLIST = """\
 
 """
 
+# Verbatim. Copied in full; conductor missions omit the whole section.
+_FAILURE_PATHS_BLOCK = (
+    "**Before you post.** For each change, name the input or state where it breaks "
+    "(service down, concurrency, partial failure, wrong ordering, install or staging "
+    "path) and the test that covers it. Change only what the brief names; anything "
+    "else you think should change goes in the review request as a proposal, not in "
+    "the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once "
+    "the request is posted, stop committing."
+)
+
+_WRITE_COMMISSION_CHECKLIST = """\
+- **FAILURE PATHS** — on a write commission; read-only episodes: N/A (rule 11)
+- **BRIEF BOUNDARY** — on a write commission; read-only episodes: N/A (rule 11)
+"""
+
+_WRITE_COMMISSION_BLOCK = (
+    "\nOn a write commission, the executor does what this block says before "
+    "posting its review request or closeout:\n\n" + _FAILURE_PATHS_BLOCK + "\n"
+)
+
 _REPORTING_CONTRACT_TEMPLATE = """\
 ## REPORTING CONTRACT (mandatory)
 
@@ -28,7 +48,7 @@ Checklist — name each explicitly in §2:
 - **COVERAGE** — for every retrieval: corpus, count, actual date/ID range
 - **MODEL ACTUAL** — resolved model when it differs from requested (in artifact body)
 - **RECON METHOD** — when breadth recon was owed or taken: `explore` | `in-seat` + anti-trigger reason | `waived` + cite; omit only when pure-mechanical/implement with loci known upfront
-{lane_b_checklist}Mechanical rules (1–4, 11):
+{write_commission_checklist}{lane_b_checklist}Mechanical rules (1–4, 11):
 1. SUFFICIENCY — do enough to answer what was asked; subset OK, subset-as-whole is not
 2. NEGATIVE ANSWERS ARE FIRST-CLASS — see above
 3. NO SILENT SUBSTITUTION — model/scope/tool/method changes belong in the returned artifact
@@ -42,7 +62,7 @@ Prompt-side rules (5–8) — fill in §2:
 8. DISTINGUISH ABSENT FROM NOT-RETRIEVED — ACCESS status separate from result status
 
 Judgment rules 9–10 live in the **dispatch-report-discipline** skill only — not gated here.
-
+{write_commission_block}
 Status/rank/liveness/next-step claims are `observed` only when quoting a
 substrate payload; positional implication from a rank line, ordinal adjacency,
 or "next open after…" is `derived` and must not render as observed
@@ -58,10 +78,37 @@ def _lane_b_checklist(lane: str | None) -> str:
     return ""
 
 
-def reporting_contract_block(*, lane: str | None = None) -> str:
+def _is_conductor_contract(contract: str | None) -> bool:
+    return (contract or "").strip().lower() == "conductor"
+
+
+def _write_commission_checklist(contract: str | None) -> str:
+    """Checklist rows for write commissions. Conductor missions omit them."""
+    if _is_conductor_contract(contract):
+        return ""
+    return _WRITE_COMMISSION_CHECKLIST
+
+
+def _write_commission_block(contract: str | None) -> str:
+    """Verbatim failure-paths block. Conductor missions omit it.
+
+    ``stop committing`` would cut a conductor run-to-completion land.
+    """
+    if _is_conductor_contract(contract):
+        return ""
+    return _WRITE_COMMISSION_BLOCK
+
+
+def reporting_contract_block(
+    *,
+    lane: str | None = None,
+    contract: str | None = None,
+) -> str:
     """Render the REPORTING CONTRACT block for one resolved checkout lane."""
     return _REPORTING_CONTRACT_TEMPLATE.format(
         lane_b_checklist=_lane_b_checklist(lane),
+        write_commission_checklist=_write_commission_checklist(contract),
+        write_commission_block=_write_commission_block(contract),
         section2_emit_line=section2_emit_line(),
     )
 
@@ -69,13 +116,16 @@ def reporting_contract_block(*, lane: str | None = None) -> str:
 REPORTING_CONTRACT_BLOCK = reporting_contract_block()
 
 
-def reporting_contract_lines(*, lane: str | None = None) -> list[str]:
+def reporting_contract_lines(
+    *,
+    lane: str | None = None,
+    contract: str | None = None,
+) -> list[str]:
     """Return the REPORTING CONTRACT block as prompt lines."""
-    block = (
-        reporting_contract_block(lane=lane)
-        if lane is not None
-        else REPORTING_CONTRACT_BLOCK
-    )
+    if lane is None and contract is None:
+        block = REPORTING_CONTRACT_BLOCK
+    else:
+        block = reporting_contract_block(lane=lane, contract=contract)
     return ["", *block.splitlines()]
 
 
