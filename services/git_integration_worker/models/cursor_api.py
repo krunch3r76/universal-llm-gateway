@@ -95,7 +95,15 @@ class CursorDispatchRequest(BaseModel):
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (
-        Literal["spawn", "planned", "crash", "silent", "watchdog", "park_harvest"]
+        Literal[
+            "spawn",
+            "planned",
+            "crash",
+            "silent",
+            "watchdog",
+            "park_harvest",
+            "cdp_probe_indeterminate",
+        ]
         | None
     ) = None
     hop_park_release: bool = False

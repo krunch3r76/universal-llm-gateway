@@ -332,6 +332,19 @@ def conductor_hop_watchdog_candidates(
                 continue
             if hop_owed(mapped, closeout_tokens=closeout_tokens):
                 candidates.append(dispatch_id)
+                continue
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                cdp_probe_indeterminate_watchdog_due,
+            )
+
+            if cdp_probe_indeterminate_watchdog_due(
+                mapped, now=now_ts
+            ) and hop_owed(
+                mapped,
+                closeout_tokens=closeout_tokens,
+                ignore_probe_indeterminate=True,
+            ):
+                candidates.append(dispatch_id)
     return candidates
 
 
