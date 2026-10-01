@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Lane-B hub checkout guard (reference-transaction, prepared phase only).
+set -euo pipefail
+
+state="${1:-}"
+if [[ "${state}" != "prepared" ]]; then
+  exit 0
+fi
+
+if [[ -z "${CURSOR_SDK_DISPATCH_ID:-}" ]]; then
+  exit 0
+fi
+
+hook_script="$(readlink -f "$0")"
+hook_dir="$(dirname "${hook_script}")"
+root="$(cd "${hook_dir}/../../.." && pwd)"
+export PYTHONPATH="${root}:${root}/libs:${root}/services/universal-stargate${PYTHONPATH:+:${PYTHONPATH}}"
+
+_passwd_home="$(getent passwd "$(id -un)" | cut -d: -f6)"
+py="${_passwd_home}/.venvs/universal/bin/python"
+if [[ ! -x "${py}" ]]; then
+  py="$(command -v python3 || true)"
+fi
+if [[ -z "${py}" || ! -x "${py}" ]]; then
+  echo "reference-transaction: no python interpreter; allowing transaction" >&2
+  exit 0
+fi
+
+rc=0
+"${py}" -m services.git_integration_worker.lane_b_reference_transaction_hook "${state}" || rc=$?
+
+if [[ "${rc}" -eq 0 ]]; then
+  exit 0
+fi
+if [[ "${rc}" -eq 2 ]]; then
+  exit 1
+fi
+echo "reference-transaction hook internal error (exit ${rc}); allowing transaction" >&2
+exit 0

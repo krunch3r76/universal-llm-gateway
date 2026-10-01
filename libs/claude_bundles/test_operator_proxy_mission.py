@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+from unittest import mock
+
 import pytest
 
 from claude_bundles.act_receipt import parse_act_receipt
+from claude_bundles.operator_proxy_hop_status import HOP_STATUS_MARKER
 from claude_bundles.operator_proxy_mission import (
+    _BRIEFING_BLOCK,
     _FORBIDDEN_HEADING,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
@@ -14,6 +20,7 @@ from claude_bundles.operator_proxy_mission import (
     is_operator_proxy_mission_purpose,
     purpose_implies_mission,
 )
+from claude_bundles.runbook_excerpt import extract_sections
 
 pytestmark = pytest.mark.offline
 
@@ -120,11 +127,13 @@ def test_operator_proxy_mission_seat_map_names_reachable_independent_check() -> 
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     seat_section = out.split("## Life surface act path")[0]
     assert "cdp/fable" in seat_section
+    assert "cursor/grok-4.7" in seat_section
     assert "cursor/composer-2.5" in seat_section
+    assert "cursor/claude-opus-5" not in seat_section
+    assert "charter-runner" not in seat_section
+    assert "cursor/gpt-5.6-terra" not in seat_section
     _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
     assert _legacy_reasoner not in seat_section
-    assert "model_pin_refused" in seat_section
-    assert "prefer `cursor/gpt-5.6-terra` when bindable" not in seat_section
 
 
 def test_briefing_one_operator_cse_per_lane() -> None:
@@ -174,3 +183,71 @@ def test_skill_surface_introspects_instead_of_asserting_loaded() -> None:
         assert f"`{slug}`" in out
     assert "decision:operator-proxy-skill-surface-split" in out
     assert "request**, not" in out or "request, not a receipt" in out.lower()
+
+
+_RUNBOOK_FIXTURE = """\
+# Maestro loop
+
+## Trigger
+First commission must not wait.
+
+## Refuse
+The first commission is not `contract=none` on birth.
+
+## Steps
+1. Read Steps only at act time.
+"""
+
+
+def _hop_block(out: str) -> str:
+    start = out.index(HOP_STATUS_MARKER)
+    end = out.index("## Mission seat map (BINDING")
+    return out[start:end]
+
+
+def test_hop_block_inlines_refuse_section_from_runbook_bytes() -> None:
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(_RUNBOOK_FIXTURE, ""),
+    ):
+        out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    block = _hop_block(out)
+    assert "First commission must not wait." in block
+    assert "contract=none" in block
+    digest = hashlib.sha256(_RUNBOOK_FIXTURE.encode()).hexdigest()
+    assert f"resolved sha256={digest}" in block
+    for excerpt in ("First commission must not wait.", "contract=none"):
+        assert not re.search(r"^## ", excerpt, re.MULTILINE)
+
+
+def test_refuse_excerpt_is_small_against_briefing_block() -> None:
+    refuse_len = len(extract_sections(_RUNBOOK_FIXTURE, ("Refuse",)))
+    assert refuse_len < len(_BRIEFING_BLOCK)
+
+
+def test_success_condition_names_contract_none_refusal_in_composed_block() -> None:
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(_RUNBOOK_FIXTURE, ""),
+    ):
+        out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    block = _hop_block(out)
+    sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
+    assert "contract=none" in sc_line
+    assert "2000 characters" not in sc_line
+
+
+def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(_RUNBOOK_FIXTURE, ""),
+    ):
+        out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    block = _hop_block(out)
+    assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
+    assert (
+        "fetch-decision: skill:retrieval-before-authoring skipped "
+        "reason=not_resolvable_by_composer"
+        in block
+    )
+    assert "runbook:maestro-loop skipped reason=not_in_context" not in block

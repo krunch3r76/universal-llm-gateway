@@ -64,13 +64,17 @@ POLICY_DEFAULTS: dict[str, Any] = {
     # Closed-park re-admits per row. Gear presets do not override this.
     "max_readmits": 2,
 }
+# Gear name kept so a stored policy fails closed instead of falling through
+# to POLICY_DEFAULTS (that fall-through would silently spawn grok).
+RETIRED_GEARS: dict[str, str] = {
+    "2-opus-hops": (
+        "gear 2-opus-hops successor cursor/claude-opus-5-5 is not in use; "
+        "pick 3-wake-on-attention (cursor/grok-4.7)"
+    ),
+}
+
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
-    "2-opus-hops": {
-        "successor_model": "cursor/claude-opus-5-5",
-        "successor_cost_intent": None,
-        "max_ticks_per_hop": 6,
-    },
     "3-wake-on-attention": {
         # Judgment hop. Premium presets stay blocked (10534). Composer is not
         # allowlisted until a mechanical hop exists.
@@ -86,7 +90,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "successor_seat": "cdp",
         "successor_model": "cdp/opus-5.5",
         "successor_cost_intent": None,
-        "successor_contract": "conductor",
+        "successor_job": "conductor",
         "ready": False,
     },
 }
@@ -94,6 +98,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
 __all__ = [
     "GEAR3_SPAWNABLE_PRESET_SUCCESSORS",
     "GEAR_PRESETS",
+    "RETIRED_GEARS",
     "POLICY_DEFAULTS",
     "_bus",
     "agent_bus_bearer_headers",
@@ -362,6 +367,8 @@ def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
     """
     overrides = dict(state.get("policy") or {})
     gear = str(overrides.get("gear") or POLICY_DEFAULTS["gear"])
+    if gear in RETIRED_GEARS:
+        raise ValueError(RETIRED_GEARS[gear])
     preset = GEAR_PRESETS.get(gear, {})
     merged = {
         **POLICY_DEFAULTS,

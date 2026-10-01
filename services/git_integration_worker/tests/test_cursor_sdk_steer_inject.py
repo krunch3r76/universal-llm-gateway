@@ -23,6 +23,10 @@ from scripts.mcp_bridge_steer_inject import (
 )
 from services.git_integration_worker.cursor_sdk_park_for_restart import ParkRefusal
 from services.git_integration_worker.cursor_sdk_steer_inject import (
+    SdkSteerInjectDelivered,
+    SdkSteerInjectEscalated,
+    SdkSteerInjectExpired,
+    SdkSteerInjectSpooled,
     SteerDepositResult,
     deposit_steer_directive,
     escalate_idle_to_park,
@@ -40,6 +44,67 @@ from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,
     unregister_live_run,
 )
+
+
+def _ledger_admit(
+    ledger: Any,
+    *,
+    dispatch_id: str,
+    execution_id: str,
+    thread_id: str = "10479",
+    resume_of: str | None = None,
+    message: str | None = None,
+) -> None:
+    from services.git_integration_worker.models.cursor_api import (
+        CursorDispatchRequest,
+        CursorDispatchResponse,
+    )
+
+    req = CursorDispatchRequest(
+        thread_id=thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=execution_id,
+        message=message or f"run-{dispatch_id}",
+        resume_of=resume_of,
+    )
+    admission = CursorDispatchResponse(
+        admitted=True,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        model_id="composer-2.5",
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=admission,
+        source_repo="/tmp/repo",
+    )
+    ledger.mark_running(dispatch_id=dispatch_id)
+
+
+def _ledger_rowid(ledger: Any, dispatch_id: str) -> int:
+    conn = ledger._connect()
+    row = conn.execute(
+        "SELECT rowid FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (dispatch_id,),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+@pytest.fixture
+def ledger_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    return CursorDispatchLedger.instance()
 
 
 @pytest.fixture
@@ -64,6 +129,7 @@ def test_deposit_writes_spool_and_emits(
     )
     result = deposit_steer_directive(
         dispatch_id="disp-dep",
+        submitted_id="disp-dep",
         thread_id="10479",
         directive="check Stargate logs",
         reason="operator steer",
@@ -362,6 +428,7 @@ def test_deposit_4442_directive_stores_inline_and_recovers(
         )
         result = deposit_steer_directive(
             dispatch_id="disp-4442",
+            submitted_id="disp-4442",
             thread_id=thread_id,
             directive=directive,
             reason="operator steer",
@@ -434,6 +501,7 @@ def test_deposit_over_8k_stores_inline_and_recovers(
         )
         result = deposit_steer_directive(
             dispatch_id="disp-over8k",
+            submitted_id="disp-over8k",
             thread_id=thread_id,
             directive=directive,
             reason="operator steer",
@@ -506,6 +574,7 @@ def test_deposit_over_64k_raises_before_spool(
         with pytest.raises(RuntimeError, match="413"):
             deposit_steer_directive(
                 dispatch_id="disp-over64k",
+                submitted_id="disp-over64k",
                 thread_id=thread_id,
                 directive=directive,
                 reason="operator steer",
@@ -518,3 +587,415 @@ def test_deposit_over_64k_raises_before_spool(
     from scripts.mcp_bridge_steer_inject import spool_path
 
     assert not spool_path(spool, "disp-over64k").is_file()
+
+
+def _seed_ac1_live(ledger: Any) -> None:
+    _ledger_admit(ledger, dispatch_id="D", execution_id="X")
+    register_live_run(
+        dispatch_id="D",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+
+
+def test_preflight_ac1_plain_dispatch_id(ledger_env: Any) -> None:
+    _seed_ac1_live(ledger_env)
+    try:
+        pre = preflight_inject("D")
+        assert pre.refusal is None
+        assert pre.row is not None
+        assert pre.row["dispatch_id"] == "D"
+    finally:
+        unregister_live_run(dispatch_id="D")
+
+
+def test_preflight_ac2_bare_execution_id(ledger_env: Any) -> None:
+    _seed_ac1_live(ledger_env)
+    try:
+        pre = preflight_inject("X")
+        assert pre.refusal is None
+        assert pre.row["dispatch_id"] == "D"
+    finally:
+        unregister_live_run(dispatch_id="D")
+
+
+def test_preflight_ac3_prefixed_execution_id(ledger_env: Any) -> None:
+    _seed_ac1_live(ledger_env)
+    try:
+        pre = preflight_inject("cursor-sdk:dispatch:X")
+        assert pre.refusal is None
+        assert pre.row["dispatch_id"] == "D"
+    finally:
+        unregister_live_run(dispatch_id="D")
+
+
+def _seed_ac4_park_resume(ledger: Any) -> None:
+    _ledger_admit(ledger, dispatch_id="P", execution_id="E")
+    ledger.mark_terminal(dispatch_id="P", terminal_status="cancelled")
+    _ledger_admit(
+        ledger, dispatch_id="P-r1", execution_id="E", resume_of="P"
+    )
+    register_live_run(
+        dispatch_id="P-r1",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+
+
+def test_preflight_ac4_park_resume_child_wins(ledger_env: Any) -> None:
+    _seed_ac4_park_resume(ledger_env)
+    try:
+        pre = preflight_inject("E")
+        assert pre.refusal is None
+        assert pre.row["dispatch_id"] == "P-r1"
+    finally:
+        unregister_live_run(dispatch_id="P-r1")
+
+
+def test_preflight_ac5_prefixed_park_resume(ledger_env: Any) -> None:
+    _seed_ac4_park_resume(ledger_env)
+    try:
+        pre = preflight_inject("cursor-sdk:dispatch:E")
+        assert pre.refusal is None
+        assert pre.row["dispatch_id"] == "P-r1"
+    finally:
+        unregister_live_run(dispatch_id="P-r1")
+
+
+def test_preflight_ac6_rowid_order_irrelevant(ledger_env: Any) -> None:
+    _ledger_admit(ledger_env, dispatch_id="P", execution_id="E")
+    ledger_env.mark_terminal(dispatch_id="P", terminal_status="cancelled")
+    _ledger_admit(
+        ledger_env, dispatch_id="P-r1", execution_id="E", resume_of="P"
+    )
+    register_live_run(
+        dispatch_id="P-r1",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    _ledger_admit(
+        ledger_env, dispatch_id="P-r2", execution_id="E", resume_of="P"
+    )
+    ledger_env.mark_terminal(dispatch_id="P-r2", terminal_status="cancelled")
+    assert _ledger_rowid(ledger_env, "P-r2") > _ledger_rowid(ledger_env, "P-r1")
+    try:
+        pre = preflight_inject("E")
+        assert pre.refusal is None
+        assert pre.row["dispatch_id"] == "P-r1"
+    finally:
+        unregister_live_run(dispatch_id="P-r1")
+
+
+@pytest.mark.asyncio
+async def test_preflight_ac7_ambiguous_two_live(
+    ledger_env: Any, spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ledger_admit(ledger_env, dispatch_id="P-r1", execution_id="E", thread_id="10479")
+    register_live_run(
+        dispatch_id="P-r1",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    _ledger_admit(ledger_env, dispatch_id="P-r2", execution_id="E", thread_id="10480")
+    register_live_run(
+        dispatch_id="P-r2",
+        thread_id="10480",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    deposit_calls: list[dict[str, Any]] = []
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject_http.deposit_steer_directive",
+        lambda **kw: deposit_calls.append(kw) or SteerDepositResult(
+            dispatch_id="x",
+            entry_id="e",
+            authority_turn_id="1",
+            spool_path=str(spool / "x.json"),
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda ev: events.append(ev),
+    )
+    try:
+        pre = preflight_inject("E")
+        assert pre.refusal is InjectRefusal.NOT_LIVE
+        assert pre.row is None
+        assert pre.detail is not None
+        assert pre.detail.startswith("ambiguous execution_id")
+
+        status, body = await inject_one_dispatch(
+            dispatch_id="E",
+            directive="nudge",
+            reason="test",
+            actor="cursor",
+            ttl_s=300,
+        )
+        assert status == 409
+        assert body["code"] == "CURSOR_INJECT_NOT_LIVE"
+        assert body["message"].startswith("ambiguous execution_id")
+        assert not deposit_calls
+        from scripts.mcp_bridge_steer_inject import spool_path
+
+        assert not spool_path(spool, "E").is_file()
+        assert not any(
+            ev.signal == "frontier.sdk.steer.inject.requested" for ev in events
+        )
+    finally:
+        unregister_live_run(dispatch_id="P-r1")
+        unregister_live_run(dispatch_id="P-r2")
+
+
+def test_preflight_ac8_cancelled_parent(ledger_env: Any) -> None:
+    _seed_ac4_park_resume(ledger_env)
+    unregister_live_run(dispatch_id="P-r1")
+    try:
+        pre = preflight_inject("P")
+        assert pre.refusal is InjectRefusal.NOT_LIVE
+        assert pre.row is not None
+        assert pre.row["dispatch_id"] == "P"
+        assert pre.detail == "row status='cancelled'"
+    finally:
+        pass
+
+
+def test_preflight_ac9_not_found(ledger_env: Any) -> None:
+    pre = preflight_inject("no-such")
+    assert pre.refusal is InjectRefusal.NOT_FOUND
+    assert pre.row is None
+
+
+def test_preflight_ac10_execution_id_not_live(ledger_env: Any) -> None:
+    _ledger_admit(ledger_env, dispatch_id="D", execution_id="X")
+    pre = preflight_inject("X")
+    assert pre.refusal is InjectRefusal.NOT_LIVE
+    assert pre.row is None
+    assert pre.detail == "no live bridge run registered in this process"
+
+
+def test_preflight_ac11_pk_beats_execution_id_collision(ledger_env: Any) -> None:
+    _ledger_admit(ledger_env, dispatch_id="D", execution_id="not-D")
+    register_live_run(
+        dispatch_id="D",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    _ledger_admit(ledger_env, dispatch_id="other-live", execution_id="D", thread_id="10480")
+    register_live_run(
+        dispatch_id="other-live",
+        thread_id="10480",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    try:
+        pre = preflight_inject("D")
+        assert pre.refusal is None
+        assert pre.row["dispatch_id"] == "D"
+    finally:
+        unregister_live_run(dispatch_id="D")
+        unregister_live_run(dispatch_id="other-live")
+
+
+def test_preflight_double_prefix_not_found(ledger_env: Any) -> None:
+    _ledger_admit(ledger_env, dispatch_id="row-x", execution_id="X")
+    register_live_run(
+        dispatch_id="row-x",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    try:
+        pre = preflight_inject("cursor-sdk:dispatch:cursor-sdk:dispatch:X")
+        assert pre.refusal is InjectRefusal.NOT_FOUND
+    finally:
+        unregister_live_run(dispatch_id="row-x")
+
+
+@pytest.mark.asyncio
+async def test_inject_ac12_bus_address_202(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(spool.parent))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    _ledger_admit(ledger, dispatch_id="disp-live", execution_id="exec-live")
+    register_live_run(
+        dispatch_id="disp-live",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    deposit_kw: list[dict[str, Any]] = []
+    recover_kw: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject_http.deposit_steer_directive",
+        lambda **kw: deposit_kw.append(kw)
+        or SteerDepositResult(
+            dispatch_id="disp-live",
+            entry_id="e-live",
+            authority_turn_id="77",
+            spool_path=str(spool / "disp-live.json"),
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject_http.recover_undelivered_steer_from_thread",
+        lambda **kw: recover_kw.append(kw) or [],
+    )
+    status, body = await inject_one_dispatch(
+        dispatch_id="cursor-sdk:dispatch:exec-live",
+        directive="check logs",
+        reason="operator steer",
+        actor="cursor",
+        ttl_s=300,
+    )
+    unregister_live_run(dispatch_id="disp-live")
+    assert status == 202
+    assert body["dispatch_id"] == "disp-live"
+    assert body["execution_id"] == "exec-live"
+    assert body["inject_state"] == "pending"
+    assert deposit_kw[0]["dispatch_id"] == "disp-live"
+    assert deposit_kw[0]["submitted_id"] == "cursor-sdk:dispatch:exec-live"
+    assert recover_kw[0]["dispatch_id"] == "disp-live"
+
+
+@pytest.mark.asyncio
+async def test_inject_ac13_not_found_envelope() -> None:
+    status, body = await inject_one_dispatch(
+        dispatch_id="no-such",
+        directive="x",
+        reason="test",
+        actor="cursor",
+        ttl_s=300,
+    )
+    assert status == 404
+    assert body["code"] == "CURSOR_INJECT_NOT_FOUND"
+    assert body["data"]["dispatch_id"] == "no-such"
+    assert body["message"] == "inject refused: NOT_FOUND: no-such"
+
+
+@pytest.mark.asyncio
+async def test_inject_ac14_ambiguous_prefixed_409(ledger_env: Any) -> None:
+    _ledger_admit(ledger_env, dispatch_id="P-r1", execution_id="E", thread_id="10479")
+    register_live_run(
+        dispatch_id="P-r1",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    _ledger_admit(ledger_env, dispatch_id="P-r2", execution_id="E", thread_id="10480")
+    register_live_run(
+        dispatch_id="P-r2",
+        thread_id="10480",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    try:
+        status, body = await inject_one_dispatch(
+            dispatch_id="cursor-sdk:dispatch:E",
+            directive="nudge",
+            reason="test",
+            actor="cursor",
+            ttl_s=300,
+        )
+        assert status == 409
+        assert body["code"] == "CURSOR_INJECT_NOT_LIVE"
+        assert body["message"].startswith("ambiguous execution_id")
+        assert body["data"]["dispatch_id"] == "cursor-sdk:dispatch:E"
+    finally:
+        unregister_live_run(dispatch_id="P-r1")
+        unregister_live_run(dispatch_id="P-r2")
+
+
+@pytest.mark.asyncio
+async def test_inject_ac15_cancelled_parent_409(ledger_env: Any) -> None:
+    _seed_ac4_park_resume(ledger_env)
+    unregister_live_run(dispatch_id="P-r1")
+    status, body = await inject_one_dispatch(
+        dispatch_id="P",
+        directive="nudge",
+        reason="test",
+        actor="cursor",
+        ttl_s=300,
+    )
+    assert status == 409
+    assert body["code"] == "CURSOR_INJECT_NOT_LIVE"
+    assert body["data"]["dispatch_id"] == "P"
+
+
+@pytest.mark.asyncio
+async def test_inject_ac17_ac18_submitted_id_on_event(
+    ledger_env: Any, monkeypatch: pytest.MonkeyPatch, spool: Path
+) -> None:
+    _seed_ac4_park_resume(ledger_env)
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda ev: events.append(ev),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject._deposit_authority_turn",
+        lambda **_k: "99",
+    )
+    try:
+        deposit_steer_directive(
+            dispatch_id="P-r1",
+            submitted_id="cursor-sdk:dispatch:E",
+            thread_id="10479",
+            directive="steer",
+            reason="test",
+            spool_dir=spool,
+        )
+        requested = [
+            ev
+            for ev in events
+            if ev.signal == "frontier.sdk.steer.inject.requested"
+        ][0]
+        assert requested.payload["submitted_id"] == "cursor-sdk:dispatch:E"
+        assert requested.payload["dispatch_id"] == "P-r1"
+        assert requested.payload["submitted_id"] is not None
+
+        events.clear()
+        deposit_steer_directive(
+            dispatch_id="plain-key",
+            submitted_id="plain-key",
+            thread_id="10479",
+            directive="steer",
+            reason="test",
+            spool_dir=spool,
+        )
+        req2 = [
+            ev
+            for ev in events
+            if ev.signal == "frontier.sdk.steer.inject.requested"
+        ][0]
+        assert req2.payload["submitted_id"] == "plain-key"
+        assert req2.payload["submitted_id"] == req2.payload["dispatch_id"]
+    finally:
+        unregister_live_run(dispatch_id="P-r1")
+
+
+def test_ac19_sibling_payloads_omit_submitted_id() -> None:
+    sp = SdkSteerInjectSpooled(
+        dispatch_id="d",
+        thread_id="t",
+        entry_id="e",
+        authority_turn_id="a",
+        spool_uri="u",
+    )
+    de = SdkSteerInjectDelivered(
+        dispatch_id="d", entry_id="e", authority_turn_id="a"
+    )
+    ex = SdkSteerInjectExpired(dispatch_id="d", entry_id="e", ttl_s=1)
+    es = SdkSteerInjectEscalated(dispatch_id="d", entry_id="e", reason="r")
+    for ev in (sp, de, ex, es):
+        assert "submitted_id" not in ev.payload

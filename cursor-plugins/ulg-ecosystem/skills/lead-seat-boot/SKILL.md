@@ -109,7 +109,7 @@ Before infra fix: `cortex(search, query=<surface>)` for existing `decision:*`; r
 
 | Seat | cortex_brief call | MCP surface notes | Boot doc |
 |---|---|---|---|
-| `web-anthropic` | `cortex_brief(agent="web-anthropic", family="claude", platform="web", role="lead")` | Full vortex except `manage` / cursor IDE tools. Dispatch local work → `fs`; peer consult → `team_dispatch(op=generate, role=reviewer|…)` (code surface only — on life: `agent_bus` a code seat); never `role=web-anthropic` self-spawn. Read `dispatch-workflow.md` §0a before first dispatch. | This skill |
+| `web-anthropic` | `cortex_brief(agent="web-anthropic", family="claude", platform="web", role="lead")` | Full vortex except `manage` / cursor IDE tools. Dispatch local work → `fs`; peer consult → `team_dispatch(op=generate, job=freeform|…)` (code surface only — on life: `agent_bus` a code seat); never `role=web-anthropic` self-spawn. Read `dispatch-workflow.md` §0a before first dispatch. | This skill |
 | `cursor` | `/cortex-brief` command | Full vortex + cursor IDE tools | `cursor-boot_ws.mdc` |
 
 ## Cursor dispatch packet compliance

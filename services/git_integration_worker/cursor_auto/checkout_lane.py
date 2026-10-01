@@ -17,7 +17,7 @@ CheckoutLaneReason = Literal[
     "scope_refused",
 ]
 
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "verify"})
+_IMPLEMENT_CLASS_JOBS = frozenset({"implement", "verify"})
 
 logger = get_logger(__name__)
 
@@ -66,7 +66,7 @@ def resolve_nested_checkout_lane(
         return lane, "explicit"
 
     contract = (job.contract or "").strip().lower()
-    if contract in _IMPLEMENT_CLASS_CONTRACTS:
+    if contract in _IMPLEMENT_CLASS_JOBS:
         logger.info(
             "cursor-auto checkout lane=B reason=auto_implement_class job=%s contract=%s",
             job.job_id,

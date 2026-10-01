@@ -213,7 +213,7 @@ def build_ide_hop_message(
         # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
         "NOW non-empty ⇒ dispatch its first leg from this tab. "
         "LOAD liaison-cursor. Repo write on this seat → "
-        "team_dispatch(seat=cursor-sdk, contract=implement, lane=B). "
+        "team_dispatch(seat=cursor-sdk, job=implement, lane=B). "
         "cursor-auto implement is the life seat (no team_dispatch). "
         "Explore recon in-tab · design/judgment → cdp/fable-5.1 · "
         "independent check → cdp/opus-5. Before any STAY verdict. "
@@ -226,8 +226,8 @@ def build_ide_hop_message(
         "git-posture § Land on every land (merge, keep both).",
         "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
         "cursor-sdk; life repo-write → cursor-auto; then cdp/opus-5.5 (check) → "
-        "cdp/fable-5.1 (design/judgment); cursor/claude-opus-5-5 "
-        "last-resort only; ¬ cursor/claude-fable-5-1; page human only on "
+        "cdp/opus-5 (design/judgment); cursor/grok-4.7 for live checkout; "
+        "¬ cursor/claude-*; page human only on "
         "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",

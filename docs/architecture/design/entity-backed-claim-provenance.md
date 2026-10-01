@@ -322,7 +322,7 @@ The legal-doc analog of the consensus pipeline's cross-model verification. Once 
 
 ### 5.1 Verifier protocol
 
-1. **Verifier model picks up a synthesis-entity assertion tree.** Dispatch via `team_dispatch(op=generate, role=reviewer, dispatch_thread_id=…, model=<verifier_model_id>)` with the synthesis-entity id and the assertion ids as context.
+1. **Verifier model picks up a synthesis-entity assertion tree.** Dispatch via `team_dispatch(op=generate, job=freeform, dispatch_thread_id=…, model=<verifier_model_id>)` with the synthesis-entity id and the assertion ids as context.
 
 2. **For each claim assertion in the tree, the verifier:**
    - Reads each `evidence_uri` via `resolve(uri, tag?)`, pulling entity + chunk + verbatim text.
@@ -767,8 +767,8 @@ The schema underwent a three-reviewer consult on `agent-bus:968` during session 
 
 | Reviewer | Dispatch | Independence | Confidence profile |
 |---|---|---|---|
-| `openai/gpt-5.5` | `team_dispatch(role=reviewer)` + MCP; execution `eadfa49c`; 88s | **Independent** — different model class from drafter (`anthropic/claude-opus-4-7`) | 5 high / 1 medium (Q5) |
-| `google/gemini-2.5-pro` | `team_dispatch(role=reviewer)` + MCP; replied via `agent_bus.reply` tool call during MCP tool loop (dispatcher marked the dispatch failed at the final turn but the reply landed on the thread). Two such posts: turns 3 and 4 on bus thread 968. | **Independent** — different model class from drafter | 6 high (bus-posted answers). `frontier_dispatch` with `mcp=False` and inline substrate yielded a different Q6 answer — see § 10.4. |
+| `openai/gpt-5.5` | `team_dispatch(job=freeform)` + MCP; execution `eadfa49c`; 88s | **Independent** — different model class from drafter (`anthropic/claude-opus-4-7`) | 5 high / 1 medium (Q5) |
+| `google/gemini-2.5-pro` | `team_dispatch(job=freeform)` + MCP; replied via `agent_bus.reply` tool call during MCP tool loop (dispatcher marked the dispatch failed at the final turn but the reply landed on the thread). Two such posts: turns 3 and 4 on bus thread 968. | **Independent** — different model class from drafter | 6 high (bus-posted answers). `frontier_dispatch` with `mcp=False` and inline substrate yielded a different Q6 answer — see § 10.4. |
 | Claude Opus 4.7 (cursor seat) | Manual trigger by Kaywan; turn 5 on bus thread 968, posted 22:02:58 (14 min after session_close) | **NOT INDEPENDENT** — same model class as drafter (Opus 4.7 on web). Cursor disclosed at top of reply that it read turns 2–4 before answering. | 5 high / 1 medium (Q5). Substantively converged with gpt-5.5 on Q3 (hybrid framing) and on the Q5 edge-endpoint caveat. |
 
 **Implications of cursor's non-independence:**

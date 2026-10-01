@@ -33,8 +33,9 @@ from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_
 
 logger = get_logger(__name__)
 
-# Prefer cursor/* Anthropic-family over anthropic/* API (house rule).
-_OPENAI_EXECUTOR_ALTERNATE = "cursor/claude-opus-5"
+# OpenAI-family executors need a reviewer whose identity is not theirs.
+# cursor/grok-4.7 is the in-use cursor seat; cursor/claude-* is not spent.
+_OPENAI_EXECUTOR_ALTERNATE = "cursor/grok-4.7"
 _GENERATE_OP = "generate"
 _CURSOR_SDK_ROLE = "cursor-sdk"
 _REVIEWER_ROLE = "reviewer"
@@ -289,7 +290,7 @@ async def _dispatch_review_child(
                 seat=_CURSOR_SDK_ROLE,
                 dispatch_thread_id=delivery_thread,
                 model=reviewer.model,
-                contract="none",
+                job="freeform",
                 prompt=prompt,
                 # Child must not cascade another review-child spawn.
                 auto_review_child=False,
@@ -308,7 +309,7 @@ async def _dispatch_review_child(
             dispatch_thread_id=delivery_thread,
             thread=delivery_thread,
             subject=f"generate independent review — {request_id[:8]}",
-            contract="none",
+            job="freeform",
             model=reviewer.model,
             auto_review_child=True,
             read_only=True,

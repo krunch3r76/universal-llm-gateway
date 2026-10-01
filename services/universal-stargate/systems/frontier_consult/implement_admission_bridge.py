@@ -337,7 +337,7 @@ def resolve_source_ref_to_packet(
             packet_sha256=mp.packet_sha256,
             materialization_present=present,
             warnings=warnings,
-            route_contract={"contract": "sketch", "lane": "B"},
+            route_contract={"job": "sketch", "lane": "B"},
         )
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
         from implement_admission.conductor_witness_defaults import fold_deps_for_admit
@@ -386,7 +386,7 @@ def resolve_source_ref_to_packet(
             packet_sha256=mp.packet_sha256,
             materialization_present=present,
             warnings=warnings,
-            route_contract={"contract": "conductor", "lane": "B"},
+            route_contract={"job": "conductor", "lane": "B"},
         )
     dirty_tree_risk = _resolve_dirty_tree_risk(
         enable_dirty_tree_risk=enable_dirty_tree_risk,

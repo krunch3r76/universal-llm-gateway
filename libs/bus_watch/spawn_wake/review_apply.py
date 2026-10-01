@@ -139,7 +139,7 @@ def build_review_apply_body(
     (``prompt is not supported with contract='implement'``). Rematerializing
     the review turn as ``source_ref=agent-bus:{root}#turn-N`` would hand the
     worker a CLEAR pre-land review and let it skip suggestions. House generate
-    (``contract=none``) plus an explicit apply-all ``message`` is the admit
+    (``job=freeform``) plus an explicit apply-all ``message`` is the admit
     path the ticker already uses for sit hops.
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
@@ -160,7 +160,7 @@ def build_review_apply_body(
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "none",
+        "job": "freeform",
         "lane": "B",
         "work_key": work_key,
         "message": message,

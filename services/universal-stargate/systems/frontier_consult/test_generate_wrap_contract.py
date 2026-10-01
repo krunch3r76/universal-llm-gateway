@@ -1,4 +1,4 @@
-"""Offline tests for contract=wrap on cursor-sdk generate (todo:generate-wrap-contract)."""
+"""Offline tests for contract=wrap on cursor-sdk generate."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def test_wrap_body_rejects_packet_path() -> None:
         TeamDispatchGenerateBody(
             op="generate",
             role="cursor-sdk",
-            contract="wrap",
+            job="wrap",
             source_ref="todo:slug",
             packet_path="tmp/reviews/packet.md",
         )
@@ -49,7 +49,7 @@ def test_wrap_body_requires_source_ref() -> None:
         TeamDispatchGenerateBody(
             op="generate",
             role="cursor-sdk",
-            contract="wrap",
+            job="wrap",
         )
 
 
@@ -59,7 +59,7 @@ def test_wrap_body_rejects_gating_misleading_knobs() -> None:
         TeamDispatchGenerateBody(
             op="generate",
             role="cursor-sdk",
-            contract="wrap",
+            job="wrap",
             source_ref="todo:slug",
             density_triage="judgment_required",
         )
@@ -70,7 +70,7 @@ def test_wrap_body_allows_absent_dispatch_thread_id() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
         role="cursor-sdk",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:slug",
     )
     assert body.dispatch_thread_id is None
@@ -93,15 +93,15 @@ async def test_wrap_happy_path_returns_200_without_sdk(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
-        contract="wrap",
+        seat="cursor-sdk",
+        job="wrap",
         source_ref="todo:generate-wrap-contract",
     )
     response = Response()
     result = await team_dispatch(body, response)
 
     assert response.status_code == 200
-    assert result["contract"] == "wrap"
+    assert result["job"] == "wrap"
     assert result["status"] == "materialized"
     assert result["materialized"] is True
     assert result["materialization_mode"] == "auto"
@@ -133,8 +133,8 @@ async def test_wrap_does_not_spawn_composer(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
-        contract="wrap",
+        seat="cursor-sdk",
+        job="wrap",
         source_ref="todo:slug",
     )
     response = Response()
@@ -166,8 +166,8 @@ async def test_wrap_gated_source_ref_returns_422(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
-        contract="wrap",
+        seat="cursor-sdk",
+        job="wrap",
         source_ref="todo:not-ready",
     )
     result = await team_dispatch(body, Response())
@@ -199,8 +199,8 @@ async def test_wrap_decision_not_asserted_returns_422(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
-        contract="wrap",
+        seat="cursor-sdk",
+        job="wrap",
         source_ref="todo:unratified",
     )
     result = await team_dispatch(body, Response())
@@ -218,7 +218,7 @@ async def test_wrap_role_not_admitted_for_non_sdk_role() -> None:
         op="generate",
         role="reviewer",
         dispatch_thread_id="thread:arc",
-        contract="wrap",
+        job="wrap",
         source_ref="todo:slug",
     )
     result = await team_dispatch(body, Response())
@@ -246,12 +246,12 @@ async def test_wrap_packet_scheme_source_ref_allowed(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="cursor-sdk",
-        contract="wrap",
+        seat="cursor-sdk",
+        job="wrap",
         source_ref="packet:tmp/reviews/existing-packet.md",
     )
     response = Response()
-    result = await team_dispatch(body, response)
+    await team_dispatch(body, response)
 
     assert response.status_code == 200
     assert seen_refs == ["packet:tmp/reviews/existing-packet.md"]
@@ -262,15 +262,15 @@ async def test_wrap_packet_scheme_source_ref_allowed(
 async def test_wrap_route_defensive_packet_path_rejection() -> None:
     body = TeamDispatchGenerateBody.model_construct(
         op="generate",
-        role="cursor-sdk",
-        contract="wrap",
+        seat="cursor-sdk",
+        job="wrap",
         source_ref="todo:slug",
         packet_path="tmp/reviews/packet.md",
     )
     result = await dispatch_cursor_sdk_generate_route(
         request_id="req-wrap",
         body=body,
-        role="cursor-sdk",
+        seat="cursor-sdk",
         response=Response(),
     )
 

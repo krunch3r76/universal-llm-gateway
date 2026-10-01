@@ -22,8 +22,6 @@ from services.git_integration_worker.cursor_sdk_resume_store_events import (
     emit_resume_store_owner_resolved,
 )
 
-MAX_RESUME_LINEAGE_HOPS = 11
-
 
 def load_row_columns(
     ledger: CursorDispatchLedger, *, dispatch_id: str, columns: str
@@ -108,10 +106,14 @@ def _store_at_dispatch(*, dispatch_id: str, state_root: str | None) -> Path | No
 def _iter_resume_lineage(
     ledger: CursorDispatchLedger, *, start_id: str
 ) -> Iterator[tuple[str, str | None]]:
-    """Yield ``(dispatch_id, state_root)`` walking ``resume_of`` toward ancestors."""
+    """Yield ``(dispatch_id, state_root)`` walking ``resume_of`` toward ancestors.
+
+    Stops when ``current`` is already in ``seen``, or when ``load_parent_row``
+    returns None or ``resume_of`` is empty or absent.
+    """
     current = start_id
     seen: set[str] = set()
-    for _ in range(MAX_RESUME_LINEAGE_HOPS):
+    while True:
         if current in seen:
             break
         seen.add(current)
@@ -216,6 +218,9 @@ def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
     Emits ``giw.resume.store.owner.resolved`` when a store path is located.
     A missing store returns ``parent_id`` and does not emit. A store outside
     every lineage HOME also returns ``parent_id`` with ``mode=external``.
+    A store under the parent HOME when the lineage walk returns no owner is
+    ``rescanned`` or ``home_contained``; ``external`` remains the
+    outside-every-HOME case.
     """
     ledger = CursorDispatchLedger.instance()
     parent = load_parent_row(ledger, parent_id=parent_id)
@@ -229,7 +234,18 @@ def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
         ledger, start_id=parent_id, store_dir=store_dir.resolve()
     )
     if owner is None:
-        mode = "external"
+        contained = False
+        try:
+            home = cursor_home.dispatch_home_path(parent_id).resolve()
+            contained = store_dir.resolve().is_relative_to(home)
+        except OSError:
+            contained = False
+        if not contained:
+            mode = "external"
+        elif rescanned:
+            mode = "rescanned"
+        else:
+            mode = "home_contained"
         owner_id = parent_id
     elif rescanned:
         mode = "rescanned"

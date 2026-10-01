@@ -57,6 +57,9 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.queue_health_events import (
     emit_execution_mode_declared,
 )
+from services.git_integration_worker.cursor_auto.release_claimed import (
+    release_claimed_auto_job,
+)
 from services.git_integration_worker.cursor_auto.static_pin_refusal import (
     assess_static_pin_refusal,
 )
@@ -205,6 +208,41 @@ async def job_state(
         include_terminal=include_terminal,
     )
     return job_state_response(job_id=job_id, thread_id=thread_id, view=view)
+
+
+class ReleaseClaimedBody(BaseModel):
+    """Body for releasing one claimed cursor-auto job. Not park, not force."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    reason: str = Field(min_length=1)
+    # Required when the heartbeat is inside the stall TTL or an owning
+    # tracked task is still alive. Absent means refuse those cases.
+    override: bool = False
+
+
+@router.post("/jobs/{job_id}/release")
+async def release_claimed_cursor_auto_job(
+    job_id: str, body: ReleaseClaimedBody, request: Request
+):
+    """Fail one claimed auto job and drop it from active_ops.
+
+    409 when the row exists but is not claimed, or when the heartbeat is
+    still inside the TTL / an owning tracked task is alive and ``override``
+    is false. 404 only when the job id is absent. ``cancel_discard`` stays
+    on the park route. This handler does not force-restart GIW.
+    """
+    controller = getattr(request.app.state, "admission_controller", None)
+    result = release_claimed_auto_job(
+        job_id,
+        reason=body.reason,
+        controller=controller,
+        override=body.override,
+    )
+    return JSONResponse(
+        status_code=int(result.get("http_status") or (200 if result.get("ok") else 404)),
+        content=result,
+    )
 
 
 @router.post("/enqueue")

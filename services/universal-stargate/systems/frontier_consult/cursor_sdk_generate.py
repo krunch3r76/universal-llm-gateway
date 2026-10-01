@@ -191,7 +191,10 @@ async def _finish_prepared_dispatch(
             nest_under=handle.nest_under,
             topic=handle.topic,
             model_knobs_requested=_stamp_model_knobs_requested(
-                handle.resolved_model, handle.aligned_knobs
+                handle.resolved_model,
+                handle.requested_model_knobs
+                if handle.requested_model_knobs is not None
+                else handle.aligned_knobs,
             ),
         )
         await rollback_admitted_dispatch_links(
@@ -215,7 +218,10 @@ async def _finish_prepared_dispatch(
         nest_under=handle.nest_under,
         topic=handle.topic,
         model_knobs_requested=_stamp_model_knobs_requested(
-            handle.resolved_model, handle.aligned_knobs
+            handle.resolved_model,
+            handle.requested_model_knobs
+            if handle.requested_model_knobs is not None
+            else handle.aligned_knobs,
         ),
     )
     result = _sdk_admit_envelope(handle, queued=queued)
@@ -267,9 +273,7 @@ async def dispatch_prepared_cursor_sdk(
     from .prompt_expand_prelude import consume_admit_fields, expand_consume_admit_path
 
     async def _dispatch(expanded: PreparedCursorSdkHandle) -> dict[str, Any]:
-        return await _finish_prepared_dispatch(
-            expanded, transcript_id=transcript_id
-        )
+        return await _finish_prepared_dispatch(expanded, transcript_id=transcript_id)
 
     admit = await expand_consume_admit_path(
         handle,
@@ -298,13 +302,13 @@ async def dispatch_cursor_sdk_generate(
     subject: str | None,
     caller_agent: str | None,
     contract: Literal[
-    "sketch",
-    "implement",
-    "wrap",
-    "conductor",
-    "pure-mechanical",
-    "none",
-],
+        "sketch",
+        "implement",
+        "wrap",
+        "conductor",
+        "pure-mechanical",
+        "none",
+    ],
     packet_path: str | None,
     message_text: str | None,
     reuse_thread: str | None = None,

@@ -362,6 +362,48 @@ def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
     assert str(fallback) not in inherited.stdout
 
 
+def test_shell_cwd_preload_keeps_dispatch_id_in_bash_child(tmp_path: Path) -> None:
+    """AC2: bash via wrappedSpawn retains CURSOR_SDK_DISPATCH_ID."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    probe = tmp_path / "dispatch_probe.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "const child = spawn('/bin/bash', ['-c', 'printf %s \"$CURSOR_SDK_DISPATCH_ID|$CURSOR_SDK_SHELL_FALLBACK_CWD\"'], { cwd: process.cwd() });",
+                "child.stdout.on('data', (b) => process.stdout.write(b));",
+                "child.on('close', (code) => process.exit(code == null ? 1 : code));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {preload}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(fallback)
+    armed["CURSOR_SDK_DISPATCH_ID"] = "disp-preload-ac2"
+    proc = subprocess.run(
+        [str(node), str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+    )
+    assert proc.returncode == 0, proc.stderr
+    dispatch_id, fallback_cwd = proc.stdout.strip().split("|", 1)
+    assert dispatch_id == "disp-preload-ac2"
+    assert fallback_cwd == ""
+
+
 def test_resolve_bridge_bin_is_absolute_file() -> None:
     """The pinned wheel must resolve to an absolute, existing launcher."""
     resolved = resolve_bridge_bin()

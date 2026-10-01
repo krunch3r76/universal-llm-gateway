@@ -609,7 +609,7 @@ def run_cdp_generate(
     ``purpose`` (default ``ask``): CDP registry/mission tag. ``operator-proxy`` /
     ``mission`` trigger skill-chip + seat-map inject on the satellite
     (``operator_proxy_mission.purpose_implies_mission``). Also matched when the
-    prompt body declares ``purpose: operator-proxy``.
+    prompt body declares ``session: operator-proxy, job: "freeform"``.
 
     ``mission_kind`` / ``parent_thread``: Chrome-host lineage claims on the
     registry row (``root|hop|side|parallel`` plus bus parent lane id). These

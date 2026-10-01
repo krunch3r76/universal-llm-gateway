@@ -49,6 +49,26 @@ def test_consult_first_write_echoes_advisory(
     assert "Write-once" in written["consult_notice"]
 
 
+def test_runbook_consult_substring_stays_editable(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """notes/runbooks/ is an invoked command, even when the slug contains -consult-."""
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/runbooks/bus-consult-watcher.md"
+    assert authority.classify_artifact_path(rel) == "unclassified"
+    assert (
+        authority.classify_artifact_path("notes/system/threads/8801-consult-reply.md")
+        == "consult"
+    )
+    first = ops_text.write_file_impl(rel, "staged\n")
+    assert first["status"] == "written"
+    assert first.get("artifact_class") != "consult"
+    second = ops_text.write_file_impl(rel, "landed\n")
+    assert second["status"] == "written"
+    assert (sandbox_root / rel).read_text(encoding="utf-8") == "landed\n"
+
+
 def test_shared_write_has_no_consult_advisory(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,

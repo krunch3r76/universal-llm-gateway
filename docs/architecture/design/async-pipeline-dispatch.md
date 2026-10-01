@@ -317,7 +317,7 @@ Pipeline caller shape:
   "pipeline_id": "chat-dispatch",
   "pipeline_options": {
     "model": "openai/gpt-5.4",
-    "role": "gatherer",
+    "job": "freeform",
     "max_tool_turns": 10,
     "generation_parameters": {"reasoning_effort": "high"},
     "server_tools": null,
@@ -340,9 +340,9 @@ MCP callers reach this via `team_dispatch` only (`op=generate|to_thread` with
 ```python
 team_dispatch(
     op="generate",
-    role="gatherer",
+    job="freeform",
     dispatch_thread_id="arc-topic-slug",
-    contract="none",
+    job="freeform",
     reasoning_effort="high",
     caller_agent="cursor",
 )

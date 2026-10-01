@@ -108,7 +108,7 @@ def confer_steer_judgment(*, stargate_base: str, fable_thread: str, reason: str,
         f"One bounded judgment only.\n\nTrigger: {reason}\n\nContext:\n{context}\n\n"
         "Output: STEER_VERDICT + NEXT_LEG. No implement."
     )
-    body = {"op": "generate", "seat": "cursor-auto", "contract": "confer",
+    body = {"op": "generate", "seat": "cursor-auto", "job": "confer",
             "dispatch_thread_id": fable_thread, "prompt": prompt, "caller_agent": "cdp-hop-backup-watch"}
     dispatch_url = f"{stargate_base.rstrip('/')}/api/v1/team/dispatch"
     try:

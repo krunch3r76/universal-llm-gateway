@@ -1,4 +1,4 @@
-"""Pre-consolidate via cursor-sdk contract=none read-only dispatch."""
+"""Pre-consolidate via cursor-sdk job=freeform read-only dispatch."""
 
 from __future__ import annotations
 
@@ -188,7 +188,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         dispatch_body: dict[str, Any] = {
             "op": "generate",
             "seat": "cursor-sdk",
-            "contract": "none",
+            "job": "freeform",
             "lane": "A",
             "read_only": True,
             "mcp": False,

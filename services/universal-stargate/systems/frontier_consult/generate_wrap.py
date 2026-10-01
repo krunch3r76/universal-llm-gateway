@@ -21,6 +21,7 @@ from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
     probe_thread,
+    refuse_conductor_operator_lane_summon,
     resolve_cursor_sdk_thread_targets,
 )
 from .dispatch_thread_context import resolve_generate_prompt_resolution
@@ -230,7 +231,7 @@ async def dispatch_cursor_sdk_generate_route(
             lane=getattr(body, "lane", None),
             nest_under=getattr(body, "nest_under", None),
             resume_of=getattr(body, "resume_of", None),
-            contract=body.contract,
+            contract=body.job,
         )
         reject_resume_of_conflicts(
             request_id=request_id,
@@ -243,8 +244,9 @@ async def dispatch_cursor_sdk_generate_route(
 
     role = seat
     try:
+        operator_lane_summon_warning: str | None = None
         source_ref = getattr(body, "source_ref", None)
-        if body.contract == "wrap":
+        if body.job == "wrap":
             if getattr(body, "packet_path", None) is not None:
                 return JSONResponse(
                     status_code=422,
@@ -297,7 +299,7 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             response.status_code = 200
             payload = {
-                "contract": "wrap",
+                "job": "wrap",
                 "status": "materialized",
                 "materialized": True,
                 "materialization_mode": "auto",
@@ -315,8 +317,14 @@ async def dispatch_cursor_sdk_generate_route(
 
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
         source_ref = getattr(body, "source_ref", None)
+        if body.job == "conductor":
+            operator_lane_summon_warning = await refuse_conductor_operator_lane_summon(
+                request_id=request_id,
+                contract=body.job,
+                dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
+            )
         if (
-            body.contract == "conductor"
+            body.job == "conductor"
             and source_ref
             and not getattr(body, "packet_path", None)
         ):
@@ -366,7 +374,7 @@ async def dispatch_cursor_sdk_generate_route(
                 ),
             )
         elif (
-            body.contract == "sketch"
+            body.job == "sketch"
             and source_ref
             and not getattr(body, "packet_path", None)
         ):
@@ -380,7 +388,7 @@ async def dispatch_cursor_sdk_generate_route(
                     workspaces_root=_workspaces_root(),
                     request_id=request_id,
                     author_family=body.caller_agent,
-                    contract=body.contract,
+                    contract=body.job,
                 ),
             )
             wrap = GenerateWrapResult(
@@ -392,7 +400,7 @@ async def dispatch_cursor_sdk_generate_route(
                 materialization_present=bridge.materialization_present,
                 route_contract=bridge.route_contract,
             )
-        elif body.contract == "implement":
+        elif body.job == "implement":
             loop = asyncio.get_running_loop()
             wrap = await loop.run_in_executor(
                 None,
@@ -404,7 +412,7 @@ async def dispatch_cursor_sdk_generate_route(
                     caller_agent=body.caller_agent,
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
-                    contract=body.contract,
+                    contract=body.job,
                     role=role,
                 ),
             )
@@ -441,7 +449,7 @@ async def dispatch_cursor_sdk_generate_route(
             wrap = GenerateWrapResult(packet_path=packet_path)
         has_packet = wrap.packet_path is not None
         prompt_resolution = None
-        if body.contract == "implement" or has_packet:
+        if body.job == "implement" or has_packet:
             source_text = ""
         else:
             prompt_resolution = await resolve_generate_prompt_resolution(
@@ -459,7 +467,7 @@ async def dispatch_cursor_sdk_generate_route(
         ) = await resolve_cursor_sdk_thread_targets(
             reuse_thread=getattr(body, "reuse_thread", None),
             dispatch_thread_id=body.dispatch_thread_id,
-            contract=body.contract,
+            contract=body.job,
             request_id=request_id,
         )
         result = await dispatch_cursor_sdk_generate(
@@ -468,7 +476,7 @@ async def dispatch_cursor_sdk_generate_route(
             model=getattr(body, "model", None),
             subject=None,
             caller_agent=body.caller_agent,
-            contract=body.contract,
+            contract=body.job,
             packet_path=wrap.packet_path,
             message_text=source_text,
             reuse_thread=reuse_thread,
@@ -528,6 +536,10 @@ async def dispatch_cursor_sdk_generate_route(
             transcript_id=getattr(body, "transcript_id", None),
         )
         if isinstance(result, dict):
+            if operator_lane_summon_warning:
+                result["warnings"] = list(result.get("warnings") or []) + [
+                    operator_lane_summon_warning
+                ]
             split_warning = consolidation_split_warning(
                 reuse_thread=reuse_thread,
                 parent_dispatch_thread_id=parent_dispatch_thread_id,

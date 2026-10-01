@@ -34,6 +34,7 @@ class FakePage:
 
 
 def chips(*slugs: str) -> dict:
+    """Build one composer-chip payload so observe tests share the page shape."""
     return {"ok": True, "slugs": list(slugs)}
 
 
@@ -151,3 +152,29 @@ async def test_empty_request_is_a_no_op(record_attaches):
     assert page.evaluate_calls == 0
     assert record_attaches == []
     assert obs.click_errors == ()
+
+
+@asyncio_test
+async def test_replaced_kept_slug_returns_without_another_attach(record_attaches):
+    """A click that drops a chip already on the composer must not pick again.
+
+    reasoning-posture was present before the click and absent after it, while
+    consult-posture is what the page shows. replacement: stops the attempt so
+    attach_one_session_skill runs once.
+    """
+    page = FakePage(
+        [
+            chips("reasoning-posture"),
+            chips("consult-posture"),
+        ]
+    )
+    obs = await attach_skills_verified(
+        page,
+        ["reasoning-posture", "consult-posture"],
+        composer=object(),
+        attempts=3,
+    )
+    assert any("replacement:" in err for err in obs.click_errors)
+    assert obs.missing == ("reasoning-posture",)
+    assert obs.observed == ("consult-posture",)
+    assert record_attaches == ["consult-posture"]

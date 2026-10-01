@@ -29,7 +29,7 @@ from services.git_integration_worker.cursor_sdk_capacity_invariant import (
 
 logger = get_logger(__name__)
 
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "verify"})
+_IMPLEMENT_CLASS_JOBS = frozenset({"implement", "verify"})
 
 
 def _holder_context(holder_dispatch_id: str) -> tuple[Lane | None, str | None]:
@@ -82,7 +82,7 @@ async def resolve_nest_under(
         holder_id = cse_nest.removeprefix("cse:")
         holder_lane, holder_thread_id = _cse_holder_context(holder_id)
         normalized_contract = (contract or "").strip().lower()
-        if normalized_contract in _IMPLEMENT_CLASS_CONTRACTS and not may_nest_under(
+        if normalized_contract in _IMPLEMENT_CLASS_JOBS and not may_nest_under(
             holder_lane=holder_lane,
             holder_thread_id=holder_thread_id,
             job=job,
@@ -138,7 +138,7 @@ async def resolve_nest_under(
     holder_id = str(holder_dispatch_id)
     holder_lane, holder_thread_id = _holder_context(holder_id)
     normalized_contract = (contract or "").strip().lower()
-    if normalized_contract in _IMPLEMENT_CLASS_CONTRACTS and not may_nest_under(
+    if normalized_contract in _IMPLEMENT_CLASS_JOBS and not may_nest_under(
         holder_lane=holder_lane,
         holder_thread_id=holder_thread_id,
         job=job,

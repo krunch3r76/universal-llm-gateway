@@ -22,7 +22,7 @@ from contract_vocab import (
     vocab_line,
 )
 from contract_vocab import (
-    DEPRECATED_ALIASES as DEPRECATED_CONTRACT_ALIASES,
+    REMOVED_JOB_ALIASES as DEPRECATED_REMOVED_JOB_ALIASES,
 )
 
 
@@ -58,7 +58,7 @@ def normalize_wire_contract(contract: str | None) -> ContractIntake:
     raw = (contract or "").strip().lower()
     if not raw:
         return ContractIntake(contract=DEFAULT_CONTRACT, requested=DEFAULT_CONTRACT)
-    aliased = DEPRECATED_CONTRACT_ALIASES.get(raw)
+    aliased = DEPRECATED_REMOVED_JOB_ALIASES.get(raw)
     if aliased is not None:
         return ContractIntake(contract=aliased, requested=raw, alias_of=raw)
     if raw in CANONICAL_CONTRACTS:
@@ -75,7 +75,7 @@ def normalize_wire_contract(contract: str | None) -> ContractIntake:
             "status_code": 422,
             "provided": raw,
             "valid_contracts": list(CANONICAL_CONTRACTS),
-            "alias_map": dict(DEPRECATED_CONTRACT_ALIASES),
+            "alias_map": dict(DEPRECATED_REMOVED_JOB_ALIASES),
         },
     )
 
@@ -83,7 +83,7 @@ def normalize_wire_contract(contract: str | None) -> ContractIntake:
 __all__ = [
     "CANONICAL_CONTRACTS",
     "DEFAULT_CONTRACT",
-    "DEPRECATED_CONTRACT_ALIASES",
+    "DEPRECATED_REMOVED_JOB_ALIASES",
     "ContractIntake",
     "normalize_wire_contract",
 ]

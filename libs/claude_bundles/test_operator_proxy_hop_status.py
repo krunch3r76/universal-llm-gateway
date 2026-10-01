@@ -135,7 +135,7 @@ def test_existing_block_above_seat_map_keeps_fields_and_gains_receipt() -> None:
     assert "NO" not in out
     assert "- success-condition:" in out
     assert "fetch-decision: runbook:maestro-loop skipped reason=not_in_context" in out
-    assert ensure_hop_status_first(out) == out
+    assert ensure_hop_status_first(out) == out  # idempotent once receipt lines present
 
 
 def test_existing_block_after_seat_map_is_hoisted() -> None:
@@ -171,26 +171,51 @@ def test_loader_seam_does_not_touch_disk() -> None:
 
 
 def test_authored_hop_block_carries_success_condition_and_fetch_receipt() -> None:
-    """Birth briefing binds the success condition and records the unread step list."""
-    from claude_bundles.fetch_decision import (
-        arrival_bind_failure,
-        step_list_in_force,
-    )
+    """Birth briefing binds the success condition and fetch receipts."""
+    from unittest import mock
 
-    out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
+    from claude_bundles.fetch_decision import arrival_bind_failure
+
+    fixture = (
+        "## Trigger\nTrigger text.\n\n## Refuse\nRefuse contract=none rule.\n\n## Steps\nStep.\n"
+    )
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(fixture, ""),
+    ):
+        out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
     start = out.index(HOP_STATUS_MARKER)
     end = out.index("## Mission seat map (BINDING")
     block = out[start:end]
     assert arrival_bind_failure(block) is None
     assert "- success-condition:" in block
-    assert "fetch-decision: runbook:maestro-loop skipped reason=not_in_context" in block
+    assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
     assert (
-        "fetch-decision: skill:retrieval-before-authoring skipped reason=not_in_context"
+        "fetch-decision: skill:retrieval-before-authoring skipped "
+        "reason=not_resolvable_by_composer"
         in block
     )
     assert block.index("- lane:") < block.index("- success-condition:")
-    assert not step_list_in_force(block, "runbook:maestro-loop")
     assert "- runbook: runbook:maestro-loop" not in block
+
+
+def test_first_acts_line_names_runbook_steps_read() -> None:
+    from unittest import mock
+
+    fixture = "## Trigger\nT\n\n## Refuse\nR\n\n## Steps\nS\n"
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(fixture, ""),
+    ):
+        out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    start = out.index(HOP_STATUS_MARKER)
+    end = out.index("## Mission seat map")
+    block = out[start:end]
+    first_acts = next(
+        line for line in block.splitlines() if line.startswith("- first-acts:")
+    )
+    assert "maestro-loop.md § Steps" in first_acts
+    assert "maestro-loop.md`" not in first_acts
 
 
 def test_mission_ensure_opens_with_this_hop_then_seat_map() -> None:
@@ -216,7 +241,7 @@ def test_hop_block_echoes_successor_birth_id_from_prompt() -> None:
     start = out.index(HOP_STATUS_MARKER)
     end = out.index("## Mission seat map")
     block = out[start:end]
-    assert "- first-acts: skill reloads" in block
+    assert "- first-acts: read cortex://notes/runbooks/maestro-loop.md § Steps" in block
     assert "lane-act-gates" in block
     assert "TYPE: SEAT_REGISTRATION quoting successor_birth_id" in block
     assert f"- successor_birth_id: {birth}" in block
@@ -238,4 +263,4 @@ def test_hop_block_successor_birth_id_absent_without_header() -> None:
         out = ensure_hop_status_first(f"{_SEAT}\nthread_id: 9501\n")
         mint.assert_not_called()
     assert "- successor_birth_id: absent" in out
-    assert "- first-acts: skill reloads" in out
+    assert "- first-acts: read cortex://notes/runbooks/maestro-loop.md § Steps" in out

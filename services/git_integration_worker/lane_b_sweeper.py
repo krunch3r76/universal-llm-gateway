@@ -121,6 +121,13 @@ async def sweep_lane_b_writes(
         if branch is None:
             logger.warning("lane_b_sweep: cannot resolve branch repo=%s", repo)
             continue
+        if branch != "master":
+            logger.info(
+                "lane_b_sweep: skip commit_paths repo=%s branch=%s",
+                repo,
+                branch,
+            )
+            continue
         message = f"lane-b: {batch.arc_id} seat={batch.seat_id} paths={len(paths)}"
         git_env = integrate_git_env_vars(batch.arc_id, seat=batch.seat_id)
         result = await commit_paths(str(repo), list(paths), message, git_env=git_env)

@@ -6,6 +6,7 @@ import asyncio
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -166,6 +167,74 @@ def test_closed_quiescent_arc_is_swept(
         check=True,
     )
     assert "lane-b:" in log.stdout
+
+
+def test_sweeper_skips_commit_when_hub_not_on_master(
+    repo: Path, patch_ledger: SeatWriteLedger
+) -> None:
+    """AC5: non-master hub branch must not call commit_paths."""
+    arc_id = "arc-non-master"
+    patch_ledger.open_arc(arc_id=arc_id, seat_id="ide-composer", source_repo=str(repo))
+    target = repo / "off_master.py"
+    target.write_text("off\n", encoding="utf-8")
+    patch_ledger.register_paths(
+        arc_id=arc_id,
+        seat_id="ide-composer",
+        source_repo=str(repo),
+        paths=("off_master.py",),
+    )
+    patch_ledger.close_arc(arc_id=arc_id)
+    _backdate_touch(
+        patch_ledger, arc_id=arc_id, path="off_master.py", seconds_ago=400
+    )
+    _git(repo, "checkout", "-B", "cursor-sdk/lane-sweeper-skip")
+
+    with patch(
+        "services.git_integration_worker.lane_b_sweeper.commit_paths",
+        new_callable=AsyncMock,
+    ) as mock_commit:
+        result = _run(sweep_lane_b_writes(repo, quiescence_s=300))
+
+    assert result.paths_committed == 0
+    mock_commit.assert_not_called()
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "off_master.py" in status.stdout
+
+
+def test_sweeper_on_master_still_commits(
+    repo: Path, patch_ledger: SeatWriteLedger
+) -> None:
+    """AC5: master hub branch keeps existing sweep behavior."""
+    assert (
+        subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        == "master"
+    )
+    arc_id = "arc-on-master"
+    patch_ledger.open_arc(arc_id=arc_id, seat_id="ide-composer", source_repo=str(repo))
+    target = repo / "on_master.py"
+    target.write_text("on\n", encoding="utf-8")
+    patch_ledger.register_paths(
+        arc_id=arc_id,
+        seat_id="ide-composer",
+        source_repo=str(repo),
+        paths=("on_master.py",),
+    )
+    patch_ledger.close_arc(arc_id=arc_id)
+    _backdate_touch(patch_ledger, arc_id=arc_id, path="on_master.py", seconds_ago=400)
+
+    result = _run(sweep_lane_b_writes(repo, quiescence_s=300))
+
+    assert result.paths_committed == 1
 
 
 def test_registration_gaps_named() -> None:

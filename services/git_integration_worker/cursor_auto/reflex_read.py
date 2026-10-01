@@ -338,7 +338,7 @@ async def _run_reflex_dispatch(
     submit = await submit_nested_dispatch(
         job,
         model_id=model_id,
-        handoff_contract="none",
+        handoff_job="freeform",
         message=message,
         # No nest_under: read_only legs are lease-exempt, so parking under the
         # executor's parent would re-park a live holder for this leg's duration.
@@ -352,7 +352,7 @@ async def _run_reflex_dispatch(
         thread_id=job.thread_id,
         dispatch_id=reflex_dispatch_id,
         model=model_id,
-        handoff_contract="none",
+        handoff_job="freeform",
         lane="cursor-auto-reflex",
         knobs=knobs,
     )

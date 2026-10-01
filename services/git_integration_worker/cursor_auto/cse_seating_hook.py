@@ -853,7 +853,7 @@ def retire_predecessors_on_seat(
                 "execution_id": (execution_id or "").strip()
                 or "__none:seated_no_stream__",
                 "parent_thread": tid,
-                "purpose": "operator-proxy",
+                "session": "operator-proxy",
                 "seat_state": "active",
                 "stream_state": "running" if (execution_id or "").strip() else "none",
                 "chat_url": (chat_url or "").strip() or None,

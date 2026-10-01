@@ -3,7 +3,7 @@ Conductor — cursor-sdk as **mission operator** of a continuity root.
 Interactive setup: bring this chat up to speed, ask establishing questions, then
 shape the **conductor score** (the densified `todo:` — Stargate materializes the
 six-block packet and births the scoreboard from it at admit) and (on confirm)
-admit with `contract=conductor` + `source_ref=todo:{slug}`.
+admit with `job=conductor` + `source_ref=todo:{slug}`.
 
 **Default posture (binding): run to completion, merge rubber-stamped.** Once
 admitted, the conductor drives every open G-row to completion in one
@@ -76,7 +76,7 @@ If root exists: update scoreboard Next-pickup to "conductor admit" if needed.
 
 ### 4 — Shape the todo (the conductor score)
 
-The packet is **not** hand-authored: `contract=conductor` refuses `packet_path`
+The packet is **not** hand-authored: `job=conductor` refuses `packet_path`
 (`conductor_with_packet_path`) and materializes the six blocks + scoreboard from
 the todo. Shape the `todo:` instead — canonical keys, G1-skip stamps, entry gate,
 substitute-sketch registration: skill § Admit from an existing plan.
@@ -104,7 +104,7 @@ expect (G1 / G2 / G5). On operator **go** / **admit**:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=conductor,
+  job=conductor,
   source_ref="todo:{slug}",   # packet_path is refused on this contract
   dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
   model_knobs={"fast":"true"},
@@ -119,7 +119,7 @@ Use-line. If `CURSOR_LANE_B_SCOPE_REFUSED`: **¬ omit `lane=`** — fix the todo
 `files_expected` paths (repo-relative), then re-admit (skill § Gotchas). After
 admit, confirm `busy_status.active_by_lane` matches the bound regime.
 
-If explicit `claude-opus-5` pin: announce inform-then-proceed trigger line. Post root CHECKPOINT with
+Post root CHECKPOINT with
 `execution_id` / `dispatch_id` / worker thread / queue holder if queued / **model**.
 
 ### 6 — Hand back

@@ -214,3 +214,66 @@ def test_drain_belt_requires_amber_and_stalled() -> None:
     waiter.enqueued_at = waiter.enqueued_at - 200.0
     assert claimed.status == "claimed"
     assert drain_belt_fires(controller) is True
+
+
+def test_stale_auto_heartbeat_drops_active_count_fresh_row_remains() -> None:
+    """A claimed row with heartbeat_age_s past HEARTBEAT_TTL_S stays in active_ops.
+
+    Age since claim is not an occupancy filter. Both the stale row and a
+    fresh row count.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from services.git_integration_worker.cursor_auto.job_ledger import (
+        AutoJobLedger,
+        get_ledger,
+    )
+    from services.git_integration_worker.drain_progress import HEARTBEAT_TTL_S
+
+    AutoJobLedger.reset_for_tests()
+    reset_queue_for_tests(durable=True)
+    queue = get_queue()
+
+    def _enq(thread: str):
+        return queue.enqueue(
+            thread_id=thread,
+            turn_number=1,
+            subject=thread,
+            body="contract: propagate\n",
+            from_agent="cursor-auto",
+            to_agent="cursor",
+            desired_model="auto",
+            desired_effort="medium",
+            contract="propagate",
+        )
+
+    stale_job = _enq("stale-hb")
+    fresh_job = _enq("fresh-hb")
+    stale = queue.claim_job(stale_job.job_id)
+    fresh = queue.claim_job(fresh_job.job_id)
+    assert stale is not None and fresh is not None
+    old = (datetime.now(UTC) - timedelta(seconds=HEARTBEAT_TTL_S + 5)).isoformat()
+    with get_ledger()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_auto_jobs SET last_heartbeat_at=? WHERE job_id=?",
+            (old, stale.job_id),
+        )
+    controller = _controller()
+    ops = controller.active_ops()
+    ids = {op.get("op_id") for op in ops}
+    assert stale.job_id in ids
+    assert fresh.job_id in ids
+    assert controller.active_count() == 2
+    stale_row = next(op for op in ops if op.get("op_id") == stale.job_id)
+    assert stale_row["heartbeat_age_s"] > HEARTBEAT_TTL_S
+
+
+def test_mark_done_on_failed_row_keeps_status_and_reason() -> None:
+    claimed = _claim_propagate_job()
+    queue = get_queue()
+    queue.mark_done(claimed.job_id, failed=True, terminal_reason="first-reason")
+    queue.mark_done(claimed.job_id, failed=True, terminal_reason="second-reason")
+    stored = queue.get(claimed.job_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.terminal_reason == "first-reason"

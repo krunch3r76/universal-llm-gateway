@@ -1727,6 +1727,72 @@ def emit_sdk_lane_b_orphan_aged(
 
 
 @event_factory
+def SdkLaneCaptureRefused(  # noqa: N802
+    dispatch_id: str,
+    worktree_path: str,
+    branch_name: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane.capture.refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "worktree_path": worktree_path,
+            "branch_name": branch_name,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_capture_refused(
+    *,
+    dispatch_id: str,
+    worktree_path: str,
+    branch_name: str,
+) -> None:
+    """Emit when a Lane-B salvage or settle path refuses a non-registry tree."""
+    _emit(
+        SdkLaneCaptureRefused(
+            dispatch_id=dispatch_id,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+        )
+    )
+
+
+@event_factory
+def SdkLaneHubCheckoutRefused(  # noqa: N802
+    dispatch_id: str,
+    toplevel: str,
+    ref_name: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane.hub.checkout.refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "toplevel": toplevel,
+            "ref_name": ref_name,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_hub_checkout_refused(
+    *,
+    dispatch_id: str,
+    toplevel: str,
+    ref_name: str,
+) -> None:
+    """Emit when the hub reference-transaction hook refuses a checkout update."""
+    _emit(
+        SdkLaneHubCheckoutRefused(
+            dispatch_id=dispatch_id,
+            toplevel=toplevel,
+            ref_name=ref_name,
+        )
+    )
+
+
+@event_factory
 def SdkLaneBWorkspacesWriteRefused(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

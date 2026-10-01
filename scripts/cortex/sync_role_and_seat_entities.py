@@ -7,8 +7,8 @@ and load_roles(). This script generates and upserts:
   family:claude / family:gpt / family:grok / family:gemini
     — primary memory anchors; type=model_family
 
-  role:web-consult / role:cursor-consult / role:cursor-implement
-  role:reviewer / role:gatherer / role:synthesizer / role:artisan / role:skeptic
+  seat: web-anthropic, job: confer / seat: cursor, job: confer / seat: cursor, job: implement
+  job: freeform / job: freeform / job: freeform / job: freeform / job: freeform
     — functional team seats; type=role
 
 Old persona role:* entities (role:oppie, role:forge, etc.) are retired in

@@ -92,9 +92,9 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   `contract=implement`, auto Composer, no IDE pickup) — the `cursor-implement`
   handoff is the operator-attended fallback. Materialization reads todo attributes;
   the implement materialized packet MUST be dense (Composer executes mechanically);
-  a determinate, pre-authored task may instead run via `contract=none` or
+  a determinate, pre-authored task may instead run via `job=freeform` or
   `contract=sketch` (judgment / recon scaffold) or
-  `contract=pure-mechanical` with context on `dispatch_thread_id` (no packet, still
+  `job=mechanical` with context on `dispatch_thread_id` (no packet, still
   explicit + bounded — § General execution lane). Legacy: `packet_path` +
   `contract=implement`. See skill `consult-routing` § Implement lane — source_ref.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
@@ -129,13 +129,13 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `server_tools` | `bool\|None` | Provider server-side built-ins. Omit = ALL card-derived built-ins; `False` suppresses card-derived provider built-ins. Independent of `mcp`. |
 | `source_ref` | `str\|None` | Admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). On `op="generate"` with `seat=cursor-sdk`: drives `contract=implement` and `contract=wrap` — Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys); the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. On `op="handoff"`: same normalize/materialize path; **preferred for the implement lane** (`cursor-implement` / `web-implement`). `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). Relay pass-through — the MCP client does NOT resolve it. |
 | `sdk_mode` | `"agent"\|"plan"\|None` | **cursor-sdk generate only** (`seat=cursor-sdk`). Cursor SDK conversation mode forwarded to GIW `POST /api/v1/cursor/dispatch`. Wire alias: `conversation_mode`. `plan` = read-only plan-first (no land claims); omit or `agent` = default implement/recon executor. Incompatible with `contract=implement\|pure-mechanical\|conductor` (422). See `docs/agent-guides/cursor-sdk-conversation-mode.md`. |
-| `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=none`, `sketch`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
+| `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `job=freeform`, `sketch`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
 | `prompt` | `str\|None` | Atomic inline brief for `op="generate"`/`op="to_thread"` consult contracts. Preferred for short self-contained briefs because it cannot desynchronize from the dispatch call. Mutually exclusive with `packet_path`, `sidecar_ref`, and `source_ref`; rejected on `implement`, `wrap`, and `handoff`. |
 | `sidecar_ref` | `str\|None` | Atomic file-backed brief reference (`cortex://` or `workspaces://`) for `op="generate"`/`op="to_thread"` consult contracts. Preferred for long briefs. Same exclusivity/contract rules as `prompt`. |
 | `purpose` | `str\|None` | **CDP generate only** (`model=cdp/…`). Registry/mission tag forwarded to the satellite (default `ask` when omitted). Set `operator-proxy` or `mission` for operator-proxy skill-chip + seat-map inject (`operator_proxy_mission.py`). Ignored on non-CDP models. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=none|sketch|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
+| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `job=freeform|sketch|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
 | `op=handoff, seat=cursor-sdk` | — | **Rejected** — 422 `seat_not_manual` (use `op=generate, seat=cursor-sdk`) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
@@ -170,8 +170,8 @@ only handoff on `team_dispatch` (not `generate`).
 | **Bound implement** (→ Web) | `web-implement` | `web-anthropic` | push bus message |
 
 **Bound implement has two seats** (contract derived from the role slug; `handoff_contract=implement`
-in the response): `role=cursor-implement` → `cursor` (open IDE thread), and
-`role=web-implement` → `web-anthropic` (operator push). Both require acceptance criteria in
+in the response): `seat=cursor, job=implement` → `cursor` (open IDE thread), and
+`seat=web-anthropic, job=implement` → `web-anthropic` (operator push). Both require acceptance criteria in
 `<task_guidance>`; the implement guardrails (acceptance-criteria lint, implement pointer line,
 `contract:implement` tag) key on the derived contract + seat, not on a role name. Distinct from
 the `*-consult` reasoning roles (which derive `consult` — they cannot raise the implement
@@ -179,8 +179,8 @@ guardrails). `model` and `handoff_contract` are not accepted on the handoff requ
 slug whose `{platform}-{contract}` encodes your intent. Web-native bound work without a
 fresh-thread handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
 
-See `projects/.cursor/rules/handoff-dispatchers.mdc` (§ web-claude for `role=web-consult`, §
-`cursor-claude` for `role=cursor-consult`); consult index skill `consult-routing`.
+See `projects/.cursor/rules/handoff-dispatchers.mdc` (§ web-claude for `seat=web-anthropic, job=confer`, §
+`cursor-claude` for `seat=cursor, job=confer`); consult index skill `consult-routing`.
 
 Creates an agent-bus thread (e.g. `web-consult` / `web-implement` → `web-anthropic`,
 `cursor-consult` / `cursor-implement` → `cursor`)
@@ -201,7 +201,7 @@ endpoint enforces that the role resolves to a manual-handoff seat
 are rejected with `handoff_requires_web_seat` 422.
 
 **Self-handoff:** a manual seat may call `op="handoff"` with the matching roster
-role (`web-anthropic` → `role=web-consult` or `role=web-implement`; `cursor` → `role=cursor-consult` or `role=cursor-implement`) to open
+role (`web-anthropic` → `seat=web-anthropic, job=confer` or `seat=web-anthropic, job=implement`; `cursor` → `seat=cursor, job=confer` or `seat=cursor, job=implement`) to open
 a new agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
 Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
@@ -259,9 +259,9 @@ Examples:
 # Generate — pre-stage context on dispatch_thread_id, then dispatch
 team_dispatch(
     op="generate",
-    role="gatherer",
+    job="freeform",
     dispatch_thread_id="cursor-2026-06-02-design-review",
-    contract="none",
+    job="freeform",
     reasoning_effort="high",
     max_tool_turns=25,
     caller_agent="cursor",
@@ -270,9 +270,9 @@ team_dispatch(
 # Bus mode — agent posts reply to thread 123
 team_dispatch(
     op="to_thread",
-    role="gatherer",
+    job="freeform",
     dispatch_thread_id="cursor-2026-06-02-design-review",
-    contract="none",
+    job="freeform",
     thread="123",
     subject="Design review",
     reasoning_effort="high",
@@ -281,7 +281,7 @@ team_dispatch(
 )
 
 # Handoff mode — fresh-WEB dispatch to web-anthropic; operator push required
-team_dispatch(op="handoff", role="web-consult",
+team_dispatch(op="handoff", seat="web-anthropic", job="confer",
               packet_path="universal-llm-gateway/tmp/reviews/<task>-web-anthropic-packet.md",
               subject="<Task> handoff — <subject>")
 # → {thread_id, subject, to_agent: "web-anthropic", push_reminder,
@@ -314,7 +314,7 @@ team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B",
 # (Legacy hand-authored alternative: packet_path="tmp/reviews/<task>-implement-packet.md")
 
 # Bound implement (→ Web) — operator push; web-anthropic implements via fs
-team_dispatch(op="handoff", role="web-implement",
+team_dispatch(op="handoff", seat="web-anthropic", job="implement",
               source_ref="todo:<slug>",
               subject="Implement <task>")
 # → {to_agent: "web-anthropic", handoff_contract: "implement", push_reminder mentions web push}
@@ -328,13 +328,13 @@ on dispatch. Use `pipeline(op="run"|"async", pipeline_id="chat-dispatch", …)` 
 
 ```python
 # GPT review (default reviewer model) — pre-stage context on dispatch_thread_id
-team_dispatch(op="generate", role="reviewer", dispatch_thread_id="arc-123",
-              contract="none")
+team_dispatch(op="generate", job="freeform", dispatch_thread_id="arc-123",
+              job="freeform")
 
 # Grok consult
-team_dispatch(op="generate", role="artisan", model="xai/grok-4.7",
+team_dispatch(op="generate", job="freeform", model="xai/grok-4.7",
               dispatch_thread_id="arc-123",
-              contract="none")
+              job="freeform")
 ```
 
 ## panel_dispatch
@@ -515,6 +515,40 @@ muddled average that degrades the primary retrieval signal.
 | `scope` | str\|list\|None | Named scope filter: single string, comma-separated string, or list. Call `rag_list_scopes()` for valid names. |
 | `prefix` | str\|list\|None | Source path prefix filter. Mutually exclusive with `scope`. |
 | `mapped` | bool | Default `false`. When `true`, exact `(scope, query)` lookup against `config/mcp/rag_mapped_index.yaml` serves a durable pack body through the identical search envelope; miss (or multi/missing scope) falls through to live `rag-context`. |
+| `search_id` | str\|None | Poll handle from an earlier `in_flight` envelope. When given, every other argument is ignored and the call attaches to that search. |
+
+### Parallel calls and the `in_flight` handle
+
+Parallel `rag_search` calls are safe and are the recommended way to cover several
+concepts (see Query language). Each call is admitted to an in-flight registry on
+the MCP server (`tools/_rag_inflight.py`):
+
+- **Identical requests share one backend search.** Same normalized `query` +
+  `scope`/`prefix` + `top_k` ⇒ one `rag-context` run; later callers attach
+  (`attached: true`) and receive the same result. Re-issuing a search is
+  therefore harmless — it never starts a second backend run.
+- **Every envelope carries `search_id`** (`"rs-…"`), including errors.
+- **Bounded wait.** A call waits up to `MCP_RAG_SEARCH_WAIT_S` (default 90 s,
+  under the 120 s MCP client idle wall). If the search is still running it
+  returns, with no `error` key:
+
+  ```
+  {"status": "in_flight", "pipeline": "rag-context", "search_id": "rs-…",
+   "elapsed_s": 90.2, "wait_budget_s": 90.0, "poll": "<recipe>"}
+  ```
+
+  **A wait that ended is not a failed search.** The backend search continues.
+  Poll with `rag(op="search", arguments='{"search_id": "rs-…"}')` or re-issue
+  the identical call; both attach to the running search.
+- **Result cache.** A finished search is served from cache for
+  `MCP_RAG_SEARCH_RESULT_TTL_S` (default 600 s) as `cache_hit: true`; a failed
+  search is kept 30 s so pollers see the failure, then the key is free again.
+  Unknown/expired `search_id` ⇒ `{"error": "Unknown or expired search_id …"}`.
+- Backend concurrency is capped at `MCP_RAG_SEARCH_WORKERS` (default 8) worker
+  threads; Stargate's model gates queue beyond that.
+
+Events: `mcp.rag.search.attached`, `mcp.rag.search.wait.exceeded`,
+`mcp.rag.search.cache.hit` (alongside the existing `mcp.rag.pipeline.*`).
 
 ### Mapped packs (`mapped=true`)
 
@@ -544,6 +578,7 @@ On success:
 ```
 {"status": "ok", "pipeline": "rag-context", "content_length": <int>,
  "duration_s": <float>, "context": "<assembled context with source labels>",
+ "search_id": "rs-…", ["attached": true], ["cache_hit": true],
  "retrieval": {
    "resolved_scope": "...",
    "scope_confidence": 1.0,
@@ -552,11 +587,28 @@ On success:
    "scope_source": "default_scope" | "classifier" | "user_override" | "prefix_override",
    "auto_classified": false,
    "scope_key": "...",
+   "chunks": [{"rank": 1, "chunk_id": "<content_hash[:8]>", "source": "<path>",
+               "prior_score": 0.91, "ce_score": 0.87, "final_score": 0.89}, ...],
+   "top_relevance": 0.87,
+   "weak_match": false,
+   "weak_match_threshold": 0.3,
    ...
  }}
 ```
 
-- **`retrieval`**: compact scope metadata from the rag-context retrieve step.
+- **`retrieval.chunks[]`**: one row per chunk in `context` order (`rank` 1 =
+  first chunk). `prior_score` is the fused retrieval score (rank-relative, not a
+  distance). `ce_score` is the cross-encoder relevance probability (sigmoid,
+  0–1) for the reranked head (`rerank_max_candidates`, default 14); tail chunks
+  carry `prior_score` only. `final_score` is the fused value that decided the
+  bounded re-order. Gate on `ce_score` / `top_relevance`; do not read
+  `prior_score` as relevance.
+- **`weak_match`**: `true` when `top_relevance < weak_match_threshold`
+  (`pipeline_options.rerank_weak_match_threshold`, default `0.3`) — the whole
+  set is weakly related to the query; cite nothing from it as support without
+  reading it. `null` when no cross-encoder scored the set (≤3 chunks, rerank
+  disabled, or generative rerank mode), in which case only `prior_score` exists.
+- **`retrieval`** (scope fields): compact scope metadata from the rag-context retrieve step.
   `auto_classified` is `true` only when `scope_source=classifier` (LLM scope
   prediction ran). The MCP primary path uses the direct pipeline
   (`scope_source=default_scope` for unscoped calls). Mapped hits use
@@ -732,13 +784,13 @@ Continuity consolidation and CHECKPOINT pipeline relays (code MCP `/mcp/code`).
 | `replay` | trigger_thread, turn, dry_run?, force?, … | P6 replay path (`force=true`, `dry_run` default true) |
 | `status` | execution_id XOR root_thread | Pipeline tracker result or hub WATERMARK read |
 | `tape_read` | thread, scope?, transcript_id?, prior_cells?, include_extras?, tools?, budget_bytes?, harvest?, channel? | Door 1 sync relay → `POST /api/v1/continuity/tape-read`. `scope=window` requires `transcript_id`; returns `cells[]` on the envelope. `channel` (`continuity` default \| `all`) selects last_session wall: `continuity` skips hop-sealed cells; `all` includes hop wall. Invalid: `hop` (422 `tape.channel_unknown`). `index[]` is budget-degrade metadata only — not a cell index. Unsealed tail arrives as the open cell (`bus_turn_id=null`). `close(op=assemble)` is the raw `verbatim_md` maintenance door; handoffs use tape read, not `assemble_transcript`. |
-| `checkpoint` | thread, surface, from_agent?, transcript_id?, jsonl_path?, chat_url?, residue?, pre_consolidate?, channel? | Async relay → `POST /api/v1/continuity/checkpoint` (`continuity-checkpoint-v1`). Required: `thread`, `surface` (`cursor` \| `claude_ai`). `channel` (`continuity` default \| `hop`) stamps ` · channel=hop` on the Window anchor when `hop`. Invalid: `all` and other values (422 `checkpoint.channel_unknown`). `surface=cursor` seals from the transcript JSONL (`jsonl_path` or discovered via `transcript_id`); `surface=claude_ai` requires `chat_url` (422 `checkpoint.chat_url_required` otherwise), defaults `from_agent` to `web-anthropic` when omitted, and seals the CSE harvest as a `messages-v1` cell with `coverage` stamped (`full` \| `tail`; harvest is capped at a **50-turn page bound** — `limit=50`, matching `HarvestRequest.limit` `le=50` — and a truncated page is stamped `tail`; declared `full` downgrades to `tail` when `truncated=true`). `pre_consolidate` default is channel-keyed: omitted on `channel=continuity` runs the read-only cursor-sdk worker; omitted on `channel=hop` skips it (explicit `pre_consolidate` overrides either). **Lean cursor path:** pass `pre_consolidate=false` explicitly — do not omit. **Tip author (step 2):** `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7, contract=none, dispatch_thread_id=…, lane=A)` — bind-only bus CHECKPOINT prose; **`seat=cursor` is handoff-only** (not generate); **model-only without `lane=` → 422 `lane_required`**. Skill `checkpoint-discipline` § Pipeline step 2. When pre-consolidate runs, caller `residue` (≤ 800 chars) is a **seed** folded into the worker packet; **worker-authored residue wins** at post (`residue_source=model`). All residue paths clamp at 800 chars with a marker when truncated. A refused seal without residue posts `INFO — checkpoint … seal refused` instead of superseding the tip. |
+| `checkpoint` | thread, surface, from_agent?, transcript_id?, jsonl_path?, chat_url?, residue?, pre_consolidate?, channel? | Async relay → `POST /api/v1/continuity/checkpoint` (`continuity-checkpoint-v1`). Required: `thread`, `surface` (`cursor` \| `claude_ai`). `channel` (`continuity` default \| `hop`) stamps ` · channel=hop` on the Window anchor when `hop`. Invalid: `all` and other values (422 `checkpoint.channel_unknown`). `surface=cursor` seals from the transcript JSONL (`jsonl_path` or discovered via `transcript_id`); `surface=claude_ai` requires `chat_url` (422 `checkpoint.chat_url_required` otherwise), defaults `from_agent` to `web-anthropic` when omitted, and seals the CSE harvest as a `messages-v1` cell with `coverage` stamped (`full` \| `tail`; harvest is capped at a **50-turn page bound** — `limit=50`, matching `HarvestRequest.limit` `le=50` — and a truncated page is stamped `tail`; declared `full` downgrades to `tail` when `truncated=true`). `pre_consolidate` default is channel-keyed: omitted on `channel=continuity` runs the read-only cursor-sdk worker; omitted on `channel=hop` skips it (explicit `pre_consolidate` overrides either). **Lean cursor path:** pass `pre_consolidate=false` explicitly — do not omit. **Tip author (step 2):** `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7, job=freeform, dispatch_thread_id=…, lane=A)` — bind-only bus CHECKPOINT prose; **`seat=cursor` is handoff-only** (not generate); **model-only without `lane=` → 422 `lane_required`**. Skill `checkpoint-discipline` § Pipeline step 2. When pre-consolidate runs, caller `residue` (≤ 800 chars) is a **seed** folded into the worker packet; **worker-authored residue wins** at post (`residue_source=model`). All residue paths clamp at 800 chars with a marker when truncated. A refused seal without residue posts `INFO — checkpoint … seal refused` instead of superseding the tip. |
 
 ### Example
 
 ```
 continuity(op="checkpoint", thread="<house resolved this turn>", surface="cursor", transcript_id="<tab UUID>", from_agent="cursor", pre_consolidate=false)
-team_dispatch(op="generate", seat="cursor-sdk", model="cursor/grok-4.7", contract="none", dispatch_thread_id="<house>", lane="A", model_knobs={"fast":"true"})
+team_dispatch(op="generate", seat="cursor-sdk", model="cursor/grok-4.7", job="freeform", dispatch_thread_id="<house>", lane="A", model_knobs={"fast":"true"})
 continuity(op="tape_read", thread="10223", budget_bytes=512000)
 ```
 
@@ -772,7 +824,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 
 ```
 agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-agent_bus(tool="request", arguments='{"thread": "6329", "to": "cursor", "subject": "Restart mcp", "body": "TYPE: DIRECTIVE\\ncontract: propagate\\nscope: propagation sync_restart mcp\\neffects_expected: propagation row persisted; restart executed or deferred", "contract": "propagate", "from": "web-anthropic"}')
+agent_bus(tool="request", arguments='{"thread": "6329", "to": "cursor", "subject": "Restart mcp", "body": "TYPE: DIRECTIVE\\ncontract: propagate\\nscope: propagation sync_restart mcp\\neffects_expected: propagation row persisted; restart executed or deferred", "job": "propagate", "from": "web-anthropic"}')
 agent_bus(tool="hop", arguments='{"thread": "6329", "reason": "mcp-restart-healthy", "from": "web-anthropic"}')
 agent_bus(tool="substrate_graph_write", arguments='{"entity_id": "todo:dispatch-verb-surface", "claim": "Substrate rot observed during implement."}')
 agent_bus(tool="substrate_friction_file", arguments='{"owner": "service:mcp-server", "note": "Life seat 404d filing friction as bus prose."}')

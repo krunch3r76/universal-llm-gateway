@@ -181,8 +181,8 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         """Run the consensus-steelman panel member dispatches (Phase 2 helper).
 
         **When ``consensus_disposition=panel``** on a material decision: admits
-        the default ≥2-family roster (``skeptic`` → grok/xai,
-        ``reviewer`` → cursor/gpt-5.6-terra on cursor-sdk) via
+        the default ≥2-family roster (``skeptic`` → xai/grok-4.7,
+        ``reviewer`` → cursor/grok-4.7) via
         ``team_dispatch(op=generate)``.
         Optional ``include_synthesizer`` adds the gemini tiebreaker (inline-only).
 
@@ -202,7 +202,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         caller** (the seat that invoked this helper) after it returns. This
         "adjudicating lead" is the caller's adjudication role for THIS panel — it
         is distinct from the ``web-consult`` handoff role (``team_dispatch(
-        op=handoff, role=web-consult)`` → claude-web). The adjudicating caller
+        op=handoff, seat=web-anthropic, job=confer)`` → claude-web). The adjudicating caller
         may be any seat.
 
         **Assert template (Menu D, assertion SOT):** pass

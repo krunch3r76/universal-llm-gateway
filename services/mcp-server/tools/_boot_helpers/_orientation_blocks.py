@@ -75,11 +75,11 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL you do NOT use a build harness. When connector-bound, `team_dispatch`/`panel_dispatch` are server-primary — call directly (if unbound, see MCP binding). Model strings = `provider/model` on optional `model=` (bare name = 404).
 - **API role** (reviewer|artisan|skeptic|…) → pre-stage bus thread; `team_dispatch(op=generate, role=…, dispatch_thread_id=…, model=?)` → poll `agent_bus(wait)`. ¬ synthetic seat models on generate (422).
-- **Mechanical implement** → `team_dispatch(op=generate, seat=cursor-sdk, source_ref=todo:{slug}, contract=implement, dispatch_thread_id=…)` — dense attrs required; `packet_path=` is the named exception.
-- **Recon/judgment (cursor-sdk)** → `seat=cursor-sdk, model=cursor/grok-4.7, contract=none` (≠ API `xai/grok-4.7`).
+- **Mechanical implement** → `team_dispatch(op=generate, seat=cursor-sdk, source_ref=todo:{slug}, job=implement, dispatch_thread_id=…)` — dense attrs required; `packet_path=` is the named exception.
+- **Recon/judgment (cursor-sdk)** → `seat=cursor-sdk, model=cursor/grok-4.7, job=freeform` (≠ API `xai/grok-4.7`).
 - **Manual handoff** → `op=handoff, seat=web-anthropic|cursor, source_ref=…|packet_path=…`; handoff IS delivery (web→operator push, cursor→IDE). Legacy aliases `claude-web`/`claude-cursor` still resolve.
 - **Panel** → `panel_dispatch(…, disposition="panel")`. **Role-less one-shot** → `pipeline(chat-dispatch, model=…)`. **Advisor** → `dispatch(tool="advisor")` [overflow].
-⚠ Build harness ≠ model picker: coding-lane Grok → `seat=cursor-sdk, model=cursor/grok-4.7`; non-code artisan Grok → `role=artisan, model=xai/grok-4.7`.
+⚠ Build harness ≠ model picker: coding-lane Grok → `seat=cursor-sdk, model=cursor/grok-4.7`; non-code artisan Grok → `job=freeform, model=xai/grok-4.7`.
 Full shapes / wrap / executor tiers: skill `consult-routing`."""
 
 
@@ -136,10 +136,10 @@ Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-po
 _CURSOR_MODEL_ECONOMICS_BLOCK = """\
 ## Cursor model economics — load-bearing facts
 Detail: Use the `cursor-model-economics` skill (shared_sync — CDP + Cursor).
-- **T1 conductor:** `cursor/claude-sonnet-5` @ `effort=max` (`thinking=true`, `context=1m`) — ¬ Grok default.
+- **T1 conductor:** `cursor/grok-4.7` (omit-model default; card `effort=high`, `fast=true`). Mechanical implement: `cursor/composer-2.5`.
 - **Costs:** `config/model_rates.yaml` ($/M) — ¬ on model cards.
-- **Auto/Router:** Teams/Enterprise only; ¬ prompt-nudge; ULG dense work pins Composer (¬ `desired_model=auto`).
-- **GPT knobs:** `reasoning` — ¬ `extra-high`; Grok / Opus effort rungs follow the model card (Grok through `xhigh`, Opus through `max`)."""
+- **Auto/Router:** Teams/Enterprise only; ¬ prompt-nudge; omit `model=` resolves `cursor/grok-4.7` (¬ `desired_model=auto` on a dense pin).
+- **Grok knobs:** `effort` through `xhigh`; card default `fast=true`."""
 
 # Compact index — full playbook is skill `consult-routing` (current superset).
 # Web-dedup (friction 25727 follow-on): the transport-preflight mandate is GATES

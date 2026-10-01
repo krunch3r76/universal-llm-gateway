@@ -24,9 +24,10 @@ Two axes are orthogonal:
 
 Escalate only on unresolved tightened residual.
 
-1. **Tier-1 cheap recon** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`), not in-seat Grep/Read spray (UI "Exploring" ≠ Explore). Fire Explore when loci unknown, span ≥3 files / unfamiliar subsystem, 2nd speculative search, or ≥2 independent recon Qs (parallel) — same trigger as `lean-context-dispatch-first` § Read-side / `subagent-strategy`. Prompt must name thoroughness (`quick`|`medium`|`very thorough`) and **return anchors** (paths, symbols, line refs), not a vague area summary. Stay in-seat when loci known ∨ need verbatim contents for imminent edit ∨ tight-loop debug. On **service / runtime / MCP** investigations: Event Service silence or claim/evidence mismatch is a **first-class gap class**, equal to code-touch gaps (grammar SOT: `path-sim` § Events/gap probe — `EVENTS-PROBE`; ops via `observability` / `scripts/query-events` / `verify-tool-execution`; ¬ raw SQL in operator chat). **After anchors:** residual root-cause / rival-fix / densify-input judgment → **`seat=cursor-sdk` `contract=investigate`** (facts + `OPEN FORK:` — never binds). **Seat wall:** Explore requires Cursor `Task`; IDE lead and any cursor-sdk/Auto runtime that exposes `Task(explore)` use it. If Task unavailable → fallback `team_dispatch(…, contract=investigate)` for investigate-emphasis. Optional unattended cursor-sdk lane only when Explore is unavailable or the job is pure mechanical inventory (grep/list/caller inventory, no judgment) → `model=cursor/composer-2.5`. Output: facts-only anchors sidecar with open forks.
-2. **Tier-2 cross-family filter** — `team_dispatch(op=generate, role=reviewer, model=openai/gpt-5.5, mcp=false)` with corpus pre-staged on dispatch thread. Scope to 3–4 focus areas. Verdict ∈ `ADMIT | ADMIT_WITH_AMENDMENTS | RETURN_TO_DESIGN`. Cross-family disagreement is signal.
-3. **Tier-3 credit-gated final** — Opus/Fable only for residual that Tier-2 cannot settle. Ask operator first. **Substrate:** Fable → web-anthropic-cdp only; Opus → CDP preferred (cortex-packaged) **or** `seat=cursor-sdk model=cursor/claude-opus-5` when live-source browse is required. **¬** `model=anthropic/*` API (`decision:anthropic-family-dispatch-substrate`).
+1. **Tier-1 cheap recon** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`), not in-seat Grep/Read spray (UI "Exploring" ≠ Explore). Fire Explore when loci unknown, span ≥3 files / unfamiliar subsystem, 2nd speculative search, or ≥2 independent recon Qs (parallel) — same trigger as `lean-context-dispatch-first` § Read-side / `subagent-strategy`. Prompt must name thoroughness (`quick`|`medium`|`very thorough`) and **return anchors** (paths, symbols, line refs), not a vague area summary. Stay in-seat when loci known ∨ need verbatim contents for imminent edit ∨ tight-loop debug. On **service / runtime / MCP** investigations: Event Service silence or claim/evidence mismatch is a **first-class gap class**, equal to code-touch gaps (grammar SOT: `path-sim` § Events/gap probe — `EVENTS-PROBE`; ops via `observability` / `scripts/query-events` / `verify-tool-execution`; ¬ raw SQL in operator chat). **After anchors:** residual root-cause / rival-fix / densify-input judgment → **`seat=cursor-sdk` `job=investigate`** (facts + `OPEN FORK:` — never binds). **Seat wall:** Explore requires Cursor `Task`; IDE lead and any cursor-sdk/Auto runtime that exposes `Task(explore)` use it. If Task unavailable → fallback `team_dispatch(…, job=investigate)` for investigate-emphasis. Optional unattended cursor-sdk lane only when Explore is unavailable or the job is pure mechanical inventory (grep/list/caller inventory, no judgment) → `model=cursor/composer-2.5`. Output: facts-only anchors sidecar with open forks.
+2. **Tier-2 cross-family filter** — `team_dispatch(op=generate, job=code-review, model=openai/gpt-5.5, mcp=false)` with corpus pre-staged on dispatch thread. Scope to 3–4 focus areas. Verdict ∈ `ADMIT | ADMIT_WITH_AMENDMENTS | RETURN_TO_DESIGN`. Cross-family disagreement is signal.
+3. **Tier-3 credit-gated final** — Opus/Fable only for residual that Tier-2 cannot settle. Ask operator first. **Substrate:** `cdp/opus-5.5` (cortex-packaged). Live-source browse is `seat=cursor-sdk` `model=cursor/grok-4.7`. `cdp/fable` only when Kaywan asks. **¬** `model=anthropic/*` API (`decision:anthropic-family-dispatch-substrate`). **¬** `cursor/claude-*`.
+
 
 `tier2_makes_tier3_rare`.
 
@@ -56,7 +57,7 @@ Semantics:
 
 Scope set for this practice: `{workflows, code_transformation, constitutional_ai, small_llm_prompting, software_agents, research_small_llm, knowledge_systems}`. Content-hash dedup may place canonical primaries under sibling scopes; this is working as designed, not a re-embed need.
 
-If delegating RAG recon unattended: mechanical multi-scope inventory → Composer (`model=cursor/composer-2.5`); investigate-emphasis RAG recon → **`seat=cursor-sdk` `contract=investigate`**. Enumerate each scope as a discrete numbered call (`S1..Sn`) and include `execute each once ∧ never-repeat ∧ never-default-scope`. Set `max_tool_turns`; cursor-sdk workers are not safely cancellable mid-flight. For ≤~7 scopes, lead inline may be cheaper than babysitting.
+If delegating RAG recon unattended: mechanical multi-scope inventory → Composer (`model=cursor/composer-2.5`); investigate-emphasis RAG recon → **`seat=cursor-sdk` `job=investigate`**. Enumerate each scope as a discrete numbered call (`S1..Sn`) and include `execute each once ∧ never-repeat ∧ never-default-scope`. Set `max_tool_turns`; cursor-sdk workers are not safely cancellable mid-flight. For ≤~7 scopes, lead inline may be cheaper than babysitting.
 
 ## Axis 2 — material-decision skeptic/panel
 
@@ -68,7 +69,7 @@ Skeptic must produce a **decisive falsifier**: concrete measurable test, explici
 
 ### Skeptic dispatch mechanics — dual path (pick by evidence need)
 
-The default `role=skeptic` model (xai/grok-4.7) is **MCP-capable**, and `team_dispatch` omit-`mcp` defaults tools-**on**. Do not cargo-cult `mcp=false` — pick the path by whether the falsifier cites live files.
+The default `job=code-review` model (xai/grok-4.7) is **MCP-capable**, and `team_dispatch` omit-`mcp` defaults tools-**on**. Do not cargo-cult `mcp=false` — pick the path by whether the falsifier cites live files.
 
 | Situation | Path | `mcp` | Notes |
 |---|---|---|---|
@@ -76,7 +77,7 @@ The default `role=skeptic` model (xai/grok-4.7) is **MCP-capable**, and `team_di
 | Self-contained inline packet (4728 shape) | MCP-OFF | `mcp=false` | Entire decision in the admit-time latest turn; forbid "read thread"/`agent_bus(get)` instructions there; pre-stage evidence paths for echo (no live discovery). |
 | Non-code personal/legal/financial lane | MCP-OFF | `mcp=false` **always** | `consensus-steelman-posture` §5; the personal corpus must not gain tools. |
 
-Default (MCP-ON): `team_dispatch(op=generate, role=skeptic, dispatch_thread_id=<thread>, mcp=true, max_tool_turns=15, contract=none)`.
+Default (MCP-ON): `team_dispatch(op=generate, job=code-review, dispatch_thread_id=<thread>, mcp=true, max_tool_turns=15, job=freeform)`.
 
 **Pointer-overwrite hygiene (F3, threads 4732/4733):** the admit-time prompt is the dispatch thread's latest turn (`read_latest_dispatch_thread_body` → `turns[-1].body`), and a generate pointer posts onto that same thread in single-thread Q/R mode. Do **not** re-generate against a thread whose latest turn is a pointer — under `mcp=false` the skeptic reads "read thread", cannot fetch, and defers (deferral theater). Keep the fat design as the latest turn, or use `split_thread=true` / a fresh single-turn thread for re-dispatch. Code-level fix (whether skeptic re-dispatch should mint a split result thread by default) is a tracked optional follow-up, not resolved here.
 
@@ -133,7 +134,7 @@ Missed v1 primaries now folded in: `reflexion-verbal-reinforcement-learning`, `s
 
 For `density_triage=judgment_required`, Gate-1 close (ladder + skeptic + dense draft) is **stage-for-densify**, not implement authority. `implement_ready` may be authored only by a reasoning-tier seat at Gate-2 densify close. Mechanical/recon Composer never self-stamps. `implement_ready_preflight.admitted` confirms internal consistency only; it is input to Gate 2, not authority.
 
-Default path: `team_dispatch(op=handoff, role=web-consult)` for Gate-2 densify. A reasoning-tier seat that ran recon may author `implement_ready` in-session only after explicitly satisfying Gate-2 criteria. Mechanical-only todos skip straight to implement.
+Default path: `team_dispatch(op=handoff, seat=web-anthropic, job=confer)` for Gate-2 densify. A reasoning-tier seat that ran recon may author `implement_ready` in-session only after explicitly satisfying Gate-2 criteria. Mechanical-only todos skip straight to implement.
 
 ## Investigate-by-probing branch
 

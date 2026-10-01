@@ -208,7 +208,7 @@ def harvest_cse(state: ReactorState, *, wait_ms: int = 5000) -> dict[str, Any] |
 
 
 def fire_fable(state: ReactorState, prompt: str) -> str | None:
-    body = {"op": "generate", "model": "cdp/fable", "purpose": "mission", "contract": "none",
+    body = {"op": "generate", "model": "cdp/fable", "session": "mission", "job": "freeform",
             "dispatch_thread_id": state.fable_thread, "prompt": prompt, "caller_agent": "cdp-hop-reactor-night"}
     resp = http_json("POST", _DISPATCH, body, timeout=120.0)
     if resp is None:
@@ -285,7 +285,7 @@ def poll_composer_terminal(execution_id: str) -> dict[str, Any]:
 def fire_composer(todo_id: str, task: str) -> str | None:
     prompt = (f"# Bounded implement — todo:{todo_id}\n\n**Reactor-assigned task:** {task}\n\n"
               "Scope: complete only this slice. Lane B. Commit path-explicit when ACs met.")
-    body = {"op": "generate", "seat": "cursor-sdk", "contract": "implement", "lane": "B",
+    body = {"op": "generate", "seat": "cursor-sdk", "job": "implement", "lane": "B",
             "dispatch_thread_id": TODO_THREADS[todo_id], "source_ref": TODO_SOURCE_REF.get(todo_id, f"todo:{todo_id}"),
             "prompt": prompt, "caller_agent": "cdp-hop-reactor-night"}
     resp = http_json("POST", _DISPATCH, body, timeout=120.0)

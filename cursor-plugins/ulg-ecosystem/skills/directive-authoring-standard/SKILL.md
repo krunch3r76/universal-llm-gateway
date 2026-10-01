@@ -40,10 +40,10 @@ Attended bind: wire `require_attended=true` **or** body `require_attended: true`
 
 | density | Cursor binds |
 |---|---|
-| dense | composer-2.5 — **pin explicit** (implement / dense amend / verify). `contract: implement` stays `handoff=pure-mechanical` unless a Judgment marker (below) raises |
-| investigate | Composer omit `model=` + `contract: investigate`; escalate to CDP when intelligence needed |
-| confer (challenge-seeking) | Composer omit `model=` + `contract: confer`; CDP (`cdp/fable`) when challenge-seeking needs width |
-| sparse amend | composer-2.5 pin |
+| dense | Mechanical implement / dense amend: pin `cursor/composer-2.5`. Verify: `cursor/grok-4.7` (`workflows.auto_judgment`). `contract: implement` stays `handoff=pure-mechanical` unless a Judgment marker (below) raises |
+| investigate | `cursor/grok-4.7` (`contract: investigate`; omit `model=` resolves this id). Escalate to `cdp/opus-5.5` when the bind needs a CDP seat |
+| confer (challenge-seeking) | `cursor/grok-4.7` + `contract: confer`. `cdp/fable` only when Kaywan asks and the challenge needs that width |
+| sparse amend | Mechanical amend: pin `cursor/composer-2.5`. Judgment amend: `cursor/grok-4.7` |
 | architecture bind | `cdp-operator-proxy` § Architecture-bind — a sequence, ¬ one executor |
 
 Escalate on the class of unknown. **2 failed dispatches on the same AC ⇒ stop** the tier or return blocked.
@@ -119,14 +119,15 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 
 **Transport:** this seat has ulg-code `team_dispatch`. Commission is `team_dispatch(op=generate, seat=cursor-sdk, lane=B, ...)`. The cursor-sdk seat nests its own further dispatches. `cursor_request` is not the wire.
 
-**Reachability:** no `conductor` contract token exists; body prose is the instruction. `contract=implement` redirects the executor to `cursor/composer-2.5` regardless of `desired_model` — use `contract=investigate` so the mechanical-executor redirect never fires.
+**Reachability:** no `conductor` contract token exists; body prose is the instruction. A non-roaming reasoning model on mechanical `handoff=pure-mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `job=investigate` when the leg is facts, not edits.
 
-**Composer + lane (BINDING):**
-- Omit `model=` — Composer is the only cursor_sdk seat; `model_knobs={"fast":"true"}` on the wire unless an arc pin names otherwise.
-- Name a CDP escalation model in the directive when the leg needs independent intelligence beyond Composer enumerate. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor model is `desired_model=cdp/opus-5.5-extra`.
+**Model + lane (BINDING):**
+- Omit `model=` resolves `cursor/grok-4.7` (`workflows.auto_judgment.model`). Card default `fast=true`. Pin `model=cursor/composer-2.5` when the leg is mechanical implement.
+- Name `cdp/opus-5.5` in the directive when the leg needs a CDP bind. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor model is `desired_model=cdp/opus-5.5-extra`.
 - Pass `lane="B"` on the wire (`team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. `team_dispatch` top-level omit is 422 `lane_required`. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
 
-Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, contract=investigate, …)`. The cursor-sdk seat nests further dispatches. `contract=implement` redirects the executor to Composer, so a conductor-class commission uses the contract the conductor recipe names, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
+Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, job=investigate, …)`. The cursor-sdk seat nests further dispatches. `job=implement` redirects the executor to Composer, so a conductor-class commission uses the job the conductor recipe names, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
+
 
 This seat: frame the Question, ratify conductor Leg-boundary DISPOSITIONs, hold true operator-only gates — ¬ personally drive each nested admit/poll/harvest.
 
@@ -148,7 +149,7 @@ Live field contract: full grammar in `cortex://notes/system/specs/directive-loop
 
 | Bad | Good |
 |---|---|
-| `desired_model=auto` on a dense job | Pin composer-2.5 |
+| `desired_model=auto` on a dense job | Pin `cursor/grok-4.7`, or `cursor/composer-2.5` when the leg is mechanical implement |
 | `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; `sidecar_content`; keep the ten §2 fields in `body` |
 | cdp/opus drives a framed 5-G-row mission turn-by-turn over the DIRECTIVE loop | Commission a conductor (D4) once the Question is framed; adjudicate Legs, don't drive them |
 | `lane="B"` only in packet prose | Wire `lane="B"` on `team_dispatch` |
@@ -164,4 +165,4 @@ Live field contract: full grammar in `cortex://notes/system/specs/directive-loop
 - [ ] Mint-then-quote: every id in the body was read from a tool payload this turn
 - [ ] Framed multi-step (≥3 G-row or bind-then-compose) ⇒ D4 conductor, not a G-row loop
 - [ ] Pre-frame shape talk ⇒ D5 `negotiation_phase` on `contract: confer`, then D4
-- [ ] Conductor: `contract=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)
+- [ ] Conductor: `job=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)

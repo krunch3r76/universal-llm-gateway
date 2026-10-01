@@ -86,7 +86,7 @@ instruction-complete. Recovery: § Followup failure triage (429-before-create).
 
 **False-negative FAILED (BINDING — a:30678 / a:30679 / a:30681):** bus `cdp FAILED` or `cdp UNVERIFIED` without a `cse_` witness is never-composed / lost-before-address, not a join miss. Scrape `chat_url` (`cse_session(op=harvest, source=chat)`). `chat_url` is only ever a `claude.ai/cowork/cse_` address; absence on a FAILED/UNVERIFIED envelope means no CSE was composed, not a join miss. `no_episode` is a join miss when the registry never bound `cse_`. Open-on-demand `incomplete_dom` and open-on-demand `no_reply_yet` are also harvest-too-fast — wait/retry; do not conclude the generate never ran.
 
-**Operator-proxy CSE retain (BINDING):** for `purpose=operator-proxy|mission`, the generate poller must **not** Stop-click / kill the CSE on `max_wall_s` or `no_progress_s`. Idle between DIRECTIVE legs is expected. Clean CSE break is allowed only for **continuity handoff** (after a new CSE launch is confirmed) or rare human escalation — see `cdp-operator-proxy` § CSE lifetime. `wall_clock_exceeded` on a mission is poller-detach / false FAILED if it still appears — reattach; ¬ treat as arc dead. Generate `max_wall_s` measures seconds since the last observed fingerprint progress (reset on each delta), not cumulative job elapsed time; mission retain posture is unchanged.
+**Operator-proxy CSE retain (BINDING):** for `session=operator-proxy, job=freeform|mission`, the generate poller must **not** Stop-click / kill the CSE on `max_wall_s` or `no_progress_s`. Idle between DIRECTIVE legs is expected. Clean CSE break is allowed only for **continuity handoff** (after a new CSE launch is confirmed) or rare human escalation — see `cdp-operator-proxy` § CSE lifetime. `wall_clock_exceeded` on a mission is poller-detach / false FAILED if it still appears — reattach; ¬ treat as arc dead. Generate `max_wall_s` measures seconds since the last observed fingerprint progress (reset on each delta), not cumulative job elapsed time; mission retain posture is unchanged.
 
 ### Service restart recovery (BINDING — 2026-08-12)
 
@@ -278,7 +278,7 @@ Cowork itself allows far more concurrent sessions than the old 2/3 host policy;
 do not pace as if three streams fill the product. Per-lane seat uniqueness
 still applies (one holder per `parent_thread`, plus one hop-succession overlap).
 
-**purpose=ask:** `other_count` / `advisor_reserve` describe occupancy class — global
+**session=ask, job=freeform:** `other_count` / `advisor_reserve` describe occupancy class — global
 count ceilings no longer block mint. Use `free_slots` / `at_hard_limit` as **signals**
 for orchestrator pacing, not hard gates.
 
@@ -302,11 +302,11 @@ orphan observability: L3 `reference-annex.md`.
 
 | Job | Path |
 |---|---|
-| **Product (DEFAULT)** — consult / binder / R-admit / judgment_gap / Fable outside-check | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=none, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → poll `poll_hint` (`agent_bus.wait`). Compose `lean-context-dispatch-first` · `consult-routing`. |
+| **Product (DEFAULT)** — consult / binder / R-admit / judgment_gap / Fable outside-check | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, job=freeform, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → poll `poll_hint` (`agent_bus.wait`). Compose `lean-context-dispatch-first` · `consult-routing`. |
 | **Life→cursor** — mint operator-proxy Cowork CSE that drives cursor (¬ life chat, ¬ second Claude for correspondence) | `life_dispatch(prompt=… \| thread=…, model=cdp/opus-5)` on `/mcp/life`. Server-pins Life project UUID; never in the tool schema. For `thread=`, latest turn must be `to=life\|dispatch` and not `from=life` (teaching 422 otherwise). Stay in-session for correspondence; `cursor_request` for a DIRECTIVE without a new CSE. |
 | **Escape** — satellite-direct / IF6 | CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5.1`). Use when `team_dispatch` CDP path is unavailable. MCP `project_ask` is removed. |
-| **Warm follow-up (attached lane)** | `cse_session(op=followup, chat_url=… \| registration_id=… \| execution_id=… \| identity omitted ⇒ resolve-or-refuse, cdp_url=… explicit override, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE. Distinct from `cse_session(op=paste)` (hop-pair / grant). `cse_session(op=resolve_attended)` for read-only triple. CLI `cowork_chat_followup.py` = escape (defaults to resolver when flags omitted). |
-| **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=none, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + **this-hop** status (settled/live/next/lane) **above** the seat-map briefing (`operator_proxy_mission.py`). Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
+| **Warm follow-up (attached lane)** | `cse_session(op=followup, chat_url=… \| registration_id=… \| execution_id=… \| identity omitted ⇒ resolve-or-refuse, cdp_url=… explicit override, prompt_text=… \| prompt_uri=…, session=operator-proxy, job=freeform, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE. Distinct from `cse_session(op=paste)` (hop-pair / grant). `cse_session(op=resolve_attended)` for read-only triple. CLI `cowork_chat_followup.py` = escape (defaults to resolver when flags omitted). |
+| **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, session=operator-proxy, job=freeform\|mission, job=freeform, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + **this-hop** status (settled/live/next/lane) **above** the seat-map briefing (`operator_proxy_mission.py`). Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Operator Chat on `/new` | `chat_compose=true` / `--chat` |
 | Register / list | `list-lanes` / `deregister-lane` |
 
@@ -358,7 +358,7 @@ Full matrix + `delete_after`: L3 `reference-annex.md` § Entry points.
 **Preferred CDP path:** `team_dispatch(model=cdp/opus-5|cdp/fable|…)` → poll
 `poll_hint` with `agent_bus(tool="wait", …)` (`consult-routing` · this skill).
 Operator-proxy missions:
-`team_dispatch(…, purpose=operator-proxy|mission)`. MCP `project_ask` is gone.
+`team_dispatch(…, session=operator-proxy, job=freeform|mission)`. MCP `project_ask` is gone.
 
 IF6 / leftover CLI executions:
 
@@ -370,7 +370,7 @@ IF6 / leftover CLI executions:
 - Dispatch-to-cdp complete: `chat_url` observed or followup `send_verified` — § Dispatch delivery. `archive_uri` is a later harvest rung, not admit-as-delivery.
 
 ```
-# IF6 only — prefer team_dispatch(model=cdp/…[, purpose=operator-proxy])
+# IF6 only — prefer team_dispatch(model=cdp/…[, session=operator-proxy, job=freeform])
 scripts/cortex/claude-ai-sync-jupiter project-ask \
   --converse --no-uuid --model opus-5 \
   --prompt-file <r-prompt.md>

@@ -2,7 +2,7 @@
 """Retired. This helper posted batches to the code-review virtual model.
 
 A code review that leaves the tab is
-team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none).
+team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review).
 """
 
 from __future__ import annotations

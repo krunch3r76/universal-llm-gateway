@@ -25,9 +25,9 @@ trigger_match_terms:
 | Path | Default |
 |---|---|
 | `model=anthropic/*` on `team_dispatch` / Stargate Anthropic Messages API | **PROHIBITED** |
-| `model=cursor/*` on `seat=cursor-sdk` | **PERMITTED** except **Fable** |
+| `model=cursor/*` on `seat=cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. ¬ `cursor/claude-*` |
 | Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp preferred** — **prefer** cortex-packaged hot paths (`cortex://`) for fewer tool calls; `workspaces://` is readable (name it when exploration is encouraged); ¬ GitHub connector browse |
-| Codebase must be navigable on the executor | **`cursor/claude-opus-*`** (cursor-sdk) is acceptable |
+| Codebase must be navigable on the executor | **`cursor/grok-4.7`** (cursor-sdk) |
 
 **Fable:** CDP / web-anthropic product picker only — ¬ `anthropic/claude-fable-*` API and ¬ `cursor/*` Fable as standing default.
 
@@ -35,7 +35,8 @@ trigger_match_terms:
 
 | Bad | Good |
 |---|---|
-| “Opus High” → `role=artisan model=anthropic/claude-opus-5` + `cost_intent` | CDP sealed ask **or** `seat=cursor-sdk model=cursor/claude-opus-5` |
+| “Opus High” → `job=freeform model=anthropic/claude-opus-5` + `cost_intent` | CDP sealed ask `model=cdp/opus-5.5`. Live checkout: `seat=cursor-sdk model=cursor/grok-4.7` |
+
 | Self-attest `deliberate_high_cost` to unlock API Opus | Treat API as **off** unless operator **explicitly** overrides the house rule for that call |
 | Cancel / re-route without operator bind when substrate was wrong | Ask substrate; ¬ silent cancel of a live dispatch |
 

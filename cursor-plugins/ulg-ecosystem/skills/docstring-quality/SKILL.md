@@ -33,12 +33,12 @@ outside `/path-sim` still owes the same ship gate:
 
 | Closer | Duty |
 |---|---|
-| `implement-todo` §5 / any `contract=implement` close | Scan `files_expected` (or touched `*.py`); criticals=0 before todo-close |
+| `implement-todo` §5 / any `job=implement` close | Scan `files_expected` (or touched `*.py`); criticals=0 before todo-close |
 | none / in-seat / Task that mutates public Python | Same scan before PASS/done; ¬ waive because "not path-sim" |
 | `/overhaul` | Production surface (tests may be excluded) clears empty, too_short, and name_echo before step 9 — command §5.5 / §5.6 |
 | Lead path-sim closeout / R-after | Same scan — path-sim § Docstring AC |
 
-**¬** invent API `role=reviewer|skeptic` docstring floors. **¬** skip scan when the
+**¬** invent API `job=freeform|skeptic` docstring floors. **¬** skip scan when the
 arc skipped path-sim.
 
 Arch docs project **docstring inventory** (signatures/imports/docstrings), not

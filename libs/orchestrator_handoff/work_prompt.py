@@ -198,7 +198,7 @@ def work_execution_lines(
             "result before the next. Mechanical legs: "
             "`Task(subagent_type=generalPurpose, model=composer-2.5)` (or omit `model=`). "
             "Reasoning / review legs: "
-            "`Task(subagent_type=generalPurpose, model=cursor/grok-4.7-xhigh)` — "
+            "`Task(subagent_type=generalPurpose, model=cursor/grok-4.7)` — "
             "**`run_in_background=false`** always on hop tabs."
         )
         lines.append(

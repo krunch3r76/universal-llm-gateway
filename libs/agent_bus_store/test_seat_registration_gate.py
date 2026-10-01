@@ -88,7 +88,8 @@ def _registration_body(
         lines.append(_skills_line())
     lines.extend(
         [
-            "fetch-decision: runbook:maestro-loop",
+            "- fetch-decision: runbook:maestro-loop in_context",
+            "- fetch-decision: skill:retrieval-before-authoring in_context",
             f"open_children: {open_children}",
             f"model: {model}",
             f"effort: {effort}",
@@ -192,6 +193,99 @@ def test_cursor_auto_stamp_exempt_201(bus_db: TestClient) -> None:
         },
     )
     assert resp.status_code == 201, resp.text
+
+
+def test_seat_registration_refuses_unparsed_fetch_decision(bus_db: TestClient) -> None:
+    parent = create_thread(thread_id=None, slug="sr-unparsed-fd")
+    thread_id = parent["id"]
+    _tag_lane_auto(thread_id)
+    model = "cdp/opus-5.5-extra"
+    effort = "high"
+    _post_standing_bind(bus_db, thread_id, model=model, effort=effort)
+    _post_admit_report(bus_db, thread_id, model=model, effort=effort)
+    body = _registration_body(model=model, effort=effort).replace(
+        "- fetch-decision: runbook:maestro-loop in_context\n", "fetch-decision: runbook:maestro-loop\n"
+    )
+    resp = bus_db.post(
+        "/threads/send",
+        json={
+            "thread": thread_id,
+            "from": "web-anthropic",
+            "to": "cursor-auto",
+            "subject": "registration",
+            "body": body,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["reason"] == "seat_registration_fetch_decision"
+
+
+def test_seat_registration_refuses_skipped_maestro_receipt(bus_db: TestClient) -> None:
+    parent = create_thread(thread_id=None, slug="sr-skipped-runbook")
+    thread_id = parent["id"]
+    _tag_lane_auto(thread_id)
+    model = "cdp/opus-5.5-extra"
+    effort = "high"
+    _post_standing_bind(bus_db, thread_id, model=model, effort=effort)
+    _post_admit_report(bus_db, thread_id, model=model, effort=effort)
+    body = _registration_body(model=model, effort=effort).replace(
+        "- fetch-decision: runbook:maestro-loop in_context\n",
+        "- fetch-decision: runbook:maestro-loop skipped reason=not_in_context\n",
+    )
+    resp = bus_db.post(
+        "/threads/send",
+        json={
+            "thread": thread_id,
+            "from": "web-anthropic",
+            "to": "cursor-auto",
+            "subject": "registration",
+            "body": body,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["reason"] == "seat_registration_fetch_decision"
+
+
+def test_retrieval_skill_ref_has_a_gate(bus_db: TestClient) -> None:
+    parent = create_thread(thread_id=None, slug="sr-skill-gate")
+    thread_id = parent["id"]
+    _tag_lane_auto(thread_id)
+    model = "cdp/opus-5.5-extra"
+    effort = "high"
+    _post_standing_bind(bus_db, thread_id, model=model, effort=effort)
+    _post_admit_report(bus_db, thread_id, model=model, effort=effort)
+    body = _registration_body(model=model, effort=effort).replace(
+        "- fetch-decision: skill:retrieval-before-authoring in_context\n", ""
+    )
+    resp = bus_db.post(
+        "/threads/send",
+        json={
+            "thread": thread_id,
+            "from": "web-anthropic",
+            "to": "cursor-auto",
+            "subject": "registration",
+            "body": body,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["reason"] == "seat_registration_retrieval_skill"
+
+    body_skipped = _registration_body(model=model, effort=effort).replace(
+        "- fetch-decision: skill:retrieval-before-authoring in_context\n",
+        "- fetch-decision: skill:retrieval-before-authoring skipped reason=not_in_context\n",
+    )
+    resp2 = bus_db.post(
+        "/threads/send",
+        json={
+            "thread": thread_id,
+            "from": "web-anthropic",
+            "to": "cursor-auto",
+            "subject": "registration",
+            "body": body_skipped,
+        },
+    )
+    assert resp2.status_code == 422
+    assert resp2.json()["detail"]["reason"] == "seat_registration_retrieval_skill"
 
 
 def test_standing_bind_replaces_model_tag_preserves_lane(bus_db: TestClient) -> None:

@@ -32,11 +32,6 @@ CHECK_REVIEW_DECISION_CITATION = "decision:code-review-panel-cursor-substrate"
 CHECK_REVIEW_API_ROLES = frozenset({"reviewer", "skeptic"})
 CURSOR_CHECK_REVIEW_MODELS = frozenset(
     {
-        "cursor/muse-spark-1.3",
-        "cursor/claude-fable-5-1",
-        "cursor/gpt-5.6-terra",
-        "cursor/gpt-5.6-sol",
-        "cursor/gpt-5.6-luna",
         "cursor/grok-4.7",
     }
 )
@@ -120,7 +115,7 @@ def coerce_check_review_omit_to_cursor_seat(
 ) -> tuple[str | None, str | None, str | None, bool]:
     """When check/review role omits model= and default is cursor/, coerce to seat=.
 
-    ``role=reviewer`` + omit model must not land on the API path with a cursor
+    ``job=check-review`` + omit model must not land on the API path with a cursor
     default (substrate_model_role_conflict / broken API transport). Returns
     ``(role, seat, model, coerced)``.
     """

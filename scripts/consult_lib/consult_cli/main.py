@@ -24,7 +24,7 @@ from .reviewer_pipeline import _run_pipeline_branch
 def _normalize_role_specific_args(args: Any) -> None:
     """Refuse the retired reviewer pipeline before any dispatch.
 
-    Code review that leaves the tab is ``purpose=review`` on CDP Opus.
+    Code review that leaves the tab is ``job=code-review`` on CDP Opus.
     """
     if args.role != "reviewer":
         return

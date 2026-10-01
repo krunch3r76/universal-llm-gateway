@@ -1,13 +1,13 @@
 # Path-sim L3 annex — tick enrollment + autonomous charter procession
 
 **Parent SOT:** `cursor-plugins/ulg-ecosystem/skills/path-sim/SKILL.md`.
-Open this annex when **enrolling a path-sim todo on the charter runner** or running the
-**autonomous** attendance arc. Attended, in-session path-sim consults do not need it.
+Path-sim consults commission with `team_dispatch` to `cursor-sdk` on lane B.
+Attended, in-session path-sim consults do not need this annex.
 
 ## Tick enrollment — typed admit (BINDING — charter-runner-alt-arch)
 
-**When:** standing path-sim / charter work must become runnable on the charter
-runner without seat SeedConfirm or ``PHASE1_SEEDS`` midwifery.
+**When:** a path-sim work item needs a typed progress record. Commission with
+`team_dispatch` (`seat=cursor-sdk`, `lane=B`).
 
 **Profile:** typed work-item admit on the durable ledger is the **control-plane
 SoT**. CHECKPOINT tip remains optional progress/resume journal — **not** admit
@@ -28,15 +28,9 @@ is not the primary admitter.
 fail closed with migrate hint. Tip schema skips apply only on the legacy path
 when no typed row exists.
 
-**Legacy enrollment tag:** tag ``charter-runner`` + ``enroll_charter_runner=true``
-may still appear on bus threads for visibility, but dual-key enroll is **not**
-required for admit→dispatch on the typed path.
-
 ## Tick enrollment — initial CHECKPOINT (legacy journal template)
 
-**When:** minting a new `charter-runner` root (`agent_bus` `send` with `enroll_charter_runner=true`) to hang a path-sim todo on the charter runner — including friction follow-ons and operator “enroll on charter runner” requests.
-
-**Profile:** `tick_charter` only (machine consumer). Full field contract + runtime skips: Use the `checkpoint-discipline` skill. **This block is the copy-paste enrollment template** — do not paraphrase the RESUME line.
+**Profile:** progress journal. Full field contract: Use the `checkpoint-discipline` skill. **This block is the copy-paste template** — do not paraphrase the RESUME line.
 
 **Order:** (1) mint scoreboard at `cortex://notes/system/threads/<slug>-scoreboard.md` from `charter-scoreboard.md` template when chartered; (2) stamp todo attrs (§ Todo lifecycle bind — dispatch-cascade-annex); (3) post CHECKPOINT below on a **new** root slug `path-sim-<todo-slug>`.
 
@@ -50,7 +44,7 @@ required for admit→dispatch on the typed path.
 TYPE: CHECKPOINT
 
 ## Profile
-`tick_charter` (charter-runner enrolled)
+`orchestrator_continuity`
 
 ## Anchor
 - Thread: agent-bus:{ROOT_ID}
@@ -99,7 +93,7 @@ None.
 
 **Autonomous attendance:** set todo attr `attendance=autonomous` and include tag `attendance:autonomous` on the root when `/path-sim … autonomous` was invoked.
 
-**Post-arc (lead):** densify projection; cite R-admit sidecar + CDP harvest (or allowed-skip evidence); **fire R-after** (`/work-item-review todo:{slug}` · `cdp/opus-5` `purpose=review`, default-on — same closed skip set) and cite its verdict URI; apply REVISE or seed follow-up; **docstring-quality scan on touched paths — criticals=0** (cite evidence); if concentrated warnings on new public surface ∨ arch-doc feedstock needed → `/docstring-enhance` CDP Sonnet then re-scan; event-instrumentation closeout one-liner when applicable; stamp `recon_waived` with `reason_code=path_sim_self_certify` **only** when R-admit **or** R-after was skipped under the closed set above **and** friction already filed — ¬ as a routine substitute for R; `friction_close` if arc started from friction; `todo-close` with evidence URIs [recon, Q, A, R-admit, implement, R-after, docstring-scan, closeout].
+**Post-arc (lead):** densify projection; cite R-admit sidecar + CDP harvest (or allowed-skip evidence); **fire R-after** (`/work-item-review todo:{slug}` · `cdp/opus-5` `job=delivery-review`, default-on — same closed skip set) and cite its verdict URI; apply REVISE or seed follow-up; **docstring-quality scan on touched paths — criticals=0** (cite evidence); if concentrated warnings on new public surface ∨ arch-doc feedstock needed → `/docstring-enhance` CDP Sonnet then re-scan; event-instrumentation closeout one-liner when applicable; stamp `recon_waived` with `reason_code=path_sim_self_certify` **only** when R-admit **or** R-after was skipped under the closed set above **and** friction already filed — ¬ as a routine substitute for R; `friction_close` if arc started from friction; `todo-close` with evidence URIs [recon, Q, A, R-admit, implement, R-after, docstring-scan, closeout].
 
 ## Autonomous charter procession (attendance axis)
 
@@ -138,17 +132,10 @@ runner (the deferred `charter-autonomous-per-root-attendance` follow-up **landed
 its overlay defect was friction 26571). Arming an autonomous arc = stamp the todo
 attr and/or tag the root — ¬ set an env var, ¬ restart to change mode.
 
-**Enrollment dual-key (legacy visibility — not control-plane):** newly adding tag
-``charter-runner`` on ``agent_bus`` ``send`` / ``create_thread`` / ``update_thread``
-still requires ``enroll_charter_runner=true`` when the tag is newly added. Typed
-ledger admit replaces enroll tag as the control path — keeping or removing an
-already-enrolled tag never needs the flag. Worker/window threads use
-``charter-window`` + ``root:`` / ``window:`` — not the enrollment tag.
-
 ### Autonomous cascade shape (same arc, unattended, across windows)
 
 ```
-G1 Q (lead CDP Fable L0) → G2 A+Gate-2 (cursor-sdk Grok, dense spec) →
+G1 Q (`cdp/opus-5`) → G2 A+Gate-2 (`cursor/grok-4.7`, dense spec) →
 [CONSULT_PENDING ⇒ consult seat (depth-1) ⇒ resume] →
 G3 R-admit (team_dispatch model=cdp/opus-5 → web-anthropic Opus; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`) → G4 implement (Composer) + deploy-verify →
 [G4a/G4b/G4c revise, cap 3] → G5 R-after (cursor-sdk Grok /work-item-review) → G6 close
@@ -165,7 +152,7 @@ separate rule and does not forbid nest+wait for Q/A limbs.
 `CONSULT_PENDING` and depth-1 are shared stop vocabulary with one textual SOT —
 `cortex://notes/system/specs/autonomous-path-sim-charter.md` § Stop vocabulary /
 § Target architecture. The charter runner **enforces** those verbs; this skill **cites** them.
-A consult launch is a path-sim leg under charter-runner launch: pinned corpus uses the
+A consult launch is a path-sim leg commissioned with `team_dispatch`: pinned corpus uses the
 consult scope-lock template (Question verbatim / OOS / detent / layers / deliverable
 gate); returned verdicts use path-sim verdict grammar (`ADMIT` | `ADMIT_WITH_AMENDMENTS`
 | `RATIFY` | `RATIFY_WITH_CONDITIONS` | `RETURN` | `SCOPE-DRIFT`). Default G3 R-admit
@@ -190,7 +177,7 @@ model-endpoint (IF6 escape = CLI `claude-ai-sync-jupiter project-ask`. MCP `proj
 
 ```
 # Primary
-team_dispatch(op=generate, model=cdp/opus-5, contract=none,
+team_dispatch(op=generate, model=cdp/opus-5, job=freeform,
               sidecar_ref=cortex://…, dispatch_thread_id=…)
 agent_bus.wait(… from_agent=web-anthropic)   # reply OR DELIVERY FAILED; long running ≠ stalled
 

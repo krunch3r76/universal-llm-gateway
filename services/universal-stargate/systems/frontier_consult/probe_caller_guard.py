@@ -1,7 +1,7 @@
 """MCP probe caller identity — cost-overhaul Rec 4 / Wave 0.3.
 
 Probes must not enter the reviewer hydration path. Prefer chat ``-mcp`` or
-``role=artisan|skeptic``. See ``agent_skill:mcp-tool-loop-trace-matrix``.
+``job=check-review|skeptic``. See ``agent_skill:mcp-tool-loop-trace-matrix``.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def reject_probe_on_reviewer(
     caller_agent: str | None,
     event_publisher: EventPublisher | None = None,
 ) -> None:
-    """Raise 422 ``probe_reviewer_forbidden`` when a probe hits role=reviewer."""
+    """Raise 422 ``probe_reviewer_forbidden`` when a probe hits job=check-review."""
     if role != "reviewer" or not is_mcp_probe_caller(caller_agent):
         return
     # Lazy import avoids cycle: admission → this module → FrontierEndpointError
@@ -42,9 +42,9 @@ def reject_probe_on_reviewer(
 
     reason = (
         f"caller_agent={caller_agent!r} is an MCP probe identity; "
-        f"role=reviewer is forbidden for probes (cost-overhaul Rec 4). "
+        f"job=check-review is forbidden for probes (cost-overhaul Rec 4). "
         f"Use /v1/chat/completions with a -mcp model, or team_dispatch "
-        f"role=artisan|skeptic / frontier dispatch — never reviewer."
+        f"job=check-review|skeptic / frontier dispatch — never reviewer."
     )
     if event_publisher is not None:
         event_publisher(

@@ -12,6 +12,12 @@ import httpx
 from fastapi import HTTPException, Response
 from universal_logging import get_logger
 
+from src.core.streaming.client_disconnect import (
+    WORK_STOP_GRACE_S,
+    stop_tasks,
+    wait_for_client_disconnect,
+)
+
 from ...utils.analysis_section_filter import create_content_filter
 from ...utils.request_context import ForwardContext, extract_model_name
 
@@ -296,12 +302,6 @@ class RequestForwarder:
             )
 
 
-async def _poll_disconnect(request) -> None:
-    """Resolve when the upstream client closes its connection."""
-    while not await request.is_disconnected():
-        await asyncio.sleep(0.5)
-
-
 async def _forward_with_disconnect_race(
     http_client: httpx.AsyncClient,
     method: str,
@@ -341,23 +341,24 @@ async def _forward_with_disconnect_race(
     if request is None:
         return await http_task
 
-    disconnect_task = asyncio.create_task(_poll_disconnect(request))
+    disconnect_task = asyncio.create_task(
+        wait_for_client_disconnect(request), name=f"dc-watch-{(request_id or '')[:8]}"
+    )
 
     try:
         done, pending = await asyncio.wait(
             {http_task, disconnect_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+        await stop_tasks(
+            tuple(pending),
+            grace_s=WORK_STOP_GRACE_S,
+            what=f"forward race for {(request_id or '')[:8]}",
+        )
 
         if disconnect_task in done:
             # Cancelling http_task already closed the outgoing TCP connection;
-            # the next hop will detect this via its own is_disconnected() poll.
+            # the next hop will detect this via its own disconnect watcher.
             logger.info(
                 f"🔌 Client disconnected - cancelled upstream for "
                 f"{(request_id or '')[:8]} (model: {model_name})"
@@ -389,10 +390,9 @@ async def _forward_with_disconnect_race(
         return http_task.result()
 
     except asyncio.CancelledError:
-        if not http_task.done():
-            http_task.cancel()
-            try:
-                await http_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        await stop_tasks(
+            (http_task, disconnect_task),
+            grace_s=WORK_STOP_GRACE_S,
+            what=f"forward race unwind for {(request_id or '')[:8]}",
+        )
         raise

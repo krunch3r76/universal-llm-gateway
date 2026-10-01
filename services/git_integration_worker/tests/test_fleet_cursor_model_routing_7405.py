@@ -56,7 +56,7 @@ def test_compose_investigate_sonnet5_knobs() -> None:
         contract="investigate",
     )
     assert knobs == {
-        "effort": "xhigh",
+        "effort": "high",
         "thinking": "true",
         "context": "1m",
     }
@@ -115,7 +115,7 @@ def test_explicit_medium_honored_on_judgment_contract() -> None:
     assert effort["notes"] == "honored"
 
 
-def test_compose_investigate_auto_is_grok_xhigh_fast() -> None:
+def test_compose_investigate_auto_is_grok_high_fast() -> None:
     model = resolve_desired_model("auto", contract="investigate")
     assert model["resolved_model_id"] == "cursor/grok-4.7"
     knobs = compose_model_knobs(
@@ -123,7 +123,7 @@ def test_compose_investigate_auto_is_grok_xhigh_fast() -> None:
         resolve_desired_effort("auto", contract="investigate"),
         contract="investigate",
     )
-    assert knobs == {"effort": "xhigh", "fast": "true"}
+    assert knobs == {"effort": "high", "fast": "true"}
 
 
 def test_compose_composer_omit_path_fast_false() -> None:

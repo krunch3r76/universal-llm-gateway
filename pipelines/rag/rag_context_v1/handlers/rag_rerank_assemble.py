@@ -40,10 +40,12 @@ from universal_logging import get_logger
 
 from .context_formatting import ChunkData, format_context, merge_adjacent_chunks
 from .rerank_scoring import (
+    WEAK_MATCH_THRESHOLD_DEFAULT,
     aggregate_window_scores,
     apply_bounded_movement,
     build_candidate_block,
     build_windows,
+    relevance_summary,
 )
 
 if TYPE_CHECKING:
@@ -142,6 +144,7 @@ class RagRerankAssembleHandler(BaseHandler):
                 json={
                     "chunks_reranked": len(chunks_data) if chunks_data else 0,
                     "rerank_enabled": False,
+                    **relevance_summary(chunks_data or []),
                 },
             )
 
@@ -306,6 +309,7 @@ class RagRerankAssembleHandler(BaseHandler):
                 "windows_evaluated": len(windows),
                 "max_rank_movement": max_move_observed,
                 "rerank_seconds": round(_seconds, 3),
+                **relevance_summary(all_chunks, final_scores=final_scores),
             },
         )
 
@@ -405,10 +409,12 @@ class RagRerankAssembleHandler(BaseHandler):
         max_ce = max(abs(s) for s in ce_scores_raw) or 1.0
 
         final_scores: dict[str, float] = {}
+        ce_scores: dict[str, float] = {}
         for c, ce_score in zip(candidates, ce_scores_raw):
             cid = c["content_hash"][:8]
             prior_norm = c["score"] / max_prior
             ce_norm = ce_score / max_ce
+            ce_scores[cid] = float(ce_score)
             final_scores[cid] = prior_weight * prior_norm + (1 - prior_weight) * ce_norm
 
         confidence_map = {c["content_hash"][:8]: "high" for c in candidates}
@@ -454,6 +460,16 @@ class RagRerankAssembleHandler(BaseHandler):
                 "rerank_model": model_id,
                 "max_rank_movement": max_move_observed,
                 "rerank_seconds": round(_seconds, 3),
+                **relevance_summary(
+                    all_chunks,
+                    final_scores=final_scores,
+                    ce_scores=ce_scores,
+                    weak_match_threshold=float(
+                        context.options.get(
+                            "rerank_weak_match_threshold", WEAK_MATCH_THRESHOLD_DEFAULT
+                        )
+                    ),
+                ),
             },
         )
 

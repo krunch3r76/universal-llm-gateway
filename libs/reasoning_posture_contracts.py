@@ -15,13 +15,13 @@ import re
 CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
 REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
-    {"implement", "pure-mechanical", "propagate", "execute", "answer", "ask"}
+    {"implement", "mechanical", "propagate", "execute", "answer", "ask"}
 )
 
 # ``team_dispatch(contract="none")``: caller prompt is sole task authority for
 # the harness stack (routing, lane-B, conductor identity). Posture slash+Use-line
 # still attach — ``none`` is judgment, not mechanical.
-FREEFORM_CONTRACTS: frozenset[str] = frozenset({"none"})
+FREEFORM_CONTRACTS: frozenset[str] = frozenset({"freeform"})
 
 REASONING_POSTURE_SLASH = "/reasoning-posture"
 
@@ -52,7 +52,11 @@ def reasoning_posture_invoke_parts(*texts: str | None) -> tuple[str, ...]:
 
 
 # Judgment contracts that receive hypothesize-simulate rival-fill injection.
-HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset({"consult", "sketch", "conductor"})
+HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset({"confer", "sketch", "conductor"})
+
+# Importers outside the keep-list use these names. The Search F names stay here.
+POSTURE_SKIP_JOBS = REASONING_POSTURE_SKIP_CONTRACTS
+HYPOTHESIZE_ON_JOBS = HYPOTHESIZE_SIMULATE_CONTRACTS
 
 
 def contract_is_freeform(contract: str | None) -> bool:
@@ -62,7 +66,9 @@ def contract_is_freeform(contract: str | None) -> bool:
 
 __all__ = [
     "FREEFORM_CONTRACTS",
+    "HYPOTHESIZE_ON_JOBS",
     "HYPOTHESIZE_SIMULATE_CONTRACTS",
+    "POSTURE_SKIP_JOBS",
     "REASONING_POSTURE_PREAMBLE",
     "REASONING_POSTURE_SKIP_CONTRACTS",
     "REASONING_POSTURE_SLASH",

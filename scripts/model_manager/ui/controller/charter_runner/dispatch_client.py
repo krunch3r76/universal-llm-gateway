@@ -3,7 +3,7 @@
 Writes a Resume-step-0 packet under the gateway checkout, then either:
 
 - ``POST /api/v1/team/dispatch`` (default generate: ``JUDGMENT_MODEL`` / cursor-sdk), or
-- ``POST /api/v1/team/handoff`` (attended: ``role=cursor-consult`` + packet_path).
+- ``POST /api/v1/team/handoff`` (attended: ``seat=cursor, job=confer`` + packet_path).
 
 Response carries ``thread_id`` / ``execution_id`` for the worker surface + transcript.
 """
@@ -155,7 +155,7 @@ async def fire_window(
     )
     result["packet_path"] = packet_path
     if admission_mode == "handoff":
-        result["executor"] = {"role": "cursor-consult", "seat": "cursor"}
+        result["executor"] = {"job": "confer", "seat": "cursor"}
     elif admission_mode == "consult":
         role = (consult_role or "judgment_gap").strip().lower() or "judgment_gap"
         result["executor"] = {

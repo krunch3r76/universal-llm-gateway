@@ -77,7 +77,7 @@ refuse_list:
   - "model:"
   - contract=implement
   - contract=sketch
-  - contract=pure-mechanical
+  - job=mechanical
   - cursor-sdk
   - web-claude
   - web-consult

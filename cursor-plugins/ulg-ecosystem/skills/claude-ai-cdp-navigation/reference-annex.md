@@ -107,8 +107,8 @@ SOT: `libs/cdp_ask/work_projection.py` `drain_projection()` and
 | `soft_limit` / `hard_limit` | 2 / 3 — **advisory**; do not refuse admission |
 | `free_slots` | Recorded **stream** headroom from `admission_count` — pacing signal |
 | `at_soft_limit` / `at_hard_limit` | Derived advisory thresholds — **not** submit/hop gates |
-| `other_count` | Pending/running non-seat (advisor / `purpose=ask`) rows |
-| `advisor_reserve` | Reserved advisor slot count (today `1`). For `purpose=ask`, compare `other_count` to this — not `free_slots` |
+| `other_count` | Pending/running non-seat (advisor / `session=ask, job=freeform`) rows |
+| `advisor_reserve` | Reserved advisor slot count (today `1`). For `session=ask, job=freeform`, compare `other_count` to this — not `free_slots` |
 
 **Recorded-only vs effective (BINDING):** `list_capacity()` counts registry rows with
 `status == active` only — recorded host capacity. `busy_status` / `/drain-state`
@@ -176,10 +176,10 @@ When CDP posts on-behalf and bus returns **409 `unread_turns_exist`**, remake af
 
 | Job | Command |
 |---|---|
-| **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=none, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
+| **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, job=freeform, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
 | **Life→cursor — life_dispatch** | `life_dispatch(prompt\|thread, model=cdp/…)` on `/mcp/life` — operator-proxy Cowork CSE that drives cursor (¬ life chat). Project UUID server-pinned. `cursor_request` if no new CSE is needed. |
 | **Escape — CLI project-ask** | `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5.1`) when team_dispatch CDP unavailable. MCP `project_ask` is removed. |
-| **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, …)` primary |
+| **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, session=operator-proxy, job=freeform\|mission, …)` primary |
 | Path-sim R-admit (CLI fallback) | `… project-ask --register --purpose ask --converse --no-uuid --model opus-5 --prompt-file tmp/reviews/…` |
 | Long task / multitask | Default Cowork (omit flags) |
 | Auto lane (Fable) | `… project-ask --register --purpose fable --converse --no-uuid --cowork-auto --model fable-5.1` |
@@ -209,7 +209,7 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
       chat_url=… | registration_id=… | execution_id=… | identity omitted,
       cdp_url=…,  # explicit (cdp_url, chat_url) override with chat_url
       prompt_text=… | prompt_uri=…,
-      purpose=operator-proxy,
+      session=operator-proxy, job=freeform,
       timeout_s=60,
       min_receipt=dom_paste | dom_committed)  # default dom_paste
     → paste proof (send_verified, receipt, target_binding); no reply harvest
@@ -296,7 +296,7 @@ Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_sk
 | Packet class | Claude-slug engage | Inline (not Claude slugs) |
 |---|---|---|
 | none · sketch (architect / admit bind) | `reasoning-posture` (+ `consult-posture` when consult-shaped) | none — **¬** `path-sim` unless this leg is a path-sim Q/A/R cascade (a:27142) |
-| **`/layer` G1 · Fable/Opus architecture** | optional judgment chips | **`architecture-invariants` + `ulg-architecture`** (fail closed — judgment chips ¬ substitute; staging `purpose=ask` owns the floor) |
+| **`/layer` G1 · Fable/Opus architecture** | optional judgment chips | **`architecture-invariants` + `ulg-architecture`** (fail closed — judgment chips ¬ substitute; staging `session=ask, job=freeform` owns the floor) |
 | **ULG service home / placement / extract / hosting BIND** | `reasoning-posture` (+ `consult-posture` when consult-shaped) | **`architecture-invariants` + `ulg-architecture`** — and **inline** `[ulg:host-process]` when process manager / service home is load-bearing (cursor_only → local inject / excerpt) |
 | Modularize / overhaul deep split | optional chip helpers | `architecture-invariants` + `modularize-discipline` (+ `ulg-architecture`) — `/modularize` cascade SOT: `modularize-path` (CDP M-Arch fail-closed inline) |
 | Overhaul §5.6 / `/docstring-enhance` CDP | `evidence-review-discipline`, `no-silent-inference` | short `architecture-invariants` floor |
@@ -319,7 +319,7 @@ Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_sk
 | Omit unattended clause from sealed / charter R packets | L2 § Sealed / unattended |
 | Treat slash-manifest lines as skill delivery | Attach + channel attest before submit |
 | Architecture placement packet with only judgment skills; systemd framing from BEFORE map unchallenged | Attach/inline `ulg-architecture` + `architecture-invariants`; inline `[ulg:host-process]` when hosting is load-bearing |
-| `/layer` Fable G1 with judgment chips only (no `ulg-architecture`) | `purpose=ask` — staging owns the arch-pair floor (`consult-routing` § CDP transport) |
+| `/layer` Fable G1 with judgment chips only (no `ulg-architecture`) | `session=ask, job=freeform` — staging owns the arch-pair floor (`consult-routing` § CDP transport) |
 
 ## Hygiene (5195)
 

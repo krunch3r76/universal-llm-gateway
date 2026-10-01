@@ -10,7 +10,7 @@ from typing import Any
 
 # ``none`` authors lane commits on conductor resumes (cursor-auto). The
 # commits check below is the witness; the contract label is not.
-_IMPLEMENT_CONTRACTS = frozenset({"implement", "pure-mechanical", "none"})
+_IMPLEMENT_JOBS = frozenset({"implement", "pure-mechanical", "none"})
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
@@ -49,7 +49,7 @@ def _nested_child_has_commits(
     source_repo: str | None,
     worktree_path: str | None,
 ) -> bool:
-    if str(contract or "") not in _IMPLEMENT_CONTRACTS:
+    if str(contract or "") not in _IMPLEMENT_JOBS:
         return False
     if str(status or "") not in _TERMINAL_STATUSES:
         return False

@@ -129,21 +129,21 @@ def test_r3_invalid_model_for_cursor_sdk_seat() -> None:
 
 def test_r4_unknown_contract_in_workflow() -> None:
     policy = _base_policy()
-    policy["workflows"]["investigate"]["contracts"].append("not-a-contract")
+    policy["workflows"]["investigate"]["jobs"].append("not-a-contract")
     errors = registry_errors(policy)
     assert any("unknown contract 'not-a-contract'" in e for e in errors)
 
 
 def test_r4_duplicate_contract_claim() -> None:
     policy = _base_policy()
-    policy["workflows"]["auto_judgment"]["contracts"].append("investigate")
+    policy["workflows"]["auto_judgment"]["jobs"].append("investigate")
     errors = registry_errors(policy)
     assert any("contract 'investigate' claimed by both" in e for e in errors)
 
 
 def test_r4_unclaimed_contract() -> None:
     policy = _base_policy()
-    policy["workflows"]["investigate"]["contracts"] = ["recon", "seed"]
+    policy["workflows"]["investigate"]["jobs"] = ["recon", "seed"]
     errors = registry_errors(policy)
     assert any("contract 'investigate' is not claimed" in e for e in errors)
 
@@ -213,12 +213,29 @@ def test_r8_contract_effort_unclaimed_canonical() -> None:
     assert any("contract 'answer' missing from contract_effort" in e for e in errors)
 
 
+def test_contract_effort_admits_conductor_and_rejects_unknown() -> None:
+    policy = _base_policy()
+    policy["contract_effort"]["conductor"] = "low"
+    policy["contract_effort"]["freeform"] = "low"
+    assert registry_errors(policy) == []
+    policy["contract_effort"]["not-a-contract"] = "low"
+    errors = registry_errors(policy)
+    assert any("contract_effort.'not-a-contract'" in e for e in errors)
+
+
+def test_configured_effort_for_job_reads_table_or_none() -> None:
+    reg = load_workflow_registry()
+    assert reg.configured_effort_for_job("conductor") == "low"
+    assert reg.configured_effort_for_job("freeform") == "low"
+    assert reg.configured_effort_for_job("not-a-job") is None
+
+
 def test_contract_effort_live_defaults_match_omit_path() -> None:
     reg = load_workflow_registry()
-    assert reg.default_effort_for_contract("investigate") == "xhigh"
+    assert reg.default_effort_for_contract("investigate") == "high"
     assert reg.default_effort_for_contract("answer") == "high"
     out = resolve_desired_effort(None, contract="investigate", registry=reg)
-    assert out["resolved_effort"] == "xhigh"
+    assert out["resolved_effort"] == "high"
     assert "via contract_effort" in out["notes"]
 
 

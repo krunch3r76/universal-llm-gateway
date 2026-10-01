@@ -582,7 +582,7 @@ async def dispatch_skill_suggest(
             model=None,
             subject=f"skill-suggest dispatch — {request_id[:8]}",
             caller_agent=canonical_agent,
-            contract="none",
+            job="freeform",
             packet_path=None,
             message_text=message,
             read_only=True,

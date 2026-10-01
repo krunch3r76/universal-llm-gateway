@@ -393,7 +393,7 @@ def enforce_team_dispatch_generate_admit(
 
     Admission predicate (FOL):
       admit_generate(role) ⟺ role ∈ generate_roles()
-      ¬(role=reviewer ∧ is_mcp_probe_caller(caller_agent))
+      ¬(job=check-review ∧ is_mcp_probe_caller(caller_agent))
 
     Auto-dispatch seats (``cursor-sdk``, …) must use ``seat=``, not ``role=``.
     """
@@ -431,7 +431,7 @@ def enforce_team_dispatch_generate_admit(
         f"auto_dispatchable={profile.auto_dispatchable}). "
         f"Manual seats are reachable only via op=handoff. "
         f"If you are {to_agent}, use fs/cortex locally; "
-        f"for peer consult use `team_dispatch(op=generate, role=reviewer, "
+        f"for peer consult use `team_dispatch(op=generate, job=check-review, "
         f"dispatch_thread_id=…)` or another API role. Passing model= dispatches "
         f"an API endpoint only — it does not spawn a web session."
     )
@@ -536,12 +536,24 @@ def resolve_handoff_contract(
     return "consult", "role_default"
 
 
-def _cursor_sdk_omit_model(*, request_id: str) -> str:
+def _cursor_sdk_omit_model(*, request_id: str, job: str | None = None) -> str:
     """Resolve omit-model for ``seat=cursor-sdk`` from the workflow registry."""
     from implement_admission.routing import load_route_policy
-    from implement_admission.workflow_registry import load_auto_judgment_default_model
+    from implement_admission.workflow_registry import (
+        MECHANICAL_WORKFLOW,
+        load_auto_judgment_default_model,
+        load_workflow_registry,
+    )
 
     try:
+        key = (job or "").strip().lower()
+        if key in {"implement", "mechanical"}:
+            binding = load_workflow_registry().workflows.get(MECHANICAL_WORKFLOW)
+            if binding is None or not binding.model:
+                raise ValueError(
+                    f"workflows.{MECHANICAL_WORKFLOW}.model must be a non-empty string"
+                )
+            return binding.model
         return load_auto_judgment_default_model(load_route_policy())
     except ValueError as exc:
         raise FrontierEndpointError(
@@ -693,6 +705,7 @@ def resolve_auto_seat_generate_target(
     model: str | None,
     request_id: str,
     packet_kind: str | None = None,
+    job: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Resolve auto-dispatch seat generate target (``seat=cursor-sdk``, …).
 
@@ -724,14 +737,13 @@ def resolve_auto_seat_generate_target(
             status_code=422,
             code="sdk_substrate_required",
         )
-    resolved_model = model or _cursor_sdk_omit_model(request_id=request_id)
+    resolved_model = model or _cursor_sdk_omit_model(request_id=request_id, job=job)
     if not resolved_model:
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
             reason=(
-                "cursor-sdk requires explicit model= or "
-                "workflows.auto_judgment.model"
+                "cursor-sdk requires explicit model= or workflows.auto_judgment.model"
             ),
             status_code=422,
             code="sdk_generate_model_invalid",
@@ -775,10 +787,11 @@ def resolve_cursor_sdk_generate_target(
     model: str | None,
     request_id: str,
     packet_kind: str | None = None,
+    job: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Backward-compat wrapper — use resolve_auto_seat_generate_target(seat=…)."""
     return resolve_auto_seat_generate_target(
-        role, model=model, request_id=request_id
+        role, model=model, request_id=request_id, job=job
     )
 
 
@@ -807,9 +820,7 @@ def is_cursor_sdk_generate_role(role: str, *, request_id: str) -> bool:
         _resolve_auto_seat_profile(role, request_id=request_id)
     except FrontierEndpointError:
         return False
-    return is_sdk_substrate_profile(
-        get_profile("cursor", "sdk")
-    )
+    return is_sdk_substrate_profile(get_profile("cursor", "sdk"))
 
 
 def is_cursor_sdk_generate_admission(

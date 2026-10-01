@@ -227,6 +227,27 @@ def test_store_owner_falls_back_to_parent_when_store_outside_every_home(
     assert event.payload["store_path"] == str(outside)
 
 
+def test_store_owner_home_scan_without_ledger_row_is_rescanned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A HOME scan with no parent ledger row emits mode=rescanned, not external."""
+    _pin_homes(monkeypatch, tmp_path / "homes")
+    parent_id = "parent-no-ledger-row"
+    _home_store(parent_id)
+    emitted: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_resume_store_events.emit_frontier_event",
+        lambda event: emitted.append(event),
+    )
+    assert resolve_store_bearing_dispatch_id(parent_id=parent_id) == parent_id
+    assert len(emitted) == 1
+    event = emitted[0]
+    assert event.signal == "giw.resume.store.owner.resolved"
+    assert event.payload["mode"] == "rescanned"
+    assert event.payload["owner_dispatch_id"] == parent_id
+    assert event.payload["parent_id"] == parent_id
+
+
 def test_first_generation_owner_selection_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -110,7 +110,6 @@ async def run_prepared_execution_inner(
                 http_request=pipeline_context.http_request,
                 pipeline_id=pipeline.id,
                 execution_id=pipeline_context.execution_id,
-                step_count=len(nodes),
             )
         else:
             execution_coro = dag_executor.execute()

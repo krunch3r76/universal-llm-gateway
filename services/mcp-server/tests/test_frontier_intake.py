@@ -187,35 +187,35 @@ def test_dispatch_thread_id_exempt_for_wrap_generate() -> None:
 # ── F17378 — packet_path on residual generate; source_ref is materializer-only ─
 
 
-def test_packet_path_ok_on_residual_generate() -> None:
+def test_packet_path_ok_on_freeform_generate() -> None:
     assert (
         reject_unsupported_packet_inputs(
-            "generate", "none", "tmp/p.md", None
+            "generate", "freeform", "tmp/p.md", None
         )
         is None
     )
 
 
-def test_packet_path_ok_on_pure_mechanical_generate() -> None:
+def test_packet_path_ok_on_mechanical_generate() -> None:
     assert (
         reject_unsupported_packet_inputs(
-            "generate", "pure-mechanical", "tmp/p.md", None
+            "generate", "mechanical", "tmp/p.md", None
         )
         is None
     )
 
 
-def test_source_ref_rejected_on_pure_mechanical_generate() -> None:
+def test_source_ref_rejected_on_mechanical_generate() -> None:
     err = reject_unsupported_packet_inputs(
-        "generate", "pure-mechanical", None, "todo:x"
+        "generate", "mechanical", None, "todo:x"
     )
     assert err is not None
     assert err["field"] == "source_ref"
 
 
-def test_source_ref_rejected_on_residual_generate() -> None:
+def test_source_ref_rejected_on_freeform_generate() -> None:
     err = reject_unsupported_packet_inputs(
-        "generate", "none", None, "todo:x"
+        "generate", "freeform", None, "todo:x"
     )
     assert err is not None
     assert err["field"] == "source_ref"
@@ -287,7 +287,7 @@ def test_source_ref_ok_on_wrap_generate() -> None:
 
 def test_packet_inputs_rejected_on_to_thread() -> None:
     err = reject_unsupported_packet_inputs(
-        "to_thread", "none", "tmp/p.md", None
+        "to_thread", "freeform", "tmp/p.md", None
     )
     assert err is not None
     assert err["field"] == "packet_path"
@@ -296,10 +296,35 @@ def test_packet_inputs_rejected_on_to_thread() -> None:
 def test_no_packet_inputs_passthrough() -> None:
     assert (
         reject_unsupported_packet_inputs(
-            "generate", "none", None, None
+            "generate", "freeform", None, None
         )
         is None
     )
+
+
+def test_omitted_job_and_consult_are_refused() -> None:
+    omitted = reject_unsupported_packet_inputs("generate", None, None, None)
+    assert omitted is not None
+    assert omitted["field"] == "job"
+    assert omitted["error"]["code"] == "job_not_admitted"
+    assert "(omitted)" in omitted["error"]["message"]
+
+    consult = reject_unsupported_packet_inputs("generate", "consult", None, None)
+    assert consult is not None
+    assert consult["field"] == "job"
+    assert consult["error"]["code"] == "job_not_admitted"
+    assert "consult" in consult["error"]["message"]
+
+    blank = reject_unsupported_packet_inputs("generate", "  ", None, None)
+    assert blank is not None
+    assert blank["error"]["code"] == "job_not_admitted"
+
+
+def test_to_thread_refuses_job_outside_its_admitted_set() -> None:
+    err = reject_unsupported_packet_inputs("to_thread", "confer", None, None)
+    assert err is not None
+    assert err["field"] == "job"
+    assert err["error"]["code"] == "job_not_admitted"
 
 
 def test_handoff_op_not_guarded() -> None:
@@ -451,27 +476,6 @@ def test_cursor_sdk_checkout_lane_required_on_model_only() -> None:
     )
     assert err is not None
     assert err["error"]["code"] == "lane_required"
-
-
-def test_validate_work_key_unparseable_ac4() -> None:
-    err = validate_work_key("foo")
-    assert err is not None
-    assert err["field"] == "work_key"
-    assert err["error"]["code"] == "work_key_unparseable"
-
-
-def test_validate_work_key_accepts_todo() -> None:
-    assert validate_work_key("todo:cursor-sdk-dispatch-work-key-gate") is None
-
-
-def test_validate_force_requires_reason_ac7() -> None:
-    err = validate_force(True, None)
-    assert err is not None
-    assert err["error"]["code"] == "force_reason_required"
-
-
-def test_validate_force_with_reason_clean() -> None:
-    assert validate_force(True, "fanout:composer-ab") is None
 
 
 def test_validate_work_key_unparseable_ac4() -> None:

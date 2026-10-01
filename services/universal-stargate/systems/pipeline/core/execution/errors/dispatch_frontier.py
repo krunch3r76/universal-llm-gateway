@@ -19,7 +19,8 @@ class UnknownPipelineOptionsError(PipelineError):
     """Raised by ``frontier_dispatch_v1`` when the caller supplies
     ``pipeline_options`` keys outside the handler's accepted set.
 
-    The raw ``frontier-dispatch`` (now ``chat-dispatch``) path silently dropped unrecognized keys
+    The raw ``frontier-dispatch`` (now ``chat-dispatch``) path silently
+    dropped unrecognized keys
     historically (e.g. top-level ``effort: \"high\"`` instead of the canonical
     ``generation_parameters.reasoning_effort``). That class of bug burned
     hours of agent debugging when reasoning levers appeared to be ignored.
@@ -40,7 +41,7 @@ class UnknownPipelineOptionsError(PipelineError):
             "For team role consults (skeptic/gatherer/synthesizer/reviewer/artisan "
             "or cursor-* seats) use `team_dispatch` — it validates options "
             "against the role contract from Cortex. xAI multi-agent roles get "
-            "mcp=False auto-derived. Inline-only passes: `role=synthesizer`."
+            "mcp=False auto-derived. Inline-only passes: `job=freeform`."
         )
 
     def to_dict(self) -> dict:

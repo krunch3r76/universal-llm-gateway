@@ -121,9 +121,9 @@ guidance.
 ```python
 team_dispatch(
     op="generate",            # required; manual-seat slugs would 422 here
-    role="gatherer",          # the param is `role` (not `agent`)
+    job="freeform",          # the param is `role` (not `agent`)
     dispatch_thread_id="<stable arc id>",   # required on generate; prompt = latest turn body on this bus thread
-    contract="none", # required on op=generate (no derivation)
+    job="freeform", # required on op=generate (no derivation)
     caller_agent="cursor",
     reasoning_effort="high",
     max_tool_turns=25,        # Phase 1; raise to 50 for Phase 2

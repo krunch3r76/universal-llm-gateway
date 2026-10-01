@@ -67,6 +67,7 @@ def settle_lane_and_dispatch_fields(
     landed_resolution_reason: str | None = None
     if binding is not None and binding.lane == "B":
         from services.git_integration_worker.cursor_sdk_lane_b_commit import (
+            SalvageResult,
             branch_state,
             commit_on_terminal,
         )
@@ -76,12 +77,36 @@ def settle_lane_and_dispatch_fields(
 
         record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
         if record is not None:
-            commit_result = commit_on_terminal(
-                dispatch_id=dispatch_id,
-                worktree_path=write_tree,
-                branch_name=record.branch_name,
-                packet_text=packet_text,
-            )
+            if write_tree.resolve() != record.worktree_path.resolve():
+                from services.git_integration_worker.cursor_sdk_events import (
+                    emit_sdk_lane_capture_refused,
+                )
+
+                try:
+                    emit_sdk_lane_capture_refused(
+                        dispatch_id=dispatch_id,
+                        worktree_path=str(write_tree.resolve()),
+                        branch_name=record.branch_name,
+                    )
+                except Exception:
+                    pass
+                refusal_token = "divergence:lane_b_commit_refused:worktree_path_mismatch"
+                deviations = [*(deviations or []), refusal_token]
+                if divergence_reason is None:
+                    divergence_reason = "divergence:lane_b_commit_refused"
+                commit_result = SalvageResult(
+                    committed=False,
+                    head_sha=None,
+                    refused=True,
+                    error="worktree_path_mismatch",
+                )
+            else:
+                commit_result = commit_on_terminal(
+                    dispatch_id=dispatch_id,
+                    worktree_path=write_tree,
+                    branch_name=record.branch_name,
+                    packet_text=packet_text,
+                )
             state = branch_state(
                 binding.receipt_tree,
                 branch_name=record.branch_name,

@@ -4,7 +4,7 @@ The wake doorbell already tells that hop not to land repo edits. That sentence
 is not a control: Composer can still commit. This gate runs after the closeout
 body exists, so the refusal is attached to evidence the hop already recorded.
 
-Admit-time ``read_only`` for every ``contract=none`` is a different door
+Admit-time ``read_only`` for every ``job=freeform`` is a different door
 (``todo:prompt-expand-none-admit``). ``contract=implement`` and
 ``contract=conductor`` stay able to land.
 """
@@ -59,7 +59,7 @@ def liaison_successor_checkout_refusal(
 ) -> str | None:
     """Return the refusal token, or ``None`` when this hop may stand.
 
-    Only ``caller_agent=liaison-ticker`` with ``contract=none`` is in scope.
+    Only ``caller_agent=liaison-ticker`` with ``job=freeform`` is in scope.
     Implement and conductor lands return ``None`` even when the closeout
     shows a checkout commit.
     """

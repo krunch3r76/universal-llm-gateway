@@ -109,9 +109,11 @@ async def attach_skills_verified(
 
     Re-observes between rounds and only retries what the page still does not
     show, so a partially-landed set costs one extra click per missing slug
-    rather than a redundant full re-attach. Returns the observation; the caller
-    owns the fail-closed decision (``attest_delivery_channels``) so channel
-    policy stays in one place.
+    rather than a redundant full re-attach. A click that drops a slug already
+    on the composer replaced the highlighted row (a:37007); that attempt
+    records ``replacement:`` and does not pick again. Returns the observation;
+    the caller owns the fail-closed decision (``attest_delivery_channels``)
+    so channel policy stays in one place.
     """
     from claude_bundles.composer_session_skills import attach_one_session_skill
 
@@ -132,7 +134,11 @@ async def attach_skills_verified(
                 attempt,
                 click_errors=tuple(click_errors),
             )
-        for slug in missing:
+        for index, slug in enumerate(missing):
+            if index == 0:
+                before = list(observed)
+            else:
+                before = await observe_composer_skill_chips(page)
             try:
                 await attach_one_session_skill(page, slug, composer=composer)
             except SkillDeliveryError as exc:
@@ -140,6 +146,27 @@ async def attach_skills_verified(
                 logger.warning("skill attach click failed slug=%s err=%s", slug, exc)
                 continue
             await page.wait_for_timeout(settle_ms)
+            after = await observe_composer_skill_chips(page)
+            kept = [name for name in requested if name in before]
+            lost = [name for name in kept if name not in after]
+            if lost:
+                click_errors.append(
+                    f"replacement: lost {', '.join(lost)} while picking {slug}"
+                )
+                logger.warning(
+                    "skill attach replaced chips lost=%s while picking %s",
+                    lost,
+                    slug,
+                )
+                still_missing = tuple(name for name in requested if name not in after)
+                return SkillAttachObservation(
+                    requested,
+                    tuple(after),
+                    still_missing,
+                    attempt,
+                    click_errors=tuple(click_errors),
+                )
+            observed = list(after)
 
     observed = await observe_composer_skill_chips(page)
     missing = tuple(slug for slug in requested if slug not in observed)

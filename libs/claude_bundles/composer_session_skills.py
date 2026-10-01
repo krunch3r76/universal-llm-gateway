@@ -234,7 +234,45 @@ async def _click_skills_entry(page: Page) -> None:
         raise SkillDeliveryError(f"Skills menu entry not found — items={items[:20]!r}")
 
 
-async def _click_menu_text(page: Page, pattern: re.Pattern[str], *, what: str) -> None:
+async def _click_menu_text(
+    page: Page,
+    pattern: re.Pattern[str],
+    *,
+    what: str,
+    exact_label: str | None = None,
+) -> None:
+    if exact_label is not None:
+        # Equality on the evaluate path — do not fall through to force=True.
+        # The first role match is the highlighted menuitem (a:37007).
+        clicked = await page.evaluate(
+            """([needle]) => {
+              const nodes = [
+                ...document.querySelectorAll(
+                  '[role="menuitem"], [role="option"], [cmdk-item]'
+                ),
+              ];
+              for (const el of nodes) {
+                const raw = (el.innerText || el.textContent || '')
+                  .trim()
+                  .replace(/\\s+/g, ' ');
+                const norm = raw.replace(/[\\uE000-\\uF8FF]/g, '').trim();
+                if (norm === needle || raw === needle) {
+                  el.scrollIntoView({block: 'nearest'});
+                  el.click();
+                  return {ok: true};
+                }
+              }
+              return {ok: false};
+            }""",
+            [exact_label],
+        )
+        if clicked and clicked.get("ok"):
+            return
+        items = await _open_menu_items(page)
+        raise SkillDeliveryError(
+            f"menu item for {what} not found (label={exact_label!r}) — "
+            f"items={items[:20]!r}"
+        )
     items = await _open_menu_items(page)
     for row in items:
         label = row.get("text") or row.get("aria") or ""
@@ -464,10 +502,21 @@ async def _open_plus_skills_menu(page: Page) -> dict[str, Any]:
 
 
 async def _click_matched_skill_label(page: Page, label: str, slug: str) -> None:
-    """Click a Skills-list row already matched to ``slug`` (a:30502 labels)."""
+    """Click the Skills row whose visible text equals ``label``.
+
+    ``locator.first.click(force=True)`` hits the highlighted menuitem, and
+    that highlight is the previous skill. The next pick then replaces it
+    (a:37007). The evaluate path clicks the node whose text equals the label
+    captured before the keystrokes and does not fall through to that forced
+    click on the first role match.
+    """
     norm = _norm_menu_label(label)
-    needle = re.compile(rf"^{re.escape(norm[:60])}", re.I)
-    await _click_menu_text(page, needle, what=f"skill:{slug}")
+    await _click_menu_text(
+        page,
+        re.compile(rf"^{re.escape(norm)}$"),
+        what=f"skill:{slug}",
+        exact_label=norm,
+    )
 
 
 async def _click_skill_slug(page: Page, slug: str) -> None:

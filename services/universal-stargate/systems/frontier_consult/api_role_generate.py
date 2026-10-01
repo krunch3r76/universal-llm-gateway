@@ -148,7 +148,7 @@ async def dispatch_api_role_generate(
         request_id=request_id,
     )
 
-    contract = body.contract
+    contract = body.job
     from implement_admission.check_review_substrate import (
         is_check_review_api_role,
         resolve_check_review_model,

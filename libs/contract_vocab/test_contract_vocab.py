@@ -7,7 +7,7 @@ from pathlib import Path
 from contract_vocab import (
     CANONICAL_CONTRACTS,
     DEFAULT_CONTRACT,
-    DEPRECATED_ALIASES,
+    REMOVED_JOB_ALIASES,
     closeout_table,
     code_work_contracts,
     nested_scope_contracts,
@@ -40,7 +40,7 @@ def test_canonical_names_stable() -> None:
         "recon",
     )
     assert DEFAULT_CONTRACT == "answer"
-    assert DEPRECATED_ALIASES == {"consult": "confer"}
+    assert REMOVED_JOB_ALIASES == {"consult": "confer"}
     assert "hop" not in CANONICAL_CONTRACTS
 
 
@@ -100,7 +100,7 @@ def test_consumer_flag_sets_agree_with_records() -> None:
 def test_handler_nested_contracts_are_nested_scope_plus_confer() -> None:
     from services.git_integration_worker.cursor_auto.handler import _NESTED_CONTRACTS
 
-    assert _NESTED_CONTRACTS == nested_scope_contracts() | {"confer", "ask"}
+    assert _NESTED_CONTRACTS == nested_scope_contracts() | {"confer", "ask", "conductor"}
 
 
 def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None:

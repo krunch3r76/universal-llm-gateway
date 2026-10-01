@@ -18,10 +18,12 @@ from claude_bundles.cowork_skill_delivery import (
     format_cdp_slash_prefix,
     split_leading_slash_skills,
 )
+from claude_bundles.maestro_runbook_load import load_maestro_runbook
 from claude_bundles.operator_proxy_hop_status import ensure_hop_status_first
 from claude_bundles.operator_proxy_skill_introspect import skill_introspection_block
 from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
 from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
+from claude_bundles.runbook_excerpt import extract_sections
 
 # CONSUMERS = import-nomination (GIW loads purposes). INJECTORS = seat paste.
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
@@ -135,10 +137,9 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — commissions with ulg-code `team_dispatch` to `cursor-sdk` on lane B. DISPOSITION and CLOSEOUT go by `send` on the private lane. Cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Architecture-bind hop 5 independent check and review fallback stay, under that condition |
-| **cursor-sdk `cursor/composer-2.5`** | **Executor / sub-PM conductor** — the seat *closest to the code* (live checkout, live probes). `{{fast:true}}` standing default; **`contract`** carries judgment vs implement — substrate *facts* via `contract=investigate`; hypotheses at **`cdp/fable`**. Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
-| **`cursor/claude-opus-5` (premium)** | **Architecture bind** — the rung past Fable when a fork needs live-checkout verification at file:line depth no CDP seat can perform. Normally fired by the sub-PM from `work-item-seed-path` S3, ¬ recited as hops from here. Fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`) — that trigger picks this **seat**, not a second effort gate; once picked, knobs follow the card through `max`. A **mandatory** independent check follows — **`cdp/fable`** when Opus authored (model-identity, a:31944). 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Other-Models ids (`cursor/gpt-5.6-terra`, Sonnet, …) require an explicit `model=` pin on cursor-sdk dispatch — omit path stays on Cursor Models (`model_pin_refused` / `other_models_pool_denied`; default bindable set is `composer-2.5` / `claude-opus-5`). An Opus-authored architecture is not self-ratifiable. |
+| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Card default `effort=high`, `fast=true`. **`contract`** splits the leg: `investigate`, `none`, and `conductor` stay on this model; mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
+| **`cdp/opus-5.5`** | **Architecture bind / independent check** — the in-use bind rung. Live-checkout file:line depth this seat cannot perform is `cursor/grok-4.7` `contract=none` on cursor-sdk, fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`). That trigger picks the **seat**. Independent check uses a different seat than the author. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. An architecture is not self-ratifiable. |
 | **cursor-sdk lane B** | **Executor** — ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). This seat directs. The cursor-sdk seat executes repo writes |
-| **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
 **One operator CSE per lane (BINDING):** this Cowork session is the operator seat. Identity is this CSE's `chat_url`. Extras on this lane are predecessors, not peers. Never touch operator CSEs on other lanes.
 
@@ -148,7 +149,7 @@ Toys (`/mcp/life`), the legal life set (hand-maintained mirror of `surface_prima
 
 ulg-code primaries (this seat): {_ulg_code_tools_line()}.
 
-Commissions go through ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Charter enroll (`enroll_charter_runner=true`) stays a legal enroll path.
+Commissions go through ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`).
 
 `cursor-auto`, `cursor_request`, and `operator_request` are deprecated. Toys still exposes `cursor_request` and `operator_request`. They are not a commission path, including when `team_dispatch` is refused. A refuse comes back verbatim. No fallback procedure. `cursor-auto` is not a bus address.
 
@@ -218,12 +219,12 @@ loop burns the mission. `mechanical(q) ⇒ ¬mentor_loop(q)`.
 
 **Idea commissioning (BINDING — operator bind 2026-08-02):** the mentor loop handles a
 *question*; this handles an **idea**. The reasoner seat is under-asked when it receives
-micro-tasks. **`cursor/composer-2.5`** executes on ideas in the same register **this** seat
-receives them — commission the idea, ¬ its decomposition, and let Composer drive
+micro-tasks. **`cursor/grok-4.7`** executes on ideas in the same register **this** seat
+receives them — commission the idea, ¬ its decomposition, and let that seat drive
 `work-item-seed-path` S1–S6 (classify → recon → architecture fork → mint todo → attach →
-layer handoff) including its **own** fan-out: Explore for breadth recon, Composer for the
-mechanical leg once judgment closes, this seat or Fable on an architecture fork it cannot
-rank, cursor-sdk again for parallel seeds.
+layer handoff) including its **own** fan-out: Explore for breadth recon, `cursor/composer-2.5`
+for the mechanical leg once judgment closes, `cdp/opus-5.5` on an architecture fork it cannot
+rank (`cdp/fable` only when Kaywan asks), cursor-sdk again for parallel seeds.
 
 **Peer disclosure when fanning a second advisor (BINDING — inv 36):** Before you (or
 the reasoner under your commission) fan one fork to a **second** advisor, tell **each**
@@ -260,7 +261,7 @@ judgment of when to bind directly with this seat.
 
 **Knob relay (this seat fires the dispatch):** this seat fires `team_dispatch` on ulg-code. `model`, `contract`, `lane`, `work_key`, and `model_knobs` go on that wire. `reasoning_effort` on `seat=cursor-sdk` is 422 `reasoning_effort_not_supported`. Body-level `effort:`, `reasoning_effort:`, or line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT: `libs/cursor_capabilities/cursor_capabilities.py`). Name `fast=true` on the cursor-sdk dispatch wire when an arc pin says so. Hop successor model: `desired_model=cdp/opus-5.5-extra`.
 
-**CDP Fable / Opus pin (BINDING):** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. A fresh operator window is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, dispatch_thread_id=<this private lane>, handoff_prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
+**CDP Fable / Opus pin (BINDING):** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. A fresh operator window is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform, dispatch_thread_id=<this private lane>, handoff_prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`
 (+ `vision:` on `TYPE: DIRECTIVE` when applicable). Empty scope or a missing contract
@@ -338,7 +339,7 @@ page once if away, then proceed — approval is standing.
 
 **New CDP window (BINDING):** when this Cowork CSE's context is stale, or Customize
 skills / life MCP just uploaded and must go live, open a fresh operator window with
-ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy,
+ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform,
 dispatch_thread_id=<THIS private request lane>, handoff_prompt=...)``. Not via
 cursor-auto. Not ``cdp/fable`` unless Kaywan asked. **Same private lane**, never a
 second request thread. Warm follow-up on a dead/stale CSE does not pick up new skill
@@ -383,10 +384,39 @@ def ensure_operator_proxy_mission_prompt(
     field_source = _field_source_without_briefing(rest_body)
     if _BRIEFING_MARKER not in rest_body:
         rest_body = f"{_BRIEFING_BLOCK.strip()}\n\n{rest_body}".rstrip() + "\n"
+
+    body, load_err = load_maestro_runbook()
+    resolved_bodies: dict[str, str] | None = None
+    trigger_excerpt = ""
+    refuse_body = ""
+    skip_reasons: dict[str, str] = {
+        "skill:retrieval-before-authoring": "not_resolvable_by_composer",
+    }
+    if body:
+        resolved_bodies = {"runbook:maestro-loop": body}
+        trigger_block = extract_sections(body, ("Trigger",))
+        trigger_excerpt = "\n".join(
+            line
+            for line in trigger_block.splitlines()
+            if not line.strip().startswith("## ")
+        ).strip()
+        refuse_block = extract_sections(body, ("Refuse",))
+        refuse_body = "\n".join(
+            line
+            for line in refuse_block.splitlines()
+            if not line.strip().startswith("## ")
+        ).strip()
+    else:
+        skip_reasons["runbook:maestro-loop"] = load_err or "unreachable"
+
     rest_body = ensure_hop_status_first(
         rest_body,
         standing_handoff_text=standing_handoff_text,
         field_source=field_source,
+        resolved_bodies=resolved_bodies,
+        skip_reasons=skip_reasons,
+        refuse_body=refuse_body,
+        trigger_excerpt=trigger_excerpt,
     )
     return f"{prefix}\n{rest_body}"
 
@@ -420,6 +450,7 @@ __all__ = [
     "MISSION_SKILL_SLUGS",
     "ULG_CODE_PRIMARY_TOOLS",
     "OPERATOR_PROXY_MISSION_PURPOSES",
+    "_BRIEFING_BLOCK",
     "_FORBIDDEN_HEADING",
     "ensure_operator_proxy_mission_prompt",
     "is_operator_proxy_mission_purpose",

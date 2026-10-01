@@ -451,7 +451,7 @@ async def _fire_and_pointer(
     except Exception:  # noqa: BLE001
         logger.exception("charter-runner window_log append_admit failed")
     executor = result.get("executor") or {}
-    fired_model = str(executor.get("model") or executor.get("role") or "")
+    fired_model = str(executor.get("model") or executor.get("job") or "")
     if admission_mode == "consult":
         mode_note = (
             " (CONSULT_PENDING — R-admit host → cdp/opus-5)"

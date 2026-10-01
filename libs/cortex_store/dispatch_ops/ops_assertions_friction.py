@@ -384,8 +384,8 @@ def _op_frictions(
     if not result.get("error"):
         fix_cycle = (
             "Actionable row → codified bug ticket, investigate→execute fix cycle: investigate "
-            "(cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
-            "execute (cursor: role=cursor-implement against spec; web: inline). "
+            "(cursor: seat=cursor, job=confer; web: seat=web-anthropic, job=confer) → dense spec; "
+            "execute (cursor: seat=cursor, job=implement against spec; web: inline). "
             "DEFAULT investigate unless mechanical-only or a dense spec exists. "
             "lifecycle investigate→fix→report. friction() is log-only. "
             "Close via friction_close (agent_skill:|workflow:|todo:|commit:|superseded|wontfix). "

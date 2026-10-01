@@ -114,7 +114,7 @@ def peel_sealed_cdp_skill_prefix(
 def ensure_review_reading_charter(text: str, purpose: str | None) -> str:
     """Place the reading-review line after the skill hash. Idempotent under peel.
 
-    ``purpose=review`` only. The packet carries the code. CDP reads the live
+    ``job=code-review`` only. The packet carries the code. CDP reads the live
     tree. Checkout, pytest, and quality_gate are not this seat's reject grounds.
     """
     if (purpose or "").strip().lower() != "review":

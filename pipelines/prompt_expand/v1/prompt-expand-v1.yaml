@@ -6,8 +6,8 @@
 #   pipeline(op="run", pipeline_id="prompt-expand",
 #            messages=[{"role":"user","content":"<TASK>"}],
 #            options={
-#              "contract": "none",            # unnamed operator TASK → none
-#              "stage": "none",               # pair with contract=none
+#              "job": "freeform",            # unnamed operator TASK → none
+#              "stage": "none",               # pair with job=freeform
 #              "executor_tier": "frontier",   # default frontier
 #              "target": "cursor",            # required; cdp|cursor (grok-bot → typed reject)
 #              "delivery": "prompt",          # prompt|dispatch (default prompt)
@@ -16,7 +16,7 @@
 #            })
 # A TASK that already names a contract is not this door — do not copy
 # implement/g5 as the default recipe. should_expand still skips generate
-# contract=none (author/residual recurse-prevention); that skip is not
+# job=freeform (author/residual recurse-prevention); that skip is not
 # this invocation.
 
 schema_version: 6

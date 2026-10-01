@@ -173,13 +173,13 @@ def test_sdk_card_clamp_does_not_define_cdp_wire_effort() -> None:
 
 
 def test_reasoning_model_never_runs_the_mechanical_leg() -> None:
-    model = resolve_desired_model("cursor/claude-opus-5", contract="implement")
+    model = resolve_desired_model("cursor/claude-sonnet-5", contract="implement")
     out, displaced = redirect_mechanical_executor(
         model,
         contract="implement",
         handoff_contract=resolve_handoff_contract("implement"),
     )
-    assert displaced == "cursor/claude-opus-5"
+    assert displaced == "cursor/claude-sonnet-5"
     assert (
         out["resolved_model_id"]
         == load_workflow_registry().workflows[MECHANICAL_WORKFLOW].model
@@ -191,14 +191,14 @@ def test_reasoning_model_never_runs_the_mechanical_leg() -> None:
 
 
 def test_reasoning_model_keeps_the_bind_leg() -> None:
-    model = resolve_desired_model("cursor/claude-opus-5", contract="investigate")
+    model = resolve_desired_model("cursor/claude-sonnet-5", contract="investigate")
     out, displaced = redirect_mechanical_executor(
         model,
         contract="investigate",
         handoff_contract=resolve_handoff_contract("investigate"),
     )
     assert displaced is None
-    assert out["resolved_model_id"] == "cursor/claude-opus-5"
+    assert out["resolved_model_id"] == "cursor/claude-sonnet-5"
 
 
 @pytest.mark.parametrize("requested", ["composer-2.5", "cursor/grok-4.7", "auto"])
