@@ -142,3 +142,47 @@ def observe_tmux_pane_hosts_manage(
             ],
         )
     return None
+
+
+def spawn_successor_pane(
+    *,
+    tmux_target: str,
+    repo_root: Path,
+    python_bin: str,
+    record_path: Path,
+    run_cmd: RunCmd,
+) -> str | None:
+    """Split a new tmux pane running armed manage; return pane id or None."""
+    cmd = (
+        f"cd {repo_root} && "
+        f"MANAGE_HANDOVER_RECORD={record_path} "
+        f"{python_bin} -m scripts.model_manager.ui"
+    )
+    proc = run_cmd(
+        [
+            "tmux",
+            "split-window",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            tmux_target,
+            cmd,
+        ]
+    )
+    if proc.returncode != 0:
+        return None
+    pane_id = (proc.stdout or "").strip()
+    return pane_id or None
+
+
+def kill_successor_pane(
+    pane_id: str | None,
+    *,
+    run_cmd: RunCmd,
+) -> None:
+    """Tear down a successor pane when arm/quit is refused or aborted."""
+    if not pane_id:
+        return
+    run_cmd(["tmux", "kill-pane", "-t", pane_id])

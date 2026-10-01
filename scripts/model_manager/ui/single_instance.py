@@ -72,6 +72,20 @@ def describe_conflict(lock_path: Path = MANAGE_LOCK_PATH) -> str:
     return "\n".join(lines) + "\n"
 
 
+def try_acquire_manage_lock(lock_path: Path = MANAGE_LOCK_PATH) -> int | None:
+    """Non-blocking exclusive lock; ``None`` when another process holds it."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+    return fd
+
+
 def acquire_manage_lock(lock_path: Path = MANAGE_LOCK_PATH) -> int:
     """Take the exclusive non-blocking manage lock, returning the held fd.
 
@@ -79,14 +93,9 @@ def acquire_manage_lock(lock_path: Path = MANAGE_LOCK_PATH) -> int:
     must stay open for the lifetime of the process — closing it drops the lock.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        os.close(fd)
-        raise ManageAlreadyRunningError(describe_conflict(lock_path)) from exc
-    os.ftruncate(fd, 0)
-    os.write(fd, f"{os.getpid()}\n".encode())
+    fd = try_acquire_manage_lock(lock_path)
+    if fd is None:
+        raise ManageAlreadyRunningError(describe_conflict(lock_path))
     return fd
 
 

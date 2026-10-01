@@ -6,8 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-# Manage is outside the managed fleet; nothing auto-respawns it after quit.
-RECOVERY_PATH = "seat tmux 0:0 re-drive per services_ws safe quit/start recipe"
 DEFAULT_QUIT_TIMEOUT_S = 180.0
 DEFAULT_BOOT_TIMEOUT_S = 120.0
 
@@ -16,7 +14,7 @@ DEFAULT_BOOT_TIMEOUT_S = 120.0
 class GuardedReexecResult:
     """Codeblind-disposition structured result for one guarded reexec attempt."""
 
-    status: str  # refused|quit|start-failed|proof-satisfied|proof-failed|dry-run
+    status: str  # refused|quit|proof-satisfied|proof-failed|dry-run
     reason: str
     dry_run: bool
     checks: dict[str, Any] = field(default_factory=dict)
@@ -26,7 +24,6 @@ class GuardedReexecResult:
     code_version_ok: bool | None = None
     process_start_later_ok: bool | None = None
     executed: bool = False
-    recovery_path: str = RECOVERY_PATH
     boot_timeout_s: float | None = None
     quit_timeout_s: float | None = None
 
@@ -37,7 +34,6 @@ class GuardedReexecResult:
             "dry_run": self.dry_run,
             "executed": self.executed,
             "target_ref": self.target_ref,
-            "recovery_path": self.recovery_path,
             "boot_timeout_s": self.boot_timeout_s,
             "quit_timeout_s": self.quit_timeout_s,
             "checks": self.checks,

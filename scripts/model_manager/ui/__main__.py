@@ -54,6 +54,7 @@ def main(
         sys.stderr.write(_NON_TTY_MSG)
         return 2
 
+    from libs.manage_handover import record_path_from_env  # noqa: PLC0415
     from scripts.model_manager.ui.single_instance import (  # noqa: PLC0415
         ManageAlreadyRunningError,
         acquire_manage_lock,
@@ -63,11 +64,14 @@ def main(
     acquire_lock_fn = acquire_lock_fn or acquire_manage_lock
     release_lock_fn = release_lock_fn or release_manage_lock
 
-    try:
-        lock_fd = acquire_lock_fn()
-    except ManageAlreadyRunningError as exc:
-        sys.stderr.write(str(exc))
-        return 3
+    armed_record_path = record_path_from_env()
+    lock_fd: int | None = None
+    if armed_record_path is None:
+        try:
+            lock_fd = acquire_lock_fn()
+        except ManageAlreadyRunningError as exc:
+            sys.stderr.write(str(exc))
+            return 3
 
     if run_fn is None:
         from scripts.model_manager.ui.app import run as run_fn  # noqa: PLC0415
@@ -75,7 +79,8 @@ def main(
     try:
         run_fn()
     finally:
-        release_lock_fn(lock_fd)
+        if lock_fd is not None:
+            release_lock_fn(lock_fd)
     return 0
 
 

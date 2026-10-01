@@ -1,27 +1,26 @@
 """Orchestrate guarded manage quit/start with structured proof verdicts.
 
-Sequence: refuse checks → pane-identity (live manage pid) → charter_pause →
-drain-clear → quit → re-exec ``python -m scripts.model_manager.ui`` →
-charter_resume → dual whoami proof (code_version match AND process_start_time
-later than pre-quit). Dry-run stops before quit and before any pause mutation.
-
-Manage is not in ``VALID_SERVICES`` and has no systemd/supervisord unit.
-Propagate ``service=manage`` calls this package from outside the manage PID.
-This package retries the start leg up to ``max_start_attempts`` times (each attempt
-gets its own ``boot_timeout_s`` window). After that budget is exhausted,
-recovery is a seat ``tmux`` ``0:0`` re-drive (or the verified target) with
-``./manage`` per ``services_ws`` safe quit/start recipe.
+Sequence: refuse checks → arm successor (tmux pane + armed record) → pre-quit
+recheck → quit incumbent → dual whoami proof. Dry-run stops before spawn.
 """
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from libs.manage_handover import (
+    prove_armed_record,
+    read_armed_record,
+    remove_armed_record,
+)
 from transport_utils import MANAGE_SOCKET
+from universal_event_bus import Event, event_factory
 
 from .checks import (
     RefuseFinding,
@@ -33,12 +32,13 @@ from .client import call_manage
 from .pane import (
     TreeContainsFn,
     find_tmux_target_hosting_manage,
+    kill_successor_pane,
     observe_tmux_pane_hosts_manage,
+    spawn_successor_pane,
 )
 from .result import (
     DEFAULT_BOOT_TIMEOUT_S,
     DEFAULT_QUIT_TIMEOUT_S,
-    RECOVERY_PATH,
     GuardedReexecResult,
     prove_pickup,
 )
@@ -59,20 +59,56 @@ DEFAULT_PYTHON = str(seat_operator_home() / ".venvs" / "universal" / "bin" / "py
 
 ManageCall = Callable[..., dict[str, Any]]
 RunCmd = Callable[[list[str]], subprocess.CompletedProcess[str]]
+KillPid = Callable[[int], None]
 
 __all__ = [
     "DEFAULT_BOOT_TIMEOUT_S",
     "DEFAULT_QUIT_TIMEOUT_S",
     "DEFAULT_TMUX_TARGET",
     "GuardedReexecResult",
-    "RECOVERY_PATH",
     "prove_pickup",
     "run_guarded_reexec",
 ]
 
 
+@event_factory
+def ManageReexecArmed(pane_id: str, record_path: str) -> Event:  # noqa: N802
+    return Event(
+        signal="manage.reexec.armed",
+        payload={"pane_id": pane_id, "record_path": record_path},
+    )
+
+
+@event_factory
+def ManageReexecRefused(reason: str) -> Event:  # noqa: N802
+    return Event(signal="manage.reexec.refused", payload={"reason": reason})
+
+
+@event_factory
+def ManageReexecQuitCommitted(tmux_target: str) -> Event:  # noqa: N802
+    return Event(
+        signal="manage.reexec.quit_committed",
+        payload={"tmux_target": tmux_target},
+    )
+
+
+@event_factory
+def ManageReexecProof(status: str, reason: str) -> Event:  # noqa: N802
+    return Event(
+        signal="manage.reexec.proof",
+        payload={"status": status, "reason": reason},
+    )
+
+
 def _default_run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=False, text=True, capture_output=True)
+
+
+def _default_kill_pid(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
 
 
 def _tmux_send(target: str, keys: str, *, run_cmd: RunCmd) -> None:
@@ -96,6 +132,41 @@ def _wait_sock(
     return False
 
 
+def _teardown_successor(
+    *,
+    pane_id: str | None,
+    record_path: Path,
+    record_pid: int | None,
+    run_cmd: RunCmd,
+    kill_pid_fn: KillPid,
+) -> None:
+    kill_successor_pane(pane_id, run_cmd=run_cmd)
+    if record_pid is not None:
+        kill_pid_fn(record_pid)
+    remove_armed_record(record_path)
+
+
+def _poll_armed_record(
+    record_path: Path,
+    *,
+    target_ref: str,
+    whoami_before: dict[str, Any],
+    boot_timeout_s: float,
+) -> tuple[bool, str, dict | None]:
+    deadline = time.monotonic() + boot_timeout_s
+    while time.monotonic() < deadline:
+        record = read_armed_record(record_path)
+        if record is not None:
+            ok, detail = prove_armed_record(
+                record, target_ref=target_ref, whoami_before=whoami_before
+            )
+            if ok:
+                return True, detail, record
+            return False, detail, record
+        time.sleep(0.25)
+    return False, "successor_not_armed", None
+
+
 def _dry_run_attach_drain(report: Any, hold: dict[str, Any]) -> None:
     """Fold hold_status drain observation into a dry-run check report."""
     report.hold_status = hold
@@ -116,6 +187,29 @@ def _attach_pane_finding(report: Any, finding: RefuseFinding | None) -> None:
     report.refused = True
 
 
+def _refused_result(
+    *,
+    dry_run: bool,
+    reason: str,
+    whoami_before: dict[str, Any],
+    target_ref: str,
+    report_dict: dict[str, Any],
+    boot_timeout_s: float,
+    quit_timeout_s: float,
+) -> GuardedReexecResult:
+    return GuardedReexecResult(
+        status="dry-run" if dry_run else "refused",
+        reason=reason,
+        dry_run=dry_run,
+        checks=report_dict,
+        whoami_before=whoami_before,
+        target_ref=target_ref,
+        executed=False,
+        boot_timeout_s=boot_timeout_s,
+        quit_timeout_s=quit_timeout_s,
+    )
+
+
 def run_guarded_reexec(
     *,
     target_ref: str,
@@ -126,20 +220,25 @@ def run_guarded_reexec(
     python_bin: str = DEFAULT_PYTHON,
     manage_call: ManageCall | None = None,
     run_cmd: RunCmd | None = None,
+    kill_pid_fn: KillPid | None = None,
     intent_db: Path | None = None,
+    armed_record_path: Path | None = None,
     pause_reason: str = "guarded_manage_reexec",
     quit_timeout_s: float = DEFAULT_QUIT_TIMEOUT_S,
     boot_timeout_s: float = DEFAULT_BOOT_TIMEOUT_S,
-    max_start_attempts: int = 3,
     tree_contains_fn: TreeContainsFn | None = None,
     intent_wait_s: float = 600.0,
     inflight_wait_s: float = 120.0,
 ) -> GuardedReexecResult:
-    """Run refuse/require/proof path; dry_run never quits or pauses charter hold."""
+    """Run refuse/arm/quit/proof path; dry_run never spawns a successor."""
     manage_call = manage_call or call_manage
     run_cmd = run_cmd or _default_run
+    kill_pid_fn = kill_pid_fn or _default_kill_pid
     python_bin = seat_python_bin(python_bin, default=DEFAULT_PYTHON)
     seat_home = seat_operator_home()
+    record_path = armed_record_path or (
+        Path(MANAGE_SOCKET).parent / "manage.armed.json"
+    )
 
     def _busy() -> dict[str, Any]:
         return manage_call("busy_status", {}, sock_path=sock_path)
@@ -167,7 +266,6 @@ def run_guarded_reexec(
             },
         )
 
-    # Dry-run skips mutate-path drain require; observes drain read-only below.
     manage_pid = whoami_before.get("pid")
     manage_pid_i = int(manage_pid) if isinstance(manage_pid, int) else None
     store = intent_store_for_manage(db_path=intent_db, manage_pid=manage_pid_i)
@@ -302,14 +400,13 @@ def run_guarded_reexec(
     report_dict["seat_prelude"] = prelude
 
     if report.refused:
-        return GuardedReexecResult(
-            status="dry-run" if dry_run else "refused",
-            reason=";".join(f.reason for f in report.findings) or "refused",
+        reason = ";".join(f.reason for f in report.findings) or "refused"
+        return _refused_result(
             dry_run=dry_run,
-            checks=report_dict,
+            reason=reason,
             whoami_before=whoami_before,
             target_ref=target_ref,
-            executed=False,
+            report_dict=report_dict,
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
         )
@@ -344,7 +441,6 @@ def run_guarded_reexec(
                 quit_timeout_s=quit_timeout_s,
             )
 
-    # ── mutate path (operator-authorized only; this dispatch does not run it)
     pause = manage_call(
         "charter_pause",
         {"reason": pause_reason, "set_by": "guarded_manage_reexec"},
@@ -372,10 +468,85 @@ def run_guarded_reexec(
             quit_timeout_s=quit_timeout_s,
         )
 
+    successor_pane_id: str | None = None
+    record_pid: int | None = None
+    t_arm_start = time.monotonic()
+
+    def _refuse_after_arm(reason: str) -> GuardedReexecResult:
+        _teardown_successor(
+            pane_id=successor_pane_id,
+            record_path=record_path,
+            record_pid=record_pid,
+            run_cmd=run_cmd,
+            kill_pid_fn=kill_pid_fn,
+        )
+        return GuardedReexecResult(
+            status="refused",
+            reason=reason,
+            dry_run=False,
+            checks={
+                **report_dict,
+                "successor_pane_id": successor_pane_id,
+                "armed_record_path": str(record_path),
+                "elapsed_arm_s": round(time.monotonic() - t_arm_start, 3),
+            },
+            whoami_before=whoami_before,
+            target_ref=target_ref,
+            executed=False,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
+        )
+
+    remove_armed_record(record_path)
+    successor_pane_id = spawn_successor_pane(
+        tmux_target=tmux_effective,
+        repo_root=repo_root,
+        python_bin=python_bin,
+        record_path=record_path,
+        run_cmd=run_cmd,
+    )
+    if not successor_pane_id:
+        return _refuse_after_arm("successor_spawn_failed")
+
+    armed_ok, arm_detail, record = _poll_armed_record(
+        record_path,
+        target_ref=target_ref,
+        whoami_before=whoami_before,
+        boot_timeout_s=boot_timeout_s,
+    )
+    if not armed_ok:
+        reason = arm_detail if arm_detail == "successor_not_armed" else arm_detail
+        return _refuse_after_arm(reason)
+
+    assert record is not None
+    record_pid_val = record.get("pid")
+    record_pid = int(record_pid_val) if isinstance(record_pid_val, int) else None
+
+    intent_finding = observe_nonterminal_intents(store)
+    if intent_finding is not None:
+        return _refuse_after_arm("nonterminal_restart_intent")
+
+    _busy()
+    hold_recheck = _hold()
+    drain_before_quit = observe_drain_clear(
+        hold_recheck if hold_recheck.get("status") != "error" else {}
+    )
+    if drain_before_quit is not None:
+        return _refuse_after_arm("drain_not_clear_before_quit")
+
     _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
+    ManageReexecQuitCommitted(tmux_target=tmux_effective)
+
     if not _wait_sock(
         sock_path, manage_call=manage_call, timeout_s=quit_timeout_s, want_up=False
     ):
+        _teardown_successor(
+            pane_id=successor_pane_id,
+            record_path=record_path,
+            record_pid=record_pid,
+            run_cmd=run_cmd,
+            kill_pid_fn=kill_pid_fn,
+        )
         return GuardedReexecResult(
             status="quit",
             reason="quit_sock_still_up",
@@ -385,29 +556,18 @@ def run_guarded_reexec(
             executed=True,
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
+            checks={"successor_pane_id": successor_pane_id},
         )
 
-    start_cmd = f"cd {repo_root} && {python_bin} -m scripts.model_manager.ui"
-    start_attempt = 0
-    sock_up = False
-    for attempt in range(1, max_start_attempts + 1):
-        _tmux_send(tmux_effective, start_cmd, run_cmd=run_cmd)
-        if _wait_sock(
-            sock_path,
-            manage_call=manage_call,
-            timeout_s=boot_timeout_s,
-            want_up=True,
-        ):
-            start_attempt = attempt
-            sock_up = True
-            break
-
-    if not sock_up:
-        # Quit succeeded; start/health did not. Distinct from status=refused
-        # (precondition — manage still up, nothing destroyed).
+    if not _wait_sock(
+        sock_path,
+        manage_call=manage_call,
+        timeout_s=boot_timeout_s,
+        want_up=True,
+    ):
         return GuardedReexecResult(
-            status="start-failed",
-            reason="reexec_sock_not_up",
+            status="proof-failed",
+            reason="successor_bind_not_observed",
             dry_run=False,
             whoami_before=whoami_before,
             target_ref=target_ref,
@@ -415,15 +575,9 @@ def run_guarded_reexec(
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
             checks={
-                "pause": pause,
-                "hold_after": hold_after,
-                "recovery_path": RECOVERY_PATH,
-                "start_attempts": max_start_attempts,
-                "note": (
-                    "manage quit landed; sock never returned after "
-                    f"{max_start_attempts} start attempt(s) within "
-                    f"boot_timeout_s={boot_timeout_s} per attempt"
-                ),
+                "successor_pane_id": successor_pane_id,
+                "armed_record_path": str(record_path),
+                "record_pid": record_pid,
             },
         )
 
@@ -436,6 +590,7 @@ def run_guarded_reexec(
         before=whoami_before, after=whoami_after, target_ref=target_ref
     )
     status = "proof-satisfied" if (version_ok and start_ok) else "proof-failed"
+    ManageReexecProof(status=status, reason=proof_reason)
     return GuardedReexecResult(
         status=status,
         reason=proof_reason,
@@ -451,9 +606,9 @@ def run_guarded_reexec(
         checks={
             "pause": pause,
             "hold_after": hold_after,
-            "start_attempts": start_attempt,
             "seat_prelude": prelude,
             "giw_paired": giw_paired,
             "tmux_target_effective": tmux_effective,
+            "successor_pane_id": successor_pane_id,
         },
     )
