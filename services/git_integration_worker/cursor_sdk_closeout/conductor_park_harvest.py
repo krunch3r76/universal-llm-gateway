@@ -118,6 +118,18 @@ def _scoreboard_body_for_row(row: dict[str, Any]) -> str:
     return ""
 
 
+def harvest_owed_at_terminal(row: dict[str, Any]) -> bool:
+    """Whether harvest is still owed on a terminal row (body, bool stamp, or empty)."""
+    body = _closeout_body_from_row(row)
+    if body.strip():
+        return harvest_still_owed(body=body)
+    rec = _record_data(row)
+    rec_harvest = rec.get("closeout_harvest_owed")
+    if isinstance(rec_harvest, bool):
+        return rec_harvest
+    return harvest_still_owed(body=body)
+
+
 def park_harvest_owed(
     row: dict[str, Any],
     *,
@@ -140,17 +152,8 @@ def park_harvest_owed(
         return False
     if rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
         return False
-    body = _closeout_body_from_row(row)
-    if body.strip():
-        if not harvest_still_owed(body=body):
-            return False
-    else:
-        rec_harvest = rec.get("closeout_harvest_owed")
-        if isinstance(rec_harvest, bool):
-            if not rec_harvest:
-                return False
-        elif not harvest_still_owed(body=body):
-            return False
+    if not harvest_owed_at_terminal(row):
+        return False
     sb = (
         scoreboard_body
         if scoreboard_body is not None
@@ -615,7 +618,7 @@ def park_harvest_continue_owed(
     if "PARKED_TRANSPORT" not in tokens:
         return False
     rec = _record_data(row)
-    if not rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
+    if not harvest_owed_at_terminal(row):
         return False
     if rec.get(_HOP_PARK_HARVEST_CONTINUED_KEY):
         return False

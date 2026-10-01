@@ -410,6 +410,18 @@ def _production_parked_row(
     return {k: row[k] for k in row.keys()}
 
 
+def test_park_harvest_reply_on_worker_thread_readmits_without_cursor_post() -> None:
+    """R1: harvest owed at terminal without fired stamp still continues on reply."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    row = _production_parked_row(ledger, req, fired=False)
+    assert park_harvest_continue_owed(
+        row,
+        reply_fn=lambda *_a, **_k: True,
+    )
+    assert conductor_park_harvest_continue_candidates(ledger) == [req.dispatch_id]
+
+
 def test_park_harvest_continue_owed_true_when_reply_arrived() -> None:
     """R-1: full conjunction with snapshot mock complete."""
     ledger = CursorDispatchLedger.instance()

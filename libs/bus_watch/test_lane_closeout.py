@@ -192,7 +192,7 @@ def test_build_closeout_record_from_sdk_json_envelope() -> None:
         worker_closeout_text=body,
     )
     assert record["settled"] == "checks_failed"
-    assert record["landed"] == "02b419c62ca06ff0646982e907e8fa0971f8a095"
+    assert record["landed"] == "NOT landed@local-master"
     assert record.get("land_disposition") == "discard"
     assert record["live"] == "unprobed"
 
@@ -210,7 +210,37 @@ def test_build_closeout_record_lane_b_unlanded_not_discard() -> None:
     )
     assert record["land_disposition"] == "unlanded"
     assert record["commits_ahead"] == 1
-    assert record["landed"] == "339fa9e0bff9f5fd8417d2da65dc46ca25977fb3"
+    assert record["landed"] == "NOT landed@local-master"
+
+
+def test_json_envelope_landed_never_lane_tip() -> None:
+    from bus_watch.lane_closeout import _parse_json_closeout_envelope
+    from bus_watch.lane_live import probe_live
+
+    unlanded = (
+        '{"work_outcome":"shipped","landed":false,"commits_ahead":1,'
+        '"evidence_uris":{"git_refs":["339fa9e0bff9f5fd8417d2da65dc46ca25977fb3"]}}'
+    )
+    parsed = _parse_json_closeout_envelope(unlanded)
+    assert parsed is not None
+    assert parsed["landed"] == "NOT landed@local-master"
+    assert probe_live("12527", parsed["landed"], parent_root="12286") == "unprobed"
+
+    no_landed_field = (
+        '{"work_outcome":"shipped","commits_ahead":1,'
+        '"evidence_uris":{"git_refs":["339fa9e0bff9f5fd8417d2da65dc46ca25977fb3"]}}'
+    )
+    parsed2 = _parse_json_closeout_envelope(no_landed_field)
+    assert parsed2 is not None
+    assert parsed2["landed"] == "NOT landed@local-master"
+
+    landed_true = (
+        '{"work_outcome":"shipped","landed":true,'
+        '"evidence_uris":{"git_refs":["02b419c62ca06ff0646982e907e8fa0971f8a095"]}}'
+    )
+    parsed3 = _parse_json_closeout_envelope(landed_true)
+    assert parsed3 is not None
+    assert parsed3["landed"] == "02b419c62ca06ff0646982e907e8fa0971f8a095"
 
 
 def test_find_worker_closeout_turn_max_turn_newest_first() -> None:

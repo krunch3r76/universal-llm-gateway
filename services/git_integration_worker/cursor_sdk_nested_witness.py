@@ -10,9 +10,13 @@ from typing import Any
 
 # ``none`` authors lane commits on conductor resumes (cursor-auto).
 # ``mechanical`` is a nested child contract that can author lane commits.
+# ``freeform`` is the nested implement contract when implement admission refuses.
 # The commits check below is the witness; the contract label is not.
 # hub fold without mechanical in the set ignores a terminal mechanical child even when commits_ahead is 1.
-_IMPLEMENT_JOBS = frozenset({"implement", "pure-mechanical", "mechanical", "none"})
+_IMPLEMENT_JOBS = frozenset(
+    {"implement", "pure-mechanical", "mechanical", "none", "freeform"}
+)
+_MAX_NEST_WALK = 12
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
@@ -172,16 +176,33 @@ def _ledger_for_witness() -> Any:
     return ledger
 
 
-def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
-    """True when a terminal nested implement child authored commits (SF1)."""
-    ledger = _ledger_for_witness()
-    child_ids = ledger.list_nested_children(parent_dispatch_id=nest_under_dispatch_id)
+def _row_has_commits(row: Any) -> bool:
+    return _nested_child_has_commits(
+        dispatch_id=str(row["dispatch_id"]),
+        contract=row["contract"],
+        status=row["status"],
+        record_json=row["record_json"],
+        wt_baseline=row["wt_baseline"],
+        source_repo=row["source_repo"],
+        worktree_path=None,
+    )
+
+
+def _nested_descendant_has_commits(
+    ledger: Any,
+    *,
+    parent_dispatch_id: str,
+    seen: set[str],
+    depth: int,
+) -> bool:
+    if depth >= _MAX_NEST_WALK or parent_dispatch_id in seen:
+        return False
+    seen.add(parent_dispatch_id)
+    child_ids = ledger.list_nested_children(parent_dispatch_id=parent_dispatch_id)
     if not child_ids:
         return False
     with ledger._connect() as conn:
         for child_id in child_ids:
-            # worktree_path is a record_json field, not a ledger column.
-            # Selecting it raises OperationalError and hides commits_ahead.
             row = conn.execute(
                 "SELECT dispatch_id, contract, status, record_json, wt_baseline, "
                 "source_repo FROM cursor_sdk_dispatches "
@@ -190,17 +211,46 @@ def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
             ).fetchone()
             if row is None:
                 continue
-            if _nested_child_has_commits(
-                dispatch_id=str(row["dispatch_id"]),
-                contract=row["contract"],
-                status=row["status"],
-                record_json=row["record_json"],
-                wt_baseline=row["wt_baseline"],
-                source_repo=row["source_repo"],
-                worktree_path=None,
+            if _row_has_commits(row):
+                return True
+            if _nested_descendant_has_commits(
+                ledger,
+                parent_dispatch_id=str(row["dispatch_id"]),
+                seen=seen,
+                depth=depth + 1,
             ):
                 return True
     return False
+
+
+def _resume_of_children_have_commits(ledger: Any, *, parent_dispatch_id: str) -> bool:
+    import sqlite3
+
+    try:
+        with ledger._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id, contract, status, record_json, wt_baseline, "
+                "source_repo FROM cursor_sdk_dispatches WHERE resume_of=?",
+                (parent_dispatch_id,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return False
+    for row in rows:
+        if _row_has_commits(row):
+            return True
+    return False
+
+
+def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
+    """True when a terminal nested implement child authored commits (SF1)."""
+    ledger = _ledger_for_witness()
+    if _nested_descendant_has_commits(
+        ledger, parent_dispatch_id=nest_under_dispatch_id, seen=set(), depth=0
+    ):
+        return True
+    return _resume_of_children_have_commits(
+        ledger, parent_dispatch_id=nest_under_dispatch_id
+    )
 
 
 def _dispatch_ids_on_thread(ledger: Any, thread_id: str) -> list[str]:

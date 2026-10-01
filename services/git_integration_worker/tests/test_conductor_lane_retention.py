@@ -21,6 +21,7 @@ from services.git_integration_worker.cursor_sdk_branch_terminal import (
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_lane_retention import (
     RETAINED_FOR_MISSION,
+    _retention_walk,
     closeout_stop_tokens,
     conductor_mission_open,
     lane_retention_reason,
@@ -404,9 +405,6 @@ def _run_failed_lane_settlement(
     closeout_text: str,
 ) -> list[dict]:
     """Drive the abandoned-mark branch of lane settlement without a git repo."""
-    from services.git_integration_worker.relay.closeout_plane_probe import (
-        PlaneObservation,
-    )
     from services.git_integration_worker.cursor_sdk_capture_binding import (
         CaptureBinding,
     )
@@ -420,6 +418,9 @@ def _run_failed_lane_settlement(
     from services.git_integration_worker.cursor_sdk_lane_b_commit import (
         BranchState,
         SalvageResult,
+    )
+    from services.git_integration_worker.relay.closeout_plane_probe import (
+        PlaneObservation,
     )
 
     record = _fake_lane_record(tmp_path, branch_name)
@@ -735,6 +736,136 @@ def test_lane_settlement_ledger_read_failure_skips_abandon_and_still_discharges(
     )
     assert settlement.outcome == "discharged"
     assert len(discharge_calls) == 1
+
+
+def test_reuse_thread_freeform_closeout_retains_open_conductor_lane(
+    tmp_path: Path,
+) -> None:
+    """R2a: reuse_thread limb retains when the thread's conductor mission is open."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, dispatch_id="hop-hold", contract="conductor", work_key="todo:swap")
+    _running(ledger, "hop-hold")
+    ledger.merge_record_json(
+        dispatch_id="hop-hold",
+        patch={
+            "closeout_stop_tokens": ["HOLD_MERGE"],
+            "closeout_body": "stop: HOLD_MERGE\n",
+        },
+    )
+    ledger.mark_terminal(dispatch_id="hop-hold", terminal_status="completed")
+    _admit(
+        ledger,
+        dispatch_id="free-limb",
+        contract="freeform",
+        work_key="agent-bus:reuse",
+    )
+    _running(ledger, "free-limb")
+    reason = _retention_walk(
+        dispatch_id="free-limb",
+        thread_id=_THREAD,
+        closeout_text="land_disposition: unlanded\n",
+        branch_name=_BRANCH,
+    )
+    assert reason is not None
+    assert reason.startswith("conductor_mission_open:")
+    import json
+
+    with ledger._connect() as conn:
+        raw = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("hop-hold",),
+        ).fetchone()
+    assert raw is not None
+    record = json.loads(raw["record_json"])
+    assert record.get("lane_retained_for_mission") == reason
+
+
+def test_thread_read_skips_when_latest_conductor_done() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, dispatch_id="hop-done", contract="conductor", work_key="todo:swap")
+    _running(ledger, "hop-done")
+    ledger.merge_record_json(
+        dispatch_id="hop-done",
+        patch={"closeout_stop_tokens": ["DONE"], "closeout_body": "stop: DONE\n"},
+    )
+    ledger.mark_terminal(dispatch_id="hop-done", terminal_status="completed")
+    _admit(ledger, dispatch_id="solo-free", contract="freeform", work_key="agent-bus:2")
+    _running(ledger, "solo-free")
+    assert (
+        _retention_walk(
+            dispatch_id="solo-free",
+            thread_id=_THREAD,
+            closeout_text="land_disposition: discard\n",
+            branch_name=_BRANCH,
+        )
+        is None
+    )
+    import json
+
+    with ledger._connect() as conn:
+        raw = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("hop-done",),
+        ).fetchone()
+    assert raw is not None
+    assert "lane_retained_for_mission" not in json.loads(raw["record_json"])
+
+
+def test_thread_read_none_when_no_conductor_on_thread(
+    tmp_path: Path, discharge_calls: list[dict]
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, dispatch_id="solo-only", contract="freeform", work_key="agent-bus:3")
+    _running(ledger, "solo-only")
+    assert (
+        _retention_walk(
+            dispatch_id="solo-only",
+            thread_id=_THREAD,
+            closeout_text="land_disposition: discard\n",
+            branch_name=_BRANCH,
+        )
+        is None
+    )
+
+
+def test_row_hop_then_done_hop_does_not_retain_branch() -> None:
+    """R2a N1: hop-2 DONE must not re-mark hop-1 ROW_HOP retention."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, dispatch_id="hop-1", contract="conductor", work_key="todo:swap")
+    _running(ledger, "hop-1")
+    ledger.merge_record_json(
+        dispatch_id="hop-1",
+        patch={
+            "closeout_stop_tokens": ["ROW_HOP"],
+            "closeout_body": "stop: ROW_HOP\nhop_seq: 1\n",
+        },
+    )
+    ledger.mark_terminal(dispatch_id="hop-1", terminal_status="completed")
+    _admit(ledger, dispatch_id="hop-2", contract="conductor", work_key="todo:swap")
+    _running(ledger, "hop-2")
+    ledger.merge_record_json(
+        dispatch_id="hop-2",
+        patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    assert (
+        _retention_walk(
+            dispatch_id="hop-2",
+            thread_id=_THREAD,
+            closeout_text=None,
+            branch_name=_BRANCH,
+        )
+        is None
+    )
+    import json
+
+    with ledger._connect() as conn:
+        raw = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("hop-1",),
+        ).fetchone()
+    assert raw is not None
+    assert "lane_retained_for_mission" not in json.loads(raw["record_json"])
+    assert get_disposition(branch_name=_BRANCH) is None
 
 
 def test_packet_reference_forbids_land_disposition_before_done() -> None:

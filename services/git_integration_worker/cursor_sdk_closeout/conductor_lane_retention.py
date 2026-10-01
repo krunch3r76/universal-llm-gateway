@@ -56,6 +56,43 @@ class _LedgerReadError(Exception):
     """
 
 
+def _load_latest_terminal_conductor_on_thread(
+    thread_id: str,
+) -> dict[str, Any] | None:
+    """Latest terminal conductor row on one worker thread (hop_seq, then terminal time)."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        hop_fields_from_record_json,
+    )
+    from services.git_integration_worker.cursor_sdk_park import _terminal_epoch
+
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches "
+            "WHERE thread_id=? AND status IN ('completed','failed','cancelled')",
+            (thread_id,),
+        ).fetchall()
+    best: dict[str, Any] | None = None
+    best_seq = -1
+    best_ts = -1.0
+    for row in rows:
+        mapped = {k: row[k] for k in row.keys()}
+        if not is_conductor_dispatch_row(mapped):
+            continue
+        hop_fields = hop_fields_from_record_json(str(mapped.get("record_json") or ""))
+        hop_seq = hop_fields.get("hop_seq")
+        seq_i = int(hop_seq) if isinstance(hop_seq, int) else 0
+        ts = _terminal_epoch(mapped) or 0.0
+        if seq_i > best_seq or (seq_i == best_seq and ts >= best_ts):
+            best = mapped
+            best_seq = seq_i
+            best_ts = ts
+    return best
+
+
 def _load_row(dispatch_id: str) -> dict[str, Any] | None:
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
@@ -268,6 +305,31 @@ def _retention_walk(
             )
             return nested
         parent_id = str(_record(parent).get("nest_under") or "").strip()
+    if is_conductor_dispatch_row(row):
+        return None
+    thread_id = str(row.get("thread_id") or "").strip()
+    if not thread_id:
+        return None
+    try:
+        conductor_row = _load_latest_terminal_conductor_on_thread(thread_id)
+    except Exception as exc:  # noqa: BLE001 — same posture as _load_row
+        logger.warning(
+            "lane retention: thread conductor read failed thread=%s err=%s",
+            thread_id,
+            exc,
+        )
+        raise _LedgerReadError from exc
+    if conductor_row is None:
+        return None
+    reason = conductor_mission_open(conductor_row, closeout_text=None)
+    if reason and _branch_is_row_lane(conductor_row, branch_name):
+        conductor_id = str(conductor_row.get("dispatch_id") or "")
+        _persist_retained_marker(
+            dispatch_id=conductor_id,
+            branch_name=branch_name or "",
+            reason=reason,
+        )
+        return reason
     return None
 
 

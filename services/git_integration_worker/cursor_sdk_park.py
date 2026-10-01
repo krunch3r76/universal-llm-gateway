@@ -357,7 +357,7 @@ def conductor_park_harvest_continue_candidates(
     )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
         _HOP_PARK_HARVEST_CONTINUED_KEY,
-        _HOP_PARK_HARVEST_FIRED_KEY,
+        harvest_owed_at_terminal,
     )
 
     candidates: list[str] = []
@@ -381,7 +381,7 @@ def conductor_park_harvest_continue_candidates(
                 rec = {}
             if not isinstance(rec, dict):
                 rec = {}
-            if not rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
+            if not harvest_owed_at_terminal(mapped):
                 continue
             if rec.get(_HOP_PARK_HARVEST_CONTINUED_KEY):
                 continue

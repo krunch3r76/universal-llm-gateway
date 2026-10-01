@@ -163,17 +163,19 @@ def _parse_json_closeout_envelope(body: str) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return None
     settled = str(data.get("work_outcome") or data.get("status") or "").lower()
-    landed_sha = ""
-    evidence = data.get("evidence_uris")
-    if isinstance(evidence, dict):
-        refs = evidence.get("git_refs") or []
-        if isinstance(refs, list) and refs:
-            landed_sha = str(refs[0]).lower()
+    disposition = _land_disposition_from_envelope(data)
+    landed_sha = "NOT landed@local-master"
+    if disposition == "landed":
+        evidence = data.get("evidence_uris")
+        if isinstance(evidence, dict):
+            refs = evidence.get("git_refs") or []
+            if isinstance(refs, list) and refs:
+                landed_sha = str(refs[0]).lower()
     parsed: dict[str, Any] = {
         "settled": settled,
         "landed": landed_sha,
         "next": "",
-        "land_disposition": _land_disposition_from_envelope(data),
+        "land_disposition": disposition,
     }
     reason = str(data.get("degraded_reason") or "")
     summary = str(data.get("summary") or "")

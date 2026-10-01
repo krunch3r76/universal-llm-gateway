@@ -168,26 +168,158 @@ def test_nested_implement_has_commits_true_for_mechanical(monkeypatch) -> None:
         )
 
 
-def _init_ledger(path: Path, rows: list[tuple]) -> None:
+def _init_ledger(path: Path, rows: list[tuple], *, with_resume_of: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
-    conn.execute(
-        """CREATE TABLE cursor_sdk_dispatches (
-            dispatch_id TEXT PRIMARY KEY,
-            contract TEXT,
-            status TEXT,
-            record_json TEXT,
-            wt_baseline TEXT,
-            source_repo TEXT,
-            thread_id TEXT
-        )"""
+    cols = (
+        "dispatch_id TEXT PRIMARY KEY, contract TEXT, status TEXT, record_json TEXT, "
+        "wt_baseline TEXT, source_repo TEXT, thread_id TEXT"
     )
-    conn.executemany(
-        "INSERT INTO cursor_sdk_dispatches VALUES (?,?,?,?,?,?,?)",
-        rows,
-    )
+    if with_resume_of:
+        cols += ", resume_of TEXT"
+    conn.execute(f"CREATE TABLE cursor_sdk_dispatches ({cols})")
+    if rows:
+        placeholders = ", ".join("?" for _ in rows[0])
+        conn.executemany(
+            f"INSERT INTO cursor_sdk_dispatches VALUES ({placeholders})",
+            rows,
+        )
     conn.commit()
     conn.close()
+
+
+def _commits_record(nest_under: str) -> str:
+    return json.dumps(
+        {
+            "nest_under": nest_under,
+            "closeout_body": '{"status":"complete","commits_ahead":1}',
+        }
+    )
+
+
+@pytest.mark.parametrize("contract", ["pure-mechanical", "mechanical"])
+def test_fold_counts_pure_mechanical_nested_child(
+    tmp_path, monkeypatch, contract: str
+) -> None:
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "child-fold",
+                contract,
+                "completed",
+                _commits_record("parent-fold"),
+                json.dumps({"admit_head": "deadbeef"}),
+                None,
+                "13998",
+            )
+        ],
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "scratch"))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    assert nested_implement_has_commits(nest_under_dispatch_id="parent-fold") is True
+
+
+@pytest.mark.parametrize("contract", ["none", "freeform"])
+def test_fold_counts_freeform_none_nested_child(
+    tmp_path, monkeypatch, contract: str
+) -> None:
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "child-fold",
+                contract,
+                "completed",
+                _commits_record("parent-fold"),
+                json.dumps({"admit_head": "deadbeef"}),
+                None,
+                "13998",
+            )
+        ],
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "scratch"))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    assert nested_implement_has_commits(nest_under_dispatch_id="parent-fold") is True
+
+
+def test_fold_counts_nested_grandchild_commits(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "mid-fold",
+                "implement",
+                "completed",
+                json.dumps({"nest_under": "parent-fold"}),
+                None,
+                None,
+                "13998",
+            ),
+            (
+                "grand-fold",
+                "implement",
+                "completed",
+                _commits_record("mid-fold"),
+                json.dumps({"admit_head": "deadbeef"}),
+                None,
+                "13998",
+            ),
+        ],
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "scratch"))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    assert nested_implement_has_commits(nest_under_dispatch_id="parent-fold") is True
+
+
+def test_fold_counts_resume_of_child_commits(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "resume-child",
+                "none",
+                "completed",
+                json.dumps(
+                    {
+                        "closeout_body": '{"status":"complete","commits_ahead":2}',
+                    }
+                ),
+                json.dumps({"admit_head": "deadbeef"}),
+                None,
+                "13998",
+                "parent-fold",
+            )
+        ],
+        with_resume_of=True,
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "scratch"))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    assert nested_implement_has_commits(nest_under_dispatch_id="parent-fold") is True
 
 
 def test_nested_implement_reads_production_ledger_when_data_dir_differs(
