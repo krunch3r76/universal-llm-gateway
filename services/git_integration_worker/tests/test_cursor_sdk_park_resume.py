@@ -211,6 +211,44 @@ def _row(dispatch_id: str) -> dict[str, Any] | None:
     return {k: row[k] for k in row.keys()} if row is not None else None
 
 
+def _admit_on_key(
+    req: CursorDispatchRequest,
+    *,
+    work_key: str,
+    caller_agent: str = "cursor",
+    contract: str = "implement",
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=caller_agent,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="m",
+        ),
+        contract=contract,
+        source_repo=str(load_config().source_repo),
+        lease_key=f"lease-{req.dispatch_id}",
+        work_key=work_key,
+        identity_class="declared",
+    )
+
+
+def _mark_completed(dispatch_id: str) -> None:
+    """Drop a child out of the active-status set so only the park can hold the key."""
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='completed', "
+            "terminal_status='completed', terminal_at=? WHERE dispatch_id=?",
+            (datetime.now(UTC).isoformat(), dispatch_id),
+        )
+
+
 # ------------------------------------------------------------------ AC-SR-7
 
 
@@ -454,6 +492,101 @@ def test_open_park_row_reserves_work_key_but_child_is_exempt(tmp_path: Path) -> 
         )
         is None
     )
+
+
+def test_hand_resume_of_open_park_releases_work_key(tmp_path: Path) -> None:
+    """A caller ``resume_of`` of an open park closes the work-key hold.
+
+    GIW auto-resume stamps ``park_resumed_by`` after admit. A hand admit
+    (web-anthropic ``resume_of``) did not, so the cancelled parent stayed the
+    holder and a later plain admit 409'd until ``cancel_discard``.
+    """
+    _seed_parked("park-a", thread_id="7100", tmp_path=tmp_path, work_key=_WORK_KEY)
+    assert _row("park-a")["status"] == "cancelled"
+    assert _row("park-a")["park_resumed_by"] is None
+    hand = CursorDispatchRequest(
+        thread_id="7101",
+        model="cursor/composer-2.5",
+        dispatch_id="hand-b",
+        execution_id="exec-hand-b",
+        caller_agent="web-anthropic",
+        message="hand resume of the parked lineage",
+        handoff_contract="implement",
+        resume_of="park-a",
+    )
+    _admit_on_key(hand, work_key=_WORK_KEY, caller_agent="web-anthropic")
+    assert _row("hand-b")["resume_of"] == "park-a"
+    _mark_completed("hand-b")
+    plain = CursorDispatchRequest(
+        thread_id="7102",
+        model="cursor/composer-2.5",
+        dispatch_id="plain-c",
+        execution_id="exec-plain-c",
+        message="plain admit after the park was resumed",
+        handoff_contract="implement",
+    )
+    _admit_on_key(plain, work_key=_WORK_KEY)
+    assert _row("park-a")["park_resumed_by"] == "hand-b"
+    assert _row("plain-c") is not None
+
+
+def test_peer_ignores_park_already_named_by_resume_of(tmp_path: Path) -> None:
+    """A park row some child already resumes is not the work-key holder.
+
+    Historical rows can have ``resume_of`` set and ``park_resumed_by`` still
+    NULL (the stamp lived only on the GIW path). The peer predicate has to
+    ignore that parent even when the column was never written.
+    """
+    _seed_parked("park-old", thread_id="7110", tmp_path=tmp_path, work_key=_WORK_KEY)
+    prior = CursorDispatchRequest(
+        thread_id="7111",
+        model="cursor/composer-2.5",
+        dispatch_id="prior-child",
+        execution_id="exec-prior-child",
+        caller_agent="web-anthropic",
+        message="resume that never stamped park_resumed_by",
+        handoff_contract="implement",
+        resume_of="park-old",
+    )
+    _admit_on_key(prior, work_key=_WORK_KEY, caller_agent="web-anthropic")
+    _mark_completed("prior-child")
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_resumed_by=NULL "
+            "WHERE dispatch_id='park-old'"
+        )
+    assert _row("park-old")["park_resumed_by"] is None
+    assert _row("prior-child")["resume_of"] == "park-old"
+    plain = CursorDispatchRequest(
+        thread_id="7112",
+        model="cursor/composer-2.5",
+        dispatch_id="plain-after",
+        execution_id="exec-plain-after",
+        message="plain admit must not see the resumed park as holder",
+        handoff_contract="implement",
+    )
+    _admit_on_key(plain, work_key=_WORK_KEY)
+    assert _row("plain-after") is not None
+
+
+def test_giw_park_resume_admit_leaves_stamp_to_mark_park_resumed(
+    tmp_path: Path,
+) -> None:
+    """GIW auto-resume still stamps only after its route returns success.
+
+    ``ledger.admit`` of a ``giw_park_resume`` child must not write
+    ``park_resumed_by``. A post-admit refusal (drain) would otherwise close
+    the park onto a child the route did not accept.
+    """
+    _seed_parked("p-giw", thread_id="7120", tmp_path=tmp_path, work_key=_WORK_KEY)
+    child = build_park_resume_request(
+        load_park_row(dispatch_id="p-giw"), attempt=1, code_version="v"
+    )
+    assert child.admitted_via == "giw_park_resume"
+    _admit_on_key(child, work_key=_WORK_KEY, caller_agent=child.caller_agent or "cursor")
+    assert _row(child.dispatch_id) is not None
+    assert _row(child.dispatch_id)["resume_of"] == "p-giw"
+    assert _row("p-giw")["park_resumed_by"] is None
 
 
 def test_cancel_discard_does_not_reserve_the_work_key(tmp_path: Path) -> None:
