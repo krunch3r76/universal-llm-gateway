@@ -317,11 +317,13 @@ def test_bound_loops_only_in_start_bound_loops() -> None:
             for handler in try_node.handlers:
                 assert _start_bound_loops_calls(handler) == []
 
-    park = methods["_park_for_handover"]
-    assert _bound_loops_in_same_try_as_server_start(park), (
-        "_park_for_handover must call _start_bound_loops only inside the try "
-        "that awaits server.start()"
-    )
+        assert _start_bound_loops_calls(fn_node), (
+            f"{fn_name} must call _start_bound_loops at least once"
+        )
+        assert _bound_loops_in_same_try_as_server_start(fn_node), (
+            f"{fn_name} must call _start_bound_loops only inside the try "
+            "that awaits server.start()"
+        )
 
 
 @pytest.mark.offline

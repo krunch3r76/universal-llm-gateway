@@ -27,8 +27,11 @@ def test_open_intent_after_arm_refuses_before_quit(tmp_path: Path) -> None:
     record_path = tmp_path / "manage.armed.json"
     tmux_log: list[list[str]] = []
     killed_pids: list[int] = []
+    manage_calls: list[str] = []
+
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
+        manage_calls.append(method)
         if method == "whoami":
             return {
                 "pid": 9,
@@ -49,6 +52,8 @@ def test_open_intent_after_arm_refuses_before_quit(tmp_path: Path) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -104,6 +109,8 @@ def test_open_intent_after_arm_refuses_before_quit(tmp_path: Path) -> None:
     assert os.getpid() in killed_pids
     assert read_armed_record(record_path) is None
     assert manage_call("whoami")["pid"] == before_pid
+    assert "charter_resume" in manage_calls
+    assert manage_calls.index("charter_resume") > manage_calls.index("charter_pause")
 
 
 @pytest.mark.offline
@@ -112,9 +119,11 @@ def test_start_not_proven_refuses_without_quit(tmp_path: Path) -> None:
     record_path = tmp_path / "manage.armed.json"
     tmux_log: list[list[str]] = []
     before_pid = 9
+    manage_calls: list[str] = []
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
+        manage_calls.append(method)
         if method == "whoami":
             return {
                 "pid": before_pid,
@@ -135,6 +144,8 @@ def test_start_not_proven_refuses_without_quit(tmp_path: Path) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -177,6 +188,8 @@ def test_start_not_proven_refuses_without_quit(tmp_path: Path) -> None:
     assert manage_call("whoami")["pid"] == before_pid
     assert elapsed < 5.0
     assert result.reason != "checks_passed_stopped_before_quit"
+    assert "charter_resume" in manage_calls
+    assert manage_calls.index("charter_resume") > manage_calls.index("charter_pause")
 
 
 @pytest.mark.offline
@@ -186,9 +199,11 @@ def test_pre_quit_busy_inflight_refuses(tmp_path: Path) -> None:
     record_path = tmp_path / "manage.armed.json"
     tmux_log: list[list[str]] = []
     killed_pids: list[int] = []
+    manage_calls: list[str] = []
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
+        manage_calls.append(method)
         if method == "whoami":
             return {
                 "pid": 9,
@@ -211,6 +226,8 @@ def test_pre_quit_busy_inflight_refuses(tmp_path: Path) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -251,6 +268,8 @@ def test_pre_quit_busy_inflight_refuses(tmp_path: Path) -> None:
         c[:2] == ["tmux", "send-keys"] and len(c) > 4 and c[4] == "q"
         for c in tmux_log
     )
+    assert "charter_resume" in manage_calls
+    assert manage_calls.index("charter_resume") > manage_calls.index("charter_pause")
 
 
 @pytest.mark.offline
