@@ -186,7 +186,11 @@ def test_crashed_conductor_hop_retains_lane_for_resume(
 def test_nested_child_under_open_conductor_retains_lane(
     tmp_path: Path, discharge_calls: list[dict]
 ) -> None:
-    """13713 hop 3: a nested limb that ends badly must not reset the shared lane."""
+    """13713 hop 3: a nested limb that ends badly must not reset the shared lane.
+
+    The limb runs on its own worker thread (13718 under 13713 in the specimen);
+    a second top-level admit on the parent's thread is refused by design.
+    """
     ledger = CursorDispatchLedger.instance()
     _admit(ledger, dispatch_id="hop-3", contract="conductor", work_key="todo:swap")
     _admit(
@@ -194,6 +198,7 @@ def test_nested_child_under_open_conductor_retains_lane(
         dispatch_id="limb-r3",
         contract="pure-mechanical",
         work_key="packet:swap-r3",
+        thread_id="13718",
         lease_key="/repo-limb",
     )
     ledger.merge_record_json(dispatch_id="limb-r3", patch={"nest_under": "hop-3"})
