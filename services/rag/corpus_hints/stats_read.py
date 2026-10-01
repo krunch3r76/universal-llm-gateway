@@ -7,11 +7,14 @@ the process serves nothing else for the duration — about 60s on the live
 index. ``GET /scopes`` then misses its 5s client timeout and Stargate's
 passthrough returns 503.
 
-Reads here open a read-only connection and aggregate once per key prefix.
-Scope membership is applied in Python with the same ASCII-nocase prefix
-match as SQLite ``LIKE prefix || '%'`` (``%`` and ``_`` inside a prefix stay
-wildcards). Callers run this function via ``asyncio.to_thread`` so the event
-loop can keep serving ``/scopes``.
+Reads here open a read-only connection and aggregate once per key prefix,
+inside one read transaction so the counts are a single snapshot. When
+``only_scope`` is set, the term scan is restricted to that scope's source
+prefixes instead of the whole corpus. Scope membership uses the same
+ASCII-nocase prefix match as SQLite ``LIKE prefix || '%'`` (``%`` and ``_``
+inside a prefix stay wildcards; ``%`` also matches newlines). Callers run
+this function via ``asyncio.to_thread`` so the event loop can keep serving
+``/scopes``.
 """
 
 from __future__ import annotations
@@ -61,10 +64,12 @@ def read_corpus_hint_stats(
     which is the fallback when the caller has no scope config.
     """
     uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True)
+    conn = sqlite3.connect(uri, uri=True, isolation_level=None)
     try:
         conn.execute("PRAGMA query_only=ON")
         conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        # One read transaction: WAL gives a stable snapshot across the statements.
+        conn.execute("BEGIN")
         total_chunks = int(
             conn.execute(
                 "SELECT COUNT(DISTINCT chunk_id) FROM properties"
@@ -97,6 +102,7 @@ def read_corpus_hint_stats(
             scope_doc_counts=doc_counts,
         )
     finally:
+        conn.rollback()
         conn.close()
 
 
@@ -110,13 +116,19 @@ def _terms_by_scope_column(
     )
     for key_prefix in key_prefixes:
         prefix_len = len(key_prefix) + 1
+        scope_sql = ""
+        scope_params: tuple[str, ...] = ()
+        if only_scope is not None:
+            scope_sql = " AND scope = ?"
+            scope_params = (only_scope,)
         rows = conn.execute(
             "SELECT scope, substr(key, ?),"
             " COUNT(DISTINCT chunk_id),"
             " COUNT(DISTINCT CASE WHEN source != '' THEN source END)"
             " FROM properties WHERE key LIKE ?"
+            f"{scope_sql}"
             " GROUP BY scope, substr(key, ?)",
-            (prefix_len, f"{key_prefix}%", prefix_len),
+            (prefix_len, f"{key_prefix}%", *scope_params, prefix_len),
         )
         for scope_name, term, chunk_count, doc_count in rows:
             if only_scope is not None and scope_name != only_scope:
@@ -138,16 +150,16 @@ def _terms_by_source_prefix(
     dict[str, dict[str, list[tuple[str, int, int]]]],
     dict[str, int],
 ]:
-    sources = [
-        str(row[0])
-        for row in conn.execute(
-            "SELECT DISTINCT source FROM properties WHERE source != ''"
-        )
-    ]
+    source_limit: list[str] | None = None
+    if only_scope is not None:
+        source_limit = list(configured_scopes.get(only_scope) or [])
+    sources = _distinct_sources(conn, source_limit)
     folded_sources = [(_ascii_lower(source), source) for source in sources]
     per_prefix: dict[str, dict[str, dict[str, int]]] = {}
     for key_prefix in key_prefixes:
-        per_prefix[key_prefix] = _chunk_counts_by_source(conn, key_prefix)
+        per_prefix[key_prefix] = _chunk_counts_by_source(
+            conn, key_prefix, source_limit
+        )
 
     scope_terms: dict[str, dict[str, list[tuple[str, int, int]]]] = {}
     scope_doc_counts: dict[str, int] = {}
@@ -171,22 +183,52 @@ def _terms_by_source_prefix(
     return scope_terms, scope_doc_counts
 
 
+def _like_clause(prefixes: list[str]) -> tuple[str, tuple[str, ...]]:
+    """SQL fragment matching SQLite ``source LIKE prefix || '%'`` for each prefix."""
+    clause = " OR ".join("source LIKE ?" for _ in prefixes)
+    params = tuple(f"{prefix}%" for prefix in prefixes)
+    return f"({clause})", params
+
+
+def _distinct_sources(
+    conn: sqlite3.Connection, source_prefixes: list[str] | None
+) -> list[str]:
+    if source_prefixes is not None and not source_prefixes:
+        return []
+    sql = "SELECT DISTINCT source FROM properties WHERE source != ''"
+    params: tuple[str, ...] = ()
+    if source_prefixes is not None:
+        clause, params = _like_clause(source_prefixes)
+        sql = f"{sql} AND {clause}"
+    return [str(row[0]) for row in conn.execute(sql, params)]
+
+
 def _chunk_counts_by_source(
-    conn: sqlite3.Connection, key_prefix: str
+    conn: sqlite3.Connection,
+    key_prefix: str,
+    source_prefixes: list[str] | None = None,
 ) -> dict[str, dict[str, int]]:
     """Map source → term → distinct chunk count for one key prefix.
 
     A ``(key, chunk_id)`` row has one source, so summing these per-source
     counts equals ``COUNT(DISTINCT chunk_id)`` across sources.
     """
+    if source_prefixes is not None and not source_prefixes:
+        return {}
     prefix_len = len(key_prefix) + 1
-    rows = conn.execute(
+    sql = (
         "SELECT source, substr(key, ?), COUNT(DISTINCT chunk_id)"
         " FROM properties"
         " WHERE source != '' AND key LIKE ?"
-        " GROUP BY source, substr(key, ?)",
-        (prefix_len, f"{key_prefix}%", prefix_len),
     )
+    params: tuple[object, ...] = (prefix_len, f"{key_prefix}%")
+    if source_prefixes is not None:
+        clause, like_params = _like_clause(source_prefixes)
+        sql = f"{sql} AND {clause}"
+        params = (*params, *like_params)
+    sql = f"{sql} GROUP BY source, substr(key, ?)"
+    params = (*params, prefix_len)
+    rows = conn.execute(sql, params)
     by_source: dict[str, dict[str, int]] = defaultdict(dict)
     for source, term, chunk_count in rows:
         if not term:
@@ -221,7 +263,8 @@ def _matcher(prefixes: list[str]) -> Callable[[str], bool]:
                 ".*" if ch == "%" else "." if ch == "_" else re.escape(ch)
                 for ch in folded
             )
-            patterns.append(re.compile(f"^{body}.*$"))
+            # DOTALL: SQLite LIKE '%' matches newlines; '.' does not.
+            patterns.append(re.compile(f"^{body}.*$", re.DOTALL))
         else:
             literals.append(folded)
 

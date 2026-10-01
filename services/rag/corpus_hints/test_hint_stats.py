@@ -10,14 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
-from services.rag.corpus_hints.stats_read import read_corpus_hint_stats
+from services.rag.corpus_hints.rebuild_gate import reset_hint_rebuild_gates
+from services.rag.corpus_hints.stats_read import CorpusHintStats, read_corpus_hint_stats
 from services.rag.corpus_hints.update import update_corpus_hints
 from services.rag.property_index import PropertyIndex
+
+
+@pytest.fixture(autouse=True)
+def _fresh_hint_rebuild_gate() -> None:
+    reset_hint_rebuild_gates()
 
 _NAME = "prop.name@@"
 _TOPIC = "prop.topic@@"
@@ -46,6 +53,9 @@ def _create_properties(path: Path) -> None:
             ("prop.other@@x", "e1", "leaf", "/data/alpha/empty.md"),
             (_NAME + "retrieval", "c9", "other", "/other/d.md"),
             (_NAME + "wid", "w1", "leaf", "/data/alpha/wild.md"),
+            (_NAME + "sibling", "s1", "leaf", "/data/alphabet/z.md"),
+            (_NAME + "newline", "n1", "leaf", "/data/alpha\n/nested.md"),
+            (_NAME + "pct", "p1", "leaf", "/data/x.md"),
         ],
     )
     conn.commit()
@@ -59,42 +69,87 @@ def _pairs(
     return set(stats_terms.get(prefix, []))
 
 
+def _legacy_like_stats(
+    db_path: Path,
+    scopes: dict[str, list[str]],
+    key_prefixes: list[str],
+) -> tuple[int, dict[str, int], dict[str, dict[str, set[tuple[str, int, int]]]]]:
+    """Per-scope LIKE counts the old property-index queries returned."""
+    conn = sqlite3.connect(db_path)
+    total_chunks = int(
+        conn.execute("SELECT COUNT(DISTINCT chunk_id) FROM properties").fetchone()[0]
+    )
+    doc_counts: dict[str, int] = {}
+    terms: dict[str, dict[str, set[tuple[str, int, int]]]] = {}
+    for scope_name, prefixes in scopes.items():
+        if not prefixes:
+            doc_counts[scope_name] = 0
+            continue
+        clause = " OR ".join("source LIKE ?" for _ in prefixes)
+        params = tuple(f"{prefix}%" for prefix in prefixes)
+        doc_counts[scope_name] = int(
+            conn.execute(
+                "SELECT COUNT(DISTINCT source) FROM properties"
+                f" WHERE source != '' AND ({clause})",
+                params,
+            ).fetchone()[0]
+        )
+        terms[scope_name] = {}
+        for key_prefix in key_prefixes:
+            prefix_len = len(key_prefix) + 1
+            rows = conn.execute(
+                "SELECT substr(key, ?), COUNT(DISTINCT chunk_id),"
+                " COUNT(DISTINCT CASE WHEN source != '' THEN source END)"
+                " FROM properties"
+                f" WHERE key LIKE ? AND source != '' AND ({clause})"
+                " GROUP BY substr(key, ?)",
+                (prefix_len, f"{key_prefix}%", *params, prefix_len),
+            )
+            terms[scope_name][key_prefix] = {
+                (str(term), int(chunks), int(docs))
+                for term, chunks, docs in rows
+                if term
+            }
+    conn.close()
+    return total_chunks, doc_counts, terms
+
+
 def test_source_prefix_stats_match_per_scope_like_counts(tmp_path: Path) -> None:
     db_path = tmp_path / "rag_metadata.db"
     _create_properties(db_path)
     scopes = {
         "alpha": ["/data/alpha"],
+        "alpha_slash": ["/data/alpha/"],
         "umbrella": ["/data/alpha", "/data/beta"],
+        "overlap": ["/data/alpha/a.md", "/data/beta"],
         "wild": ["/data/al_ha"],
+        "percent": ["/data/%"],
         "empty": [],
     }
+    prefixes = [_NAME, _TOPIC]
     stats = read_corpus_hint_stats(
         db_path,
         configured_scopes=scopes,
-        key_prefixes=[_NAME, _TOPIC],
+        key_prefixes=prefixes,
         only_scope=None,
     )
+    total_chunks, doc_counts, terms = _legacy_like_stats(db_path, scopes, prefixes)
 
-    assert stats.total_chunks == 10
-    assert stats.scope_doc_counts["alpha"] == 5
-    assert stats.scope_doc_counts["umbrella"] == 6
-    assert stats.scope_doc_counts["empty"] == 0
-    assert _pairs(stats.scope_prefix_terms["alpha"], _NAME) == {
-        ("retrieval", 4, 3),
-        ("wid", 1, 1),
-    }
-    assert _pairs(stats.scope_prefix_terms["alpha"], _TOPIC) == set()
-    assert _pairs(stats.scope_prefix_terms["umbrella"], _NAME) == {
-        ("retrieval", 4, 3),
-        ("wid", 1, 1),
-    }
-    assert _pairs(stats.scope_prefix_terms["umbrella"], _TOPIC) == {
-        ("routing", 3, 1),
-    }
-    assert ("retrieval", 4, 3) in _pairs(stats.scope_prefix_terms["wild"], _NAME)
-    assert "/other/d.md" not in {
-        term for term, _, _ in stats.scope_prefix_terms["alpha"][_NAME]
-    }
+    assert stats.total_chunks == total_chunks
+    assert stats.scope_doc_counts == doc_counts
+    for scope_name, prefix_terms in terms.items():
+        for prefix, expected in prefix_terms.items():
+            assert _pairs(stats.scope_prefix_terms[scope_name], prefix) == expected
+    alpha_names = _pairs(stats.scope_prefix_terms["alpha"], _NAME)
+    slash_names = _pairs(stats.scope_prefix_terms["alpha_slash"], _NAME)
+    assert ("sibling", 1, 1) in alpha_names
+    assert ("sibling", 1, 1) not in slash_names
+    assert ("newline", 1, 1) in alpha_names
+    assert ("newline", 1, 1) not in slash_names
+    assert ("routing", 3, 1) in _pairs(stats.scope_prefix_terms["overlap"], _TOPIC)
+    percent_names = _pairs(stats.scope_prefix_terms["percent"], _NAME)
+    assert ("sibling", 1, 1) in percent_names
+    assert ("retrieval", 4, 3) in percent_names
 
 
 def test_only_scope_skips_other_configured_scopes(tmp_path: Path) -> None:
@@ -229,3 +284,198 @@ async def test_update_writes_scored_hints_for_configured_scope(
 
     assert "retrieval" in result["alpha"]
     assert ("retrieval", _NAME) in stored
+
+
+def test_only_scope_term_sql_filters_by_source_prefix(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "rag_metadata.db"
+    _create_properties(db_path)
+    seen: list[str] = []
+    real_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(seen.append)
+        return conn
+
+    monkeypatch.setattr(
+        "services.rag.corpus_hints.stats_read.sqlite3.connect",
+        connect,
+    )
+    stats = read_corpus_hint_stats(
+        db_path,
+        configured_scopes={"alpha": ["/data/alpha"], "beta": ["/data/beta"]},
+        key_prefixes=[_NAME, _TOPIC],
+        only_scope="beta",
+    )
+    term_sql = [sql for sql in seen if "GROUP BY source" in sql]
+    assert term_sql
+    assert all("source LIKE" in sql for sql in term_sql)
+    assert set(stats.scope_prefix_terms) == {"beta"}
+
+
+def test_only_scope_column_sql_filters_by_scope(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "rag_metadata.db"
+    _create_properties(db_path)
+    seen: list[str] = []
+    real_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        conn.set_trace_callback(seen.append)
+        return conn
+
+    monkeypatch.setattr(
+        "services.rag.corpus_hints.stats_read.sqlite3.connect",
+        connect,
+    )
+    read_corpus_hint_stats(
+        db_path,
+        configured_scopes=None,
+        key_prefixes=[_NAME],
+        only_scope="leaf",
+    )
+    grouped = [sql for sql in seen if "GROUP BY scope" in sql]
+    assert grouped
+    assert all("AND scope =" in sql for sql in grouped)
+
+
+@pytest.mark.asyncio
+async def test_overlapping_rebuilds_share_one_follow_up(monkeypatch, tmp_path: Path) -> None:
+    in_flight = 0
+    peak = 0
+    calls = 0
+    only_scopes: list[str | None] = []
+    lock = threading.Lock()
+
+    def slow_read(*_args, **kwargs):
+        nonlocal in_flight, peak, calls
+        with lock:
+            calls += 1
+            only_scopes.append(kwargs.get("only_scope"))
+            in_flight += 1
+            peak = max(peak, in_flight)
+        try:
+            time.sleep(0.35)
+            return CorpusHintStats(total_chunks=0, total_docs=0)
+        finally:
+            with lock:
+                in_flight -= 1
+
+    monkeypatch.setattr(
+        "services.rag.corpus_hints.update.read_corpus_hint_stats",
+        slow_read,
+    )
+    index = _FakeIndex()
+    index.db_path = tmp_path / "hints.db"
+
+    async def rebuild() -> dict[str, str]:
+        return await update_corpus_hints(
+            index,
+            scope="alpha",
+            configured_scopes={"alpha": ["/data/alpha"], "beta": ["/data/beta"]},
+        )
+
+    leader = asyncio.create_task(rebuild())
+    await asyncio.sleep(0.05)
+    await asyncio.gather(leader, rebuild(), rebuild())
+    assert calls == 2
+    assert peak == 1
+    assert only_scopes == ["alpha", "alpha"]
+
+
+@pytest.mark.asyncio
+async def test_scoring_runs_off_the_event_loop(monkeypatch, tmp_path: Path) -> None:
+    def fast_read(*_args, **_kwargs):
+        return CorpusHintStats(
+            total_chunks=1,
+            total_docs=1,
+            scope_prefix_terms={"alpha": {_NAME: [("retrieval", 1, 1)]}},
+            scope_doc_counts={"alpha": 1},
+        )
+
+    def slow_score(*_args, **_kwargs):
+        time.sleep(0.4)
+        return 1.0
+
+    monkeypatch.setattr(
+        "services.rag.corpus_hints.update.read_corpus_hint_stats",
+        fast_read,
+    )
+    monkeypatch.setattr("services.rag.corpus_hints.update.score_term", slow_score)
+    index = _FakeIndex()
+    index.db_path = tmp_path / "score.db"
+    finished_at: list[float] = []
+
+    async def mark() -> None:
+        await asyncio.sleep(0.05)
+        finished_at.append(time.monotonic())
+
+    started = time.monotonic()
+    marker = asyncio.create_task(mark())
+    await update_corpus_hints(
+        index,
+        configured_scopes={"alpha": ["/data/alpha"]},
+        min_chunks_name=1,
+        min_docs=1,
+    )
+    await marker
+    assert finished_at
+    assert finished_at[0] - started < 0.2
+
+
+@pytest.mark.asyncio
+async def test_freshness_repair_batches_stale_scopes(monkeypatch) -> None:
+    from services.rag.config import RagConfig, ScopeDefinition, WatchDirectory
+    from services.rag.vocabulary._repair import run_scope_freshness_repair
+
+    calls: list[dict] = []
+
+    async def fake_update(_index, **kwargs) -> dict[str, str]:
+        calls.append(kwargs)
+        return {}
+
+    monkeypatch.setattr(
+        "services.rag.vocabulary._repair.update_corpus_hints",
+        fake_update,
+    )
+
+    class _Index:
+        def has_scope_vocabulary(self, _scope: str) -> bool:
+            return True
+
+        async def stamp_watermark(self, _step: str) -> None:
+            return None
+
+    config = RagConfig(
+        watch_directories=[WatchDirectory(path="/data")],
+        scopes={
+            "alpha": ScopeDefinition(prefixes=["/data/alpha"], vocab_mode="none"),
+            "beta": ScopeDefinition(prefixes=["/data/beta"], vocab_mode="none"),
+            "union": ScopeDefinition(
+                prefixes=["/data/alpha", "/data/beta"],
+                is_union=True,
+                vocab_mode="none",
+            ),
+        },
+    )
+    await run_scope_freshness_repair(
+        property_index=_Index(),
+        config=config,
+        stale_scopes=["alpha", "beta", "union", "missing"],
+        event_bus=None,
+        trigger="startup",
+    )
+    assert len(calls) == 1
+    assert "scope" not in calls[0]
+    assert set(calls[0]["configured_scopes"]) == {"alpha", "beta"}
+
+    calls.clear()
+    await run_scope_freshness_repair(
+        property_index=_Index(),
+        config=config,
+        stale_scopes=["beta", "union"],
+        event_bus=None,
+        trigger="startup",
+    )
+    assert len(calls) == 1
+    assert calls[0]["scope"] == "beta"
