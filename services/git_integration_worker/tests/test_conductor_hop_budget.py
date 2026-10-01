@@ -871,7 +871,9 @@ def test_budget_authority_patch_carries_scoreboard_tip() -> None:
         },
     )
     patch_body = build_budget_authority_patch(row)
-    assert patch_body["hop_scoreboard_tip"] == "ba556e0a852421f18a801f998a5f35839f7a962a"
+    assert (
+        patch_body["hop_scoreboard_tip"] == "ba556e0a852421f18a801f998a5f35839f7a962a"
+    )
 
 
 # --- mission cap: only rows that owe a hop are budgeted ---
@@ -901,7 +903,7 @@ def _chain_at_cap(ledger: CursorDispatchLedger, *, last_tokens: list[str]) -> di
 
 @pytest.mark.parametrize(
     "token",
-    ["DONE", "ROW_PINNED", "OPERATOR_GATE", "HOLD_MERGE", "CONSULT_PENDING"],
+    ["DONE", "ROW_PINNED", "OPERATOR_GATE", "HOLD_MERGE"],
 )
 def test_mission_cap_never_parks_a_designed_stop(token: str) -> None:
     """A designed stop owes no hop; the cap must not add a second lock to it.
@@ -920,6 +922,26 @@ def test_mission_cap_never_parks_a_designed_stop(token: str) -> None:
     assert verdict.ok is True
     assert verdict.park is False
     assert verdict.reason is None
+
+
+@pytest.mark.parametrize("token", ["CONSULT_PENDING", "PARKED_TRANSPORT"])
+def test_mission_cap_still_parks_continue_owed_stops(token: str) -> None:
+    """CONSULT_PENDING and PARKED_TRANSPORT admit successors, so the cap binds.
+
+    ``consult_pending_continue_owed`` and ``park_harvest_continue_owed`` are
+    the only budget check those chains get. An early exit on either token
+    drops the mission cap.
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=[token])
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({token}),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is True
+    assert verdict.ok is False
+    assert verdict.reason == _PARK_REASON_MISSION_CAP
 
 
 def test_mission_cap_still_parks_a_planned_hop_at_cap() -> None:
@@ -955,3 +977,25 @@ def test_mission_cap_skips_restart_park_rows() -> None:
     )
     assert verdict.park is False
     assert verdict.ok is True
+
+
+def test_mission_cap_counts_cancel_discard_rows() -> None:
+    """Only ``park_for_restart`` is the same hop as its resume child.
+
+    ``cancel_discard`` ended the attempt. Skipping every ``park_kind`` would
+    hide those rows from the mission cap.
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=["ROW_HOP"])
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='cancel_discard' "
+            "WHERE dispatch_id IN ('cap-1', 'cap-2')"
+        )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_MISSION_CAP

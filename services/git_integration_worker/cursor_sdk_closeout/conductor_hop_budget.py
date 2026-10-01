@@ -10,13 +10,17 @@ on every hop, which is an unpaid instrument rather than a stalled mission
 (``assertion:32411``).
 
 Budgets apply only to rows that owe a hop — a planned ``ROW_HOP`` or a crash.
-A designed stop (``DONE``, ``ROW_PINNED``, ``CONSULT_PENDING``, …) is never
-parked by a budget: it owes nothing, and a park on it is a second lock the
-operator must release by hand on top of the designed one (sixteen
+A designed stop that owes no successor (``DONE``, ``ROW_PINNED``,
+``HOLD_MERGE``, ``OPERATOR_GATE``) is never parked by a budget: a park on it
+is a second lock the operator must release by hand (sixteen
 ``hop_budget_mission_cap`` parks landed on DONE / ROW_PINNED / OPERATOR_GATE
-rows in the week to 2026-10-01, each paging). The mission cap counts hop
-attempts, not substrate churn: a row GIW parked for a service restart is the
-same hop as its resume child.
+rows in the week to 2026-10-01, each paging). ``CONSULT_PENDING`` and
+``PARKED_TRANSPORT`` do admit successors (``consult_pending_continue_owed``,
+``park_harvest_continue_owed``), and those chains' only budget check is this
+function, so the mission cap still applies. The mission cap counts hop
+attempts, not substrate churn: a row GIW parked for a service restart
+(``park_for_restart`` only) is the same hop as its resume child.
+``cancel_discard`` is a finished attempt and still counts.
 """
 
 from __future__ import annotations
@@ -42,11 +46,15 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     signature_can_prove_loop,
     signatures_share_crash_row,
 )
+from services.git_integration_worker.cursor_sdk_park_ledger import PARK_KIND_RESTART
 
 logger = get_logger(__name__)
 
 HOP_PARKED_KEY = "hop_parked"
 HOP_PARK_REASON_KEY = "hop_park_reason"
+# Stops that owe no successor. CONSULT_PENDING and PARKED_TRANSPORT are absent
+# on purpose: those chains still pass through the mission cap.
+_CAP_EXEMPT_STOPS = frozenset({"DONE", "ROW_PINNED", "HOLD_MERGE", "OPERATOR_GATE"})
 HOP_LAST_TERMINAL_AT_KEY = "hop_last_terminal_at"
 
 _DEFAULT_CRASH_CAP = 3
@@ -219,13 +227,14 @@ def _no_progress_verdict(
 def count_hop_attempts(chain: list[dict[str, Any]]) -> int:
     """Terminal rows that were real hop attempts, for the mission cap.
 
-    A row GIW parked for a service restart (``park_kind`` set) was ended by the
-    substrate, not by the mission, and its resume child is the same hop
-    continued. Counting both charges every restart against the cap twice
-    (worker 13618: six of fifteen rows were restart parks), so parked parents
-    are skipped. Rows with no ``park_kind`` column read as attempts.
+    A row GIW parked for a service restart (``park_kind=park_for_restart``)
+    was ended by the substrate, not by the mission, and its resume child is
+    the same hop continued. Counting both charges every restart against the
+    cap twice (worker 13618: six of fifteen rows were restart parks), so only
+    those parents are skipped. ``cancel_discard`` and any other ``park_kind``
+    are finished attempts. A missing ``park_kind`` reads as an attempt.
     """
-    return sum(1 for prior in chain if not prior.get("park_kind"))
+    return sum(1 for prior in chain if prior.get("park_kind") != PARK_KIND_RESTART)
 
 
 def evaluate_hop_budget(
@@ -237,11 +246,12 @@ def evaluate_hop_budget(
     """Return whether the reactor may admit a successor (bind §2.6.6).
 
     Order matters: an already-parked row stays refused; a designed stop that
-    is not a hop (``DONE``, ``ROW_PINNED``, ``CONSULT_PENDING``, …) owes no
-    successor and is never parked by a budget; only then do the mission cap,
-    the no-progress verdict (planned ``ROW_HOP``) and the crash cap apply.
-    The watchdog calls this before ``hop_owed``, so a budget park here on a
-    designed stop would page and lock a mission that is merely waiting.
+    owes no successor (``DONE``, ``ROW_PINNED``, ``HOLD_MERGE``,
+    ``OPERATOR_GATE``) is never parked by a budget; ``CONSULT_PENDING`` and
+    ``PARKED_TRANSPORT`` fall through to the mission cap. Only then do the
+    no-progress verdict (planned ``ROW_HOP``) and the crash cap apply.
+    The watchdog calls this before ``hop_owed``, so a budget park on a
+    no-successor stop would page and lock a mission that is merely waiting.
     """
     cfg = config or load_hop_budget_config()
     work_key = str(row.get("work_key") or "")
@@ -257,7 +267,8 @@ def evaluate_hop_budget(
         )
 
     planned = _planned_closeout(row, closeout_tokens=closeout_tokens)
-    if not planned and closeout_tokens & STOP_TOKENS:
+    # Continue-owed stops (CONSULT_PENDING, PARKED_TRANSPORT) stay under the cap.
+    if not planned and closeout_tokens & _CAP_EXEMPT_STOPS:
         return HopBudgetVerdict(ok=True)
 
     dispatch_id = str(row.get("dispatch_id") or "")
