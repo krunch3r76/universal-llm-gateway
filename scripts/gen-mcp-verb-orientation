@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Regenerate per-verb tools/list orientation blocks from config/mcp/verb-orientation.yaml.
+
+Single SOT: ``config/mcp/verb-orientation.yaml``. This script renders one
+block into each of the five served tool docstrings:
+
+  - ``services/mcp-server/tools/frontier.py`` — team_dispatch (owns the
+    existing ``Depth:`` line so the role-doc generator does not double-emit it)
+  - ``services/mcp-server/tools/manage.py`` — title ``Manage Services``
+  - ``services/mcp-server/tools/events.py`` — title ``Observability`` only
+    (not ``Observability Preview``)
+  - ``services/mcp-server/tools/_agent_bus_read.py`` — agent_bus_read
+  - ``services/mcp-server/tool_search.py`` — tool_search (not under tools/)
+
+``cursor_only`` slugs are fs-read lines from ``emit_workspaces_fs_read``
+(``catalog.resolve_sot``). ``shared_sync`` slugs are ``agent_skill:`` URIs.
+The verb names ``manage``, ``observability``, and ``tool_search`` are never
+emitted as skill URIs.
+
+Usage:
+  scripts/gen-mcp-verb-orientation            # rewrite docstrings in place
+  scripts/gen-mcp-verb-orientation --check    # exit non-zero on drift (CI gate)
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "libs"))
+
+from claude_bundles.catalog import load_skill_catalog  # noqa: E402
+from claude_bundles.cdp_inline_read_cue import emit_workspaces_fs_read  # noqa: E402
+
+_SOT = _REPO_ROOT / "config" / "mcp" / "verb-orientation.yaml"
+_SKILLS = _REPO_ROOT / "config" / "skills.yaml"
+
+_FORBIDDEN_SKILL_URIS = frozenset(
+    {
+        "agent_skill:manage",
+        "agent_skill:observability",
+        "agent_skill:tool_search",
+    }
+)
+
+# Insertion anchors sit on the closing docstring quote of the named tool.
+# Each pattern must match exactly once. The observability anchor is the
+# Observability example, not Observability Preview.
+_TARGETS: dict[str, tuple[Path, str]] = {
+    "team_dispatch": (
+        _REPO_ROOT / "services" / "mcp-server" / "tools" / "frontier.py",
+        r"        Depth: `agent_skill:dispatch-workflow`.*",
+    ),
+    "manage": (
+        _REPO_ROOT / "services" / "mcp-server" / "tools" / "manage.py",
+        r'        and Retry-After: 30 — retry or use wait_healthy\(service="mcp"\)\.\n',
+    ),
+    "observability": (
+        _REPO_ROOT / "services" / "mcp-server" / "tools" / "events.py",
+        r'          observability\(operation="pipeline-trace", params=\{"execution_id": "abc123"\}\)\n',
+    ),
+    "agent_bus_read": (
+        _REPO_ROOT / "services" / "mcp-server" / "tools" / "_agent_bus_read.py",
+        r"        content; it is permitted here as a read-cursor side effect\.\n",
+    ),
+    "tool_search": (
+        _REPO_ROOT / "services" / "mcp-server" / "tool_search.py",
+        r'          tool_search\(query="friction"\)\n',
+    ),
+}
+
+
+def _start(verb: str) -> str:
+    return f"        «verb-orientation:{verb}»\n"
+
+
+def _end(verb: str) -> str:
+    return f"        «/verb-orientation:{verb}»\n"
+
+
+def _load_slate() -> dict[str, dict[str, list[str]]]:
+    raw = yaml.safe_load(_SOT.read_text(encoding="utf-8")) or {}
+    verbs = raw.get("verbs")
+    if not isinstance(verbs, dict):
+        raise SystemExit("FAIL gen-mcp-verb-orientation: verbs mapping missing")
+    expected = set(_TARGETS)
+    if set(verbs) != expected:
+        raise SystemExit(
+            "FAIL gen-mcp-verb-orientation: verb keys "
+            f"{sorted(verbs)} != {sorted(expected)}"
+        )
+    slate: dict[str, dict[str, list[str]]] = {}
+    for verb, row in verbs.items():
+        if not isinstance(row, dict):
+            raise SystemExit(f"FAIL gen-mcp-verb-orientation: {verb} row is not a mapping")
+        cursor_only = row.get("cursor_only") or []
+        shared_sync = row.get("shared_sync") or []
+        if not isinstance(cursor_only, list) or not isinstance(shared_sync, list):
+            raise SystemExit(f"FAIL gen-mcp-verb-orientation: {verb} slug lists malformed")
+        slate[verb] = {
+            "cursor_only": [str(s) for s in cursor_only],
+            "shared_sync": [str(s) for s in shared_sync],
+        }
+    return slate
+
+
+def _assert_slugs_loadable(slate: dict[str, dict[str, list[str]]]) -> None:
+    catalog = load_skill_catalog(_SKILLS, repo_root=_REPO_ROOT, validate_sot=True)
+    for verb, row in slate.items():
+        for slug in row["cursor_only"] + row["shared_sync"]:
+            if slug not in catalog.entries:
+                raise SystemExit(
+                    f"FAIL gen-mcp-verb-orientation: {verb} slug {slug!r} "
+                    "is not a key under skills: in config/skills.yaml"
+                )
+            uri = f"agent_skill:{slug}"
+            if uri in _FORBIDDEN_SKILL_URIS:
+                raise SystemExit(
+                    f"FAIL gen-mcp-verb-orientation: refused skill URI {uri}"
+                )
+
+
+def _render_block(verb: str, row: dict[str, list[str]], repo_root: Path) -> str:
+    catalog = load_skill_catalog(_SKILLS, repo_root=repo_root, validate_sot=True)
+    shared = " · ".join(f"`agent_skill:{slug}`" for slug in row["shared_sync"])
+    lines = [_start(verb), f"        Depth: {shared}.\n"]
+    if row["cursor_only"]:
+        lines.append(
+            "        cursor_only (fs, not on the Customize loader):\n"
+        )
+        for slug in row["cursor_only"]:
+            sot, _label = catalog.resolve_sot(slug, repo_root)
+            fs_line = emit_workspaces_fs_read(sot, repo_root)
+            if "cursor-auto" in fs_line or "cursor_auto" in fs_line:
+                raise SystemExit(
+                    f"FAIL gen-mcp-verb-orientation: fs path for {slug} "
+                    "contains a cursor-auto token"
+                )
+            lines.append(f"        - `{slug}` — {fs_line}\n")
+    lines.append(_end(verb))
+    block = "".join(lines)
+    for forbidden in _FORBIDDEN_SKILL_URIS:
+        if forbidden in block:
+            raise SystemExit(
+                f"FAIL gen-mcp-verb-orientation: block emitted {forbidden}"
+            )
+    return block
+
+
+def _replace_marked(text: str, verb: str, block: str) -> tuple[str, int]:
+    pattern = re.compile(
+        re.escape(_start(verb)) + r".*?" + re.escape(_end(verb)),
+        re.DOTALL,
+    )
+    return pattern.subn(lambda _m: block, text, count=1)
+
+
+def _sub_once(pattern: str, repl, text: str, label: str) -> str:
+    out, n = re.subn(pattern, repl, text, count=1, flags=re.MULTILINE)
+    if n != 1:
+        raise SystemExit(
+            f"FAIL gen-mcp-verb-orientation: anchor {label!r} matched {n}x "
+            "(expected 1) — docstring line missing or reworded."
+        )
+    return out
+
+
+def _apply(text: str, verb: str, block: str, anchor: str) -> str:
+    marked, n = _replace_marked(text, verb, block)
+    if n == 1:
+        # A second unmarked Depth on team_dispatch would double-emit.
+        if verb == "team_dispatch":
+            depth_lines = [
+                line
+                for line in marked.splitlines()
+                if line.strip().startswith("Depth:")
+            ]
+            if len(depth_lines) != 1:
+                raise SystemExit(
+                    "FAIL gen-mcp-verb-orientation: frontier Depth line "
+                    f"count is {len(depth_lines)} (expected 1)"
+                )
+        return marked
+    if n != 0:
+        raise SystemExit(
+            f"FAIL gen-mcp-verb-orientation: marker {verb} matched {n}x"
+        )
+    if verb == "team_dispatch":
+        return _sub_once(anchor, lambda _m: block.rstrip("\n"), text, verb)
+    return _sub_once(anchor, lambda m: m.group(0) + block, text, verb)
+
+
+def render_all(repo_root: Path | None = None) -> dict[Path, str]:
+    """Return path → rewritten text. Does not write."""
+    root = repo_root or _REPO_ROOT
+    slate = _load_slate()
+    _assert_slugs_loadable(slate)
+    rendered: dict[Path, str] = {}
+    for verb, (path, anchor) in _TARGETS.items():
+        if not path.is_file():
+            raise SystemExit(f"FAIL gen-mcp-verb-orientation: missing {path}")
+        block = _render_block(verb, slate[verb], root)
+        original = path.read_text(encoding="utf-8")
+        rendered[path] = _apply(original, verb, block, anchor)
+    # Observability Preview must not receive the observability block.
+    events = rendered[_TARGETS["observability"][0]]
+    preview = events.split('title="Observability Preview"', 1)
+    if len(preview) != 2:
+        raise SystemExit(
+            "FAIL gen-mcp-verb-orientation: Observability Preview title missing"
+        )
+    if "«verb-orientation:observability»" in preview[1]:
+        raise SystemExit(
+            "FAIL gen-mcp-verb-orientation: observability block landed in "
+            "Observability Preview"
+        )
+    if events.count("«verb-orientation:observability»") != 1:
+        raise SystemExit(
+            "FAIL gen-mcp-verb-orientation: observability marker count "
+            f"{events.count('«verb-orientation:observability»')} != 1"
+        )
+    return rendered
+
+
+def main(check: bool) -> int:
+    try:
+        rendered = render_all()
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    drift: list[str] = []
+    for path, text in rendered.items():
+        original = path.read_text(encoding="utf-8")
+        rel = path.relative_to(_REPO_ROOT)
+        if text == original:
+            print(f"OK   {rel} — up to date")
+            continue
+        if check:
+            drift.append(str(rel))
+            print(f"DRIFT {rel} — verb orientation stale")
+        else:
+            path.write_text(text, encoding="utf-8")
+            print(f"WROTE {rel} — verb orientation regenerated")
+    if check and drift:
+        print(
+            f"\nFAIL gen-mcp-verb-orientation: {len(drift)} file(s) drifted — "
+            "run scripts/gen-mcp-verb-orientation to regenerate.",
+            file=sys.stderr,
+        )
+        return 1
+    print("\nOK gen-mcp-verb-orientation: five blocks consistent")
+    return 0
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero on drift without rewriting (CI gate mode)",
+    )
+    sys.exit(main(parser.parse_args().check))

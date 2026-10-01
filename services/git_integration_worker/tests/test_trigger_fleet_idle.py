@@ -81,7 +81,6 @@ def test_fleet_idle_unmet_defers(store: TriggerStore) -> None:
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(busy)
 
@@ -108,7 +107,6 @@ def test_fleet_idle_met_fires(store: TriggerStore) -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(idle)
 
@@ -133,7 +131,6 @@ def test_fleet_idle_memoized_once_per_pass(store: TriggerStore) -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(idle)
 
@@ -164,7 +161,6 @@ def test_rearm_on_terminal(store: TriggerStore) -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(idle)
     with patch(
@@ -195,7 +191,6 @@ def test_reconcile_row_rearms_recurring(store: TriggerStore) -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(idle)
     with patch(
@@ -246,7 +241,6 @@ def test_revoke_clears_recurrence_on_fired_row(store: TriggerStore) -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(idle)
     with patch(
@@ -298,7 +292,6 @@ def test_grace_s_holds_idle() -> None:
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     t0 = 1000.0
     assert eval_fleet_idle(snap, {"grace_s": 30}, now_monotonic=t0) is False
@@ -314,7 +307,6 @@ def test_tick_empty_queued_consults_do_not_block_default() -> None:
         dispatch_idle=True,
         tick_empty=True,
         tick_empty_strict=False,
-        cursor_auto_idle=True,
     )
     assert eval_fleet_idle(snap, {"grace_s": 0}) is True
 
@@ -326,7 +318,6 @@ def test_tick_empty_admitted_consult_blocks() -> None:
         dispatch_idle=True,
         tick_empty=False,
         tick_empty_strict=False,
-        cursor_auto_idle=True,
     )
     assert eval_fleet_idle(snap, {"grace_s": 0}) is False
 
@@ -338,7 +329,6 @@ def test_tick_empty_admitted_root_blocks() -> None:
         dispatch_idle=True,
         tick_empty=False,
         tick_empty_strict=False,
-        cursor_auto_idle=True,
     )
     assert eval_fleet_idle(snap, {"grace_s": 0}) is False
 
@@ -350,7 +340,6 @@ def test_block_on_queued_consults_restores_strict() -> None:
         dispatch_idle=True,
         tick_empty=True,
         tick_empty_strict=False,
-        cursor_auto_idle=True,
     )
     assert (
         eval_fleet_idle(snap, {"grace_s": 0, "block_on_queued_consults": True}) is False

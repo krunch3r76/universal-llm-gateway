@@ -158,7 +158,7 @@ def _code_ref_validation_with_provenance(
             "probe": "GET /health via ServiceState.check_*",
         },
         "code_ref_probe": {
-            "endpoint": "GET /api/v1/git/cursor-auto/liveness",
+            "endpoint": "GET /api/v1/git/admin/liveness",
             "observation": observation,
         },
         "note": (

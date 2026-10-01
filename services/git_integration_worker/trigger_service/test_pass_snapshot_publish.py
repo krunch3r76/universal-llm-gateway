@@ -58,7 +58,6 @@ def _busy_snapshot() -> FleetIdleSnapshot:
         verdict=FleetVerdict.BUSY,
         dispatch_idle=True,
         tick_empty=True,
-        cursor_auto_idle=True,
         cdp_lane_idle=False,
     )
 
@@ -109,7 +108,6 @@ def test_publish_failure_does_not_wedge_gate(store: TriggerStore) -> None:
         verdict=FleetVerdict.BUSY,
         dispatch_idle=False,
         tick_empty=True,
-        cursor_auto_idle=True,
     )
     reader = _StaticFleetReader(snap)
 

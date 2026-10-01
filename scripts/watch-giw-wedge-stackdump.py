@@ -43,7 +43,7 @@ from watch_giw_wedge_recover import (  # noqa: E402
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8091
 _HEALTH_PATH = "/health"
-_LIVENESS_PATH = "/api/v1/git/cursor-auto/liveness"
+_LIVENESS_PATH = "/api/v1/git/admin/liveness"
 _STACKDUMP_LOG = Path("/tmp/logs/git-integration-worker/stackdump.log")
 _WORKER_LOG = Path("/tmp/logs/git-integration-worker/git-integration-worker.log")
 _EMAIL_BRIDGE_SOCK = os.environ.get(

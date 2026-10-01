@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from claude_bundles.holder_strings import format_nest_under_cse
@@ -12,11 +11,6 @@ from services.git_integration_worker.cse_session_holders import (
     ensure_schema,
     upsert_holder,
 )
-from services.git_integration_worker.cursor_auto.gate_serialize import (
-    derive_cse_nest_under,
-)
-from services.git_integration_worker.cursor_auto.nest_parent import resolve_nest_under
-from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     NestParentNotLive,
@@ -36,46 +30,8 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLed
     return CursorDispatchLedger.instance()
 
 
-def _job(*, thread_id: str = "11667") -> AutoJob:
-    return AutoJob(
-        job_id="job-nest",
-        thread_id=thread_id,
-        turn_number=1,
-        subject="DIRECTIVE",
-        body="TYPE: DIRECTIVE\nscope: foo\n",
-        from_agent="cdp-operator-11667-mailbox",
-        to_agent="cursor-auto",
-        desired_model="cursor/composer-2.5",
-        desired_effort="high",
-        contract="implement",
-    )
 
 
-@pytest.mark.asyncio
-async def test_resolve_nest_under_auto_derives_cse_parent(
-    ledger: CursorDispatchLedger,
-) -> None:
-    with ledger._connect() as conn:
-        ensure_schema(conn)
-        upsert_holder(
-            conn,
-            chat_url=_CSE_URL,
-            registration_id="reg-n",
-            lane_thread_id="11667",
-        )
-        conn.commit()
-    gate_plan = {"action": "nest_park", "reason": "gate_at_capacity_prefer_park"}
-    client = SimpleNamespace()
-    queue = SimpleNamespace()
-    result = await resolve_nest_under(
-        _job(),
-        client=client,
-        queue=queue,
-        gate_plan=gate_plan,
-        work_bounded=True,
-        contract="implement",
-    )
-    assert result == format_nest_under_cse("cse_nest1")
 
 
 def test_admit_cse_nest_skips_sdk_park(ledger: CursorDispatchLedger) -> None:
@@ -267,13 +223,3 @@ def test_dormant_cse_valid_nest_parent(ledger: CursorDispatchLedger) -> None:
     assert row["nest_under"] == format_nest_under_cse("cse_nest1")
 
 
-def test_derive_cse_nest_under_from_lane(ledger: CursorDispatchLedger) -> None:
-    with ledger._connect() as conn:
-        ensure_schema(conn)
-        upsert_holder(
-            conn,
-            chat_url=_CSE_URL,
-            lane_thread_id="11667",
-        )
-        conn.commit()
-    assert derive_cse_nest_under(_job()) == format_nest_under_cse("cse_nest1")

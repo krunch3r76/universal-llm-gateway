@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+from services.git_integration_worker.cursor_sdk_closeout import (
+    SdkRunOutcome,
+    prepare_closeout_delivery,
+)
+from services.git_integration_worker.relay.closeout_plane_probe import (
     PlaneObservation,
     annotate_checkpoint_claim_discrepancy,
     annotate_plane_discrepancy,
@@ -27,15 +29,8 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     render_plane_headline,
     strip_plane_line,
 )
-from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+from services.git_integration_worker.relay.closeout_relay_common import (
     strip_projected_closeout_envelope,
-)
-from services.git_integration_worker.cursor_auto.closeout_tree_state import (
-    compute_closeout_tree_state,
-)
-from services.git_integration_worker.cursor_sdk_closeout import (
-    SdkRunOutcome,
-    prepare_closeout_delivery,
 )
 
 pytestmark = pytest.mark.offline
@@ -438,159 +433,14 @@ def test_qualify_checkpoint_and_deployment_additive() -> None:
     )
 
 
-def test_compute_tree_state_stranded_end_to_end(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path)
-    branch = "cursor-sdk/auto-3137b70eeaba"
-    _git(repo, "checkout", "-b", branch)
-    (repo / "x.txt").write_text("x\n", encoding="utf-8")
-    _git(repo, "add", "x.txt")
-    _git(repo, "commit", "-m", "stranded")
-    head = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "checkout", "master")
-    wrapper = _wrapper(head_sha=head, branch=branch)
-    with (
-        patch(
-            "services.git_integration_worker.cursor_auto.closeout_tree_state."
-            "compute_lane_a_checkpoint_value",
-            return_value="deferred: authored paths not yet path-explicit committed",
-        ),
-        patch(
-            "services.git_integration_worker.cursor_auto.closeout_tree_state."
-            "authored_paths_for_dispatch",
-            return_value=("x.txt",),
-        ),
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="auto-3137b70eeaba",
-            wrapper_text=wrapper,
-        )
-    assert "NOT landed@local-master" in state.plane_line
-    assert state.checkpoint.startswith("deferred@local-master:")
-    assert state.deployment_state is not None
-    assert "@local-master" in state.deployment_state
-    # no gate on complete — plane present regardless
-    assert state.plane_line.startswith("plane:")
 
 
-def test_compute_tree_state_missing_head_unknown(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path)
-    wrapper = _wrapper(head_sha=None, branch=None)
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="d-empty",
-            wrapper_text=wrapper,
-        )
-    assert state.plane_line == "plane: unknown@lane-B (capture head absent)"
-    assert state.checkpoint == "nothing_authored@local-master"
 
 
-def test_transport_death_recovers_capture_head_from_committer_ref(
-    tmp_path: Path,
-) -> None:
-    """Turn-29 shape: transport-error wrapper + existing ref by dispatch committer.
-
-    Capture JSON is absent, so the old path published ``capture head absent``.
-    The branch tip committed as ``cursor-sdk/<dispatch_id>`` must render instead.
-    """
-    repo = _init_repo(tmp_path)
-    dispatch_id = "auto-turn29dead"
-    branch = f"cursor-sdk/{dispatch_id}"
-    _git(repo, "checkout", "-b", branch)
-    (repo / "kept.txt").write_text("preserved\n", encoding="utf-8")
-    env = {
-        **os.environ,
-        "GIT_AUTHOR_NAME": f"cursor-sdk/{dispatch_id}",
-        "GIT_AUTHOR_EMAIL": f"{dispatch_id}@dispatch.git-integration-worker",
-        "GIT_COMMITTER_NAME": f"cursor-sdk/{dispatch_id}",
-        "GIT_COMMITTER_EMAIL": f"{dispatch_id}@dispatch.git-integration-worker",
-    }
-    subprocess.run(
-        ["git", "-C", str(repo), "add", "kept.txt"],
-        check=True,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", "lane work"],
-        check=True,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    head = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "checkout", "master")
-    wrapper = (
-        '```json\n{\n  "code": "transport_error",\n  "message": "bridge died"\n}\n```'
-    )
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id=dispatch_id,
-            wrapper_text=wrapper,
-        )
-    assert "capture head absent" not in state.plane_line
-    assert head[:7] in state.plane_line
-    assert "tip@lane-B" in state.plane_line
-    assert branch in state.plane_line
 
 
-def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -> None:
-    """Lane-A specimen (auto-1a46033ab0e5): tip on master + commits_ahead=0 → NOT landed.
-
-    Production Lane-A now populates commits_ahead (presence present). Zero commits is
-    measured 0 — G₂ refuses vacuous ancestry-alone bare landed@local-master.
-    """
-    repo = _init_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-    # Capture shape after PRIMARY populate: head_sha set, commits_ahead=0, no branch.
-    wrapper = _wrapper(head_sha=head, branch=None, commits_ahead=0)
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="lane-a-head",
-            wrapper_text=wrapper,
-        )
-    assert "unknown@lane-B (capture head absent)" not in state.plane_line
-    assert "NOT landed@local-master" in state.plane_line
 
 
-def test_compute_tree_state_lane_a_commits_ahead_one_reports_landed(
-    tmp_path: Path,
-) -> None:
-    """Lane-A tip on master with commits_ahead>=1 still renders bare landed."""
-    repo = _init_repo(tmp_path)
-    (repo / "lane_a_landed.txt").write_text("landed\n", encoding="utf-8")
-    _git(repo, "add", "lane_a_landed.txt")
-    _git(repo, "commit", "-m", "lane-a progress")
-    head = _git(repo, "rev-parse", "HEAD")
-    wrapper = _wrapper(head_sha=head, branch=None, commits_ahead=1)
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="committed abc1234 paths=1",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="lane-a-genuine-land",
-            wrapper_text=wrapper,
-        )
-    assert "landed@local-master" in state.plane_line
-    assert "NOT landed@local-master" not in state.plane_line
 
 
 def test_apply_landed_admit_gate_absent_renders_landed_unknown() -> None:
@@ -717,28 +567,6 @@ def test_landed_axis_parse_a1_a2_u1_u2_feed_gate_unknown() -> None:
         assert f"unknown@local-master ({reason})" in line, payload
 
 
-def test_compute_tree_state_absent_commits_ahead_renders_landed_unknown(
-    tmp_path: Path,
-) -> None:
-    """Compose arm: tip on master + key-omitted commits_ahead → unknown@local-master."""
-    repo = _init_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-    wrapper = _wrapper(head_sha=head, branch=None)  # A1 — key omitted
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="lane-a-absent-ahead",
-            wrapper_text=wrapper,
-        )
-    assert "unknown@local-master (commits_ahead absent)" in state.plane_line
-    assert "tip@lane-B" in state.plane_line
-    bare = state.plane_line.replace("unknown@local-master (commits_ahead absent)", "")
-    assert "landed@local-master" not in bare
-    assert "NOT landed@local-master" not in state.plane_line
 
 
 def test_landed_axis_unknown_skips_not_landed_discrepancy_arm() -> None:
@@ -787,75 +615,10 @@ def test_apply_landed_admit_gate_present_zero_refuses_landed() -> None:
     assert "NOT landed@local-master" in headline
 
 
-def test_vacuous_tip_on_master_commits_ahead_zero_not_landed(tmp_path: Path) -> None:
-    """G₂ vacuous positive — tip on master with commits_ahead=0 must NOT claim landed."""
-    repo = _init_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-    wrapper = _wrapper(head_sha=head, branch="cursor-sdk/auto-vacuous", commits_ahead=0)
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="auto-vacuous",
-            wrapper_text=wrapper,
-        )
-    assert "NOT landed@local-master" in state.plane_line
-    plane_body = state.plane_line.split("plane:", 1)[1]
-    assert "landed@local-master" not in plane_body.replace(
-        "NOT landed@local-master", ""
-    )
 
 
-def test_vacuous_landed_false_wrapper_still_not_landed(tmp_path: Path) -> None:
-    """Optional landed:false in wrapper does not override G₂ admit gate."""
-    repo = _init_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-    wrapper = _wrapper(
-        head_sha=head,
-        branch="cursor-sdk/auto-vacuous",
-        commits_ahead=0,
-        landed=False,
-    )
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="auto-vacuous-false",
-            wrapper_text=wrapper,
-        )
-    assert "NOT landed@local-master" in state.plane_line
 
 
-def test_genuine_land_commits_ahead_one_reports_landed(tmp_path: Path) -> None:
-    """Genuine land — branch commit merged to master with commits_ahead=1."""
-    repo = _init_repo(tmp_path)
-    branch = "cursor-sdk/auto-genuine-land"
-    _git(repo, "checkout", "-b", branch)
-    (repo / "landed.txt").write_text("landed\n", encoding="utf-8")
-    _git(repo, "add", "landed.txt")
-    _git(repo, "commit", "-m", "lane-b progress")
-    head = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "checkout", "master")
-    _git(repo, "merge", "--ff-only", branch)
-    wrapper = _wrapper(head_sha=head, branch=branch, commits_ahead=1)
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="committed abc1234 paths=1",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="auto-genuine-land",
-            wrapper_text=wrapper,
-        )
-    assert "landed@local-master" in state.plane_line
-    assert "NOT landed@local-master" not in state.plane_line
 
 
 def test_lane_b_missing_admit_head_git_refs_unions_head_sha(
@@ -944,34 +707,6 @@ def test_lane_b_missing_admit_head_git_refs_unions_head_sha(
         CursorDispatchLedger._instance = None
 
 
-def test_gitignored_only_commits_ahead_zero_plane_unknown_not_not_landed(
-    tmp_path: Path,
-) -> None:
-    """Git-unreachable-only effects: measured 0 must not project NOT landed."""
-    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
-        GIT_UNREACHABLE_REASON,
-    )
-
-    repo = _init_repo(tmp_path)
-    head = _git(repo, "rev-parse", "HEAD")
-    wrapper = _wrapper(
-        head_sha=head,
-        branch="cursor-sdk/auto-gitignored",
-        commits_ahead=0,
-        files_untracked_or_ignored=[".claude/skills/x/SKILL.md"],
-    )
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ):
-        state = compute_closeout_tree_state(
-            source_repo=repo,
-            dispatch_id="auto-gitignored",
-            wrapper_text=wrapper,
-        )
-    assert f"unknown@local-master ({GIT_UNREACHABLE_REASON})" in state.plane_line
-    assert "NOT landed@local-master" not in state.plane_line
 
 
 def test_strip_plane_line_roundtrip() -> None:

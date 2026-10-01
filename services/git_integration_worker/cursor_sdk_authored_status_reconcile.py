@@ -15,7 +15,7 @@ from typing import Any
 
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
-from services.git_integration_worker.cursor_auto.lane_a_status import (
+from services.git_integration_worker.relay.lane_a_status import (
     extract_status_claim,
 )
 

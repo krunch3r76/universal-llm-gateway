@@ -73,7 +73,7 @@ def defer_reason_and_detail_for_identity(
             ),
         )
     if persisted.before is not None:
-        from services.git_integration_worker.cursor_auto.propagation_probe import (
+        from services.git_integration_worker.relay.propagation_probe import (
             proof_identity_attestation,
         )
 

@@ -9,7 +9,6 @@ import pytest
 
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import (
-    AUTO_OMIT_CONTRACTS,
     CHECK_REVIEW_WORKFLOW,
     MECHANICAL_WORKFLOW,
     assert_workflow_registry_boot_conformance,
@@ -21,10 +20,6 @@ from implement_admission.workflow_registry import (
     render_workflow_registry_block,
     verify_workflow_registry_conformance,
     verify_workflow_registry_drift,
-)
-from services.git_integration_worker.cursor_auto.wire_map import (
-    resolve_desired_effort,
-    resolve_desired_model,
 )
 
 pytestmark = pytest.mark.offline
@@ -76,28 +71,8 @@ def test_parse_raises_on_errors() -> None:
         parse_workflow_registry({})
 
 
-@pytest.mark.parametrize("contract", sorted(AUTO_OMIT_CONTRACTS))
-def test_auto_resolves_via_workflow_slug(contract: str) -> None:
-    reg = load_workflow_registry()
-    binding = reg.workflow_for_contract(contract)
-    assert binding is not None
-    out = resolve_desired_model("auto", contract=contract, registry=reg)
-    assert out["resolved_model_id"] == binding.model
-    assert f"via workflows.{binding.slug}" in out["notes"]
 
 
-def test_falsifier_investigate_grok_implement_stays_composer() -> None:
-    policy = copy.deepcopy(load_route_policy())
-    policy["workflows"]["investigate"] = {
-        **policy["workflows"]["investigate"],
-        "model": "cursor/grok-4.7",
-    }
-    reg = parse_workflow_registry(policy)
-    inv = resolve_desired_model("auto", contract="investigate", registry=reg)
-    impl = resolve_desired_model("auto", contract="implement", registry=reg)
-    assert inv["resolved_model_id"] == "cursor/grok-4.7"
-    assert impl["resolved_model_id"] == "cursor/composer-2.5"
-    assert "via workflows.investigate" in inv["notes"]
 
 
 def _base_policy() -> dict:
@@ -237,27 +212,8 @@ def test_configured_effort_for_job_reads_table_or_none() -> None:
     assert reg.configured_effort_for_job("not-a-job") is None
 
 
-def test_contract_effort_live_defaults_match_omit_path() -> None:
-    reg = load_workflow_registry()
-    assert reg.default_effort_for_contract("investigate") == "high"
-    assert reg.default_effort_for_contract("answer") == "high"
-    out = resolve_desired_effort(None, contract="investigate", registry=reg)
-    assert out["resolved_effort"] == "high"
-    assert "via contract_effort" in out["notes"]
 
 
-def test_falsifier_contract_effort_yaml_without_wire_map_edit() -> None:
-    policy = _base_policy()
-    policy["contract_effort"]["answer"] = "high"
-    reg = parse_workflow_registry(policy)
-    out = resolve_desired_effort(None, contract="answer", registry=reg)
-    assert out["resolved_effort"] == "high"
-    assert (
-        resolve_desired_effort(None, contract="implement", registry=reg)[
-            "resolved_effort"
-        ]
-        == "medium"
-    )
 
 
 def test_render_workflow_registry_block_lists_live_slots() -> None:

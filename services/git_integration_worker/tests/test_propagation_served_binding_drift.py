@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-from openapi_mcp.codegen import ManifestCheckResult
-
-from services.git_integration_worker.cursor_auto.propagation_served_binding_drift import (
+from services.git_integration_worker.relay.propagation_served_binding_drift import (
     check_served_binding_drift,
 )
 
@@ -139,98 +136,5 @@ def test_served_binding_drift_clean_when_parity():
     assert result.warning_messages == ()
 
 
-@pytest.mark.offline
-def test_pre_commit_repo_only_skips_served_binding_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts import openapi_mcp_codegen as codegen
-
-    calls: list[str] = []
-
-    def _track(*_args, **_kwargs):
-        calls.append("served_binding_drift")
-        return ManifestCheckResult((), ())
-
-    monkeypatch.setattr(
-        codegen,
-        "_check_service_detailed",
-        lambda _s, **_k: ManifestCheckResult((), ()),
-    )
-    monkeypatch.setattr(
-        codegen,
-        "check_tier_m_manifest_coverage",
-        lambda: type(
-            "R",
-            (),
-            {"check_result": ManifestCheckResult((), ())},
-        )(),
-    )
-    from openapi_mcp import commit_snapshot as snap
-
-    from services.git_integration_worker.cursor_auto import (
-        propagation_descriptor_drift,
-        propagation_served_binding_drift,
-    )
-
-    monkeypatch.setattr(
-        snap,
-        "check_services_from_commit_tree",
-        lambda services, **_k: [(s, ManifestCheckResult((), ())) for s in services],
-    )
-    monkeypatch.setattr(
-        propagation_descriptor_drift,
-        "check_descriptor_drift",
-        lambda **_: propagation_descriptor_drift.DescriptorDriftResult((), ()),
-    )
-    monkeypatch.setattr(
-        propagation_served_binding_drift,
-        "check_served_binding_drift",
-        _track,
-    )
-    codegen.main(["--check", "--service", "all", "--repo-only"])
-    assert calls == []
 
 
-@pytest.mark.offline
-def test_fleet_check_invokes_served_binding_gate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts import openapi_mcp_codegen as codegen
-
-    calls: list[str] = []
-
-    def _track(*_args, **_kwargs):
-        calls.append("served_binding_drift")
-        return ManifestCheckResult((), ())
-
-    monkeypatch.setattr(
-        codegen,
-        "_check_service_detailed",
-        lambda _s: ManifestCheckResult((), ()),
-    )
-    monkeypatch.setattr(
-        codegen,
-        "check_tier_m_manifest_coverage",
-        lambda: type(
-            "R",
-            (),
-            {"check_result": ManifestCheckResult((), ())},
-        )(),
-    )
-    from services.git_integration_worker.cursor_auto import (
-        propagation_descriptor_drift,
-        propagation_served_binding_drift,
-    )
-
-    monkeypatch.setattr(
-        propagation_descriptor_drift,
-        "check_descriptor_drift",
-        lambda **_: propagation_descriptor_drift.DescriptorDriftResult((), ()),
-    )
-    monkeypatch.setattr(
-        propagation_served_binding_drift,
-        "check_served_binding_drift",
-        _track,
-    )
-    codegen.main(["--check", "--service", "all"])
-    assert calls == ["served_binding_drift"]

@@ -114,14 +114,14 @@ def test_defect_a_email_bridge_specimen_keeps_miss_text(
         return _Raising()
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.propagation_probe.make_sync_client",
+        "services.git_integration_worker.relay.propagation_probe.make_sync_client",
         _client,
     )
     timed = observe_code_ref_live("agent_bus", ref)
     assert timed.observation["probe_reachable"] is False
     assert timed.observation["probe_error"] == "ReadTimeout: timed out"
     assert timed.reason == "ReadTimeout: timed out"
-    from services.git_integration_worker.cursor_auto.propagation_probe import (
+    from services.git_integration_worker.relay.propagation_probe import (
         probe_process_live,
     )
 

@@ -15,28 +15,9 @@ _DEFAULT_REPLY = BusReplyResult(status_code=200, body={})
 
 # Import-bound names — patch each module that may default-construct in tests.
 CURSOR_BUS_CLIENT_PATCH_TARGETS: tuple[str, ...] = (
-    "services.git_integration_worker.cursor_auto.supersede",
-    "services.git_integration_worker.cursor_auto.job_reconcile",
-    "services.git_integration_worker.cursor_auto.job_reconcile_honor",
-    "services.git_integration_worker.cursor_auto.handler",
-    "services.git_integration_worker.cursor_auto.handler_terminal",
-    "services.git_integration_worker.cursor_auto.handler_deadline",
-    "services.git_integration_worker.cursor_auto.handler_execute",
-    "services.git_integration_worker.cursor_auto.handler_propagation",
-    "services.git_integration_worker.cursor_auto.continuity_hop",
-    "services.git_integration_worker.cursor_auto.substrate_feedback",
-    "services.git_integration_worker.cursor_auto.nested_sdk",
-    "services.git_integration_worker.cursor_auto.nested_outcome",
-    "services.git_integration_worker.cursor_auto.nest_parent",
-    "services.git_integration_worker.cursor_auto.mission_negotiation_handler",
-    "services.git_integration_worker.cursor_auto.closeout_replay",
-    "services.git_integration_worker.cursor_auto.admit_gates",
-    "services.git_integration_worker.cursor_auto.dispatch_progress",
-    "services.git_integration_worker.cursor_auto.reflex_read",
     "services.git_integration_worker.cursor_sdk_park_resume",
     "services.git_integration_worker.cursor_sdk_park_http",
     "services.git_integration_worker.cursor_sdk_closeout.park_finalize",
-    "services.git_integration_worker.routes.cursor_auto",
     "services.git_integration_worker.routes.cursor_sdk",
 )
 

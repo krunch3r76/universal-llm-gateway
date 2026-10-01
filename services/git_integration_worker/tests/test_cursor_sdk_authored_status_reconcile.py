@@ -8,10 +8,10 @@ from pathlib import Path
 from implement_admission.closeout_models import observed_process_verification
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
-from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+from services.git_integration_worker.relay.closeout_relay_effects import (
     amend_completion_overclaim,
 )
-from services.git_integration_worker.cursor_auto.lane_a_status import (
+from services.git_integration_worker.relay.lane_a_status import (
     extract_status_claim,
 )
 from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (

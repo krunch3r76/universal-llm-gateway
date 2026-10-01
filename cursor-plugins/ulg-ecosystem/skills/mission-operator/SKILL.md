@@ -10,7 +10,7 @@ trigger_match_terms: ["mission operator", "mission closeout", "MISSION_CLOSEOUT"
 ## Contract
 
 The operator is a role, not a model. The role may be filled by Cowork, the IDE,
-cursor-auto, or a tick window. The mission handle is the durable identity:
+cursor-sdk, or a tick window. The mission handle is the durable identity:
 `thread_id`, `parent_thread`, `lane_role`, `request_id`, `mission_kind`, and
 the current CSE/chat handle when present.
 
@@ -39,7 +39,8 @@ fields from a CSE or model name.
 ## Human-facing memos on a mission lane
 
 A memo for a human to read needs no schema, but it must not be posted with
-`request`. `request` is the admit verb: it enqueues cursor-auto, can supersede an
+`request`. `request` writes a bus turn; it does not arm a worker. Code work is
+`team_dispatch`. A prose memo posted as a directive can supersede an
 in-flight job on the same thread, and posts a terminal `status:` turn that
 completes `status:done` waiters. A prose memo sent that way reads as a directive.
 

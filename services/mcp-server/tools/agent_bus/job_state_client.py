@@ -1,7 +1,6 @@
-"""Keyed cursor-auto job-state HTTP client (observer view).
+"""Job-state observer client.
 
-Split from ``request_worker_client`` so the retry ladder for job_state can
-grow without pushing the liveness/enqueue module over the SLOC red line.
+The Auto worker route is removed. ``fetch_job_state`` reports that removal.
 """
 
 from __future__ import annotations
@@ -9,14 +8,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import httpx
-
 from .worker_http import (
     _DEFAULT_ATTEMPT_TIMEOUTS_S,
     _DEFAULT_BACKOFF_S,
     _DEFAULT_MAX_ATTEMPTS,
     _DEFAULT_TOTAL_BUDGET_S,
-    _auto_url,
 )
 
 
@@ -28,51 +24,20 @@ def _fetch_job_state_once(
     base_url: str | None,
     timeout_s: float,
 ) -> tuple[dict[str, Any], Exception | None]:
-    """Single HTTP GET to the worker job-state endpoint."""
-    params: list[str] = []
-    if job_id:
-        params.append(f"job_id={job_id}")
-    if thread_id:
-        params.append(f"thread_id={thread_id}")
-    if include_terminal:
-        params.append("include_terminal=true")
-    qs = "&".join(params)
-    url = _auto_url(f"/job-state?{qs}", base_url=base_url)
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            resp = client.get(url)
-        data = resp.json() if resp.content else {}
-        if resp.status_code != 200:
-            return (
-                {
-                    "ok": False,
-                    "found": False,
-                    "job": None,
-                    "reason": "job_state_http_error",
-                    "status_code": resp.status_code,
-                },
-                None,
-            )
-        return (
-            {
-                "ok": bool(data.get("ok", True)),
-                "found": bool(data.get("found")),
-                "job": data.get("job"),
-                "reason": "ok" if data.get("found") else "not_found",
-            },
-            None,
-        )
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        return (
-            {
-                "ok": False,
-                "found": False,
-                "job": None,
-                "reason": "job_state_unreachable",
-                "error": str(exc),
-            },
-            exc,
-        )
+    """The Auto job-state route is removed."""
+    del base_url, timeout_s
+    return (
+        {
+            "ok": False,
+            "found": False,
+            "job": None,
+            "reason": "auto_arm_removed",
+            "thread_id": thread_id,
+            "job_id": job_id,
+            "include_terminal": include_terminal,
+        },
+        None,
+    )
 
 
 def _job_state_retryable(result: dict[str, Any]) -> bool:

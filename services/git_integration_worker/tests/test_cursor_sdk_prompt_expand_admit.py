@@ -9,24 +9,12 @@ from fastapi.testclient import TestClient
 from systems.frontier_consult.prompt_expand_prelude import ExpandRun
 
 from services.git_integration_worker.app import create_app
-from services.git_integration_worker.cursor_auto.nested_sdk import (
-    resolve_enrolled_root_fields,
-)
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_prompt_expand import (
     expand_contract_for_admit,
     giw_should_expand_prompt,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
-
-
-@pytest.mark.offline
-def test_resolve_enrolled_root_fields_direct_root() -> None:
-    fields = resolve_enrolled_root_fields("10479")
-    assert fields == {
-        "continuity_root_thread_id": "10479",
-        "parent_dispatch_thread_id": "10479",
-    }
 
 
 @pytest.mark.offline

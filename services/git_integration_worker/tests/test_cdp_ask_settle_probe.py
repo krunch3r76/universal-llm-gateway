@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.propagation_probe import (
+from services.git_integration_worker.relay.propagation_probe import (
     _fetch_cdp_ask_health,
     resolve_cdp_ask_probe_base_url,
 )
@@ -79,7 +79,7 @@ def test_fetch_cdp_ask_health_env_absent_uses_config() -> None:
             return_value=("jupiter", 8770, "http://jupiter:8770"),
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.propagation_probe._fetch_health_at_base",
+            "services.git_integration_worker.relay.propagation_probe._fetch_health_at_base",
             return_value=health,
         ) as fetch_mock,
     ):

@@ -29,7 +29,7 @@ from services.git_integration_worker.admission import (
     WorkAdmissionController,
 )
 from services.git_integration_worker.config import WorkerConfig, load_config
-from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
+from services.git_integration_worker.relay.terminal_post_outcome import (
     terminal_post_retryable,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient

@@ -80,7 +80,7 @@ def test_prepare_closeout_delivery_conductor_g1_pin_missing_s4b(
     # gitignored local skill SOTs, so catalog validation raises before this
     # test can see the closeout grade. The grade is the assertion.
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.episode_residue._claude_ai_slugs",
+        "services.git_integration_worker.relay.episode_residue._claude_ai_slugs",
         lambda: frozenset(),
     )
     outcome = SdkRunOutcome(

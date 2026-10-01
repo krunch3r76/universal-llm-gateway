@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from implement_admission.closeout_helpers import cortex_files_root
 
-from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
+from services.git_integration_worker.relay.closeout_relay_cortex_uri import (
     read_cortex_text,
 )
 
