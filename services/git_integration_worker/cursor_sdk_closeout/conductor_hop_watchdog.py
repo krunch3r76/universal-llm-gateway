@@ -19,7 +19,6 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
     HOP_CDP_PROBE_INDETERMINATE_AT_KEY,
     cdp_probe_indeterminate_watchdog_due,
-    cdp_probe_indeterminate_withholds,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     _closeout_tokens_from_row,
@@ -188,22 +187,26 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     if verdict.park and verdict.reason:
         await park_conductor_hop_mission(row, reason=verdict.reason)
         return False
-    if await asyncio.to_thread(cdp_probe_indeterminate_withholds, row):
+    # Health-red (a 2s /health timeout is ok=False) must not preempt a row
+    # hop_owed would admit at grace as watchdog. The one-shot CDP branch
+    # runs only when hop_owed is false.
+    if not await asyncio.to_thread(hop_owed, row, closeout_tokens=closeout_tokens):
         due = await asyncio.to_thread(cdp_probe_indeterminate_watchdog_due, row)
+        if not due:
+            return False
         still_owed = await asyncio.to_thread(
             hop_owed,
             row,
             closeout_tokens=closeout_tokens,
             ignore_probe_indeterminate=True,
         )
-        if due and still_owed:
-            return await _admit_cdp_probe_indeterminate(
-                row,
-                closeout_tokens=closeout_tokens,
-            )
-        return False
-    if not await asyncio.to_thread(hop_owed, row, closeout_tokens=closeout_tokens):
-        return False
+        if not still_owed:
+            return False
+        return await _admit_cdp_probe_indeterminate(
+            row,
+            closeout_tokens=closeout_tokens,
+            backoff_s=verdict.backoff_s,
+        )
     if not _backoff_elapsed(row, backoff_s=verdict.backoff_s):
         return False
     body = build_hop_team_dispatch_body(row, hop_reason_override="watchdog")
@@ -246,12 +249,29 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     return stamped
 
 
+def _stamp_cdp_probe_indeterminate(dispatch_id: str) -> None:
+    """Burn the one-shot only after success, a permanent error, or a park."""
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={HOP_CDP_PROBE_INDETERMINATE_AT_KEY: time.time()},
+    )
+
+
 async def _admit_cdp_probe_indeterminate(
     row: dict[str, Any],
     *,
     closeout_tokens: frozenset[str],
+    backoff_s: float,
 ) -> bool:
-    """Admit one successor after an indeterminate CDP probe outlasts 2× grace."""
+    """Admit one successor after an indeterminate CDP probe outlasts 2× grace.
+
+    A failed post reuses ``_backoff_elapsed`` and the admit-retry crash cap.
+    ``hop_cdp_probe_indeterminate_at`` is stamped on success, when the error
+    is permanent, or when the row parks — not on a transient 5xx or transport
+    error, which would drop the row out of the candidate list.
+    """
+    if not _backoff_elapsed(row, backoff_s=backoff_s):
+        return False
     dispatch_id = str(row.get("dispatch_id") or "")
     body = build_hop_team_dispatch_body(
         row,
@@ -260,21 +280,46 @@ async def _admit_cdp_probe_indeterminate(
     if body is None or "dispatch_thread_id" not in body:
         return False
     ok, detail = await post_conductor_hop_team_dispatch(body)
-    admitted = await _stamp_admit_outcome(
+    if ok:
+        admitted = await _stamp_admit_outcome(
+            dispatch_id=dispatch_id,
+            row=row,
+            closeout_tokens=closeout_tokens,
+            hop_reason=HOP_REASON_CDP_PROBE_INDETERMINATE,
+            ok=True,
+            detail=detail,
+            emit_watchdog=True,
+        )
+        # After the outcome write, so a full record replace cannot drop the stamp.
+        if admitted:
+            _stamp_cdp_probe_indeterminate(dispatch_id)
+        return admitted
+    await _stamp_admit_outcome(
         dispatch_id=dispatch_id,
         row=row,
         closeout_tokens=closeout_tokens,
         hop_reason=HOP_REASON_CDP_PROBE_INDETERMINATE,
-        ok=ok,
+        ok=False,
         detail=detail,
-        emit_watchdog=True,
+        emit_watchdog=False,
     )
-    # After the outcome write, so a full record replace cannot drop the stamp.
-    CursorDispatchLedger.instance().merge_record_json(
-        dispatch_id=dispatch_id,
-        patch={HOP_CDP_PROBE_INDETERMINATE_AT_KEY: time.time()},
-    )
-    return admitted
+    row = _load_row(dispatch_id) or row
+    if _admit_error_permanent(row):
+        _stamp_cdp_probe_indeterminate(dispatch_id)
+        _emit_hop_skipped(row, gate=SKIP_GATE_ADMIT_ERROR_PERMANENT)
+        return False
+    status_code = detail.get("status_code")
+    if status_code is not None and int(status_code) >= 500:
+        cfg = load_hop_budget_config()
+        hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
+        admit_err = hop_fields.get("hop_admit_error")
+        attempts = (
+            int(admit_err.get("attempts") or 0) if isinstance(admit_err, dict) else 0
+        )
+        if attempts >= cfg.crash_cap_per_row:
+            await park_conductor_hop_mission(row, reason=PARK_REASON_ADMIT_RETRY_CAP)
+            _stamp_cdp_probe_indeterminate(dispatch_id)
+    return False
 
 
 async def _service_admit_retry_park(row: dict) -> bool:

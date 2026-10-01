@@ -6,6 +6,10 @@ import json
 import time
 from typing import Any
 
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
+
 CONDUCTOR_ROW_PINNED = "conductor_row_pinned"
 CONDUCTOR_ROW_HOP = "conductor_row_hop"
 CONDUCTOR_EXIT_PERSIST = "conductor_exit_persist"
@@ -101,7 +105,12 @@ def cdp_ask_health_red() -> bool:
 
     Config misses and transport faults are not red. An empty lane snapshot
     is already the fail-closed signal for a down process; red is the explicit
-    unhealthy observation the watchdog treats like that empty snapshot.
+    unhealthy observation.
+
+    ``observe_cdp_ask_health`` returns ``ok=False`` on its 2s timeout, so one
+    slow ``/health`` counts as red. That must not divert a row ``hop_owed``
+    would still admit: the watchdog runs the one-shot CDP branch only when
+    ``hop_owed`` is false.
     """
     try:
         from scripts.model_manager.ui.controller.service_config import (
@@ -167,11 +176,28 @@ def cdp_probe_indeterminate_watchdog_due(
 
     One-shot: ``hop_cdp_probe_indeterminate_at`` suppresses a second admit.
     The reactor still answers ``probe_indeterminate`` immediately.
+
+    Cheap terminal and grace checks run before the lane-snapshot read. A
+    raise on one row returns false so a sweep can continue.
     """
+    try:
+        return _cdp_probe_indeterminate_watchdog_due(row, now=now)
+    except Exception:
+        logger.warning(
+            "cdp probe indeterminate due check failed dispatch_id=%s",
+            row.get("dispatch_id"),
+            exc_info=True,
+        )
+        return False
+
+
+def _cdp_probe_indeterminate_watchdog_due(
+    row: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> bool:
     rec = _record_data_from_row(row)
     if isinstance(rec.get(HOP_CDP_PROBE_INDETERMINATE_AT_KEY), (int, float)):
-        return False
-    if not cdp_probe_indeterminate_withholds(row):
         return False
     from services.git_integration_worker.cursor_sdk_park import _terminal_epoch
 
@@ -184,7 +210,9 @@ def cdp_probe_indeterminate_watchdog_due(
     )
 
     grace = load_hop_budget_config().reactor_grace_s
-    return (now_ts - terminal) > (2 * grace)
+    if (now_ts - terminal) <= (2 * grace):
+        return False
+    return cdp_probe_indeterminate_withholds(row)
 
 
 def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
