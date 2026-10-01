@@ -30,13 +30,23 @@ def _remote_pid_unmeasured(info: ServiceInfo) -> dict[str, Any]:
     ``value_utc`` stays null. The error is that sentence, not a liveness
     answer and not an ``off_host`` flag.
     """
+    if info.pid is None:
+        if info.fail_class:
+            clause = f"fail_class={info.fail_class}"
+        else:
+            clause = f"status={info.status.value}"
+        error = (
+            f"no pid reported by {info.health_url} ({clause}); local /proc was not read"
+        )
+    else:
+        error = (
+            f"pid {info.pid} reported by {info.health_url} is not on this host; "
+            "local /proc was not read"
+        )
     return {
         "kind": "host_proc_start",
         "value_utc": None,
         "granularity_s": HOST_CLOCK_GRANULARITY_S,
         "clock_domain": "host_proc",
-        "error": (
-            f"pid {info.pid} reported by {info.health_url} is not on this host; "
-            "local /proc was not read"
-        ),
+        "error": error,
     }
