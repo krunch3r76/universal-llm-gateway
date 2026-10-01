@@ -39,7 +39,7 @@ Cursor seats in use: `cursor/grok-4.7` (omit-model) and `cursor/composer-2.5` (m
 
 | Seat | Model / contract | Use when |
 |---|---|---|
-| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
+| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — omitted knobs follow the card; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
 | **Composer (nested implement)** | **`cursor/composer-2.5`** — pin `model=` on mechanical `job=implement`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. Omit `model=` resolves `cursor/grok-4.7`, not Composer. |
 | **CDP width** | **`cdp/opus-5`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. `cdp/fable-5.1` only when Kaywan asks. |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`job=code-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → `cursor/composer-2.5` `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
@@ -55,7 +55,7 @@ Detail + admit shapes: Use the `conductor` skill.
 
 ## Grok effort
 
-Gate = model card (`libs/cursor_capabilities` `grok-4.7`): `effort` `low|medium|high|xhigh`, card default `high`. `fast` card default is **`true`**. Silence on `model_knobs` follows that card. ¬ a policy ladder below the card.
+Gate = model card (`libs/cursor_capabilities` `grok-4.7`): `effort` `low|medium|high|xhigh`. Silence on `model_knobs` follows that card. ¬ a policy ladder below the card, and ¬ copy the card's current default into this text.
 
 ## Auto / Cursor Router
 

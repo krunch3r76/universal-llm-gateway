@@ -10,13 +10,13 @@ from services.git_integration_worker.cursor_models import (
 )
 
 
-def test_grok_omit_path_fast_true() -> None:
+def test_grok_omit_path_fast_false() -> None:
     cfg = resolve_cursor("grok-4.7")
     selection = build_model_selection(cfg)
     emitted = {p.id: p.value for p in selection.params}
-    assert emitted["fast"] == "true"
-    assert default_variant("grok-4.7")["fast"] == "true"
-    assert supported_knobs("grok-4.7")["fast"].default == "true"
+    assert emitted["fast"] == "false"
+    assert default_variant("grok-4.7")["fast"] == "false"
+    assert supported_knobs("grok-4.7")["fast"].default == "false"
 
 
 def test_anthropic_omit_path_thinking_context_defaults() -> None:

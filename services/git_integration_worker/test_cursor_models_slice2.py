@@ -21,8 +21,8 @@ def test_resolve_cursor_still_returns_descriptor_knobs() -> None:
     assert {spec.name for spec in cfg.params} == {"fast"}
 
 
-def test_resolve_cursor_grok_omit_fast_true() -> None:
-    """Grok 4.7 omit-path emits context=256k and fast=true.
+def test_resolve_cursor_grok_omit_fast_false() -> None:
+    """Grok 4.7 omit-path emits context=256k and fast=false.
 
     ListModels' default variant is context=500k. The card pins 256k.
     """
@@ -39,15 +39,15 @@ def test_resolve_cursor_grok_omit_fast_true() -> None:
     assert default_variant("grok-4.7") == {
         "context": "256k",
         "effort": "high",
-        "fast": "true",
+        "fast": "false",
     }
     assert supported_knobs("grok-4.7")["context"].accepted == ("256k", "500k")
     assert supported_knobs("grok-4.7")["context"].default == "256k"
-    assert supported_knobs("grok-4.7")["fast"].default == "true"
+    assert supported_knobs("grok-4.7")["fast"].default == "false"
     selection = build_model_selection(cfg)
     by_id = {p.id: p.value for p in selection.params}
     assert by_id["context"] == "256k"
-    assert by_id["fast"] == "true"
+    assert by_id["fast"] == "false"
     assert by_id["reasoning_effort"] == "high"
     pinned = build_model_selection(cfg, {"context": "500k"})
     assert {p.id: p.value for p in pinned.params}["context"] == "500k"

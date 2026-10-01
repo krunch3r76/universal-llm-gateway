@@ -90,15 +90,15 @@ workflows:
     jobs: [implement]
   investigate:
     # investigate omit-effort is high; seed is low; recon stays medium.
-    # fast=true is the grok-4.7 card default when the knob is omitted.
+    # Omitted knobs, including fast, follow the grok-4.7 card.
     seat: cursor-sdk
     model: cursor/grok-4.7
     jobs: [investigate, recon, seed]
   auto_judgment:
     # Judgment omit-model. Never Composer. Effort for these jobs is
     # contract_effort (conductor low; answer/ask/confer/verify/execute/propagate high).
-    # fast=true is the grok-4.7 card default, filled
-    # when the knob is omitted (compose_model_knobs / build_model_selection).
+    # Omitted knobs, including fast, follow the grok-4.7 card
+    # (compose_model_knobs / build_model_selection).
     seat: cursor-sdk
     model: cursor/grok-4.7
     jobs: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]

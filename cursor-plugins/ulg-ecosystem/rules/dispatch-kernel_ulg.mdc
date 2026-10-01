@@ -23,7 +23,7 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 | Need | Path | Autonomy |
 |---|---|---|
 | Mechanical implement | `team_dispatch(..., lane="B", job=implement, model=cursor/composer-2.5)`. Omit `model=` resolves `cursor/grok-4.7`. Throwaway worktree for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
-| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh fast; conductor → `cursor/grok-4.7` high fast. `OPEN FORK:` only | autonomous |
+| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh; conductor → `cursor/grok-4.7` high. Omitted knobs follow the card. `OPEN FORK:` only | autonomous |
 | Greater reasoning / independent check | **ACTIVE** width (not top rung) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
 | Live checkout | `cursor/grok-4.7` `job=freeform` on cursor-sdk | autonomous |
 

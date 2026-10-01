@@ -122,7 +122,7 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 **Reachability:** no `conductor` contract token exists; body prose is the instruction. A non-roaming reasoning model on mechanical `handoff=pure-mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `job=investigate` when the leg is facts, not edits.
 
 **Model + lane (BINDING):**
-- Omit `model=` resolves `cursor/grok-4.7` (`workflows.auto_judgment.model`). Card default `fast=true`. Pin `model=cursor/composer-2.5` when the leg is mechanical implement.
+- Omit `model=` resolves `cursor/grok-4.7` (`workflows.auto_judgment.model`). Omitted knobs follow that card. Pin `model=cursor/composer-2.5` when the leg is mechanical implement.
 - Name `cdp/opus-5.5` in the directive when the leg needs a CDP bind. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor model is `desired_model=cdp/opus-5.5-extra`.
 - Pass `lane="B"` on the wire (`team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. `team_dispatch` top-level omit is 422 `lane_required`. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
 

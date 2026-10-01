@@ -47,8 +47,8 @@ def score_play_seat_lines() -> tuple[str, ...]:
     so a packet cannot keep offering Fable after ACTIVE moves.
     """
     return (
-        "- Enumerate · implement · drive: `cursor/grok-4.7` — `effort=high`, "
-        "`fast=false`; same slug as the ticker successor.",
+        "- Enumerate · implement · drive: `cursor/grok-4.7` — omitted knobs "
+        "follow the card; same slug as the ticker successor.",
         "- Intelligence (architecture, ranking, fork resolution): CDP "
         f"`{ACTIVE.model}` at reasoning_effort={ACTIVE.reasoning_effort} "
         "for G1, G2, G4, and G3→G5. Bind/review stays `cdp/opus-5.5`.",

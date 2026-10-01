@@ -332,12 +332,12 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"
             ),
-            "fast": KnobSpec(accepted=("false", "true"), default="true"),
+            "fast": KnobSpec(accepted=("false", "true"), default="false"),
         },
         default_variant={
             "context": "256k",
             "effort": "high",
-            "fast": "true",
+            "fast": "false",
         },
         instruction_profile="reasoner",
         context_window_tokens=256_000,

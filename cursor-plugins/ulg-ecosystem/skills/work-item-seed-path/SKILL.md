@@ -446,7 +446,7 @@ micro-step. **The operator seat** commissions via ulg-code `team_dispatch`
 `desired_effort` on `agent_bus.request`. **Code-side** `team_dispatch` shape stays
 scoped to code seats: `seat=cursor-sdk` · omit `model=` ·
 `model_knobs={"fast":"true"}` on the dispatch
-wire when Fast is intended — ULG grok/composer omit-path is **`fast=false`**; pin `{fast:true}` explicitly
+wire when Fast is intended. An omitted `fast` follows that model's card
 (`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
 `libs/claude_bundles/operator_proxy_mission.py` § Knob relay.
 

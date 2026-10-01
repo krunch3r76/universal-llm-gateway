@@ -322,14 +322,14 @@ profiles:
 #     Judgment contracts (answer, confer, ask, verify, execute, propagate,
 #     conductor, none, sketch, …) stay on grok; omit-effort follows
 #     contract_effort (high for those judgment jobs except conductor/seed/
-#     freeform). fast=true is the grok card default when the knob is omitted.
+#     freeform). Omitted knobs, including fast, follow the grok-4.7 card.
 #   Bound implement (Auto lane): same Composer slot as mechanical_implement;
 #     packet must be dense. cursor-sdk is platform=sdk on the Cursor
 #     subscription, NOT an Anthropic-API generate lane.
 #   Recon+investigate: contract=investigate|seed|recon → workflows.investigate
 #     (cursor/grok-4.7). investigate omit-effort is high; seed omit-effort is
 #     low; recon omit-effort is medium. conductor and freeform omit-effort
-#     are low. fast=true is the grok card default. Returns facts + OPEN FORK
+#     are low. Omitted knobs, including fast, follow the grok-4.7 card. Returns facts + OPEN FORK
 #     lines, never a bind. Ranking/bind → CDP (cdp/fable, cdp/opus-5).
 #   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", seat="cursor", contract="implement") →
 #     cursor from any dispatching seat; packet + acceptance criteria required. Use only
