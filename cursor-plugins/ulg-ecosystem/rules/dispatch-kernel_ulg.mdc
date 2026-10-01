@@ -24,7 +24,7 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 |---|---|---|
 | Mechanical implement | `team_dispatch(..., lane="B", job=implement, model=cursor/composer-2.5)`. Omit `model=` resolves `cursor/grok-4.7`. Throwaway worktree for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
 | Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh fast; conductor → `cursor/grok-4.7` high fast. `OPEN FORK:` only | autonomous |
-| Greater reasoning / independent check | **ACTIVE** width (`cdp/opus-5`, reasoning_effort=max, not top rung; `libs/implement_admission/conductor_width_seat.py`) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
+| Greater reasoning / independent check | **ACTIVE** width (not top rung) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
 | Live checkout | `cursor/grok-4.7` `job=freeform` on cursor-sdk | autonomous |
 
 Binder order (reasoning strength): `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`;

@@ -54,13 +54,18 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 
 ## When the width seat defaults (CDP — not a Cursor pool)
 
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
+
 Conductor G1/G2 width is ACTIVE, not a Cursor pool. `cursor/claude-fable-5`
 and `cursor/claude-fable-5-1` (launched 2026-09-01, same headline $/M) are carded Other
 Models options; we **block** both for cost — do not pin either.
 
 | Width seat | When |
 |---|---|
-| **Conductor G1 / Mode B** | Architecture open: architectural consult / ≥2 unranked forks / feature-add ∧ invariant-touching / detent≥wide. Seat is ACTIVE `cdp/opus-5` at reasoning_effort=max. Recipe: § S3 — **conductor copies**; IDE seed path does not fire it |
+| **Conductor G1 / Mode B** | Architecture open: architectural consult / ≥2 unranked forks / feature-add ∧ invariant-touching / detent≥wide. Seat is ACTIVE. Recipe: § S3 — **conductor copies**; IDE seed path does not fire it |
 | **Path-sim Q** | Non-codework bundled Q — not this path |
 | **Ladder 2b** | Independent binder when the producer is Opus |
 
@@ -73,7 +78,7 @@ Models options; we **block** both for cost — do not pin either.
 | **Cursor Models** | Composer 2.5 | G3 densify / G5 implement / conductor orchestrate / CDP-stuck 2b default — **after** Fable harvest |
 | **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5{,-1}` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5{,-1}` **blocked** (cost). Conductor width is ACTIVE, not `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
-G2 frame follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model and does not pin `cdp/opus-5` at `extra`. G2 is not the Other Models pool.
+G2 frame follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model and does not change ACTIVE's model or effort. G2 is not the Other Models pool.
 Other Models quota is not a reason to skip the ACTIVE G1 width seat or to spend T3 Opus as a
 substitute for it. T2/T3 and hop-4 live-checkout Opus still need their **named**
 

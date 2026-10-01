@@ -1,4 +1,8 @@
 ## Packet
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
 
 Six-block handoff packet (`architecture-handoff-protocol`), **materialized by
 Stargate from the todo** on `job=conductor` + `source_ref` (front-matter
@@ -204,9 +208,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
   without the owed stronger-model **harvest**. Two pickers, not one:
-  **G4 Skeptic** (pre-implement, on the G3 **spec**) = ACTIVE (`cdp/opus-5`,
-  reasoning_effort=max; effort_when_bind_gates_wave=max when a bind gates a
-  wave). **Under `conductor_profile=fable-scarce`:**
+  **G4 Skeptic** (pre-implement, on the G3 **spec**) = ACTIVE (reasoning_effort
+  and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave).
+  **Under `conductor_profile=fable-scarce`:**
   G4 still reads ACTIVE, and the ≤1 `cdp/fable-5.1` leg-per-arc allowance is
   removed. **After-ship code review**
   (post-implement, on the **lane branch**, before land) = `cdp/opus-5.5`
@@ -223,8 +227,7 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   rebinds that gate’s seat (e.g. Cursor skeptic) — inform-then-proceed, never
   silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
 - Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
-  on ACTIVE (`cdp/opus-5`, reasoning_effort=max; effort_when_bind_gates_wave=max
-  when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
+  on ACTIVE (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
   summoning thread as a report. The report is not a stop. A human gate is
   only an explicit see-score or `OPERATOR_GATE`.
 - No live summoning chat = confer-and-finish via `team_dispatch` (Q2 unchanged).

@@ -6,7 +6,11 @@ trigger_match_terms: ["path-sim", "path_sim", "path simulation", "aperture", "de
 related_skills: ["hypothesize-simulate", "reasoning-posture", "consult-routing", "dispatch-workflow", "handoff-packet-authoring", "frontier-model-instructions"]
 ---
 
-# Path-Sim — frontier solution/question-space search
+# Path-Sim —
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+ frontier solution/question-space search
 
 **v0 provisional** — Stage 1 of `decision:fable-path-sim-remaining-window`; ratify/revise at window close after ≥2 dogfood reps (annex C § Staging). Edits land HERE (SOT); the template annex (`notes/system/templates/fable-path-sim-prompt.md`) and window params on the decision entity regenerate from this — never fork a second body.
 
@@ -90,20 +94,20 @@ Primary delivery is an explicit slug line, not a paste. Caller composes:
 
 - **Quality ≠ transport.** “Opus 5 Max / High”, “Fable Max”, “Grok-4.5 High” name **effort**, not a dispatch path.
 - **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): `model=anthropic/*` via Stargate API is **PROHIBITED**; wide consult / R-admit ⇒ **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed. ¬ unlock API via routine `cost_intent`.
-- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, job=freeform`**; bundled-arc **Q** defaults to ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`). `job=freeform, model=xai/grok-4.7` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.7` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
+- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, job=freeform`**; bundled-arc **Q** defaults to ACTIVE. `job=freeform, model=xai/grok-4.7` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.7` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
 
 - **Composer** = Stage-B implement only — never the A (L1+L2) leg. Detail: `consult-routing` § Anthropic-family substrate · § xAI coding-substrate · annex C.
 
 ## Dispatch cascade + R positions (essentials — mechanics in annex A)
 
 ```
-recon → Q (lead CDP ACTIVE L0: `cdp/opus-5`, reasoning_effort=max; `conductor_width_seat.py`) → A (Composer enumerate → cdp/fable bind + Gate-2) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
+recon → Q (lead CDP ACTIVE L0) → A (Composer enumerate → cdp/fable bind + Gate-2) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
   →[ADMIT] implement (Composer) → R-after (/work-item-review · cdp/opus-5 job=delivery-review, default-on) → closeout
 ```
 
 - **Lead orchestrates, does not author.** ¬ in-seat L0/L1/L2 reasoning or hand-implement on `judgment_required` arcs unless the operator explicitly overrides.
 - **Q∧A are coupled (P1).** Never A without a Q sidecar/verdict; never Q without a following A. An operator frame is **input to Q**, never a substitute (`q_skipped` retired). Absence of frame stamps ⇒ unframed ⇒ normal **ACTIVE Q** → A (Composer enumerate → **`cdp/fable` bind**); ¬ escalate to the human for a frame. **Closed-detent quick recipe** (above) stays Fable-only — that carve-out is ¬ the bundled arc.
-- **Default seating:** Q = ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`). A = Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks). R-admit = Opus CDP. While ACTIVE.model is `cdp/opus-5`, Q and R-admit share that wire; `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`.
+- **Default seating:** Q = ACTIVE. A = Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks). R-admit = Opus CDP. When ACTIVE's usage channel is Opus, Q and R-admit share that wire; `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`.
 - **R is one posture at two pins**, both default-on: **R-admit** (before implement · web-anthropic CDP Opus · lead-owned — a headless worker "running R" collapses to self-certify) and **R-after** (after ship · **`cdp/opus-5` `job=delivery-review` `reasoning_effort="high"`** · delivery critique over staged diff/closeout). Verdict grammar `RATIFY | REVISE | SCOPE-DRIFT` / `ADMIT | ADMIT_WITH_AMENDMENTS | RATIFY_WITH_CONDITIONS | RETURN`.
 
 - **R ≠ skeptic ≠ Gate-6.** ¬ stamp `recon_waived` / `skeptic_ratified` / lead self-ADMIT as a substitute for CDP R. Lead confidence that a bind is "mechanical" is **self-signal** — R exists to challenge that claim.

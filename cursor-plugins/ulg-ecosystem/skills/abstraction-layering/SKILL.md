@@ -108,13 +108,17 @@ owns R-admit machinery only — codework does not route through path-sim process
 `layer todo:{slug}` · `layer friction {id}` · `layer=architecture|frame|densify|check|implement`
 
 ## Arc (G1–G7)
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
 
 Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps.
 
 | G | Layer | Seat | Token | Exit |
 |---|---|---|---|---|
-| 1 | Architecture | ACTIVE `cdp/opus-5` reasoning_effort=max · **arch skill floor**. | `[consult:judgment_gap]` | `fable-answer.md` |
-| 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (not a different model, not `extra`). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
+| 1 | Architecture | ACTIVE · **arch skill floor**. | `[consult:judgment_gap]` | `fable-answer.md` |
+| 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (does not change ACTIVE's model or effort). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `job=delivery-review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |

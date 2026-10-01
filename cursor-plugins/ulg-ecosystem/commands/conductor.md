@@ -1,4 +1,8 @@
 Conductor — cursor-sdk as **mission operator** of a continuity root.
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
 
 Interactive setup: bring this chat up to speed, ask establishing questions, then
 shape the **conductor score** (the densified `todo:` — Stargate materializes the
@@ -58,7 +62,7 @@ Ask in one batch; skip any already bound in chat:
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
 7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
-   judgment nests ACTIVE `cdp/opus-5` (width) / `cdp/opus-5.5` (bind/review). Width nests ACTIVE; bind/review stays `cdp/opus-5.5`. An Other-Models pin only
+   judgment nests width seat ACTIVE; bind/review uses `cdp/opus-5.5`. Width nests ACTIVE; bind/review stays on `cdp/opus-5.5`. An Other-Models pin only
    with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
 8. **Admit now?** — shape the todo only vs admit after confirm.
 
@@ -135,4 +139,4 @@ closeout, not a mid-mission pause. Codify residuals on the root entity.
 Ring **7310** (`7244-ide-resolution`): Lane A finish of 7186 residual; packet
 `tmp/reviews/7310-conductor-packet.md`; sibling 7281 cite-only. Early dogfood
 admitted Opus — standing seat is Composer (omit `model=`); judgment nests CDP
-(width ACTIVE `cdp/opus-5` / bind-review `cdp/opus-5.5`) unless an Other-Models pin names a trigger.
+(width seat ACTIVE; bind-review `cdp/opus-5.5`) unless an Other-Models pin names a trigger.
