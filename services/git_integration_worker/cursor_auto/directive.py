@@ -468,7 +468,7 @@ def build_sdk_message(job_body: str, *, contract: str, lane: str | None = None) 
         f"contract={contract}",
         "",
         body,
-        *reporting_contract_lines(lane=lane),
+        *reporting_contract_lines(lane=lane, contract=contract),
     ]
     if contract in {"implement", "investigate", "verify"} and lane == "A":
         lines.extend(

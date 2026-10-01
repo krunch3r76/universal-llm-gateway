@@ -109,6 +109,18 @@ _LANE_B_WORKTREE_TEMPLATE = (
     "changing cwd."
 )
 
+# Verbatim. Also copied in full in reporting_contract.py and two skills.
+# 431 bytes. Do not paraphrase.
+_FAILURE_PATHS_BLOCK = (
+    "**Before you post.** For each change, name the input or state where it breaks "
+    "(service down, concurrency, partial failure, wrong ordering, install or staging "
+    "path) and the test that covers it. Change only what the brief names; anything "
+    "else you think should change goes in the review request as a proposal, not in "
+    "the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once "
+    "the request is posted, stop committing."
+)
+_FAILURE_PATHS_MARKER = "**Before you post.**"
+
 _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
     "CONDUCTOR SEAT IDENTITY (mandatory): Your GIW dispatch_id is {dispatch_id}. "
     "When nesting cursor-sdk legs from this Lane-B conductor seat:\n"
@@ -536,9 +548,11 @@ def _append_lane_b_worktree(
 ) -> None:
     """Append the shell-cwd warning when this lane-B run does not already carry it.
 
-    Freeform ``none`` skips the rest of the lane harness. It does not skip this
-    block: packet and sidecar dispatches are ``none``, and a top-level ``cd``
-    into a directory the run then deletes is what kills them.
+    Freeform ``freeform`` skips the rest of the lane harness. It does not skip
+    this block: packet and sidecar dispatches are freeform, and a top-level
+    ``cd`` into a directory the run then deletes is what kills them. The
+    failure-paths block is a second same-gate append (see
+    ``_append_failure_paths_block``); conductor packets skip that one only.
     """
     if lane != "B" or not lane_worktree:
         return
@@ -547,6 +561,50 @@ def _append_lane_b_worktree(
     if any("LANE-B WORKTREE" in part for part in parts):
         return
     parts.append(_LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree))
+
+
+def _packet_is_conductor(
+    contract: str,
+    *,
+    has_packet_path: bool,
+    existing_text: str | None,
+) -> bool:
+    """Conductor packet: contract token, or a packet body that names the skill."""
+    return contract == "conductor" or (
+        has_packet_path
+        and bool(existing_text)
+        and _CONDUCTOR_PACKET_MARKER_RE.search(existing_text) is not None
+    )
+
+
+def _append_failure_paths_block(
+    parts: list[str],
+    *,
+    contract: str,
+    lane: str | None,
+    lane_worktree: str | None,
+    existing_text: str | None,
+    has_packet_path: bool,
+) -> None:
+    """Append the failure-paths block on lane-B worktree runs, not conductors.
+
+    Same gate as the worktree cwd warning. ``stop committing`` would cut a
+    conductor's run-to-completion land, so conductor packets skip the block.
+    Idempotent when ``existing_text`` or *parts* already contain the marker.
+    """
+    if lane != "B" or not lane_worktree:
+        return
+    if _packet_is_conductor(
+        contract,
+        has_packet_path=has_packet_path,
+        existing_text=existing_text,
+    ):
+        return
+    if _FAILURE_PATHS_MARKER in (existing_text or ""):
+        return
+    if any(_FAILURE_PATHS_MARKER in part for part in parts):
+        return
+    parts.append(_FAILURE_PATHS_BLOCK)
 
 
 def _skill_invoke_block(
@@ -598,9 +656,12 @@ def resolve_prompt_preamble(
 
     Non-mechanical contracts get ``/reasoning-posture`` plus the Use-line unless
     *prompt_preamble* or *existing_text* already carries those cues (idempotent).
-    Freeform ``none`` still skips the harness stack; posture is the judgment floor.
-    The lane-B worktree cwd warning is the exception: packet and sidecar runs
-    are freeform, and they are the runs that ``cd`` into a directory they delete.
+    Freeform ``freeform`` still skips the harness stack; posture is the judgment floor.
+    Two exceptions share the worktree gate: the lane-B cwd warning, and the
+    failure-paths block. Conductor packets get the cwd warning and not the
+    failure-paths block — ``stop committing`` would cut a run-to-completion land.
+    Packet and sidecar runs are freeform, and they are the runs that ``cd``
+    into a directory they delete.
 
     Lane-B dispatches additionally carry the branch contract: the obligation to
     declare a land disposition arrives with the work rather than after residue
@@ -662,6 +723,14 @@ def resolve_prompt_preamble(
             lane_worktree=lane_worktree,
             existing_text=existing_text,
         )
+        _append_failure_paths_block(
+            parts,
+            contract=contract,
+            lane=lane,
+            lane_worktree=lane_worktree,
+            existing_text=existing_text,
+            has_packet_path=has_packet_path,
+        )
         if not parts:
             return ""
         return "\n\n".join(parts) + "\n\n"
@@ -693,10 +762,18 @@ def resolve_prompt_preamble(
             lane_worktree=lane_worktree,
             existing_text=existing_text,
         )
-    is_conductor_packet = contract == "conductor" or (
-        has_packet_path
-        and bool(existing_text)
-        and _CONDUCTOR_PACKET_MARKER_RE.search(existing_text) is not None
+        _append_failure_paths_block(
+            parts,
+            contract=contract,
+            lane=lane,
+            lane_worktree=lane_worktree,
+            existing_text=existing_text,
+            has_packet_path=has_packet_path,
+        )
+    is_conductor_packet = _packet_is_conductor(
+        contract,
+        has_packet_path=has_packet_path,
+        existing_text=existing_text,
     )
     if lane == "B" and contract == "conductor" and is_conductor_packet and dispatch_id:
         parts.append(_CONDUCTOR_SKILL_ORIENT)

@@ -1,6 +1,6 @@
 ---
 name: dispatch-report-discipline
-description: "Dispatch closeout reporting — eleven rules for truthful executor §2 closeouts; judgment rules 9–10 for minds only. Referenced by cursor-auto REPORTING CONTRACT block."
+description: "Dispatch closeout reporting — twelve rules for truthful executor §2 closeouts; judgment rules 9–10 for minds only. Referenced by cursor-auto REPORTING CONTRACT block."
 ---
 
 # Dispatch Report Discipline
@@ -9,7 +9,7 @@ Standing doctrine for what a truthful nested cursor-sdk closeout must contain.
 The cursor-auto `build_sdk_message` injects a compressed **REPORTING CONTRACT**
 block on every contract; this skill carries the full rules and reasoning.
 
-## The eleven rules
+## The twelve rules
 
 ### 1. SUFFICIENCY
 
@@ -106,6 +106,16 @@ commissioned to write.
 **Why:** Read-only contracts exist to bound blast radius.
 
 **Enforcement:** L1 clamp + L2 prompt.
+
+### 12. FAILURE PATHS AND BRIEF BOUNDARY
+
+On a write commission, end with this block, in full:
+
+**Before you post.** For each change, name the input or state where it breaks (service down, concurrency, partial failure, wrong ordering, install or staging path) and the test that covers it. Change only what the brief names; anything else you think should change goes in the review request as a proposal, not in the diff. Run `git diff --stat <base>..HEAD` and account for every file. Once the request is posted, stop committing.
+
+**Why:** A change that is right on its own terms can still break the next path, and an edit past the brief is a different change.
+
+**Enforcement:** This skill plus the REPORTING CONTRACT checklist, write commissions only.
 
 ## Anti-patterns
 
