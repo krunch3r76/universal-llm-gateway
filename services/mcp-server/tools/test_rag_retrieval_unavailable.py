@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,7 +22,12 @@ if str(_MCP) not in sys.path:
     sys.path.insert(0, str(_MCP))
 
 from tools import _rag_inflight, _rag_search_exec  # noqa: E402
-from tools._rag_inflight import admit_search, attach_search, search_key  # noqa: E402
+from tools._rag_inflight import (  # noqa: E402
+    UnknownSearchError,
+    admit_search,
+    attach_search,
+    search_key,
+)
 
 _SCOPE_CATALOG_PATH = _HANDLERS / "scope_catalog.py"
 _scope_spec = importlib.util.spec_from_file_location(
@@ -31,6 +37,19 @@ assert _scope_spec and _scope_spec.loader
 _scope_mod = importlib.util.module_from_spec(_scope_spec)
 sys.modules[_scope_spec.name] = _scope_mod
 _scope_spec.loader.exec_module(_scope_mod)
+
+
+class _InflightClock:
+    """Controllable monotonic clock for ``_rag_inflight`` TTL assertions only."""
+
+    def __init__(self, start: float = 10_000.0) -> None:
+        self.t = start
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def set(self, value: float) -> None:
+        self.t = value
 
 
 def _load_handler_module(module_name: str, filename: str) -> Any:
@@ -91,7 +110,11 @@ def _install_scope_catalog(
     client = _Client()
     monkeypatch.setattr(_scope_mod, "make_async_client", lambda *a, **k: client)
     fixed_now = 2_000.0
-    monkeypatch.setattr(_scope_mod.time, "monotonic", lambda: fixed_now)
+    monkeypatch.setattr(
+        _scope_mod,
+        "time",
+        SimpleNamespace(monotonic=lambda: fixed_now),
+    )
     if stale:
         _scope_mod._cache_scopes = {"llm_prompting"}
         _scope_mod._cache_prefixes = {}
@@ -218,7 +241,7 @@ def _rag_search_production(
     query: str,
     pipeline_options: dict[str, Any],
     pipeline_calls: dict[str, int],
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, str]:
     """MCP rag_search path: inflight registry → run_rag_search → stamped envelope."""
 
     def _pipeline_call(*_args: object, **_kwargs: object) -> dict[str, Any]:
@@ -229,19 +252,20 @@ def _rag_search_production(
 
     monkeypatch.setattr(_rag_search_exec, "pipeline_call", _pipeline_call)
 
+    key = search_key(query, pipeline_options)
+
     def _start() -> dict[str, Any]:
         return _rag_search_exec.run_rag_search(
             query,
             scope="llm_prompting",
             prefixes=None,
-            pipeline_options=pipeline_options,
+            pipeline_options=dict(pipeline_options),
             unscoped=False,
         )
 
-    key = search_key(query, pipeline_options)
     ticket = admit_search(key, _start)
     env = ticket.stamp(ticket.wait())
-    return env, ticket.search_id
+    return env, ticket.search_id, key
 
 
 @pytest.mark.parametrize("stale_catalog", [False, True])
@@ -262,7 +286,7 @@ def test_connect_error_all_queries_yields_retryable_envelope(
     }
 
     try:
-        env, search_id = _rag_search_production(
+        env, search_id, key = _rag_search_production(
             monkeypatch,
             stale_catalog=stale_catalog,
             query=query,
@@ -285,18 +309,74 @@ def test_connect_error_all_queries_yields_retryable_envelope(
         assert pipeline_calls["n"] == 1
 
         retry = admit_search(
-            search_key(query, pipeline_options),
+            key,
             lambda: _rag_search_exec.run_rag_search(
                 query,
                 scope="llm_prompting",
                 prefixes=None,
-                pipeline_options=pipeline_options,
+                pipeline_options=dict(pipeline_options),
                 unscoped=False,
             ),
         )
         assert retry.cache_hit is False
         assert retry.wait()["status"] == "error"
+        assert retry.search_id != search_id
         assert pipeline_calls["n"] == 2
     finally:
         _clear_registry()
         _reset_scope_catalog_cache()
+
+
+def test_inflight_failure_ttl_vs_success_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure TTL (30s) evicts retryable errors; success cache keeps 600s."""
+
+    clock = _InflightClock(10_000.0)
+    monkeypatch.setattr(_rag_inflight, "time", clock)
+    _clear_registry()
+
+    def _fail_start() -> dict[str, Any]:
+        return {
+            "status": "error",
+            "retryable": True,
+            "retrieval": {"retrieval_rejection_reason": "retrieval_unavailable"},
+        }
+
+    try:
+        fail_ticket = admit_search("failure-ttl-key", _fail_start)
+        assert fail_ticket.wait()["status"] == "error"
+        fail_entry = _rag_inflight._by_id[fail_ticket.search_id]
+        finished = fail_entry.finished_at
+        assert finished is not None
+
+        clock.set(finished + 29.0)
+        poll = attach_search(fail_ticket.search_id)
+        assert poll.cache_hit is False
+        assert poll.wait()["status"] == "error"
+
+        clock.set(finished + 31.0)
+        with pytest.raises(UnknownSearchError):
+            attach_search(fail_ticket.search_id)
+
+        _clear_registry()
+        clock.set(20_000.0)
+
+        def _ok_start() -> dict[str, Any]:
+            return {"status": "ok", "context": "cached body"}
+
+        ok_ticket = admit_search("success-ttl-key", _ok_start)
+        assert ok_ticket.wait()["status"] == "ok"
+        ok_finished = _rag_inflight._by_id[ok_ticket.search_id].finished_at
+        assert ok_finished is not None
+
+        clock.set(ok_finished + 31.0)
+        ok_poll = attach_search(ok_ticket.search_id)
+        assert ok_poll.cache_hit is True
+        assert ok_poll.wait()["context"] == "cached body"
+
+        clock.set(ok_finished + 601.0)
+        with pytest.raises(UnknownSearchError):
+            attach_search(ok_ticket.search_id)
+    finally:
+        _clear_registry()
