@@ -29,6 +29,12 @@ _DEFAULT_IDLE_S = 180.0
 _RECYCLE_DEADLINE_S = 604800.0  # 7d alert ceiling; idle gate is the escalate
 
 
+def _recycle_caller(params: dict[str, Any]) -> str:
+    from scripts.model_manager.ui.api_dispatch import caller_agent_from_manage_request
+
+    return caller_agent_from_manage_request(params)
+
+
 def recycle_idle_s() -> float:
     """Return the occupant-idle window used before recycle escalates to force."""
     raw = os.environ.get("GIW_RECYCLE_IDLE_S")
@@ -197,6 +203,7 @@ async def recycle_giw(
         supervisor=supervisor,
         reason="manage recycle_giw (drain then idle-escalate)",
         park_live=False,
+        caller_agent=_recycle_caller(params),
     )
     intent_id = str(result.get("restart_intent_id") or "")
     if intent_id:

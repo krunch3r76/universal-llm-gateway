@@ -494,7 +494,17 @@ class GitWorkerDrainSupervisor:
                     await self._emit_progress(intent, now - start)
                     # The 30s tick is not a re-arm. An abandoned intent whose
                     # only signal is this tick expires through cancel.
-                    if await self._expire_abandoned(intent):
+                    try:
+                        expired = await self._expire_abandoned(intent)
+                    except Exception:
+                        logger.warning(
+                            "restart intent expiry tick failed; row stays "
+                            "pending_drain intent_id=%s",
+                            intent.intent_id,
+                            exc_info=True,
+                        )
+                        expired = False
+                    if expired:
                         return _AWAIT_CANCELLED
                     last_progress = now
                 snapshot = await self._safe_drain_state()

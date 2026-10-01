@@ -54,6 +54,49 @@ async def test_sdk_closeout_in_flight_is_not_a_dead_heartbeat() -> None:
     assert row["determination"] == "busy"
 
 
+@pytest.mark.asyncio
+async def test_busy_status_open_sdk_ticket_without_claimed_at_stays_busy(
+    tmp_path,
+) -> None:
+    """Production _busy_status entry for an open sdk ticket with no claimed_at.
+
+    The probe payload is what GIW active-work carries mid-closeout. Reclassifying
+    that row as dead would report idle and let the drain finish.
+    """
+    from unittest.mock import MagicMock
+
+    from scripts.model_manager.ui.api_dispatch import _busy_status
+    from scripts.model_manager.ui.controller.restart_intent_store import (
+        RestartIntentStore,
+    )
+
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    closing = ActiveWork(
+        busy=True,
+        detail={
+            "busy": True,
+            "active_count": 1,
+            "active_ops": [
+                {
+                    "op_id": "sdk-closeout",
+                    "kind": "cursor_sdk",
+                    "heartbeat_age_s": 180.0,
+                    "last_heartbeat_at": "2026-09-30T12:00:00+00:00",
+                }
+            ],
+        },
+    )
+    ctl = MagicMock()
+    ctl.restart_intent_store = store
+    ctl.restart_gate = RestartDrainGate(
+        probes={"git_integration_worker": _Probe(closing)}
+    )
+    status = await _busy_status(ctl, service="git_integration_worker")
+    assert status["busy"] is True
+    assert status["restart_would_defer"] is True
+    assert status["determination"] == "busy"
+
+
 def test_heartbeat_stops_at_close_ticket_not_at_run_end() -> None:
     """The retained heartbeat thread is stopped by stop_closeout_heartbeat."""
     stop = Event()

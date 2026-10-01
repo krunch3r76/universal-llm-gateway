@@ -100,7 +100,16 @@ async def expire_via_cancel(
                 intent_id,
             )
             return False
-        await release_drain(intent.intent_id, int(intent.drain_epoch))
+        try:
+            await release_drain(intent.intent_id, int(intent.drain_epoch))
+        except Exception:
+            logger.warning(
+                "restart intent expiry release failed; leaving pending_drain "
+                "intent_id=%s",
+                intent_id,
+                exc_info=True,
+            )
+            return False
     store.cancel(intent_id)
     logger.warning(
         "restart intent expired via cancel intent_id=%s caller_agent=%s",
