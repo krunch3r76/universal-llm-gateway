@@ -13,11 +13,17 @@ import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
+from deploy_identity.code_version import resolve_code_version
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
+from libs.manage_handover import (
+    record_path_from_env,
+    remove_armed_record,
+    write_armed_record,
+)
 from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer, ManageSocketBusyError
@@ -136,6 +142,9 @@ class ModelManagerApp(App):
         self._digest_tick_loop: DigestTickLoop | None = None
         self._charter_tick_loop: CharterRunnerTickLoop | None = None
         self._stargate_health_restart = None
+        self._armed_record_path = record_path_from_env()
+        self._manage_lock_fd: int | None = None
+        self._bound_loops_started = False
         # Set when on_mount aborts startup; ``run`` turns it into a stderr line
         # plus a non-zero process exit (Textual has already torn the frame down
         # by then, so a notify() would never be seen).
@@ -180,16 +189,23 @@ class ModelManagerApp(App):
         await self._broadcaster.start_debug_server()
         await self._event_bus.publish(TuiStarted(pid=os.getpid()))
 
+        if self._armed_record_path is not None:
+            write_armed_record(
+                self._armed_record_path,
+                pid=os.getpid(),
+                code_version=resolve_code_version(),
+            )
+
         self._api_server = ManageAPIServer(self._service_controller, self._event_bus)
         try:
             await self._api_server.start()
+            await self._start_bound_loops()
         except ManageSocketBusyError as e:
-            # Another live ./manage owns the socket. A socket-less manage is
-            # not a degraded manage — it would still run the charter runner and
-            # digest loop against the same workspace as the socket owner, so
-            # two processes would tick the same work. Abort startup instead.
             logger.error("Manage API server refused to bind: %s", e)
             self._api_server = None
+            if self._armed_record_path is not None:
+                self.set_timer(10, self._park_for_handover)
+                return
             self._startup_error = f"manage.sock conflict: {e}"
             self.exit(return_code=STARTUP_CONFLICT_EXIT_CODE)
             return
@@ -203,8 +219,12 @@ class ModelManagerApp(App):
             )
             self.set_timer(10, self._retry_api_server)
 
-        # Resume any persisted, non-terminal restart intents (event-driven drain
-        # supervisor) — robust to a manage restart mid-drain. Never crashes boot.
+    async def _start_bound_loops(self) -> None:
+        """Start reconcile + tick loops only after manage.sock is bound."""
+        if self._bound_loops_started:
+            return
+        self._bound_loops_started = True
+
         await self._service_controller.reconcile_pending_restart_intents()
 
         try:
@@ -260,6 +280,47 @@ class ModelManagerApp(App):
                 severity="warning",
                 timeout=15,
             )
+
+    async def _park_for_handover(self) -> None:
+        """Armed successor: acquire flock, then bind manage.sock when incumbent exits."""
+        from scripts.model_manager.ui.single_instance import (
+            release_manage_lock,
+            try_acquire_manage_lock,
+        )
+
+        if self._api_server is not None:
+            return
+        if self._event_bus is None:
+            return
+
+        fd = try_acquire_manage_lock()
+        if fd is None:
+            self.set_timer(30, self._park_for_handover)
+            return
+
+        self._manage_lock_fd = fd
+        server = ManageAPIServer(self._service_controller, self._event_bus)
+        try:
+            await server.start()
+            self._api_server = server
+            if self._armed_record_path is not None:
+                remove_armed_record(self._armed_record_path)
+            await self._start_bound_loops()
+        except ManageSocketBusyError as e:
+            logger.error("Handover bind refused while holding flock: %s", e)
+            release_manage_lock(fd)
+            self._manage_lock_fd = None
+            if self._armed_record_path is not None:
+                remove_armed_record(self._armed_record_path)
+            self._startup_error = f"manage.sock conflict: {e}"
+            self.exit(return_code=STARTUP_CONFLICT_EXIT_CODE)
+            return
+        except Exception as e:
+            logger.warning("Handover bind failed: %s", e)
+            release_manage_lock(fd)
+            self._manage_lock_fd = None
+            self.set_timer(30, self._park_for_handover)
+            return
 
     async def reload_charter_tick(self) -> dict:
         """Restart the charter runner loop in place. Wired to ``charter_reload``.
@@ -322,8 +383,12 @@ class ModelManagerApp(App):
             self._api_server = server
             self.notify("manage.sock recovered — agent tools now available", timeout=10)
             logger.info("Manage API server recovered on retry")
+            await self._start_bound_loops()
         except ManageSocketBusyError as e:
             logger.error("Manage API server retry refused: %s", e)
+            if self._armed_record_path is not None:
+                self.set_timer(30, self._park_for_handover)
+                return
             self._startup_error = f"manage.sock conflict: {e}"
             self.exit(return_code=STARTUP_CONFLICT_EXIT_CODE)
             return
@@ -367,6 +432,13 @@ class ModelManagerApp(App):
             await self._event_bus.publish(TuiExited(reason="quit"))
         if self._broadcaster is not None:
             await self._broadcaster.stop_debug_server()
+        if self._manage_lock_fd is not None:
+            from scripts.model_manager.ui.single_instance import release_manage_lock
+
+            release_manage_lock(self._manage_lock_fd)
+            self._manage_lock_fd = None
+        if self._armed_record_path is not None:
+            remove_armed_record(self._armed_record_path)
 
     def _busy_snapshot(self) -> BusySnapshot:
         """Compose the full in-flight picture blocking exit.

@@ -8,7 +8,7 @@ own replacement. Propagate admits ``service=manage`` and
 PID). Manage stays out of ``VALID_SERVICES`` / in-process ``sync_restart``.
 """
 
-from .result import RECOVERY_PATH, GuardedReexecResult
+from .result import GuardedReexecResult
 from .runner import run_guarded_reexec
 
-__all__ = ["GuardedReexecResult", "RECOVERY_PATH", "run_guarded_reexec"]
+__all__ = ["GuardedReexecResult", "run_guarded_reexec"]

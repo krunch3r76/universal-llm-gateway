@@ -112,12 +112,22 @@ def test_main_releases_lock_after_run() -> None:
     assert released == [42]
 
 
-def _on_mount_node() -> ast.AsyncFunctionDef:
+def _app_class_methods() -> dict[str, ast.AsyncFunctionDef]:
     tree = ast.parse(_APP_PY.read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_mount":
-            return node
-    raise AssertionError("on_mount not found in app.py")
+    methods: dict[str, ast.AsyncFunctionDef] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name != "ModelManagerApp":
+            continue
+        for item in node.body:
+            if isinstance(item, ast.AsyncFunctionDef):
+                methods[item.name] = item
+    if "on_mount" not in methods:
+        raise AssertionError("on_mount not found in app.py")
+    return methods
+
+
+def _on_mount_node() -> ast.AsyncFunctionDef:
+    return _app_class_methods()["on_mount"]
 
 
 def _busy_handler(on_mount: ast.AsyncFunctionDef) -> ast.ExceptHandler:
@@ -134,33 +144,208 @@ def _busy_handler(on_mount: ast.AsyncFunctionDef) -> ast.ExceptHandler:
 @pytest.mark.offline
 def test_busy_socket_handler_exits_and_returns() -> None:
     handler = _busy_handler(_on_mount_node())
+    armed_branch = None
+    armed_idx = -1
+    for idx, node in enumerate(handler.body):
+        if isinstance(node, ast.If):
+            armed_branch = node
+            armed_idx = idx
+            break
+    assert armed_branch is not None, "armed vs non-armed branch required"
 
-    calls = {
+    armed_body = armed_branch.body
+    non_armed = handler.body[armed_idx + 1 :]
+    non_armed_calls = {
         node.func.attr
-        for node in ast.walk(handler)
+        for node in ast.walk(ast.Module(body=non_armed, type_ignores=[]))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
-    assert "exit" in calls, "on_mount must exit the app on manage.sock conflict"
-    assert isinstance(handler.body[-1], ast.Return), (
-        "on_mount must return immediately after exiting"
+    assert "exit" in non_armed_calls
+    armed_timer_targets = {
+        node.args[1].attr
+        for node in ast.walk(ast.Module(body=armed_body, type_ignores=[]))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "set_timer"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Attribute)
+    }
+    assert "_park_for_handover" in armed_timer_targets
+    armed_returns = [
+        node
+        for node in ast.walk(ast.Module(body=armed_body, type_ignores=[]))
+        if isinstance(node, ast.Return)
+    ]
+    assert armed_returns, "armed busy handler must return after scheduling park"
+    assert isinstance(armed_body[-1], ast.Return), (
+        "armed ManageSocketBusyError branch must end with return"
     )
 
 
-@pytest.mark.offline
-def test_busy_socket_handler_precedes_charter_and_digest_startup() -> None:
-    """The abort must happen before any tick loop is constructed."""
-    on_mount = _on_mount_node()
-    handler = _busy_handler(on_mount)
+def _handler_last_is_return(handler: ast.ExceptHandler) -> bool:
+    if not handler.body:
+        return False
+    return isinstance(handler.body[-1], ast.Return)
 
-    started = [
-        node.lineno
-        for node in ast.walk(on_mount)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {"DigestTickLoop", "CharterRunnerTickLoop"}
+
+def _try_has_server_start(try_node: ast.Try) -> bool:
+    for sub in ast.walk(ast.Module(body=try_node.body, type_ignores=[])):
+        if (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "start"
+        ):
+            return True
+    return False
+
+
+def _start_bound_loops_lineno_in_try_body(try_node: ast.Try) -> set[int]:
+    return {
+        sub.lineno
+        for sub in ast.walk(ast.Module(body=try_node.body, type_ignores=[]))
+        if isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "_start_bound_loops"
+    }
+
+
+def _bound_loops_in_same_try_as_server_start(fn_node: ast.AsyncFunctionDef) -> bool:
+    """Every _start_bound_loops call must sit in a try that also awaits server.start()."""
+    all_linenos = {c.lineno for c in _start_bound_loops_calls(fn_node)}
+    if not all_linenos:
+        return True
+    covered: set[int] = set()
+    for try_node in ast.walk(fn_node):
+        if not isinstance(try_node, ast.Try):
+            continue
+        if not _try_has_server_start(try_node):
+            continue
+        covered |= _start_bound_loops_lineno_in_try_body(try_node)
+    return all_linenos <= covered
+
+
+def _loop_call_names(node: ast.AST) -> set[str]:
+    loop_names = {
+        "reconcile_pending_restart_intents",
+        "DigestTickLoop",
+        "CharterRunnerTickLoop",
+        "StargateHealthRestart",
+    }
+    names: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            if isinstance(sub.func, ast.Name) and sub.func.id in loop_names:
+                names.add(sub.func.id)
+            if isinstance(sub.func, ast.Attribute) and sub.func.attr in loop_names:
+                names.add(sub.func.attr)
+    return names
+
+
+def _start_bound_loops_calls(node: ast.AST) -> list[ast.Call]:
+    return [
+        sub
+        for sub in ast.walk(node)
+        if isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "_start_bound_loops"
     ]
-    assert started, "expected tick loop construction in on_mount"
-    assert min(started) > handler.body[-1].lineno
+
+
+def _try_has_start_before_bound_loops(try_node: ast.Try) -> bool:
+    start_seen = False
+    for stmt in try_node.body:
+        for sub in ast.walk(stmt):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "start"
+            ):
+                start_seen = True
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "_start_bound_loops"
+            ):
+                if not start_seen:
+                    return False
+    return start_seen
+
+
+@pytest.mark.offline
+def test_bound_loops_only_in_start_bound_loops() -> None:
+    methods = _app_class_methods()
+    on_mount = methods["on_mount"]
+    start_fn = methods["_start_bound_loops"]
+
+    loop_names = {
+        "reconcile_pending_restart_intents",
+        "DigestTickLoop",
+        "CharterRunnerTickLoop",
+        "StargateHealthRestart",
+    }
+
+    assert loop_names <= _loop_call_names(start_fn)
+    assert _loop_call_names(on_mount) == set(), (
+        f"on_mount must not start loops: {_loop_call_names(on_mount)}"
+    )
+
+    for fn_name in ("on_mount", "_retry_api_server", "_park_for_handover"):
+        fn_node = methods[fn_name]
+        assert _loop_call_names(fn_node) == set(), (
+            f"{fn_name} must not call loop names directly"
+        )
+        for handler in ast.walk(fn_node):
+            if not isinstance(handler, ast.ExceptHandler):
+                continue
+            if isinstance(handler.type, ast.Name) and handler.type.id == (
+                "ManageSocketBusyError"
+            ):
+                assert _start_bound_loops_calls(handler) == []
+                assert any(isinstance(n, ast.Return) for n in handler.body)
+                assert _handler_last_is_return(handler), (
+                    f"{fn_name} ManageSocketBusyError handler must end with return"
+                )
+
+        for try_node in ast.walk(fn_node):
+            if not isinstance(try_node, ast.Try):
+                continue
+            if not _start_bound_loops_calls(try_node):
+                continue
+            assert _try_has_start_before_bound_loops(try_node), (
+                f"{fn_name} must call .start() before _start_bound_loops in try"
+            )
+            for handler in try_node.handlers:
+                assert _start_bound_loops_calls(handler) == []
+
+        assert _start_bound_loops_calls(fn_node), (
+            f"{fn_name} must call _start_bound_loops at least once"
+        )
+        assert _bound_loops_in_same_try_as_server_start(fn_node), (
+            f"{fn_name} must call _start_bound_loops only inside the try "
+            "that awaits server.start()"
+        )
+
+
+@pytest.mark.offline
+def test_main_armed_defers_lock_and_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    monkeypatch.setenv("MANAGE_HANDOVER_RECORD", str(Path("/tmp/armed.json")))
+    acquired: list[str] = []
+    ran: list[str] = []
+
+    code = main(
+        [],
+        stdin_isatty=True,
+        run_fn=lambda: ran.append("run"),
+        acquire_lock_fn=lambda: acquired.append("lock") or 1,
+        release_lock_fn=lambda fd: None,
+    )
+    assert code == 0
+    assert acquired == []
+    assert ran == ["run"]
 
 
 @pytest.mark.offline

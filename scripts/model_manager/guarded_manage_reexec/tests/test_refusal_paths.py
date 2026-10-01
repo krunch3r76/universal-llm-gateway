@@ -7,6 +7,7 @@ happy-path coverage.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from libs.manage_handover import write_armed_record
 from scripts.model_manager.guarded_manage_reexec.checks import (
     collect_refuse_report,
     observe_drain_clear,
@@ -25,7 +27,6 @@ from scripts.model_manager.guarded_manage_reexec.pane import (
     observe_tmux_pane_hosts_manage,
 )
 from scripts.model_manager.guarded_manage_reexec.runner import (
-    RECOVERY_PATH,
     prove_pickup,
     run_guarded_reexec,
 )
@@ -284,7 +285,6 @@ def test_dry_run_stops_before_quit(tmp_path: Any) -> None:
     assert result.status == "dry-run"
     assert result.reason == "checks_passed_stopped_before_quit"
     assert result.executed is False
-    assert result.recovery_path == RECOVERY_PATH
     assert "charter_pause" not in calls
 
 
@@ -488,10 +488,14 @@ def test_dry_run_unarmed_hold_still_refuses_nonterminal_intent(
     assert "nonterminal_restart_intent" in result.reason
 
 
-def test_start_never_healthy_reports_failure_not_hang(tmp_path: Any) -> None:
-    """Quit-ok + sock never-up ⇒ status=start-failed within boot_timeout bound."""
+def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
+    """Quit lands but successor sock never returns ⇒ proof-failed, not refused."""
     store = _store(tmp_path)
+    record_path = tmp_path / "manage.armed.json"
     state = {"down": False}
+    tmux_log: list[list[str]] = []
+    killed_pids: list[int] = []
+    later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
@@ -517,16 +521,33 @@ def test_start_never_healthy_reports_failure_not_hang(tmp_path: Any) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        tmux_log.append(cmd)
         if cmd[:2] == ["tmux", "display-message"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
-        if cmd[:2] == ["tmux", "send-keys"]:
-            # First send is quit (`q`); subsequent is start — stay down either way.
+        if cmd[:2] == ["tmux", "split-window"]:
+            write_armed_record(
+                record_path,
+                pid=os.getpid(),
+                code_version="deadbeef",
+                process_start_time=later,
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="%42\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"] and cmd[4] == "q":
             state["down"] = True
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
+
+    def kill_pid(pid: int) -> None:
+        killed_pids.append(pid)
 
     t0 = time.monotonic()
     result = run_guarded_reexec(
@@ -534,38 +555,112 @@ def test_start_never_healthy_reports_failure_not_hang(tmp_path: Any) -> None:
         dry_run=False,
         manage_call=manage_call,
         intent_db=store._db_path,  # noqa: SLF001
+        armed_record_path=record_path,
         run_cmd=run_cmd,
+        kill_pid_fn=kill_pid,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
         quit_timeout_s=0.2,
         boot_timeout_s=0.2,
     )
     elapsed = time.monotonic() - t0
-    assert result.status == "start-failed"
-    assert result.reason == "reexec_sock_not_up"
+    assert result.status == "proof-failed"
+    assert result.reason == "successor_bind_not_observed"
     assert result.executed is True
-    assert result.whoami_before is not None
-    assert result.whoami_before["pid"] == 9
-    assert result.boot_timeout_s == 0.2
-    assert result.recovery_path == RECOVERY_PATH
-    assert result.checks["start_attempts"] == 3
-    # Must terminate: wall clock well under an unbounded hang (≪ 30s).
     assert elapsed < 5.0
-    # Opposite of precondition refuse: status is not "refused".
-    assert result.status != "refused"
+    assert result.checks.get("successor_pane_id") == "%42"
+    assert result.checks.get("record_pid") == os.getpid()
+    assert not any(c[:2] == ["tmux", "kill-pane"] for c in tmux_log)
+    assert os.getpid() not in killed_pids
 
 
-def test_start_retry_then_succeed(tmp_path: Any) -> None:
-    """AC3.2a: first start attempt fails sock-up; second succeeds with proof."""
+def test_quit_sock_still_up_tears_down_successor(tmp_path: Any) -> None:
+    """Incumbent sock stays up after q ⇒ quit + successor teardown."""
     store = _store(tmp_path)
-    state = {"down": False, "starts_sent": 0}
+    record_path = tmp_path / "manage.armed.json"
+    tmux_log: list[list[str]] = []
+    killed_pids: list[int] = []
     later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
         if method == "whoami":
-            if state["down"] and state["starts_sent"] < 2:
-                return {"status": "error", "reason": "manage_sock_missing"}
-            if state["down"] and state["starts_sent"] >= 2:
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        tmux_log.append(cmd)
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            write_armed_record(
+                record_path,
+                pid=os.getpid(),
+                code_version="deadbeef",
+                process_start_time=later,
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="%77\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    def kill_pid(pid: int) -> None:
+        killed_pids.append(pid)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        armed_record_path=record_path,
+        run_cmd=run_cmd,
+        kill_pid_fn=kill_pid,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        quit_timeout_s=0.2,
+        boot_timeout_s=0.2,
+    )
+    assert result.status == "quit"
+    assert result.reason == "quit_sock_still_up"
+    assert result.executed is True
+    assert any(c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%77" for c in tmux_log)
+    assert os.getpid() in killed_pids
+    assert result.checks.get("successor_pane_id") == "%77"
+    assert result.checks.get("record_pid") == os.getpid()
+
+
+def test_arm_then_quit_proof_satisfied(tmp_path: Any) -> None:
+    """Armed record before quit; successor binds and passes pickup proof."""
+    store = _store(tmp_path)
+    record_path = tmp_path / "manage.armed.json"
+    state = {"down": False, "successor_visible": False}
+    later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            if state["down"]:
+                if not state["successor_visible"]:
+                    state["successor_visible"] = True
+                    return {"status": "error", "reason": "manage_sock_missing"}
                 return {
                     "pid": 10,
                     "code_version": "deadbeef",
@@ -597,12 +692,20 @@ def test_start_retry_then_succeed(tmp_path: Any) -> None:
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         if cmd[:2] == ["tmux", "display-message"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            write_armed_record(
+                record_path,
+                pid=os.getpid(),
+                code_version="deadbeef",
+                process_start_time=later,
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="%42\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"] and cmd[4] == "q":
+            state["down"] = True
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if cmd[:2] == ["tmux", "send-keys"]:
-            keys = cmd[4]
-            if keys == "q":
-                state["down"] = True
-            elif "scripts.model_manager.ui" in keys:
-                state["starts_sent"] += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
 
@@ -611,26 +714,30 @@ def test_start_retry_then_succeed(tmp_path: Any) -> None:
         dry_run=False,
         manage_call=manage_call,
         intent_db=store._db_path,  # noqa: SLF001
+        armed_record_path=record_path,
         run_cmd=run_cmd,
+        kill_pid_fn=lambda _pid: None,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
         quit_timeout_s=0.2,
-        boot_timeout_s=0.2,
-        max_start_attempts=3,
+        boot_timeout_s=0.5,
     )
     assert result.status == "proof-satisfied"
-    assert result.checks["start_attempts"] == 2
+    assert result.executed is True
 
 
-def test_start_retry_exhausted_never_healthy(tmp_path: Any) -> None:
-    """AC3.2b: all start attempts fail sock-up ⇒ start-failed with attempt count."""
+def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
+    """Wrong code_version in armed record ⇒ refused before quit."""
     store = _store(tmp_path)
-    state = {"down": False, "starts_sent": 0}
+    record_path = tmp_path / "manage.armed.json"
+    sends: list[list[str]] = []
+    tmux_log: list[list[str]] = []
+    killed_pids: list[int] = []
+    manage_calls: list[str] = []
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
+        manage_calls.append(method)
         if method == "whoami":
-            if state["down"]:
-                return {"status": "error", "reason": "manage_sock_missing"}
             return {
                 "pid": 9,
                 "code_version": "deadbeef",
@@ -650,34 +757,48 @@ def test_start_retry_exhausted_never_healthy(tmp_path: Any) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        tmux_log.append(cmd)
         if cmd[:2] == ["tmux", "display-message"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "split-window"]:
+            write_armed_record(
+                record_path,
+                pid=os.getpid(),
+                code_version="wrongversion",
+                process_start_time="2026-08-11T00:00:00+00:00",
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout="%42\n", stderr="")
         if cmd[:2] == ["tmux", "send-keys"]:
-            keys = cmd[4]
-            if keys == "q":
-                state["down"] = True
-            elif "scripts.model_manager.ui" in keys:
-                state["starts_sent"] += 1
+            sends.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:2] == ["tmux", "kill-pane"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
 
-    t0 = time.monotonic()
+    def kill_pid(pid: int) -> None:
+        killed_pids.append(pid)
+
     result = run_guarded_reexec(
         target_ref="deadbeef",
         dry_run=False,
         manage_call=manage_call,
         intent_db=store._db_path,  # noqa: SLF001
+        armed_record_path=record_path,
         run_cmd=run_cmd,
+        kill_pid_fn=kill_pid,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
-        quit_timeout_s=0.2,
-        boot_timeout_s=0.2,
-        max_start_attempts=2,
+        boot_timeout_s=0.5,
     )
-    elapsed = time.monotonic() - t0
-    assert result.status == "start-failed"
-    assert result.reason == "reexec_sock_not_up"
-    assert result.checks["start_attempts"] == 2
-    assert elapsed < 5.0
+    assert result.status == "refused"
+    assert "code_version_mismatch" in result.reason
+    assert result.reason.startswith("successor_proof_failed:")
+    assert result.executed is False
+    assert not any(len(c) > 4 and c[4] == "q" for c in sends)
+    assert any(c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%42" for c in tmux_log)
+    assert os.getpid() in killed_pids
+    assert "charter_resume" in manage_calls
