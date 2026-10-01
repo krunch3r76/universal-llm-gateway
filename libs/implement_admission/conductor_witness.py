@@ -137,9 +137,10 @@ def _scoreboard_rows(
     Tip rows are used only when every declared row is an R row. Any G row
     keeps ``G_ROWS`` so the ladder witnesses (G1 derived_from, G4 withhold/FAIL
     body, G6 verdict/sha, F1/S7, S4b/S9, L1) still apply — one R row the
-    conductor added must not select the custom-row rules. A tip with no G and
-    no all-R table (other custom ids) still folds those tip rows. Only a tip
-    with no row table at all consults the work item, and then with the full
+    conductor added must not select the custom-row rules. ``row_id_in`` yields
+    only ``G1``–``G7`` or ``R\\d+``, so a table of other custom ids is not a
+    tip-row set and those ids are not folded. Only a tip with no G/R row table
+    at all consults the work item, and then with the full
     projection the materializer used at birth (``conductor_materialize``),
     never the Card, which has no ``attributes``. A cortex read failure, a
     missing ``attributes`` map, or a non-dict entity degrades to ``G_ROWS``
