@@ -502,6 +502,7 @@ def run_guarded_reexec(
             run_cmd=run_cmd,
             kill_pid_fn=kill_pid_fn,
         )
+        manage_call("charter_resume", {}, sock_path=sock_path)
         return GuardedReexecResult(
             status="refused",
             reason=reason,
@@ -587,9 +588,7 @@ def run_guarded_reexec(
             run_cmd=run_cmd,
             kill_pid_fn=kill_pid_fn,
         )
-        _publish_reexec(
-            ManageReexecProof(status="quit", reason="quit_sock_still_up")
-        )
+        _publish_reexec(ManageReexecProof(status="quit", reason="quit_sock_still_up"))
         return GuardedReexecResult(
             status="quit",
             reason="quit_sock_still_up",

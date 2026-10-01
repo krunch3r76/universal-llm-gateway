@@ -302,6 +302,10 @@ class ModelManagerApp(App):
         server = ManageAPIServer(self._service_controller, self._event_bus)
         try:
             await server.start()
+            self._api_server = server
+            if self._armed_record_path is not None:
+                remove_armed_record(self._armed_record_path)
+            await self._start_bound_loops()
         except ManageSocketBusyError as e:
             logger.error("Handover bind refused while holding flock: %s", e)
             release_manage_lock(fd)
@@ -317,11 +321,6 @@ class ModelManagerApp(App):
             self._manage_lock_fd = None
             self.set_timer(30, self._park_for_handover)
             return
-
-        self._api_server = server
-        if self._armed_record_path is not None:
-            remove_armed_record(self._armed_record_path)
-        await self._start_bound_loops()
 
     async def reload_charter_tick(self) -> dict:
         """Restart the charter runner loop in place. Wired to ``charter_reload``.

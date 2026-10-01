@@ -177,6 +177,51 @@ def test_busy_socket_handler_exits_and_returns() -> None:
         if isinstance(node, ast.Return)
     ]
     assert armed_returns, "armed busy handler must return after scheduling park"
+    assert isinstance(armed_body[-1], ast.Return), (
+        "armed ManageSocketBusyError branch must end with return"
+    )
+
+
+def _handler_last_is_return(handler: ast.ExceptHandler) -> bool:
+    if not handler.body:
+        return False
+    return isinstance(handler.body[-1], ast.Return)
+
+
+def _try_has_server_start(try_node: ast.Try) -> bool:
+    for sub in ast.walk(ast.Module(body=try_node.body, type_ignores=[])):
+        if (
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Attribute)
+            and sub.func.attr == "start"
+        ):
+            return True
+    return False
+
+
+def _start_bound_loops_lineno_in_try_body(try_node: ast.Try) -> set[int]:
+    return {
+        sub.lineno
+        for sub in ast.walk(ast.Module(body=try_node.body, type_ignores=[]))
+        if isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == "_start_bound_loops"
+    }
+
+
+def _bound_loops_in_same_try_as_server_start(fn_node: ast.AsyncFunctionDef) -> bool:
+    """Every _start_bound_loops call must sit in a try that also awaits server.start()."""
+    all_linenos = {c.lineno for c in _start_bound_loops_calls(fn_node)}
+    if not all_linenos:
+        return True
+    covered: set[int] = set()
+    for try_node in ast.walk(fn_node):
+        if not isinstance(try_node, ast.Try):
+            continue
+        if not _try_has_server_start(try_node):
+            continue
+        covered |= _start_bound_loops_lineno_in_try_body(try_node)
+    return all_linenos <= covered
 
 
 def _loop_call_names(node: ast.AST) -> set[str]:
@@ -257,6 +302,9 @@ def test_bound_loops_only_in_start_bound_loops() -> None:
             ):
                 assert _start_bound_loops_calls(handler) == []
                 assert any(isinstance(n, ast.Return) for n in handler.body)
+                assert _handler_last_is_return(handler), (
+                    f"{fn_name} ManageSocketBusyError handler must end with return"
+                )
 
         for try_node in ast.walk(fn_node):
             if not isinstance(try_node, ast.Try):
@@ -268,6 +316,12 @@ def test_bound_loops_only_in_start_bound_loops() -> None:
             )
             for handler in try_node.handlers:
                 assert _start_bound_loops_calls(handler) == []
+
+    park = methods["_park_for_handover"]
+    assert _bound_loops_in_same_try_as_server_start(park), (
+        "_park_for_handover must call _start_bound_loops only inside the try "
+        "that awaits server.start()"
+    )
 
 
 @pytest.mark.offline

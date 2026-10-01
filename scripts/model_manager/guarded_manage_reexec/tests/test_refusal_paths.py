@@ -493,6 +493,8 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
     store = _store(tmp_path)
     record_path = tmp_path / "manage.armed.json"
     state = {"down": False}
+    tmux_log: list[list[str]] = []
+    killed_pids: list[int] = []
     later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
@@ -519,9 +521,12 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        tmux_log.append(cmd)
         if cmd[:2] == ["tmux", "display-message"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
         if cmd[:2] == ["tmux", "split-window"]:
@@ -541,6 +546,9 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(cmd)
 
+    def kill_pid(pid: int) -> None:
+        killed_pids.append(pid)
+
     t0 = time.monotonic()
     result = run_guarded_reexec(
         target_ref="deadbeef",
@@ -549,6 +557,7 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
         intent_db=store._db_path,  # noqa: SLF001
         armed_record_path=record_path,
         run_cmd=run_cmd,
+        kill_pid_fn=kill_pid,
         tree_contains_fn=lambda pid, ancestor: pid == ancestor,
         quit_timeout_s=0.2,
         boot_timeout_s=0.2,
@@ -560,6 +569,8 @@ def test_quit_ok_successor_never_binds(tmp_path: Any) -> None:
     assert elapsed < 5.0
     assert result.checks.get("successor_pane_id") == "%42"
     assert result.checks.get("record_pid") == os.getpid()
+    assert not any(c[:2] == ["tmux", "kill-pane"] for c in tmux_log)
+    assert os.getpid() not in killed_pids
 
 
 def test_quit_sock_still_up_tears_down_successor(tmp_path: Any) -> None:
@@ -630,9 +641,7 @@ def test_quit_sock_still_up_tears_down_successor(tmp_path: Any) -> None:
     assert result.status == "quit"
     assert result.reason == "quit_sock_still_up"
     assert result.executed is True
-    assert any(
-        c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%77" for c in tmux_log
-    )
+    assert any(c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%77" for c in tmux_log)
     assert os.getpid() in killed_pids
     assert result.checks.get("successor_pane_id") == "%77"
     assert result.checks.get("record_pid") == os.getpid()
@@ -723,9 +732,11 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
     sends: list[list[str]] = []
     tmux_log: list[list[str]] = []
     killed_pids: list[int] = []
+    manage_calls: list[str] = []
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
+        manage_calls.append(method)
         if method == "whoami":
             return {
                 "pid": 9,
@@ -746,6 +757,8 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
             }
         if method == "charter_pause":
             return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
         raise AssertionError(method)
 
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -786,7 +799,6 @@ def test_arm_proof_rejected_refuses_before_quit(tmp_path: Any) -> None:
     assert result.reason.startswith("successor_proof_failed:")
     assert result.executed is False
     assert not any(len(c) > 4 and c[4] == "q" for c in sends)
-    assert any(
-        c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%42" for c in tmux_log
-    )
+    assert any(c[:3] == ["tmux", "kill-pane", "-t"] and c[3] == "%42" for c in tmux_log)
     assert os.getpid() in killed_pids
+    assert "charter_resume" in manage_calls
