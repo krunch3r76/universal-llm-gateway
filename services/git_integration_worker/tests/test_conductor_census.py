@@ -623,3 +623,153 @@ def test_renderers_carry_the_release_call() -> None:
     assert payload[0]["state"] == "budget_parked"
     assert payload[0]["thread_id"] == "13713"
     assert render_table([]).endswith("(no conductor missions in the ledger)")
+
+
+def test_days_filter_marks_old_finished_rows_stale() -> None:
+    """--days N relabels finished rows older than N days; a fresh done stays done."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        dispatch_id="old-done",
+        thread_id="1",
+        work_key="todo:old-done",
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    _admit(
+        ledger,
+        dispatch_id="fresh-done",
+        thread_id="2",
+        work_key="todo:fresh-done",
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    old = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+    fresh = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET terminal_at=? WHERE dispatch_id='old-done'",
+            (old,),
+        )
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET terminal_at=? WHERE dispatch_id='fresh-done'",
+            (fresh,),
+        )
+        rows = census(conn, days=7)
+    by_id = {row.dispatch_id: row for row in rows}
+    assert by_id["old-done"].state == "stale"
+    assert by_id["fresh-done"].state == "done"
+    assert "stale" in CENSUS_STATES
+
+
+def test_operator_lane_comes_from_sessions_registry() -> None:
+    """A sessions-registry operator lane is not summoned as dispatch_thread_id."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_census import (
+        operator_lanes_from_sessions,
+    )
+
+    sessions = {
+        "reg:op": {
+            "purpose": "operator-proxy",
+            "ids": {"lane_thread": "77777"},
+        },
+        "reg:review": {
+            "purpose": "review",
+            "ids": {"lane_thread": "88888"},
+        },
+    }
+    lanes = operator_lanes_from_sessions(sessions)
+    assert "77777" in lanes
+    assert "88888" not in lanes
+    row = classify_mission_row(
+        {
+            "dispatch_id": "hop-op",
+            "thread_id": "14000",
+            "work_key": "todo:op-lane",
+            "status": "completed",
+            "terminal_at": datetime.now(UTC).isoformat(),
+            "record_json": json.dumps(
+                {
+                    "closeout_stop_tokens": ["ROW_HOP"],
+                    "summoning_thread_id": "77777",
+                }
+            ),
+        },
+        operator_lanes=lanes,
+    )
+    assert 'dispatch_thread_id="14000"' in row.release
+    assert 'dispatch_thread_id="77777"' not in row.release
+
+
+def test_stacked_parks_on_one_lane_are_counted() -> None:
+    """Two unreleased parks on the same thread are not collapsed to one."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        dispatch_id="park-a",
+        thread_id="55",
+        work_key="todo:stacked",
+        terminal_status="cancelled",
+        record_patch={"closeout_stop_tokens": ["ROW_HOP"]},
+    )
+    _admit(
+        ledger,
+        dispatch_id="park-b",
+        thread_id="55",
+        work_key="todo:stacked",
+        terminal_status="cancelled",
+        record_patch={"closeout_stop_tokens": ["ROW_HOP"]},
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='park_for_restart' "
+            "WHERE dispatch_id IN ('park-a', 'park-b')"
+        )
+        rows = census(conn)
+    assert len(rows) == 1
+    assert rows[0].stacked_parks == 2
+    assert "stacked parks on lane: 2" in rows[0].reason
+
+
+def test_partial_last_row_is_not_a_census_row() -> None:
+    """A torn record_json is not classified, and the reader does not write."""
+    import sqlite3
+
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        resolve_cursor_sdk_dispatch_ledger_path,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_census import (
+        open_census_connection,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        dispatch_id="good-row",
+        thread_id="3",
+        work_key="todo:good",
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    _admit(
+        ledger,
+        dispatch_id="torn-row",
+        thread_id="4",
+        work_key="todo:torn",
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id='torn-row'",
+            ('{"closeout_stop_tokens":',),
+        )
+    path = resolve_cursor_sdk_dispatch_ledger_path()
+    reader = open_census_connection(path)
+    try:
+        rows = census(reader)
+        assert [row.dispatch_id for row in rows] == ["good-row"]
+        writer = sqlite3.connect(path, timeout=0.3)
+        writer.execute("BEGIN IMMEDIATE")
+        writer.rollback()
+        writer.close()
+        with pytest.raises(sqlite3.OperationalError):
+            reader.execute("CREATE TABLE census_must_not_write(x)")
+    finally:
+        reader.close()

@@ -1,0 +1,15 @@
+schema_version: 6
+id: conductor-census
+version: "1.0"
+type: conductor_census
+description: >
+  Read-only fold of conductor missions from the GIW dispatch ledger.
+  Options: open_only (bool), days (int, stale window), format (table|json).
+output: census
+
+options:
+  timeout_seconds: 30
+
+steps:
+  - name: census
+    type: conductor_census_v1
