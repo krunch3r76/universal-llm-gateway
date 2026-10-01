@@ -13,7 +13,15 @@ from typing import Any
 
 # Relevance keys pass through verbatim; their shape is owned by
 # ``pipelines/rag/rag_context_v1/rerank_scoring.relevance_summary``.
-_RELEVANCE_KEYS = ("chunks", "weak_match", "top_relevance", "weak_match_threshold")
+_RELEVANCE_KEYS = (
+    "chunks",
+    "weak_match",
+    "top_relevance",
+    "weak_match_threshold",
+    "rerank_status",
+    "weak_match_basis",
+    "rerank_error",
+)
 
 
 def retrieval_metadata_from_response(
@@ -54,6 +62,9 @@ def envelope_retrieval_fields(
     rejection_reason = retrieval.get("scope_rejection_reason")
     if isinstance(rejection_reason, str) and rejection_reason:
         envelope["retrieval"]["scope_rejection_reason"] = rejection_reason
+    retrieval_rejection = retrieval.get("retrieval_rejection_reason")
+    if isinstance(retrieval_rejection, str) and retrieval_rejection:
+        envelope["retrieval"]["retrieval_rejection_reason"] = retrieval_rejection
     for key in _RELEVANCE_KEYS:
         if key in retrieval:
             envelope["retrieval"][key] = retrieval[key]

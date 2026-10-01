@@ -1169,6 +1169,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "scope_confidence": float(
                         rewrite_data.get("scope_confidence", 1.0)
                     ),
+                    "retrieval_rejection_reason": "retrieval_unavailable",
                 },
             )
 

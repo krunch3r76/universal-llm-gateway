@@ -19,10 +19,20 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _cache_ttl_seconds = 60.0
+# A refresh failure may keep serving the previous catalog for this long.
+# Fail-closed means "do not accept a scope the catalog does not name"; a
+# catalog a few minutes old still does that. Past this window, callers get
+# None and must surface a transport failure rather than an empty corpus.
+_stale_serve_seconds = 300.0
+# Parallel searches share one refresh. After a failed attempt, further
+# callers inside this backoff reuse the stale catalog instead of each
+# waiting out another /scopes timeout.
+_refresh_backoff_seconds = 5.0
 _cache_lock = asyncio.Lock()
 _cache_scopes: set[str] | None = None
 _cache_prefixes: dict[str, list[str]] | None = None
 _cache_ts: float = 0.0
+_cache_last_attempt_ts: float = 0.0
 
 
 async def _refresh_cache(base_url: str) -> bool:
@@ -88,8 +98,23 @@ async def _refresh_cache(base_url: str) -> bool:
         return False
 
 
+def _stale_catalog_usable(now: float) -> bool:
+    """True when a previous catalog is still inside the staleness window."""
+    return (
+        _cache_scopes is not None
+        and (now - _cache_ts) < _stale_serve_seconds
+    )
+
+
 async def _ensure_cache(base_url: str) -> bool:
-    """Ensure cache is fresh; returns True if cache is valid."""
+    """Ensure cache is fresh; returns True if a catalog may be used.
+
+    A failed refresh still returns True while the last successful catalog is
+    younger than ``_stale_serve_seconds``. A cold cache, or one older than
+    that window, returns False so the caller can report a transport failure.
+    """
+    global _cache_last_attempt_ts  # noqa: PLW0603
+
     now = time.monotonic()
     if _cache_scopes is not None and (now - _cache_ts) < _cache_ttl_seconds:
         return True
@@ -97,14 +122,30 @@ async def _ensure_cache(base_url: str) -> bool:
         now2 = time.monotonic()
         if _cache_scopes is not None and (now2 - _cache_ts) < _cache_ttl_seconds:
             return True
-        return await _refresh_cache(base_url)
+        if (
+            _stale_catalog_usable(now2)
+            and (now2 - _cache_last_attempt_ts) < _refresh_backoff_seconds
+        ):
+            return True
+        _cache_last_attempt_ts = now2
+        if await _refresh_cache(base_url):
+            return True
+        if _stale_catalog_usable(time.monotonic()):
+            logger.warning(
+                "RAG /scopes refresh failed; serving catalog cached %.0fs ago",
+                time.monotonic() - _cache_ts,
+            )
+            return True
+        return False
 
 
 async def fetch_valid_scopes(base_url: str) -> set[str] | None:
     """Return valid scope names from RAG ``/scopes`` with TTL cache.
 
-    Callers enforce fail-closed behavior: ``None`` means scope validation
-    cannot proceed and retrieval should return zero chunks.
+    ``None`` means no catalog is available, including no last-known-good
+    copy inside the staleness window. Callers must treat that as a transport
+    failure, not as an empty corpus. A catalog a few minutes old is still
+    returned so unknown scopes stay rejected.
     """
     if await _ensure_cache(base_url):
         return _cache_scopes
