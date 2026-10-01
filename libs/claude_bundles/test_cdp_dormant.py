@@ -1177,3 +1177,92 @@ def test_mint_headroom_recheck_emits_after_drain_true(
     assert len(display_events) == 2
     assert display_events[0].payload["after_drain"] is False  # type: ignore[attr-defined]
     assert display_events[1].payload["after_drain"] is True  # type: ignore[attr-defined]
+
+
+def test_reserve_post_drain_does_not_overwrite_released_row(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent release during headroom drain must not clobber released status."""
+    from claude_bundles.cdp_registry import lifecycle as life
+
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_post_drain_rel")
+    reg.make_dormant(seat.registration_id, is_listening=lambda _p: False)
+    rid = seat.registration_id
+
+    def drain_then_release(**_kwargs: object) -> dormant_drain.DrainResult:
+        active = reg._store.load_active()
+        row = dict(active[rid])
+        row["status"] = "released"
+        row["released_at"] = 1.0
+        active[rid] = row
+        reg._store.write_active(active)
+        return dormant_drain.DrainResult()
+
+    monkeypatch.setattr(life, "_mint_headroom_gate", lambda **_kw: drain_then_release())
+
+    with pytest.raises(reg.SeatContended) as excinfo:
+        life.reserve_allocating_row(
+            holder=seat.holder,
+            purpose=seat.purpose,
+            mission_kind="root",
+            parent_thread="lane-post-drain-rel",
+            listen=lambda _p: False,
+            registration_id=rid,
+            profile_suffix=seat.profile_suffix,
+            carry={"chat_url": _row(rid).get("chat_url")},
+            expect_status="dormant",
+            launch=True,
+            join=False,
+        )
+    assert excinfo.value.data["depth"] == "reserve_compare_and_set"
+    assert excinfo.value.data["observed_status"] == "released"
+    assert _row(rid)["status"] == "released"
+
+
+def test_reserve_post_drain_joins_allocating_instead_of_second_mint(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Join target appearing during drain returns join, not a duplicate mint."""
+    from claude_bundles.cdp_registry import lifecycle as life
+
+    parent = "lane-post-drain-join"
+    peer_id = "peer-alloc-post-drain"
+    reg._store.write_active(
+        {
+            peer_id: {
+                "registration_id": peer_id,
+                "port": 9223,
+                "profile_suffix": "reg-peerpd",
+                "profile": str(isolated_registry / "peer-profile"),
+                "holder": "peer-holder",
+                "purpose": "operator-proxy",
+                "mission_kind": "root",
+                "parent_thread": parent,
+                "status": "allocating",
+                "chrome_pid": None,
+                "holder_pid": None,
+                "started_at": 1.0,
+            }
+        }
+    )
+
+    def drain_then_seed_peer(**_kwargs: object) -> dormant_drain.DrainResult:
+        reg._claim_driver_lock(peer_id)
+        return dormant_drain.DrainResult()
+
+    monkeypatch.setattr(life, "_mint_headroom_gate", lambda **_kw: drain_then_seed_peer())
+
+    row, minted = life.reserve_allocating_row(
+        holder="join-after-drain",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread=parent,
+        listen=lambda _p: False,
+        launch=True,
+        join=True,
+    )
+    assert minted is False
+    assert row["registration_id"] == peer_id
+    active = reg._load_active()
+    assert len(active) == 1
+    assert peer_id in active

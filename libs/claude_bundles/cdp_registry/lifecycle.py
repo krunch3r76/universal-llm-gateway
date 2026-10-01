@@ -182,92 +182,107 @@ def reserve_allocating_row(
     """
     from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
-    with _store.ports_lock():
-        active = _store.load_active()
-        parent = str(parent_thread or "").strip()
-        purpose_norm = str(purpose or "").strip()
-        kind_norm = str(mission_kind or "").strip().lower()
-        if (
-            join
-            and registration_id is None
-            and parent
-            and purpose_norm in OPERATOR_PURPOSES
-            and kind_norm != "hop"
-        ):
-            target = _join_target(active, parent)
-            if target is not None:
-                return target, False
-        if expect_status is not None:
-            current = active.get(registration_id) if registration_id else None
-            current_status = (
-                current.get("status") if isinstance(current, dict) else None
+    parent = str(parent_thread or "").strip()
+    purpose_norm = str(purpose or "").strip()
+    kind_norm = str(mission_kind or "").strip().lower()
+    join_eligible = (
+        join
+        and registration_id is None
+        and parent
+        and purpose_norm in OPERATOR_PURPOSES
+        and kind_norm != "hop"
+    )
+
+    def _count_allocating(active_map: dict[str, Any]) -> int:
+        return sum(
+            1
+            for row in active_map.values()
+            if isinstance(row, dict) and row.get("status") == "allocating"
+        )
+
+    def _expect_status_ok(active_map: dict[str, Any]) -> None:
+        if expect_status is None:
+            return
+        current = active_map.get(registration_id) if registration_id else None
+        current_status = current.get("status") if isinstance(current, dict) else None
+        if current_status != expect_status:
+            raise SeatContended(
+                f"registration {registration_id!r} is {current_status!r}, "
+                f"not {expect_status!r}",
+                retryable=True,
+                data={
+                    "depth": "reserve_compare_and_set",
+                    "observed_status": current_status,
+                    "registration_id": registration_id,
+                },
             )
-            if current_status != expect_status:
-                raise SeatContended(
-                    f"registration {registration_id!r} is {current_status!r}, "
-                    f"not {expect_status!r}",
-                    retryable=True,
-                    data={
-                        "depth": "reserve_compare_and_set",
-                        "observed_status": current_status,
-                        "registration_id": registration_id,
-                    },
+
+    resolved_display = cdp_lane.cdp_display()
+    while True:
+        with _store.ports_lock():
+            active = _store.load_active()
+            if join_eligible:
+                target = _join_target(active, parent)
+                if target is not None:
+                    return target, False
+            _expect_status_ok(active)
+            reserved_chromes = _count_allocating(active) if launch else 0
+
+        if launch:
+            _mint_headroom_gate(
+                display=resolved_display,
+                reserved_chromes=reserved_chromes,
+                listen=listen,
+            )
+
+        with _store.ports_lock():
+            active = _store.load_active()
+            if join_eligible:
+                target = _join_target(active, parent)
+                if target is not None:
+                    return target, False
+            _expect_status_ok(active)
+            post_drain_allocating = _count_allocating(active) if launch else 0
+            if launch and post_drain_allocating != reserved_chromes:
+                reserved_chromes = post_drain_allocating
+                continue
+            exclude = _used_ports(active) | _peer_lane_ports()
+            port = select_free_registry_port(listen, exclude=exclude)
+            if registration_id is None or profile_suffix is None:
+                registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+            row: dict[str, Any] = {
+                **(carry or {}),
+                "registration_id": registration_id,
+                "port": port,
+                "profile_suffix": profile_suffix,
+                "profile": str(cdp_lane.profile_for(profile_suffix)),
+                "holder": holder,
+                "purpose": purpose,
+                "display": resolved_display,
+                "mission_kind": mission_kind,
+                "parent_thread": parent_thread,
+                "status": "allocating",
+                "chrome_pid": None,
+                "holder_pid": os.getpid(),
+                "started_at": time.time(),
+            }
+            for seat_key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
+                row.pop(seat_key, None)
+            _claim_driver_lock(registration_id)
+            active[registration_id] = row
+            _store.write_active(active)
+            _store.append_log("allocating", row)
+            _events.emit(
+                _events.cdp_port_allocating(
+                    registration_id=registration_id,
+                    port=port,
+                    parent_thread=parent_thread
+                    if isinstance(parent_thread, str)
+                    else None,
+                    holder=holder,
                 )
-        resolved_display = cdp_lane.cdp_display()
-        reserved_chromes = (
-            sum(
-                1
-                for row in active.values()
-                if isinstance(row, dict) and row.get("status") == "allocating"
             )
-            if launch
-            else 0
-        )
-
-    if launch:
-        _mint_headroom_gate(
-            display=resolved_display,
-            reserved_chromes=reserved_chromes,
-            listen=listen,
-        )
-
-    with _store.ports_lock():
-        active = _store.load_active()
-        exclude = _used_ports(active) | _peer_lane_ports()
-        port = select_free_registry_port(listen, exclude=exclude)
-        if registration_id is None or profile_suffix is None:
-            registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
-        row: dict[str, Any] = {
-            **(carry or {}),
-            "registration_id": registration_id,
-            "port": port,
-            "profile_suffix": profile_suffix,
-            "profile": str(cdp_lane.profile_for(profile_suffix)),
-            "holder": holder,
-            "purpose": purpose,
-            "display": resolved_display,
-            "mission_kind": mission_kind,
-            "parent_thread": parent_thread,
-            "status": "allocating",
-            "chrome_pid": None,
-            "holder_pid": os.getpid(),
-            "started_at": time.time(),
-        }
-        for seat_key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
-            row.pop(seat_key, None)
-        _claim_driver_lock(registration_id)
-        active[registration_id] = row
-        _store.write_active(active)
-        _store.append_log("allocating", row)
-        _events.emit(
-            _events.cdp_port_allocating(
-                registration_id=registration_id,
-                port=port,
-                parent_thread=parent_thread if isinstance(parent_thread, str) else None,
-                holder=holder,
-            )
-        )
-    return row, True
+        return row, True
 
 
 def activate_allocating_row(
