@@ -48,7 +48,12 @@ _X_EXHAUSTED_SCOPE = (
     "True when observed headroom is below one multiprocess Chrome budget; "
     "None when x_clients is unobserved"
 )
-_X_MAX_SCOPE = "configured X MaxClients (CDP_X_MAX_CLIENTS, default 64)"
+_X_MAX_SCOPE = "configured X MaxClients (CDP_X_MAX_CLIENTS, else :1 → 128, else 64)"
+# Desktop Xwayland :1 is started with no -maxclients (server default 256).
+# The 64 gate was refusing mints while that server still had room. Temporary
+# until dormant seats keep the client count down. Xvfb :2/:3 stay at 64
+# because those servers are launched with -maxclients 64.
+_DISPLAY_MAX_CLIENTS = {":1": 128}
 _X_BUDGET_SCOPE = "unix clients reserved for one multiprocess Chrome (CDP_X_CHROME_CLIENT_BUDGET, default 8)"
 
 
@@ -101,13 +106,25 @@ def _cdp_display() -> str:
     return cdp_display()
 
 
-def _max_clients() -> int:
+def _display_key(display: str) -> str:
+    """Normalize ``:1``, ``1``, and ``:1.0`` to ``:1``."""
+    text = display.strip()
+    if not text.startswith(":"):
+        text = f":{text}"
+    return text.split(".", 1)[0]
+
+
+def _max_clients(display: str | None = None) -> int:
     raw = os.environ.get("CDP_X_MAX_CLIENTS", "").strip()
     if raw:
         with contextlib.suppress(ValueError):
             value = int(raw)
             if value > 0:
                 return value
+    if display is not None:
+        pinned = _DISPLAY_MAX_CLIENTS.get(_display_key(display))
+        if pinned is not None:
+            return pinned
     return X_MAX_CLIENTS_DEFAULT
 
 
@@ -135,7 +152,7 @@ def probe_x_display(
     ``/proc/net/unix``. Unreadable procfs yields ``x_exhausted=None`` (unobserved).
     """
     resolved_display = display if display is not None else _cdp_display()
-    cap = _max_clients() if max_clients is None else max_clients
+    cap = _max_clients(resolved_display) if max_clients is None else max_clients
     budget = _chrome_budget() if chrome_budget is None else chrome_budget
     if count is None:
         observed = count_x11_unix_clients(resolved_display, proc_net_unix=proc_net_unix)
