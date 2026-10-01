@@ -25,6 +25,7 @@ from claude_bundles.conductor_stop import (
     next_admit_payload_matches_entry_gate,
     parse_designed_stop_tokens,
 )
+from implement_admission.conductor_score_table import SCOREBOARD_ROW_ID
 from implement_admission.conductor_witness_types import row_status_in_tip
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
@@ -218,9 +219,16 @@ def hop_body_build_refused(
 
 
 def _scoreboard_entry_gate(scoreboard_body: str) -> str | None:
-    """Parse ``**Entry gate:** Gn`` from the scoreboard tip when present."""
+    """Parse ``**Entry gate:** <row id>`` from the scoreboard tip when present.
+
+    Row ids follow ``SCOREBOARD_ROW_ID`` (G1–G7 and R rows). A G-only pattern
+    dropped R-row missions, so ``generation_options.scoreboard_entry_gate``
+    stayed unset (a:37055).
+    """
+    # Bold may close before the colon (``**Entry gate**:``) or after it
+    # (``**Entry gate:**``), which is how scoreboard tips are written.
     match = re.search(
-        r"(?im)(?:\*\*)?Entry gate(?:\*\*)?\s*:\s*(G[1-8])\b",
+        rf"(?im)\*{{0,2}}Entry gate\*{{0,2}}\s*:\s*\*{{0,2}}\s*({SCOREBOARD_ROW_ID})\b",
         scoreboard_body or "",
     )
     if match is None:
