@@ -66,7 +66,15 @@ def _admit(
 
 def test_hop_reasons_reexport_matches_events_vocabulary() -> None:
     assert HOP_REASONS == frozenset(
-        {"spawn", "planned", "crash", "silent", "watchdog", "park_harvest"}
+        {
+            "spawn",
+            "planned",
+            "crash",
+            "silent",
+            "watchdog",
+            "park_harvest",
+            "cdp_probe_indeterminate",
+        }
     )
     assert validate_hop_reason("spawn") is True
     assert validate_hop_reason("invalid") is False

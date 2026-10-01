@@ -25,6 +25,7 @@ from claude_bundles.conductor_stop import (
     next_admit_payload_matches_entry_gate,
     parse_designed_stop_tokens,
 )
+from implement_admission.conductor_score_table import SCOREBOARD_ROW_ID
 from implement_admission.conductor_witness_types import row_status_in_tip
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
@@ -156,10 +157,7 @@ def _row_id_in_scoreboard_table(scoreboard_body: str, row_id: str | None) -> boo
 
 
 def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str | None:
-    """Entry gate from scoreboard header, fold, or first OPEN row."""
-    gate = _scoreboard_entry_gate(scoreboard_body)
-    if gate:
-        return gate
+    """Live entry gate: fold first for todo: missions, else header, else first OPEN row."""
     work_key = str(row.get("work_key") or "")
     if work_key.startswith("todo:"):
         slug = work_key.split(":", 1)[1].strip()
@@ -194,6 +192,9 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                     slug,
                     exc,
                 )
+    gate = _scoreboard_entry_gate(scoreboard_body)
+    if gate:
+        return gate
     return _first_open_row_in_scoreboard(scoreboard_body)
 
 
@@ -235,9 +236,16 @@ def hop_body_build_refused(
 
 
 def _scoreboard_entry_gate(scoreboard_body: str) -> str | None:
-    """Parse ``**Entry gate:** Gn`` from the scoreboard tip when present."""
+    """Parse ``**Entry gate:** <row id>`` from the scoreboard tip when present.
+
+    Row ids follow ``SCOREBOARD_ROW_ID`` (G1–G7 and R rows). A G-only pattern
+    dropped R-row missions, so ``generation_options.scoreboard_entry_gate``
+    stayed unset (a:37055).
+    """
+    # Bold may close before the colon (``**Entry gate**:``) or after it
+    # (``**Entry gate:**``), which is how scoreboard tips are written.
     match = re.search(
-        r"(?im)(?:\*\*)?Entry gate(?:\*\*)?\s*:\s*(G[1-8])\b",
+        rf"(?im)\*{{0,2}}Entry gate\*{{0,2}}\s*:\s*\*{{0,2}}\s*({SCOREBOARD_ROW_ID})\b",
         scoreboard_body or "",
     )
     if match is None:
@@ -279,6 +287,8 @@ def _hop_skip_gate(
     if ext_gate == SKIP_GATE_LIVE_EXTERNAL:
         return SKIP_GATE_LIVE_EXTERNAL
     if ext_gate == SKIP_GATE_PROBE_INDETERMINATE:
+        # Stay fail-closed on this pass. The watchdog admits once the row has
+        # been terminal longer than twice the reactor grace.
         return SKIP_GATE_PROBE_INDETERMINATE
     if not hop_owed(row, closeout_tokens=closeout_tokens):
         status = str(row.get("status") or "")
@@ -447,8 +457,14 @@ def hop_owed(
     row: dict[str, Any],
     *,
     closeout_tokens: frozenset[str] | None = None,
+    ignore_probe_indeterminate: bool = False,
 ) -> bool:
-    """Predicate from bind §2.6 item 3 (row must already be terminal)."""
+    """Predicate from bind §2.6 item 3 (row must already be terminal).
+
+    ``ignore_probe_indeterminate`` is the watchdog's double-grace path. The
+    reactor leaves it false, so an empty CDP probe still withholds immediately.
+    A live external gate is never ignored.
+    """
     status = str(row.get("status") or "")
     if status not in ("completed", "failed", "cancelled"):
         return False
@@ -472,7 +488,9 @@ def hop_owed(
     if not budget_ok_for_hop(row, closeout_tokens=tokens):
         return False
     ext_verdict, _ext_gate = external_gate_hop_verdict(row)
-    if ext_verdict in {"live", "indeterminate_closed"}:
+    if ext_verdict == "live":
+        return False
+    if ext_verdict == "indeterminate_closed" and not ignore_probe_indeterminate:
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
@@ -577,6 +595,85 @@ def _summoning_head_turn_patch(
     return patch
 
 
+def _fold_mission(row: dict[str, Any]) -> Any:
+    """Witness fold for the row's todo, or None when there is no board."""
+    work_key = str(row.get("work_key") or "")
+    if not work_key.startswith("todo:"):
+        return None
+    slug = work_key.split(":", 1)[1].strip()
+    if not slug:
+        return None
+    try:
+        from implement_admission.conductor_witness import fold_scoreboard
+
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            fold_deps_with_ledger,
+        )
+
+        return fold_scoreboard(
+            slug,
+            deps=fold_deps_with_ledger(f"todo:{slug}", repo=_fold_repo(row)),
+            write_journal=False,
+        )
+    except Exception as exc:  # noqa: BLE001 — fold failure must not fail closeout
+        logger.warning(
+            "conductor done workflow fold failed slug=%s err=%s",
+            slug,
+            exc,
+        )
+        return None
+
+
+def mark_todo_done_on_mission_close(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str],
+) -> None:
+    """Set workflow_state=done when the fold shows every row DONE and G7 landed.
+
+    A DONE token alone is not enough: a partial ladder, an open mission, a
+    missing G7, or a ROW_HOP closeout leaves the card open. Matches the
+    implement adapter's ``entity_update(workflow_state=done)`` write.
+    """
+    if "DONE" not in closeout_tokens or "ROW_HOP" in closeout_tokens:
+        return
+    fold = _fold_mission(row)
+    if fold is None:
+        return
+    statuses = getattr(fold, "row_status", None) or {}
+    if not statuses:
+        return
+    if any(status != "DONE" for status in statuses.values()):
+        return
+    if statuses.get("G7") != "DONE":
+        return
+    work_key = str(row.get("work_key") or "")
+    slug = work_key.split(":", 1)[1].strip() if work_key.startswith("todo:") else ""
+    if not slug:
+        return
+    entity_id = f"todo:{slug}"
+    from implement_admission.closeout_runtime import get_runtime
+
+    try:
+        resp = get_runtime().dispatch(
+            "entity_update",
+            {"entity_id": entity_id, "workflow_state": "done"},
+        )
+    except Exception as exc:  # noqa: BLE001 — must not block terminal closeout
+        logger.warning(
+            "conductor done workflow entity_update failed entity_id=%s err=%s",
+            entity_id,
+            exc,
+        )
+        return
+    if isinstance(resp, dict) and resp.get("error"):
+        logger.warning(
+            "conductor done workflow entity_update error entity_id=%s err=%s",
+            entity_id,
+            resp.get("error"),
+        )
+
+
 def merge_conductor_closeout_hop_authority(
     *,
     dispatch_id: str,
@@ -646,6 +743,7 @@ def merge_conductor_closeout_hop_authority(
             hop_seq=hop_seq,
             hop_reason="planned",
         )
+    mark_todo_done_on_mission_close(row, closeout_tokens=tokens)
 
 
 def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:

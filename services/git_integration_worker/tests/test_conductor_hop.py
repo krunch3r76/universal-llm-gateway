@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons 
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     SKIP_GATE_NEXT_ADMIT_BLOCKED,
     _hop_skip_gate,
+    _scoreboard_entry_gate,
     _utc_closeout_instant,
     build_conductor_hop_idempotency_key,
     build_hop_team_dispatch_body,
@@ -1121,6 +1122,50 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
     assert build_hop_team_dispatch_body(row) is not None
 
 
+def test_ac7_stale_header_entry_gate_fold_wins_over_harvest_next_admit(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale **Entry gate:** header must not outrank fold for NEXT_ADMIT guard (F1)."""
+    from claude_bundles.conductor_stop import next_admit_payload_matches_entry_gate
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _live_entry_gate_for_row,
+    )
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    body = (
+        "# Scoreboard\n\n"
+        "- **Entry gate:** G1\n"
+        "- **NEXT_ADMIT:** harvest G1\n\n"
+        "## Gated deliverables\n\n"
+        "| ID | Deliverable | Status |\n|---|---|---|\n"
+        "| G1 | Architecture | DONE |\n"
+        "| G2 | Frame | OPEN |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        body, encoding="utf-8"
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    fold_stub = object()
+    with patch(
+        "implement_admission.conductor_witness.fold_scoreboard",
+        return_value=fold_stub,
+    ):
+        with patch(
+            "implement_admission.conductor_witness.resolve_entry_gate_from_fold",
+            return_value="G2",
+        ):
+            assert _live_entry_gate_for_row(row, body) == "G2"
+            assert not next_admit_payload_matches_entry_gate("harvest G1", "G2")
+            body_out = build_hop_team_dispatch_body(row)
+    assert body_out is not None
+    assert body_out["generation_options"]["scoreboard_entry_gate"] == "G1"
+
+
 def test_ac7_stale_scoreboard_harvest_does_not_block_row_hop(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1143,6 +1188,26 @@ def test_ac7_stale_scoreboard_harvest_does_not_block_row_hop(
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
     assert build_hop_team_dispatch_body(row) is not None
+
+
+def test_r_row_entry_gate_sets_generation_option(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D4: R-row entry gates use the scoreboard row-id grammar, not G[1-8]."""
+    assert _scoreboard_entry_gate("**Entry gate:** R4") == "R4"
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        "# Scoreboard\n\n**Entry gate:** R4\n\n| R4 | Review | OPEN |\n",
+        encoding="utf-8",
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    assert body["generation_options"]["scoreboard_entry_gate"] == "R4"
 
 
 @pytest.mark.asyncio
