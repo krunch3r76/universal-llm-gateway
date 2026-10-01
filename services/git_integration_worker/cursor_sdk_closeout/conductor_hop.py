@@ -595,6 +595,67 @@ def _summoning_head_turn_patch(
     return patch
 
 
+def _fold_mission(row: dict[str, Any]) -> Any:
+    """Witness fold for the row's todo, or None when there is no board."""
+    work_key = str(row.get("work_key") or "")
+    if not work_key.startswith("todo:"):
+        return None
+    slug = work_key.split(":", 1)[1].strip()
+    if not slug:
+        return None
+    try:
+        from implement_admission.conductor_witness import fold_scoreboard
+
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            fold_deps_with_ledger,
+        )
+
+        return fold_scoreboard(
+            slug,
+            deps=fold_deps_with_ledger(f"todo:{slug}", repo=_fold_repo(row)),
+            write_journal=False,
+        )
+    except Exception as exc:  # noqa: BLE001 — fold failure must not fail closeout
+        logger.warning(
+            "conductor done workflow fold failed slug=%s err=%s",
+            slug,
+            exc,
+        )
+        return None
+
+
+def mark_todo_done_on_mission_close(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str],
+) -> None:
+    """Set workflow_state=done when the fold shows every row DONE and G7 landed.
+
+    A DONE token alone is not enough: a partial ladder, an open mission, a
+    missing G7, or a ROW_HOP closeout leaves the card open. Matches the
+    implement adapter's ``entity_update(workflow_state=done)`` write.
+    """
+    if "DONE" not in closeout_tokens or "ROW_HOP" in closeout_tokens:
+        return
+    fold = _fold_mission(row)
+    if fold is None:
+        return
+    statuses = getattr(fold, "row_status", None) or {}
+    if not statuses:
+        return
+    if any(status != "DONE" for status in statuses.values()):
+        return
+    if statuses.get("G7") != "DONE":
+        return
+    work_key = str(row.get("work_key") or "")
+    from implement_admission.closeout_runtime import get_runtime
+
+    get_runtime().dispatch(
+        "entity_update",
+        {"entity_id": work_key, "workflow_state": "done"},
+    )
+
+
 def merge_conductor_closeout_hop_authority(
     *,
     dispatch_id: str,
@@ -664,6 +725,7 @@ def merge_conductor_closeout_hop_authority(
             hop_seq=hop_seq,
             hop_reason="planned",
         )
+    mark_todo_done_on_mission_close(row, closeout_tokens=tokens)
 
 
 def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:
