@@ -248,10 +248,14 @@ def conductor_consult_pending_degraded_reason(
     parsed = parse_stop_tokens(body)
     if "CONSULT_PENDING" not in parsed.tokens:
         return None
+    # Omit packet_text. A conductor packet makes validate_conductor_closeout
+    # return designed_stop_missing before the Mode B admit-proof check
+    # (6814e2dd9), so a bare CONSULT_PENDING never matched "admit-proof" and
+    # the fallthrough below graded it as a live wait. This grader's contract
+    # is the proof/handoff split, not the designed-stop gate.
     verdict = validate_conductor_closeout(
         body,
         require_mode_b_proof=True,
-        packet_text=packet_text,
     )
     if not verdict.ok and verdict.reason and "admit-proof" in verdict.reason.lower():
         return CONDUCTOR_CONSULT_HANDOFF_MISSING
@@ -300,12 +304,13 @@ def conductor_g1_pin_s4b_degraded_reason(
         is_conductor = extract_packet_kind_from_packet(packet_text) == "conductor"
     if not is_conductor:
         return None
-    from claude_bundles.conductor_stop import validate_conductor_closeout
+    # validate_conductor_closeout returns designed_stop_missing before S4b
+    # (6814e2dd9), so a G1 pin with no stop: footer never surfaced
+    # s4b_g1_pin_missing. This grader is the S4b predicate; designed-stop
+    # remains the full validator's own gate.
+    from claude_bundles.conductor_stop import validate_s4b_g1_pin
 
-    verdict = validate_conductor_closeout(body, packet_text=packet_text)
-    if not verdict.ok and verdict.reason == "s4b_g1_pin_missing":
-        return "s4b_g1_pin_missing"
-    return None
+    return validate_s4b_g1_pin(body, packet_text=packet_text)
 
 
 def conductor_unwitnessed_done_degraded_reason(
