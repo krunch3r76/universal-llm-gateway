@@ -200,9 +200,65 @@ def test_wire_fields_qualify_numerics() -> None:
 def test_max_clients_default_64_for_desktop_colon_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """No live argv and no env → default 64, including desktop ``:1``."""
     monkeypatch.delenv("CDP_X_MAX_CLIENTS", raising=False)
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [],
+    )
     snap = probe_x_display(display=":1", count=10)
     assert snap["x_max_clients"] == 64
+
+
+def test_max_clients_belief_is_min_of_live_argv_and_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Env 256 cannot outvote a live Xvfb that was started at 64."""
+    monkeypatch.setenv("CDP_X_MAX_CLIENTS", "256")
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [["/usr/bin/Xvfb", ":2", "-maxclients", "64"]],
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 64
+    monkeypatch.setenv("CDP_X_MAX_CLIENTS", "32")
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [["Xvfb", ":2", "-maxclients", "256"]],
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 32
+
+
+def test_max_clients_belief_uses_live_argv_when_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CDP_X_MAX_CLIENTS", raising=False)
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: [["Xvfb", ":2", "-auth", "/tmp/x", "-maxclients", "256"]],
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 256
+    assert probe_x_display(display=":3", count=0)["x_max_clients"] == 64
+
+
+def test_max_clients_belief_env_when_procfs_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CDP_X_MAX_CLIENTS", "128")
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._proc_cmdlines",
+        lambda proc_root=None: None,
+    )
+    assert probe_x_display(display=":2", count=0)["x_max_clients"] == 128
+
+
+def test_proc_cmdlines_unreadable_returns_none(tmp_path: Path) -> None:
+    from claude_bundles.x_display_capacity import (
+        _maxclients_in_cmdlines,
+        _proc_cmdlines,
+    )
+
+    assert _proc_cmdlines(tmp_path / "missing-proc") is None
+    assert _maxclients_in_cmdlines(None, ":2") is None
 
 
 def test_wire_fields_x_max_scope_no_display_pin() -> None:
@@ -335,3 +391,170 @@ def test_allocate_port_for_profile_still_calls_headroom(
     assert called
     assert port == 9333
     assert reused is False
+
+
+def test_admit_display_falls_over_and_launch_env_uses_admitted_display(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Injected {:2: 57, :3: 22} admits :3; Chrome env DISPLAY is that display."""
+    from claude_bundles import cdp_lane
+    from claude_bundles import cdp_registry_events as ev
+    from claude_bundles.cdp_display_auth import DisplayAuth
+    from claude_bundles.x_display_capacity import admit_display
+
+    fallovers: list[object] = []
+
+    def _capture(event: object) -> None:
+        if getattr(event, "signal", None) == "cdp.port.display_fallover":
+            fallovers.append(event)
+
+    monkeypatch.setattr(ev, "emit", _capture)
+    admitted = admit_display(
+        [":2", ":3"],
+        {},
+        counts={":2": 57, ":3": 22},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    assert admitted == ":3"
+    assert fallovers
+    assert fallovers[0].payload["admitted"] == ":3"  # type: ignore[attr-defined]
+
+    captured: dict[str, object] = {}
+
+    class _Proc:
+        pid = 7
+
+    def _popen(*_args: object, **kwargs: object) -> _Proc:
+        captured["env"] = kwargs.get("env")
+        return _Proc()
+
+    monkeypatch.setattr(cdp_lane, "_seed_profile", lambda _profile: None)
+    monkeypatch.setattr(cdp_lane, "_seed_lane_session", lambda _port, _pid: None)
+    monkeypatch.setattr(cdp_lane, "is_listening", lambda _port: True)
+    monkeypatch.setattr(cdp_lane.subprocess, "Popen", _popen)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.resolve_display_auth",
+        lambda display, **_kwargs: DisplayAuth(
+            path=tmp_path / "Xauthority", source="per_display", required=True
+        ),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_cdp_display_reachable",
+        lambda **_kwargs: ":3",
+    )
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    cdp_lane._launch_chrome(9223, profile, display=admitted)
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["DISPLAY"] == ":3"
+
+
+def test_admit_display_names_every_exhausted_candidate() -> None:
+    from claude_bundles.x_display_capacity import admit_display
+
+    with pytest.raises(XDisplayCapacityError) as caught:
+        admit_display(
+            [":2", ":3"],
+            {},
+            counts={":2": 57, ":3": 60},
+            max_clients=64,
+            chrome_budget=8,
+            auth_resolves=lambda _display: True,
+        )
+    message = str(caught.value)
+    assert ":2" in message
+    assert ":3" in message
+    assert "57" in message
+    assert "60" in message
+
+
+def test_single_candidate_matches_cdp_display_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_lane import cdp_display, cdp_display_candidates
+    from claude_bundles.x_display_capacity import admit_display
+
+    monkeypatch.delenv("CDP_DISPLAYS", raising=False)
+    monkeypatch.setenv("CDP_DISPLAY", ":2")
+    assert cdp_display() == ":2"
+    assert cdp_display_candidates() == [":2", ":3"]
+    monkeypatch.setenv("CDP_DISPLAY", ":3")
+    assert cdp_display_candidates() == [":3", ":2"]
+    monkeypatch.setenv("CDP_DISPLAY", ":1")
+    assert cdp_display_candidates() == [":1"]
+    monkeypatch.setenv("CDP_DISPLAY", ":2")
+    monkeypatch.setenv("CDP_DISPLAYS", ":2")
+    assert cdp_display_candidates() == [":2"]
+    admitted = admit_display(
+        [":2"],
+        {},
+        counts={":2": 56},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    snap = require_chrome_headroom(
+        display=cdp_display(), count=56, max_clients=64, chrome_budget=8
+    )
+    assert admitted == ":2"
+    assert snap["x_display"] == admitted
+    assert snap["x_exhausted"] is False
+
+
+def test_admit_display_is_sticky_not_least_loaded() -> None:
+    """:2 still has a full Chrome budget; do not jump to the emptier :3."""
+    from claude_bundles.x_display_capacity import admit_display
+
+    admitted = admit_display(
+        [":2", ":3"],
+        {},
+        counts={":2": 56, ":3": 0},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    assert admitted == ":2"
+
+
+def test_admit_display_reserves_one_budget_per_pin_on_that_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refuse iff ``headroom - pin_count * budget < budget``.
+
+    Four ``:3`` pins at budget 8 consume 32. Headroom 40 leaves 8, and
+    ``8 < 8`` is false, so the mint is admitted. Headroom 39 leaves 7 and
+    is refused. A ``:2`` pin in the same table is not charged to ``:3``.
+    """
+    from claude_bundles.x_display_capacity import admit_display
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._load_pin_lanes",
+        lambda: {
+            "fleet": {"display": ":2", "port": 9222},
+            "messages": {"display": ":3", "port": 9250},
+            "ess": {"display": ":3", "port": 9260},
+            "gopuff": {"display": ":3", "port": 9270},
+            "calendar": {"display": ":3", "port": 9290},
+        },
+    )
+    admitted = admit_display(
+        [":3"],
+        {},
+        counts={":3": 24},
+        max_clients=64,
+        chrome_budget=8,
+        auth_resolves=lambda _display: True,
+    )
+    assert admitted == ":3"
+    with pytest.raises(XDisplayCapacityError):
+        admit_display(
+            [":3"],
+            {},
+            counts={":3": 25},
+            max_clients=64,
+            chrome_budget=8,
+            auth_resolves=lambda _display: True,
+        )

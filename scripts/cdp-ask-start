@@ -146,6 +146,8 @@ setsid env \
   ULG_CODE_VERSION="${ULG_CODE_VERSION:-}" \
   ULG_REPO="$REPO" \
   PYTHONPATH="$_PYTHONPATH" \
+  CDP_X_MAX_CLIENTS="${CDP_X_MAX_CLIENTS:-}" \
+  CDP_DISPLAYS="${CDP_DISPLAYS:-}" \
   "$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" --port "$PORT" \
   </dev/null >/tmp/logs/cdp-ask/start.log 2>&1 &
 

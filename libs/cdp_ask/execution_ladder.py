@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from claude_bundles import cdp_registry
@@ -33,8 +34,119 @@ from cdp_ask.unverifiable import is_host_lost_error
 logger = logging.getLogger(__name__)
 
 MAX_HOST_LOSS_RESUMES = 1
+# Harvest reclaim runs only for these purposes. Anything else leaves the row.
+_HARVEST_DORMANT_PURPOSES = frozenset({"ask", "review"})
 
 __all__ = ["MAX_HOST_LOSS_RESUMES", "finish_execution", "guard_execution"]
+
+
+@dataclass(frozen=True)
+class _HarvestSnap:
+    """Pre-``mark_terminal`` view of followup occupancy.
+
+    ``mark_terminal`` write-through replaces any in-flight ``execution_state``,
+    including ``kind == "followup"``. Pre-check (ii) must use this snapshot.
+    """
+
+    followup_in_flight: bool
+
+
+def _snapshot_harvest_row(registration_id: str) -> _HarvestSnap:
+    row = cdp_registry._load_active().get(registration_id)
+    if not isinstance(row, dict):
+        return _HarvestSnap(False)
+    entry = cdp_registry.row_execution_in_flight(row)
+    followup = isinstance(entry, dict) and entry.get("kind") == "followup"
+    return _HarvestSnap(followup)
+
+
+def _reclaim_completed_harvest(record: Any, snap: _HarvestSnap) -> None:
+    """Park a still-active ask/review Chrome after a completed harvest.
+
+    FORK A — terminal reached, cleanup bypassed in-process. This hook covers
+    that fork: ``execution_state`` finished, row still active with chrome_pid.
+    FORK B (boot reconcile / satellite restart) and FORK C (Stargate harvest
+    only) are out of this function. Do not rank them here.
+
+    Mirrors ``deregister_on_exit`` guard order as pre-checks only. Does not
+    call ``_park_dormant`` (hard-coded ``idle_exit``) or ``deregister_on_exit``
+    (``purpose_kill_default("ask")`` would release the row).
+
+    Pre-check (ii) is the snapshot. Pre-checks (i) and (iii) re-read
+    immediately before ``make_dormant``. A followup stamped between the
+    snapshot and ``make_dormant`` is an accepted race: ``make_dormant`` has
+    no followup refusal, and this hook does not re-check (ii).
+    """
+    registration_id = str(getattr(record, "registration_id", "") or "")
+    if not registration_id:
+        return
+    if snap.followup_in_flight:
+        logger.info(
+            "harvest dormant skipped registration=%s reason=followup_in_flight",
+            registration_id,
+        )
+        return
+    row = cdp_registry._load_active().get(registration_id)
+    if not isinstance(row, dict):
+        logger.info(
+            "harvest dormant skipped registration=%s reason=row_gone",
+            registration_id,
+        )
+        return
+    status = row.get("status")
+    chrome_pid = row.get("chrome_pid")
+    if status != "active" or chrome_pid is None:
+        logger.info(
+            "harvest dormant skipped registration=%s status=%s chrome_pid=%s",
+            registration_id,
+            status,
+            chrome_pid,
+        )
+        return
+    from claude_bundles.cse_wake_retain import registration_has_wake_debt
+
+    if registration_has_wake_debt(registration_id):
+        logger.info(
+            "harvest dormant skipped registration=%s reason=wake_debt",
+            registration_id,
+        )
+        return
+    port = row.get("port")
+    port_i = port if isinstance(port, int) else 0
+    purpose = getattr(record, "purpose", None)
+    from claude_bundles import cdp_registry_events as _events
+
+    try:
+        _events.emit(
+            _events.cdp_port_exit_kill_decision(
+                purpose=purpose if isinstance(purpose, str) else None,
+                registration_id=registration_id,
+                port=port_i,
+                kill=False,
+            )
+        )
+        seat = cdp_registry.make_dormant(registration_id, reason="bus_terminal_harvest")
+    except cdp_registry.RegistryError:
+        logger.info(
+            "harvest dormant registry error registration=%s",
+            registration_id,
+        )
+        return
+    if seat is None:
+        logger.info(
+            "harvest dormant refused registration=%s reason=bus_terminal_harvest",
+            registration_id,
+        )
+        return
+    with contextlib.suppress(Exception):
+        _events.emit(
+            _events.cdp_port_harvest_dormant(
+                registration_id=registration_id,
+                purpose=purpose if isinstance(purpose, str) else None,
+                port=seat.last_port if isinstance(seat.last_port, int) else port_i,
+                reason="bus_terminal_harvest",
+            )
+        )
 
 
 def _park_for_resume(registration_id: str) -> bool:
@@ -92,6 +204,20 @@ async def finish_execution(
     stall = payload.get("stall_stage")
     if status == "failed" and not stall:
         stall = classify_stall_stage(error)
+    harvest_record = None
+    harvest_snap: _HarvestSnap | None = None
+    if status == "completed":
+        harvest_record = await store.get(execution_id)
+        purpose = getattr(harvest_record, "purpose", None)
+        registration_id = getattr(harvest_record, "registration_id", None)
+        if (
+            harvest_record is not None
+            and purpose in _HARVEST_DORMANT_PURPOSES
+            and registration_id
+        ):
+            harvest_snap = await asyncio.to_thread(
+                _snapshot_harvest_row, str(registration_id)
+            )
     await store.mark_terminal(
         execution_id,
         status=status,
@@ -99,6 +225,10 @@ async def finish_execution(
         error=error,
         stall_stage=stall if status == "failed" else None,
     )
+    if harvest_record is not None and harvest_snap is not None:
+        await asyncio.to_thread(
+            _reclaim_completed_harvest, harvest_record, harvest_snap
+        )
 
 
 async def _abort_requested(store: ExecutionStore, execution_id: str) -> bool:

@@ -136,6 +136,38 @@ def test_nested_implement_has_commits_reads_ledger_children(monkeypatch) -> None
     assert "worktree_path" not in sql
 
 
+def test_nested_implement_has_commits_true_for_mechanical(monkeypatch) -> None:
+    """A terminal nested mechanical child with commits_ahead>0 witnesses G5."""
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    row = {
+        "dispatch_id": "child-mechanical-g5",
+        "contract": "mechanical",
+        "status": "completed",
+        "record_json": json.dumps(
+            {
+                "closeout_body": '{"status":"complete","commits_ahead":1}',
+            }
+        ),
+        "wt_baseline": json.dumps({"admit_head": "deadbeef"}),
+        "source_repo": None,
+    }
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = row
+    conn.__enter__.return_value = conn
+    conn.__exit__.return_value = None
+    ledger = MagicMock()
+    ledger.list_nested_children.return_value = ["child-mechanical-g5"]
+    ledger._connect.return_value = conn
+    with patch(
+        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger"
+    ) as ledger_cls:
+        ledger_cls.instance.return_value = ledger
+        assert (
+            nested_implement_has_commits(nest_under_dispatch_id="parent-conductor-g5")
+            is True
+        )
+
+
 def _init_ledger(path: Path, rows: list[tuple]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)

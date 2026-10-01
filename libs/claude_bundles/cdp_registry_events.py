@@ -223,6 +223,56 @@ def cdp_port_exit_kill_decision(
 
 
 @event_factory
+def cdp_port_display_fallover(
+    *,
+    admitted: str,
+    skipped: list[str],
+    candidates: list[str],
+) -> Event:
+    """Mint skipped an exhausted display and admitted a later candidate.
+
+    Sibling of ``cdp.port.exit_kill_decision`` — same ``cdp.port`` family.
+    """
+    return Event(
+        signal="cdp.port.display_fallover",
+        role="observation",
+        scope="node",
+        payload={
+            "admitted": admitted,
+            "skipped": list(skipped),
+            "candidates": list(candidates),
+        },
+    )
+
+
+@event_factory
+def cdp_port_harvest_dormant(
+    *,
+    registration_id: str,
+    purpose: str | None,
+    port: int | None,
+    reason: str,
+) -> Event:
+    """Completed ask/review harvest parked the row dormant.
+
+    Sibling of ``cdp.port.exit_kill_decision``. ``kill`` stays false: this
+    hook calls ``make_dormant``, not ``deregister_on_exit``.
+    """
+    return Event(
+        signal="cdp.port.harvest_dormant",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "purpose": purpose,
+            "port": port if isinstance(port, int) else None,
+            "reason": reason,
+            "kill": False,
+        },
+    )
+
+
+@event_factory
 def cdp_port_dormant(
     *,
     registration_id: str,

@@ -15,11 +15,26 @@ def _x_display_unobserved_by_default(
     unit tests would refuse every ``register_lane`` when Xvfb is at cap.
     """
     monkeypatch.setenv("CDP_DISPLAY", ":2")
+    # Explicit single display keeps register/relaunch tests on the sole-candidate
+    # path (auth deferred to launch). Pair fallover is opt-in via delenv.
+    monkeypatch.setenv("CDP_DISPLAYS", ":2")
     if request.node.get_closest_marker("live_x_display"):
         return
     monkeypatch.setattr(
         "claude_bundles.x_display_capacity.count_x11_unix_clients",
         lambda display, proc_net_unix=None: None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _pin_lanes_empty_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Host ``pins.toml`` must not change headroom math or port selection.
+
+    Tests that cover pin reserve or pin-port exclusion replace ``_load_pin_lanes``.
+    """
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity._load_pin_lanes",
+        lambda: {},
     )
 
 

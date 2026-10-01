@@ -8,9 +8,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-# ``none`` authors lane commits on conductor resumes (cursor-auto). The
-# commits check below is the witness; the contract label is not.
-_IMPLEMENT_JOBS = frozenset({"implement", "pure-mechanical", "none"})
+# ``none`` authors lane commits on conductor resumes (cursor-auto).
+# ``mechanical`` is a nested child contract that can author lane commits.
+# The commits check below is the witness; the contract label is not.
+# hub fold without mechanical in the set ignores a terminal mechanical child even when commits_ahead is 1.
+_IMPLEMENT_JOBS = frozenset({"implement", "pure-mechanical", "mechanical", "none"})
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
