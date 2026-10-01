@@ -1,0 +1,23 @@
+---
+description: "On a dispatch, consult, or watcher wake that brings new information — do not end on the relay; name the next activity and start it when already commissioned."
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+---
+# Dispatch wake continue
+
+**Invariant:** `wake(dispatch ∨ consult ∨ watcher) ∧ new_information ⇒ ¬end(relay)` · name one next activity · `already_commissioned ⇒ start(it)`.
+
+The wake prompt says inform briefly and skip follow-up talk. That prompt does not close the turn.
+
+## Forbidden / Permitted
+
+| Forbidden | Permitted |
+|---|---|
+| Relay the result and stop | Say what the information unblocks, name one next activity |
+| Wait for "continue" when the next step was already commissioned | Start that step |
+| A menu of next steps | One recommendation. Wait only for a human-only gate |
+
+| Bad | Good |
+|---|---|
+| "The review is in. Item 3 is the wrong next change." | "Item 3 is the wrong next change. Next is one brochure source through v2, no file edits. Running it." |
