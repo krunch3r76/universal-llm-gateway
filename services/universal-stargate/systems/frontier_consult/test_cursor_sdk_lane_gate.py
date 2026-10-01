@@ -16,6 +16,8 @@ from systems.frontier_consult.cursor_sdk_lane_gate import (
 from systems.frontier_consult.generate_wrap import GenerateWrapResult
 from systems.frontier_consult.route import TeamDispatchGenerateBody, team_dispatch
 
+from .conftest import dispatch_cursor_sdk_generate_mock
+
 
 def test_require_lane_raises_when_top_level_omits() -> None:
     with pytest.raises(FrontierEndpointError) as exc:
@@ -77,7 +79,9 @@ async def test_team_dispatch_omitted_lane_returns_422() -> None:
 async def test_team_dispatch_nest_under_omits_lane_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock(return_value={"execution_id": "exec-nest", "thread_id": "t1"})
+    sdk_mock = dispatch_cursor_sdk_generate_mock(
+        return_value={"execution_id": "exec-nest", "thread_id": "t1"}
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,
@@ -110,7 +114,7 @@ async def test_team_dispatch_nest_under_omits_lane_still_admits(
 async def test_wrap_omits_lane_still_materializes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock()
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,

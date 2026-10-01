@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from life_intent.commit import apply_commit
+from life_intent.commit import _prepare_recon_handle, apply_commit
 from life_intent.proposal_store import (
     PROPOSAL_KIND_LIFE_INTENT,
     PROPOSAL_TTL_SECONDS,
@@ -163,6 +164,28 @@ def test_stored_proposal_binds_life_intent_kind() -> None:
     row = get_proposal(proposal_id)
     assert row is not None
     assert row.kind == PROPOSAL_KIND_LIFE_INTENT
+
+
+@pytest.mark.asyncio
+async def test_prepare_recon_handle_passes_contract_none() -> None:
+    from systems.frontier_consult.cursor_sdk_generate_prepare import (
+        prepare_cursor_sdk_generate,
+    )
+
+    with patch(
+        "systems.frontier_consult.cursor_sdk_generate_prepare.prepare_cursor_sdk_generate",
+        new=AsyncMock(spec=prepare_cursor_sdk_generate, return_value=_FakeHandle()),
+    ) as prepare:
+        handle = await _prepare_recon_handle(
+            request_id="req-recon",
+            packet_path="packet.md",
+            subject="login timeout",
+            reply_thread="agent-bus:life-intent-test",
+        )
+
+    assert handle is not None
+    assert prepare.await_args.kwargs["contract"] == "none"
+    inspect.signature(prepare_cursor_sdk_generate).bind(**prepare.await_args.kwargs)
 
 
 def test_sequential_double_commit_one_success_one_reject(

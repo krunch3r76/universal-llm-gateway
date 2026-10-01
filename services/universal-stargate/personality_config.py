@@ -173,26 +173,3 @@ async def create_api_personality_config(
     gateway_manager = SingleGatewayManager(gateway_config=config)
     await gateway_manager.initialize()
     return PersonalityConfig(gateway_manager=gateway_manager)
-
-
-# Global instance - will be created based on usage
-_global_personality_config: PersonalityConfig | None = None
-
-
-def get_global_personality_config() -> PersonalityConfig | None:
-    """Get the global personality configuration instance"""
-    return _global_personality_config
-
-
-async def initialize_global_personality_config(
-    gateway_configs: list[str | GatewayConfig] | None = None,
-    gateway_url: str | None = None,
-) -> PersonalityConfig:
-    """Initialize the global personality configuration"""
-    global _global_personality_config
-
-    _global_personality_config = await create_api_personality_config(
-        gateway_configs=gateway_configs, gateway_url=gateway_url
-    )
-
-    return _global_personality_config

@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from .conftest import dispatch_cursor_sdk_generate_mock
+
 from .skill_suggest_dispatch_closeout import (
     fetch_worker_closeout_body,
     map_wait_outcome_to_degraded_reason,
@@ -321,12 +323,13 @@ async def test_dispatch_idle_timeout_degraded_reason() -> None:
         ),
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
-            return_value={
-                "execution_id": "exec-idle-d",
-                "thread_id": "2111",
-                "dispatch_id": "d-idle",
-            },
+            new=dispatch_cursor_sdk_generate_mock(
+                return_value={
+                    "execution_id": "exec-idle-d",
+                    "thread_id": "2111",
+                    "dispatch_id": "d-idle",
+                },
+            ),
         ),
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.await_worker_ack",
@@ -391,12 +394,13 @@ async def test_dispatch_ledger_absent_probe_fail_is_worker_unreachable() -> None
         ),
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
-            return_value={
-                "execution_id": "exec-u",
-                "thread_id": "2111",
-                "dispatch_id": "d-u",
-            },
+            new=dispatch_cursor_sdk_generate_mock(
+                return_value={
+                    "execution_id": "exec-u",
+                    "thread_id": "2111",
+                    "dispatch_id": "d-u",
+                },
+            ),
         ),
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.await_worker_ack",

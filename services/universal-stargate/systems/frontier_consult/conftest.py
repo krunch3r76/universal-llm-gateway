@@ -10,8 +10,25 @@ patch.dict usage is untouched.
 from __future__ import annotations
 
 import os
+from unittest.mock import AsyncMock
 
 import pytest
+
+
+def dispatch_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
+    from systems.frontier_consult.cursor_sdk_generate import (
+        dispatch_cursor_sdk_generate,
+    )
+
+    return AsyncMock(spec=dispatch_cursor_sdk_generate, **kwargs)
+
+
+def prepare_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
+    from systems.frontier_consult.cursor_sdk_generate_prepare import (
+        prepare_cursor_sdk_generate,
+    )
+
+    return AsyncMock(spec=prepare_cursor_sdk_generate, **kwargs)
 
 
 @pytest.fixture(autouse=True)
