@@ -443,10 +443,53 @@ def _config(request: Request) -> WorkerConfig:
 
 
 def _mark_lane_b_abandon_disposition(*, dispatch_id: str, source_repo: Path) -> None:
+    """Mark the lane abandoned unless an open conductor mission still owns it.
+
+    Failed terminals (timeout, crash, refused or undelivered closeout) reach
+    here from ``_mark_terminal_and_promote`` after ``mark_terminal``, so the
+    closing row is already ``failed``. ``lane_retention_reason`` is the same
+    predicate settlement uses: a crash with no stop token, or a nested limb
+    on the conductor's lane, skips the marker ``gc_merged_dispatch_branches``
+    deletes on. A ledger that cannot be read returns None and the mark
+    proceeds, as settlement does. A limb's own lane branch is not the
+    ancestor's and is still marked.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_lane_retention import (
+        lane_retention_reason,
+    )
     from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        branch_name_for_lane,
         mark_lane_b_disposition_for_dispatch,
     )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_dispatch_worktree,
+    )
 
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    branch_name = (
+        record.branch_name if record is not None else branch_name_for_lane(dispatch_id)
+    )
+    try:
+        retained = lane_retention_reason(
+            dispatch_id=dispatch_id,
+            branch_name=branch_name,
+        )
+    except Exception as exc:  # noqa: BLE001 — terminal path must not die here
+        logger.warning(
+            "lane_b abandon retention check failed dispatch_id=%s: %s",
+            dispatch_id,
+            exc,
+        )
+        retained = None
+    if retained:
+        logger.info(
+            "lane_b abandon skipped; branch retained for open conductor mission "
+            "branch=%s dispatch_id=%s reason=%s",
+            branch_name,
+            dispatch_id,
+            retained,
+        )
+        return
     mark_lane_b_disposition_for_dispatch(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
@@ -1440,6 +1483,7 @@ async def _mark_terminal_and_promote(
     if parked_parent is not None:
         parent_id, _parent_repo, parent_status = parked_parent
         if parent_status in ("completed", "failed", "cancelled"):
+
             def _load_parent_row() -> dict | None:
                 with ledger._connect() as conn:
                     row = conn.execute(

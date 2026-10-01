@@ -90,7 +90,9 @@ def settle_lane_and_dispatch_fields(
                     )
                 except Exception:
                     pass
-                refusal_token = "divergence:lane_b_commit_refused:worktree_path_mismatch"
+                refusal_token = (
+                    "divergence:lane_b_commit_refused:worktree_path_mismatch"
+                )
                 deviations = [*(deviations or []), refusal_token]
                 if divergence_reason is None:
                     divergence_reason = "divergence:lane_b_commit_refused"
@@ -249,6 +251,7 @@ def settle_lane_and_dispatch_fields(
                     dispatch_id=dispatch_id,
                     thread_id=thread_id,
                     closeout_text=closeout_text,
+                    branch_name=record.branch_name,
                 )
                 if retained is None:
                     mark_lane_b_disposition(

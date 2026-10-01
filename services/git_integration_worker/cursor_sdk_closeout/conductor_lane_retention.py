@@ -14,10 +14,13 @@ failed or cancelled marked the shared branch abandoned. Worker 13713 lost
 
 This module answers one question for the settlement paths: is this lane still
 owned by an open mission? Callers are
-``cursor_sdk_branch_terminal.settle_lane_branch`` (skips discharge and debt)
-and ``delivery_assembly.lane_settlement`` (skips the abandoned mark). Only a
-conductor closeout that carries ``DONE``, or a closeout with no open conductor
-above it, settles the branch. Reads the dispatch ledger; writes nothing.
+``cursor_sdk_branch_terminal.settle_lane_branch`` (skips discharge and debt),
+``delivery_assembly.lane_settlement`` (skips the abandoned mark), and
+``routes.cursor_sdk._mark_lane_b_abandon_disposition`` (the failed-terminal
+mark that ``gc_merged_dispatch_branches`` deletes on). Only a conductor
+closeout that carries ``DONE``, or a closeout with no open conductor above it
+on this branch, settles the branch. A nested limb's own lane branch is not
+the ancestor's and settles. Reads the dispatch ledger; writes nothing.
 """
 
 from __future__ import annotations
@@ -86,18 +89,25 @@ def closeout_stop_tokens(
 
 
 def conductor_mission_open(
-    row: dict[str, Any], *, closeout_text: str | None
+    row: dict[str, Any],
+    *,
+    closeout_text: str | None,
+    closing: bool = False,
 ) -> str | None:
     """Reason the mission this conductor row belongs to is still open, else None.
 
-    Open means the row is live, or terminal without ``DONE``: every other
-    designed stop continues on the same branch, and a crash (no token at all)
-    is resumed on it. A non-conductor row never opens a mission by itself.
+    The closing row is still ``running`` when settlement runs
+    (``prepare_closeout_delivery_async`` precedes ``mark_terminal``). Its live
+    status is not evidence the mission continues: ``DONE`` settles, any other
+    designed stop retains with that token, and no token is a crash resume.
+    Ancestors reached through ``nest_under`` keep the live-status shortcut;
+    their closeout text is not in hand. A non-conductor row never opens a
+    mission by itself.
     """
     if not is_conductor_dispatch_row(row):
         return None
     status = str(row.get("status") or "")
-    if status in _LIVE_STATUSES:
+    if not closing and status in _LIVE_STATUSES:
         return f"conductor_live:{status}"
     tokens = closeout_stop_tokens(row, closeout_text)
     if "DONE" in tokens:
@@ -106,19 +116,35 @@ def conductor_mission_open(
     return f"conductor_mission_open:{label}"
 
 
+def _branch_is_row_lane(row: dict[str, Any], branch_name: str | None) -> bool:
+    """True when *branch_name* is this row's ``cursor-sdk/lane-{thread_id}``."""
+    if not branch_name:
+        return False
+    thread_id = str(row.get("thread_id") or "").strip()
+    if not thread_id:
+        return False
+    from services.git_integration_worker.cursor_sdk_worktree import lane_branch_name
+
+    return lane_branch_name(thread_id) == branch_name
+
+
 def lane_retention_reason(
     *,
     dispatch_id: str,
     thread_id: str | None = None,
     closeout_text: str | None = None,
+    branch_name: str | None = None,
 ) -> str | None:
-    """Why the lane branch must survive this closeout, or None when it may settle.
+    """Why this lane branch must survive this closeout, or None when it may settle.
 
-    Walks ``nest_under`` from the closing row toward its root: a nested child
-    on a shared lane retains the branch when any ancestor is a conductor whose
-    mission is open. ``thread_id`` is accepted for symmetry with the settlement
-    call sites; the decision rests on ledger rows. Never raises — a ledger that
-    cannot be read settles as before (returns None) and logs a warning.
+    Walks ``nest_under`` from the closing row toward its root. The closing row
+    is decided on its stop tokens. A nested child retains only the open
+    conductor ancestor's own lane branch; a limb settling ``cursor-sdk/lane-{its
+    thread}`` is not that branch and returns None. ``thread_id`` is accepted
+    for symmetry with the settlement call sites; the decision rests on ledger
+    rows and ``branch_name``. Never raises — a ledger that cannot be read
+    settles as before (returns None) and logs a warning. A missing row or a
+    ``branch_name`` that matches no open conductor's lane also returns None.
     """
     _ = thread_id
     try:
@@ -130,8 +156,8 @@ def lane_retention_reason(
         return None
     if row is None:
         return None
-    reason = conductor_mission_open(row, closeout_text=closeout_text)
-    if reason:
+    reason = conductor_mission_open(row, closeout_text=closeout_text, closing=True)
+    if reason and _branch_is_row_lane(row, branch_name):
         return reason
     seen: set[str] = {dispatch_id}
     parent_id = str(_record(row).get("nest_under") or "").strip()
@@ -149,7 +175,7 @@ def lane_retention_reason(
         if parent is None:
             break
         parent_reason = conductor_mission_open(parent, closeout_text=None)
-        if parent_reason:
+        if parent_reason and _branch_is_row_lane(parent, branch_name):
             return f"nested_under_open_conductor:{parent_id}:{parent_reason}"
         parent_id = str(_record(parent).get("nest_under") or "").strip()
     return None
