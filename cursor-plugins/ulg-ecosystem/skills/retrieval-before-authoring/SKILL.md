@@ -12,7 +12,7 @@ About to author a prompt, packet, or outbound prose another agent or human will 
 
 ## Refuse
 
-Author from priors without retrieve. Filing an off-topic yield as a scope mis-map — dense retrieval never returns zero chunks; judge fit, report null.
+Author from priors without retrieve. Filing an off-topic yield as a scope mis-map — dense retrieval never returns zero chunks; judge fit, report null. Reading a non-ok status, `scope_catalog_unavailable`, or `weak_match: null` with basis `none` as an empty corpus.
 
 ## Steps
 
@@ -24,30 +24,39 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 | Scope | What it holds |
 |---|---|
 | `llm_prompting` | persona/framing, ICL, long-context, prompt optimization |
-| `suggestion_orientation` | hypnosis/autosuggestion literature + LLM↔suggestion parallels; yields free-strategy, Law of Reversed Effort, demand characteristics **by analogy** — query in corpus vocabulary (suggestion, expectancy, reiteration, contextual dependency), not LLM-pedagogy terms |
+| `suggestion_orientation` | hypnosis/autosuggestion and LLM parallels; query in corpus words (suggestion, expectancy, reiteration), not pedagogy terms |
 | `prompt_injection` | spotlighting, instruction hierarchy, post-prompting |
 | `agent_skills_research` | procedural memory, progressive disclosure |
 
-`suggestion_orientation` is outside composite `research` / `all_research` — query it by name. Already mined, do not rediscover: speaker-side persona framing null-to-negative, audience-side helps (Pei et al.) · free-strategy: invite the model to choose the route and report it · Law of Reversed Effort: open a possibility, never demand a ceiling · constraints last (post-prompting) · a stance block declares itself subordinate to the facts.
+`suggestion_orientation` is outside composite `research` / `all_research` — query it by name. Already mined: speaker-side persona null-to-negative; audience-side helps; free-strategy; Law of Reversed Effort; constraints last; stance subordinate to facts.
 
-`writing` is human craft, not LLM prompting — do not cite when the reader is a model. Default route for a design packet is grok-authors then operator-expands; the operator's own retrieval still runs when the operator authors.
+`writing` is human craft, not LLM prompting — do not cite when the reader is a model.
    Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance.
 
 3. **Call shape.** Use `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')`.
-   Falsifier: on that step: wrong op or scope omitted from the call.
+   Falsifier: on that step: wrong op, scope omitted, or `top_k` other than 10.
 
-4. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job; report nulls with hits; do not file an off-topic yield as a mis-map.
+4. **Read the signals.** Read `weak_match` with `rerank_status` and `weak_match_basis`. A null `weak_match` whose basis is `none` is not a weak corpus. Any `status` other than `ok`, or reason `scope_catalog_unavailable`, is a transport failure: retry once with fresh query text and report the failure, never as a null yield.
+
+| envelope | read it as |
+|---|---|
+| `weak_match: false`, basis `cross_encoder`, `rerank_status: ok` | scored; top score cleared the threshold |
+| `weak_match: null`, basis `none`, `rerank_status: skipped_small_set` | not scored; the null is not evidence |
+
+   Falsifier: on that step: treated basis `none` or a non-ok status as an empty scope.
+
+5. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job; report nulls with hits; do not file an off-topic yield as a mis-map.
    Falsifier: on that step: re-queried a null scope same job, omitted nulls from the report, or filed off-topic chunks as a scope defect.
 
-5. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk.
+6. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk.
    Falsifier: on that step: audience named but genre omitted, or constraint-heavy compliance prose.
 
-6. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
+7. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
    Falsifier: on that step: inference laundered as a corpus citation.
 
-7. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment.
+8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment.
    Falsifier: on that step: dispatch without the report bundle.
 
 ## Falsifier
 
-This body failed if retrieval was skipped, null scopes were hidden, or an LLM packet cited human-writing scopes as model-execution guidance.
+This body failed if retrieval was skipped, a transport failure was reported as a null yield, null scopes were hidden, or an LLM packet cited human-writing scopes as model-execution guidance.

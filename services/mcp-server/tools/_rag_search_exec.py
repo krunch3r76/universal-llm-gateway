@@ -150,6 +150,38 @@ def unscoped_scope_note(retrieval_fields: dict[str, Any]) -> str | None:
     return None
 
 
+def _catalog_unavailable(envelope: dict[str, Any]) -> bool:
+    """True when the pipeline rejected the search because ``/scopes`` was down."""
+    retrieval = envelope.get("retrieval")
+    return (
+        isinstance(retrieval, dict)
+        and retrieval.get("scope_rejection_reason") == "scope_catalog_unavailable"
+    )
+
+
+def _catalog_transport_failure(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite a catalog outage so it cannot be read as an empty corpus.
+
+    Drops ``context`` (the no-results sentinel is non-empty and would otherwise
+    take the ``status: ok`` path). ``retryable`` marks the envelope for the
+    failure TTL in the in-flight cache.
+    """
+    retrieval = envelope.get("retrieval")
+    failure: dict[str, Any] = {
+        "status": "error",
+        "retryable": True,
+        "error": (
+            "Scope catalog unavailable (RAG /scopes). "
+            "This is a transport failure, not an empty corpus."
+        ),
+        "pipeline": envelope.get("pipeline", "rag-context"),
+        "retrieval": retrieval if isinstance(retrieval, dict) else {},
+    }
+    if "duration_s" in envelope:
+        failure["duration_s"] = envelope["duration_s"]
+    return failure
+
+
 def run_rag_search(
     query: str,
     *,
@@ -158,15 +190,47 @@ def run_rag_search(
     pipeline_options: dict[str, Any],
     unscoped: bool,
 ) -> dict[str, Any]:
-    """Execute one ``rag-context`` search end to end and return its envelope.
+    """Execute one ``rag-context`` search and return its envelope.
 
     *pipeline_options* must already carry the normalized scope/prefix/chunk-cap
-    options; this function adds ``timeout_seconds``. Returns ``status: ok`` with
-    ``context``, ``retrieval`` and ``duration_s``, an ``error`` envelope with
-    retrieval fields when the pipeline produced no content, or the
-    ``handle_pipeline_error`` envelope on transport failure. Records the
-    ``mcp.rag.pipeline.*`` lifecycle events as a side effect.
+    options; the inner call adds ``timeout_seconds``. Returns ``status: ok``
+    with ``context`` and ``retrieval`` on a real result, an ``error`` envelope
+    when the pipeline produced no content, or ``handle_pipeline_error`` on
+    transport failure. A ``scope_catalog_unavailable`` result is retried once;
+    if it persists, the envelope is ``status: error`` and ``retryable`` with
+    no ``context``, so a reader cannot take the outage for an empty corpus.
+    Other scope rejections keep their existing sentinel behavior.
     """
+    envelope = _rag_search_once(
+        query,
+        scope=scope,
+        prefixes=prefixes,
+        pipeline_options=pipeline_options,
+        unscoped=unscoped,
+    )
+    if not _catalog_unavailable(envelope):
+        return envelope
+    envelope = _rag_search_once(
+        query,
+        scope=scope,
+        prefixes=prefixes,
+        pipeline_options=dict(pipeline_options),
+        unscoped=unscoped,
+    )
+    if _catalog_unavailable(envelope):
+        return _catalog_transport_failure(envelope)
+    return envelope
+
+
+def _rag_search_once(
+    query: str,
+    *,
+    scope: str | list[str] | None,
+    prefixes: list[str] | None,
+    pipeline_options: dict[str, Any],
+    unscoped: bool,
+) -> dict[str, Any]:
+    """One Stargate ``rag-context`` call, without the catalog-outage retry."""
     record_args: dict[str, Any] = {
         "pipeline": "rag-context",
         "query": query,

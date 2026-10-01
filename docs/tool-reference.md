@@ -540,9 +540,12 @@ the MCP server (`tools/_rag_inflight.py`):
   **A wait that ended is not a failed search.** The backend search continues.
   Poll with `rag(op="search", arguments='{"search_id": "rs-…"}')` or re-issue
   the identical call; both attach to the running search.
-- **Result cache.** A finished search is served from cache for
-  `MCP_RAG_SEARCH_RESULT_TTL_S` (default 600 s) as `cache_hit: true`; a failed
-  search is kept 30 s so pollers see the failure, then the key is free again.
+- **Result cache.** A finished successful search is served from cache for
+  `MCP_RAG_SEARCH_RESULT_TTL_S` (default 600 s) as `cache_hit: true`. A failed
+  search — the future raised, or the envelope is `retryable` / carries
+  `scope_rejection_reason: scope_catalog_unavailable` — is kept only
+  `FAILED_RESULT_TTL_S` (30 s), then the key is free. A re-issue after a
+  catalog failure starts a new search; it is not replayed for 10 minutes.
   Unknown/expired `search_id` ⇒ `{"error": "Unknown or expired search_id …"}`.
 - Backend concurrency is capped at `MCP_RAG_SEARCH_WORKERS` (default 8) worker
   threads; Stargate's model gates queue beyond that.
@@ -592,6 +595,8 @@ On success:
    "top_relevance": 0.87,
    "weak_match": false,
    "weak_match_threshold": 0.3,
+   "rerank_status": "ok",
+   "weak_match_basis": "cross_encoder",
    ...
  }}
 ```
@@ -606,8 +611,14 @@ On success:
 - **`weak_match`**: `true` when `top_relevance < weak_match_threshold`
   (`pipeline_options.rerank_weak_match_threshold`, default `0.3`) — the whole
   set is weakly related to the query; cite nothing from it as support without
-  reading it. `null` when no cross-encoder scored the set (≤3 chunks, rerank
-  disabled, or generative rerank mode), in which case only `prior_score` exists.
+  reading it. `null` when no cross-encoder scored the set. Read it with
+  `weak_match_basis`: `cross_encoder` means the null-or-bool came from those
+  scores; `none` means it did not, and a null is not evidence the corpus is weak.
+- **`rerank_status`**: `ok`, `skipped_small_set` (generative mode, ≤3 chunks),
+  `disabled`, `fallback_score_count_mismatch`, `partial_window_failures:<n>`,
+  or `error`. `rerank_error` is set on the mismatch and on a cross-encoder
+  request failure (`rerank_request_failed`). A request failure returns the
+  prior order with `rerank_status: error` instead of failing the whole search.
 - **`retrieval`** (scope fields): compact scope metadata from the rag-context retrieve step.
   `auto_classified` is `true` only when `scope_source=classifier` (LLM scope
   prediction ran). The MCP primary path uses the direct pipeline
@@ -615,9 +626,20 @@ On success:
   `scope_source=user_override` (or the index entry's value).
 - **`scope_note`**: present on unscoped success/empty paths when
   `scope_source` is `default_scope` or `classifier` (static advisory).
+- **Scope rejections.** `invalid_scope_override`, `invalid_predicted_scope`,
+  and `scope_confidence_below_threshold` stay `status: ok` with the no-results
+  sentinel in `context` and `scope_rejected: true`. `scope_catalog_unavailable`
+  is a transport failure: the tool retries the pipeline once, and if `/scopes`
+  is still down the envelope is `status: error`, `retryable: true`, with no
+  `context`. That is not an empty corpus. It uses the 30 s failure cache, not
+  the 600 s success cache. A last-known-good catalog up to 5 minutes old is
+  served when a refresh fails, so a brief `/scopes` timeout does not reject
+  known scopes.
 
 On error: `{"error": "<message>"}` plus optional `scope_note` and `retrieval`
 when the pipeline completed with metadata before failing content assembly.
+A catalog outage uses `status: error` and `retryable: true` as above, not this
+empty-content shape.
 
 ### Direct pipeline callers
 

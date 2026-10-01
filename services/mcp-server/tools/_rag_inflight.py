@@ -18,8 +18,10 @@ harmless:
   poll with — the backend search keeps running on its worker thread;
 - a finished search stays cached for ``MCP_RAG_SEARCH_RESULT_TTL_S`` (default
   600 s), so a poll or a redundant re-issue returns ``cache_hit: true`` without
-  touching Stargate. A *failed* search is kept only ``FAILED_RESULT_TTL_S`` so
-  pollers learn the failure, then the key is free for a fresh attempt.
+  touching Stargate. A *failed* search — the future raised, or the envelope is
+  ``retryable`` / ``scope_catalog_unavailable`` — is kept only
+  ``FAILED_RESULT_TTL_S`` so pollers learn the failure, then the key is free
+  for a fresh attempt. A catalog outage must not sit in the success cache.
 
 Thread model: ``rag_search`` itself runs on the server's default thread pool
 (``server.py`` runs sync tool functions off the event loop); the backend call
@@ -71,7 +73,18 @@ class _Entry:
     finished_at: float | None = None
 
     def failed(self) -> bool:
-        return self.future.done() and self.future.exception() is not None
+        """True when the search raised or returned a retryable transport failure.
+
+        ``scope_catalog_unavailable`` is a transport failure even if an older
+        caller shaped it as ``status: ok`` with the no-results sentinel. Those
+        envelopes use the failure TTL, not the 600 s success cache.
+        """
+        if not self.future.done():
+            return False
+        if self.future.exception() is not None:
+            return True
+        result = self.future.result()
+        return _retryable_failure(result)
 
 
 _lock = threading.Lock()
@@ -160,6 +173,19 @@ class SearchTicket:
         if self.cache_hit:
             fields["cache_hit"] = True
         return {**envelope, **fields}
+
+
+def _retryable_failure(result: Any) -> bool:
+    """True for envelopes that must not be cached as a successful retrieval."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("retryable") is True:
+        return True
+    retrieval = result.get("retrieval")
+    return (
+        isinstance(retrieval, dict)
+        and retrieval.get("scope_rejection_reason") == "scope_catalog_unavailable"
+    )
 
 
 def search_key(query: str, pipeline_options: dict[str, Any]) -> str:

@@ -13,7 +13,15 @@ from typing import Any
 
 # Relevance keys pass through verbatim; their shape is owned by
 # ``pipelines/rag/rag_context_v1/rerank_scoring.relevance_summary``.
-_RELEVANCE_KEYS = ("chunks", "weak_match", "top_relevance", "weak_match_threshold")
+_RELEVANCE_KEYS = (
+    "chunks",
+    "weak_match",
+    "top_relevance",
+    "weak_match_threshold",
+    "rerank_status",
+    "weak_match_basis",
+    "rerank_error",
+)
 
 
 def retrieval_metadata_from_response(
