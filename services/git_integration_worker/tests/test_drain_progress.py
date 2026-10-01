@@ -7,6 +7,7 @@ from services.git_integration_worker.drain_progress import (
     HEARTBEAT_TTL_S,
     STALL_WINDOW_S,
     OccupancyProgressTracker,
+    claim_heartbeat_dead,
     heartbeat_fresh,
     is_progress,
     occupancy_op_ids,
@@ -132,3 +133,18 @@ def test_occupancy_op_ids_skips_missing() -> None:
     assert occupancy_op_ids([{"op_id": "a"}, {}, {"op_id": "b"}]) == frozenset(
         {"a", "b"}
     )
+
+
+def test_sdk_closeout_ticket_without_claimed_at_is_not_dead() -> None:
+    """A cursor-sdk ticket copied last_heartbeat_at and has no claimed_at.
+
+    Mid-closeout that row stays occupancy until close_ticket. Before this
+    rule, age alone marked it dead and active_count hit 0.
+    """
+    closing = {
+        "op_id": "sdk-closeout",
+        "kind": "cursor_sdk",
+        "heartbeat_age_s": 180.0,
+        "last_heartbeat_at": "2026-09-30T12:00:00+00:00",
+    }
+    assert claim_heartbeat_dead(closing) is False

@@ -1016,6 +1016,30 @@ def _start_heartbeat(
     return t, stop
 
 
+# Heartbeat stays up through closeout. ``_run_sdk_sync`` used to ``hb_stop.set()``
+# in its finally, while the admission ticket stayed open until
+# ``_close_ticket_after`` → ``close_ticket``. A drain probe in that window saw
+# a stale ``last_heartbeat_at`` and no ``claimed_at``.
+_CLOSEOUT_HEARTBEATS: dict[str, tuple[Thread, _ThreadEvent]] = {}
+
+
+def retain_heartbeat_through_closeout(
+    dispatch_id: str, thread: Thread, stop: _ThreadEvent
+) -> None:
+    """Hold a run heartbeat until ``stop_closeout_heartbeat`` (close_ticket)."""
+    _CLOSEOUT_HEARTBEATS[dispatch_id] = (thread, stop)
+
+
+def stop_closeout_heartbeat(dispatch_id: str) -> None:
+    """Stop the heartbeat retained for ``dispatch_id``. Idempotent."""
+    pair = _CLOSEOUT_HEARTBEATS.pop(dispatch_id, None)
+    if pair is None:
+        return
+    thread, stop = pair
+    stop.set()
+    thread.join(timeout=5.0)
+
+
 def _usage_live_from_raw(
     raw_usage: Mapping[str, Any] | None,
     *,
@@ -1430,8 +1454,7 @@ def _run_sdk_sync(
             # failure envelope does not destroy all knowledge of the run.
             raise SdkRunAbortedError(str(exc), forensics=_abort_forensics(exc)) from exc
         finally:
-            hb_stop.set()
-            hb_thread.join(timeout=5.0)
+            retain_heartbeat_through_closeout(ctx.dispatch_id, hb_thread, hb_stop)
             unregister_live_run(dispatch_id=ctx.dispatch_id)
             stop_bridge_stderr_drain(bridge_tap)
             if client is not None:
@@ -2225,6 +2248,7 @@ async def _close_ticket_after(
         raise
     finally:
         controller.close_ticket(op_id, terminal_status="closed")
+        stop_closeout_heartbeat(op_id)
 
 
 async def _run_sdk_dispatch_gated(

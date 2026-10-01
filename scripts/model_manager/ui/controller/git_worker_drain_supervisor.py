@@ -492,6 +492,20 @@ class GitWorkerDrainSupervisor:
                 now = time.monotonic()
                 if now - last_progress >= self.progress_interval_s:
                     await self._emit_progress(intent, now - start)
+                    # The 30s tick is not a re-arm. An abandoned intent whose
+                    # only signal is this tick expires through cancel.
+                    try:
+                        expired = await self._expire_abandoned(intent)
+                    except Exception:
+                        logger.warning(
+                            "restart intent expiry tick failed; row stays "
+                            "pending_drain intent_id=%s",
+                            intent.intent_id,
+                            exc_info=True,
+                        )
+                        expired = False
+                    if expired:
+                        return _AWAIT_CANCELLED
                     last_progress = now
                 snapshot = await self._safe_drain_state()
                 if snapshot is not None:
@@ -716,6 +730,16 @@ class GitWorkerDrainSupervisor:
             "deferred git-worker restart timed out (alert-only; keep-await continues): "
             "intent_id=%s",
             intent.intent_id,
+        )
+
+    async def _expire_abandoned(self, intent: Intent) -> bool:
+        """Cancel an arm past its window. The 30s tick is the only caller."""
+        from .restart_intent_expiry import expire_via_cancel
+
+        return await expire_via_cancel(
+            self.store,
+            intent.intent_id,
+            release_drain=self.cancel_drain,
         )
 
     def _abort_kind(self, intent: Intent) -> str | None:

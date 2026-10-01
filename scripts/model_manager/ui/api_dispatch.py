@@ -171,7 +171,10 @@ async def execute(
                 return refuse_giw_force_lifecycle()
             if service == "git_integration_worker" and not force:
                 return await _git_worker_drain_supervised(
-                    ctl, "stop", park_live=giw_park_live_from_params(params)
+                    ctl,
+                    "stop",
+                    park_live=giw_park_live_from_params(params),
+                    caller_agent=caller_agent_from_manage_request(params),
                 )
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
             if preempted is not None:
@@ -210,7 +213,10 @@ async def execute(
                 return refuse_giw_force_lifecycle()
             if service == "git_integration_worker" and not force:
                 result = await _git_worker_drain_supervised(
-                    ctl, "restart", park_live=giw_park_live_from_params(params)
+                    ctl,
+                    "restart",
+                    park_live=giw_park_live_from_params(params),
+                    caller_agent=caller_agent_from_manage_request(params),
                 )
             else:
                 preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
@@ -281,6 +287,7 @@ async def execute(
                     code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                     row_id=_optional_attr_str(params, "row_id"),
                     park_live=giw_park_live_from_params(params),
+                    caller_agent=caller_agent_from_manage_request(params),
                 )
             if service == "stargate" and not force:
                 return await _stargate_idle_drain_supervised(
@@ -288,6 +295,7 @@ async def execute(
                     "sync_restart",
                     code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                     row_id=_optional_attr_str(params, "row_id"),
+                    caller_agent=caller_agent_from_manage_request(params),
                 )
             if not force and caller_dispatch_id:
                 work = await ctl.restart_gate.probe(service)
@@ -318,6 +326,7 @@ async def execute(
                         caller_dispatch_id=caller_dispatch_id,
                         code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                         row_id=_optional_attr_str(params, "row_id"),
+                        caller_agent=caller_agent_from_manage_request(params),
                     )
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
             if preempted is not None:
@@ -500,6 +509,7 @@ async def sync_restart_charter_harvest(
             store=ctl.restart_intent_store,
             supervisor=supervisor,
             reason="charter harvest propagation",
+            caller_agent="manage",
         )
         proven = result.get("status") == "ok"
         return await _attach_harvest_authority_identity(
@@ -619,6 +629,22 @@ async def sync_restart_charter_harvest(
     )
 
 
+def caller_agent_from_manage_request(params: dict[str, Any]) -> str:
+    """Identity stored on a restart intent armed by a manage request.
+
+    Prefer the caller's dispatch id, then an agent label on the request,
+    otherwise the literal ``manage``. Never ``unknown``.
+    """
+    dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
+    if dispatch_id:
+        return dispatch_id
+    for key in ("caller_agent", "from_agent", "agent"):
+        label = _optional_attr_str(params, key)
+        if label:
+            return label
+    return "manage"
+
+
 def _optional_attr_str(params: dict[str, Any], key: str) -> str | None:
     """Return a stripped string param, or None when missing/blank/non-string."""
     value = params.get(key)
@@ -634,6 +660,7 @@ async def _stargate_idle_drain_supervised(
     *,
     code_ref: str = "HEAD",
     row_id: str | None = None,
+    caller_agent: str = "manage",
 ) -> dict[str, Any]:
     """Non-force stargate sync_restart — durable intent + idle/ceiling supervisor."""
     supervisor = StargateIdleDrainSupervisor(
@@ -654,6 +681,7 @@ async def _stargate_idle_drain_supervised(
         reason=f"manage {action} (stargate idle drain)",
         code_ref=code_ref,
         row_id=row_id,
+        caller_agent=caller_agent,
     )
 
 
@@ -689,6 +717,7 @@ async def _git_worker_drain_supervised(
     code_ref: str = "HEAD",
     row_id: str | None = None,
     park_live: bool = True,
+    caller_agent: str = "manage",
 ) -> dict[str, Any]:
     """Route a non-force git-worker lifecycle action to the drain supervisor.
 
@@ -716,6 +745,7 @@ async def _git_worker_drain_supervised(
         code_ref=code_ref,
         row_id=row_id,
         park_live=park_live,
+        caller_agent=caller_agent,
     )
 
 

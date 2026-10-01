@@ -43,6 +43,9 @@ def project_restart_intent_consumer(
         # start, and the last park sweep ({requested, refused, live_after, …}).
         "park_live": intent.park_live,
         "park_summary": intent.park_summary,
+        "caller_agent": intent.caller_agent,
+        "armed_at": intent.armed_at,
+        "expires_at": intent.expires_at,
     }
 
 

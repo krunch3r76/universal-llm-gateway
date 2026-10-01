@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 from .restart_intent_states import (
     STATUS_ACTIVATION_UNVERIFIED,
@@ -15,6 +16,11 @@ from .restart_intent_states import (
     STATUS_TIMEOUT,
     STATUS_VERIFYING_ACTIVATION,
 )
+
+# Abandoned arm bound. A live supervisor's 30s progress tick does not refresh
+# this; a joining create_intent does. In-flight rows receive a fresh window
+# at migration (from now), not from created_at.
+INTENT_EXPIRY_WINDOW_S = 600.0
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS restart_intents (
@@ -32,6 +38,9 @@ CREATE TABLE IF NOT EXISTS restart_intents (
     last_seen_event_seq  INTEGER NOT NULL DEFAULT 0,
     reason               TEXT,
     kill_boundary_at     TEXT,
+    caller_agent         TEXT,
+    armed_at             TEXT,
+    expires_at           TEXT,
     park_live            INTEGER NOT NULL DEFAULT 0,
     park_summary         TEXT,
     created_at           TEXT NOT NULL,
@@ -119,7 +128,34 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
             """
         )
     _ensure_park_columns(conn)
+    _ensure_arm_columns(conn)
     _ensure_kill_cas_indexes(conn)
+
+
+def _ensure_arm_columns(conn: sqlite3.Connection) -> None:
+    """Add arm columns. In-flight rows get a fresh window from now.
+
+    Does not write ``timeout`` and does not date the window from
+    ``created_at`` (that expired drains older than 10 minutes on first read).
+    """
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+    }
+    if "caller_agent" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN caller_agent TEXT")
+    if "armed_at" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN armed_at TEXT")
+    if "expires_at" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN expires_at TEXT")
+    now = datetime.now(UTC)
+    expires = (now + timedelta(seconds=INTENT_EXPIRY_WINDOW_S)).isoformat()
+    armed = now.isoformat()
+    conn.execute(
+        "UPDATE restart_intents SET armed_at=?, expires_at=? "
+        "WHERE expires_at IS NULL AND status IN ('pending_drain', 'drained_restarting')",
+        (armed, expires),
+    )
 
 
 def _ensure_park_columns(conn: sqlite3.Connection) -> None:
@@ -136,4 +172,4 @@ def _ensure_park_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN park_summary TEXT")
 
 
-__all__ = ["_DDL", "apply_restart_intent_schema"]
+__all__ = ["INTENT_EXPIRY_WINDOW_S", "_DDL", "apply_restart_intent_schema"]

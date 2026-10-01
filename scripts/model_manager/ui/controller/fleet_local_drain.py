@@ -57,6 +57,7 @@ async def drain_stop_git_worker(ctl: ServiceController) -> str:
         store=ctl.restart_intent_store,
         supervisor=supervisor,
         reason="fleet stop (supervised drain)",
+        caller_agent="manage",
     )
     intent_id = str(result.get("restart_intent_id", ""))[:8]
     drain_status = result.get("drain_status", result.get("status"))

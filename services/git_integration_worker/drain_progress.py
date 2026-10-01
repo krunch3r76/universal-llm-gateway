@@ -29,9 +29,97 @@ from typing import Any
 # Tickets rely on turnover, not this TTL. These feed R1 progress / telemetry
 # and the Auto belt — they must not arm a supervisor kill.
 HEARTBEAT_TTL_S = 90.0
+# A claim whose heartbeat moved, then stopped for two poll intervals, is not
+# a live holder. Admission tickets (cursor-sdk closeout included) have no
+# ``claimed_at`` and stay busy until ``close_ticket`` — copying
+# ``last_heartbeat_at`` onto the ticket must not finish the drain mid-closeout.
+HEARTBEAT_INTERVAL_S = 30.0
+DEAD_HEARTBEAT_AFTER_S = 2.0 * HEARTBEAT_INTERVAL_S
 STALL_WINDOW_S = 90.0
 # Above the ~2 min completed→SIGTERM lookalike window named in the bind.
 COMPLETED_UNCONSUMED_GRACE_S = 150.0
+
+
+def claim_heartbeat_dead(
+    op: dict[str, Any], *, now: datetime | None = None
+) -> bool:
+    """True only for a claimed row whose heartbeat writer stopped.
+
+    No ``claimed_at`` (admission tickets, including a cursor-sdk closeout)
+    stays occupancy. A stamp still equal to ``claimed_at`` was never bumped;
+    that age is time since claim and stays occupancy.
+    """
+    claimed = op.get("claimed_at")
+    if not isinstance(claimed, str) or not claimed:
+        return False
+    age = _heartbeat_age_s(op, now=now)
+    if age is None or age <= DEAD_HEARTBEAT_AFTER_S:
+        return False
+    last = op.get("last_heartbeat_at")
+    if isinstance(last, str) and last == claimed:
+        return False
+    return True
+
+
+def drain_busy_from_ops(
+    ops: list[dict[str, Any]], *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Busy verdict. Dead claimed heartbeats are not busy; open tickets are."""
+    live: list[dict[str, Any]] = []
+    dead: list[dict[str, Any]] = []
+    for op in ops:
+        if claim_heartbeat_dead(op, now=now):
+            dead.append(op)
+        else:
+            live.append(op)
+    if live:
+        return {
+            "busy": True,
+            "determination": "busy",
+            "live_ops": live,
+            "dead_heartbeat_ops": dead,
+        }
+    if dead:
+        return {
+            "busy": False,
+            "determination": "dead_heartbeat",
+            "live_ops": live,
+            "dead_heartbeat_ops": dead,
+        }
+    return {
+        "busy": False,
+        "determination": "idle",
+        "live_ops": live,
+        "dead_heartbeat_ops": dead,
+    }
+
+
+def reclassify_dead_heartbeat_work(
+    detail: dict[str, Any], *, busy: bool
+) -> tuple[bool, dict[str, Any]]:
+    """Drop a probe whose only holders are dead claimed heartbeats.
+
+    An open cursor-sdk ticket has no ``claimed_at`` and stays busy through
+    closeout. This does not write intent rows.
+    """
+    ops = detail.get("active_ops")
+    if isinstance(ops, list) and ops:
+        verdict = drain_busy_from_ops(ops)
+        if verdict["determination"] == "dead_heartbeat":
+            updated = dict(detail)
+            updated["busy"] = False
+            updated["active_count"] = 0
+            updated["active_ops"] = []
+            updated["determination"] = "dead_heartbeat"
+            updated["dead_heartbeat_ops"] = verdict["dead_heartbeat_ops"]
+            return False, updated
+        if verdict["dead_heartbeat_ops"] and verdict["live_ops"]:
+            updated = dict(detail)
+            updated["active_ops"] = verdict["live_ops"]
+            updated["active_count"] = len(verdict["live_ops"])
+            updated["busy"] = True
+            return True, updated
+    return busy, detail
 
 
 def occupancy_op_ids(ops: list[dict[str, Any]]) -> frozenset[str]:
