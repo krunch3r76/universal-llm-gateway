@@ -648,12 +648,30 @@ def mark_todo_done_on_mission_close(
     if statuses.get("G7") != "DONE":
         return
     work_key = str(row.get("work_key") or "")
+    slug = work_key.split(":", 1)[1].strip() if work_key.startswith("todo:") else ""
+    if not slug:
+        return
+    entity_id = f"todo:{slug}"
     from implement_admission.closeout_runtime import get_runtime
 
-    get_runtime().dispatch(
-        "entity_update",
-        {"entity_id": work_key, "workflow_state": "done"},
-    )
+    try:
+        resp = get_runtime().dispatch(
+            "entity_update",
+            {"entity_id": entity_id, "workflow_state": "done"},
+        )
+    except Exception as exc:  # noqa: BLE001 — must not block terminal closeout
+        logger.warning(
+            "conductor done workflow entity_update failed entity_id=%s err=%s",
+            entity_id,
+            exc,
+        )
+        return
+    if isinstance(resp, dict) and resp.get("error"):
+        logger.warning(
+            "conductor done workflow entity_update error entity_id=%s err=%s",
+            entity_id,
+            resp.get("error"),
+        )
 
 
 def merge_conductor_closeout_hop_authority(

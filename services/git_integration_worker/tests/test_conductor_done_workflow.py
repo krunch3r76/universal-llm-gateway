@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from implement_admission.closeout_runtime import (
@@ -138,3 +139,73 @@ def test_done_closeout_skips_when_ladder_partial_or_g7_open_or_row_hop(
         statuses={"G1": "DONE", "G7": "DONE"},
     )
     assert not any(tool == "entity_update" for tool, _ in hopped)
+
+
+class _Ctl:
+    worker_id = "w"
+
+    def is_draining(self) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "entity_update_behavior",
+    [
+        "raise",
+        "error_response",
+    ],
+)
+async def test_entity_update_failure_still_reaches_mark_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    entity_update_behavior: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Raising or error entity_update must not escape before mark_terminal."""
+    from services.git_integration_worker.routes.cursor_sdk import (
+        _mark_terminal_and_promote,
+    )
+
+    def _dispatch(tool: str, args: dict) -> dict:
+        if tool == "entity_update":
+            if entity_update_behavior == "raise":
+                raise RuntimeError("cortex down")
+            return {"error": "write rejected"}
+        return {}
+
+    set_runtime(CloseoutRuntime(dispatch=_dispatch))
+    monkeypatch.setattr(
+        "implement_admission.conductor_witness.fold_scoreboard",
+        lambda *a, **k: _fold({"G1": "DONE", "G6": "DONE", "G7": "DONE"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_nested_witness.fold_deps_with_ledger",
+        lambda *a, **k: None,
+    )
+    _admit()
+    with caplog.at_level("WARNING"):
+        merge_conductor_closeout_hop_authority(
+            dispatch_id="done-wf-1",
+            closeout_body=_DONE_BODY,
+            thread_id="14001",
+        )
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.maybe_fire_conductor_hop_reactor",
+            new_callable=AsyncMock,
+        ):
+            await _mark_terminal_and_promote(
+                dispatch_id="done-wf-1",
+                terminal_status="completed",
+                controller=_Ctl(),
+                emit_tag="CURSOR_TEST_DONE_WF",
+            )
+
+    assert _WORK_KEY in caplog.text
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("done-wf-1",),
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "completed"
