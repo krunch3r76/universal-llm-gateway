@@ -134,21 +134,24 @@ def _scoreboard_rows(
 ) -> tuple[str, ...]:
     """Rows to fold: the tip's own table, else the work item, else the G-ladder.
 
-    A tip that declares acceptance rows (any non-G id) is folded against
-    exactly those rows. A tip that carries only G rows — including a sparse
-    board born with a subset of the ladder — keeps ``G_ROWS`` so the ladder
-    witnesses (G1 derived_from, F1/S7, S4b/S9, L1) still apply. Only a tip
+    Tip rows are used only when every declared row is an R row. Any G row
+    keeps ``G_ROWS`` so the ladder witnesses (G1 derived_from, G4 withhold/FAIL
+    body, G6 verdict/sha, F1/S7, S4b/S9, L1) still apply — one R row the
+    conductor added must not select the custom-row rules. A tip with no G and
+    no all-R table (other custom ids) still folds those tip rows. Only a tip
     with no row table at all consults the work item, and then with the full
     projection the materializer used at birth (``conductor_materialize``),
-    never the Card, which has no ``attributes``. A cortex read failure
-    degrades to ``G_ROWS`` rather than failing the fold.
+    never the Card, which has no ``attributes``. A cortex read failure, a
+    missing ``attributes`` map, or a non-dict entity degrades to ``G_ROWS``
+    rather than failing the fold. A missing tip is the caller's problem:
+    ``fold_scoreboard`` returns None before this runs.
     """
     _ = files_root
     from_tip = rows_in_tip(tip_body)
     if from_tip:
-        if any(not row_id.startswith("G") for row_id in from_tip):
-            return from_tip
-        return G_ROWS
+        if any(row_id.startswith("G") for row_id in from_tip):
+            return G_ROWS
+        return from_tip
     source_ref = deps.source_ref or f"todo:{slug}"
     attrs: dict[str, Any] = {}
     try:

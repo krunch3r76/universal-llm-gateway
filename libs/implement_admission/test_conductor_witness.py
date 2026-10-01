@@ -906,3 +906,43 @@ def test_fold_all_g_tip_keeps_ladder_semantics(tmp_path: Path) -> None:
     fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
     assert fold is not None
     assert tuple(fold.row_status) == ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
+
+
+def test_mixed_g_and_r_tip_keeps_g4_verdict_check(tmp_path: Path) -> None:
+    """One R row must not fold G4 under custom-row rules.
+
+    Custom BIND accepts a resolving URI. The G-ladder refuses a G4 body that
+    withholds or FAILs. A conductor-written tip can add an R row beside the
+    ladder; that mix still has to keep the G4 check.
+    """
+    files_root = tmp_path / "cortex"
+    reviews = files_root / "notes/system/reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "withhold.md").write_text(
+        "Verdict: G4 **does not** clear G5.\nAC-7 | **FAIL**\n",
+        encoding="utf-8",
+    )
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n"
+        "| G4 | Skeptic | — | OPEN | |\n"
+        "| R1 | Extra acceptance row. | — | OPEN | |\n\n"
+        "## Sidecars\n\n"
+        "| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        "| G4 | `cortex://notes/system/reviews/withhold.md` | withhold body |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    deps = FoldDeps(
+        cortex=_CardOnlyCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert tuple(fold.row_status) == ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
+    assert "G4" not in fold.witnessed_done
+    assert fold.row_status["G4"] != "DONE"
