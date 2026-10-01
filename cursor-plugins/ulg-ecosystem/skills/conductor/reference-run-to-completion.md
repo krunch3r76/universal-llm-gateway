@@ -1,4 +1,8 @@
 ## Run to completion (binding default)
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
 
 The packet admit is a **standing** authorization for the whole mission, not a
 per-G-row one. Default posture once running:
@@ -27,8 +31,7 @@ per-G-row one. Default posture once running:
   one dispatch simply stops `DONE`. Owed stops win at a boundary:
   `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
   `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify on ACTIVE
-  (`cdp/opus-5`, reasoning_effort=max, and effort_when_bind_gates_wave=max
-  when a bind gates a wave) then continues — a live summoning chat is not a
+  (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) then continues — a live summoning chat is not a
   human stop; named
   hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
   then hop. If you end with the mission open and **no** token, the substrate

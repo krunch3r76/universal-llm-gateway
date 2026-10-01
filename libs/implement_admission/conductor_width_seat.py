@@ -38,6 +38,62 @@ ACTIVE = ConductorWidthSeat(
 )
 
 
+WIDTH_SEAT_MARKER_START = "<!-- width-seat:v1:start -->"
+WIDTH_SEAT_MARKER_END = "<!-- width-seat:v1:end -->"
+
+_CHANNEL_BY_FAMILY = {"opus": "Opus", "fable": "Fable"}
+
+
+def _usage_channel(model: str) -> str:
+    cli_id = model.removeprefix("cdp/")
+    family = cli_id.split("-", 1)[0]
+    channel = _CHANNEL_BY_FAMILY.get(family)
+    if channel is None:
+        msg = f"unknown width-seat model family for {model!r}"
+        raise ValueError(msg)
+    return channel
+
+
+def width_seat_block(seat: ConductorWidthSeat | None = None) -> str:
+    """Render the width-seat marker block from ACTIVE (or *seat*)."""
+    chosen = ACTIVE if seat is None else seat
+    cli_id = chosen.model.removeprefix("cdp/")
+    channel = _usage_channel(chosen.model)
+    line = (
+        "> **Width seat** (generated from "
+        "`libs/implement_admission/conductor_width_seat.py`; do not hand-edit): "
+        f"ACTIVE = `{chosen.model}` · `reasoning_effort={chosen.reasoning_effort}` · "
+        f"`effort_when_bind_gates_wave={chosen.effort_when_bind_gates_wave}` "
+        "only when a bind gates a wave · "
+        f"CLI `--model {cli_id}` · usage channel **{channel}**. "
+        f"RESTORE = `{RESTORE.model}` · "
+        f"`reasoning_effort={RESTORE.reasoning_effort}` "
+        "(only when Kaywan asks; set `ACTIVE = RESTORE`)."
+    )
+    return "\n".join((WIDTH_SEAT_MARKER_START, line, WIDTH_SEAT_MARKER_END))
+
+
+def embed_width_seat_block(
+    text: str, seat: ConductorWidthSeat | None = None
+) -> str:
+    """Replace the width-seat marker span with a freshly rendered block."""
+    start_count = text.count(WIDTH_SEAT_MARKER_START)
+    end_count = text.count(WIDTH_SEAT_MARKER_END)
+    if start_count != 1 or end_count != 1:
+        msg = (
+            f"width-seat markers: expected exactly one start and one end, "
+            f"got {start_count} start and {end_count} end"
+        )
+        raise ValueError(msg)
+    start = text.index(WIDTH_SEAT_MARKER_START)
+    end = text.index(WIDTH_SEAT_MARKER_END)
+    if end < start:
+        msg = "width-seat end marker precedes start marker"
+        raise ValueError(msg)
+    block = width_seat_block(seat)
+    return text[:start] + block + text[end + len(WIDTH_SEAT_MARKER_END) :]
+
+
 def g3_g5_score_ratify_clause(seat: ConductorWidthSeat | None = None) -> str:
     """Name the width seat inside a G3→G5 score-ratify sentence.
 

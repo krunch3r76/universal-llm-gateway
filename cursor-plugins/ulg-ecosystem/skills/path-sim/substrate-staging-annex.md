@@ -1,5 +1,9 @@
 # Path-sim L3 annex — substrate house rules, vision-align, docstring AC, staging
 
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
 **Parent SOT:** `cursor-plugins/ulg-ecosystem/skills/path-sim/SKILL.md`.
 Open this annex when **choosing a transport** for a path-sim leg, filling a
 `VISION-ALIGN` block with a non-`none` verdict, or auditing v0 staging status.
@@ -8,17 +12,17 @@ L2 carries the one-line substrate rule and the VISION-ALIGN block grammar.
 ## Per-family parameters (effort tiers — NOT transport binds)
 
 **Do not read this table as “who fires Q.”** Transport binds live in annex A § Dispatch bindings
-and the xAI/Anthropic rows below. While ACTIVE.model is `cdp/opus-5`, a `cdp/opus-5`
+and the xAI/Anthropic rows below. When ACTIVE.model equals the R-admit model, a CDP
 event on a path-sim thread may be Q or R-admit. Distinguish by phase.
 
 | Window | Q effort | A effort | R-admit effort |
 |---|---|---|---|
-| Shipped width seat | ACTIVE reasoning_effort (max) | Grok-4.5 High (transport bind) | Opus 5 (CDP) |
+| Width seat (ACTIVE) | reasoning_effort per ACTIVE | Grok-4.5 High (transport bind) | Opus 5 (CDP) |
 | `ACTIVE = RESTORE` | Fable 5.1 high (max when a bind gates a wave) | Grok-4.5 High | Opus 5 (CDP) |
 
-- **Default bundled Q transport:** ACTIVE (`cdp/opus-5`, reasoning_effort=max; `libs/implement_admission/conductor_width_seat.py`).
+- **Default bundled Q transport:** ACTIVE.
 - **Default A transport:** Composer enumerate → **`cdp/fable` bind** — operator bind 2026-09-02 (a:31976).
-- **Default R-admit transport:** CDP Opus (`cdp/opus-5`). Same wire as Q while ACTIVE is that model.
+- **Default R-admit transport:** CDP Opus (R-admit pin). When ACTIVE.model equals the R-admit model, same wire as Q.
 - **Cascade:** Q = ACTIVE → Composer enumerate + Fable A-bind → Opus R-admit. `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`.
 - Recovery sharpen uses ACTIVE again (annex A § Q-cascade). It is not a separate Fable hop.
 - Window params carry `operator ratify 2026-07-16 (a:24764)`; they name **effort**, not dispatch seat. ¬ rewrite annex A transport binds.
@@ -43,7 +47,7 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 | Path | Default |
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | **Composer enumerate → `cdp/fable` bind** |
-| Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=cdp/opus-5, reasoning_effort=max)` while that is the shipped seat (`libs/implement_admission/conductor_width_seat.py`; annex A) |
+| Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)` |
 | `team_dispatch` `job=freeform, model=xai/grok-4.7` for checkout-present coding consult | **PROHIBITED** |
 
 | Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.7` |

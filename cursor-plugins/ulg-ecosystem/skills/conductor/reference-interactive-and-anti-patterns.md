@@ -1,11 +1,14 @@
 ## Interactive entry
+<!-- width-seat:v1:start -->
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+<!-- width-seat:v1:end -->
+
 
 Command `/conductor` (plugin): orient → ask establishing questions (incl. **model
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
 when the operator already bound the answers in chat. Scoreboard mint includes
-stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE (`cdp/opus-5`,
-reasoning_effort=max); after-ship code review = `cdp/opus-5.5` — hard, ¬
+stronger-model gates (a:32146 · a:32226): G4 Skeptic = ACTIVE; after-ship code review = `cdp/opus-5.5` — hard, ¬
 optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 (¬ DEFERRED-and-proceed). Profile
 `fable-scarce` ⇒ see § Profile fable-scarce (width rows stay on ACTIVE).
