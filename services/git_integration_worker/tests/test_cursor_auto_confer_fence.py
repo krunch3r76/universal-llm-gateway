@@ -109,7 +109,8 @@ def test_confer_fixture_lists_offgit_uri_not_effects_none():
     assert looks_section2(payload.body)
     assert _OFFGIT_URI in payload.body
     assert "effects: (none" not in payload.body.lower()
-    assert payload.status != "complete"
+    # Wrapper status complete is preserved once the off-git URI is located in the body; offset-0 miss-cell must not downgrade that measurement.
+    assert payload.status == "complete"
 
 
 def test_fence_violation_when_guarded_write_unannounced():
