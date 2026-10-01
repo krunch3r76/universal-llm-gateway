@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from .personality_config import (
         PersonalityConfig,
         create_api_personality_config,
-        get_global_personality_config,
     )
     from .systems.transformations import OutputFormat, TransformationEngine
 
@@ -71,18 +70,15 @@ def __getattr__(name: str) -> Any:
     if name in {
         "PersonalityConfig",
         "create_api_personality_config",
-        "get_global_personality_config",
     }:
         from .personality_config import (
             PersonalityConfig,
             create_api_personality_config,
-            get_global_personality_config,
         )
 
         mapping = {
             "PersonalityConfig": PersonalityConfig,
             "create_api_personality_config": create_api_personality_config,
-            "get_global_personality_config": get_global_personality_config,
         }
         return mapping[name]
 
@@ -120,7 +116,6 @@ __all__ = [
     "MiddlewareManager",
     # Global accessors
     "get_global_middleware",
-    "get_global_personality_config",
     # Package info
     "PACKAGE_INFO",
 ]

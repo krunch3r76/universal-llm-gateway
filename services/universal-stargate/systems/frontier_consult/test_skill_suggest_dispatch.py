@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -13,7 +14,10 @@ from implement_admission.closeout_models import EvidenceUris, ImplementCloseout
 from implement_admission.spec import CloseoutStatus
 from pydantic import ValidationError
 
+from systems.frontier_consult.cursor_sdk_generate import dispatch_cursor_sdk_generate
+
 from .admission import FrontierEndpointError
+from .conftest import dispatch_cursor_sdk_generate_mock
 from .skill_suggest_dispatch import (
     SkillSuggestDispatchRequest,
     apply_required_skills_backstop,
@@ -27,6 +31,13 @@ from .skill_suggest_dispatch_helpers import (
     validate_skill_suggest_envelope,
 )
 from .skill_suggest_worker_waiter import WorkerWaitOutcome
+
+
+def _patch_dispatch(**kwargs: object):
+    return patch(
+        "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
+        new=dispatch_cursor_sdk_generate_mock(autospec=True, **kwargs),
+    )
 
 
 def _default_candidates() -> list[dict]:
@@ -184,10 +195,7 @@ async def test_dispatch_prefer_worker_false_skips_worker_hop() -> None:
     fallback_payload["route"] = "fallback"
 
     with (
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
-        ) as dispatch,
+        _patch_dispatch() as dispatch,
         patch(
             "systems.frontier_consult.skill_suggest_dispatch.run_fallback",
             new_callable=AsyncMock,
@@ -217,9 +225,7 @@ async def test_dispatch_fallback_on_worker_idle_timeout() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             return_value={
                 "execution_id": "exec-1",
                 "thread_id": "2111",
@@ -268,9 +274,7 @@ async def test_dispatch_uses_residual_contract() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             side_effect=FrontierEndpointError(
                 request_id="req-test",
                 field="contract",
@@ -290,6 +294,9 @@ async def test_dispatch_uses_residual_contract() -> None:
 
     dispatch.assert_awaited_once()
     assert dispatch.await_args.kwargs["contract"] == "none"
+    inspect.signature(dispatch_cursor_sdk_generate).bind(
+        **dispatch.await_args.kwargs
+    )
 
 
 @pytest.mark.offline
@@ -301,9 +308,7 @@ async def test_dispatch_worker_path_returns_envelope() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             return_value={
                 "execution_id": "exec-2",
                 "thread_id": "2112",
@@ -359,9 +364,7 @@ async def test_dispatch_hallucinated_slug_triggers_fallback() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             return_value={"execution_id": "exec-h", "thread_id": "2116"},
         ),
         patch(
@@ -569,9 +572,7 @@ async def test_dispatch_worker_unreachable_fast_fails_to_fallback() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             return_value={
                 "execution_id": "exec-q",
                 "thread_id": "2113",
@@ -616,9 +617,7 @@ async def test_dispatch_queued_ack_proceeds_to_event_waiter() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             return_value={
                 "execution_id": "exec-q-ack",
                 "thread_id": "2114",
@@ -893,9 +892,7 @@ async def test_dispatch_worker_path_applies_backstop() -> None:
 
     with (
         _patch_extended_candidates(),
-        patch(
-            "systems.frontier_consult.skill_suggest_dispatch.dispatch_cursor_sdk_generate",
-            new_callable=AsyncMock,
+        _patch_dispatch(
             return_value={
                 "execution_id": "exec-b",
                 "thread_id": "2115",

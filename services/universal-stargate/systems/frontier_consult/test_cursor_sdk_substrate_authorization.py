@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
 from .admission import FrontierEndpointError, resolve_cursor_sdk_generate_target
+from .conftest import dispatch_cursor_sdk_generate_mock
 from .route import TeamDispatchGenerateBody, team_dispatch
 
 
@@ -51,7 +50,9 @@ async def test_team_dispatch_cloud_role_cursor_model_rejects_before_dispatch(
 async def test_cursor_sdk_role_with_cursor_model_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock(return_value={"execution_id": "exec-1", "thread_id": "t1"})
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
+        return_value={"execution_id": "exec-1", "thread_id": "t1"}
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,

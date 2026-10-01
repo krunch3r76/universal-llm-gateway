@@ -24,6 +24,8 @@ from fastapi import Response
 from implement_admission.preflight import DecisionNotAssertedError
 from pydantic import ValidationError
 
+from .conftest import dispatch_cursor_sdk_generate_mock
+from .dispatch_thread_context import GeneratePromptResolution
 from .generate_wrap import GenerateWrapResult
 from .route import TeamDispatchGenerateBody, team_dispatch
 
@@ -34,17 +36,23 @@ def _patch_sdk_and_thread_read(
     sdk_return: dict[str, str],
     thread_body: str,
 ) -> tuple[AsyncMock, AsyncMock]:
-    """Patch the SDK orchestrator + dispatch-thread reader on the route module."""
-    sdk_mock = AsyncMock(return_value=sdk_return)
-    thread_read = AsyncMock(return_value=thread_body)
+    """Patch the SDK orchestrator + prompt resolution on the generate route."""
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, return_value=sdk_return)
+    prompt_resolution = AsyncMock(
+        return_value=GeneratePromptResolution(
+            text=thread_body,
+            prompt_bind_mode="dispatch_thread_latest",
+            prompt_turn_number=1,
+        )
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.generate_wrap.read_latest_dispatch_thread_body",
-        thread_read,
+        "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
+        prompt_resolution,
     )
-    return sdk_mock, thread_read
+    return sdk_mock, prompt_resolution
 
 
 @pytest.mark.asyncio
@@ -111,7 +119,7 @@ async def test_cursor_sdk_residual_packet_skips_dispatch_thread(
     thread_read.assert_not_awaited()
     sdk_mock.assert_awaited_once()
     kwargs = sdk_mock.await_args.kwargs
-    assert kwargs["contract"] == "none"
+    assert kwargs["contract"] == "freeform"
     assert kwargs["packet_path"] == "tmp/reviews/light-packet.md"
     assert kwargs["message_text"] == ""
 
@@ -152,7 +160,7 @@ async def test_cursor_sdk_residual_unresolved_packet_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Missing packet_path on light generate → 422 packet_path_unresolved."""
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
@@ -221,10 +229,16 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-1: bare source_ref materializes and dispatches with the bridge packet_path."""
-    sdk_mock = AsyncMock(
+    sdk_mock = dispatch_cursor_sdk_generate_mock(
+        autospec=True,
         return_value={"execution_id": "exec-wrap", "thread_id": "1728"}
     )
-    thread_read = AsyncMock(return_value="should-not-be-read")
+    prompt_resolution = AsyncMock(
+        return_value=GeneratePromptResolution(
+            text="should-not-be-read",
+            prompt_bind_mode="dispatch_thread_latest",
+        )
+    )
     gate_refs: list[str | None] = []
     bridge_refs: list[str] = []
 
@@ -241,8 +255,8 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.generate_wrap.read_latest_dispatch_thread_body",
-        thread_read,
+        "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
+        prompt_resolution,
     )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.prepare_implement_packet", _prepare
@@ -264,7 +278,7 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
         "materialization_mode": "auto",
         "warnings": ["executor-absent"],
     }
-    thread_read.assert_not_awaited()
+    prompt_resolution.assert_not_awaited()
     sdk_mock.assert_awaited_once()
     assert sdk_mock.await_args.kwargs["packet_path"] == (
         "tmp/reviews/first-class-wrap-transport-implement-packet.md"
@@ -279,7 +293,7 @@ async def test_cursor_sdk_implement_gated_source_ref_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-3: bridge gated → 422 generate_source_ref_gated; SDK not awaited."""
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate", sdk_mock
     )
@@ -314,7 +328,7 @@ async def test_cursor_sdk_implement_decision_not_asserted_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-3a: un-ratified decision on materialization sub-path → 422."""
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
 
     def _raise_decision(**kwargs: object) -> GenerateWrapResult:  # noqa: ARG001
         raise DecisionNotAssertedError()

@@ -628,12 +628,17 @@ def _install_route_stubs(
         calls["resolve"] += 1
         return await real_resolve(**kwargs)
 
-    async def _dispatch(**_kwargs: object) -> dict:
-        return {"status": "admitted"}
+    from .conftest import dispatch_cursor_sdk_generate_mock
+
+    dispatch_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
+        return_value={"status": "admitted"},
+    )
 
     monkeypatch.setattr(generate_wrap, "prepare_conductor_packet", _prepare)
     monkeypatch.setattr(generate_wrap, "resolve_cursor_sdk_thread_targets", _resolve)
-    monkeypatch.setattr(generate_wrap, "dispatch_cursor_sdk_generate", _dispatch)
+    monkeypatch.setattr(
+        generate_wrap, "dispatch_cursor_sdk_generate", dispatch_mock
+    )
     return calls, captured
 
 

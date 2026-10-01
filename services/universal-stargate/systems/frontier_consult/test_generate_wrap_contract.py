@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import Response
@@ -16,6 +16,8 @@ from systems.frontier_consult.generate_wrap import (
     prepare_implement_packet,
 )
 from systems.frontier_consult.route import TeamDispatchGenerateBody, team_dispatch
+
+from .conftest import dispatch_cursor_sdk_generate_mock
 
 
 def _wrap_result(**overrides: object) -> GenerateWrapResult:
@@ -81,7 +83,7 @@ def test_wrap_body_allows_absent_dispatch_thread_id() -> None:
 async def test_wrap_happy_path_returns_200_without_sdk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,
@@ -121,7 +123,9 @@ async def test_wrap_happy_path_returns_200_without_sdk(
 async def test_wrap_does_not_spawn_composer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock(return_value={"execution_id": "exec-should-not-run"})
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
+        return_value={"execution_id": "exec-should-not-run"}
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,
@@ -150,7 +154,7 @@ async def test_wrap_does_not_spawn_composer(
 async def test_wrap_gated_source_ref_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,
@@ -183,7 +187,7 @@ async def test_wrap_gated_source_ref_returns_422(
 async def test_wrap_decision_not_asserted_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock()
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True, )
 
     def _raise_decision(**kwargs: object) -> GenerateWrapResult:  # noqa: ARG001
         raise DecisionNotAssertedError()

@@ -21,6 +21,8 @@ from systems.frontier_consult.cursor_sdk_worker_dispatch import (
 from systems.frontier_consult.generate_wrap import GenerateWrapResult
 from systems.frontier_consult.route import TeamDispatchGenerateBody, team_dispatch
 
+from .conftest import dispatch_cursor_sdk_generate_mock
+
 
 def test_team_dispatch_generate_body_accepts_resume_of() -> None:
     body = TeamDispatchGenerateBody(
@@ -87,7 +89,9 @@ async def test_team_dispatch_resume_of_without_reuse_thread_returns_422(
 async def test_team_dispatch_resume_of_omits_lane_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sdk_mock = AsyncMock(return_value={"execution_id": "exec-resume", "thread_id": "9964"})
+    sdk_mock = dispatch_cursor_sdk_generate_mock(autospec=True,
+        return_value={"execution_id": "exec-resume", "thread_id": "9964"}
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
         sdk_mock,
@@ -164,7 +168,10 @@ async def test_worker_packet_dispatch_forwards_resume_of(
 def test_parse_worker_error_surfaces_resume_reason() -> None:
     resp = MagicMock()
     resp.status_code = 422
-    resp.text = '{"code":"CURSOR_RESUME_INELIGIBLE","message":"ineligible","data":{"reason":"thread_mismatch"}}'
+    resp.text = (
+        '{"code":"CURSOR_RESUME_INELIGIBLE","message":"ineligible",'
+        '"data":{"reason":"thread_mismatch"}}'
+    )
     resp.json.return_value = {
         "code": "CURSOR_RESUME_INELIGIBLE",
         "message": "ineligible",

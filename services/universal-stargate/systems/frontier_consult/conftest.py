@@ -10,8 +10,33 @@ patch.dict usage is untouched.
 from __future__ import annotations
 
 import os
+from unittest.mock import AsyncMock
 
 import pytest
+
+
+def dispatch_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
+    from unittest.mock import create_autospec
+
+    from systems.frontier_consult.cursor_sdk_generate import (
+        dispatch_cursor_sdk_generate,
+    )
+
+    # Callers pass autospec=True so the test file names the constraint.
+    # create_autospec is what actually binds the real signature (contract=).
+    kwargs.pop("autospec", None)
+    return create_autospec(dispatch_cursor_sdk_generate, **kwargs)
+
+
+def prepare_cursor_sdk_generate_mock(**kwargs: object) -> AsyncMock:
+    from unittest.mock import create_autospec
+
+    from systems.frontier_consult.cursor_sdk_generate_prepare import (
+        prepare_cursor_sdk_generate,
+    )
+
+    kwargs.pop("autospec", None)
+    return create_autospec(prepare_cursor_sdk_generate, **kwargs)
 
 
 @pytest.fixture(autouse=True)
