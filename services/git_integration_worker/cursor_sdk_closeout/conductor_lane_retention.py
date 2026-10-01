@@ -17,10 +17,13 @@ owned by an open mission? Callers are
 ``cursor_sdk_branch_terminal.settle_lane_branch`` (skips discharge and debt),
 ``delivery_assembly.lane_settlement`` (skips the abandoned mark), and
 ``routes.cursor_sdk._mark_lane_b_abandon_disposition`` (the failed-terminal
-mark that ``gc_merged_dispatch_branches`` deletes on). Only a conductor
+mark that ``gc_merged_dispatch_branches`` deletes on). A retain also stamps
+``lane_retained_for_mission`` on the owning row and a
+``retained_for_mission`` disposition the reap does not delete. Only a conductor
 closeout that carries ``DONE``, or a closeout with no open conductor above it
 on this branch, settles the branch. A nested limb's own lane branch is not
-the ancestor's and settles. Reads the dispatch ledger; writes nothing.
+the ancestor's and settles. Reads the dispatch ledger; the marker write is
+the one mutation.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ from services.git_integration_worker.cursor_sdk_conductor_identity import (
 logger = get_logger(__name__)
 
 RETAINED_FOR_MISSION = "retained_for_mission"
+_RETAINED_MARKER_KEY = "lane_retained_for_mission"
 _LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
 _MAX_NEST_WALK = 12
 
@@ -112,6 +116,10 @@ def conductor_mission_open(
     tokens = closeout_stop_tokens(row, closeout_text)
     if "DONE" in tokens:
         return None
+    if not tokens:
+        marker = _record(row).get(_RETAINED_MARKER_KEY)
+        if isinstance(marker, str) and marker:
+            return marker
     label = ",".join(sorted(tokens)) if tokens else "crash"
     return f"conductor_mission_open:{label}"
 
@@ -126,6 +134,68 @@ def _branch_is_row_lane(row: dict[str, Any], branch_name: str | None) -> bool:
     from services.git_integration_worker.cursor_sdk_worktree import lane_branch_name
 
     return lane_branch_name(thread_id) == branch_name
+
+
+def _persist_retained_marker(*, dispatch_id: str, branch_name: str, reason: str) -> None:
+    """Stamp the retention where a later reap can see it without the closeout text."""
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={_RETAINED_MARKER_KEY: reason},
+        )
+    except Exception as exc:  # noqa: BLE001 — the decision already stands
+        logger.warning(
+            "lane retention marker write failed dispatch=%s err=%s", dispatch_id, exc
+        )
+    try:
+        from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+            mark_lane_b_disposition,
+        )
+
+        mark_lane_b_disposition(
+            branch_name=branch_name,
+            reason=RETAINED_FOR_MISSION,
+            dispatch_id=dispatch_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — record stamp is the other copy
+        logger.warning(
+            "lane retention disposition write failed branch=%s err=%s",
+            branch_name,
+            exc,
+        )
+
+
+def _clear_retained_marker(*, dispatch_id: str, branch_name: str) -> None:
+    """DONE on this lane releases the marker the reap was honoring."""
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={_RETAINED_MARKER_KEY: None},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "lane retention marker clear failed dispatch=%s err=%s", dispatch_id, exc
+        )
+    try:
+        from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+            clear_disposition,
+        )
+
+        clear_disposition(branch_name=branch_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "lane retention disposition clear failed branch=%s err=%s",
+            branch_name,
+            exc,
+        )
 
 
 def lane_retention_reason(
@@ -156,8 +226,18 @@ def lane_retention_reason(
         return None
     if row is None:
         return None
+    tokens = closeout_stop_tokens(row, closeout_text)
+    if (
+        "DONE" in tokens
+        and is_conductor_dispatch_row(row)
+        and _branch_is_row_lane(row, branch_name)
+    ):
+        _clear_retained_marker(dispatch_id=dispatch_id, branch_name=branch_name or "")
     reason = conductor_mission_open(row, closeout_text=closeout_text, closing=True)
     if reason and _branch_is_row_lane(row, branch_name):
+        _persist_retained_marker(
+            dispatch_id=dispatch_id, branch_name=branch_name or "", reason=reason
+        )
         return reason
     seen: set[str] = {dispatch_id}
     parent_id = str(_record(row).get("nest_under") or "").strip()
@@ -176,7 +256,13 @@ def lane_retention_reason(
             break
         parent_reason = conductor_mission_open(parent, closeout_text=None)
         if parent_reason and _branch_is_row_lane(parent, branch_name):
-            return f"nested_under_open_conductor:{parent_id}:{parent_reason}"
+            nested = f"nested_under_open_conductor:{parent_id}:{parent_reason}"
+            _persist_retained_marker(
+                dispatch_id=parent_id,
+                branch_name=branch_name or "",
+                reason=nested,
+            )
+            return nested
         parent_id = str(_record(parent).get("nest_under") or "").strip()
     return None
 

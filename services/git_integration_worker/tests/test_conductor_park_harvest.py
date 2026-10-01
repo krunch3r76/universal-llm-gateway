@@ -421,6 +421,17 @@ def test_park_harvest_continue_owed_true_when_reply_arrived() -> None:
     )
 
 
+def test_park_harvest_continue_rejects_done_in_body() -> None:
+    """Park-harvest continue does not accept a body that also says stop: DONE."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-done-body")
+    row = _production_parked_row(ledger, req)
+    record = json.loads(row["record_json"])
+    record["closeout_body"] = "stop: PARKED_TRANSPORT\nstop: DONE\n"
+    row["record_json"] = json.dumps(record)
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+
+
 def test_park_harvest_continue_owed_false_when_row_pinned() -> None:
     """R-2: operator stop tokens must not trigger continue."""
     ledger = CursorDispatchLedger.instance()

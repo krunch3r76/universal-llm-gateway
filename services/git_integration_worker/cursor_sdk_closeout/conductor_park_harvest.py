@@ -50,6 +50,24 @@ def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
     return frozenset()
 
 
+def _closeout_declares_done(row: dict[str, Any], tokens: frozenset[str]) -> bool:
+    """True when the stamp or the closeout body carries stop: DONE.
+
+    Continue callers sometimes pass a stamp that names only their own token.
+    A body that also says DONE is still a finished mission, and admitting a
+    successor from it would treat a terminal closeout as a consult or a
+    park-harvest.
+    """
+    if "DONE" in tokens:
+        return True
+    body = _closeout_body_from_row(row)
+    if not body:
+        return False
+    from claude_bundles.conductor_stop import parse_designed_stop_tokens
+
+    return "DONE" in parse_designed_stop_tokens(body).tokens
+
+
 def _record_data(row: dict[str, Any]) -> dict[str, Any]:
     record_json = str(row.get("record_json") or "")
     try:
@@ -434,6 +452,8 @@ def consult_pending_continue_owed(
     if status not in ("completed", "failed", "cancelled"):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
+    if _closeout_declares_done(row, tokens):
+        return False
     rec = _record_data(row)
     if rec.get(_CONSULT_PENDING_CONTINUED_KEY):
         return False
@@ -590,6 +610,8 @@ def park_harvest_continue_owed(
     if status not in ("completed", "failed", "cancelled"):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
+    if _closeout_declares_done(row, tokens):
+        return False
     if "PARKED_TRANSPORT" not in tokens:
         return False
     rec = _record_data(row)

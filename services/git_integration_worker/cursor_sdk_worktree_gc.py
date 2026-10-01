@@ -99,6 +99,8 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
             continue
         disposition = get_disposition(branch_name=name)
         if disposition is not None:
+            if disposition.reason == "retained_for_mission":
+                continue
             if _delete_orphan_branch(
                 repo=repo,
                 branch_name=name,

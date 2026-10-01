@@ -160,6 +160,28 @@ def test_ac2_seat_dispose_marker_gc_reap_and_clear(
     assert reaped[-1]["reason"] == "abandoned"
 
 
+def test_retained_disposition_is_not_reaped(source_repo: Path) -> None:
+    """A retained-for-mission marker is not a license for the reap to delete."""
+    branch, _ = _create_orphan_branch(
+        source_repo,
+        dispatch_id="keep-me",
+        rel_path="keep.py",
+        body="keep\n",
+    )
+    mark_lane_b_disposition(
+        branch_name=branch,
+        reason="retained_for_mission",
+        dispatch_id="keep-me",
+    )
+    deleted = gc_merged_dispatch_branches(source_repo=source_repo)
+    assert deleted == 0
+    listing = _git("branch", "--list", branch, cwd=source_repo).stdout
+    assert branch in listing
+    marked = get_disposition(branch_name=branch)
+    assert marked is not None
+    assert marked.reason == "retained_for_mission"
+
+
 def test_ac3_late_landing_cherry_reclaim_without_marker(
     source_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

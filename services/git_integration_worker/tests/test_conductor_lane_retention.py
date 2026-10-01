@@ -518,7 +518,7 @@ def test_lane_settlement_skips_abandoned_while_conductor_running(
         branch_name=_BRANCH,
         closeout_text="",
     )
-    assert marks == []
+    assert [mark.get("reason") for mark in marks] == [RETAINED_FOR_MISSION]
     assert get_disposition(branch_name=_BRANCH) is None
 
 
@@ -656,3 +656,89 @@ def test_failed_terminal_abandon_proceeds_when_ledger_unreadable(
         dispatch_id="hop-crash", source_repo=tmp_path / "repo"
     )
     assert calls == ["hop-crash"]
+
+
+def test_retained_marker_outlives_closeout_text(tmp_path: Path) -> None:
+    """The reap marker remains after the closeout text is no longer evidence."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, dispatch_id="hop-mark", contract="conductor", work_key="todo:swap")
+    _running(ledger, "hop-mark")
+    first = lane_retention_reason(
+        dispatch_id="hop-mark",
+        thread_id=_THREAD,
+        closeout_text=_HOP_CLOSEOUT,
+        branch_name=_BRANCH,
+    )
+    assert first == "conductor_mission_open:ROW_HOP"
+    row = ledger.dispatch_status_by_id(dispatch_id="hop-mark")
+    assert row is not None
+    ledger.merge_record_json(
+        dispatch_id="hop-mark",
+        patch={"closeout_stop_tokens": [], "closeout_body": ""},
+    )
+    ledger.mark_terminal(dispatch_id="hop-mark", terminal_status="completed")
+    again = lane_retention_reason(
+        dispatch_id="hop-mark",
+        thread_id=_THREAD,
+        closeout_text="",
+        branch_name=_BRANCH,
+    )
+    assert again == first
+    with ledger._connect() as conn:
+        raw = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("hop-mark",),
+        ).fetchone()
+    assert raw is not None
+    import json
+
+    record = json.loads(raw["record_json"])
+    assert record.get("lane_retained_for_mission") == first
+    marked = get_disposition(branch_name=_BRANCH)
+    assert marked is not None
+    assert marked.reason == RETAINED_FOR_MISSION
+
+
+def test_lane_settlement_lookup_exception_does_not_abandon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raising retention lookup must not fall through into abandoned."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(ledger, dispatch_id="hop-boom", contract="conductor", work_key="todo:swap")
+    _running(ledger, "hop-boom")
+
+    def _boom(**_kwargs: object) -> str:
+        raise RuntimeError("lookup failed")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout."
+        "conductor_lane_retention.lane_retention_reason",
+        _boom,
+    )
+    marks = _run_failed_lane_settlement(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        dispatch_id="hop-boom",
+        thread_id=_THREAD,
+        branch_name=_BRANCH,
+        closeout_text=_HOP_CLOSEOUT,
+    )
+    assert marks == []
+    assert get_disposition(branch_name=_BRANCH) is None
+
+
+def test_packet_reference_forbids_land_disposition_before_done() -> None:
+    """U8 map: Packet → reference-packet.md. The G5 executor row stays."""
+    packet = (
+        Path(__file__).resolve().parents[3]
+        / "cursor-plugins/ulg-ecosystem/skills/conductor/reference-packet.md"
+    )
+    text = packet.read_text(encoding="utf-8")
+    assert "do not declare `land_disposition`" in text
+    assert "lane_retained_for_mission" in text
+    assert "| G5 implement | `agent` | `implement` \\| `pure-mechanical` | path-explicit commit / `land_disposition` |" in text
+    skill = packet.parent / "SKILL.md"
+    body = skill.read_text(encoding="utf-8")
+    assert len(body.encode()) <= 4096
+    for heading in ("## Trigger", "## Refuse", "## Steps", "## Falsifier"):
+        assert heading in body
