@@ -103,10 +103,19 @@ async def execute(
 
     match method:
         case "fleet_liveness":
-            unexpected = sorted(set(params) - {"code_ref", "activation_validation_id"})
+            unexpected = sorted(
+                set(params)
+                - {
+                    "code_ref",
+                    "activation_validation_id",
+                    "service",
+                    "services",
+                }
+            )
             if unexpected:
                 raise ValueError(
-                    "fleet_liveness accepts only code_ref, activation_validation_id: "
+                    "fleet_liveness accepts only code_ref, "
+                    "activation_validation_id, service, services: "
                     + ", ".join(unexpected)
                 )
             code_ref = params.get("code_ref")
@@ -119,12 +128,20 @@ async def execute(
                 raise ValueError(
                     "fleet_liveness activation_validation_id must be a string"
                 )
+            service = params.get("service")
+            if service is not None and not isinstance(service, str):
+                raise ValueError("fleet_liveness service must be a string")
+            services = params.get("services")
+            if services is not None and not isinstance(services, list):
+                raise ValueError("fleet_liveness services must be a list")
             return await asyncio.to_thread(
                 build_snapshot,
                 ctl.root,
                 svc,
                 code_ref=code_ref,
                 activation_validation_id=activation_validation_id,
+                service=service,
+                services=services,
             )
 
         case "recycle_giw":

@@ -755,3 +755,200 @@ def test_null_pid_remote_timeout_names_fail_class_and_skips_local_proc(
     )
     assert marker["error"] != "proc_start_unavailable"
     assert "pid None reported" not in marker["error"]
+
+
+def _empty_probe_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    empty_probe = {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((empty_probe, empty_probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+
+
+def test_normalize_service_filter_unknown_raises() -> None:
+    with pytest.raises(ValueError, match="unknown service"):
+        live.normalize_service_filter(service="not_a_service")
+
+
+def test_normalize_service_filter_empty_list_raises() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        live.normalize_service_filter(services=[])
+
+
+def test_normalize_service_filter_empty_list_with_service_raises() -> None:
+    """Empty services=[] raises even when service= is also set (A1)."""
+    with pytest.raises(ValueError, match="non-empty"):
+        live.normalize_service_filter(service="mcp", services=[])
+
+
+def test_normalize_service_filter_strips_whitespace() -> None:
+    assert live.normalize_service_filter(service="  mcp  ") == ("mcp",)
+
+
+def test_service_filter_singular_returns_one_row_plus_porcelain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    result = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="git_integration_worker"
+    )
+    assert [row["service"] for row in result["services"]] == [
+        "git_integration_worker"
+    ]
+    assert result["service_filter"] == {
+        "services": ["git_integration_worker"]
+    }
+    assert "checkout" in result
+    assert result["checkout"]["head_sha"] == "head"
+
+
+def test_service_filter_multi_preserves_service_slugs_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    result = live.build_snapshot(
+        tmp_path,
+        SimpleNamespace(),
+        service="mcp",
+        services=["git_integration_worker", "mcp"],
+    )
+    assert [row["service"] for row in result["services"]] == [
+        "mcp",
+        "git_integration_worker",
+    ]
+    assert result["service_filter"] == {
+        "services": ["mcp", "git_integration_worker"]
+    }
+
+
+def test_unfiltered_preserves_full_fleet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    result = live.build_snapshot(tmp_path, SimpleNamespace())
+    assert [row["service"] for row in result["services"]] == list(
+        live.SERVICE_SLUGS
+    )
+    assert result["service_filter"] is None
+
+
+def test_filtered_code_ref_validation_only_selected_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    calls: list[dict[str, object | None]] = []
+
+    def _current_validation(service, code_ref, *, activation_validation_id=None):
+        calls.append(
+            {
+                "service": service,
+                "code_ref": code_ref,
+                "activation_validation_id": activation_validation_id,
+            }
+        )
+        return {
+            "verdict": "activation_unattributed",
+            "liveness": {"answer": "yes", "observation": {}},
+            "activation": None,
+        }
+
+    monkeypatch.setattr(live, "current_validation", _current_validation)
+    result = live.build_snapshot(
+        tmp_path,
+        SimpleNamespace(),
+        code_ref="probe-sha",
+        activation_validation_id="val-1",
+        service="git_integration_worker",
+    )
+    assert calls == [
+        {
+            "service": "git_integration_worker",
+            "code_ref": "probe-sha",
+            "activation_validation_id": "val-1",
+        }
+    ]
+    assert len(result["services"]) == 1
+    assert "code_ref_validation" in result["services"][0]
+
+
+def test_filtered_service_probe_failure_keeps_unknown_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """mcp-down / checker exception still yields a row under the filter."""
+    _empty_probe_pair(monkeypatch)
+
+    def _boom(_state, service):
+        raise RuntimeError(f"down:{service}")
+
+    monkeypatch.setattr(live, "_service_info", _boom)
+    result = live.build_snapshot(tmp_path, SimpleNamespace(), service="mcp")
+    assert len(result["services"]) == 1
+    row = result["services"][0]
+    assert row["service"] == "mcp"
+    assert row["status"] == "unknown"
+    assert row["probe_errors"] == ["service_probe:RuntimeError"]
