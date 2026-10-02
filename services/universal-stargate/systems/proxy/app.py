@@ -452,7 +452,7 @@ async def starlette_http_exception_handler(
 
 
 def _retired_review_identity_field(exc: RequestValidationError) -> str | None:
-    """``purpose=review`` or ``role=reviewer`` is an unknown job, not a retired code."""
+    """``purpose`` ``review`` or ``role`` ``reviewer`` — unknown job, not retired."""
     body = exc.body
     if not isinstance(body, dict):
         return None
@@ -473,7 +473,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     These are raised when request body/query params don't match Pydantic models
     (invalid types, missing required fields, out-of-range values, etc.).
 
-    ``purpose=review`` and ``role=reviewer`` are refused as ``job_unknown``
+    ``purpose`` ``review`` and ``role`` ``reviewer`` are refused as ``job_unknown``
     (HTTP 422, ``dispatch.job.refused``). Other validation stays HTTP 400.
     """
     identity_field = _retired_review_identity_field(exc)

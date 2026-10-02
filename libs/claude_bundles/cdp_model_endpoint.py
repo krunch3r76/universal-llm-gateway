@@ -625,8 +625,8 @@ def run_cdp_generate(
 
     ``purpose`` (default ``ask``): CDP registry/mission tag. ``operator-proxy`` /
     ``mission`` trigger skill-chip + seat-map inject on the satellite
-    (``operator_proxy_mission.purpose_implies_mission``). A prompt line
-    ``purpose=operator-proxy`` does not. Retain uses ``StagedPrompt.mission``
+    (``operator_proxy_mission.purpose_implies_mission``). A prompt line that
+    names ``purpose`` as ``operator-proxy`` does not. Retain uses ``StagedPrompt.mission``
     captured at staging.
 
     ``mission_kind`` / ``parent_thread``: Chrome-host lineage claims on the
