@@ -38,7 +38,7 @@ class OperatorHopHarvestAssembleHandler(BaseHandler):
             ""
             if auto
             else (
-                "team_dispatch(reuse_thread=<worker>, job=conductor, lane=B, "
+                "team_dispatch(reuse_thread=<worker>, contract=conductor, lane=B, "
                 "source_ref=<work_key>)"
             )
         )

@@ -3,7 +3,7 @@
 Doctrine: ``decision:tick-heal-cdp-operator-default``. When the tick
 silent-starves, do not wait for IDE babysitting — claim once, page an SOS
 (minimum), leave details on the bus for cursor-auto, and auto-admit a CDP
-operator-proxy heal via ``team_dispatch(model=cdp/opus-5, session=operator-proxy, job=freeform)``
+operator-proxy heal via ``team_dispatch(model=cdp/opus-5, purpose=operator-proxy, contract=freeform)``
 when ``CHARTER_TICK_SOS_CDP`` is enabled.
 """
 
@@ -400,7 +400,7 @@ async def _post_cursor_auto_note(
             f"- detail: {detail or '(none)'}",
             "",
             "Kaywan can dig here / via cursor-auto. CDP operator-proxy may also",
-            "be running a heal mission (session=operator-proxy, job=freeform via team_dispatch).",
+            "be running a heal mission (purpose=operator-proxy, contract=freeform via team_dispatch).",
             "Doctrine: decision:tick-heal-cdp-operator-default",
         ]
     )

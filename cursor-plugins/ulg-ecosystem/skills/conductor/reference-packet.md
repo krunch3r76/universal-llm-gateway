@@ -73,7 +73,7 @@ IDE mints todo identity (S4a); Stargate materializes the packet:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  job=conductor,
+  contract=conductor,
   lane="B",
   source_ref="todo:{slug}",
   dispatch_thread_id="{root}",   # shape 1 when root is not an operator lane; else shape 2 child
@@ -107,7 +107,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
 | G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |
-| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, job=delivery-review, dispatch_thread_id=<worker>, parent_thread=<summoning or worker>, prompt=<body with job=delivery-review and retrieval_report: lines>)`, one `poll_hint` wait, `NEXT_ADMIT: harvest <execution_id>` in the hop CHECKPOINT; distinct from the attended G5 closer) |
+| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<summoning or worker>, prompt=<body with delivery-review tag and retrieval_report: lines>)`, one `poll_hint` wait, `NEXT_ADMIT: harvest <execution_id>` in the hop CHECKPOINT; distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
 **Scoreboard tip template (worked example — sparse birth):**
@@ -135,11 +135,11 @@ implement:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  job=implement,
+  contract=implement,
   nest_under=<plan_dispatch_id>,
   lane=,                          # inherit parent isolation
-  sdk_mode=agent,                 # omit ok — implement-class defaults agent
   packet_path=…,                  # or source_ref when implement_ready stamped
+                                  # implement-class defaults agent admit mode
 )
 ```
 
@@ -231,7 +231,7 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   Score journal appends require real UTC timestamps (`datetime.now(UTC)` on
   write — authority: `implement_admission.conductor_score_io`).
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal) via
-  `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, session=ask, dispatch_thread_id=<this worker thread id>)`.
+  `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, purpose=ask, dispatch_thread_id=<this worker thread id>)`.
   Explicit see-score → `ROW_PINNED` + ping.
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
@@ -383,7 +383,7 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   model_knobs={"fast":"true"},
-  job=conductor,
+  contract=conductor,
   source_ref=todo:{slug},
   resume_of=<terminal parent dispatch_id>,  # ROW_PINNED lift — same agent
   reuse_thread=<parent worker thread>,      # REQUIRED with resume_of
