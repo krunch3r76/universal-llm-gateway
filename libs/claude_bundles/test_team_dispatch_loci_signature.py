@@ -64,6 +64,10 @@ def test_frontier_team_dispatch_descriptor_uses_contract_and_purpose() -> None:
         "frontier.py team_dispatch descriptor still uses backticked job=/session= "
         "as MCP call syntax: " + "; ".join(hits)
     )
+    # a:37288 — say once how MCP names map onto the Stargate body.
+    assert (
+        "forwards them to Stargate as body `job`/`purpose`" in text
+    ), "team_dispatch docstring missing contract/purpose → job/purpose wire note"
 
 
 def test_claude_ai_cdp_navigation_cse_session_example_matches_schema() -> None:
