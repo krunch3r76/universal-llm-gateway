@@ -152,6 +152,13 @@ def _operator_seat_held_envelope(
     }
 
 
+def _seat_axis_projection_unavailable(snap: dict[str, Any]) -> bool:
+    """True when active-work lacks a usable seat_rows projection (not vacant)."""
+    if snap.get("registry_availability") == "unavailable":
+        return True
+    return "seat_rows" not in snap
+
+
 def seat_holder_refusal(
     snap: dict[str, Any],
     *,
@@ -167,11 +174,19 @@ def seat_holder_refusal(
     lane_key = (lane or "").strip()
     if not lane_key:
         return None
-    if "seat_rows" not in snap:
-        return None
+    is_hop = hop_succession or (mission_kind or "").strip().lower() == "hop"
+    if _seat_axis_projection_unavailable(snap):
+        if is_hop:
+            return None
+        return {
+            "code": "seat_unavailable",
+            "message": "seat-axis projection unavailable for lane admission",
+            "source": "cdp_ask",
+            "retryable": True,
+            "data": {"lane": lane_key},
+        }
     holder = lane_seat_holder(snap, lane_key)
     state: SeatHolderState = holder["state"]
-    is_hop = hop_succession or (mission_kind or "").strip().lower() == "hop"
     if state == "unavailable":
         return {
             "code": "seat_unavailable",

@@ -28,11 +28,20 @@ from cdp_ask.followup_envelope import (
     identity_supplied,
     lane_not_attached_detail,
 )
+from cdp_ask.followup_events import (
+    cdp_ask_followup_refused_seat_mismatch,
+)
+from cdp_ask.followup_events import (
+    emit as emit_followup_event,
+)
+from cdp_ask.lane_admission import lane_seat_holder
+from cdp_ask.lane_snapshot import read_cdp_lane_snapshot
 from cdp_ask.models import (
     FollowupProjectAskRequest,
     FollowupProjectAskResponse,
     TargetBinding,
 )
+from cdp_ask.operator_seat_resolve import resolve_operator_seat
 
 
 async def scan_lane_cse_urls(reg: cdp_registry.Registration) -> list[str]:
@@ -265,6 +274,57 @@ def stale_registration_id_conflict(
     return matches[0].registration_id == chosen.registration_id
 
 
+def _lane_seat_followup_gate(
+    req: FollowupProjectAskRequest,
+) -> tuple[FollowupProjectAskRequest, FollowupProjectAskResponse | None]:
+    """When ``parent_thread`` is set, bind or refuse against the seat-axis holder."""
+    lane = (req.parent_thread or "").strip()
+    if not lane:
+        return req, None
+    try:
+        snap = read_cdp_lane_snapshot()
+    except Exception:
+        return req, fail_followup(
+            "seat_unavailable",
+            detail="active-work seat projection unreachable",
+        )
+    holder = lane_seat_holder(snap, lane)
+    holder_reg = str(holder.get("registration_id") or "").strip() or None
+    _chat, reg_id, _exe, _cdp = identity_keys(req)
+    if reg_id and holder_reg and reg_id != holder_reg:
+        emit_followup_event(
+            cdp_ask_followup_refused_seat_mismatch(
+                lane=lane,
+                target_registration_id=reg_id,
+                holder_registration_id=holder_reg,
+            )
+        )
+        return req, fail_followup(
+            "operator_seat_mismatch",
+            detail=(
+                f"registration_id {reg_id!r} does not match lane holder "
+                f"{holder_reg!r}"
+            ),
+        )
+    if identity_supplied(req):
+        return req, None
+    resolved = resolve_operator_seat(lane, get_lane_snapshot=lambda: snap)
+    if not resolved.get("authority_reachable"):
+        return req, fail_followup(
+            "seat_unavailable",
+            detail="seat-axis projection unavailable for followup",
+        )
+    bound_reg = str(resolved.get("registration_id") or "").strip() or None
+    if not bound_reg:
+        return req, fail_followup(
+            "lane_not_attached",
+            detail=lane_not_attached_detail(),
+        )
+    if req.registration_id == bound_reg:
+        return req, None
+    return req.model_copy(update={"registration_id": bound_reg}), None
+
+
 async def resolve_followup_target(
     req: FollowupProjectAskRequest,
     store: ExecutionStore,
@@ -275,6 +335,10 @@ async def resolve_followup_target(
     TargetBinding | None,
 ]:
     """Resolve to a single attached CSE target or return a typed error response."""
+    req, lane_err = _lane_seat_followup_gate(req)
+    if lane_err is not None:
+        return None, lane_err, "parent_thread", None
+
     if not identity_supplied(req):
         target, err, path = resolve_attended_binding()
         binding: TargetBinding | None = target.target_binding if target else None

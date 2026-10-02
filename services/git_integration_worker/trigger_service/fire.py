@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -49,10 +50,28 @@ def is_retryable_submit_error(exc: BaseException) -> bool:
     return False
 
 
+def _lane_binding_from_row(row: TriggerRow | None) -> tuple[str | None, bool, str | None]:
+    """Read optional lane binding keys from ``predicate_args`` on a trigger row."""
+    if row is None or not row.predicate_args:
+        return None, False, None
+    try:
+        raw = json.loads(row.predicate_args)
+    except (TypeError, json.JSONDecodeError):
+        return None, False, None
+    if not isinstance(raw, dict):
+        return None, False, None
+    parent = str(raw.get("parent_thread") or "").strip() or None
+    mission_kind = str(raw.get("mission_kind") or "").strip() or None
+    hop = mission_kind == "hop" or bool(raw.get("hop_succession"))
+    pred = str(raw.get("predecessor_registration_id") or "").strip() or None
+    return parent, hop, pred
+
+
 def lane_available(
     client: CdpAskClient,
     *,
     purpose: str | None = None,
+    row: TriggerRow | None = None,
 ) -> tuple[bool, str | None]:
     """Probe cdp-ask active-work; hard-limit or a live same-purpose session is busy.
 
@@ -70,8 +89,25 @@ def lane_available(
         raise
     from cdp_ask.lane_admission import purpose_lane_refusal
 
+    parent_thread, hop_succession, predecessor_registration_id = _lane_binding_from_row(
+        row
+    )
+    mission_kind = None
+    if row and row.predicate_args:
+        try:
+            args = json.loads(row.predicate_args)
+            if isinstance(args, dict):
+                mission_kind = str(args.get("mission_kind") or "").strip() or None
+        except (TypeError, json.JSONDecodeError):
+            mission_kind = None
     refuse, label, _envelope = purpose_lane_refusal(
-        snap, purpose=purpose, unattended=True
+        snap,
+        purpose=purpose,
+        unattended=True,
+        parent_thread=parent_thread,
+        hop_succession=hop_succession,
+        mission_kind=mission_kind,
+        predecessor_registration_id=predecessor_registration_id,
     )
     if refuse:
         return False, f"cdp lane at {label or 'hard'} limit"
@@ -102,6 +138,15 @@ def _emit_bare(signal: str, **payload: Any) -> None:
 def submit_fire(row: TriggerRow, *, client: CdpAskClient | None = None) -> str:
     """POST operator-proxy execution; returns execution_id. Raises on failure."""
     http = client or CdpAskClient()
+    parent_thread, hop_succession, _pred = _lane_binding_from_row(row)
+    mission_kind = None
+    if row.predicate_args:
+        try:
+            args = json.loads(row.predicate_args)
+            if isinstance(args, dict):
+                mission_kind = str(args.get("mission_kind") or "").strip() or None
+        except (TypeError, json.JSONDecodeError):
+            mission_kind = None
     body = SubmitProjectAskRequest(
         prompt_text=compose_attested_prompt(row),
         prompt_uri=row.prompt_uri,
@@ -110,6 +155,8 @@ def submit_fire(row: TriggerRow, *, client: CdpAskClient | None = None) -> str:
         model=row.model,
         converse=True,
         no_project_uuid=True,
+        parent_thread=parent_thread,
+        mission_kind=mission_kind if hop_succession or mission_kind else None,
     )
     result = http.submit(body)
     execution_id = result.get("execution_id")
@@ -135,7 +182,9 @@ def fire_once(
         arc=row.arc,
         fire_at=row.fire_at,
     )
-    ok, reason = lane_available(client or CdpAskClient(), purpose=row.purpose)
+    ok, reason = lane_available(
+        client or CdpAskClient(), purpose=row.purpose, row=row
+    )
     if not ok:
         # Backstop for rows without a fleet_idle predicate. A busy lane is a
         # not-yet, not a failed submit — revert without consuming an attempt so

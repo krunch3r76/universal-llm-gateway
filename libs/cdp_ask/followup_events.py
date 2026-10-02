@@ -170,6 +170,26 @@ def cdp_ask_attended_refused(
 
 
 @event_factory
+def cdp_ask_followup_refused_seat_mismatch(
+    *,
+    lane: str,
+    target_registration_id: str,
+    holder_registration_id: str,
+) -> Event:
+    """Followup refused because explicit identity disagrees with the lane holder."""
+    return Event(
+        signal="cdp_ask.followup.refused_seat_mismatch",
+        role="observation",
+        scope="node",
+        payload={
+            "lane": lane,
+            "target_registration_id": target_registration_id,
+            "holder_registration_id": holder_registration_id,
+        },
+    )
+
+
+@event_factory
 def cdp_ask_admission_refused_seat_held(
     *,
     lane: str,

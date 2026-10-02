@@ -48,8 +48,7 @@ def _snap(
         "at_hard_limit": total >= abs_hard,
         "observed_at": "2026-10-02T20:00:00+00:00",
     }
-    if seat_rows is not None:
-        out["seat_rows"] = seat_rows
+    out["seat_rows"] = list(seat_rows) if seat_rows is not None else []
     return out
 
 
@@ -443,6 +442,47 @@ def test_vacant_lane_admits() -> None:
         )
         is None
     )
+
+
+def test_absent_seat_rows_refuses_non_hop() -> None:
+    snap = _snap([])
+    del snap["seat_rows"]
+    refusal = seat_holder_refusal(
+        snap,
+        lane="6655",
+        purpose="operator-proxy",
+        mission_kind="root",
+    )
+    assert refusal is not None
+    assert refusal["code"] == "seat_unavailable"
+
+
+def test_absent_seat_rows_hop_still_admits() -> None:
+    snap = _snap([])
+    del snap["seat_rows"]
+    assert (
+        seat_holder_refusal(
+            snap,
+            lane="6655",
+            purpose="operator-proxy",
+            mission_kind="hop",
+            hop_succession=True,
+        )
+        is None
+    )
+
+
+def test_registry_unavailable_refuses_non_hop() -> None:
+    snap = _snap([], seat_rows=[])
+    snap["registry_availability"] = "unavailable"
+    refusal = seat_holder_refusal(
+        snap,
+        lane="6655",
+        purpose="operator-proxy",
+        mission_kind=None,
+    )
+    assert refusal is not None
+    assert refusal["code"] == "seat_unavailable"
 
 
 def test_lane_seat_holder_conflict_picks_max_bound_at() -> None:

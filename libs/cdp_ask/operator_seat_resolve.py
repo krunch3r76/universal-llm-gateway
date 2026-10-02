@@ -165,8 +165,8 @@ def _resolve_from_http(
     if not isinstance(snap, dict):
         return _null_identity()
     observed_at = str(snap.get("observed_at") or "").strip() or _now_iso()
-    if "seat_rows" not in snap:
-        return _null_identity(observed_at=observed_at)
+    if snap.get("registry_availability") == "unavailable" or "seat_rows" not in snap:
+        return _unavailable_identity()
     seat_rows_raw = snap.get("seat_rows")
     if not isinstance(seat_rows_raw, list):
         return _unavailable_identity()

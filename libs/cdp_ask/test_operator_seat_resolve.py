@@ -148,7 +148,11 @@ def test_http_failure_returns_unavailable_not_local() -> None:
 
 def test_http_malformed_json_returns_null_with_observed_at() -> None:
     out = resolve_operator_seat(
-        "10479", get_lane_snapshot=lambda: {"observed_at": "2026-09-15T02:00:00+00:00"}
+        "10479",
+        get_lane_snapshot=lambda: {
+            "observed_at": "2026-09-15T02:00:00+00:00",
+            "seat_rows": [],
+        },
     )
     assert out["source"] is None
     assert out["observed_at"] == "2026-09-15T02:00:00+00:00"
@@ -187,6 +191,15 @@ def test_two_seat_open_rows_selects_newest_bound_at() -> None:
     assert reg_id == "reg-new"
     assert reason is not None
     assert "500.0" in reason
+
+
+def test_missing_seat_rows_key_is_unavailable() -> None:
+    out = resolve_operator_seat(
+        "10479",
+        get_lane_snapshot=lambda: {"observed_at": "t"},
+    )
+    assert out["authority_reachable"] is False
+    assert out["source"] == "unavailable"
 
 
 def test_empty_http_seat_rows_returns_null_not_local_fallback() -> None:
