@@ -1380,6 +1380,146 @@ def test_run_sdk_sync_injects_venv_env(
     assert os.environ.get("PATH") == prev_path
 
 
+def test_run_sdk_sync_trims_with_contract_and_admit_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gated runner's sync leg must trim with the admit contract and skills."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    repo_venv = _fake_repo_venv(tmp_path)
+    dispatch_home = tmp_path / "dispatch-home"
+    dispatch_home.mkdir()
+    seen: dict[str, object] = {}
+
+    def _record(cursor_dir: Path, *, contract: str, extra_slugs: object) -> tuple:
+        seen["contract"] = contract
+        seen["extra"] = list(extra_slugs)
+        seen["cursor"] = cursor_dir
+        return ()
+
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
+    monkeypatch.setattr(route_mod, "setup_cursor_dispatch_home", lambda _d, **_: dispatch_home)
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
+    monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="composer-2.5"))
+    monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
+    monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))
+    monkeypatch.setattr(route_mod, "trim_conductor_skill_catalog", _record)
+    monkeypatch.setattr(route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock()))
+
+    def _fake_launch(*_a: object, command: list[str], **_k: object) -> MagicMock:
+        class _Run:
+            def wait(self) -> MagicMock:
+                return MagicMock(result="ok", status="finished", duration_ms=10)
+
+            def conversation(self) -> list[object]:
+                return []
+
+        class _Agent:
+            id = "agent-1"
+
+            def send(self, _prompt: str) -> _Run:
+                return _Run()
+
+        client = MagicMock()
+        client.create_agent.return_value = _Agent()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch)
+    route_mod._run_sdk_sync(
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="disp-trim",
+            thread_id="14183",
+            contract="conductor",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        prompt="hello",
+        config_model_id="cursor/composer-2.5",
+        selection_overrides=None,
+        resolved_model="composer-2.5",
+        gate_loop=MagicMock(),
+        skills=["agent_skill:foo"],
+    )
+    assert seen["contract"] == "conductor"
+    assert "agent_skill:foo" in seen["extra"]
+    assert seen["cursor"] == dispatch_home / ".cursor"
+
+
+def test_qualified_skills_id_keeps_preexisting_plugin_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from skills_mount.cursor_fs import CursorSkillResolution, CursorSkillSot
+
+    from services.git_integration_worker import cursor_sdk_skills_mount as mount_mod
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    repo_venv = _fake_repo_venv(tmp_path)
+    dispatch_home = tmp_path / "dispatch-home"
+    skill = (
+        dispatch_home
+        / ".cursor/plugins/local/ulg-ecosystem/skills/foo/SKILL.md"
+    )
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: foo\n---\n", encoding="utf-8")
+
+    def _classify(slugs: object, *, repo_root: Path) -> CursorSkillResolution:
+        return CursorSkillResolution(
+            resolved=(
+                CursorSkillSot(
+                    requested_id="agent_skill:foo",
+                    canonical_slug="foo",
+                    path=skill,
+                    layer="plugin",
+                ),
+            ),
+            unresolved=(),
+        )
+
+    monkeypatch.setattr(mount_mod, "classify_cursor_skills", _classify)
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
+    monkeypatch.setattr(route_mod, "setup_cursor_dispatch_home", lambda _d, **_: dispatch_home)
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
+    monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="composer-2.5"))
+    monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
+    monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))
+    monkeypatch.setattr(route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock()))
+
+    def _fake_launch(*_a: object, command: list[str], **_k: object) -> MagicMock:
+        class _Run:
+            def wait(self) -> MagicMock:
+                return MagicMock(result="ok", status="finished", duration_ms=10)
+
+            def conversation(self) -> list[object]:
+                return []
+
+        client = MagicMock()
+        client.create_agent.return_value = MagicMock(
+            send=lambda _p: _Run(), id="agent-1", close=MagicMock()
+        )
+        client.create_agent.return_value.close = MagicMock()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch)
+    route_mod._run_sdk_sync(
+        ctx=_ctx(
+            tmp_path,
+            dispatch_id="disp-foo",
+            thread_id="14183",
+            contract="conductor",
+            dispatch_workspace=tmp_path,
+        ),
+        prompt="hello",
+        config_model_id="cursor/composer-2.5",
+        selection_overrides=None,
+        resolved_model="composer-2.5",
+        gate_loop=MagicMock(),
+        skills=["agent_skill:foo"],
+    )
+    assert skill.is_file()
+
+
 def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -121,6 +121,9 @@ from services.git_integration_worker.cursor_sdk_concurrency_posture import (
 from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
     ConductorMissionParked,
 )
+from services.git_integration_worker.cursor_sdk_conductor_skill_trim import (
+    trim_conductor_skill_catalog,
+)
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -1118,6 +1121,7 @@ def _run_sdk_sync(
     # cursor-agent discovers skills from the filesystem, so this is the only window
     # in which `skills=` can become real. Guidance, not transport — a mount failure
     # is reported and the dispatch continues.
+    mount_result = None
     try:
         mount_result = stage_dispatch_skills(
             dispatch_home / ".cursor",
@@ -1141,6 +1145,23 @@ def _run_sdk_sync(
                 result=mount_result,
                 execution_id=execution_id,
             )
+    # After overlay (inside setup) and skills= staging. Shared by generate,
+    # queued promote, hop successor admits, the hop watchdog, and park-resume
+    # children — each reaches this function.
+    removed = trim_conductor_skill_catalog(
+        dispatch_home / ".cursor",
+        contract=ctx.handoff_contract,
+        extra_slugs=[
+            *(skills or ()),
+            *(mount_result.mounted_slugs if mount_result else ()),
+        ],
+    )
+    logger.info(
+        "conductor skill trim: dispatch_id=%s contract=%s removed=%s",
+        ctx.dispatch_id,
+        ctx.handoff_contract,
+        list(removed),
+    )
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
     try:
