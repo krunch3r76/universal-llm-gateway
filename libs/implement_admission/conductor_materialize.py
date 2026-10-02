@@ -367,6 +367,16 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "forbids the hop — harvest first."
         ),
         (
+            "- Context pressure: at every leg boundary and on every wake, hop when "
+            "≥2 of these hold — ≥6 closeouts harvested, skill set reloaded more than "
+            "once, a tool result spilled to a file, replies summarize instead of "
+            "quoting. Bump the standing handoff (in flight + first act), then hop "
+            "between legs, never mid-harvest; Next-pickup is the same open G-row. "
+            "Before each density hop, write one scoreboard line via "
+            "`forward_mutate_tip` (stop noted, no row status change) ≺ ten-field hop "
+            "CHECKPOINT ≺ closeout, then end with `stop: ROW_HOP` as the last line."
+        ),
+        (
             "- A block this row cannot pass by repeating the same refusal is a gate, "
             "not `stop: ROW_PINNED`. File the friction, clear the pin, and continue "
             "the row. Do not end the hop on that same unpaid gate. Do not revert "

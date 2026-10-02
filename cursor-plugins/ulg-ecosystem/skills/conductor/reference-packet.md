@@ -250,6 +250,11 @@ a `CHECKPOINT — hop <n>` turn on the **worker** thread (`supersedes_turn` =
 prior hop CHECKPOINT, `mark_read=true`, self→self). Order: journal append ≺
 sidecar write ≺ bus tip ≺ closeout.
 
+**Density hop (leg boundary):** work-item tip delta via `forward_mutate_tip`
+(stop noted, row Status unchanged) ≺ ten-field hop CHECKPOINT ≺ closeout
+(`stop: ROW_HOP`). `Next-pickup` names the same open G-row as entry gate — not
+a rewind.
+
 Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` ·
 `Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
 field under profile **`cdp_fable_legs_arc`** no longer caps legs: the ≤1

@@ -226,6 +226,77 @@ def test_materialize_conductor_hop_contract(tmp_path: Path) -> None:
     assert "stop: ROW_HOP | ROW_PINNED | HOLD_MERGE" in mp.text
     assert "repeating the same refusal is a gate" in mp.text
     assert "hop_seq: <n>" in mp.text
+    assert (
+        "Context pressure: at every leg boundary and on every wake, hop when "
+        "≥2 of these hold — ≥6 closeouts harvested, skill set reloaded more than "
+        "once, a tool result spilled to a file, replies summarize instead of "
+        "quoting. Bump the standing handoff (in flight + first act), then hop "
+        "between legs, never mid-harvest"
+    ) in mp.text
+    assert "Next-pickup is the same open G-row" in mp.text
+    assert "forward_mutate_tip" in mp.text
+
+
+def test_non_done_tip_delta_changes_budget_tip_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stop-noted tip rewrite without DONE moves the sha the budget stamps."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        build_budget_authority_patch,
+    )
+
+    files_root = tmp_path / "cortex"
+    slug = "density-hop-tip-sha"
+    materialize_conductor(
+        f"todo:{slug}",
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets",
+        files_root=files_root,
+    )
+    tip_before = read_tip(slug, files_root=files_root)
+    assert tip_before is not None
+
+    def _tip_sha_for_slug(*, slug: str) -> str | None:
+        tip = read_tip(slug, files_root=files_root)
+        return tip[1] if tip else None
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress.read_scoreboard_tip",
+        _tip_sha_for_slug,
+    )
+    row = {"work_key": f"todo:{slug}", "record_json": "{}"}
+    patch_before = build_budget_authority_patch(row)
+    sha_before = patch_before.get("hop_scoreboard_tip")
+    assert sha_before == tip_before[1]
+
+    g2_stop_body = re.sub(
+        r"(\|\s*G2\s*\|[^|]*\|[^|]*\|)\s*OPEN(\s*\|)",
+        r"\1 OPEN\2 density-hop: stop noted |",
+        tip_before[0],
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    assert g2_stop_body != tip_before[0]
+    assert "DONE" not in g2_stop_body.split("G2", 1)[1][:80]
+    mutated = forward_mutate_tip(
+        slug,
+        next_body=g2_stop_body,
+        seat="conductor",
+        dispatch_id="d-density",
+        reason="density hop stop noted",
+        rows=("G2",),
+        delta="G2 Stops: stop noted",
+        files_root=files_root,
+    )
+    assert mutated.rejected_reason is None
+    tip_after = read_tip(slug, files_root=files_root)
+    assert tip_after is not None
+    assert tip_after[1] != tip_before[1]
+
+    patch_after = build_budget_authority_patch(row)
+    sha_after = patch_after.get("hop_scoreboard_tip")
+    assert sha_after == tip_after[1]
+    assert sha_after != sha_before
 
 
 def test_sparse_scoreboard_has_mode_column() -> None:

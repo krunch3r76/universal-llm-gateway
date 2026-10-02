@@ -28,7 +28,14 @@ per-G-row one. Default posture once running:
   start-to-finish under one standing admit as a chain of short dispatches.
   Bounds each dispatch's token footprint to roughly one movement and caps a
   crash's loss to the in-flight row (`a:31786`). A mission that ends inside
-  one dispatch simply stops `DONE`. Owed stops win at a boundary:
+  one dispatch simply stops `DONE`.
+- **In-row density hop (leg boundary).** Context pressure at a leg boundary or
+  wake (≥2 of: many closeouts harvested, skill reloads, spilled tool output,
+  summarize-not-quote replies) uses the same planned successor as gated row-close:
+  `hop_reason=planned`, no `resume_of`, same open G-row as `Next-pickup`, hop
+  between legs never mid-harvest. Scoreboard: `forward_mutate_tip` (stop noted,
+  status unchanged) ≺ hop CHECKPOINT ≺ closeout `stop: ROW_HOP`.
+- Owed stops win at a boundary:
   `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
   `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify on ACTIVE
   (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) then continues — a live summoning chat is not a

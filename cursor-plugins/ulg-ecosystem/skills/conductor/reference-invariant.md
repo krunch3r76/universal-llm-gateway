@@ -15,7 +15,10 @@ Hop contract (bound `a:31807`):
 
 ```
 hop(conductor) ⇒
-  boundary = gated_row_close(Gn) ∧ ¬owed(designed_stop @ Gn)
+  boundary = (gated_row_close(Gn) ∨ leg_boundary_density_pressure) ∧ ¬owed(designed_stop @ Gn)
+  ∧ leg_boundary_density_pressure ⇒
+      ≥2(context_pressure_signals) ∧ forward_mutate_tip(stop_noted, ¬row_status_change)
+        ≺ CHECKPOINT(hop) ≺ closeout(stop: ROW_HOP) ∧ Next-pickup = same_open_G_row
   ∧ predecessor: journal_append ≺ CHECKPOINT(hop) ≺ closeout(stop: ROW_HOP)
   ∧ ¬ team_dispatch(reuse_thread=<own thread>) from a live seat      # F1/F2: 422/409 by design
   ∧ successor admitted by substrate ⇐ ledger.mark_terminal(predecessor)  # authority transition
