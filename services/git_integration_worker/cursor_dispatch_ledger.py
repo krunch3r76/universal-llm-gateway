@@ -788,21 +788,6 @@ def _stamp_hand_park_resume(
     )
 
 
-# A restart park keeps its ``work_key`` until a resume child exists (spec D5.4b).
-# ``park_resumed_by`` is the stamp; a row with ``resume_of`` pointing here is the
-# same fact when a hand admit landed before that column was written.
-# ``cancel_discard`` is not that window: the row is dead, and reserving the key
-# re-admits the same pin into a 409.
-_OPEN_PARK_ROW_SQL = (
-    "(park_kind='park_for_restart' AND park_resumed_by IS NULL "
-    "AND (park_expires_at IS NULL OR park_expires_at > ?) "
-    "AND NOT EXISTS ("
-    "SELECT 1 FROM cursor_sdk_dispatches AS park_resume_child "
-    "WHERE park_resume_child.resume_of = cursor_sdk_dispatches.dispatch_id"
-    "))"
-)
-
-
 def _migrate_park_columns(conn: sqlite3.Connection) -> None:
     """Additive ``park_*`` columns + open-park partial index (steer-restart v1).
 
@@ -1265,7 +1250,15 @@ class CursorDispatchLedger:
                 hop_declared=hop_declared,
             )
         writer_key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
-        with self._connect() as conn:
+        from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+            OPEN_RESTART_PARK_SQL,
+            emit_after_commit,
+            refuse_parked_conductor_mission,
+            release_mission_parks,
+        )
+
+        park_emits: list = []
+        with emit_after_commit(park_emits), self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT dispatch_id, fingerprint, status, thread_id, resolved_model, "
@@ -1360,7 +1353,7 @@ class CursorDispatchLedger:
                     "record_json FROM cursor_sdk_dispatches "
                     "WHERE work_key=? AND dispatch_id<>? "
                     f"AND (status IN ({_ACTIVE_IDENTITY_STATUSES}) "
-                    f"OR {_OPEN_PARK_ROW_SQL}) LIMIT 1",
+                    f"OR {OPEN_RESTART_PARK_SQL}) LIMIT 1",
                     (effective_work_key, req.dispatch_id, _now()),
                 ).fetchone()
                 if peer is not None:
@@ -1541,17 +1534,13 @@ class CursorDispatchLedger:
                         )
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
-            from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
-                refuse_parked_conductor_mission,
-                release_mission_park,
-            )
-
             if hop_park_release:
-                release_mission_park(
+                release_mission_parks(
                     conn,
                     work_key=effective_work_key,
                     thread_id=req.thread_id,
                     caller_agent=str(caller_agent or ""),
+                    post_commit_emits=park_emits,
                 )
             refuse_parked_conductor_mission(
                 conn,

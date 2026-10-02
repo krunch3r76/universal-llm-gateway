@@ -726,7 +726,173 @@ def test_stacked_parks_on_one_lane_are_counted() -> None:
         rows = census(conn)
     assert len(rows) == 1
     assert rows[0].stacked_parks == 2
-    assert "stacked parks on lane: 2" in rows[0].reason
+    assert "open parks in mission scope: 2" in rows[0].reason
+    assert "park-a" in rows[0].reason
+
+
+def test_ac1_r1_single_older_park_visible() -> None:
+    """AC1: done latest row with one hidden budget park stays visible."""
+    from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+        mission_park_state,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    work_key = "todo:r1-park"
+    thread_id = "8801"
+    _admit(
+        ledger,
+        dispatch_id="old-park",
+        thread_id=thread_id,
+        work_key=work_key,
+    )
+    _admit(
+        ledger,
+        dispatch_id="new-done",
+        thread_id=thread_id,
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    ledger.merge_record_json(
+        dispatch_id="old-park",
+        patch={"hop_parked": True, "hop_park_reason": "hop_budget_mission_cap"},
+    )
+    with ledger._connect() as conn:
+        rows = census(conn)
+        open_rows = census(conn, open_only=True)
+        state = mission_park_state(conn, work_key=work_key, thread_id=thread_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.state == "done"
+    assert row.stacked_parks == 1
+    assert "open parks in mission scope: 1" in row.reason
+    assert "old-park" in row.reason
+    assert "hop_park_release" in row.release
+    assert open_rows
+    assert state is not None
+    assert state.parked_dispatch_id == "old-park"
+
+
+def test_ac2_restart_park_expired_not_counted() -> None:
+    ledger = CursorDispatchLedger.instance()
+    work_key = "todo:expired-restart"
+    _admit(
+        ledger,
+        dispatch_id="old-restart",
+        thread_id="1",
+        work_key=work_key,
+        terminal_status="cancelled",
+    )
+    _admit(
+        ledger,
+        dispatch_id="new-done",
+        thread_id="1",
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='park_for_restart', "
+            "park_expires_at=? WHERE dispatch_id='old-restart'",
+            (past,),
+        )
+        rows = census(conn, open_only=True)
+        full = census(conn)
+    assert full[0].stacked_parks == 0
+    assert "open parks in mission scope" not in full[0].reason
+    assert not rows
+
+
+def test_ac3_restart_resume_child_not_counted() -> None:
+    ledger = CursorDispatchLedger.instance()
+    work_key = "todo:resume-child"
+    _admit(
+        ledger,
+        dispatch_id="old-restart",
+        thread_id="2",
+        work_key=work_key,
+        terminal_status="cancelled",
+    )
+    _admit(
+        ledger,
+        dispatch_id="new-done",
+        thread_id="2",
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='park_for_restart' "
+            "WHERE dispatch_id='old-restart'"
+        )
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET resume_of='old-restart' "
+            "WHERE dispatch_id='new-done'"
+        )
+        rows = census(conn)
+    assert rows[0].stacked_parks == 0
+
+
+def test_ac4_non_conductor_park_not_counted() -> None:
+    ledger = CursorDispatchLedger.instance()
+    work_key = "todo:non-conductor"
+    thread_id = "3"
+    _admit(
+        ledger,
+        dispatch_id="lb-park",
+        thread_id=thread_id,
+        work_key=work_key,
+    )
+    _admit(
+        ledger,
+        dispatch_id="cond-done",
+        thread_id=thread_id,
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    ledger.merge_record_json(
+        dispatch_id="lb-park",
+        patch={"hop_parked": True, "hop_park_reason": "hop_budget_mission_cap"},
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET contract='light-bounded' "
+            "WHERE dispatch_id='lb-park'"
+        )
+        rows = census(conn, open_only=True)
+        full = census(conn)
+    assert full[0].stacked_parks == 0
+    assert not rows
+
+
+def test_ac5_park_visible_on_other_mission_row() -> None:
+    ledger = CursorDispatchLedger.instance()
+    work_key = "todo:cross-thread"
+    _admit(
+        ledger,
+        dispatch_id="done-t1",
+        thread_id="10",
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    _admit(
+        ledger,
+        dispatch_id="park-t2",
+        thread_id="20",
+        work_key=work_key,
+        record_patch={
+            "closeout_stop_tokens": ["ROW_HOP"],
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_mission_cap",
+        },
+    )
+    with ledger._connect() as conn:
+        rows = {r.thread_id: r for r in census(conn)}
+        open_rows = {r.thread_id: r for r in census(conn, open_only=True)}
+    assert rows["20"].state == "budget_parked"
+    assert rows["20"].stacked_parks == 0
+    assert rows["10"].stacked_parks == 0
+    assert "10" not in open_rows
 
 
 def test_partial_last_row_is_not_a_census_row() -> None:

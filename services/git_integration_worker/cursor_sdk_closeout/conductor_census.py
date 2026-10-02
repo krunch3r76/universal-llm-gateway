@@ -7,11 +7,10 @@ mission is invisible until someone searches threads (friction class A10,
 the state that row left the mission in, why, how long it has been there, and
 the exact call that releases it. Everything is derived from ledger columns and
 ``record_json`` stamps that the hop reactor, park gate and park harvest
-already write (``hop_parked`` / ``hop_park_reason`` / ``hop_park_released_at``,
-``closeout_stop_tokens``, ``hop_successor``, ``hop_admit_error``,
-``park_kind`` / ``park_resumed_by``, ``closeout_turn``,
-``consult_summoning_after_turn``, ``hop_park_harvest_fired_at``). Read-only;
-never raises on a malformed record.
+already write. Open parks are read through the park gate's ``open_parks``:
+budget scope is ``work_key OR thread_id`` on finished conductor rows;
+restart scope is ``work_key`` only; freshness is read-time ``now``.
+Recovery is stateless recompute. Read-only; never raises on a malformed record.
 
 Callers: ``scripts/conductor-census`` (table or JSON) and any seat that wants
 a census payload. The vocabulary of ``MissionCensusRow.state`` is
@@ -78,7 +77,7 @@ class MissionCensusRow:
     seconds_in_state: float | None
     successor: str | None
     release: str
-    stacked_parks: int = 0
+    stacked_parks: int = 0  # open parks in mission scope when any are hidden from latest rows
 
 
 def _record(row: dict[str, Any]) -> dict[str, Any]:
@@ -416,27 +415,6 @@ def latest_mission_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
-def _stacked_open_parks(conn: sqlite3.Connection, thread_id: str) -> int:
-    """Unreleased parks on one worker thread, including rows older than the latest."""
-    count = 0
-    cursor = conn.execute(
-        "SELECT park_kind, park_resumed_by, record_json FROM cursor_sdk_dispatches "
-        "WHERE thread_id=?",
-        (thread_id,),
-    )
-    for raw in cursor.fetchall():
-        row = {k: raw[k] for k in raw.keys()}
-        if _record_is_partial(row.get("record_json")):
-            continue
-        if row.get("park_kind") == "park_for_restart" and not row.get("park_resumed_by"):
-            count += 1
-            continue
-        record = _record(row)
-        if record.get("hop_parked") is True and not record.get("hop_park_released_at"):
-            count += 1
-    return count
-
-
 def census(
     conn: sqlite3.Connection,
     *,
@@ -451,16 +429,24 @@ def census(
     what still owes something. Rows that fail to classify never abort the
     census: they fall back to the ``silent`` state with the exception text.
     """
+    now_dt = now or datetime.now(UTC)
+    now_iso = now_dt.astimezone(UTC).isoformat()
+    latest_raw = latest_mission_rows(conn)
+    latest_ids = frozenset(str(r.get("dispatch_id") or "") for r in latest_raw)
     known = {
         str(item[0])
         for item in conn.execute("SELECT dispatch_id FROM cursor_sdk_dispatches")
     }
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_census_parks import (
+        apply_open_park_projection,
+    )
+
     rows: list[MissionCensusRow] = []
-    for raw in latest_mission_rows(conn):
+    for raw in latest_raw:
         try:
             entry = classify_mission_row(
                 raw,
-                now=now,
+                now=now_dt,
                 known_dispatch_ids=known,
                 operator_lanes=operator_lanes,
             )
@@ -480,13 +466,12 @@ def census(
                 release="inspect the ledger row",
                 stacked_parks=0,
             )
-        parks = _stacked_open_parks(conn, entry.thread_id)
-        if parks >= 2:
-            entry = replace(
-                entry,
-                stacked_parks=parks,
-                reason=f"{entry.reason}; stacked parks on lane: {parks}",
-            )
+        entry, has_hidden = apply_open_park_projection(
+            conn,
+            entry,
+            latest_ids=latest_ids,
+            now_iso=now_iso,
+        )
         if (
             days is not None
             and entry.state in _FINISHED_STATES
@@ -494,7 +479,7 @@ def census(
             and entry.seconds_in_state > days * _DAY_S
         ):
             entry = replace(entry, state="stale")
-        if open_only and entry.state in {"done", "succeeded"}:
+        if open_only and entry.state in {"done", "succeeded"} and not has_hidden:
             continue
         rows.append(entry)
     # Longest-stuck first; rows with no measurable age last.

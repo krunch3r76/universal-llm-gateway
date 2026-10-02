@@ -189,7 +189,7 @@ def FrontierSdkConductorHopParkReleased(  # noqa: N802
     work_key: str | None,
     caller_agent: str,
 ) -> Event:
-    """Explicit ``hop_park_release`` cleared a mission park hold."""
+    """One budget-park row whose ``hop_park_released_at`` stamp committed with an admit that set ``hop_park_release``; emitted after that commit, once per released row."""
     payload: dict[str, Any] = {
         "parked_dispatch_id": parked_dispatch_id,
         "thread_id": thread_id,
