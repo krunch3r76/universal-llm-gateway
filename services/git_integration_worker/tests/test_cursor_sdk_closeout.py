@@ -6,7 +6,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from implement_admission.spec import CloseoutStatus
@@ -4098,3 +4098,129 @@ def test_build_implement_closeout_body_is_sealed() -> None:
     payload = json.loads(body)
     assert payload["schema_version"] == 1
     assert "tool_call_count" in payload
+
+
+_CONFORMING_ROLE_BODY = (
+    "Findings ok.\n\nFILE_EVIDENCE_PATHS:\n"
+    "- workspaces://universal-llm-gateway/foo.py"
+)
+
+
+@pytest.mark.asyncio
+async def test_closeout_role_turn_follows_cursor_sdk_reply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cursor-sdk reply is first and always. Role sender only when the body conforms."""
+    from implement_admission.spec import CloseoutStatus
+
+    from services.git_integration_worker.admission import WorkAdmissionController
+    from services.git_integration_worker.cursor_bus import BusReplyResult
+    from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+        CloseoutDelivery,
+    )
+    from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    posts: list[dict] = []
+
+    class _Resp:
+        status_code = 200
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def post(self, _path, json=None, headers=None):
+            posts.append(json or {})
+            return _Resp()
+
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_role_delivery.make_async_client",
+        lambda *_a, **_k: _Client(),
+    )
+
+    async def _prep(**_kw):
+        body = _kw["outcome"].body
+        return CloseoutDelivery(
+            body=body,
+            sidecar_ref="",
+            sidecar_path=tmp_path / "side.md",
+            full_result_bytes=len(body),
+            closeout_status=CloseoutStatus.COMPLETE,
+        )
+
+    monkeypatch.setattr(route_mod, "prepare_closeout_delivery_async", _prep)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_closeout_pager."
+        "page_conductor_silence",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "CursorDispatchLedger",
+        MagicMock(instance=lambda: MagicMock(read_wt_baseline=lambda **_k: None)),
+    )
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", MagicMock())
+    monkeypatch.setattr(route_mod, "emit_implement_closeout_trigger", AsyncMock())
+    monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", MagicMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+    monkeypatch.setattr(route_mod, "_load_dispatch_record_json_sync", lambda **_k: None)
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_row_hop_defers_link_terminate", lambda **_k: True)
+
+    replies: list[str] = []
+
+    class _Bus:
+        async def reply(self, **kwargs):
+            replies.append(kwargs["from_agent"])
+            return BusReplyResult(status_code=200, body={"turn_number": 1})
+
+    controller = WorkAdmissionController(
+        ledger=MagicMock(),
+        worker_id="w-role",
+        pid=0,
+        worker_started_at="2026-10-02T00:00:00Z",
+    )
+
+    async def _run(contract: str, body: str, model: str = "cursor/grok-4.7") -> None:
+        replies.clear()
+        posts.clear()
+        req = CursorDispatchRequest(
+            thread_id="14338",
+            model=model,
+            dispatch_id=f"d-{contract or 'blank'}",
+            execution_id="exec-role",
+            message="check",
+            handoff_contract=contract,
+        )
+        await route_mod._deliver_sdk_closeout(
+            req=req,
+            source_repo=tmp_path,
+            outcome=SdkRunOutcome(
+                body=body,
+                status="finished",
+                duration_ms=10,
+                tool_call_count=0,
+            ),
+            degraded_reason=None,
+            bus=_Bus(),
+            reply_to="dispatch",
+            work_item_ref=None,
+            controller=controller,
+        )
+
+    await _run("check-review", _CONFORMING_ROLE_BODY)
+    assert replies == ["cursor-sdk"]
+    assert [p["from"] for p in posts] == ["skeptic"]
+
+    await _run("check-review", "no evidence block")
+    assert replies == ["cursor-sdk"]
+    assert posts == []
+
+    await _run("none", _CONFORMING_ROLE_BODY)
+    assert replies == ["cursor-sdk"]
+    assert posts == []

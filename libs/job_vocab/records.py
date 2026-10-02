@@ -14,7 +14,6 @@ _TO_THREAD = "to_thread"
 _HANDOFF = "handoff"
 _CURSOR_AUTO = "cursor_auto"
 
-_CHECK_REVIEW_DELIVERY = "reviewer"
 _INLINE_HANDLES = frozenset({"prompt", "packet_path", "sidecar_ref"})
 _SOURCE_REF_HANDLES = frozenset({"source_ref"})
 
@@ -32,7 +31,7 @@ class JobRecord:
     resume_root_ok: bool
     ac_observed: bool
     ledger_continuation: bool
-    delivery_role: str
+    role_turn: bool
     handle_set: frozenset[str]
     source_ref_required: bool
     inline_prompt_refused: bool
@@ -56,7 +55,7 @@ def _inline(
     stop_after_allowed: bool,
     cost_risk_warn: bool = False,
     recon_owed: bool = False,
-    delivery_role: str = "",
+    role_turn: bool = False,
     posture_skip: bool = False,
     hypothesize_on: bool = False,
     harness_stack_skip: bool = False,
@@ -71,7 +70,7 @@ def _inline(
         resume_root_ok=False,
         ac_observed=False,
         ledger_continuation=False,
-        delivery_role=delivery_role,
+        role_turn=role_turn,
         handle_set=_INLINE_HANDLES,
         source_ref_required=False,
         inline_prompt_refused=False,
@@ -98,7 +97,7 @@ def _source_ref(
         resume_root_ok=False,
         ac_observed=False,
         ledger_continuation=False,
-        delivery_role="",
+        role_turn=False,
         handle_set=_SOURCE_REF_HANDLES,
         source_ref_required=True,
         inline_prompt_refused=True,
@@ -119,7 +118,7 @@ _AUTO = frozenset({_CURSOR_AUTO})
 
 # freeform copies the old ``none`` row, including hypothesize_on.
 # code-review / delivery-review copy that row without hypothesize_on.
-# check-review copies that row and sets delivery_role.
+# check-review copies that row and sets role_turn.
 # mechanical copies the old pure-mechanical row (stop_after was not forbidden).
 # confer copies the old consult row.
 JOB_RECORDS: tuple[JobRecord, ...] = (
@@ -159,7 +158,7 @@ JOB_RECORDS: tuple[JobRecord, ...] = (
         _G,
         stop_after_allowed=False,
         recon_owed=True,
-        delivery_role=_CHECK_REVIEW_DELIVERY,
+        role_turn=True,
     ),
     _inline("confer", _G_HAND_AUTO, stop_after_allowed=True, hypothesize_on=True),
     _inline("investigate", _G_AUTO, stop_after_allowed=True, recon_owed=True),
@@ -192,6 +191,7 @@ INLINE_ONLY_JOBS = _derived(lambda record: record.source_ref_refused)
 POSTURE_SKIP_JOBS = _derived(lambda record: record.posture_skip)
 HYPOTHESIZE_ON_JOBS = _derived(lambda record: record.hypothesize_on)
 HARNESS_STACK_SKIP_JOBS = _derived(lambda record: record.harness_stack_skip)
+ROLE_TURN_JOBS = _derived(lambda record: record.role_turn)
 
 # Handwritten comparands. AC9. Not computed from rows.
 _GENERATE_ADMITTED_LITERAL = frozenset(
@@ -240,6 +240,7 @@ _POSTURE_SKIP_LITERAL = frozenset(
 )
 _HYPOTHESIZE_LITERAL = frozenset({"confer", "sketch", "conductor", "freeform"})
 _HARNESS_STACK_SKIP_LITERAL = frozenset({"freeform"})
+_ROLE_TURN_LITERAL = frozenset({"check-review"})
 
 assert GENERATE_ADMITTED_JOBS == _GENERATE_ADMITTED_LITERAL
 assert TO_THREAD_ADMITTED_JOBS == _TO_THREAD_ADMITTED_LITERAL
@@ -249,6 +250,7 @@ assert SOURCE_REF_JOBS == _SOURCE_REF_LITERAL
 assert POSTURE_SKIP_JOBS == _POSTURE_SKIP_LITERAL
 assert HYPOTHESIZE_ON_JOBS == _HYPOTHESIZE_LITERAL
 assert HARNESS_STACK_SKIP_JOBS == _HARNESS_STACK_SKIP_LITERAL
+assert ROLE_TURN_JOBS == _ROLE_TURN_LITERAL
 assert INLINE_ONLY_JOBS.isdisjoint(SOURCE_REF_JOBS)
 
 

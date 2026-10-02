@@ -24,6 +24,7 @@ from cursor_capabilities import (
     effort_knob_name,
 )
 from effort_vocabulary import normalize_effort
+from job_vocab.records import job_record
 from model_id import ModelId
 
 # Code-lane standing default citation (decision:code-review-panel-cursor-substrate).
@@ -245,6 +246,21 @@ def cursor_delivery_from_role(model: str) -> str | None:
 def is_cursor_check_review_model(model: str) -> bool:
     """True when ``model`` is in the standing cursor check/review allowlist."""
     return model.strip().lower() in CURSOR_CHECK_REVIEW_MODELS
+
+
+def cursor_role_turn_sender(job: str, model: str) -> str | None:
+    """Sole authority for a cursor-sdk closeout role turn.
+
+    ``job`` is the stored handoff token. ``model`` is the admit-time model id.
+    Returns the bus author role when the job row sets ``role_turn`` and the
+    model is on the check/review allowlist. Returns None otherwise. No I/O.
+    """
+    record = job_record(job)
+    if record is None or not record.role_turn:
+        return None
+    if not is_cursor_check_review_model(model):
+        return None
+    return cursor_delivery_from_role(model)
 
 
 def resolve_check_review_model(
