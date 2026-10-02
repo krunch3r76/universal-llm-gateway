@@ -1,17 +1,22 @@
 """Normalize and finalize cursor-sdk TokenUsage for worker closeout emit.
 
-Post-wait ``run.usage`` / ``result.usage`` is authoritative for run totals.
-Stream ``SDKUsageMessage`` / turn-ended payloads supply per-turn breakdown and
-status nuance. ``reasoning_tokens`` is optional enrichment (subset of output) —
-not required for dashboard-comparable ``total_tokens``.
+Post-wait ``run.usage`` / ``result.usage`` is authoritative for run field
+breakdown. Stream ``SDKUsageMessage`` / turn-ended payloads supply per-turn
+breakdown and status nuance. ``reasoning_tokens`` is optional enrichment
+(subset of output) — never added into ``total_tokens``.
 
-Cache / total semantics (R finding #1, path-sim 5361): when wire ``total_tokens``
-is absent, fallback recompute is ``input + output + cache_read + cache_write``
-under the assumption that ``input_tokens`` excludes cache (Anthropic-style
-breakdown columns). That derived total is tagged ``_total_derived`` so
-reconcile never compares a recomputed stream total against a wire post-wait
-total (heterogeneous formulas → spurious ``reconciled_delta``). Prefer wire
-totals whenever present. Tag is stripped before emit.
+Cache / total semantics (friction a:37158): Cursor SDK ``TokenUsage`` on the
+local agent store reports ``inputTokens`` **including** cache reads (observed
+on 80/80 recent ledger rows: ``cache_read ≤ input``; wire
+``totalTokens = input + output + cache_read + cache_write`` therefore
+double-counts cache). Dashboard/Admin API rows can show ``cache ≫ input``
+(exclusive columns) — when that shape appears, keep the exclusive sum.
+
+Honest dashboard-comparable ``total_tokens`` for the inclusive Cursor shape is
+``input + output`` (cache fields remain as breakdown). When the honest total
+differs from wire or is recomputed, tag ``_total_derived`` so reconcile never
+compares heterogeneous formulas (R finding #1 / path-sim 5361). Tag is stripped
+before emit.
 """
 
 from __future__ import annotations
@@ -36,6 +41,40 @@ _SUM_FIELDS = (
     "cache_read_tokens",
     "cache_write_tokens",
 )
+
+
+def _input_includes_cache(
+    *,
+    input_tokens: int | None,
+    cache_read: int | None,
+) -> bool:
+    """True when cache_read looks like a subset of input (Cursor SDK shape).
+
+    ``cache_read > input`` is the Admin/dashboard exclusive shape — do not
+    rewrite those totals. Absent cache_read ⇒ no inclusive correction.
+    """
+    if input_tokens is None or cache_read is None:
+        return False
+    return cache_read <= input_tokens
+
+
+def _honest_total_tokens(
+    *,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    cache_read: int | None,
+    cache_write: int | None,
+) -> int | None:
+    """Dashboard-comparable total for this Cursor-sdk payload shape."""
+    if _input_includes_cache(input_tokens=input_tokens, cache_read=cache_read):
+        parts = [value for value in (input_tokens, output_tokens) if value is not None]
+        return sum(parts) if parts else None
+    parts = [
+        value
+        for value in (input_tokens, output_tokens, cache_read, cache_write)
+        if value is not None
+    ]
+    return sum(parts) if parts else None
 
 
 def public_usage(usage: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -94,35 +133,46 @@ def usage_payload_from_object(raw: Any) -> Mapping[str, Any] | None:
 def normalize_usage_map(raw: Mapping[str, Any]) -> tuple[dict[str, Any] | None, bool]:
     """Map SDK usage payloads to a canonical token vector (+ optional spend).
 
-    Prefer wire ``total_tokens`` (dashboard-comparable). When absent, recompute
-    as input + output + cache_read + cache_write (assumes ``input_tokens``
-    excludes cache) and tag ``_total_derived`` so reconcile stays formula-safe.
+    For Cursor-inclusive payloads (``cache_read ≤ input``), emit honest
+    ``total_tokens = input + output`` even when wire ``totalTokens`` double-counts
+    cache (a:37158). Exclusive shape (``cache_read > input``) keeps wire total
+    when present, else ``input + output + cache_read + cache_write``. Any
+    recomputed or corrected total is tagged ``_total_derived``.
     ``reasoning_tokens`` is a subset of output — never added into total.
     """
     input_tokens = _first_token_count(raw, _INPUT_TOKEN_KEYS)
     output_tokens = _first_token_count(raw, _OUTPUT_TOKEN_KEYS)
-    total_tokens = _first_token_count(raw, _TOTAL_TOKEN_KEYS)
+    wire_total = _first_token_count(raw, _TOTAL_TOKEN_KEYS)
     cache_read = _first_token_count(raw, _CACHE_READ_KEYS)
     cache_write = _first_token_count(raw, _CACHE_WRITE_KEYS)
     reasoning = _first_token_count(raw, _REASONING_KEYS)
     if (
         input_tokens is None
         and output_tokens is None
-        and total_tokens is None
+        and wire_total is None
         and cache_read is None
         and cache_write is None
     ):
         return None, False
     total_derived = False
-    if total_tokens is None:
-        parts = [
-            value
-            for value in (input_tokens, output_tokens, cache_read, cache_write)
-            if value is not None
-        ]
-        if parts:
-            total_tokens = sum(parts)
+    honest = _honest_total_tokens(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read=cache_read,
+        cache_write=cache_write,
+    )
+    if _input_includes_cache(input_tokens=input_tokens, cache_read=cache_read):
+        total_tokens = honest
+        if total_tokens is not None and total_tokens != wire_total:
             total_derived = True
+        elif wire_total is None and total_tokens is not None:
+            total_derived = True
+    elif wire_total is None:
+        total_tokens = honest
+        if total_tokens is not None:
+            total_derived = True
+    else:
+        total_tokens = wire_total
     normalized: dict[str, Any] = {}
     if input_tokens is not None:
         normalized["input_tokens"] = input_tokens
@@ -167,7 +217,11 @@ def sum_normalized_usages(items: tuple[dict[str, Any], ...]) -> dict[str, Any]:
 def latest_turn_used_tokens(
     turn_usages: tuple[Mapping[str, Any] | None, ...],
 ) -> int | None:
-    """Return the latest turn's input/total tokens — never sum across turns."""
+    """Return the latest turn's input/total tokens — never sum across turns.
+
+    On Cursor SDK end-of-run payloads this is cumulative ``input_tokens``, not a
+    live context-window occupancy (a:37158 ``usage_live.used_tokens`` nuance).
+    """
     for raw in reversed(turn_usages):
         if not raw:
             continue

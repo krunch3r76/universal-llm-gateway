@@ -156,5 +156,7 @@ def test_persist_dispatch_usage_roundtrip() -> None:
     assert restored is not None
     assert restored.usage is not None
     assert restored.usage["input_tokens"] == 36080
-    assert restored.usage["total_tokens"] == 61435
+    # Inclusive Cursor shape: wire 61435 = 36080+299+25056; honest = input+output.
+    assert restored.usage["total_tokens"] == 36080 + 299
+    assert restored.usage["cache_read_tokens"] == 25056
     assert restored.usage_capture_status == "captured"

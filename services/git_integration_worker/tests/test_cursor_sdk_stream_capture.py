@@ -393,6 +393,7 @@ def test_normalize_usage_map_handles_camel_case_bridge_keys() -> None:
             "outputTokens": 50,
             "cacheReadTokens": 10,
             "cacheWriteTokens": 2,
+            # Wire total double-counts cache (100+50+10+2); honest = input+output.
             "totalTokens": 162,
         }
     )
@@ -402,7 +403,52 @@ def test_normalize_usage_map_handles_camel_case_bridge_keys() -> None:
         "output_tokens": 50,
         "cache_read_tokens": 10,
         "cache_write_tokens": 2,
-        "total_tokens": 162,
+        "total_tokens": 150,
+        "_total_derived": True,
+    }
+
+
+def test_normalize_usage_map_cursor_inclusive_specimen_bab548() -> None:
+    """a:37158 — Cursor store shape: input includes cacheRead; wire total double-counts."""
+    normalized, mappable = normalize_usage_map(
+        {
+            "inputTokens": 3577994,
+            "outputTokens": 15131,
+            "cacheReadTokens": 3322624,
+            "cacheWriteTokens": 0,
+            "totalTokens": 6915749,
+            "reasoningTokens": 7558,
+        }
+    )
+    assert mappable is True
+    assert normalized is not None
+    assert normalized["input_tokens"] == 3577994
+    assert normalized["cache_read_tokens"] == 3322624
+    assert normalized["output_tokens"] == 15131
+    assert normalized["total_tokens"] == 3577994 + 15131
+    assert normalized["total_tokens"] == 3593125
+    assert normalized.get("_total_derived") is True
+    assert normalized["reasoning_tokens"] == 7558
+
+
+def test_normalize_usage_map_exclusive_when_cache_exceeds_input() -> None:
+    """Admin/dashboard exclusive columns: cache ≫ input — keep wire total."""
+    normalized, mappable = normalize_usage_map(
+        {
+            "inputTokens": 66,
+            "outputTokens": 6074,
+            "cacheReadTokens": 1952379,
+            "cacheWriteTokens": 120467,
+            "totalTokens": 2078986,
+        }
+    )
+    assert mappable is True
+    assert normalized == {
+        "input_tokens": 66,
+        "output_tokens": 6074,
+        "cache_read_tokens": 1952379,
+        "cache_write_tokens": 120467,
+        "total_tokens": 2078986,
     }
 
 
@@ -485,7 +531,7 @@ def test_finalize_prefers_post_wait_and_marks_reconciled_delta() -> None:
             usage={
                 "input_tokens": 100,
                 "output_tokens": 50,
-                "cache_read_tokens": 10,
+                # No cache → exclusive/absent-cache path keeps wire total 160.
                 "total_tokens": 160,
             }
         ),
@@ -493,7 +539,6 @@ def test_finalize_prefers_post_wait_and_marks_reconciled_delta() -> None:
     assert finalized.usage == {
         "input_tokens": 100,
         "output_tokens": 50,
-        "cache_read_tokens": 10,
         "total_tokens": 160,
     }
     assert finalized.usage_capture_status == "reconciled_delta"
@@ -528,18 +573,18 @@ def test_finalize_prefers_captured_when_post_wait_has_total_over_stream_partial(
 
 
 def test_finalize_skips_reconciled_delta_when_stream_total_was_recomputed() -> None:
-    """R finding #1 — do not compare recomputed stream total vs wire post-wait."""
+    """R finding #1 — do not compare recomputed stream total vs corrected post-wait."""
     stream_usage, _status = normalize_usage_map(
         {
             "input_tokens": 10,
             "output_tokens": 5,
             "cache_read_tokens": 10,
-            # no wire total → recompute 25 + _total_derived
+            # no wire total → inclusive honest 15 + _total_derived
         }
     )
     assert stream_usage is not None
     assert stream_usage.get("_total_derived") is True
-    assert stream_usage["total_tokens"] == 25
+    assert stream_usage["total_tokens"] == 15
 
     capture = StreamCapture(
         tool_calls=(),
@@ -547,7 +592,7 @@ def test_finalize_skips_reconciled_delta_when_stream_total_was_recomputed() -> N
             "input_tokens": 10,
             "output_tokens": 5,
             "cache_read_tokens": 10,
-            "total_tokens": 25,
+            "total_tokens": 15,
         },
         usage_capture_status="captured",
         usage_total_derived=True,
@@ -564,7 +609,8 @@ def test_finalize_skips_reconciled_delta_when_stream_total_was_recomputed() -> N
                 "input_tokens": 10,
                 "output_tokens": 5,
                 "cache_read_tokens": 10,
-                "total_tokens": 15,  # wire total ≠ recomputed 25
+                # Wire double-count 25; normalize corrects to 15 (derived).
+                "total_tokens": 25,
             }
         ),
     )
