@@ -8,7 +8,7 @@ import time
 import pytest
 
 from claude_bundles.chat_reply_wait import (
-    HarvestIncomplete,
+    HarvestIncompleteError,
     _complete_enough,
     _cowork_complete_enough,
     _in_flight,
@@ -116,7 +116,7 @@ async def test_inflight_past_idle_timeout_still_completes(advance_clock) -> None
 async def test_idle_without_growth_raises(advance_clock) -> None:
     before = _state(body_len=0, n=0)
     page = _FakePage([_state(body_len=0, n=0) for _ in range(20)])
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete"):
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete"):
         await wait_assistant_reply(
             page,
             before=before,
@@ -130,7 +130,7 @@ async def test_idle_without_growth_raises(advance_clock) -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_with_nonzero_body_carries_partial(advance_clock) -> None:
-    """a:37226 — HarvestIncomplete must retain last scrape when last≫0."""
+    """a:37226 — HarvestIncompleteError must retain last scrape when last≫0."""
     before = _state(body_len=0, n=0)
     # Mid-review prose: nonzero body, no sealed verdict → require_review stays open.
     partial = (
@@ -145,7 +145,7 @@ async def test_timeout_with_nonzero_body_carries_partial(advance_clock) -> None:
             for _ in range(20)
         ]
     )
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete") as exc:
         await wait_assistant_reply(
             page,
             before=before,
@@ -194,7 +194,7 @@ async def test_error_banner_idle_raises_on_timeout_with_match(advance_clock) -> 
             for _ in range(20)
         ]
     )
-    with pytest.raises(HarvestIncomplete, match=r"error_banner.*Overloaded"):
+    with pytest.raises(HarvestIncompleteError, match=r"error_banner.*Overloaded"):
         await wait_assistant_reply(
             page,
             before=before,
@@ -275,7 +275,7 @@ async def test_lingering_overloaded_after_turn_completes(advance_clock) -> None:
 async def test_lingering_overloaded_complete_beats_timeout_raise(
     advance_clock,
 ) -> None:
-    """On idle timeout, structural complete + banner returns — ¬ HarvestIncomplete."""
+    """On idle timeout, structural complete + banner returns — ¬ HarvestIncompleteError."""
     before = _state(body_len=0, n=0)
     # Alternate lengths so stable never reaches stable_polls mid-loop; force
     # the timeout exit path while remaining structurally complete.
@@ -447,7 +447,7 @@ async def test_structural_quiet_growth_at_n_minus_one_resets_streak(
     # 4 quiet (streak 4), growth resets, 4 more quiet (streak 4) — never hits 5.
     seq = [quiet] * 5 + [growth] + [quiet] * 10
     page = _FakePage(seq)
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete"):
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete"):
         await wait_assistant_reply(
             page,
             before=before,
@@ -463,12 +463,12 @@ async def test_structural_quiet_growth_at_n_minus_one_resets_streak(
 async def test_structural_quiet_tier_b_raises_harvest_incomplete_never_landed(
     advance_clock, structural_quiet_n
 ) -> None:
-    """Never-landed wedge → Tier B idle timeout raises HarvestIncomplete (AC5)."""
+    """Never-landed wedge → Tier B idle timeout raises HarvestIncompleteError (AC5)."""
     before = _state(body_len=0, n=0)
     quiet = _cowork_quiet_state(n=0, body_len=0, body="")
     seq = [quiet] * 20
     page = _FakePage(seq)
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete") as exc:
         await wait_assistant_reply(
             page,
             before=before,
@@ -713,7 +713,7 @@ async def test_static_badge_raises_harvest_incomplete(advance_clock) -> None:
     """A quiet badge page raises and keeps the scrape (a:37226)."""
     badge = "Browsed files, edited a note."
     page = _FakePage([_state(body_len=len(badge), n=1, body=badge) for _ in range(20)])
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete") as exc:
         await wait_assistant_reply(
             page,
             before=_state(body_len=0, n=0),
@@ -737,7 +737,7 @@ async def test_changing_badge_refreshes_idle_then_quiet_raises(advance_clock) ->
     ]
     quiet_body = changing[-1]["body"]
     quiet = [_state(body_len=len(quiet_body), n=1, body=quiet_body) for _ in range(12)]
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete") as exc:
         await wait_assistant_reply(
             _FakePage(changing + quiet),
             before=_state(body_len=0, n=0),
@@ -758,7 +758,7 @@ async def test_timestamp_tick_on_badge_does_not_refresh(advance_clock) -> None:
         for i in range(20)
     ]
     page = _FakePage([_state(body_len=len(body), n=1, body=body) for body in bodies])
-    with pytest.raises(HarvestIncomplete, match="timed out incomplete"):
+    with pytest.raises(HarvestIncompleteError, match="timed out incomplete"):
         await wait_assistant_reply(
             page,
             before=_state(body_len=0, n=0),

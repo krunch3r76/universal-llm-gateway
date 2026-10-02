@@ -286,7 +286,7 @@ async def harvest_assistant(page, *, min_msg_chars: int = 40) -> dict:
     return await page.evaluate(HARVEST_JS, {"minMsgChars": min_msg_chars})
 
 
-class HarvestIncomplete(RuntimeError):
+class HarvestIncompleteError(RuntimeError):
     """Turn did not satisfy complete(turn) — caller must ¬delete.
 
     ``body`` is the last scraped assistant text when present so callers can
@@ -335,7 +335,7 @@ def _badge_only_body(state: dict) -> bool:
 
 
 def _error_banner_message(state: dict, *, on_timeout: bool = False) -> str:
-    """Human-readable HarvestIncomplete detail including matched banner text."""
+    """Human-readable HarvestIncompleteError detail including matched banner text."""
     kind = "error_banner on timeout" if on_timeout else "error_banner detected"
     match = (state.get("error_banner_match") or "").strip()
     text = (state.get("error_banner_text") or "").strip()
@@ -592,11 +592,11 @@ async def wait_assistant_reply(
     ):
         return state
     if _fatal_error_banner(state):
-        raise HarvestIncomplete(
+        raise HarvestIncompleteError(
             _error_banner_message(state, on_timeout=True),
             state=state,
         )
-    raise HarvestIncomplete(
+    raise HarvestIncompleteError(
         f"timed out incomplete (base_len={base_len}, last={state.get('body_len')}, "
         f"n={state.get('n')}) — ¬delete",
         state=state,

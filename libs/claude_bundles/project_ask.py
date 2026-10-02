@@ -34,7 +34,7 @@ from claude_bundles.chat_model_select import (
     select_model,
 )
 from claude_bundles.chat_reply_wait import (
-    HarvestIncomplete,
+    HarvestIncompleteError,
     harvest_assistant,
     wait_assistant_reply,
 )
@@ -769,7 +769,7 @@ async def project_ask_on_page(
             artifact_cards=tuple(cards),
             artifact_cards_unresolved=False,
         )
-    except HarvestIncomplete as exc:
+    except HarvestIncompleteError as exc:
         # a:37226 — preserve nonzero last scrape; bare Exception path zeroed body.
         partial = strip_thinking_prefix(exc.body or "")
         return ProjectAskResult(
