@@ -130,7 +130,7 @@ async def test_worker_presealed_sidecar_keeps_judgment_skill_floor(
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
-    seeded = stage_cdp_prompt_with_skills(
+    stage_cdp_prompt_with_skills(
         execution_id="exec-f1b-seed",
         prompt_text="sealed judgment body\n",
         purpose=None,
