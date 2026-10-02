@@ -895,6 +895,37 @@ def test_ac5_park_visible_on_other_mission_row() -> None:
     assert "10" not in open_rows
 
 
+def test_torn_row_same_mission_scope_not_counted() -> None:
+    """AC11: torn record_json on same work_key/thread is skipped; prior row wins."""
+    ledger = CursorDispatchLedger.instance()
+    work_key = "todo:shared-mission"
+    thread_id = "9011"
+    _admit(
+        ledger,
+        dispatch_id="mission-good",
+        thread_id=thread_id,
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    _admit(
+        ledger,
+        dispatch_id="mission-torn",
+        thread_id=thread_id,
+        work_key=work_key,
+        record_patch={"closeout_stop_tokens": ["DONE"]},
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id='mission-torn'",
+            ('{"closeout_stop_tokens":',),
+        )
+        rows = census(conn)
+    assert len(rows) == 1
+    assert rows[0].dispatch_id == "mission-good"
+    assert rows[0].work_key == work_key
+    assert rows[0].thread_id == thread_id
+
+
 def test_partial_last_row_is_not_a_census_row() -> None:
     """A torn record_json is not classified, and the reader does not write."""
     import sqlite3

@@ -218,18 +218,17 @@ def test_ac7_set_release_stamps_all_parks_after_commit(monkeypatch: pytest.Monke
                 HOP_PARK_REASON_KEY: "hop_budget_mission_cap",
             },
         )
-    calls: list[str] = []
+    emit_observations: list[tuple[str, bool]] = []
 
     def _recorder(**kwargs: object) -> None:
         parked = str(kwargs.get("parked_dispatch_id"))
-        calls.append(parked)
         with CursorDispatchLedger.instance()._connect() as conn:
             row = conn.execute(
                 "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (parked,),
             ).fetchone()
         data = json.loads(row["record_json"])
-        assert HOP_PARK_RELEASED_AT_KEY in data
+        emit_observations.append((parked, HOP_PARK_RELEASED_AT_KEY in data))
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_park_released",
@@ -258,7 +257,15 @@ def test_ac7_set_release_stamps_all_parks_after_commit(monkeypatch: pytest.Monke
         hop_reason="planned",
         hop_park_release=True,
     )
-    assert sorted(calls) == ["park-a", "park-b"]
+    assert sorted(pid for pid, _ in emit_observations) == ["park-a", "park-b"]
+    assert all(stamped for _, stamped in emit_observations)
+    with ledger._connect() as conn:
+        for dispatch_id in ("park-a", "park-b"):
+            row = conn.execute(
+                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            assert HOP_PARK_RELEASED_AT_KEY in json.loads(row["record_json"])
 
 
 def test_ac8_rollback_skips_emit_on_thread_occupied(monkeypatch: pytest.MonkeyPatch) -> None:
