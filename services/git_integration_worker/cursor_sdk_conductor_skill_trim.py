@@ -35,6 +35,7 @@ CONDUCTOR_SKILL_KEEP: frozenset[str] = frozenset(
         "cdp-operator-proxy",
         "cheap-recon-before-escalation",
         "checkpoint-discipline",
+        "consult-posture",
         "checkout-kernel",
         "claude-ai-cdp-navigation",
         "conductor",
@@ -47,19 +48,23 @@ CONDUCTOR_SKILL_KEEP: frozenset[str] = frozenset(
         "dispatch-report-discipline",
         "dispatch-shape",
         "dispatch-workflow",
+        "friction-review",
         "fs",
         "git-posture",
         "handoff-packet-authoring",
         "hypothesize-simulate",
         "interagent-posture",
         "judgment-escalation-ladder",
+        "lane-act-gates",
         "lead-agent-git-integration",
         "liaison",
         "life-operator-do-chain",
         "mission-operator",
         "orchestration-lanes",
         "pager-notify",
+        "path-sim",
         "reasoning-posture",
+        "required-skills-pickup",
         "residual-imprint",
         "retrieval-before-authoring",
         "score-play",
@@ -70,7 +75,11 @@ CONDUCTOR_SKILL_KEEP: frozenset[str] = frozenset(
 
 
 def conductor_skill_trim_enabled() -> bool:
-    """Default on. ``0`` / ``false`` / ``no`` / ``off`` restores the full census."""
+    """Default on. ``0`` / ``false`` / ``no`` / ``off`` skips the cut on the next home build.
+
+    Turning the switch off does not restore a home that was already trimmed.
+    Resume reuses that directory and skips ``setup_cursor_dispatch_home``.
+    """
     raw = os.environ.get(_ENV, "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
 
@@ -86,7 +95,7 @@ def trim_conductor_skill_catalog(
     A missing keep-set slug is a warning; the home is still built. Non-conductor
     contracts and a disabled switch are no-ops.
     """
-    if (contract or "").strip() != "conductor":
+    if (contract or "").strip().lower() != "conductor":
         return ()
     if not conductor_skill_trim_enabled():
         return ()
@@ -98,20 +107,18 @@ def trim_conductor_skill_catalog(
             keep.add(text)
     if not skills_dir.is_dir():
         logger.warning(
-            "conductor skill trim: skills dir absent at %s; home left as copied",
+            "conductor skill trim: skills dir absent at %s; home left as copied; "
+            "keep-set slugs missing from source tree: %s",
             skills_dir,
+            ", ".join(sorted(keep)),
         )
-        for slug in sorted(keep):
-            logger.warning(
-                "conductor skill trim: keep-set slug %s missing from source tree",
-                slug,
-            )
         return ()
     present = {p.name for p in skills_dir.iterdir() if p.is_dir()}
-    for slug in sorted(keep - present):
+    missing = sorted(keep - present)
+    if missing:
         logger.warning(
-            "conductor skill trim: keep-set slug %s missing from source tree",
-            slug,
+            "conductor skill trim: keep-set slugs missing from source tree: %s",
+            ", ".join(missing),
         )
     removed: list[str] = []
     for name in sorted(present - keep):
