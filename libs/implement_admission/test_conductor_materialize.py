@@ -519,15 +519,24 @@ def test_review_leg_packet_one_dispatch_one_wait(tmp_path: Path) -> None:
     )
     assert (
         mp.text.count(
-            "team_dispatch(op=generate, job=delivery-review, model=cdp/opus-5.5, contract=freeform)"
+            "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
+            "purpose=review, dispatch_thread_id=<this worker thread id>"
         )
         == 1
     )
+    assert "purpose=review" in mp.text
+    assert "dispatch_thread_id=" in mp.text
+    assert "NEXT_ADMIT: harvest" in mp.text
+    assert (
+        "A successor whose CHECKPOINT carries a G6 execution_id harvests that id "
+        "and does not dispatch G6."
+    ) in mp.text
+    assert "for the same gate in this row" not in mp.text
     assert "Wait once with agent_bus tool=wait bound to" in mp.text
     assert "poll_hint" in mp.text
     assert "evidence: absent" in mp.text
+    assert "cannot run in this row" in mp.text
     assert "nested_cdp_prompt_gate.py" in mp.text
-    assert "Do not fire a second team_dispatch for the same gate" in mp.text
     assert not re.search(r"\bgrep\b", mp.text, re.IGNORECASE)
     assert "cursor-sdk dispatch admitted with nest_under" in mp.text
     assert "still-running CDP review does not forbid stop: ROW_HOP" in mp.text
