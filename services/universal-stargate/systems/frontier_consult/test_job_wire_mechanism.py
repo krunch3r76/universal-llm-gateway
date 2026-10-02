@@ -436,3 +436,144 @@ async def test_freeform_omitted_session_admits_without_quoted_purpose_briefing(
     assert "cdp-operator-proxy" not in staged
     assert prompt.splitlines()[0] in staged
     assert "reasoning-posture" in staged
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "session",
+    ["operator-proxy", "mission"],
+)
+async def test_session_operator_proxy_or_mission_admits_briefing_and_chip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    session: str,
+) -> None:
+    """session=operator-proxy|mission: briefing and cdp-operator-proxy chip.
+
+    Breaks when the session field is dropped before staging, or when the
+    floor comes from a prompt line instead of cdp_skill_profiles.
+    """
+    result, staged = await _admit_cdp_session(
+        monkeypatch, tmp_path, session=session, request_id=f"req-{session}"
+    )
+    assert result["resolved_job"] == "freeform"
+    assert "Mission seat map" in staged
+    assert "cdp-operator-proxy" in staged
+
+
+@pytest.mark.asyncio
+async def test_session_ask_admits_architecture_floor_without_chip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """session=ask: architecture floor, no operator-proxy briefing or chip.
+
+    Breaks when ask is treated as a mission purpose.
+    """
+    _result, staged = await _admit_cdp_session(
+        monkeypatch, tmp_path, session="ask", request_id="req-ask"
+    )
+    assert "architecture-invariants" in staged
+    assert "ulg-architecture" in staged
+    assert "Mission seat map" not in staged
+    assert "cdp-operator-proxy" not in staged
+
+
+@pytest.mark.asyncio
+async def test_session_operator_proxy_underscore_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """session=operator_proxy: intake dispatch.job.refused session_unknown.
+
+    Breaks when the underscore spelling is folded into operator-proxy and
+    staging injects the briefing. Service-down is out of this path: the
+    refuse is raised before CDP admit.
+    """
+    import systems.frontier_consult._frontier_intake as intake
+
+    seen: list[str | None] = []
+    real = intake.reject_unsupported_packet_inputs
+
+    def _wrap(**kwargs: Any) -> None:
+        seen.append(kwargs.get("session"))
+        return real(**kwargs)
+
+    monkeypatch.setattr(intake, "reject_unsupported_packet_inputs", _wrap)
+
+    refused = await team_dispatch(
+        TeamDispatchGenerateBody(
+            op="generate",
+            job="freeform",
+            model="cdp/opus-5.5",
+            dispatch_thread_id="14394",
+            prompt="Do the work.\n",
+            session="operator_proxy",
+        ),
+        Response(),
+    )
+    body = json.loads(refused.body)
+    assert refused.status_code == 422
+    assert body["field"] == "session"
+    assert body["error"]["code"] == "session_unknown"
+    assert body["details"]["event"] == "dispatch.job.refused"
+    assert body["details"]["reason"] == "session_unknown"
+    assert seen == ["operator_proxy"]
+
+
+async def _admit_cdp_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    *,
+    session: str,
+    request_id: str,
+) -> tuple[dict[str, Any], str]:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from claude_bundles import cdp_model_endpoint_staging as staging
+
+    from systems.frontier_consult import cdp_generate as mod
+
+    monkeypatch.setattr(staging, "ephemeral_dir", lambda _eid: tmp_path)
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(
+        mod,
+        "admit_handoff_dispatch",
+        AsyncMock(return_value=MagicMock(reason="ok")),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
+
+    async def _worker(**kwargs: Any) -> None:
+        del kwargs
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _worker)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="14394",
+        prompt="Do the work.\n",
+        session=session,
+    )
+    response = Response()
+    result = await mod.dispatch_cdp_generate(
+        request_id=request_id,
+        body=body,
+        response=response,
+    )
+    assert 200 <= response.status_code < 300
+    assert result["execution_id"]
+    staged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    return result, staged

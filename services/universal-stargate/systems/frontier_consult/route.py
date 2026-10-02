@@ -248,6 +248,9 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # (sonnet → produce, else ask). operator-proxy|mission triggers
     # skill-chip inject on the satellite.
     purpose: str | None = None
+    # Admit key for the CDP skill floor. operator-proxy|mission|ask.
+    # Unknown present values (operator_proxy) are session_unknown at intake.
+    session: str | None = None
     # Chrome-host lineage (model=cdp/… only). Distinct from purpose retain tag.
     mission_kind: str | None = None
     # Bus private-request parent lane (hop/side parent). Not SDK nest_under.
@@ -620,6 +623,7 @@ async def team_dispatch(
             stop_after=(
                 (getattr(body, "generation_options", None) or {}).get("stop_after")
             ),
+            session=getattr(body, "session", None),
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())

@@ -10,6 +10,22 @@ from claude_bundles.cdp_skill_profiles import (
 )
 
 
+def test_session_operator_proxy_and_mission_chip_ask_does_not() -> None:
+    """Legal session keys select the floor. Underscore is not a profile key.
+
+    Breaks when session=operator-proxy|mission drops cdp-operator-proxy, or
+    when session=ask grows that chip. Refusal of operator_proxy is intake.
+    """
+    for session in ("operator-proxy", "mission"):
+        floor = profile_slugs_for_session(session)
+        assert floor[0] == "cdp-operator-proxy"
+        assert "reasoning-posture" in floor
+    ask = profile_slugs_for_session("ask")
+    assert ask[:2] == ("architecture-invariants", "ulg-architecture")
+    assert "cdp-operator-proxy" not in ask
+    assert "cdp-operator-proxy" not in profile_slugs_for_session("operator_proxy")
+
+
 def test_omitted_session_floor_ignores_quoted_purpose_line() -> None:
     quoted = "purpose=operator-proxy\n"
     assert "purpose=operator-proxy" in quoted

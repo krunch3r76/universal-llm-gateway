@@ -34,9 +34,26 @@ def reject_unsupported_packet_inputs(
     source_ref: str | None,
     packet_kind: str | None = None,
     stop_after: str | None = None,
+    session: str | None = None,
 ) -> None:
     """Mirror MCP predicates 3/4/5 for Stargate HTTP admit."""
     reject_retired_packet_kind(packet_kind, request_id=request_id)
+    from job_grammar import resolve_session
+
+    session_reason = resolve_session(session)
+    if session_reason == "session_unknown":
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="session",
+            reason=f"session {session!r} is not an admitted session",
+            status_code=422,
+            code="session_unknown",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "session_unknown",
+                "registry_ref": "job_vocab:unresolved",
+            },
+        )
     if op not in ("generate", "to_thread"):
         return
     wire = (contract or "").strip().lower()
