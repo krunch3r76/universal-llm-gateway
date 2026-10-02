@@ -252,12 +252,14 @@ async def project_followup_on_page(
     download_output: bool = False,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
+    purpose: str = "ask",
 ) -> ProjectAskResult:
     """Send another turn on the current chat. No navigate.
 
     Correlation ids thread into ``send_prompt`` → skill-delivery attest.
     """
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
+    require_review_verdict = (purpose or "").strip().lower() == "review"
     try:
         before = await harvest_assistant(page)
         await send_prompt(
@@ -274,6 +276,7 @@ async def project_followup_on_page(
             min_growth=min_growth,
             min_body=min_body,
             on_harvest=on_harvest,
+            require_review_verdict=require_review_verdict,
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, {})
@@ -352,6 +355,7 @@ async def run_project_conversation(
     download_output: bool = False,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
+    purpose: str = "ask",
 ) -> list[ProjectAskResult]:
     """N-turn consult on one chat. First opens compose; later turns follow up.
 
@@ -361,6 +365,7 @@ async def run_project_conversation(
     """
     if not prompts:
         raise ValueError("prompts required")
+    require_review_verdict = (purpose or "").strip().lower() == "review"
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     results: list[ProjectAskResult] = []
     try:
@@ -381,6 +386,7 @@ async def run_project_conversation(
                 download_output=download_output,
                 execution_id=satellite_execution_id or None,
                 stargate_execution_id=stargate_execution_id,
+                purpose=purpose,
             )
         else:
             url = compose_url or "https://claude.ai/new"
@@ -423,6 +429,7 @@ async def run_project_conversation(
                 min_growth=min_growth,
                 min_body=min_body,
                 on_harvest=on_harvest,
+                require_review_verdict=require_review_verdict,
             )
             body = strip_thinking_prefix(state.get("body") or "")
             try:
@@ -507,6 +514,7 @@ async def run_project_conversation(
                 download_output=download_output,
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
+                purpose=purpose,
             )
             results.append(nxt)
             if not nxt.ok:

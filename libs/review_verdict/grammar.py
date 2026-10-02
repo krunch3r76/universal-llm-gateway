@@ -180,6 +180,15 @@ def parse_any_review_body(text: str) -> ParsedVerdict:
     return gate6
 
 
+def has_parseable_verdict(text: str) -> bool:
+    """True when any accepted review-verdict grammar yields a token.
+
+    Used as the harvest/proof gate for ``purpose=review`` so skill-induction
+    acks and mid-tool prose cannot seal a CDP review (a:37156 / a:37034).
+    """
+    return parse_any_review_body(text).token is not None
+
+
 def format_canonical_merits_line(token: str) -> str:
     """Single line for R-admit / R1: ``Merits: RATIFY`` (underscore tokens)."""
     normalized = normalize_verdict_token(token)
@@ -209,6 +218,7 @@ __all__ = [
     "format_canonical_gate6_block",
     "format_canonical_merits_line",
     "gate6_affirmative_disposition",
+    "has_parseable_verdict",
     "normalize_verdict_token",
     "parse_any_review_body",
     "parse_gate6_markdown",

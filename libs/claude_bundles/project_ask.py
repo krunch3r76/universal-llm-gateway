@@ -617,12 +617,15 @@ async def project_ask_on_page(
     expected_size: ExpectedSize = "auto",
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
+    purpose: str = "ask",
 ) -> ProjectAskResult:
     """Run one sealed ask on an existing Playwright page.
 
     ``execution_id`` remains the **satellite** admit id (archive path only).
     ``stargate_execution_id`` is the Stargate seating id threaded into skill
     delivery attest (payload key ``execution_id``).
+    ``purpose=review`` keeps harvest open until a parseable VERDICT lands
+    (a:37156 skill-induction seal).
     """
     dest = project_url(project_uuid)
     try:
@@ -660,6 +663,7 @@ async def project_ask_on_page(
             min_growth=min_growth,
             min_body=min_body,
             on_harvest=on_harvest,
+            require_review_verdict=(purpose or "").strip().lower() == "review",
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, model_info)
@@ -787,6 +791,7 @@ async def run_project_ask(
     expected_size: ExpectedSize = "auto",
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
+    purpose: str = "ask",
 ) -> ProjectAskResult:
     """Connect CDP, run one sealed ask, disconnect.
 
@@ -812,6 +817,7 @@ async def run_project_ask(
             expected_size=expected_size,
             harvest_source=harvest_source,
             download_output=download_output,
+            purpose=purpose,
         )
     finally:
         await pw.stop()

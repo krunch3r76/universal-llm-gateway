@@ -1428,6 +1428,62 @@ def test_run_cdp_generate_chrome_only_completed_without_proof_keeps_polling(
     assert "substantive" in result.body.lower() or "bind record" in result.body.lower()
 
 
+def test_run_cdp_generate_review_induction_ack_keeps_polling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """a:37156 — purpose=review must not ok=True on skill-induction ack."""
+    induction = (
+        "Three skills loaded. Posture state:\n\n"
+        "Question: not yet pinned — no substantive request in this turn, "
+        "only the load directives.\n\n"
+        "Give me the actual question or task."
+    )
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-review-induction")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-ind", "status": "running"},
+            {
+                "execution_id": "sat-ind",
+                "status": "completed",
+                "body": induction,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+                "completion_phase": "terminal",
+                "archive_uri": "cortex://notes/system/threads/induction.md",
+            },
+            {
+                "execution_id": "sat-ind",
+                "status": "completed",
+                "body": induction + "\n\nVERDICT: WITHHOLD\n",
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+                "completion_phase": "terminal",
+                "archive_uri": "cortex://notes/system/threads/induction.md",
+            },
+        ]
+    )
+    abort_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    def _no_abort(*_args, **_kwargs):
+        abort_calls.append(True)
+        return {"abort_skipped": False}
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _no_abort)
+    result = run_cdp_generate(
+        execution_id="dispatch-review-induction",
+        model_id="cdp/opus-5",
+        prompt_text="review the packet",
+        purpose="review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert abort_calls == []
+    assert "VERDICT: WITHHOLD" in result.body
+
+
 def test_run_cdp_generate_mission_overload_retain_cse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

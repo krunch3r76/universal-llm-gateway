@@ -36,6 +36,7 @@ from collections.abc import Awaitable, Callable
 
 from cdp_ask.structural_quiet import StructuralQuietTracker
 from chat_harvest.chrome import is_chrome_only
+from review_verdict.grammar import has_parseable_verdict
 
 HARVEST_JS = """
 ({ minMsgChars }) => {
@@ -347,13 +348,20 @@ def _complete_enough(
     min_growth: int,
     min_body: int,
     ignore_in_flight: bool = False,
+    require_review_verdict: bool = False,
 ) -> bool:
     """Structural turn complete — ¬ a prose-length gate.
 
     ``min_growth`` / ``min_body`` remain for call-site compat; ignored here.
+    ``require_review_verdict`` (purpose=review): refuse skill-induction /
+    mid-tool prose that lacks a parseable verdict line (a:37156 / a:37034).
     """
     del min_growth, min_body, base_len
     if _badge_only_body(state):
+        return False
+    if require_review_verdict and not has_parseable_verdict(
+        str(state.get("body") or "")
+    ):
         return False
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
@@ -370,6 +378,7 @@ def _cowork_complete_enough(
     min_body: int,
     saw_working: bool,
     ignore_in_flight: bool = False,
+    require_review_verdict: bool = False,
 ) -> bool:
     """URL-guarded Cowork fallback (24864) with positive new-turn guard.
 
@@ -383,10 +392,14 @@ def _cowork_complete_enough(
     # once the turn is idle (friction 25684) — same as chat path.
     if _in_flight(state) and not ignore_in_flight:
         return False
-    del min_body, min_growth
+    del min_body, min_growth, saw_working
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
     if cur_len < 1 or _badge_only_body(state):
+        return False
+    if require_review_verdict and not has_parseable_verdict(
+        str(state.get("body") or "")
+    ):
         return False
 
     grew_n = cur_n > base_n
@@ -410,6 +423,7 @@ async def wait_assistant_reply(
     min_body: int = 400,
     min_msg_chars: int | None = None,
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
+    require_review_verdict: bool = False,
 ) -> dict:
     """Wait until complete(turn) or idle timeout.
 
@@ -419,6 +433,9 @@ async def wait_assistant_reply(
 
     ``on_harvest`` receives each successful sample (held-page only — dual-completion
     ladder consumers must not open a competing CDP connect; friction 25671).
+
+    ``require_review_verdict``: when True (``purpose=review``), structural idle
+    alone is not enough — the harvested body must carry a parseable verdict.
     """
     msg_floor = min_msg_chars if min_msg_chars is not None else 10
     base_len = (before or {}).get("body_len", 0)
@@ -476,6 +493,7 @@ async def wait_assistant_reply(
                 min_growth=min_growth,
                 min_body=min_body,
                 ignore_in_flight=ignore_in_flight,
+                require_review_verdict=require_review_verdict,
             ):
                 if cur_len == last_len:
                     stable += 1
@@ -492,6 +510,7 @@ async def wait_assistant_reply(
                 min_body=min_body,
                 saw_working=saw_working,
                 ignore_in_flight=ignore_in_flight,
+                require_review_verdict=require_review_verdict,
             ):
                 if cur_len == last_len:
                     cowork_stable += 1
@@ -520,6 +539,7 @@ async def wait_assistant_reply(
         base_n=base_n,
         min_growth=min_growth,
         min_body=min_body,
+        require_review_verdict=require_review_verdict,
     ):
         return state
     if _cowork_complete_enough(
@@ -529,6 +549,7 @@ async def wait_assistant_reply(
         min_growth=min_growth,
         min_body=min_body,
         saw_working=saw_working,
+        require_review_verdict=require_review_verdict,
     ):
         return state
     if _fatal_error_banner(state):

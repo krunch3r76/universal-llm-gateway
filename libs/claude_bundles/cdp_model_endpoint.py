@@ -137,6 +137,15 @@ def _is_chrome_only_body(body: str) -> bool:
     return is_chrome_only(body)
 
 
+def _review_lacks_verdict(purpose: str, body: str) -> bool:
+    """True when purpose=review and body has no parseable verdict (a:37156)."""
+    if (purpose or "").strip().lower() != "review":
+        return False
+    from review_verdict.grammar import has_parseable_verdict
+
+    return not has_parseable_verdict(body)
+
+
 def _has_unresolved_artifact_card(snapshot: dict[str, Any]) -> bool:
     """True when harvest observed in-chat artifact cards without resolved body."""
     return bool(snapshot.get("artifact_cards_unresolved"))
@@ -874,6 +883,11 @@ def run_cdp_generate(
 
         if _has_proof(snapshot):
             body = str(snapshot.get("body") or "")
+            # purpose=review: skill-induction / mid-tool prose is not proof
+            # (a:37156 / a:37034). Keep polling like chrome-only completed.
+            if _review_lacks_verdict(purpose, body):
+                sleep(poll_interval_s)
+                continue
             if _proof_rejects_overload(snapshot):
                 abort_info = _abort_then_sweep(
                     sat_id,
@@ -936,7 +950,7 @@ def run_cdp_generate(
 
         if _completed_without_proof(snapshot):
             body = str(snapshot.get("body") or "")
-            if _is_chrome_only_body(body):
+            if _is_chrome_only_body(body) or _review_lacks_verdict(purpose, body):
                 sleep(poll_interval_s)
                 continue
             abort_info = _abort_then_sweep(

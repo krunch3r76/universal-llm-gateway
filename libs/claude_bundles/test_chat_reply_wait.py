@@ -495,6 +495,79 @@ def test_streaming_pause_on_tool_badge_is_not_complete() -> None:
     )
 
 
+def test_review_verdict_gate_rejects_skill_induction_ack() -> None:
+    """a:37156 — purpose=review must not seal on skill-load preamble prose."""
+    induction = (
+        "Three skills loaded. Posture state:\n\n"
+        "Question: not yet pinned — no substantive request in this turn, "
+        "only the load directives.\n\n"
+        "Give me the actual question or task and I'll pin scope and bind one leg."
+    )
+    state = _state(
+        body_len=len(induction),
+        n=1,
+        streaming=False,
+        stop=False,
+        body=induction,
+    )
+    assert (
+        _complete_enough(
+            state,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+            require_review_verdict=True,
+        )
+        is False
+    )
+    with_verdict = {
+        **state,
+        "body": induction + "\n\nVERDICT: WITHHOLD\n",
+        "body_len": len(induction) + len("\n\nVERDICT: WITHHOLD\n"),
+    }
+    assert (
+        _complete_enough(
+            with_verdict,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+            require_review_verdict=True,
+        )
+        is True
+    )
+
+
+def test_review_verdict_gate_rejects_mid_tool_prose() -> None:
+    """a:37034 — mid-review prose without VERDICT is not complete for reviews."""
+    mid = "Next I'm reading the live-tree callees"
+    state = _state(body_len=len(mid), n=1, streaming=False, stop=False, body=mid)
+    assert (
+        _complete_enough(
+            state,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+            require_review_verdict=True,
+        )
+        is False
+    )
+    # Non-review purposes still accept substantive prose without VERDICT.
+    assert (
+        _complete_enough(
+            state,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+            require_review_verdict=False,
+        )
+        is True
+    )
+
+
 def test_cowork_complete_enough_rejects_len_growth_without_n() -> None:
     """AC-S1-c: body grew but n unchanged must not complete."""
     state = {
