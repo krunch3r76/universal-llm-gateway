@@ -433,7 +433,10 @@ def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> b
         return True
     if not prompt:
         return False
-    head = "\n".join(prompt.splitlines()[:_PURPOSE_HEADER_LINES])
+    from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
+
+    _attach, _inline, body = peel_sealed_cdp_skill_prefix(prompt)
+    head = "\n".join(body.splitlines()[:_PURPOSE_HEADER_LINES])
     return _PURPOSE_DOC.search(head) is not None
 
 

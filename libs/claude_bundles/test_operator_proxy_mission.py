@@ -365,6 +365,47 @@ def test_staged_prompt_text_runner_would_load_still_implies_mission(
     assert purpose_implies_mission("freeform", merged)
 
 
+def test_header_on_body_line_40_survives_authority_line_shift(
+    tmp_path, monkeypatch
+) -> None:
+    """Column-0 header on author body line 40 stays a mission after the seal.
+
+    Staging prepends the skills authority line, so the header sits on merged
+    line 41 or later. ``staged.mission`` and ``purpose_implies_mission`` on
+    the loaded prompt.md must agree.
+    """
+    body = ("\n" * 39) + "purpose: operator-proxy\n"
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
+        prompt_text=body,
+        purpose="freeform",
+    )
+    assert staged.staged
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert staged.mission is True
+    assert purpose_implies_mission("freeform", merged) is True
+
+
+def test_inline_class_slug_shift_keeps_body_line_5_header(
+    tmp_path, monkeypatch
+) -> None:
+    """An inline skills block must not push a body-line-5 header out of the window."""
+    body = "line1\nline2\nline3\nline4\npurpose: operator-proxy\n"
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
+        prompt_text=body,
+        purpose="freeform",
+        skills=["investigation-economy"],
+    )
+    assert staged.staged
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert '<skill slug="investigation-economy"' in merged
+    assert staged.mission is True
+    assert purpose_implies_mission("freeform", merged) is True
+
+
 def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(tmp_path, monkeypatch) -> None:
     staged = _stage_under(
         tmp_path,

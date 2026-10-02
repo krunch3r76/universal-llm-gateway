@@ -274,6 +274,10 @@ def stage_cdp_prompt_with_skills(
         SkillDeliveryError,
         prepend_cdp_dispatch_skills,
     )
+    from claude_bundles.operator_proxy_mission import (
+        MISSION_SKILL_SLUGS,
+        purpose_implies_mission,
+    )
     from claude_bundles.sealed_cdp_prefix import ensure_review_reading_charter
 
     reject_cdp_skills_path_sim(skills)
@@ -292,8 +296,6 @@ def stage_cdp_prompt_with_skills(
             _stamp_owned_ephemeral_notice(uri, purpose)
             # Worker re-entry has no prior omit_slash in scope. Recompute from
             # the same purpose plus the already-staged body (read_prompt_text).
-            from claude_bundles.operator_proxy_mission import purpose_implies_mission
-
             return StagedPrompt(
                 prompt_uri=uri,
                 ephemeral_root=root if root.is_dir() else None,
@@ -331,10 +333,6 @@ def stage_cdp_prompt_with_skills(
                     code="pool_blocked",
                 ) from exc
             raise CdpStagingError(str(exc), code="pool_blocked") from exc
-    from claude_bundles.operator_proxy_mission import (
-        MISSION_SKILL_SLUGS,
-        purpose_implies_mission,
-    )
 
     omit_slash = purpose_implies_mission(purpose, body)
     if omit_slash:
@@ -433,7 +431,7 @@ def stage_prompt_uri(
                 prompt_uri=raw,
                 ephemeral_root=None,
                 staged=False,
-                mission=False,
+                mission=mission,
             )
         source = resolve_workspaces_path(raw)
         if source is None:
@@ -451,7 +449,7 @@ def stage_prompt_uri(
             prompt_uri=_cortex_uri(rel),
             ephemeral_root=dest_dir,
             staged=True,
-            mission=False,
+            mission=mission,
         )
 
     raise CdpStagingError(
