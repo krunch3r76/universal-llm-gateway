@@ -139,7 +139,9 @@ async def test_timeout_with_nonzero_body_carries_partial(advance_clock) -> None:
     )
     page = _FakePage(
         [
-            _state(body_len=len(partial), n=1, body=partial, streaming=False, stop=False)
+            _state(
+                body_len=len(partial), n=1, body=partial, streaming=False, stop=False
+            )
             for _ in range(20)
         ]
     )
@@ -643,3 +645,125 @@ def test_is_user_prompt_echo_rejects_you_said_belt() -> None:
     """AC-S1-d: echo belt rejects You said: chrome."""
     assert _is_user_prompt_echo("You said: /reasoning-posture\n")
     assert not _is_user_prompt_echo("Assistant analysis begins here.")
+
+
+def _both_complete(body: str, *, expected: bool) -> None:
+    state = _state(body_len=len(body), n=1, body=body)
+    kwargs = {
+        "base_len": 0,
+        "base_n": 0,
+        "min_growth": 1,
+        "min_body": 1,
+        "require_review_verdict": False,
+    }
+    assert _complete_enough(state, **kwargs) is expected
+    cowork = {**state, "url": "https://claude.ai/cowork/cse_018abc"}
+    assert _cowork_complete_enough(cowork, saw_working=True, **kwargs) is expected
+
+
+def test_badge_shape_does_not_complete() -> None:
+    """Quiet tool-status scrapes are not the reply. Phrase-list and shape."""
+    from chat_harvest.test_chrome import (
+        ARCHIVE_BADGE_PREAMBLE,
+        UPDATED_TASKS_PREAMBLE,
+    )
+
+    for body in (
+        ARCHIVE_BADGE_PREAMBLE,
+        UPDATED_TASKS_PREAMBLE,
+        "Browsed files, edited a note.",
+        "Edited a note\nEdited a note",
+    ):
+        _both_complete(body, expected=False)
+
+
+def test_terse_prose_and_open_fork_still_complete() -> None:
+    """Pronoun prose, Done, specimen 347, and a verdict-less consult complete."""
+    from chat_harvest.test_chrome import OPEN_FORK_CONSULT, SPECIMEN_347_BODY
+
+    for body in (
+        SPECIMEN_347_BODY,
+        "Fixed it, reran tests.",
+        "Done.",
+        OPEN_FORK_CONSULT,
+    ):
+        _both_complete(body, expected=True)
+
+
+@pytest.mark.asyncio
+async def test_badge_then_prose_returns_later_sample(advance_clock) -> None:
+    """A shape-badge sample must not return before the prose sample."""
+    badge = "Browsed files, edited a note."
+    prose = badge + "\n\nFixed the gate and returned the later answer."
+    early = [_state(body_len=len(badge), n=1, body=badge) for _ in range(3)]
+    done = [_state(body_len=len(prose), n=2, body=prose) for _ in range(3)]
+    state = await wait_assistant_reply(
+        _FakePage(early + done),
+        before=_state(body_len=0, n=0),
+        timeout_s=30,
+        poll_ms=500,
+        stable_polls=2,
+    )
+    assert "later answer" in state["body"]
+    assert advance_clock["t"] < 1_030.0
+
+
+@pytest.mark.asyncio
+async def test_static_badge_raises_harvest_incomplete(advance_clock) -> None:
+    """A quiet badge page raises and keeps the scrape (a:37226)."""
+    badge = "Browsed files, edited a note."
+    page = _FakePage([_state(body_len=len(badge), n=1, body=badge) for _ in range(20)])
+    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+        await wait_assistant_reply(
+            page,
+            before=_state(body_len=0, n=0),
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    assert exc.value.body == badge
+    assert advance_clock["t"] <= 1_002.5
+
+
+@pytest.mark.asyncio
+async def test_changing_badge_refreshes_idle_then_quiet_raises(advance_clock) -> None:
+    """Same-length badge rewrites reset the idle budget. A quiet stretch expires."""
+    same = "Browsed files, edited a note."
+    other = "Updated files, edited a note."
+    assert len(same) == len(other)
+    changing = [
+        _state(body_len=len(same), n=1, body=same if i % 2 == 0 else other)
+        for i in range(10)
+    ]
+    quiet_body = changing[-1]["body"]
+    quiet = [_state(body_len=len(quiet_body), n=1, body=quiet_body) for _ in range(12)]
+    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+        await wait_assistant_reply(
+            _FakePage(changing + quiet),
+            before=_state(body_len=0, n=0),
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    assert exc.value.body == quiet_body
+    assert advance_clock["t"] >= 1_004.0
+
+
+@pytest.mark.asyncio
+async def test_timestamp_tick_on_badge_does_not_refresh(advance_clock) -> None:
+    """A trailing timestamp tick is not a scrape change. The idle budget expires."""
+    badge = "Browsed files, edited a note."
+    bodies = [
+        f"{badge}\njust now" if i % 2 == 0 else f"{badge}\n1 minute ago"
+        for i in range(20)
+    ]
+    page = _FakePage([_state(body_len=len(body), n=1, body=body) for body in bodies])
+    with pytest.raises(HarvestIncomplete, match="timed out incomplete"):
+        await wait_assistant_reply(
+            page,
+            before=_state(body_len=0, n=0),
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    assert advance_clock["t"] <= 1_003.0

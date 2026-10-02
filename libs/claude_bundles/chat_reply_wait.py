@@ -35,7 +35,11 @@ import time
 from collections.abc import Awaitable, Callable
 
 from cdp_ask.structural_quiet import StructuralQuietTracker
-from chat_harvest.chrome import is_chrome_only
+from chat_harvest.chrome import (
+    badge_scrape_change_key,
+    is_chrome_only,
+    is_tool_status_body,
+)
 from review_verdict.grammar import has_parseable_verdict
 
 HARVEST_JS = """
@@ -326,7 +330,8 @@ def _badge_only_body(state: dict) -> bool:
     Cowork drops ``data-is-streaming`` between tool calls. That pause is not
     the end of the turn, and it is not the agent-bus proof reply.
     """
-    return is_chrome_only(str(state.get("body") or ""))
+    body = str(state.get("body") or "")
+    return is_chrome_only(body) or is_tool_status_body(body)
 
 
 def _error_banner_message(state: dict, *, on_timeout: bool = False) -> str:
@@ -450,7 +455,9 @@ async def wait_assistant_reply(
 
     ``timeout_s`` is idle wall-time without in-flight signals. While Stop,
     streaming, or tool_pause is observed the idle deadline is refreshed — there
-    is no hard wall ceiling (friction 24666).
+    is no hard wall ceiling (friction 24666). A badge-only scrape refreshes
+    that same deadline when its chrome-narrowed text changes, including while
+    those in-flight flags are false. A static badge page still expires.
 
     ``on_harvest`` receives each successful sample (held-page only — dual-completion
     ladder consumers must not open a competing CDP connect; friction 25671).
@@ -467,6 +474,7 @@ async def wait_assistant_reply(
     saw_working = False
     idle_deadline = time.monotonic() + max(timeout_s, 1)
     structural_quiet = StructuralQuietTracker()
+    prev_badge_key: str | None = None
 
     while True:
         state = await harvest_assistant(page, min_msg_chars=msg_floor)
@@ -495,6 +503,14 @@ async def wait_assistant_reply(
 
         if state.get("task_map_working"):
             saw_working = True
+
+        if _badge_only_body(state):
+            badge_key = badge_scrape_change_key(str(state.get("body") or ""))
+            if prev_badge_key is not None and badge_key != prev_badge_key:
+                idle_deadline = time.monotonic() + max(timeout_s, 1)
+            prev_badge_key = badge_key
+        else:
+            prev_badge_key = None
 
         if effective_in_flight:
             if not tier_b_unlatch:
@@ -546,7 +562,9 @@ async def wait_assistant_reply(
             else:
                 cowork_stable = 0
 
-        if (not effective_in_flight or tier_b_unlatch) and time.monotonic() >= idle_deadline:
+        if (
+            not effective_in_flight or tier_b_unlatch
+        ) and time.monotonic() >= idle_deadline:
             break
         await asyncio.sleep(poll_ms / 1000)
 
