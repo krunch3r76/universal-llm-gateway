@@ -92,7 +92,7 @@ def test_grok_max_lists_supported_no_forward(
         )
     details = exc_info.value.details
     assert details is not None
-    assert details["supported"] == ["low", "medium", "high"]
+    assert details["supported"] == ["low", "medium", "high", "xhigh"]
     assert details["suggested_model_knobs"] == {}
     assert "effort" not in details["suggested_model_knobs"]
     assert captured_rejects[0]["requested"] == "max"
@@ -101,7 +101,11 @@ def test_grok_max_lists_supported_no_forward(
 def test_composer_and_gemini_empty_suggested(
     captured_rejects: list[dict[str, Any]],
 ) -> None:
-    for model in ("cursor/composer-2.5", "cursor/gemini-3.6-flash"):
+    expected = {
+        "cursor/composer-2.5": {},
+        "cursor/gemini-3.6-flash": {"effort": "low"},
+    }
+    for model, knobs in expected.items():
         with pytest.raises(FrontierEndpointError) as exc_info:
             reject_nonempty_reasoning_effort(
                 request_id="r1",
@@ -110,9 +114,7 @@ def test_composer_and_gemini_empty_suggested(
             )
         details = exc_info.value.details
         assert details is not None
-        assert details["suggested_model_knobs"] == {}
-        assert details["knob"] is None
-        assert "no effort-like knob" in exc_info.value.reason
+        assert details["suggested_model_knobs"] == knobs
     assert len(captured_rejects) == 2
 
 

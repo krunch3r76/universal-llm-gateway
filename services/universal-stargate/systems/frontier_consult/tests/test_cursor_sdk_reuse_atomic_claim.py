@@ -66,8 +66,8 @@ class TestAutoConsolidationAtomicClaim:
     ) -> None:
         """Successful atomic claim: claim_and_post called; admit skipped."""
         _patch_generate_deps(monkeypatch)
-        claim = AsyncMock()
-        post_pointer = AsyncMock()
+        claim = AsyncMock(return_value=1)
+        post_pointer = AsyncMock(return_value=1)
         admit = AsyncMock(return_value=True)
         worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
 
@@ -140,8 +140,8 @@ class TestExplicitReuseBypassesGate:
     ) -> None:
         """Explicit reuse bypasses the CAS gate."""
         _patch_generate_deps(monkeypatch)
-        claim = AsyncMock()
-        post_pointer = AsyncMock()
+        claim = AsyncMock(return_value=1)
+        post_pointer = AsyncMock(return_value=1)
         admit = AsyncMock(return_value=True)
         worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
 

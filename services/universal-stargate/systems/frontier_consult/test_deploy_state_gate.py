@@ -72,7 +72,7 @@ def test_plan_source_ref_derives_gate_files(
         closeout=_closeout(),
         cortex=mock_cortex,
     )
-    mock_cortex.entity_get.assert_called_once_with("plan:deploy-gate")
+    mock_cortex.entity_get.assert_called_once_with("plan:deploy-gate", intent="full")
 
 
 def test_unresolvable_source_ref_rejects(mock_cortex: MagicMock) -> None:

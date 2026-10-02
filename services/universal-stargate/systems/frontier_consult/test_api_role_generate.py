@@ -461,7 +461,7 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
     dispatch_payload = {
         "execution_id": "exec-2",
         "status": "running",
-        "capabilities": {"resolved_model": "anthropic/claude-opus-4-6"},
+        "capabilities": {"resolved_model": "anthropic/claude-opus-4-8"},
     }
     mock_profile = type("Profile", (), {"tool_surface": "mcp"})()
 
@@ -497,7 +497,7 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
             response=response,
         )
 
-    assert result["resolved_model"] == "anthropic/claude-opus-4-6"
+    assert result["resolved_model"] == "anthropic/claude-opus-4-8"
 
 
 @pytest.mark.asyncio

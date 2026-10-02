@@ -768,6 +768,8 @@ async def _admit_cdp_session(
     )
     monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
     monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
+    # Unit tests do not run cdp-ask; skip the live-lane external seat gate.
+    monkeypatch.setattr(mod, "refuse_second_external_gate_at_fire", lambda **kw: None)
 
     async def _worker(**kwargs: Any) -> None:
         del kwargs

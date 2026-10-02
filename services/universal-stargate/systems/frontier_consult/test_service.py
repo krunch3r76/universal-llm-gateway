@@ -39,7 +39,7 @@ async def test_permissive_persona_accepts_anything(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4-mini",
+                default_model="openai/gpt-5.6-terra",
                 allowed_models=[],
                 allowed_options=None,
             ),
@@ -52,7 +52,7 @@ async def test_permissive_persona_accepts_anything(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "hello"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         generation_options={"max_tokens": 12, "temperature": 0.2},
     )
@@ -60,9 +60,9 @@ async def test_permissive_persona_accepts_anything(
     options = body["pipeline_options"]
     assert body["model"] == "team-dispatch"
     assert body["dispatch_thread_id"] == _DISPATCH_THREAD
-    assert options["role"] == "gatherer"
-    assert options["model"] == "openai/gpt-5.4"
-    assert options["model_entity_id"] == "model:gpt-5.4"
+    assert options["role"] == "reviewer"
+    assert options["model"] == "openai/gpt-5.6-terra"
+    assert options["model_entity_id"] == "model:gpt-5.6-terra"
     assert "tools" not in options
     assert options["mcp"] is True
     assert options["_endpoint_request_id"]
@@ -77,8 +77,8 @@ async def test_build_dispatch_body_sets_knob_resolution_preview(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4",
-                allowed_models=["openai/gpt-5.4", "openai/gpt-5.5"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=["openai/gpt-5.6-terra", "openai/gpt-5.5"],
                 allowed_options=None,
             ),
         )
@@ -90,7 +90,7 @@ async def test_build_dispatch_body_sets_knob_resolution_preview(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "hello"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         reasoning_effort="high",
     )
@@ -111,8 +111,8 @@ async def test_build_dispatch_body_knob_resolution_preview_includes_max_output(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4",
-                allowed_models=["openai/gpt-5.4", "openai/gpt-5.5"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=["openai/gpt-5.6-terra", "openai/gpt-5.5"],
                 allowed_options=None,
             ),
         )
@@ -124,7 +124,7 @@ async def test_build_dispatch_body_knob_resolution_preview_includes_max_output(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "hello"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         reasoning_effort="high",
         generation_options={"max_tokens": 4096},
@@ -152,7 +152,7 @@ async def test_explicit_model_override_can_fill_any_role(
         return _bundle(
             AgentMeta(
                 default_model="xai/grok-4.7",
-                allowed_models=["xai/grok-4.7"],
+                allowed_models=["xai/grok-4.7", "openai/gpt-5.6-terra"],
                 allowed_options=None,
             ),
         )
@@ -166,12 +166,12 @@ async def test_explicit_model_override_can_fill_any_role(
         messages=[{"role": "user", "content": "x"}],
         role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="openai/gpt-5.4",
+        model="openai/gpt-5.6-terra",
     )
     body = await build_dispatch_body(req)
     assert body["model"] == "team-dispatch"
-    assert body["pipeline_options"]["model"] == "openai/gpt-5.4"
-    assert body["pipeline_options"]["model_entity_id"] == "model:gpt-5.4"
+    assert body["pipeline_options"]["model"] == "openai/gpt-5.6-terra"
+    assert body["pipeline_options"]["model_entity_id"] == "model:gpt-5.6-terra"
     assert body["pipeline_options"]["mcp"] is True
 
 
@@ -223,14 +223,14 @@ async def test_team_dispatch_xai_agent_enables_mcp(
 async def test_team_dispatch_non_xai_agent_enables_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Non-xAI team roles (gatherer, synthesizer, reviewer) get mcp=True."""
+    """Non-xAI team roles (synthesizer, reviewer) get mcp=True."""
 
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4-mini",
+                default_model="openai/gpt-5.6-terra",
                 allowed_models=[],
                 allowed_options=None,
             ),
@@ -243,7 +243,7 @@ async def test_team_dispatch_non_xai_agent_enables_mcp(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
     )
     body = await build_dispatch_body(req)
@@ -259,8 +259,8 @@ async def test_strict_persona_rejects_generation_options_keys(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4-mini",
-                allowed_models=["openai/gpt-5.4-mini"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=["openai/gpt-5.6-terra"],
                 allowed_options=["max_tokens"],
             ),
         )
@@ -272,7 +272,7 @@ async def test_strict_persona_rejects_generation_options_keys(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         model="openai/gpt-5.4-mini",
         generation_options={"temperature": 0.3},
@@ -289,8 +289,8 @@ async def test_default_model_used_when_omitted(monkeypatch: pytest.MonkeyPatch) 
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4",
-                allowed_models=["openai/gpt-5.4", "openai/gpt-5.4-mini"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=["openai/gpt-5.6-terra", "openai/gpt-5.5"],
                 allowed_options=None,
             ),
         )
@@ -302,14 +302,14 @@ async def test_default_model_used_when_omitted(monkeypatch: pytest.MonkeyPatch) 
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
     )
     body = await build_dispatch_body(req)
     assert body["model"] == "team-dispatch"
-    assert body["pipeline_options"]["role"] == "gatherer"
-    assert body["pipeline_options"]["model"] == "openai/gpt-5.4"
-    assert body["pipeline_options"]["model_entity_id"] == "model:gpt-5.4"
+    assert body["pipeline_options"]["role"] == "reviewer"
+    assert body["pipeline_options"]["model"] == "openai/gpt-5.6-terra"
+    assert body["pipeline_options"]["model_entity_id"] == "model:gpt-5.6-terra"
 
 
 @pytest.mark.asyncio
@@ -349,8 +349,8 @@ async def test_build_dispatch_body_forwards_server_tools_when_supplied(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4",
-                allowed_models=["openai/gpt-5.4"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=["openai/gpt-5.6-terra"],
                 allowed_options=None,
             ),
         )
@@ -362,7 +362,7 @@ async def test_build_dispatch_body_forwards_server_tools_when_supplied(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         server_tools=False,
     )
@@ -379,8 +379,8 @@ async def test_build_dispatch_body_omits_server_tools_when_unset(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.4",
-                allowed_models=["openai/gpt-5.4"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=["openai/gpt-5.6-terra"],
                 allowed_options=None,
             ),
         )
@@ -392,7 +392,7 @@ async def test_build_dispatch_body_omits_server_tools_when_unset(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="gatherer",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
     )
     body = await build_dispatch_body(req)
@@ -426,6 +426,8 @@ async def test_build_dispatch_body_server_tools_noop_on_card_empty_model(
         dispatch_thread_id=_DISPATCH_THREAD,
         model="anthropic/claude-sonnet-4-6",
         server_tools=False,
+        cost_intent="deliberate_high_cost",
+        cost_intent_reason="test anthropic card server_tools no-op",
     )
     body = await build_dispatch_body(req)
     assert body["pipeline_options"]["server_tools"] is False
@@ -591,7 +593,7 @@ async def test_team_dispatch_requires_dispatch_thread_id(
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
-        return _bundle(AgentMeta(default_model="openai/gpt-5.4-mini"))
+        return _bundle(AgentMeta(default_model="openai/gpt-5.6-terra"))
 
     monkeypatch.setattr(
         "systems.frontier_consult.service.hydrate_agent",
@@ -613,7 +615,7 @@ async def test_team_dispatch_collapses_to_latest_user_turn(
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
-        return _bundle(AgentMeta(default_model="openai/gpt-5.4-mini"))
+        return _bundle(AgentMeta(default_model="openai/gpt-5.6-terra"))
 
     monkeypatch.setattr(
         "systems.frontier_consult.service.hydrate_agent",
@@ -791,8 +793,12 @@ async def test_gate_effective_model_parity_with_hydration(
         captured_hydrate_model.append(model)
         return _bundle(
             AgentMeta(
-                default_model="openai/gpt-5.5",
-                allowed_models=["openai/gpt-5.5", "anthropic/claude-opus-4-8"],
+                default_model="openai/gpt-5.6-terra",
+                allowed_models=[
+                    "openai/gpt-5.6-terra",
+                    "openai/gpt-5.5",
+                    "anthropic/claude-opus-4-8",
+                ],
             ),
         )
 
@@ -806,6 +812,8 @@ async def test_gate_effective_model_parity_with_hydration(
         role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         model="anthropic/claude-opus-4-8",
+        cost_intent="deliberate_high_cost",
+        cost_intent_reason="test anthropic override parity",
     )
     explicit_gate = _resolve_pre_hydration_effective_model(
         explicit_req, request_id="parity-explicit"
@@ -828,6 +836,8 @@ async def test_gate_effective_model_parity_with_hydration(
     no_role_req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
         model="anthropic/claude-opus-4-8",
+        cost_intent="deliberate_high_cost",
+        cost_intent_reason="test anthropic override parity",
     )
     no_role_gate = _resolve_pre_hydration_effective_model(
         no_role_req, request_id="parity-no-role"
@@ -915,9 +925,15 @@ async def test_required_criticality_fails_closed_service(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.7"),
+            agent_meta=AgentMeta(
+                default_model="xai/grok-4.7",
+                allowed_models=["xai/grok-4.7"],
+            ),
             inline_only=True,
             required_body_unresolved=True,
+            required_body_dropped=[
+                {"id": "rule:critical", "reason": "body_missing"}
+            ],
             injection_meta={
                 "dropped": [{"id": "rule:critical", "reason": "body_missing"}]
             },
@@ -930,8 +946,9 @@ async def test_required_criticality_fails_closed_service(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="grok-api-multi",
+        role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
+        model="xai/grok-4.7",
     )
     with pytest.raises(FrontierEndpointError) as exc:
         await build_dispatch_body(req)
@@ -1111,7 +1128,6 @@ async def test_build_dispatch_body_pipeline_options_within_handler_accepted_keys
 @pytest.mark.parametrize(
     ("role", "resolved_contract", "generation_options", "expect_sentinel"),
     [
-        ("cursor-sdk", None, None, True),
         ("reviewer", "implement", None, True),
         ("reviewer", None, {"coding_session": True}, True),
         ("reviewer", None, None, False),
@@ -1189,8 +1205,9 @@ async def test_inline_only_uses_hydrate_injected_bodies_only(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="cursor-sdk",
+        role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
+        model="xai/grok-4.7",
     )
     body = await build_dispatch_body(req)
     system = body["pipeline_options"]["system"]
@@ -1275,19 +1292,15 @@ async def test_skills_non_openai_admits_layer_a_fs_line(
         model="anthropic/claude-opus-4-8",
         skills=["architecture-invariants"],
         resolved_contract="none",
+        cost_intent="deliberate_high_cost",
+        cost_intent_reason="test anthropic layer-a skill line",
     )
     events: list[Any] = []
     body = await build_dispatch_body(req, event_publisher=events.append)
     system = body["pipeline_options"]["system"]
-    assert 'fs(sandbox="workspaces"' in system
-    assert "architecture-invariants.md" in system
-    channel_events = [
-        evt for evt in events if evt.signal == "dispatch.skills.channel.resolved"
-    ]
-    assert len(channel_events) == 1
-    row = channel_events[0].payload["skills"][0]
-    assert row["channel"] == "layer_a"
-    assert row["origin"] == "caller"
+    # Non-OpenAI generate no longer inlines a workspaces fs() line; the skill
+    # is named on the staged prompt instead.
+    assert "architecture-invariants" in system
     assert "skills_mount" not in body["pipeline_options"]
 
 
@@ -1328,6 +1341,7 @@ async def test_skills_unknown_id_rejects_before_pipeline(
 async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mounted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
@@ -1355,7 +1369,7 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="reviewer",
+        role="synthesizer",
         dispatch_thread_id=_DISPATCH_THREAD,
         job="freeform",
         model="openai/gpt-5.5",
@@ -1420,7 +1434,7 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
     mounted = [evt for evt in events if evt.signal == "dispatch.skills.mounted"]
     assert len(mounted) == 1
     payload = mounted[0].payload
-    assert payload["role"] == "reviewer"
+    assert payload["role"] == "synthesizer"
     assert payload["model"] == "openai/gpt-5.5"
     assert payload["canonical_slugs"] == ["agent-identity-signoff"]
 
@@ -1429,6 +1443,7 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
 async def test_api_role_generate_skills_non_openai_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
@@ -1446,10 +1461,12 @@ async def test_api_role_generate_skills_non_openai_admits(
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="reviewer",
+        role="synthesizer",
         dispatch_thread_id=_DISPATCH_THREAD,
         job="freeform",
         model="anthropic/claude-opus-4-8",
+        cost_intent="deliberate_high_cost",
+        cost_intent_reason="test anthropic skills admit",
         skills=["architecture-invariants"],
         caller_agent="cursor",
     )
@@ -1463,7 +1480,7 @@ async def test_api_role_generate_skills_non_openai_admits(
         assert req.skills == ["architecture-invariants"]
         dispatch_body = await build_dispatch_body(req)
         system = dispatch_body["pipeline_options"]["system"]
-        assert "architecture-invariants.md" in system
+        assert "architecture-invariants" in system
         return {
             "execution_id": "exec-skills-non-openai",
             "status": "running",

@@ -108,8 +108,8 @@ async def test_auto_consolidation_uses_atomic_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_generate_deps(monkeypatch)
-    claim = AsyncMock()
-    post_pointer = AsyncMock()
+    claim = AsyncMock(return_value=1)
+    post_pointer = AsyncMock(return_value=1)
     create_thread = AsyncMock(return_value="2701")
     admit = AsyncMock(return_value=True)
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
@@ -145,8 +145,8 @@ async def test_explicit_reuse_bypasses_atomic_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_generate_deps(monkeypatch)
-    claim = AsyncMock()
-    post_pointer = AsyncMock()
+    claim = AsyncMock(return_value=1)
+    post_pointer = AsyncMock(return_value=1)
     admit = AsyncMock(return_value=True)
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
 
