@@ -53,7 +53,10 @@ def lane_seat_holder(
     *,
     purposes: frozenset[str] = OPERATOR_PURPOSES,
 ) -> dict[str, Any]:
-    """Fold ``seat_rows`` into one live operator identity for *lane*."""
+    """Fold ``seat_rows`` into one live operator identity for *lane*.
+
+    A row matches ``seat_lane`` when set, otherwise ``parent_thread``.
+    """
     lane_key = (lane or "").strip()
     observed_at = str(snap.get("observed_at") or "").strip() or None
     seat_rows = snap.get("seat_rows")
@@ -74,7 +77,10 @@ def lane_seat_holder(
         purpose = str(row.get("purpose") or "").strip().lower()
         if purpose not in purposes:
             continue
-        if str(row.get("parent_thread") or "").strip() != lane_key:
+        row_lane = str(row.get("seat_lane") or "").strip()
+        if not row_lane:
+            row_lane = str(row.get("parent_thread") or "").strip()
+        if row_lane != lane_key:
             continue
         reg_id = str(row.get("registration_id") or "").strip()
         if not reg_id:

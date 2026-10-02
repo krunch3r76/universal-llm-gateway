@@ -472,6 +472,37 @@ def test_absent_seat_rows_hop_still_admits() -> None:
     )
 
 
+def test_lane_seat_holder_prefers_seat_lane_over_parent_thread() -> None:
+    seat_rows = [
+        {
+            "registration_id": "reg-axis",
+            "seat_lane": "6655",
+            "parent_thread": "9999",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 10.0,
+        }
+    ]
+    held = lane_seat_holder(_snap([], seat_rows=seat_rows), "6655")
+    assert held["state"] == "held"
+    assert held["registration_id"] == "reg-axis"
+    vacant = lane_seat_holder(_snap([], seat_rows=seat_rows), "9999")
+    assert vacant["state"] == "vacant"
+
+
+def test_lane_seat_holder_falls_back_to_parent_thread() -> None:
+    seat_rows = [
+        {
+            "registration_id": "reg-parent",
+            "parent_thread": "6655",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 10.0,
+        }
+    ]
+    holder = lane_seat_holder(_snap([], seat_rows=seat_rows), "6655")
+    assert holder["state"] == "held"
+    assert holder["registration_id"] == "reg-parent"
+
+
 def test_registry_unavailable_refuses_non_hop() -> None:
     snap = _snap([], seat_rows=[])
     snap["registry_availability"] = "unavailable"
@@ -504,3 +535,47 @@ def test_lane_seat_holder_conflict_picks_max_bound_at() -> None:
     assert holder["state"] == "conflict"
     assert holder["registration_id"] == "reg-new"
     assert holder["candidates"] == ["reg-old", "reg-new"]
+
+
+def test_submit_503_when_load_active_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Registry read failure on the producer must fail-closed a non-hop submit."""
+    from fastapi.testclient import TestClient
+
+    from cdp_ask.app import create_app
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("CDP_ASK_TREE_STATE_REFRESH", "0")
+    monkeypatch.setattr("cdp_ask.app.verify_harvest_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+
+    fail_registry = {"armed": False}
+
+    def _load_active() -> dict:
+        if fail_registry["armed"]:
+            raise OSError("registry unreadable")
+        return {}
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        _load_active,
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        fail_registry["armed"] = True
+        resp = client.post(
+            "/v1/project-ask/executions",
+            json={
+                "purpose": "operator-proxy",
+                "parent_thread": "6655",
+                "mission_kind": "root",
+                "prompt_text": "probe",
+            },
+        )
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["code"] == "seat_unavailable"
