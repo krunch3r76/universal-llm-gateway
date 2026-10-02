@@ -160,7 +160,8 @@ async def test_spawn_child_carries_auto_review_child() -> None:
 
     dispatch.assert_awaited_once()
     child_body = dispatch.await_args.args[0]
-    assert child_body.op == "to_thread"
-    assert child_body.auto_review_child is True
-    assert child_body.thread == "thread:1805"
+    assert child_body.op == "generate"
+    assert child_body.seat == "cursor-sdk"
+    assert child_body.job == "check-review"
+    assert child_body.auto_review_child is False
     assert result["execution_id"] == "child-exec"

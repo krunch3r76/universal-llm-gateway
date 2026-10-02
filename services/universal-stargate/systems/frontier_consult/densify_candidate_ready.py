@@ -23,8 +23,6 @@ from .material_decision_gate import material_decision_closeout_flags
 
 EventPublisher = Callable[[Any], None]
 
-_DEFAULT_REVIEWER_ROLE = "reviewer"
-
 
 def _default_reviewer_model() -> str:
     from implement_admission.check_review_substrate import (
@@ -150,27 +148,6 @@ def build_reviewer_prompt(
     )
 
 
-class _PromptOverride:
-    def __init__(self, text: str) -> None:
-        self._text = text
-        self._original: Any = None
-
-    def __enter__(self) -> None:
-        from . import dispatch_thread_context
-
-        self._original = dispatch_thread_context.read_latest_dispatch_thread_body
-
-        async def _stub(**kwargs: Any) -> str:
-            return self._text
-
-        dispatch_thread_context.read_latest_dispatch_thread_body = _stub
-
-    def __exit__(self, *args: object) -> None:
-        from . import dispatch_thread_context
-
-        dispatch_thread_context.read_latest_dispatch_thread_body = self._original
-
-
 async def spawn_densify_reviewer_child(
     *,
     request_id: str,
@@ -181,41 +158,23 @@ async def spawn_densify_reviewer_child(
     """Spawn one cross-family reviewer on check/review standing default substrate."""
     from model_id import ModelId
 
-    from .route import (
-        TeamDispatchGenerateBody,
-        TeamDispatchToThreadBody,
-        team_dispatch,
-    )
+    from .route import TeamDispatchGenerateBody, team_dispatch
 
     reviewer_model = _default_reviewer_model()
-    if ModelId.parse(reviewer_model).backend_type == "cursor_sdk":
-        child_body: TeamDispatchGenerateBody | TeamDispatchToThreadBody = (
-            TeamDispatchGenerateBody(
-                op="generate",
-                seat="cursor-sdk",
-                dispatch_thread_id=parent_dispatch_thread_id,
-                model=reviewer_model,
-                job="freeform",
-                prompt=reviewer_prompt,
-                auto_review_child=False,
-                spawn_review_provenance="generate_review_child",
-                lane="A",
-            )
-        )
-        result = await team_dispatch(child_body, response)
-    else:
-        child_body = TeamDispatchToThreadBody(
-            op="to_thread",
-            role=_DEFAULT_REVIEWER_ROLE,
-            dispatch_thread_id=parent_dispatch_thread_id,
-            thread=parent_dispatch_thread_id,
-            subject=f"densify cross-family review — {request_id[:8]}",
-            job="freeform",
-            model=reviewer_model,
-            auto_review_child=True,
-        )
-        with _PromptOverride(reviewer_prompt):
-            result = await team_dispatch(child_body, response)
+    if ModelId.parse(reviewer_model).backend_type != "cursor_sdk":
+        return {}
+    child_body = TeamDispatchGenerateBody(
+        op="generate",
+        seat="cursor-sdk",
+        dispatch_thread_id=parent_dispatch_thread_id,
+        model=reviewer_model,
+        job="check-review",
+        prompt=reviewer_prompt,
+        auto_review_child=False,
+        spawn_review_provenance="generate_review_child",
+        lane="A",
+    )
+    result = await team_dispatch(child_body, response)
     if isinstance(result, JSONResponse):
         return {"error": "reviewer_spawn_failed"}
     return result if isinstance(result, dict) else {}

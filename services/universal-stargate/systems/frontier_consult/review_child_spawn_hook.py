@@ -38,8 +38,6 @@ logger = get_logger(__name__)
 _OPENAI_EXECUTOR_ALTERNATE = "cursor/grok-4.7"
 _GENERATE_OP = "generate"
 _CURSOR_SDK_ROLE = "cursor-sdk"
-_REVIEWER_ROLE = "reviewer"
-_TO_THREAD_OP = "to_thread"
 _SPAWN_PROVENANCE = "generate_review_child"
 
 CONTEXT_MISS_MAX_ATTEMPTS = 8
@@ -265,61 +263,40 @@ async def _dispatch_review_child(
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
 ) -> dict[str, Any]:
-    """Admit one review child on the substrate matching ``reviewer.model``.
+    """Admit one review child when ``reviewer.model`` is cursor_sdk.
 
-    ``cursor/*`` → ``op=generate`` + ``seat=cursor-sdk`` (house preference).
-    Cloud API models → ``op=to_thread`` + ``role=reviewer`` (existing path).
+    Non-cursor backends do not spawn.
     """
     from model_id import ModelId
 
-    from .route import TeamDispatchGenerateBody, TeamDispatchToThreadBody, team_dispatch
+    from .route import TeamDispatchGenerateBody, team_dispatch
 
-    use_cursor_sdk = ModelId.parse(reviewer.model).backend_type == "cursor_sdk"
-    if use_cursor_sdk:
-        if prompt_turn_number is None:
-            logger.warning(
-                "review_child spawn fail-closed: missing frozen_turn pin "
-                "thread=%s",
-                delivery_thread,
-            )
-            return {}
-        _ = prompt_bind_mode
-        child_body: TeamDispatchGenerateBody | TeamDispatchToThreadBody = (
-            TeamDispatchGenerateBody(
-                op=_GENERATE_OP,
-                seat=_CURSOR_SDK_ROLE,
-                dispatch_thread_id=delivery_thread,
-                model=reviewer.model,
-                job="freeform",
-                prompt=prompt,
-                # Child must not cascade another review-child spawn.
-                auto_review_child=False,
-                spawn_review_provenance=_SPAWN_PROVENANCE,
-                prompt_turn_number=prompt_turn_number,
-                prompt_bind_mode="frozen_turn",
-                lane="A",
-            )
+    if ModelId.parse(reviewer.model).backend_type != "cursor_sdk":
+        return {}
+    if prompt_turn_number is None:
+        logger.warning(
+            "review_child spawn fail-closed: missing frozen_turn pin "
+            "thread=%s",
+            delivery_thread,
         )
-        result = await team_dispatch(child_body, Response())
-        child_op, child_role = _GENERATE_OP, _CURSOR_SDK_ROLE
-    else:
-        child_body = TeamDispatchToThreadBody(
-            op=_TO_THREAD_OP,
-            role=_REVIEWER_ROLE,
-            dispatch_thread_id=delivery_thread,
-            thread=delivery_thread,
-            subject=f"generate independent review — {request_id[:8]}",
-            job="freeform",
-            model=reviewer.model,
-            auto_review_child=True,
-            read_only=True,
-            spawn_review_provenance=_SPAWN_PROVENANCE,
-        )
-        from .densify_candidate_ready import _PromptOverride
-
-        with _PromptOverride(prompt):
-            result = await team_dispatch(child_body, Response())
-        child_op, child_role = _TO_THREAD_OP, _REVIEWER_ROLE
+        return {}
+    _ = prompt_bind_mode
+    child_body = TeamDispatchGenerateBody(
+        op=_GENERATE_OP,
+        seat=_CURSOR_SDK_ROLE,
+        dispatch_thread_id=delivery_thread,
+        model=reviewer.model,
+        job="check-review",
+        prompt=prompt,
+        # Child must not cascade another review-child spawn.
+        auto_review_child=False,
+        spawn_review_provenance=_SPAWN_PROVENANCE,
+        prompt_turn_number=prompt_turn_number,
+        prompt_bind_mode="frozen_turn",
+        lane="A",
+    )
+    result = await team_dispatch(child_body, Response())
+    child_op, child_role = _GENERATE_OP, _CURSOR_SDK_ROLE
 
     if not isinstance(result, dict):
         return {}
