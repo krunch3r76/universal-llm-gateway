@@ -106,6 +106,24 @@ def test_fire_spawn_refuses_unset_model_without_posting() -> None:
     assert posted == []
 
 
+def test_fire_spawn_holds_unadmitted_successor_job() -> None:
+    posted: list[dict] = []
+    result = fire_spawn(
+        "10479",
+        {
+            "successor_contract": "conductor",
+            "successor_model": "cursor/grok-4.7",
+            "max_hop_minutes": 60,
+        },
+        {},
+        leftover={"leftover": "sit", "reason": "sit_no_todo"},
+        submit=lambda body: posted.append(body) or ({}, 200),
+    )
+    assert result["refused"] == "successor_job_unadmitted"
+    assert result.get("quiet_refusal") is True
+    assert posted == []
+
+
 def test_predicate_refuses_live_seat_lock() -> None:
     lock = {"holder": "sdk:live", "expires_at": "2099-01-01T00:00:00Z"}
     ev = evaluate_spawn_predicate(
@@ -244,8 +262,9 @@ def test_dispatch_body_message_not_packet() -> None:
         },
     )
     assert body["op"] == "generate"
-    assert body["contract"] == "none"
-    assert body["contract"] not in {"implement", "pure-mechanical"}
+    assert body["job"] == "freeform"
+    assert "contract" not in body
+    assert "_refused" not in body
     assert "packet_path" not in body
     assert "message" in body
     message = body["message"]
@@ -1127,19 +1146,22 @@ def test_dispatch_body_passes_resolved_seat_into_message() -> None:
         },
     )
     assert body["seat"] == "cdp"
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
+    assert body["_refused"] == "successor_job_unadmitted"
     assert "seat cdp" in body["message"]
     assert "— contract: conductor." in body["message"]
     assert "runbook:bus-consult-watcher" not in body["message"]
 
 
-def test_dispatch_body_contract_defaults_none_when_absent() -> None:
-    """AC1.2 — absent successor_contract stays none on the wire."""
+def test_dispatch_body_job_freeform_when_successor_contract_absent() -> None:
+    """AC1.2 — absent successor_contract projects to freeform on the wire."""
     body = build_dispatch_body(
         "10479",
         {"successor_model": "cursor/claude-fable-5-1", "max_hop_minutes": 60},
     )
-    assert body["contract"] == "none"
+    assert body["job"] == "freeform"
+    assert "contract" not in body
+    assert "_refused" not in body
 
 
 def test_dispatch_body_grok_successor_pins_high_non_fast() -> None:
@@ -1190,7 +1212,8 @@ def test_dispatch_body_contract_conductor_from_policy() -> None:
             "max_hop_minutes": 60,
         },
     )
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
+    assert body["_refused"] == "successor_job_unadmitted"
 
 
 def test_abandoned_lane_does_not_wake() -> None:
@@ -1496,7 +1519,7 @@ def test_tick_spawn_writes_fired_latch_on_low_success(monkeypatch) -> None:  # n
     )
     assert out["action"] == "spawned"
     assert "a:35997" in (state.get("row_class_fired") or {})
-    assert posted[0]["contract"] == "implement"
+    assert posted[0]["job"] == "implement"
     assert "_friction_id" not in posted[0]
     assert (out.get("fire") or {}).get("body", {}).get("_friction_id") == "a:35997"
 
