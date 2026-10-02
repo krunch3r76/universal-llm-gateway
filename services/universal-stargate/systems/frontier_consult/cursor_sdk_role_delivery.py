@@ -1,4 +1,11 @@
-"""Cursor-sdk → role-labeled bus turn bridge for check/review dispatches (F2)."""
+"""Bridge a cursor-sdk check/review closeout into a role-labeled agent-bus turn.
+
+GIW success closeout (``routes/cursor_sdk.py``) calls
+``should_bridge_cursor_check_review`` after the cursor-sdk reply posts.
+Eligible contracts are historical ``none`` and job-vocab ``check-review``,
+and only models on the cursor check/review allowlist. The role post fails
+closed on a non-conforming closeout and does not replace the cursor-sdk reply.
+"""
 
 from __future__ import annotations
 
@@ -63,9 +70,22 @@ def _conforming_check_closeout(body: str) -> tuple[str, list[str]] | None:
 
 
 def build_role_labeled_turn_body(findings: str, file_paths: list[str]) -> str:
+    """Assemble the role-labeled turn body the check gate can parse.
+
+    ``findings`` is the closeout prose. ``file_paths`` are appended under a
+    ``FILE_EVIDENCE_PATHS:`` header, one path per line. Returns the combined
+    text. Does not post or validate conformance.
+    """
     lines = [findings.rstrip(), "", "FILE_EVIDENCE_PATHS:"]
     lines.extend(f"- {path}" for path in file_paths)
     return "\n".join(lines)
+
+
+# ``none`` is the pre-split freeform token. Job vocabulary now stores
+# ``check-review`` as its own handoff contract; ``sdk_contract_or_missing``
+# returns that token unchanged. ``code-review`` and ``delivery-review`` stay
+# off this bridge (empty ``delivery_role``; not this predicate).
+_ROLE_BRIDGE_CONTRACTS = frozenset({"none", "check-review"})
 
 
 def should_bridge_cursor_check_review(
@@ -73,7 +93,17 @@ def should_bridge_cursor_check_review(
     contract: str,
     resolved_model: str,
 ) -> bool:
-    return contract == "none" and is_cursor_check_review_model(resolved_model)
+    """Whether this closeout should post a second, role-labeled bus turn.
+
+    ``contract`` is the stored handoff token (already lowercased by
+    ``sdk_contract_or_missing`` on the GIW path). ``resolved_model`` must be
+    in the cursor check/review allowlist. Returns False for every other job,
+    including ``implement``, ``code-review``, and ``delivery-review``. No I/O.
+    """
+    token = (contract or "").strip().lower()
+    return token in _ROLE_BRIDGE_CONTRACTS and is_cursor_check_review_model(
+        resolved_model
+    )
 
 
 async def post_role_labeled_check_turn(
@@ -126,4 +156,10 @@ async def post_role_labeled_check_turn(
 
 
 def resolve_delivery_from_role(resolved_model: str) -> str | None:
+    """Map an allowlisted cursor model to the bus author role for the bridge.
+
+    ``resolved_model`` is the admit-time model id. Returns ``reviewer`` or
+    ``skeptic`` when ``cursor_delivery_from_role`` recognizes the bare id,
+    otherwise None so the closeout skips the role post. No I/O.
+    """
     return cursor_delivery_from_role(resolved_model)
