@@ -25,7 +25,6 @@ from .admission import (
     FrontierEndpointError,
     enforce_team_dispatch_generate_admit,
     resolve_cursor_sdk_handoff_seat,
-    resolve_handoff_contract,
     resolve_handoff_seat,
     resolve_handoff_target,
     resolve_web_handoff_seat,
@@ -556,10 +555,14 @@ def test_h1d_web_implement_target_resolves() -> None:
     assert platform == "web"
 
 
-def test_h1d_web_implement_defaults_implement() -> None:
+def test_h1d_web_implement_role_yields_absent_contract(tmp_path: Path) -> None:
     """role=web-implement gives no job. Spec step 3 item 16: absent in, absent out."""
-    contract, source = resolve_handoff_contract(
-        role="web-implement", request_id="req-wi-c"
+    contract, source = derive_contract(
+        source_ref=None,
+        packet_path=None,
+        role="web-implement",
+        cortex=_V2LaneCortex(dispatch_lane="cursor-implement"),
+        workspaces_root=tmp_path,
     )
     assert contract is None
     assert contract not in {"none", "answer"}
@@ -859,7 +862,7 @@ def _capturing_bus_transport(
     return httpx.MockTransport(handler)
 
 
-def test_hc1_web_consult_no_contract_defaults_consult(
+def test_hc1_web_consult_omitted_job_ambiguous(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -945,27 +948,41 @@ def test_hc2b_model_field_rejected(
     assert resp.status_code == 422
 
 
-def test_hc3_cursor_implement_defaults_implement() -> None:
+def test_hc3_cursor_implement_role_yields_absent_contract(tmp_path: Path) -> None:
     """role=cursor-implement gives no job. Spec step 3 item 16: absent."""
-    contract, source = resolve_handoff_contract(
-        role="cursor-implement", request_id="req-c3"
+    contract, source = derive_contract(
+        source_ref=None,
+        packet_path=None,
+        role="cursor-implement",
+        cortex=_V2LaneCortex(dispatch_lane="cursor-implement"),
+        workspaces_root=tmp_path,
     )
     assert contract is None
     assert contract not in {"none", "answer"}
     assert source == "absent"
 
 
-def test_resolve_handoff_contract_none_is_absent() -> None:
-    """Spec verification near line 472: resolve_handoff_contract(None) is not none or answer."""
-    result = resolve_handoff_contract(None)
-    assert result[0] not in {"none", "answer"}
-    assert result == (None, "absent")
+def test_derive_contract_absent_without_signals(tmp_path: Path) -> None:
+    """Spec step 3 item 16: derive_contract with no signals is absent, not none or answer."""
+    contract, source = derive_contract(
+        source_ref=None,
+        packet_path=None,
+        role=None,
+        cortex=_V2LaneCortex(dispatch_lane="web-spec"),
+        workspaces_root=tmp_path,
+    )
+    assert contract not in {"none", "answer"}
+    assert (contract, source) == (None, "absent")
 
 
-def test_hc4b_web_consult_consult() -> None:
+def test_hc4b_web_consult_role_yields_absent_contract(tmp_path: Path) -> None:
     """role=web-consult does not lock confer. Spec step 3 item 16: absent."""
-    contract, source = resolve_handoff_contract(
-        role="web-consult", request_id="req-c4b"
+    contract, source = derive_contract(
+        source_ref=None,
+        packet_path=None,
+        role="web-consult",
+        cortex=_V2LaneCortex(dispatch_lane="web-spec"),
+        workspaces_root=tmp_path,
     )
     assert contract is None
     assert contract not in {"none", "answer", "confer"}
@@ -2650,6 +2667,35 @@ def test_d4_consult_packet_no_acceptance_admits_default(
     body = resp.json()
     assert body["handoff_contract"] is None
     assert body["handoff_contract_source"] == "absent"
+
+
+def test_d4_cursor_implement_packet_no_acceptance_admits_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DX_REL, _CONSULT_ONLY_PACKET)
+    captured: dict[str, Any] = {}
+    _patch_bus(monkeypatch, _capturing_bus_transport(captured, thread_id="bus-dx-ci"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "packet_path": _DX_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["handoff_contract"] is None
+    assert body["handoff_contract_source"] == "absent"
+    tags = captured["payload"].get("tags") or []
+    assert not any(str(tag).startswith("contract:") for tag in tags)
 
 
 def test_d2_packet_path_prefix_coercion_route(

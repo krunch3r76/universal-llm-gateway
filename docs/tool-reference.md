@@ -187,8 +187,9 @@ Creates an agent-bus thread (e.g. `web-consult` / `web-implement` → `web-anthr
 and returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract,
 handoff_contract_source, push_reminder, result_handle, handoff_status,
 poll_hint}` synchronously — no model is dispatched and no `execution_id` is minted.
-(`resolved_handoff_seat` aliases `to_agent`; `handoff_contract_source` is always
-`"role_default"`.)
+(`resolved_handoff_seat` aliases `to_agent`; `handoff_contract_source` is one of
+`explicit_param`, `source_ref_dispatch_lane`, `packet_frontmatter`, or `absent` —
+a roster role does not supply a default job.)
 `result_handle.kind` is `"agent_bus_thread"` (authoritative for retrieval — use
 `agent_bus`, not `pipeline(op="result")`). Initial `handoff_status` is
 `awaiting_first_reply`. `poll_hint` carries `tool` (`"wait"`), `arguments` (object,

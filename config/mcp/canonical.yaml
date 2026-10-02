@@ -4763,7 +4763,7 @@ tools:
     \    ∧ ¬execution_id.\nAt least one of packet_path | source_ref; source_ref triggers normalize→materialize
     and the\nconfirmed-decision gate (source_ref path only). Stargate owns resolution — relay
     pass-through only.\nHandoffSeat = web-anthropic | cursor. Contract derived server-side
-    (source_ref dispatch_lane →\npacket front-matter contract: → role default_contract → consult).\n\
+    (explicit job → source_ref dispatch_lane →\npacket front-matter contract: → absent when job omitted).\n\
     The {platform}-{contract} shorthands (web-consult, web-implement, cursor-consult, cursor-implement)
     remain accepted and encode (seat, contract).\nhandoff seat-map: web-consult, web-implement
     → web-anthropic; cursor-consult, cursor-implement → cursor.\nOperator-only overrides (hidden

@@ -2455,7 +2455,7 @@ async def _run_sdk_dispatch_gated(
     # request path (caller gets 200/202 immediately; no Stargate read-timeout
     # 599 on slow dirty-checkout baselines).
     # cursor-auto maps operator implement → handoff_contract pure-mechanical
-    # (wire_map.resolve_handoff_contract); both need admit_head for lane git_refs.
+    # (wire_map.derive_contract); both need admit_head for lane git_refs.
     if ctx.handoff_contract in (
         "implement",
         "pure-mechanical",

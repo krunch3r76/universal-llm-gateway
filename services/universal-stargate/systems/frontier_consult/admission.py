@@ -521,20 +521,6 @@ def resolve_handoff_target(
     return to_agent, family, platform, to_agent
 
 
-def resolve_handoff_contract(
-    role: str | None = None,
-    request_id: str = "",
-) -> tuple[None, str]:
-    """Absent in, absent out (spec step 3 item 16).
-
-    A role does not supply a job. ``resolve_handoff_contract(None)`` returns
-    absent and does not return ``none`` or ``answer``. Senders that need
-    implement state ``job=implement``.
-    """
-    _ = role, request_id
-    return None, "absent"
-
-
 def _cursor_sdk_omit_model(*, request_id: str, job: str | None = None) -> str:
     """Resolve omit-model for ``seat=cursor-sdk`` from the workflow registry."""
     from implement_admission.routing import load_route_policy
