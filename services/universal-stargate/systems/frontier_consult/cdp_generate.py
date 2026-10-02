@@ -2,9 +2,9 @@
 
 Thin admit front over the native CDP API (``cdp_ask.client`` /
 ``POST /api/v1/providers/cdp/ask`` via ``claude_bundles.cdp_model_endpoint``).
-Forwards optional ``purpose`` (default ``ask``) onto the satellite submit so
-operator-proxy missions can set ``purpose=operator-proxy, job=freeform|mission`` without
-bare ``project_ask``. Posts on-behalf turns as ``from=web-anthropic`` (endpoint
+Forwards optional ``session`` onto the satellite submit so an operator-proxy
+window can set ``session=operator-proxy`` and ``job=freeform`` without bare
+``project_ask``. Posts on-behalf turns as ``from=web-anthropic`` (endpoint
 address) only after harvest proof (or failed+stall). CDP is substrate/session
 association (``web-anthropic-cdp``, ``execution_id``), not a bus seat.
 """
@@ -446,7 +446,7 @@ async def dispatch_cdp_generate(
         raise FrontierEndpointError(
             request_id=request_id,
             field="contract",
-            reason="CDP model-endpoint admits none/pure-mechanical only",
+            reason="CDP model-endpoint refuses job=implement and job=wrap",
             status_code=422,
             code="cdp_contract_unsupported",
         )

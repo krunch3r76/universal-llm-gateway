@@ -135,7 +135,7 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — commissions with ulg-code `team_dispatch` to `cursor-sdk` on lane B. DISPOSITION and CLOSEOUT go by `send` on the private lane. Cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Architecture-bind hop 5 independent check and review fallback stay, under that condition |
-| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Omitted knobs follow the grok-4.7 card. **`contract`** splits the leg: `investigate`, `freeform`, and `conductor` stay on this model. Admit a conductor with `contract=conductor` (maestro-loop step 5a). Do not admit one with `contract=none`. Mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
+| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Omitted knobs follow the grok-4.7 card. **`job`** splits the leg: `investigate`, `freeform`, and `conductor` stay on this model. Admit a conductor with `job=conductor` (maestro-loop step 5a). The freeform id is `job=freeform`. Mechanical `job=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
 | **`cdp/opus-5.5`** | **Architecture bind / independent check** — the in-use bind rung. Live-checkout file:line depth this seat cannot perform is `cursor/grok-4.7` `contract=freeform` on cursor-sdk, fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`). That trigger picks the **seat**. Independent check uses a different seat than the author. An architecture is not self-ratifiable. |
 | **cursor-sdk lane B** | **Executor** — ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). This seat directs. The cursor-sdk seat executes repo writes |
 
@@ -259,7 +259,7 @@ judgment of when to bind directly with this seat.
 
 **Knob relay (this seat fires the dispatch):** this seat fires `team_dispatch` on ulg-code. `model`, `contract`, `lane`, `work_key`, and `model_knobs` go on that wire. `reasoning_effort` on `seat=cursor-sdk` is 422 `reasoning_effort_not_supported`. Body-level `effort:`, `reasoning_effort:`, or line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT: `libs/cursor_capabilities/cursor_capabilities.py`). Name `fast=true` on the cursor-sdk dispatch wire when an arc pin says so. Hop successor model: `desired_model=cdp/opus-5.5-extra`.
 
-**CDP Fable / Opus pin (BINDING):** Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. If hop returns `seat.identity_unresolvable`, fall back with ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, mission_kind=hop, parent_thread=<this private lane>, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)` — `mission_kind=hop` is required mid-stream (a:37182). A fresh root window (not a hop) is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
+**CDP Fable / Opus pin (BINDING):** Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. If hop returns `seat.identity_unresolvable`, fall back with ulg-code `team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, mission_kind=hop, parent_thread=<this private lane>, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)` — `mission_kind=hop` is required mid-stream (a:37182). A fresh root window (not a hop) is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`
 (+ `vision:` on `TYPE: DIRECTIVE` when applicable). Empty scope or a missing contract
@@ -337,7 +337,7 @@ page once if away, then proceed — approval is standing.
 
 **New CDP window (BINDING):** when this Cowork CSE's context is stale, or Customize
 skills / life MCP just uploaded and must go live, open a fresh operator window with
-ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, job=freeform,
+ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform,
 dispatch_thread_id=<THIS private request lane>, prompt=...)``. Not a hop — omit
 ``mission_kind=hop`` (root admit; mid-stream over a live generate still hits the
 external-gate refuse until harvest). Not via cursor-auto. Not ``cdp/fable`` unless
@@ -419,10 +419,10 @@ def _field_source_without_briefing(rest_body: str) -> str:
 
 
 # Header declaration only. A prose quote (review packets, seat-map
-# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
+# team_dispatch session key) is not a mission.
 _PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
-    r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",
+    r"^purpose\s*[:=]\s*(" + "operator-proxy|mission" + r"\b|operator_proxy)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -430,7 +430,7 @@ _PURPOSE_DOC = re.compile(
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
     """True only when the purpose argument is an operator-proxy mission tag.
 
-    A prompt line ``purpose=operator-proxy`` (column 0 or quoted) is not a
+    A prompt line that names the operator-proxy tag (column 0 or quoted) is not a
     session and does not open the hop briefing or the operator-proxy chip.
     ``prompt`` is retained so callers that pass the staged body stay valid.
     """

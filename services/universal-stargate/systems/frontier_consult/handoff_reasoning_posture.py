@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from implement_admission.admission_read import frontmatter_value
 from reasoning_posture_contracts import (
-    FREEFORM_CONTRACTS,
     HYPOTHESIZE_SIMULATE_CONTRACTS,
     REASONING_POSTURE_SKIP_CONTRACTS,
     reasoning_posture_warrants_injection,
@@ -41,11 +40,8 @@ def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> 
 def handoff_wants_hypothesize_simulate(text: str, handoff_contract: str | None) -> bool:
     """Return True when this handoff leaves the option space open to the seat.
 
-    ``consult`` qualifies: a consult carries a pinned Question and may need
-    rival generation. ``none`` is freeform — caller prompt is sole authority.
+    Membership is the hypothesize set production imports, which includes freeform.
     """
     raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()
     lowered = raw.lower()
-    if lowered in FREEFORM_CONTRACTS:
-        return False
     return lowered in HYPOTHESIZE_SIMULATE_CONTRACTS

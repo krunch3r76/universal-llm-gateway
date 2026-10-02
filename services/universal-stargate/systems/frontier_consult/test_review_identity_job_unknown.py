@@ -60,9 +60,70 @@ def test_role_reviewer_is_job_unknown() -> None:
     _assert_job_unknown({**_BASE, "role": "reviewer"}, "role")
 
 
-def test_other_validation_stays_400() -> None:
+def _post(body: dict) -> tuple[int, dict, str]:
     client = _client()
-    response = client.post("/api/v1/team/dispatch", json={"op": "generate"})
-    assert response.status_code == 400
-    assert "job_unknown" not in response.text
-    assert "dispatch.job.refused" not in response.text
+    response = client.post("/api/v1/team/dispatch", json=body)
+    return response.status_code, response.json(), response.text
+
+
+def test_post_job_missing_is_422() -> None:
+    """Missing job is intake grammar. Breaks when pydantic 400s before the event."""
+    status, payload, text = _post(
+        {"op": "generate", "prompt": "hello", "dispatch_thread_id": "dt-1"}
+    )
+    assert status == 422
+    assert payload["field"] == "job"
+    assert payload["error"]["code"] == "job_missing"
+    assert payload["details"]["event"] == "dispatch.job.refused"
+    assert payload["details"]["reason"] == "job_missing"
+    assert "job_unknown" not in text
+
+
+def test_post_retired_token_is_job_unknown() -> None:
+    """Retired wire token. Breaks when consult is admitted or the event is dropped."""
+    status, payload, _text = _post({**_BASE, "job": "consult"})
+    assert status == 422
+    assert payload["error"]["code"] == "job_unknown"
+    assert payload["details"]["event"] == "dispatch.job.refused"
+    assert payload["details"]["registry_ref"] == "job_vocab:unresolved"
+
+
+def test_post_answer_is_job_unknown_on_generate() -> None:
+    """answer is cursor-auto only. Breaks when generate admits it."""
+    status, payload, _text = _post({**_BASE, "job": "answer"})
+    assert status == 422
+    assert payload["error"]["code"] == "job_unknown"
+    assert payload["details"]["event"] == "dispatch.job.refused"
+    assert payload["details"]["reason"] == "job_unknown"
+
+
+def test_post_hop_without_job_skips_job_missing() -> None:
+    """mission_kind=hop with no job. Breaks when intake emits job_missing."""
+    status, payload, text = _post(
+        {
+            "op": "generate",
+            "prompt": "hop",
+            "dispatch_thread_id": "dt-1",
+            "mission_kind": "hop",
+        }
+    )
+    assert status == 422
+    assert payload["error"]["code"] == "role_or_seat_required"
+    assert "job_missing" not in text
+
+
+def test_post_implement_plus_prompt_is_handle_forbidden() -> None:
+    """implement plus prompt. Breaks when the model validator returns 400."""
+    status, payload, _text = _post(
+        {
+            "op": "generate",
+            "job": "implement",
+            "prompt": "edit the repo",
+            "dispatch_thread_id": "dt-1",
+        }
+    )
+    assert status == 422
+    assert payload["field"] == "prompt"
+    assert payload["error"]["code"] == "handle_forbidden"
+    assert payload["details"]["event"] == "dispatch.job.refused"
+    assert payload["details"]["reason"] == "handle_forbidden"

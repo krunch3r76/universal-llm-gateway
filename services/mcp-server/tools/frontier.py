@@ -820,20 +820,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             body["role"] = role
         if seat is not None:
             body["seat"] = seat
-        if contract is None:
-            admitted = (
-                TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
-            )
-            return {
-                "error": {
-                    "code": "validation_error",
-                    "message": (
-                        f"contract is required for op={op!r}; "
-                        "use " + ", ".join(sorted(admitted))
-                    ),
-                },
-                "field": "contract",
-            }
         seat_is_sdk = seat == "cursor-sdk"
         wrap_err = validate_wrap_inputs(
             op,

@@ -666,16 +666,10 @@ def test_team_dispatch_generate_requires_contract() -> None:
         )
 
     assert len(relay_calls) == 0
-    assert result["error"]["code"] == "validation_error"
-    assert result["field"] == "contract"
-    message = result["error"]["message"]
-    assert "contract is required" in message
-    assert "op='generate'" in message
-    for job in GENERATE_ADMITTED_JOBS:
-        assert job in message
-    # Generate-only jobs must remain in the generate refusal.
-    assert "code-review" in message
-    assert "wrap" in message
+    assert result["error"]["code"] == "job_missing"
+    assert result["field"] == "job"
+    assert result["error"]["event"] == "dispatch.job.refused"
+    assert result["error"]["reason"] == "job_missing"
 
 
 def test_team_dispatch_to_thread_requires_contract_lists_to_thread_jobs() -> None:
@@ -698,14 +692,10 @@ def test_team_dispatch_to_thread_requires_contract_lists_to_thread_jobs() -> Non
             )
         )
 
-    assert result["error"]["code"] == "validation_error"
-    assert result["field"] == "contract"
-    message = result["error"]["message"]
-    assert "op='to_thread'" in message
-    for job in TO_THREAD_ADMITTED_JOBS:
-        assert job in message
-    for job in GENERATE_ADMITTED_JOBS - TO_THREAD_ADMITTED_JOBS:
-        assert job not in message, job
+    assert result["error"]["code"] == "job_missing"
+    assert result["field"] == "job"
+    assert result["error"]["reason"] == "job_missing"
+    assert result["error"]["event"] == "dispatch.job.refused"
 
 
 def test_team_dispatch_generate_accepts_subject_with_warning() -> None:

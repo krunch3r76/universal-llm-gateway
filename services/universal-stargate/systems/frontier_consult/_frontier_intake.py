@@ -38,6 +38,7 @@ def reject_unsupported_packet_inputs(
     model: str | None = None,
     prompt: str | None = None,
     sidecar_ref: str | None = None,
+    mission_kind: str | None = None,
 ) -> None:
     """Mirror MCP predicates 3/4/5 for Stargate HTTP admit."""
     reject_retired_packet_kind(packet_kind, request_id=request_id)
@@ -62,6 +63,9 @@ def reject_unsupported_packet_inputs(
     wire = (contract or "").strip().lower()
     admitted = TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
     if not wire:
+        # Hop fires with no job. Breaks when a hop POST is refused job_missing.
+        if (mission_kind or "").strip().lower() == "hop":
+            return
         raise FrontierEndpointError(
             request_id=request_id,
             field="job",
@@ -110,31 +114,20 @@ def reject_unsupported_packet_inputs(
             },
         )
     if wire not in admitted:
-        # Generate surface: a registry job whose admitted_ops omit generate
-        # is unknown on this op (cursor-auto-only ids such as answer).
-        # Breaks when generate intake returns job_not_admitted or omits the event.
-        if op == "generate":
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="job",
-                reason=f"job {parsed.job!r} is not admitted for op='generate'",
-                status_code=422,
-                code="job_unknown",
-                details={
-                    "event": "dispatch.job.refused",
-                    "reason": "job_unknown",
-                    "registry_ref": parsed.registry_ref,
-                },
-            )
+        # A registry job outside this op's admitted set is job_unknown.
+        # Breaks when to_thread returns job_not_admitted with no event
+        # (confer on to_thread; answer on generate).
         raise FrontierEndpointError(
             request_id=request_id,
             field="job",
-            reason=(
-                f"job {wire!r} is not admitted for op={op!r}; "
-                f"must be one of: {', '.join(sorted(admitted))}"
-            ),
+            reason=f"job {parsed.job!r} is not admitted for op={op!r}",
             status_code=422,
-            code="job_not_admitted",
+            code="job_unknown",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "job_unknown",
+                "registry_ref": parsed.registry_ref,
+            },
         )
     record = parsed.record
     assert record is not None
@@ -146,22 +139,11 @@ def reject_unsupported_packet_inputs(
         sidecar_ref=sidecar_ref,
         source_ref=source_ref,
     )
-    if wire in {"none", "pure-mechanical"} and source_ref is not None:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="source_ref",
-            reason=(
-                f"source_ref is forbidden for contract={wire!r}; "
-                "pick a materializer contract"
-            ),
-            status_code=422,
-            code=f"{wire}_with_source_ref",
-        )
-    if wire == "none" and stop_after:
+    if stop_after and not record.stop_after_allowed:
         raise FrontierEndpointError(
             request_id=request_id,
             field="stop_after",
-            reason="stop_after is forbidden with job='freeform'",
+            reason=f"stop_after is forbidden for job={record.name!r}",
             status_code=422,
             code="none_with_stop_after",
         )

@@ -201,19 +201,8 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # When set and packet_path is absent (job=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
-    job: Literal[
-        "freeform",
-        "mechanical",
-        "sketch",
-        "implement",
-        "wrap",
-        "conductor",
-        "code-review",
-        "delivery-review",
-        "check-review",
-        "confer",
-        "investigate",
-    ]
+    # Optional so intake owns job grammar (missing, retired, and op admission).
+    job: str | None = None
     reuse_thread: str | None = None
     split_thread: bool = False
     density_triage: DensityTriage | None = None
@@ -627,6 +616,7 @@ async def team_dispatch(
             model=getattr(body, "model", None),
             prompt=getattr(body, "prompt", None),
             sidecar_ref=getattr(body, "sidecar_ref", None),
+            mission_kind=getattr(body, "mission_kind", None),
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())

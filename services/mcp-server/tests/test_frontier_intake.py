@@ -316,7 +316,9 @@ def test_to_thread_refuses_job_outside_its_admitted_set() -> None:
     err = reject_unsupported_packet_inputs("to_thread", "confer", None, None)
     assert err is not None
     assert err["field"] == "job"
-    assert err["error"]["code"] == "job_not_admitted"
+    assert err["error"]["code"] == "job_unknown"
+    assert err["error"]["event"] == "dispatch.job.refused"
+    assert err["error"]["reason"] == "job_unknown"
 
 
 def test_handoff_op_not_guarded() -> None:

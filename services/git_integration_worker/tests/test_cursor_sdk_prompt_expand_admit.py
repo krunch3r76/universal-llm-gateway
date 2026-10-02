@@ -177,3 +177,40 @@ def test_cursor_auto_admit_refuses_unknown_job(client: TestClient, job: str) -> 
     assert payload["error"]["registry_ref"] == "job_vocab:unresolved"
     assert payload["error"]["code"] == "job_unknown"
     assert payload["error"]["reason"] != "job_retired"
+
+
+def test_cursor_auto_admit_refuses_missing_job(client: TestClient) -> None:
+    """No handoff_contract. Breaks when cursor-auto admits an omitted job."""
+    body = {
+        "thread_id": "11767",
+        "model": "cursor/composer-2.5",
+        "dispatch_id": "auto-missing-job",
+        "execution_id": "exec-missing-job",
+        "message": "x",
+        "admitted_via": "cursor-auto",
+    }
+    resp = client.post("/api/v1/cursor/dispatch", json=body)
+    payload = resp.json()
+    assert resp.status_code == 422
+    assert payload["error"]["code"] == "job_missing"
+    assert payload["error"]["event"] == "dispatch.job.refused"
+    assert payload["error"]["reason"] == "job_missing"
+
+
+def test_cursor_auto_admit_refuses_generate_only_job(client: TestClient) -> None:
+    """check-review is a registry id outside CURSOR_AUTO_ADMITTED_JOBS."""
+    body = {
+        "thread_id": "11767",
+        "model": "cursor/composer-2.5",
+        "dispatch_id": "auto-check-review",
+        "execution_id": "exec-check-review",
+        "message": "x",
+        "handoff_contract": "check-review",
+        "admitted_via": "cursor-auto",
+    }
+    resp = client.post("/api/v1/cursor/dispatch", json=body)
+    payload = resp.json()
+    assert resp.status_code == 422
+    assert payload["error"]["code"] == "job_unknown"
+    assert payload["error"]["event"] == "dispatch.job.refused"
+    assert payload["error"]["registry_ref"] == "job_vocab:check-review"

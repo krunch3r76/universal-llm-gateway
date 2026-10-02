@@ -32,9 +32,6 @@ _KEEP_LIST = frozenset(
         "libs/dispatch_knob_policy/__init__.py",
         "cursor-plugins/ulg-ecosystem/skills/hypothesize-simulate/SKILL.md",
         "scripts/model_manager/ui/controller/charter_runner/window_terminal_contract.py",
-        "libs/claude_bundles/operator_proxy_mission.py",
-        "services/universal-stargate/systems/frontier_consult/cdp_generate.py",
-        "services/universal-stargate/systems/frontier_consult/life_dispatch_routes.py",
     }
 )
 

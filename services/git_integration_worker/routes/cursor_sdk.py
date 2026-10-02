@@ -3247,18 +3247,39 @@ async def admit_cursor_dispatch(
     binding (S1 re-pin), write lease, work-key identity, resume eligibility —
     rather than a shortcut that would skip them.
     """
-    if req.admitted_via == "cursor-auto" and req.handoff_contract:
+    if req.admitted_via == "cursor-auto":
         from job_grammar import resolve_job_token
+        from job_vocab import CURSOR_AUTO_ADMITTED_JOBS
 
-        parsed = resolve_job_token(str(req.handoff_contract).strip())
-        if parsed.reason == "job_unknown":
+        raw_job = str(req.handoff_contract or "").strip()
+        if not raw_job:
+            # Breaks when cursor-auto admit proceeds with no handoff_contract.
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "field": "job",
+                    "error": {
+                        "code": "job_missing",
+                        "message": "job '(omitted)' is not admitted for cursor-auto",
+                        "event": "dispatch.job.refused",
+                        "reason": "job_missing",
+                        "registry_ref": "job_vocab:unresolved",
+                    },
+                },
+            )
+        parsed = resolve_job_token(raw_job)
+        # A registry id outside CURSOR_AUTO_ADMITTED_JOBS is not this surface.
+        # Breaks when check-review (generate-only) is admitted on cursor-auto.
+        if parsed.reason == "job_unknown" or (
+            parsed.job not in CURSOR_AUTO_ADMITTED_JOBS
+        ):
             return JSONResponse(
                 status_code=422,
                 content={
                     "field": "job",
                     "error": {
                         "code": "job_unknown",
-                        "message": f"job {parsed.job!r} is not a registry job",
+                        "message": f"job {parsed.job!r} is not admitted for cursor-auto",
                         "event": "dispatch.job.refused",
                         "reason": "job_unknown",
                         "registry_ref": parsed.registry_ref,

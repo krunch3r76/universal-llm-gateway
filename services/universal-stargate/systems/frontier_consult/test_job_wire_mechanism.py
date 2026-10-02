@@ -267,24 +267,22 @@ def test_stargate_intake_refuses_omitted_job_and_consult() -> None:
 
 
 def test_validating_constructor_rejects_omitted_and_consult() -> None:
-    with pytest.raises(ValidationError) as omitted:
-        TeamDispatchGenerateBody(
-            op="generate",
-            role="gatherer",
-            dispatch_thread_id="dt-1",
-            prompt="hello",
-        )
-    assert any(err["loc"] == ("job",) for err in omitted.value.errors())
-
-    with pytest.raises(ValidationError) as consult:
-        TeamDispatchGenerateBody(
-            op="generate",
-            role="gatherer",
-            dispatch_thread_id="dt-1",
-            prompt="hello",
-            job="consult",  # type: ignore[arg-type]
-        )
-    assert any(err["loc"] == ("job",) for err in consult.value.errors())
+    # Generate job is optional str. Intake owns omitted and retired tokens.
+    omitted = TeamDispatchGenerateBody(
+        op="generate",
+        role="gatherer",
+        dispatch_thread_id="dt-1",
+        prompt="hello",
+    )
+    assert omitted.job is None
+    consult = TeamDispatchGenerateBody(
+        op="generate",
+        role="gatherer",
+        dispatch_thread_id="dt-1",
+        prompt="hello",
+        job="consult",
+    )
+    assert consult.job == "consult"
 
     with pytest.raises(ValidationError) as to_thread:
         TeamDispatchToThreadBody(

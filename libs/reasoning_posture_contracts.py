@@ -11,17 +11,20 @@ from __future__ import annotations
 
 import re
 
+from job_vocab import HARNESS_STACK_SKIP_JOBS
+from job_vocab import HYPOTHESIZE_ON_JOBS as _VOCAB_HYPOTHESIZE_ON_JOBS
+from job_vocab import POSTURE_SKIP_JOBS as _VOCAB_POSTURE_SKIP_JOBS
+
 # Harvest nominates these manage slugs when this lib lands (package-grain).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
-REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
-    {"implement", "mechanical", "propagate", "execute", "answer", "ask"}
-)
+# One set ships: production (cursor_sdk_packet, handoff_reasoning_posture)
+# imports these names, and they are the job_vocab rows.
+REASONING_POSTURE_SKIP_CONTRACTS = _VOCAB_POSTURE_SKIP_JOBS
 
-# ``team_dispatch(contract="none")``: caller prompt is sole task authority for
-# the harness stack (routing, lane-B, conductor identity). Posture slash+Use-line
-# still attach — ``none`` is judgment, not mechanical.
-FREEFORM_CONTRACTS: frozenset[str] = frozenset({"freeform"})
+# Caller prompt is sole task authority for the harness stack. Posture
+# slash+Use-line still attach — freeform is judgment, not mechanical.
+FREEFORM_CONTRACTS: frozenset[str] = HARNESS_STACK_SKIP_JOBS
 
 REASONING_POSTURE_SLASH = "/reasoning-posture"
 
@@ -51,8 +54,9 @@ def reasoning_posture_invoke_parts(*texts: str | None) -> tuple[str, ...]:
     return tuple(parts)
 
 
-# Judgment contracts that receive hypothesize-simulate rival-fill injection.
-HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset({"confer", "sketch", "conductor"})
+# Judgment jobs that receive hypothesize-simulate rival-fill injection.
+# freeform is in this set (job_vocab hypothesize_on).
+HYPOTHESIZE_SIMULATE_CONTRACTS = _VOCAB_HYPOTHESIZE_ON_JOBS
 
 # Importers outside the keep-list use these names. The Search F names stay here.
 POSTURE_SKIP_JOBS = REASONING_POSTURE_SKIP_CONTRACTS

@@ -222,11 +222,17 @@ def reject_unsupported_packet_inputs(
             },
         )
     if wire not in admitted:
+        # Known registry id outside this op. Breaks when to_thread returns
+        # job_not_admitted and omits the refused event.
         return _validation_error(
-            f"job {wire!r} is not admitted for op={op!r}; "
-            f"must be one of: {', '.join(sorted(admitted))}",
+            f"job {parsed.job!r} is not admitted for op={op!r}",
             field="job",
-            code="job_not_admitted",
+            code="job_unknown",
+            error_fields={
+                "event": "dispatch.job.refused",
+                "reason": "job_unknown",
+                "registry_ref": parsed.registry_ref,
+            },
         )
     if wire in SOURCE_REF_JOBS and source_ref is None:
         message = f"source_ref is required for contract={wire!r}"
@@ -253,15 +259,12 @@ def reject_unsupported_packet_inputs(
             field="source_ref",
             code=f"{wire}_with_source_ref",
         )
-    if wire == "none" and source_ref is not None:
+    from job_vocab import job_record
+
+    record = job_record(wire)
+    if record is not None and stop_after and not record.stop_after_allowed:
         return _validation_error(
-            "source_ref is forbidden for job='freeform'; use work_key instead",
-            field="source_ref",
-            code="none_with_source_ref",
-        )
-    if wire == "none" and stop_after:
-        return _validation_error(
-            "stop_after is forbidden with job='freeform'",
+            f"stop_after is forbidden for job={record.name!r}",
             field="stop_after",
             code="none_with_stop_after",
         )
