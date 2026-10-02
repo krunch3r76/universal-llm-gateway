@@ -330,8 +330,7 @@ def try_claim_density_steer_deposit(
         if ctrl.get("density_steer_deposited"):
             conn.execute("COMMIT")
             return "latched", mapped
-        inflight = ctrl.get("density_steer_deposit_inflight")
-        if inflight and inflight != claim_token:
+        if ctrl.get("density_steer_deposit_inflight"):
             conn.execute("COMMIT")
             return "latched", mapped
         model = _resolve_model(mapped)
@@ -339,14 +338,12 @@ def try_claim_density_steer_deposit(
         if not should_steer_density_hop(reading, model=model):
             conn.execute("COMMIT")
             return "below_threshold", mapped
-        if not inflight:
-            ctrl["density_steer_deposit_inflight"] = claim_token
-            _merge_record_json_subobject_conn(
-                conn,
-                dispatch_id=dispatch_id,
-                subkey=_DENSITY_CONTROL_KEY,
-                patch=ctrl,
-            )
+        _merge_record_json_subobject_conn(
+            conn,
+            dispatch_id=dispatch_id,
+            subkey=_DENSITY_CONTROL_KEY,
+            patch={"density_steer_deposit_inflight": claim_token},
+        )
         conn.execute("COMMIT")
         refreshed = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -379,12 +376,11 @@ def release_density_steer_claim(
             return
         ctrl = _control_blob(str(row["record_json"] or ""))
         if ctrl.get("density_steer_deposit_inflight") == claim_token:
-            ctrl.pop("density_steer_deposit_inflight", None)
             _merge_record_json_subobject_conn(
                 conn,
                 dispatch_id=dispatch_id,
                 subkey=_DENSITY_CONTROL_KEY,
-                patch=ctrl,
+                patch={"density_steer_deposit_inflight": None},
             )
         conn.execute("COMMIT")
 
@@ -414,14 +410,6 @@ def finalize_density_steer_deposit(
         if ctrl.get("density_steer_deposit_inflight") not in (None, claim_token):
             conn.execute("ROLLBACK")
             return
-        ctrl.pop("density_steer_deposit_inflight", None)
-        ctrl.update(
-            {
-                "density_steer_deposited": True,
-                "density_steer_entry_id": deposit.entry_id,
-                "density_steer_authority_turn_id": deposit.authority_turn_id,
-            }
-        )
         from services.git_integration_worker.cursor_dispatch_ledger import (
             _merge_record_json_subobject_conn,
         )
@@ -430,7 +418,12 @@ def finalize_density_steer_deposit(
             conn,
             dispatch_id=dispatch_id,
             subkey=_DENSITY_CONTROL_KEY,
-            patch=ctrl,
+            patch={
+                "density_steer_deposit_inflight": None,
+                "density_steer_deposited": True,
+                "density_steer_entry_id": deposit.entry_id,
+                "density_steer_authority_turn_id": deposit.authority_turn_id,
+            },
         )
         conn.execute("COMMIT")
 
@@ -450,6 +443,7 @@ class DensityHarnessStreamHook:
         "_started_call",
         "_stream_tool_call_count",
         "_dirty_trajectory",
+        "_resume_mid_call",
     )
 
     def __init__(
@@ -474,6 +468,7 @@ class DensityHarnessStreamHook:
         self._started_call = False
         self._stream_tool_call_count = 0
         self._dirty_trajectory = False
+        self._resume_mid_call = False
         self._load_existing_state()
 
     @property
@@ -493,16 +488,24 @@ class DensityHarnessStreamHook:
         latest = reading.latest_visible_estimate
         if latest > self._user_tokens:
             self._stream_tokens = latest - self._user_tokens
-        if self._model_calls > 0:
+        self._resume_mid_call = reading.model_calls > len(reading.visible_series)
+        self._started_call = False
+
+    def _ensure_call_open(self) -> None:
+        if self._started_call:
+            return
+        if self._resume_mid_call:
             self._started_call = True
+            self._resume_mid_call = False
+            return
+        self._open_model_call()
 
     def note_prose(self, text: str) -> None:
         if not str(text or "").strip():
             return
         if self._tools_since_prose > 0 and self._started_call:
             self._close_model_call()
-        if not self._started_call:
-            self._open_model_call()
+        self._ensure_call_open()
         self._stream_tokens += estimate_tokens_from_text(text)
         self._tools_since_prose = 0
         self._dirty_trajectory = True
@@ -510,8 +513,7 @@ class DensityHarnessStreamHook:
     def note_tool_call(self, *, arg_bytes: int, result_bytes: int, status: str) -> None:
         if status not in {"completed", "error"}:
             return
-        if not self._started_call:
-            self._open_model_call()
+        self._ensure_call_open()
         self._stream_tokens += estimate_tokens_from_chars(arg_bytes + result_bytes)
         self._tools_since_prose += 1
         self._stream_tool_call_count += 1
@@ -599,7 +601,8 @@ def maybe_deposit_density_steer(
     ledger: Any | None = None,
 ) -> SteerDepositResult | None:
     dispatch_id = str(row.get("dispatch_id") or "")
-    claim_token = submitted_id or f"density-harness:{dispatch_id}:{uuid.uuid4().hex}"
+    base = submitted_id or f"density-harness:{dispatch_id}"
+    claim_token = f"{base}:{uuid.uuid4().hex}"
     outcome, claimed_row = try_claim_density_steer_deposit(
         dispatch_id=dispatch_id,
         claim_token=claim_token,

@@ -764,7 +764,11 @@ def _merge_record_json_subobject_conn(
     sub = data.get(subkey)
     if not isinstance(sub, dict):
         sub = {}
-    sub.update(patch)
+    for key, value in patch.items():
+        if value is None:
+            sub.pop(key, None)
+        else:
+            sub[key] = value
     data[subkey] = sub
     conn.execute(
         "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",

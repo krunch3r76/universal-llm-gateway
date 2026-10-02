@@ -9,14 +9,17 @@ import pytest
 
 from services.git_integration_worker.conductor_hop_watchdog import (
     maybe_tick_density_harness_steer,
+    sweep_density_harness_steers,
 )
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_row_density_harness_meter import (
     DensityHarnessStreamHook,
     apply_synthetic_density_trajectory,
     density_harness_control_patch,
-    maybe_deposit_density_steer,
+    finalize_density_steer_deposit,
     read_density_harness_meter,
+    release_density_steer_claim,
+    try_claim_density_steer_deposit,
 )
 from services.git_integration_worker.cursor_sdk_steer_inject import SteerDepositResult
 from services.git_integration_worker.models.cursor_api import (
@@ -145,10 +148,10 @@ def test_finding1_trajectory_writes_do_not_erase_steer_latch(
     assert reading.latest_visible_estimate >= _THRESHOLD
 
 
-def test_finding2_concurrent_deposit_claim_allows_one_post(
+def test_finding2_concurrent_tick_and_sweep_one_post(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Finding 2: live tick + sweep race → one ``deposit_steer_directive``."""
+    """Finding 2: live tick + sweep (production ``density-harness:{id}``) → one deposit."""
     ledger = CursorDispatchLedger.instance()
     req = _req()
     _admit(ledger, req)
@@ -163,7 +166,7 @@ def test_finding2_concurrent_deposit_claim_allows_one_post(
 
     def _deposit(**kwargs: object) -> SteerDepositResult:
         with lock:
-            calls.append(str(kwargs.get("entry_id", "")))
+            calls.append(str(kwargs.get("submitted_id", "")))
         return SteerDepositResult(
             dispatch_id=req.dispatch_id,
             entry_id="e-race",
@@ -176,23 +179,121 @@ def test_finding2_concurrent_deposit_claim_allows_one_post(
         _deposit,
     )
 
-    def _worker(submitted_id: str) -> None:
+    def _live_tick() -> None:
         barrier.wait()
-        with ledger._connect() as conn:
-            raw = conn.execute(
-                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-                (req.dispatch_id,),
-            ).fetchone()
-        mapped = {k: raw[k] for k in raw.keys()}
-        maybe_deposit_density_steer(mapped, submitted_id=submitted_id, ledger=ledger)
+        maybe_tick_density_harness_steer(dispatch_id=req.dispatch_id)
 
-    t1 = threading.Thread(target=_worker, args=("claim-a",))
-    t2 = threading.Thread(target=_worker, args=("claim-b",))
+    def _sweep() -> None:
+        barrier.wait()
+        sweep_density_harness_steers(ledger=ledger)
+
+    t1 = threading.Thread(target=_live_tick)
+    t2 = threading.Thread(target=_sweep)
     t1.start()
     t2.start()
     t1.join()
     t2.join()
     assert len(calls) == 1
+
+
+def _control_from_ledger(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
+    import json
+
+    with ledger._connect() as conn:
+        rec = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    data = json.loads(rec["record_json"])
+    return dict(data.get("density_harness_control") or {})
+
+
+def test_inflight_cleared_after_release() -> None:
+    """Related finding 2: release removes ``density_steer_deposit_inflight`` from ledger."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="release-inflight", execution_id="exec-ri")
+    _admit(ledger, req)
+    apply_synthetic_density_trajectory(
+        dispatch_id=req.dispatch_id,
+        call_estimates=[_THRESHOLD],
+        ledger=ledger,
+    )
+    token = "density-harness:release-inflight:deadbeef"
+    outcome, _ = try_claim_density_steer_deposit(
+        dispatch_id=req.dispatch_id, claim_token=token, ledger=ledger
+    )
+    assert outcome == "claimed"
+    ctrl = _control_from_ledger(ledger, req.dispatch_id)
+    assert ctrl.get("density_steer_deposit_inflight") == token
+    release_density_steer_claim(
+        dispatch_id=req.dispatch_id, claim_token=token, ledger=ledger
+    )
+    ctrl = _control_from_ledger(ledger, req.dispatch_id)
+    assert "density_steer_deposit_inflight" not in ctrl
+
+
+def test_inflight_cleared_after_finalize() -> None:
+    """Related finding 2: finalize clears inflight and sets deposited latch."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="finalize-inflight", execution_id="exec-fi")
+    _admit(ledger, req)
+    apply_synthetic_density_trajectory(
+        dispatch_id=req.dispatch_id,
+        call_estimates=[_THRESHOLD],
+        ledger=ledger,
+    )
+    token = "density-harness:finalize-inflight:cafebabe"
+    outcome, _ = try_claim_density_steer_deposit(
+        dispatch_id=req.dispatch_id, claim_token=token, ledger=ledger
+    )
+    assert outcome == "claimed"
+    deposit = SteerDepositResult(
+        dispatch_id=req.dispatch_id,
+        entry_id="entry-fi",
+        authority_turn_id="3",
+        spool_path="/tmp/x",
+    )
+    finalize_density_steer_deposit(
+        dispatch_id=req.dispatch_id,
+        claim_token=token,
+        deposit=deposit,
+        ledger=ledger,
+    )
+    ctrl = _control_from_ledger(ledger, req.dispatch_id)
+    assert "density_steer_deposit_inflight" not in ctrl
+    assert ctrl.get("density_steer_deposited") is True
+    assert ctrl.get("density_steer_entry_id") == "entry-fi"
+
+
+def test_hook_reload_no_duplicate_series_indices() -> None:
+    """Residue: resume mid-call must not duplicate call indices or inflate running sum."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="reload-series", execution_id="exec-rs")
+    _admit(ledger, req)
+    apply_synthetic_density_trajectory(
+        dispatch_id=req.dispatch_id,
+        call_estimates=[76_800],
+        ledger=ledger,
+    )
+    hook = DensityHarnessStreamHook(
+        dispatch_id=req.dispatch_id,
+        user_text="",
+        ledger=ledger,
+    )
+    hook.note_prose("x" * 80_000)
+    hook.note_tool_call(arg_bytes=500, result_bytes=500, status="completed")
+    hook.note_prose("y" * 80)
+    hook.flush()
+    with ledger._connect() as conn:
+        rec = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    reading = read_density_harness_meter(rec["record_json"], model=_GROK)
+    indices = [pair[0] for pair in reading.visible_series]
+    assert len(indices) == len(set(indices))
+    assert reading.running_visible_sum == sum(est for _, est in reading.visible_series)
+    assert indices.count(2) <= 1
 
 
 def test_finding3_fresh_hook_loads_existing_control_latch(
