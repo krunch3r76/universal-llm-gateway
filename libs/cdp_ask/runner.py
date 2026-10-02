@@ -435,6 +435,7 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
         text = ensure_operator_proxy_mission_prompt(
             text,
             standing_handoff_text=standing_handoff_text_for_prompt(text),
+            execution_id=resolve_stargate_execution_id(req),
         )
         from claude_bundles.cowork_skill_delivery import (
             extract_cdp_required_authority,

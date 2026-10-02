@@ -1,29 +1,8 @@
-"""This-hop status block — first visible heading on operator-proxy missions.
+"""Standing-handoff section copy for the hop-successor prompt.
 
-Cowork renders the first markdown heading after skill chips as the dispatch
-card. Operator-proxy submits used to open on the seat-map briefing, so the
-human saw doctrine instead of the job. This module hoists the
-mission/settled/live/next/lane block above that briefing, then the
-success-condition line and one ``fetch-decision`` receipt per arrival ref.
-
-The runbook Trigger cannot bind a seat that has not read it. This composer
-writes the success condition before the seat's first token. That is what
-breaks the circle. The step list is not copied. A pointer
-(``- runbook:``) is not a receipt; an existing block that lacks the receipt
-is grafted, then left byte-stable.
-
-``mission`` is the one field that does not change hop to hop — it names what
-the arc is *for*, so the block still orients a reader even when the other
-three fields degrade to ``(unspecified)`` (e.g. the standing-handoff sidecar
-is missing). It is filled from an explicit ``mission:`` line, else the
-DIRECTIVE ``vision:`` convention (``directive.py`` / admit-gate), else a
-``## Mission`` heading in the standing-handoff sidecar — never fabricated.
-
-Callers: ``ensure_operator_proxy_mission_prompt`` (pure string transform) and
-``cdp_ask.runner.resolve_prompt`` (optional standing-handoff sidecar fill).
-An existing This-hop block that already carries the fetch receipt is left
-byte-stable. A block without the receipt is grafted, then stable.
-``(unspecified)`` is an honest hole, not idle and not invented progress.
+``ensure_operator_proxy_mission_prompt`` fills the template from the newest
+consecutive CURRENT sections of the standing-handoff sidecar. This module
+does not author the old This-hop card.
 """
 
 from __future__ import annotations
@@ -35,73 +14,26 @@ from collections.abc import Callable
 from hop_handoff.body import parse_successor_birth_id
 from hop_handoff.standing_handoff import standing_handoff_path
 
-from claude_bundles.fetch_decision import (
-    decision_lines,
-    receipts_present,
-)
-
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
 INJECTORS: tuple[str, ...] = ("cdp_ask",)
 
-HOP_STATUS_MARKER = "## This hop (read first)"
-UNSPECIFIED = "(unspecified)"
-_FIRST_ACTS_LINE = (
-    "- first-acts: read cortex://notes/runbooks/maestro-loop.md § Steps → "
-    "skill reloads (`lane-act-gates` with the birth slugs) → "
-    "handoff head (fs offset=0 limit=50) → journal → "
-    "fetch(last=3, compact=true) → mark_read(through_turn, agent=web-anthropic) → send "
-    "TYPE: SEAT_REGISTRATION quoting successor_birth_id"
+UNKNOWN_FIELD = "unknown"
+_CURRENT_SECTION_CAP = 4
+_CAP_NOTE = "consolidated section not found; read the handoff head"
+MISSING_HANDOFF_INSTRUCTION = (
+    "The S7 standing-handoff state file is absent.\n"
+    "Lane-tip reconstruction is degraded, not equivalent.\n"
+    "Author the standing handoff before you leave."
 )
-_RULE_PLUS_SPECIMEN_LINE = (
-    "- rule-plus-specimen: DISPOSITION over 2000 characters is refused "
-    "(over_briefing_target). Specimen: 2129 and 2105 chars after the seat had read "
-    "the Refuse line (a:36836)."
-)
-_MAX_FIELD = 120
-_SEAT_MAP_MARKER = "## Mission seat map (BINDING"
 
-_FIELD_RE = re.compile(
-    r"^(mission|settled|live|next|lane):\s*(.+?)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-_VISION_RE = re.compile(r"^vision:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 _THREAD_RE = re.compile(
     r"^(?:thread_id|parent_thread):\s*(\d+)\s*$",
     re.MULTILINE,
 )
 _ARC_RE = re.compile(r"^arc:\s*(?:agent-bus:)?(\d+)\s*$", re.MULTILINE)
 _LANE_ID_RE = re.compile(r"^lane:\s*(?:agent-bus[:\s]+)?(\d+)", re.MULTILINE)
-_TRIGGER_RE = re.compile(r"^trigger:\s*(.+?)\s*$", re.MULTILINE)
-_SH_URI_RE = re.compile(r"^standing_handoff:\s*(cortex://\S+)\s*$", re.MULTILINE)
-_SH_FRESH_RE = re.compile(
-    r"^standing_handoff_freshness:\s*(\S+)\s*$",
-    re.MULTILINE,
-)
-_LIVE_HEADING_RE = re.compile(
-    r"^##\s+(?:Live|LIVE)(?:\s*[—–-].*)?$",
-    re.MULTILINE,
-)
-_SETTLED_HEADING_RE = re.compile(
-    r"^##\s+Settled\b.*$",
-    re.MULTILINE | re.IGNORECASE,
-)
-_NEXT_HEADING_RE = re.compile(
-    r"^##\s+(?:First next act|The work)\b.*$",
-    re.MULTILINE | re.IGNORECASE,
-)
-_MISSION_HEADING_RE = re.compile(
-    r"^##\s+Mission\b.*$",
-    re.MULTILINE | re.IGNORECASE,
-)
 _ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
-_EXECUTION_ID_RE = re.compile(r"^execution_id:\s*(\S+)\s*$", re.MULTILINE)
-_CDP_DISPATCH_ID_RE = re.compile(
-    r"^cdp_dispatch_id:\s*(\S+)\s*$",
-    re.MULTILINE,
-)
-_BIRTH_TURN_RE = re.compile(r"^birth_turn:\s*(\S+)\s*$", re.MULTILINE)
-UNKNOWN_FIELD = "unknown"
 
 
 def extract_thread_id(text: str) -> str | None:
@@ -126,7 +58,6 @@ def standing_handoff_text_for_prompt(
 
     Returns None when no thread id is parseable or the file is absent.
     *read_path* is a test seam; production reads ``standing_handoff_path``.
-    I/O stays here so ``ensure_hop_status_first`` remains a string transform.
     """
     thread_id = extract_thread_id(prompt)
     if not thread_id:
@@ -142,411 +73,123 @@ def standing_handoff_text_for_prompt(
     return None
 
 
-def ensure_hop_status_first(
-    rest_body: str,
-    *,
-    standing_handoff_text: str | None = None,
-    field_source: str | None = None,
-    in_context_refs: tuple[str, ...] = (),
-    resolved_bodies: dict[str, str] | None = None,
-    skip_reasons: dict[str, str] | None = None,
-    refuse_body: str = "",
-    trigger_excerpt: str = "",
-) -> str:
-    """Guarantee ``This hop`` sits above the seat map. Idempotent once receipted.
-
-    A block that already carries the success condition and every
-    ``fetch-decision`` is returned unchanged (no sidecar re-fill). A block
-    that lacks them is grafted; seat field lines are not rewritten.
-    Missing blocks are authored from *field_source* (default: the body minus
-    an existing hop block), then *standing_handoff_text*, then
-    ``(unspecified)``. Pass the pre-briefing caller as *field_source* so
-    seat-map doctrine cannot become the ``next:`` line.
-
-    ``in_context_refs`` / ``resolved_bodies`` apply only when this call
-    authors or grafts the receipt. A second call will not upgrade a
-    ``skipped`` line already present.
-    """
-    body = rest_body or ""
-    existing, remainder = _split_hop_block(body)
-    if existing is not None and _hop_already_first(body):
-        return _graft_receipts(
-            body,
-            in_context_refs=in_context_refs,
-            resolved_bodies=resolved_bodies,
-            skip_reasons=skip_reasons,
-            refuse_body=refuse_body,
-            trigger_excerpt=trigger_excerpt,
-        )
-    if existing is not None:
-        hoisted = f"{existing.rstrip()}\n\n{remainder.lstrip()}"
-        return _graft_receipts(
-            hoisted,
-            in_context_refs=in_context_refs,
-            resolved_bodies=resolved_bodies,
-            skip_reasons=skip_reasons,
-            refuse_body=refuse_body,
-            trigger_excerpt=trigger_excerpt,
-        )
-    source = remainder if field_source is None else field_source
-    block = _format_hop_status(
-        _collect_fields(source, standing_handoff_text=standing_handoff_text),
-        in_context_refs=in_context_refs,
-        resolved_bodies=resolved_bodies,
-        source_text=body,
-        skip_reasons=skip_reasons,
-        refuse_body=refuse_body,
-        trigger_excerpt=trigger_excerpt,
-    )
-    return f"{block}\n{remainder.lstrip()}"
-
-
-def _graft_receipts(
-    text: str,
-    *,
-    in_context_refs: tuple[str, ...] = (),
-    resolved_bodies: dict[str, str] | None = None,
-    skip_reasons: dict[str, str] | None = None,
-    refuse_body: str = "",
-    trigger_excerpt: str = "",
-) -> str:
-    """Append the receipt to the first hop block when it is missing.
-
-    Seat field lines stay. A block that already has the receipt is returned
-    unchanged, including whitespace.
-    """
-    idx = text.find(HOP_STATUS_MARKER)
-    if idx < 0:
-        return text
-    after = text[idx + len(HOP_STATUS_MARKER) :]
-    next_heading = re.search(r"^## ", after, re.MULTILINE)
-    if next_heading:
-        end = idx + len(HOP_STATUS_MARKER) + next_heading.start()
-    else:
-        end = len(text)
-    block = text[idx:end]
-    if receipts_present(block):
-        return text
-    has_runbook = bool((resolved_bodies or {}).get("runbook:maestro-loop"))
-    addition = _receipt_with_runbook_excerpts(
-        decision_lines(
-            in_context_refs=in_context_refs,
-            resolved_bodies=resolved_bodies,
-            skip_reasons=skip_reasons,
-            refuse_body=refuse_body,
-        ),
-        trigger_excerpt=trigger_excerpt if has_runbook else "",
-        refuse_body=refuse_body if has_runbook else "",
-    )
-    successor = _successor_inject_lines(text)
-    prefix = text[:end].rstrip()
-    suffix = text[end:]
-    grafted = f"{prefix}\n{addition}\n{successor}\n"
-    if suffix:
-        if not suffix.startswith("\n"):
-            grafted += "\n"
-        grafted += suffix.lstrip("\n")
-    return grafted
-
-
-def _hop_already_first(body: str) -> bool:
-    stripped = body.lstrip()
-    if not stripped.startswith(HOP_STATUS_MARKER):
-        return False
-    seat = stripped.find(_SEAT_MAP_MARKER)
-    return seat < 0 or stripped.find(HOP_STATUS_MARKER) < seat
-
-
-def _split_hop_block(text: str) -> tuple[str | None, str]:
-    idx = text.find(HOP_STATUS_MARKER)
-    if idx < 0:
-        return None, text
-    after = text[idx + len(HOP_STATUS_MARKER) :]
-    next_heading = re.search(r"^## ", after, re.MULTILINE)
-    if next_heading:
-        end = idx + len(HOP_STATUS_MARKER) + next_heading.start()
-        block = text[idx:end]
-        rest = text[:idx] + after[next_heading.start() :]
-    else:
-        block = text[idx:]
-        rest = text[:idx]
-    return block.strip() + "\n", rest
-
-
-def _collect_fields(
-    text: str,
-    *,
-    standing_handoff_text: str | None,
-) -> dict[str, str]:
-    fields = {
-        key: UNSPECIFIED for key in ("mission", "settled", "live", "next", "lane")
-    }
-    _fill_from_labeled_lines(fields, text)
-    _fill_mission_from_vision(fields, text)
-    _fill_from_continuity_headers(fields, text)
-    _fill_next_from_caller_body(fields, text)
-    if standing_handoff_text:
-        _fill_from_standing_handoff(fields, standing_handoff_text)
-    return fields
-
-
-def _fill_from_labeled_lines(fields: dict[str, str], text: str) -> None:
-    for match in _FIELD_RE.finditer(text):
-        key = match.group(1).lower()
-        value = _clip(match.group(2))
-        if value and fields[key] == UNSPECIFIED:
-            fields[key] = value
-
-
-def _fill_mission_from_vision(fields: dict[str, str], text: str) -> None:
-    """Fall back to the DIRECTIVE ``vision:`` convention when unlabeled.
-
-    ``vision:`` is already the established "why this work matters" field on
-    implement/investigate DIRECTIVEs (admit-gate requires it). Reusing it
-    here means a mission line appears with zero new authoring convention on
-    any DIRECTIVE that already declares one.
-    """
-    if fields["mission"] != UNSPECIFIED:
-        return
-    match = _VISION_RE.search(text)
-    if match:
-        value = _clip(match.group(1))
-        if value:
-            fields["mission"] = value
-
-
-def _fill_from_continuity_headers(fields: dict[str, str], text: str) -> None:
-    thread_id = extract_thread_id(text)
-    if thread_id and fields["lane"] == UNSPECIFIED:
-        fields["lane"] = f"agent-bus:{thread_id}"
-    trigger = _TRIGGER_RE.search(text)
-    if trigger and fields["live"] == UNSPECIFIED:
-        fields["live"] = _clip(f"continuity hop — {trigger.group(1)}")
-    uri = _SH_URI_RE.search(text)
-    fresh = _SH_FRESH_RE.search(text)
-    if uri and fields["next"] == UNSPECIFIED:
-        suffix = f" ({fresh.group(1)})" if fresh else ""
-        fields["next"] = _clip(f"read {uri.group(1)}{suffix}")
-
-
-def _fill_next_from_caller_body(fields: dict[str, str], text: str) -> None:
-    if fields["next"] != UNSPECIFIED:
-        return
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("##") or line.startswith("|"):
-            continue
-        if line.startswith("#"):
-            title = line.lstrip("#").strip()
-            if title and title.lower() not in {"mission", "handoff"}:
-                fields["next"] = _clip(title)
-                return
-            continue
-        if line.startswith("/") or line.startswith("TYPE:"):
-            continue
-        if re.match(r"^[a-z_][a-z0-9_]*:", line, re.I):
-            if line.lower().startswith("subject:"):
-                fields["next"] = _clip(line.split(":", 1)[1])
-                return
-            continue
-        fields["next"] = _clip(line)
-        return
-
-
-def _fill_from_standing_handoff(fields: dict[str, str], sidecar: str) -> None:
-    if fields["lane"] == UNSPECIFIED:
-        lane_line = _LANE_ID_RE.search(sidecar)
-        if lane_line:
-            fields["lane"] = f"agent-bus:{lane_line.group(1)}"
-        else:
-            labeled = re.search(r"^lane:\s+(.+)$", sidecar, re.MULTILINE)
-            if labeled:
-                fields["lane"] = _clip(labeled.group(1).split(" · ", 1)[0])
-    mapping = (
-        ("mission", _MISSION_HEADING_RE),
-        ("settled", _SETTLED_HEADING_RE),
-        ("live", _LIVE_HEADING_RE),
-        ("next", _NEXT_HEADING_RE),
-    )
-    for key, heading in mapping:
-        if fields[key] != UNSPECIFIED:
-            continue
-        excerpt = _section_first_line(sidecar, heading)
-        if excerpt:
-            fields[key] = excerpt
-
-
-def _section_first_line(text: str, heading: re.Pattern[str]) -> str | None:
-    match = heading.search(text)
-    if not match:
-        return None
-    for raw in text[match.end() :].splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("#"):
-            return None
-        if line.startswith("|") and set(line.replace("|", "").strip()) <= {"-", ":"}:
-            continue
-        if line.startswith("|"):
-            cells = [
-                cell.strip() for cell in line.strip("|").split("|") if cell.strip()
-            ]
-            line = " — ".join(cells)
-        return _clip(line)
-    return None
-
-
-def _successor_inject_lines(source_text: str) -> str:
-    """First-acts line, echoed birth id, and rule-plus-specimen (no mint)."""
-    birth_id = parse_successor_birth_id(source_text or "") or "absent"
-    return (
-        f"{_FIRST_ACTS_LINE}\n"
-        f"- successor_birth_id: {birth_id}\n"
-        f"{_RULE_PLUS_SPECIMEN_LINE}"
-    )
-
-
-def _receipt_with_runbook_excerpts(
-    receipt: str,
-    *,
-    trigger_excerpt: str,
-    refuse_body: str,
-) -> str:
-    """Place Trigger/Refuse excerpts immediately after the runbook resolved line."""
-    if not trigger_excerpt.strip() and not refuse_body.strip():
-        return receipt
-    out: list[str] = []
-    for line in receipt.splitlines():
-        out.append(line)
-        if line.startswith("- fetch-decision: runbook:maestro-loop resolved"):
-            if trigger_excerpt.strip():
-                out.extend(trigger_excerpt.rstrip("\n").splitlines())
-            if refuse_body.strip():
-                out.extend(refuse_body.rstrip("\n").splitlines())
-    return "\n".join(out)
-
-
-def _format_hop_status(
-    fields: dict[str, str],
-    *,
-    in_context_refs: tuple[str, ...] = (),
-    resolved_bodies: dict[str, str] | None = None,
-    source_text: str = "",
-    skip_reasons: dict[str, str] | None = None,
-    refuse_body: str = "",
-    trigger_excerpt: str = "",
-) -> str:
-    receipt = _receipt_with_runbook_excerpts(
-        decision_lines(
-            in_context_refs=in_context_refs,
-            resolved_bodies=resolved_bodies,
-            skip_reasons=skip_reasons,
-            refuse_body=refuse_body,
-        ),
-        trigger_excerpt=trigger_excerpt,
-        refuse_body=refuse_body
-        if (resolved_bodies or {}).get("runbook:maestro-loop")
-        else "",
-    )
-    successor = _successor_inject_lines(source_text)
-    return (
-        f"{HOP_STATUS_MARKER}\n"
-        f"- mission: {fields['mission']}\n"
-        f"- settled: {fields['settled']}\n"
-        f"- live: {fields['live']}\n"
-        f"- next: {fields['next']}\n"
-        f"- lane: {fields['lane']}\n"
-        f"{receipt}\n"
-        f"{successor}\n"
-    )
-
-
-def _clip(value: str) -> str:
-    collapsed = re.sub(r"\s+", " ", (value or "").strip())
-    if len(collapsed) <= _MAX_FIELD:
-        return collapsed
-    return collapsed[: _MAX_FIELD - 1].rstrip() + "…"
-
-
-def newest_current_section(text: str) -> tuple[str, str, str] | None:
-    """First ATX heading containing ``CURRENT``, copied whole, with its sha256.
-
-    Standing handoffs prepend, so the first match is the newest. The returned
-    verbatim is the heading line plus its body through the next ATX heading.
-    It is never passed through :func:`_clip`.
-    """
+def _heading_sections(text: str) -> list[tuple[str, str]]:
+    """ATX sections as ``(heading, section text including the heading)``."""
     lines = (text or "").splitlines()
-    start: int | None = None
-    heading = ""
-    level = 0
+    starts: list[tuple[int, int, str]] = []
     for index, line in enumerate(lines):
         match = _ATX_HEADING_RE.match(line)
         if match is None:
             continue
-        if "CURRENT" not in match.group(2):
-            continue
-        start = index
-        heading = match.group(2).strip()
-        level = len(match.group(1))
-        break
-    if start is None or not heading:
-        return None
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        match = _ATX_HEADING_RE.match(lines[index])
-        if match is not None and len(match.group(1)) <= level:
-            end = index
+        starts.append((index, len(match.group(1)), match.group(2).strip()))
+    sections: list[tuple[str, str]] = []
+    for number, (index, level, heading) in enumerate(starts):
+        end = len(lines)
+        for later in range(number + 1, len(starts)):
+            if starts[later][1] <= level:
+                end = starts[later][0]
+                break
+        sections.append((heading, "\n".join(lines[index:end]).rstrip()))
+    return sections
+
+
+def _section_is_stop(heading: str, body: str) -> bool:
+    if "supersedes" in heading:
+        return True
+    return any(line.strip().startswith("IN FLIGHT") for line in body.splitlines())
+
+
+def newest_current_section(text: str) -> tuple[str, str] | None:
+    """Consecutive CURRENT sections from the newest, through the first stop.
+
+    Standing handoffs prepend, so the first ``CURRENT`` heading is the newest.
+    Copy continues through the next CURRENT headings and includes the first
+    section whose heading contains ``supersedes`` or whose body has a line
+    starting ``IN FLIGHT``. A non-CURRENT heading ends the run. At most four
+    sections are copied; when a fifth would have been copied, the verbatim
+    ends with ``consolidated section not found; read the handoff head``.
+    """
+    sections = _heading_sections(text)
+    start: int | None = None
+    for index, (heading, _body) in enumerate(sections):
+        if "CURRENT" in heading:
+            start = index
             break
-    verbatim = "\n".join(lines[start:end]).rstrip()
-    digest = hashlib.sha256(verbatim.encode("utf-8")).hexdigest()
-    return heading, verbatim, digest
+    if start is None:
+        return None
+    chosen: list[str] = []
+    newest_heading = ""
+    capped = False
+    for heading, body in sections[start:]:
+        if "CURRENT" not in heading:
+            break
+        if len(chosen) >= _CURRENT_SECTION_CAP:
+            capped = True
+            break
+        if not newest_heading:
+            newest_heading = heading
+        chosen.append(body)
+        if _section_is_stop(heading, body):
+            break
+    if not chosen or not newest_heading:
+        return None
+    verbatim = "\n\n".join(chosen)
+    if capped:
+        verbatim = f"{verbatim}\n{_CAP_NOTE}"
+    return newest_heading, verbatim
 
 
-def _labeled_value(pattern: re.Pattern[str], text: str) -> str:
-    match = pattern.search(text or "")
-    if match is None:
-        return UNKNOWN_FIELD
-    value = match.group(1).strip()
-    return value or UNKNOWN_FIELD
+def handoff_file_sha256(text: str) -> str:
+    """sha256 of the whole sidecar text, not of the extracted section."""
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
 def hop_successor_fields(
     prompt: str,
     *,
     standing_handoff_text: str | None = None,
+    execution_id: str = "",
 ) -> dict[str, str]:
     """Fill the hop-successor template from the prompt and standing handoff.
 
-    Missing values are ``unknown``. The CURRENT section is copied whole.
+    ``execution_id`` is the satellite's Stargate id. An empty id omits the
+    birth-record clause. ``cdp_dispatch_id`` and ``birth_turn`` are not
+    rendered. A missing CURRENT section is the absent-file instruction.
     """
     lane = extract_thread_id(prompt or "") or UNKNOWN_FIELD
     birth = parse_successor_birth_id(prompt or "") or UNKNOWN_FIELD
-    section = newest_current_section(standing_handoff_text or "")
+    sidecar = standing_handoff_text or ""
+    section = newest_current_section(sidecar)
+    exec_id = (execution_id or "").strip()
+    execution_clause = f", execution_id {exec_id}" if exec_id else ""
     if section is None:
-        heading, verbatim, digest = UNKNOWN_FIELD, UNKNOWN_FIELD, UNKNOWN_FIELD
+        heading = "absent"
+        verbatim = MISSING_HANDOFF_INSTRUCTION
+        running_now = "## What is running now (standing handoff file absent)"
+        digest = ""
     else:
-        heading, verbatim, digest = section
+        heading, verbatim = section
+        digest = handoff_file_sha256(sidecar)
+        running_now = (
+            "## What is running now (copied whole from the standing handoff "
+            f"head, {heading}, handoff file sha256 at render {digest})"
+        )
     return {
         "lane": lane,
         "successor_birth_id": birth,
-        "execution_id": _labeled_value(_EXECUTION_ID_RE, prompt or ""),
-        "cdp_dispatch_id": _labeled_value(_CDP_DISPATCH_ID_RE, prompt or ""),
-        "birth_turn": _labeled_value(_BIRTH_TURN_RE, prompt or ""),
+        "execution_clause": execution_clause,
         "handoff_section_heading": heading,
         "handoff_sha": digest,
+        "running_now_line": running_now,
         "handoff_current_section_verbatim": verbatim,
     }
 
 
 __all__ = [
-    "HOP_STATUS_MARKER",
+    "MISSING_HANDOFF_INSTRUCTION",
     "UNKNOWN_FIELD",
-    "UNSPECIFIED",
-    "ensure_hop_status_first",
     "extract_thread_id",
+    "handoff_file_sha256",
     "hop_successor_fields",
     "newest_current_section",
     "standing_handoff_text_for_prompt",

@@ -42,6 +42,24 @@ def test_resolve_stargate_execution_id_empty_without_carrier() -> None:
     assert resolve_stargate_execution_id(req) == ""
 
 
+def test_resolve_prompt_puts_stargate_execution_id_on_the_birth_record() -> None:
+    from cdp_ask.runner import resolve_prompt
+
+    req = SubmitProjectAskRequest(
+        prompt_text="thread_id: 9501\n# Mission\n",
+        purpose="operator-proxy",
+        stargate_execution_id="sg-birth-1",
+    )
+    with patch(
+        "claude_bundles.operator_proxy_hop_status.standing_handoff_path"
+    ) as path:
+        path.return_value.is_file.return_value = False
+        rendered = resolve_prompt(req)[0]
+    assert "execution_id sg-birth-1" in rendered
+    assert "CDP generate" not in rendered
+    assert "Author the standing handoff before you leave." in rendered
+
+
 def test_default_archive_path_scopes_new_asks_by_execution_id(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
