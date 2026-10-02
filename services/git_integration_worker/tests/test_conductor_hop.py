@@ -1144,6 +1144,8 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Real gated-deliverables rows keep the fold entry gate (land admit ≠ that gate)."""
+    from pathlib import Path
+
     from implement_admission.conductor_witness import (
         FoldDeps,
         fold_scoreboard,
@@ -1166,6 +1168,36 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
             _ = entity_id, type_id
             return []
 
+    def _boom_cortex_conn(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError(
+            "cortex_conn opened — AC7 fold must stay hermetic (a:37150)"
+        )
+
+    # A1 (14141 review): fail if any path opens the production cortex DB.
+    monkeypatch.setattr("cortex_store.db.cortex_conn", _boom_cortex_conn)
+
+    stub_deps = FoldDeps(
+        cortex=_EmptyWitnessCortex(),
+        source_ref=_WORK_KEY,
+        repo=tmp_path / "repo",
+    )
+
+    def _stub_fold_deps(
+        source_ref: str,
+        *,
+        repo: Path,
+        summon_mode: str | None = None,
+        summoning_thread_id: str | None = None,
+    ) -> FoldDeps:
+        _ = source_ref, repo, summon_mode, summoning_thread_id
+        return stub_deps
+
+    # A2 (14141 review): hop-body live fold uses the same stub, not DefaultWitnessCortex.
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_nested_witness.fold_deps_with_ledger",
+        _stub_fold_deps,
+    )
+
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     scoreboards = tmp_path / "notes/system/scoreboards"
     scoreboards.mkdir(parents=True)
@@ -1187,11 +1219,7 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
     )
     fold = fold_scoreboard(
         "conductor-hop-fixture",
-        deps=FoldDeps(
-            cortex=_EmptyWitnessCortex(),
-            source_ref=_WORK_KEY,
-            repo=tmp_path / "repo",
-        ),
+        deps=stub_deps,
         write_journal=False,
     )
     assert fold is not None
