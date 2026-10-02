@@ -1288,7 +1288,7 @@ def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
 def test_hop_mismatched_registration_refuses_even_with_sole_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fail-closed: non-matching predecessor_registration_id does not sole-gate exempt."""
+    """Fail-closed: mismatched predecessor_registration_id skips sole-gate exempt."""
     from systems.frontier_consult.admission import FrontierEndpointError
     from systems.frontier_consult.cdp_generate import (
         refuse_second_external_gate_at_fire,
