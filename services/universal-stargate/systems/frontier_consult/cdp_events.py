@@ -25,6 +25,7 @@ def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> bool:
 
 __all__ = [
     "CdpGenerateAdmitted",
+    "CdpGenerateRefusedSeatHeld",
     "CdpGenerateSubmitted",
     "CdpGenerateSeated",
     "CdpGenerateProof",
@@ -60,6 +61,33 @@ def CdpGenerateAdmitted(  # noqa: N802
         payload["topic"] = topic
     return Event(
         signal="cdp.generate.admitted",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def CdpGenerateRefusedSeatHeld(  # noqa: N802
+    *,
+    request_id: str,
+    lane: str,
+    holder_registration_id: str,
+    purpose: str,
+    mission_kind: str | None,
+    observed_at: str,
+) -> Event:
+    """Non-hop generate refused because the lane seat journal reports a holder."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "lane": lane,
+        "holder_registration_id": holder_registration_id,
+        "purpose": purpose,
+        "observed_at": observed_at,
+    }
+    if mission_kind:
+        payload["mission_kind"] = mission_kind
+    return Event(
+        signal="cdp.generate.refused_seat_held",
         payload=payload,
         scope="node",
     )

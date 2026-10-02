@@ -165,6 +165,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 reattach=reattach,
                 retain_lane=retain_lane,
                 min_receipt=min_receipt,
+                parent_thread=parent_thread,
             )
 
         if not chat_url and not registration_id:

@@ -101,17 +101,21 @@ def test_hop_successor_binds_driving_seat() -> None:
     assert projected["registration_id"] == "reg-hop"
 
 
-def test_select_registration_id_picks_max_seat_bound_at_with_reason() -> None:
-    reg_id, reason = _select_registration_id(
+def test_lane_seat_holder_conflict_matches_resolve_winner() -> None:
+    from cdp_ask.lane_admission import lane_seat_holder
+
+    seat_rows = seat_rows_from_registry_records(
         [
-            ("reg-old", 10.0),
-            ("reg-new", 500.0),
+            _registry_record(registration_id="reg-old", seat_bound_at=10.0),
+            _registry_record(registration_id="reg-new", seat_bound_at=500.0),
         ]
     )
-    assert reg_id == "reg-new"
-    assert reason is not None
-    assert "seat_bound_at" in reason
-    assert "reg-new" in reason
+    snap = {"seat_rows": seat_rows, "observed_at": "2026-09-15T03:00:00+00:00"}
+    holder = lane_seat_holder(snap, "10479")
+    assert holder["state"] == "conflict"
+    assert holder["registration_id"] == "reg-new"
+    out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
+    assert out["registration_id"] == "reg-new"
 
 
 def test_resolve_dormant_seat_row_via_http() -> None:

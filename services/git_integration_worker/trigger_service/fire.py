@@ -70,7 +70,9 @@ def lane_available(
         raise
     from cdp_ask.lane_admission import purpose_lane_refusal
 
-    refuse, label = purpose_lane_refusal(snap, purpose=purpose, unattended=True)
+    refuse, label, _envelope = purpose_lane_refusal(
+        snap, purpose=purpose, unattended=True
+    )
     if refuse:
         return False, f"cdp lane at {label or 'hard'} limit"
     if purpose:

@@ -165,6 +165,7 @@ def relay_followup(
     reattach: bool,
     retain_lane: bool,
     min_receipt: Literal["dom_paste", "dom_committed", "human_visible"],
+    parent_thread: str | None = None,
 ) -> dict[str, Any]:
     """POST warm paste to ``/v1/project-ask/followups``."""
     if not any(
@@ -190,6 +191,7 @@ def relay_followup(
             "reattach": reattach,
             "retain_lane": retain_lane,
             "min_receipt": min_receipt if min_receipt != "dom_paste" else None,
+            "parent_thread": parent_thread,
         }.items()
         if v is not None and v != "" and v is not False
     }

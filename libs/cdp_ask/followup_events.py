@@ -170,6 +170,33 @@ def cdp_ask_attended_refused(
 
 
 @event_factory
+def cdp_ask_admission_refused_seat_held(
+    *,
+    lane: str,
+    holder_registration_id: str,
+    purpose: str,
+    mission_kind: str | None,
+    execution_id: str | None,
+) -> Event:
+    """Submit-path refusal when the seat-axis journal reports an open holder."""
+    payload: dict[str, Any] = {
+        "lane": lane,
+        "holder_registration_id": holder_registration_id,
+        "purpose": purpose,
+    }
+    if mission_kind:
+        payload["mission_kind"] = mission_kind
+    if execution_id:
+        payload["execution_id"] = execution_id
+    return Event(
+        signal="cdp_ask.admission.refused_seat_held",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
 def cdp_ask_followup_unbound_capped(
     *,
     registration_id: str | None,

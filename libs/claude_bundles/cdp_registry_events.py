@@ -548,6 +548,26 @@ def cdp_seat_lane_bound(
 
 
 @event_factory
+def cdp_seat_lane_conflict(
+    *,
+    lane: str,
+    candidate_ids: list[str],
+    observed_at: str,
+) -> Event:
+    """More than one seat-open row projected for one lane — fold drift signal."""
+    return Event(
+        signal="cdp.seat.lane_conflict",
+        role="observation",
+        scope="node",
+        payload={
+            "lane": lane,
+            "candidate_ids": candidate_ids,
+            "observed_at": observed_at,
+        },
+    )
+
+
+@event_factory
 def cdp_seat_lane_released(
     *,
     registration_id: str,
