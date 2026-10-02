@@ -5,6 +5,11 @@ defaults to out-of-band ``cortex_schema(op)`` (see
 ``cortex_store.openapi_mcp.schema_channel``). OpenAPI-served ops are derived
 from native route ``x-mcp`` stamps via
 ``cortex_store.openapi_mcp._route_map.served_ops``.
+
+Friction ``category`` members are injected from runtime
+``_FRICTION_CATEGORIES`` because the umbrella wire keeps ``arguments`` as an
+opaque JSON string (decision:dispatch-arguments-string-wire-form) — nested
+canonical ``enum`` is not visible on tools/list (friction a:37199).
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ from __future__ import annotations
 from typing import Literal
 
 from _derive import CortexSurfaceSpec, derive_cortex_surface
+from cortex_store.dispatch_ops._shared import _FRICTION_CATEGORIES
 
 Surface = Literal["life", "code"]
 _CODE_BUDGET = 2048
@@ -54,6 +60,17 @@ def _assert_budget(text: str, surface: Surface) -> None:
         )
 
 
+def friction_category_call_contract() -> str:
+    """Seat-facing friction category + protocol-anchor contract (runtime SOT)."""
+    cats = ", ".join(sorted(_FRICTION_CATEGORIES))
+    return (
+        f"friction.category ∈ {{{cats}}}; "
+        "protocol (actionable) requires exactly one anchor: "
+        "charter{charter_root, window_index} or "
+        "continuity{root_thread, cp_ordinal}."
+    )
+
+
 def _tier1_block(spec: CortexSurfaceSpec) -> str:
     lines = ["Write/session Tier-1 cores (reconciled fol_descriptor):"]
     for op in sorted(spec.tier1_rows):
@@ -84,7 +101,7 @@ def render_cortex_tool_description(
     path = canonical_yaml_path or _DEFAULT_CANONICAL
     spec = derive_cortex_surface(surface, path)
 
-    parts = [_CONSTANT_CORE.rstrip()]
+    parts = [_CONSTANT_CORE.rstrip(), friction_category_call_contract()]
     if surface == "life":
         parts.append(_tier1_block(spec))
     else:
