@@ -589,7 +589,7 @@ async def test_freeform_omitted_session_admits_without_quoted_purpose_briefing(
 
     A prompt line ``purpose=operator-proxy`` does not open the hop briefing
     or the cdp-operator-proxy chip. Breaks when staging still scans the prompt
-    or when omitted purpose is inferred as ask.
+    or when omitted body purpose opens the session=ask staging floor.
     """
     from unittest.mock import AsyncMock, MagicMock
 
@@ -619,11 +619,21 @@ async def test_freeform_omitted_session_admits_without_quoted_purpose_briefing(
     monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
 
     seen: dict[str, Any] = {}
+    pending: list[Any] = []
 
     async def _worker(**kwargs: Any) -> None:
         seen.update(kwargs)
 
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+    def _capture_task(coro: object, **kwargs: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
     monkeypatch.setattr(mod, "run_cdp_worker", _worker)
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
 
     prompt = "purpose=operator-proxy\nDo the work.\n"
     body = TeamDispatchGenerateBody(
@@ -643,6 +653,8 @@ async def test_freeform_omitted_session_admits_without_quoted_purpose_briefing(
     assert result["execution_id"]
     assert result["resolved_job"] == "freeform"
     assert result["registry_ref"] == "job_vocab:freeform"
+    assert pending, "dispatch did not schedule run_cdp_worker"
+    await pending[0]
     assert seen.get("purpose") is None
     staged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert "Mission seat map" not in staged

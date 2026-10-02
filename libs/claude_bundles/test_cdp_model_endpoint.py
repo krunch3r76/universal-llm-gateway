@@ -621,6 +621,51 @@ def test_run_cdp_generate_parent_thread_on_submit_request(
     assert captured[0].parent_thread == "10479"
 
 
+def test_run_cdp_generate_submit_purpose_defaults_to_ask_when_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Omitted purpose: staging stays None; SubmitProjectAskRequest gets ask."""
+    from cdp_ask.models import SubmitProjectAskRequest
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-purpose-none")
+    captured: list[SubmitProjectAskRequest] = []
+
+    class _FakeAsk:
+        def submit(
+            self, submit_req: SubmitProjectAskRequest, **kwargs: Any
+        ) -> dict[str, Any]:
+            captured.append(submit_req)
+            return {
+                "execution_id": "sat-purpose",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+            }
+
+        def poll(self, execution_id: str, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "execution_id": execution_id,
+                "status": "complete",
+                "completion_phase": "content_proof",
+                "content_proof_uri": "cortex://notes/system/threads/proof.md",
+                "body": "done",
+                "body_len": 4,
+            }
+
+    run_cdp_generate(
+        execution_id="dispatch-purpose-none",
+        model_id="cdp/opus-5.5",
+        prompt_text="Review the diff.",
+        purpose=None,
+        poll_interval_s=0,
+        ask_client=_FakeAsk(),  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert _recorded_staging_kwargs[-1]["purpose"] is None
+    assert captured
+    assert captured[0].purpose == "ask"
+
+
 def test_run_cdp_generate_stall_wall_clock(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

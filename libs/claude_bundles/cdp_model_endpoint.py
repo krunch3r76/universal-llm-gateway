@@ -602,7 +602,7 @@ def run_cdp_generate(
     converse: bool = True,
     no_project_uuid: bool = True,
     project_uuid: str | None = None,
-    purpose: str = "ask",
+    purpose: str | None = None,
     mission_kind: str | None = None,
     parent_thread: str | None = None,
     holder: str = "cdp-model-endpoint",
@@ -686,10 +686,11 @@ def run_cdp_generate(
         )
     mission_retain = staged.mission
 
+    submit_purpose = purpose if purpose is not None else "ask"
     submit_req = SubmitProjectAskRequest(
         prompt_uri=staged.prompt_uri,
         holder=holder,
-        purpose=purpose,
+        purpose=submit_purpose,
         mission_kind=mission_kind,
         parent_thread=parent_thread,
         model=picker,
