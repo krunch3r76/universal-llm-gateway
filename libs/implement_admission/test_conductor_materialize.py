@@ -226,15 +226,14 @@ def test_materialize_conductor_hop_contract(tmp_path: Path) -> None:
     assert "stop: ROW_HOP | ROW_PINNED | HOLD_MERGE" in mp.text
     assert "repeating the same refusal is a gate" in mp.text
     assert "hop_seq: <n>" in mp.text
+    assert "Density hop (GIW steer):" in mp.text
+    assert "GIW measures context for you." in mp.text
+    assert "Context pressure:" not in mp.text
+    assert "≥2 of these hold" not in mp.text
     assert (
-        "Context pressure: at every leg boundary and on every wake, hop when "
-        "≥2 of these hold — ≥6 closeouts harvested, skill set reloaded more than "
-        "once, a tool result spilled to a file, replies summarize instead of "
-        "quoting. Bump the standing handoff (in flight + first act), then hop "
-        "between legs, never mid-harvest"
+        "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
+        "purpose=ask, dispatch_thread_id="
     ) in mp.text
-    assert "Next-pickup is the same open G-row" in mp.text
-    assert "forward_mutate_tip" in mp.text
 
 
 def test_non_done_tip_delta_changes_budget_tip_sha(
@@ -489,7 +488,9 @@ def test_materialize_conductor_default_confer_and_finish_strings(
     confer_sentence = (
         "G3→G5 default: in-process CDP score-ratify "
         f"({g3_g5_score_ratify_clause()}) "
-        "(do-not-fight / likely-optimal)."
+        "(do-not-fight / likely-optimal) via "
+        "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
+        "purpose=ask, dispatch_thread_id=<this worker thread id>)."
     )
     assert "summon_mode: confer_and_finish" in mp.text
     assert confer_sentence in mp.text
