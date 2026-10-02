@@ -807,6 +807,47 @@ async def test_watchdog_parks_on_budget_exhaustion() -> None:
     park_mock.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_watchdog_does_not_budget_park_cancel_discard() -> None:
+    """a:37149 — discard at mission_cap must not page/lock via watchdog budget.
+
+    Reviewer falsifier: discard row past grace → sweep/fire must not call
+    ``park_conductor_hop_mission`` and must leave ``mission_park_state`` clear.
+    """
+    from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+        mission_park_state,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(24):
+        dispatch_id = f"pred-disc-{idx}"
+        _terminal_row(
+            ledger,
+            dispatch_id=dispatch_id,
+            closeout_tokens=["ROW_HOP"] if idx else [],
+            terminal_at_offset_s=-200.0 - idx,
+        )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='cancel_discard', "
+            "status='cancelled', terminal_status='cancelled' "
+            "WHERE dispatch_id='pred-disc-0'"
+        )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog."
+        "park_conductor_hop_mission",
+        AsyncMock(),
+    ) as park_mock:
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-disc-0")
+    assert ok is False
+    park_mock.assert_not_called()
+    with ledger._connect() as conn:
+        assert mission_park_state(conn, work_key=_WORK_KEY) is None
+    assert "pred-disc-0" not in conductor_hop_watchdog_candidates(
+        ledger, grace_s=0.0, now=time.time() + 10_000
+    )
+
+
 def test_watchdog_hops_owed_off_event_loop() -> None:
     """hop_owed does sync CDP HTTP — must not run on the GIW asyncio thread."""
     from pathlib import Path
