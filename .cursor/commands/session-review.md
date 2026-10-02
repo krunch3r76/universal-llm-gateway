@@ -2,7 +2,7 @@
 
 **Code review request (binding):** in this tab, apply `review-task-guidance`
 and do not dispatch. A code review that leaves the tab is
-`team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`
+`team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`
 with the session arc and touched files staged to `cortex://`. `cdp/opus-5` is
 the same class. Do not call model `code-review`. A `web-anthropic` handoff is
 the session-critique lane, not a substitute for that code review.

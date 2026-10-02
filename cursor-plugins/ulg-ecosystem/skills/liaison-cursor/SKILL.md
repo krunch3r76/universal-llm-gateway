@@ -35,5 +35,5 @@ A conductor whose closeout is already relayed, while its tail still prints `stal
 | Bad | Good |
 |---|---|
 | Arm a tail and read each conductor turn | Wait for the closeout or a designed stop |
-| Sketch or `job=implement` on a house row | One `job=conductor` admit, then land here |
+| Sketch or `contract=implement` on a house row | One `job=conductor` admit, then land here |
 | Another `--replace` after the same quoted error | A new gate, or stop `REPEATED_FAILURE` |

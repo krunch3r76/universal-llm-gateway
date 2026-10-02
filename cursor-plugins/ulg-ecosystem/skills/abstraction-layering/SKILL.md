@@ -121,9 +121,9 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (does not change ACTIVE's model or effort). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
-| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `job=delivery-review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
+| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `contract=delivery-review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
-| 6 | Pre-land review | `cdp/opus-5` `job=code-review` on lane branch diff | `[judgment]` | R1 sidecar |
+| 6 | Pre-land review | `cdp/opus-5` `contract=code-review` on lane branch diff | `[judgment]` | R1 sidecar |
 | 7 | Verify + ship | inline + land | `[inline]` | ACs, docstrings, close, L1 |
 
 ### G1 / G2 architecture skill floor (BINDING — pre-densify)
@@ -143,7 +143,7 @@ Staging `session=ask, job=freeform` owns the arch-pair floor (`consult-routing` 
 Lead duty is the S3 recipe + same-turn admit — not a preflight checklist.
 
 1. Copy `work-item-seed-path` § S3 Fable generate recipe (live-CSE followup vs
-   fresh `team_dispatch(session=ask, job=freeform)`). **¬** reconstruct `skills=`.
+   fresh `team_dispatch(purpose=ask, contract=freeform)`). **¬** reconstruct `skills=`.
 2. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit)
    **or** honest halt.
 
@@ -238,8 +238,8 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    legs with no G3 densify: skip emit.
 4. **G4** — optional explicit Other Models check (Terra if named). Default **skip**.
    When run: fold amendments + refresh `spec_sha256`.
-5. **G5** — Composer `job=implement`, `source_ref=todo:{slug}`.
-6. **G6** — pre-land: `cdp/opus-5` `job=code-review` on lane branch diff; R1 sidecar.
+5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
+6. **G6** — pre-land: `cdp/opus-5` `contract=code-review` on lane branch diff; R1 sidecar.
 7. **G7** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5 · land (L1).
    **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨
    `files_expected ∩ surface-glob-table ≠ ∅`), verify `(block present in dense spec) ∧
@@ -274,7 +274,7 @@ envelope advise-vs-reject). G3→4 / G5→7 keep their reject-mode checkers.
 
 ### Pre-land CDP Opus review (G6 — binding on conductor arcs)
 
-`cdp/opus-5` **`job=code-review`** on the **lane branch diff** is **G6**, not G4
+`cdp/opus-5` **`contract=code-review`** on the **lane branch diff** is **G6**, not G4
 (pre-ship spec) and not optional commentary. Fire **after G5 implement, before G7
 land** — `review harvest ≺ land ≺ DONE`. Stage closeout + diff to `cortex://`;
 record harvest on sidecar **R1**.

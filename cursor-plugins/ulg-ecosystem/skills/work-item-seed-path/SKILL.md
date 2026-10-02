@@ -224,12 +224,12 @@ Copy **§ S3 Fable generate recipe** (followup vs fresh generate). Staging
 IDE seed path stamps Mode B on the disposition; it does not fire the consult.
 
 **Checkout rung:** fork needs live-checkout verification at file:line depth a CDP seat
-structurally cannot perform ⇒ escalate to `cursor/grok-4.7` `job=freeform` (hop 4) when the
+structurally cannot perform ⇒ escalate to `cursor/grok-4.7` `contract=freeform` (hop 4) when the
 four-condition trigger in `decision:architecture-bind-escalation-chain` holds
 (`cdp-operator-proxy` § Architecture-bind chain) — **pre-authorized, ¬ operator ping**.
 That trigger picks the **seat**, not a second effort gate; once picked, knobs follow
 the grok card (`effort` through `xhigh`). Announce
-model + effort + why. When that CDP consult is refused or fails (including `X display exhausted`), do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` `job=freeform` `model_knobs={"effort":"xhigh"}`) or `operator` (question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread, which `CONSULT_PENDING` watches). That SOT also binds the **mandatory** independent
+model + effort + why. When that CDP consult is refused or fails (including `X display exhausted`), do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard: `nested-grok` (`cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`) or `operator` (question and context on the worker thread `to=web-anthropic`, one-line pointer on `parent_thread` `to=web-anthropic`; the operator answers on the worker thread, which `CONSULT_PENDING` watches). That SOT also binds the **mandatory** independent
 check (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks — an architecture is not self-ratifiable) and verbatim
 densify. ¬ fork those rules here.
 
@@ -264,8 +264,8 @@ team_dispatch(
     op="generate",
     model="cdp/opus-5",
     reasoning_effort="max",
-    job="freeform",
-    session="ask",
+    contract="freeform",
+    purpose="ask",
 
     packet_path="tmp/reviews/{slug}-fable-g1.md",  # or sidecar_ref=cortex://…
     dispatch_thread_id="<work thread, not an unrelated charter root>",
@@ -288,7 +288,7 @@ Problem/Scope/Acceptance may be sparse. **Do not** set
 implement, set packet `sdk_mode: plan` (or rely on `read_only=true` default on
 `consult|none|ask|recon|seed`) so the nested dispatch runs Cursor SDK **plan**
 mode — artifact URIs only, no land claims. Follow with a separate
-`job=implement` dispatch (`sdk_mode: agent` or omit) after the seated
+`contract=implement` dispatch (`sdk_mode: agent` or omit) after the seated
 conductor stamps the **`implement_ready` assertion** (Gate-2 densify). SoT:
 `docs/agent-guides/cursor-sdk-conversation-mode.md` ·
 `services/git_integration_worker/cursor_sdk_mode.py`.
@@ -302,15 +302,15 @@ CDP rows (G1/G2/G4/G6) are out of scope — they use `team_dispatch(model=cdp/�
 |---|---|---|---|---|
 | **G1** | Architecture consult | — (CDP `session=ask, job=freeform`) | — | Never cursor-sdk plan |
 | **G2** | Frame | — (CDP; transport per conductor profile) | — | — |
-| **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `implement_ready` assertion stamped or dense packet ⇒ **`agent`** + `job=implement` |
+| **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `implement_ready` assertion stamped or dense packet ⇒ **`agent`** + `contract=implement` |
 | **G4** | Skeptic | — (CDP) | — | — |
 | **G5** | Implement | `implement` \| `pure-mechanical` | **`agent`** | `sdk_mode=plan` **422** at admit (`validate_sdk_mode_at_admit`) |
-| **G6** | After-ship review | — (CDP `job=delivery-review`) | — | — |
+| **G6** | After-ship review | — (CDP `contract=delivery-review`) | — | — |
 | **G7** | Land / merge | `conductor` (orchestrator) | **`agent`** | Conductor admit is always agent-class |
 
 **W3 plan → implement:** when a G3 plan leg closes
 `plan:closeout_verdict=PLAN_COMPLETE`, the conductor's `NEXT_ADMIT` is a nested
-`job=implement` dispatch with `nest_under=<plan_dispatch_id>` (inherit lane
+`contract=implement` dispatch with `nest_under=<plan_dispatch_id>` (inherit lane
 + worktree). Read plan closeout fields (`open_forks`, `spec_sha256`,
 `artifact_paths`, verdict) before authoring the implement packet. Sparse nested
 `ask|recon|seed` legs use explicit/packet **`sdk_mode: plan`** when plan mode
@@ -345,7 +345,7 @@ First codework utterance after S4a mint:
 team_dispatch(
   op="generate",
   seat="cursor-sdk",
-  job="conductor",          # materializer — ¬ "freeform" (freeform + source_ref is 422 none_with_source_ref)
+  contract="conductor",          # materializer — ¬ "freeform" (freeform + source_ref is 422 none_with_source_ref)
 
   lane="B",
   source_ref="todo:{slug}",      # ¬ packet_path (refused on this contract)

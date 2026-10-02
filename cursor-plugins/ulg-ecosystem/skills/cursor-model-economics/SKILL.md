@@ -44,10 +44,10 @@ Cursor seats in use: `cursor/grok-4.7` (omit-model) and `cursor/composer-2.5` (m
 | **CDP width** | **`cdp/opus-5`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. `cdp/fable-5.1` only when Kaywan asks. |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`job=code-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → `cursor/composer-2.5` `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
 | **Check/review** | **`cursor/grok-4.7`** via `workflows.check_review.model` | Same model as judgment omit. |
-| **Live checkout** | **`cursor/grok-4.7`** `job=freeform` | File:line depth on a cursor-sdk checkout. |
+| **Live checkout** | **`cursor/grok-4.7`** `contract=freeform` | File:line depth on a cursor-sdk checkout. |
 
 
-Nested legs: mechanical → `cursor/composer-2.5` · investigate → `cursor/grok-4.7` `job=investigate` returning `OPEN FORK:` lines
+Nested legs: mechanical → `cursor/composer-2.5` · investigate → `cursor/grok-4.7` `contract=investigate` returning `OPEN FORK:` lines
 · `cursor/claude-fable-5{,-1}` **blocked on judgment/implement** (cost) —
 `cdp/fable` only when Kaywan asks · binder when unsure → `cdp/opus-5.5`.
 

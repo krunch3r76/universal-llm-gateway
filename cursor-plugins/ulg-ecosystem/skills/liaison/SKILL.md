@@ -14,7 +14,7 @@ session to a designed stop), `decision:conductor-attended-vs-unattended-routing`
 
 | Bad | Good |
 |---|---|
-| Sketch or `job=implement` from this tab on a house row | One conductor admit; harvest its closeout |
+| Sketch or `contract=implement` from this tab on a house row | One conductor admit; harvest its closeout |
 | CDP generate on the house thread as the play | Conductor lane parented to the house |
 
 **Not the same as** `runbook:liaison-seat-on-a-lane` — that runbook is voice/web liaison on a **foreign lane**;
@@ -303,7 +303,7 @@ an undispositioned friction on a charter-owned service, once per assertion id (`
 a fresh `CONTEXT_BUDGET` from the `sdk:` holder's own stream. Hold reasons are the per-clause booleans on the
 ticker's stdout line (`tmp/watchers/liaison-ticker-<R>.log` when started by `--go-under`). The successor claims
 the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
-dispatches (`job=implement`, omit `model=`) run **alongside** — they are not Fable seats.
+dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 

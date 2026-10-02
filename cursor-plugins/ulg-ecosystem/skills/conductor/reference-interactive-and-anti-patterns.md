@@ -36,7 +36,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Bad | Good |
 |---|---|
 | Admit conductor packet without `Use the conductor skill` in `<invariants>` | Continuity-lead required-skill gate (Audience) |
-| Hand-author `tmp/reviews/{slug}-conductor-packet.md` and pass `packet_path=` on `job=conductor` | Shape the **todo**; `source_ref=todo:` — the materializer writes the packet and the scoreboard (§ Admit from an existing plan) |
+| Hand-author `tmp/reviews/{slug}-conductor-packet.md` and pass `packet_path=` on `contract=conductor` | Shape the **todo**; `source_ref=todo:` — the materializer writes the packet and the scoreboard (§ Admit from an existing plan) |
 | Spawn with `job="freeform"` + `source_ref=todo:` (post-`19ab1566a` residue) | `job="conductor"` — `none_with_source_ref` is a 422, not a lighter admit |
 | Stamp `derived_from` attribute only (or edge only) to skip G1 | Both attribute and `consult_kind=architecture` edge, or neither — a `consult_kind: sketch` doc is not a G1 witness |
 | Seed `implement_ready` / `files_modified` / `acceptance` on the todo | Readiness is a Gate-2 assertion; canonical keys are `files_expected` / `acceptance_criteria` / `required_skills` (non-empty `list[str]`) |
@@ -60,7 +60,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
 | Closes `status: partial`/`checks_failed` with zero files touched because it wanted to flag the plan first | Flag the concern on the CHECKPOINT while still driving — flagging is commentary, not a hold |
-| Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `job=implement` — independent dispatch is judgment/spec-only |
+| Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
 | Nest 422 then in-seat G5 absorb | `PARKED_TRANSPORT` + persist; fix wire and re-nest under live `dispatch_id` |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire Opus after-ship / Fable Skeptic and never read it | Summoning-thread lead quotes the harvest; unread ⇒ ¬ DONE |
@@ -68,7 +68,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
 | Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = ACTIVE on the spec; code review stays `cdp/opus-5.5` on the lane branch diff, before land (G6) |
 | Author a nested CDP width prompt without `retrieval_report: cortex://…` (or claim RAG in-stream with no sidecar) | Run `retrieval-before-authoring` for real; write the report sidecar (Queries / Yields / Choice-to-evidence); cite it on the prompt body — substrate refuses admit without it (a:37183) |
-| Open a G4 / `gate_path=SKEPTIC` / adversarial-spec prompt with delivery/code-review chrome ("packet carries the code under review", checkout-pytest waive) | Spec-skeptic genre only; job=delivery-review delivery charter is for G6 / `job=delivery-review`, never G4 — substrate refuses chrome-on-SKEPTIC |
+| Open a G4 / `gate_path=SKEPTIC` / adversarial-spec prompt with delivery/code-review chrome ("packet carries the code under review", checkout-pytest waive) | Spec-skeptic genre only; job=delivery-review delivery charter is for G6 / `contract=delivery-review`, never G4 — substrate refuses chrome-on-SKEPTIC |
 | Hop closeout lists nested prompt URIs with no report bundle | Closeout check: every nested CDP prompt authored this hop has a resolvable report bundle (`hop_prompts_missing_report_bundles`) |
 | Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Path-explicit commit of session paths, then prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |

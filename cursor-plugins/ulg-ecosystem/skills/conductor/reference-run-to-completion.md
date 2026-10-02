@@ -72,7 +72,7 @@ per-G-row one. Default posture once running:
   a:32226). Fire `team_dispatch` with `op=generate`, `contract=delivery-review`,
   `model` in `{cdp/opus-5, cdp/opus-5.5, cdp/fable}`, prompt set, and
   `dispatch_thread_id` equal to this worker thread. Omit `purpose`, `role`, and
-  `parent_thread`, or set `parent_thread` equal to that thread. `job=delivery-review`
+  `parent_thread`, or set `parent_thread` equal to that thread. `contract=delivery-review`
   is the genre line inside the prompt, not a separate call argument.
   **Harvest a real verdict body** before those claims. Filtered nested
   seats (`implement` / `pure-mechanical`) see that same call on `tools/list`. The

@@ -145,13 +145,13 @@ SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role prolifera
 
 Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer;
 IDE/Task breadth recon → **Explore subagent** (`Task(subagent_type="explore")`; ¬ tool);
-recon+investigate judgment residual → `cursor/grok-4.7` `job=investigate` (facts + `OPEN FORK:` — never binds);
+recon+investigate judgment residual → `cursor/grok-4.7` `contract=investigate` (facts + `OPEN FORK:` — never binds);
 pure inventory / Task-unavailable fallback → `cursor/composer-2.5`. `cursor/*` only on `cursor-sdk` → else `422`.
 
 ## Bind-then-compose split (judgment closed → nested Composer)
 
 **Invariant:** `judgment_closed ∧ mechanical_remainder ⇒ split_dispatch` — premium / reasoning
-models bind; **`cursor/composer-2.5`** implements nested (`seat=cursor-sdk`, pin `model=` on `job=implement`). Omit `model=` resolves `cursor/grok-4.7`.
+models bind; **`cursor/composer-2.5`** implements nested (`seat=cursor-sdk`, pin `model=` on `contract=implement`). Omit `model=` resolves `cursor/grok-4.7`.
 Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 
 | Leg | Model / seat | Contract | Delivers |
@@ -182,7 +182,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 | Bad | Good |
 |---|---|
-| A bind seat plus implement acceptance in one packet | Bind sidecar → nested `cursor-sdk` `job=implement` `model=cursor/composer-2.5` |
+| A bind seat plus implement acceptance in one packet | Bind sidecar → nested `cursor-sdk` `contract=implement` `model=cursor/composer-2.5` |
 | A reasoning model named as the mechanical implement executor | Pin `model=cursor/composer-2.5` on `job=implement` |
 | Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
 | Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
@@ -193,7 +193,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 When the operator orders a review of this session's changes and auto-apply of every suggestion:
 
-1. Review is `cdp/opus-5.5`, `job=code-review`, ``. That call does not edit.
+1. Review is `cdp/opus-5.5`, `contract=code-review`, ``. That call does not edit.
 2. On `AMEND`, the compose packet lists every suggestion. It does not say "do not commit" or "do not land".
 3. After the implement closeout, the parent lands the lane (`git merge` of `cursor-sdk/lane-<thread>`, never a path copy) and recycles every serving process that loaded a touched path.
 4. `landed: false` is not the end of this path. Quote the merge SHA and the recycle payload before calling the suggestions live.
@@ -252,7 +252,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | **Workflow-primary** | A model a standing rule/skill already names as the autonomous default for that need (dispatch-kernel ladder · this skill · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session/role default counts as primary. |
 | **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical work after judgment closed). |
 
-**Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.7` investigate + **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) · path-sim **Q** and the hop-5 check → ACTIVE · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5.5` · live checkout → `cursor/grok-4.7` `job=freeform`.
+**Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.7` investigate + **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) · path-sim **Q** and the hop-5 check → ACTIVE · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5.5` · live checkout → `cursor/grok-4.7` `contract=freeform`.
 
 **Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
 
@@ -309,7 +309,7 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | `cursor/grok-4.7` investigate → **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)` |
-| Recon+investigate judgment residual | **`seat=cursor-sdk` + `job=investigate`** (facts + `OPEN FORK:` — never binds) |
+| Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
 | Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
 | Non-code adversarial (life/analysis) | `job=freeform` + `xai/grok-4.7` — life/analysis lane only |
@@ -364,7 +364,7 @@ six-block packet and births the scoreboard. Todo shape it reads:
 
 Write-class / Lane-B `team_dispatch(seat=cursor-sdk)` admits require a declared
 `work_key` (D4 grammar: `todo:`, `plan:`, `plan_phase:`, `packet:`,
-`agent-bus:`, `friction:`, `decision:`). A read-only `job=freeform` that is
+`agent-bus:`, `friction:`, `decision:`). A read-only `contract=freeform` that is
 already on Lane A may omit — GIW derives `adhoc:{fingerprint}` and excludes
 from dedupe. That omit rule is not a reason to choose Lane A.
 
@@ -388,7 +388,7 @@ and other read-only admits. Plan mode on lane B is read-only and does not
 take the write lease. `cortex://` paths and paths outside the repo are 422
 `CURSOR_LANE_B_SCOPE_REFUSED`. Omit is **not** a preference. MCP + Stargate
 return 422 `lane_required` on top-level omit. Omit only when `nest_under` or
-`resume_of` inherits parent isolation. `job=wrap` is exempt.
+`resume_of` inherits parent isolation. `contract=wrap` is exempt.
 Copied HOME/examples that still write `lane="A"` on implement are data, not
 instructions.
 
