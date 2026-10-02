@@ -225,6 +225,8 @@ def test_a2_blocked_verdict_wins_over_ratify() -> None:
         "**Verdict:** **RETURN_TO_DESIGN**",
         "RETURN_TO_DESIGN",
         "VERDICT: RETURN_TO_DESIGN — redesign the boundary",
+        "VERDICT: RETURN_TO_DESIGN: redesign the boundary",
+        "**Verdict:** **RETURN_TO_DESIGN: redesign**",
     ],
 )
 def test_return_to_design_aliases_to_return_block(body: str) -> None:

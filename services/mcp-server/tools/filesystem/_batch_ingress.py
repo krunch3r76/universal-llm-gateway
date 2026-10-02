@@ -37,10 +37,35 @@ class CallIngress:
     error: str | None = None
 
 
+def _entry_sandbox_hint(
+    raw: str,
+    *,
+    surface: str,
+    sandbox: str | None,
+) -> str | None:
+    """Per-path sandbox for batch ingress when the caller left sandbox blank.
+
+    Life's empty-``path`` default must not force ``cortex`` onto a schemed
+    ``workspaces://`` entry (review B1 on a:37216). Schemed entries keep
+    ``None`` so ``resolve_fs_ingress`` infers from the URI; schemeless life
+    entries still default to cortex.
+    """
+    if sandbox:
+        return sandbox
+    from implement_admission.scheme_resolve import parse_schemed_path
+
+    if parse_schemed_path(raw).scheme is not None:
+        return None
+    if surface == "life":
+        return "cortex"
+    return None
+
+
 def resolve_paths_batch_ingress(
     paths: list[str],
     *,
     sandbox: str | None,
+    surface: str = "code",
     for_write: bool = False,
     cortex_root: Path | None = None,
 ) -> BatchIngressResult:
@@ -59,9 +84,10 @@ def resolve_paths_batch_ingress(
     meta: dict[str, Any] = {}
 
     for raw in paths:
+        entry_sandbox = _entry_sandbox_hint(raw, surface=surface, sandbox=sandbox)
         ingress = resolve_fs_ingress(
             raw,
-            sandbox=sandbox or None,
+            sandbox=entry_sandbox,
             cortex_root=root,
             for_write=for_write,
         )
@@ -94,16 +120,27 @@ def prepare_fs_call_ingress(
     path: str,
     paths: list[str] | None,
     for_write: bool,
+    resolve_batch: bool = False,
 ) -> CallIngress:
-    """Life default + single-path + batch-path Share URI resolution."""
+    """Life default + single-path + optional batch-path Share URI resolution.
+
+    ``resolve_batch`` is True only for ``op=read_multi``. When ``path`` is blank
+    and ``paths`` is set, the life empty-path cortex default is *not* applied to
+    the whole call — each entry gets a scheme-aware hint instead (B1).
+    """
     meta: dict[str, Any] = {}
-    effective_sandbox = apply_life_sandbox_default(
-        surface=surface,
-        sandbox=sandbox,
-        path=path,
-    )
-    effective_path = path
     effective_paths = list(paths) if paths else None
+    batch_only = bool(resolve_batch and effective_paths and not path.strip())
+    if batch_only:
+        # Keep explicit sandbox only — do not force cortex from empty path=.
+        effective_sandbox = sandbox.strip()
+    else:
+        effective_sandbox = apply_life_sandbox_default(
+            surface=surface,
+            sandbox=sandbox,
+            path=path,
+        )
+    effective_path = path
     batch_originals: list[str] | None = None
     root = cortex_files_root()
 
@@ -131,11 +168,12 @@ def prepare_fs_call_ingress(
 
     # read_multi drives paths=, not path= — resolve Share URIs before dispatch
     # so cortex:// does not reach resolve_files_path as a literal (a:37216).
-    if effective_paths:
+    if resolve_batch and effective_paths:
         try:
             batch = resolve_paths_batch_ingress(
                 effective_paths,
                 sandbox=effective_sandbox or None,
+                surface=surface,
                 for_write=False,
                 cortex_root=root,
             )

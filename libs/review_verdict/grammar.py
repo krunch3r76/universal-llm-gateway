@@ -31,6 +31,8 @@ _GATE6_BOLD_VERDICT_RE = re.compile(
 _ADVANCE = frozenset({"ADMIT", "RATIFY"})
 _AMEND = frozenset({"ADMIT_WITH_AMENDMENTS", "RATIFY_WITH_CONDITIONS"})
 _BLOCK = frozenset({"RETURN", "SCOPE-DRIFT", "SCOPE_DRIFT", "REJECT"})
+# Trailing prose after a block token (space/tab/em-dash/hyphen/paren/colon).
+_BLOCK_TRAILING_SEP = " \t—-(:"
 # First-word aliases only. ADMIT and RATIFY stay whole-string members of _ADVANCE.
 _CLOSED_ADVANCE_ALIASES = frozenset({"PASS", "APPROVE", "SHIP"})
 _STANDALONE_VERDICT_RE = re.compile(
@@ -70,7 +72,7 @@ def normalize_verdict_token(raw: str) -> str:
         return "RETURN"
     if token.startswith("RETURN_TO_DESIGN"):
         rest = token[len("RETURN_TO_DESIGN") :]
-        if rest and rest[0] in " \t—-(":
+        if rest and rest[0] in _BLOCK_TRAILING_SEP:
             return "RETURN" + rest
     return token
 
@@ -101,7 +103,7 @@ def _block_token_with_trailing(normalized: str) -> ParsedVerdict | None:
             return ParsedVerdict(token, VerdictAction.BLOCKED, "r_verdict_blocked")
         if normalized.startswith(token) and len(normalized) > len(token):
             tail = normalized[len(token) :]
-            if tail and tail[0] in " \t—-(":
+            if tail and tail[0] in _BLOCK_TRAILING_SEP:
                 return ParsedVerdict(token, VerdictAction.BLOCKED, "r_verdict_blocked")
     return None
 
