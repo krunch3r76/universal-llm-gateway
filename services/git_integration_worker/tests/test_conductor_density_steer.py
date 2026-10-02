@@ -14,6 +14,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatc
 from services.git_integration_worker.cursor_sdk_row_density_harness_meter import (
     DensityHarnessStreamHook,
     apply_synthetic_density_trajectory,
+    density_harness_control_patch,
     density_harness_record_patch,
     read_density_harness_meter,
     should_steer_density_hop,
@@ -241,14 +242,18 @@ def test_delivered_steer_plus_eight_tools_parks_once(
     ledger = CursorDispatchLedger.instance()
     req = _req()
     _admit_row(ledger, req)
+    apply_synthetic_density_trajectory(
+        dispatch_id=req.dispatch_id,
+        call_estimates=[_THRESHOLD],
+        ledger=ledger,
+    )
     ledger.merge_record_json(
         dispatch_id=req.dispatch_id,
-        patch=density_harness_record_patch(
+        patch=density_harness_control_patch(
             {
                 "density_steer_deposited": True,
                 "density_steer_delivered": True,
                 "density_steer_delivered_at_tool_count": 10,
-                "latest_visible_estimate": _THRESHOLD,
             }
         ),
     )
@@ -283,7 +288,7 @@ def test_terminal_before_plus_eight_no_park(monkeypatch: pytest.MonkeyPatch) -> 
     _admit_row(ledger, req)
     ledger.merge_record_json(
         dispatch_id=req.dispatch_id,
-        patch=density_harness_record_patch(
+        patch=density_harness_control_patch(
             {
                 "density_steer_deposited": True,
                 "density_steer_delivered": True,
