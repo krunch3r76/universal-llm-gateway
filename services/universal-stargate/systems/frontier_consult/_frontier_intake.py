@@ -145,7 +145,7 @@ def reject_unsupported_packet_inputs(
             field="stop_after",
             reason=f"stop_after is forbidden for job={record.name!r}",
             status_code=422,
-            code="none_with_stop_after",
+            code="stop_after_not_allowed",
         )
 
 

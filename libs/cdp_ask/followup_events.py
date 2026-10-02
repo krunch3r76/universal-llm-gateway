@@ -170,6 +170,53 @@ def cdp_ask_attended_refused(
 
 
 @event_factory
+def cdp_ask_followup_refused_seat_mismatch(
+    *,
+    lane: str,
+    target_registration_id: str,
+    holder_registration_id: str,
+) -> Event:
+    """Followup refused because explicit identity disagrees with the lane holder."""
+    return Event(
+        signal="cdp_ask.followup.refused_seat_mismatch",
+        role="observation",
+        scope="node",
+        payload={
+            "lane": lane,
+            "target_registration_id": target_registration_id,
+            "holder_registration_id": holder_registration_id,
+        },
+    )
+
+
+@event_factory
+def cdp_ask_admission_refused_seat_held(
+    *,
+    lane: str,
+    holder_registration_id: str,
+    purpose: str,
+    mission_kind: str | None,
+    execution_id: str | None,
+) -> Event:
+    """Submit-path refusal when the seat-axis journal reports an open holder."""
+    payload: dict[str, Any] = {
+        "lane": lane,
+        "holder_registration_id": holder_registration_id,
+        "purpose": purpose,
+    }
+    if mission_kind:
+        payload["mission_kind"] = mission_kind
+    if execution_id:
+        payload["execution_id"] = execution_id
+    return Event(
+        signal="cdp_ask.admission.refused_seat_held",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
 def cdp_ask_followup_unbound_capped(
     *,
     registration_id: str | None,

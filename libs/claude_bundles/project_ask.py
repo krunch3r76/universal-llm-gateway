@@ -34,7 +34,7 @@ from claude_bundles.chat_model_select import (
     select_model,
 )
 from claude_bundles.chat_reply_wait import (
-    HarvestIncomplete,
+    HarvestIncompleteError,
     harvest_assistant,
     wait_assistant_reply,
 )
@@ -453,7 +453,8 @@ async def send_prompt(
     *,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
-) -> None:
+    await_induction_reply: bool = False,
+) -> dict | None:
     """Clear the composer, attach leading slash skills, then click submit.
 
     Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
@@ -474,6 +475,10 @@ async def send_prompt(
     After a successful work-prompt click, records a non-gating Context → Skills
     receipt (``cdp.skill.context_loaded``) — chips gate submit; the rail is the
     receipt.
+
+    ``await_induction_reply`` waits out the skill-load turn and returns its
+    harvest so reply-wait callers do not seal that ack as the ask (a:37267).
+    Paste-half leaves it false. None when no induction turn was sent.
     """
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
@@ -509,7 +514,15 @@ async def send_prompt(
     await page.wait_for_timeout(180)
 
     induction_observed: list[str] = []
+    reply_baseline: dict | None = None
     if induction_slugs:
+        # Same floor as wait_assistant_reply polls (10). The harvest default of 40
+        # drops a short prior turn from base_n, so the first poll looks like a new turn.
+        pre_induction = (
+            await harvest_assistant(page, min_msg_chars=10)
+            if await_induction_reply
+            else None
+        )
         induction_text = render_skill_induction(induction_slugs)
         await composer.click(force=True)
         await page.wait_for_timeout(200)
@@ -518,6 +531,14 @@ async def send_prompt(
         await _submit_composer_draft(page, composer=composer, draft_text=induction_text)
         panel = await wait_for_induction_panel(page, induction_slugs)
         induction_observed = list(panel.skills)
+        if await_induction_reply:
+            from claude_bundles.induction_reply_baseline import (
+                capture_induction_reply_baseline,
+            )
+
+            reply_baseline = await capture_induction_reply_baseline(
+                page, before=pre_induction or {}
+            )
         await clear_composer_verified(page, composer)
         await page.wait_for_timeout(180)
 
@@ -546,6 +567,7 @@ async def send_prompt(
         satellite_execution_id=str(satellite_execution_id or ""),
     )
     del missing, attach_notes
+    return reply_baseline
 
 
 async def _compose_model_selected(
@@ -657,13 +679,17 @@ async def project_ask_on_page(
                 delete_after=None,
                 error=f"model select failed: {model_info}",
             )
-        before = await harvest_assistant(page)
-        await send_prompt(
+        from claude_bundles.induction_reply_baseline import work_reply_before
+
+        caller_before = await harvest_assistant(page, min_msg_chars=10)
+        induction_baseline = await send_prompt(
             page,
             prompt,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=str(execution_id or ""),
+            await_induction_reply=True,
         )
+        before = work_reply_before(caller_before, induction_baseline)
         state = await wait_assistant_reply(
             page,
             before=before,
@@ -769,7 +795,7 @@ async def project_ask_on_page(
             artifact_cards=tuple(cards),
             artifact_cards_unresolved=False,
         )
-    except HarvestIncomplete as exc:
+    except HarvestIncompleteError as exc:
         # a:37226 — preserve nonzero last scrape; bare Exception path zeroed body.
         partial = strip_thinking_prefix(exc.body or "")
         return ProjectAskResult(

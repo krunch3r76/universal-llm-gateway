@@ -38,6 +38,33 @@ class _FakeReg:
     started_at: float | None = None
 
 
+def _patch_active_and_seat_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    regs: list[_FakeReg],
+) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.cdp_registry.list_active",
+        lambda: regs,
+    )
+    seat_rows: list[dict[str, object]] = []
+    for index, reg in enumerate(regs):
+        purpose = (reg.purpose or "").strip()
+        if purpose not in {"operator-proxy", "mission"}:
+            continue
+        seat_rows.append(
+            {
+                "registration_id": reg.registration_id,
+                "parent_thread": reg.parent_thread or f"lane-{reg.registration_id}",
+                "purpose": purpose,
+                "seat_bound_at": float(index + 1),
+            }
+        )
+    monkeypatch.setattr(
+        "cdp_ask.lane_snapshot.read_cdp_lane_snapshot",
+        lambda **kwargs: {"seat_rows": seat_rows, "observed_at": "t"},
+    )
+
+
 def _reg(
     reg_id: str,
     *,
@@ -63,10 +90,7 @@ def test_ac1_one_mission_registration_live(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reg = _reg("reg-1")
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active",
-        lambda: [reg],
-    )
+    _patch_active_and_seat_rows(monkeypatch, [reg])
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
         lambda rid: CSE_U if rid == "reg-1" else None,
@@ -95,9 +119,9 @@ def test_ac1_one_mission_registration_live(
 def test_ac1_two_mission_registrations_ambiguous(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active",
-        lambda: [_reg("reg-1"), _reg("reg-2", port=9224, purpose="mission")],
+    _patch_active_and_seat_rows(
+        monkeypatch,
+        [_reg("reg-1"), _reg("reg-2", port=9224, purpose="mission")],
     )
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
@@ -120,10 +144,7 @@ def test_same_lane_extras_collapse_to_one_holder(
 ) -> None:
     holder = _reg("reg-hop", port=9230, parent_thread="6655", mission_kind="hop")
     extra = _reg("reg-old", port=9228, parent_thread="6655", mission_kind="root")
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active",
-        lambda: [extra, holder],
-    )
+    _patch_active_and_seat_rows(monkeypatch, [extra, holder])
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
         lambda rid: CSE_U if rid == "reg-hop" else f"{CSE_U}-{rid}",
@@ -148,10 +169,7 @@ def test_same_lane_extras_collapse_to_one_holder(
 def test_ac1_zero_mission_registrations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active",
-        lambda: [_reg("reg-1", purpose="ask")],
-    )
+    _patch_active_and_seat_rows(monkeypatch, [_reg("reg-1", purpose="ask")])
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
         lambda rid: None,
@@ -170,10 +188,7 @@ def test_ac2_shadow_urls_unregistered_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reg = _reg("reg-1", port=9223)
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active",
-        lambda: [reg],
-    )
+    _patch_active_and_seat_rows(monkeypatch, [reg])
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
         lambda rid: CSE_U if rid == "reg-1" else None,
@@ -195,10 +210,7 @@ def test_ac3_sole_candidate_liveness_failed_no_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reg = _reg("reg-1", port=9223)
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active",
-        lambda: [reg],
-    )
+    _patch_active_and_seat_rows(monkeypatch, [reg])
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
         lambda rid: CSE_U if rid == "reg-1" else None,
@@ -221,9 +233,7 @@ def test_ac3_sole_candidate_liveness_failed_no_retry(
 
 
 def _no_live_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "cdp_ask.attended_operator.cdp_registry.list_active", lambda: []
-    )
+    _patch_active_and_seat_rows(monkeypatch, [])
     monkeypatch.setattr(
         "cdp_ask.attended_operator.cdp_orphans.probe_live_ports",
         lambda port_range=None: [],

@@ -1,4 +1,10 @@
-"""Cursor-sdk → role-labeled bus turn bridge for check/review dispatches (F2)."""
+"""Bridge a cursor-sdk check/review closeout into a role-labeled agent-bus turn.
+
+GIW success closeout decides eligibility with
+``cursor_role_turn_sender`` and posts here when that returns a sender.
+The role post fails closed on a non-conforming closeout and does not
+replace the cursor-sdk reply.
+"""
 
 from __future__ import annotations
 
@@ -59,6 +65,12 @@ def _conforming_check_closeout(body: str) -> tuple[str, list[str]] | None:
 
 
 def build_role_labeled_turn_body(findings: str, file_paths: list[str]) -> str:
+    """Assemble the role-labeled turn body the check gate can parse.
+
+    ``findings`` is the closeout prose. ``file_paths`` are appended under a
+    ``FILE_EVIDENCE_PATHS:`` header, one path per line. Returns the combined
+    text. Does not post or validate conformance.
+    """
     lines = [findings.rstrip(), "", "FILE_EVIDENCE_PATHS:"]
     lines.extend(f"- {path}" for path in file_paths)
     return "\n".join(lines)

@@ -348,7 +348,8 @@ def test_dry_run_sit_keeps_liaison_successor(monkeypatch) -> None:  # noqa: ANN0
     out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
     body = out["body"]
     assert body is not None
-    assert body["contract"] == "none"
+    assert body["job"] == "freeform"
+    assert "contract" not in body
     assert str(body["work_key"]).startswith("agent-bus:10479:night-")
     assert "WAKE — liaison headless successor" in str(body.get("message") or "")
     assert out["evaluation"]["leftover"]["leftover"] == LEFTOVER_SIT

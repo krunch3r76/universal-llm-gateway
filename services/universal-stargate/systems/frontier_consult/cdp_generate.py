@@ -206,6 +206,7 @@ def refuse_second_external_gate_at_fire(
     hop_own_generate: bool = False,
     predecessor_registration_id: str | None = None,
     error_field: str = "purpose",
+    mission_kind: str | None = None,
 ) -> None:
     """P1.3 — refuse a second gate while one is still streaming for the lane.
 
@@ -225,6 +226,55 @@ def refuse_second_external_gate_at_fire(
     from claude_bundles.hop_cadence_id_map import normalize_exclude_ids
 
     snap = _read_lane_snapshot_for_gate(request_id=request_id)
+    from cdp_ask.lane_admission import seat_holder_refusal
+
+    seat_refusal = seat_holder_refusal(
+        snap,
+        lane=lane,
+        purpose=purpose,
+        mission_kind=mission_kind,
+        predecessor_registration_id=predecessor_registration_id,
+        hop_succession=hop_own_generate,
+    )
+    if seat_refusal is not None:
+        code = str(seat_refusal.get("code") or "operator_seat_held")
+        if code == "seat_unavailable":
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="active-work",
+                reason="seat-axis projection unavailable for external gate",
+                status_code=503,
+                code="cdp_gate_probe_failed",
+            )
+        if code != "seat_holder_mismatch":
+            from . import cdp_events
+
+            data = seat_refusal.get("data") or {}
+            cdp_events.publish_cdp_kwargs(
+                cdp_events.CdpGenerateRefusedSeatHeld,
+                request_id=request_id,
+                lane=lane,
+                holder_registration_id=str(data.get("holder_registration_id") or ""),
+                purpose=purpose,
+                mission_kind=mission_kind,
+                observed_at=str(data.get("observed_at") or ""),
+            )
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="purpose",
+                reason=str(seat_refusal.get("message") or code),
+                status_code=409,
+                code="operator_seat_held",
+                details=seat_refusal,
+            )
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="purpose",
+            reason=str(seat_refusal.get("message") or code),
+            status_code=409,
+            code=code,
+            details=seat_refusal,
+        )
     exclude = normalize_exclude_ids(exclude_execution_id)
     if hop_own_generate:
         own = _hop_own_generate_execution_id(snap, lane, predecessor_registration_id)
@@ -265,6 +315,7 @@ def _refuse_external_gate_for_generate(
         hop_own_generate=hop,
         predecessor_registration_id=(predecessor_registration_id if hop else None),
         error_field=error_field,
+        mission_kind=mission_kind,
     )
 
 

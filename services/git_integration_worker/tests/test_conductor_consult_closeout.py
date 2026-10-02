@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_sdk_closeout.closeout_records import
     SdkRunOutcome,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+    CONDUCTOR_EXIT_PERSIST,
     CONDUCTOR_NEST_IN_FLIGHT,
     CONDUCTOR_ROW_HOP,
     CONDUCTOR_ROW_PINNED,
@@ -244,42 +245,35 @@ def test_verify_deliverables_suppresses_gate_d_on_consult_wait(tmp_path) -> None
     assert any("consult_pending_wait" in row.command for row in rows)
 
 
-def test_should_page_row_pinned() -> None:
+def test_should_page_only_consult_handoff_missing() -> None:
     from services.git_integration_worker.cursor_sdk_closeout.conductor_closeout_pager import (
         should_page_conductor_silence,
     )
 
     assert should_page_conductor_silence(
+        degraded_reason=CONDUCTOR_CONSULT_HANDOFF_MISSING, nest_under=None
+    )
+    assert not should_page_conductor_silence(
         degraded_reason=CONDUCTOR_ROW_PINNED, nest_under=None
     )
-    assert should_page_conductor_silence(
+    assert not should_page_conductor_silence(
+        degraded_reason=CONDUCTOR_ROW_HOP, nest_under=None
+    )
+    assert not should_page_conductor_silence(
         degraded_reason=CONDUCTOR_NEST_IN_FLIGHT, nest_under=None
     )
-    assert should_page_conductor_silence(
+    assert not should_page_conductor_silence(
+        degraded_reason=CONDUCTOR_CONSULT_PENDING, nest_under=None
+    )
+    assert not should_page_conductor_silence(
+        degraded_reason=CONDUCTOR_EXIT_PERSIST, nest_under=None
+    )
+    assert not should_page_conductor_silence(
         degraded_reason=None, nest_under=None, is_conductor=True
     )
     assert not should_page_conductor_silence(
         degraded_reason=None, nest_under=None, is_conductor=False
     )
-
-
-def test_should_page_orphan_nest(monkeypatch) -> None:
-    from services.git_integration_worker.cursor_sdk_closeout import (
-        conductor_closeout_pager as pager_mod,
-    )
-
-    class _Led:
-        def dispatch_status_by_id(self, *, dispatch_id: str):
-            return {"dispatch_id": dispatch_id, "status": "completed"}
-
-        @classmethod
-        def instance(cls):
-            return cls()
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger",
-        _Led,
-    )
-    assert pager_mod.should_page_conductor_silence(
-        degraded_reason=None, nest_under="dead-parent"
+    assert not should_page_conductor_silence(
+        degraded_reason=None, nest_under="any-parent", is_conductor=False
     )

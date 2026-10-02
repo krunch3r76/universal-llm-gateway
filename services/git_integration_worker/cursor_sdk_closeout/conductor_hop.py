@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
+from claude_bundles.cdp_registry.execution_state import execution_state_of
 from claude_bundles.conductor_stop import (
     EXIT_PERSIST_STOPS,
     consult_pending_blocks_progression,
@@ -38,7 +40,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
+from services.git_integration_worker.cursor_sdk_closeout import conductor_exit_reasons
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+    _LIVE_NEST,
     SKIP_GATE_LIVE_EXTERNAL,
     SKIP_GATE_PROBE_INDETERMINATE,
     conductor_has_live_nested,
@@ -230,12 +234,189 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+_TERMINAL_EXECUTION_STATES = frozenset({"finished", "failed", "aborted"})
+_HARVEST_ID_TOKEN_RE = re.compile(r"^[0-9a-fA-F-]{8,}$")
+
+
+def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
+    tokens = _closeout_tokens_from_row(row)
+    if "ROW_HOP" not in tokens:
+        return False
+    if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
+        return False
+    return True
+
+
+def _harvest_target_token(guard: str) -> str | None:
+    admit = last_next_admit_payload(guard)
+    if not admit:
+        return None
+    parts = admit.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "harvest":
+        return None
+    token = parts[1]
+    if not _HARVEST_ID_TOKEN_RE.fullmatch(token):
+        return None
+    hex_digits = sum(1 for ch in token if ch in "0123456789abcdefABCDEF")
+    if hex_digits < 8:
+        return None
+    return token
+
+
+def _inflight_db_path() -> Path:
+    data_dir = os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))
+    return Path(data_dir) / "stargate-cdp-generate-inflight.db"
+
+
+def _prefix_match_id(candidate: str, token: str) -> bool:
+    if not candidate or not token:
+        return False
+    lower_c = candidate.lower()
+    lower_t = token.lower()
+    return lower_c == lower_t or lower_c.startswith(lower_t)
+
+
+def _dispatch_terminal_for_status(status: str | None) -> bool:
+    return str(status or "") not in _LIVE_NEST
+
+
+def _execution_terminal_from_state(row: dict[str, Any]) -> bool:
+    entry = execution_state_of(row)
+    if entry is None:
+        return False
+    return str(entry.get("state") or "") in _TERMINAL_EXECUTION_STATES
+
+
+def _collect_dispatch_targets(token: str) -> list[tuple[str, bool]]:
+    ledger = CursorDispatchLedger.instance()
+    hits: list[tuple[str, bool]] = []
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id, status FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id = ? OR dispatch_id LIKE ?",
+            (token, token + "%"),
+        ).fetchall()
+    for row in rows:
+        dispatch_id = str(row["dispatch_id"])
+        hits.append((dispatch_id, _dispatch_terminal_for_status(row["status"])))
+    return hits
+
+
+def _registry_rows_for_exact_execution_id(
+    active: dict[str, dict[str, Any]], execution_id: str
+) -> list[dict[str, Any]]:
+    if not execution_id:
+        return []
+    matches: list[dict[str, Any]] = []
+    for row in active.values():
+        if not isinstance(row, dict):
+            continue
+        top = str(row.get("execution_id") or "").strip()
+        state_entry = execution_state_of(row)
+        nested = (
+            str(state_entry.get("execution_id") or "").strip() if state_entry else ""
+        )
+        if top == execution_id or nested == execution_id:
+            matches.append(row)
+    return matches
+
+
+def _collect_execution_targets(token: str) -> list[tuple[str, bool]]:
+    from claude_bundles.cdp_registry_store import load_active
+
+    targets: list[tuple[str, bool]] = []
+    inflight_satellites: set[str] = set()
+    db_path = _inflight_db_path()
+    if db_path.is_file():
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            inflight_rows = conn.execute(
+                "SELECT execution_id, satellite_execution_id FROM cdp_inflight_leg "
+                "WHERE execution_id = ? OR execution_id LIKE ?",
+                (token, token + "%"),
+            ).fetchall()
+        finally:
+            conn.close()
+        active = load_active()
+        for inflight_row in inflight_rows:
+            exec_id = str(inflight_row["execution_id"])
+            satellite = str(inflight_row["satellite_execution_id"] or "").strip()
+            if satellite:
+                inflight_satellites.add(satellite)
+            registry_hits = _registry_rows_for_exact_execution_id(active, satellite)
+            if len(registry_hits) != 1:
+                terminal = False
+            else:
+                terminal = _execution_terminal_from_state(registry_hits[0])
+            targets.append((exec_id, terminal))
+
+    active = load_active()
+    for row in active.values():
+        if not isinstance(row, dict):
+            continue
+        top = str(row.get("execution_id") or "").strip()
+        state_entry = execution_state_of(row)
+        nested = (
+            str(state_entry.get("execution_id") or "").strip() if state_entry else ""
+        )
+        matched_key: str | None = None
+        if _prefix_match_id(top, token):
+            matched_key = top
+        elif nested and _prefix_match_id(nested, token):
+            matched_key = nested
+        else:
+            continue
+        if top in inflight_satellites or nested in inflight_satellites:
+            continue
+        targets.append((matched_key, _execution_terminal_from_state(row)))
+    return targets
+
+
+def _named_target_is_terminal(token: str) -> bool:
+    try:
+        dispatch_targets = _collect_dispatch_targets(token)
+        execution_targets = _collect_execution_targets(token)
+    except Exception:
+        return False
+    combined: list[tuple[str, str, bool]] = [
+        ("dispatch", key, terminal) for key, terminal in dispatch_targets
+    ] + [("execution", key, terminal) for key, terminal in execution_targets]
+    if len(combined) != 1:
+        return False
+    kind, _key, terminal = combined[0]
+    if not terminal:
+        return False
+    if kind == "execution":
+        try:
+            snap = conductor_exit_reasons.read_external_gate_lane_snapshot()
+        except Exception:
+            return False
+        if not snap:
+            return False
+        if conductor_exit_reasons.cdp_ask_health_red():
+            return False
+    return True
+
+
 def hop_body_build_refused(
     row: dict[str, Any], rec: dict[str, Any] | None = None
 ) -> bool:
     """True when NEXT_ADMIT forbids rematerializing a conductor successor (AC7)."""
     data = rec if rec is not None else _record_data(row)
-    return next_admit_blocks_hop_body(_next_admit_guard_text(row, data))
+    guard = _next_admit_guard_text(row, data)
+    if not next_admit_blocks_hop_body(guard):
+        return False
+    if not _row_hop_tokens_allow_lift(row):
+        return True
+    token = _harvest_target_token(guard)
+    if token is None:
+        return True
+    if not _named_target_is_terminal(token):
+        return True
+    if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
+        return True
+    return False
 
 
 def _scoreboard_entry_gate(scoreboard_body: str) -> str | None:

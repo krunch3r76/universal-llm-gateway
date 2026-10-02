@@ -22,6 +22,7 @@ from job_vocab import (
     INLINE_ONLY_JOBS,
     SOURCE_REF_JOBS,
     TO_THREAD_ADMITTED_JOBS,
+    job_record,
 )
 from universal_logging import get_logger
 
@@ -234,6 +235,13 @@ def reject_unsupported_packet_inputs(
                 "registry_ref": parsed.registry_ref,
             },
         )
+    record = job_record(wire)
+    if not record.stop_after_allowed and stop_after:
+        return _validation_error(
+            f"stop_after is forbidden for job={wire!r}",
+            field="stop_after",
+            code="stop_after_not_allowed",
+        )
     if wire in SOURCE_REF_JOBS and source_ref is None:
         message = f"source_ref is required for contract={wire!r}"
         if wire == "implement":
@@ -258,15 +266,6 @@ def reject_unsupported_packet_inputs(
             f"source_ref is forbidden for contract={wire!r}; pick a materializer contract",
             field="source_ref",
             code=f"{wire}_with_source_ref",
-        )
-    from job_vocab import job_record
-
-    record = job_record(wire)
-    if record is not None and stop_after and not record.stop_after_allowed:
-        return _validation_error(
-            f"stop_after is forbidden for job={record.name!r}",
-            field="stop_after",
-            code="none_with_stop_after",
         )
     if wire in SOURCE_REF_JOBS and prompt is not None:
         return _validation_error(

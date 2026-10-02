@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from chat_harvest.chrome import (
     RELAY_ENVELOPE_SUBJECT_RE,
+    badge_scrape_change_key,
     is_chrome_only,
     is_failed_relay_envelope_subject,
     is_prompt_echo,
     is_relay_envelope_subject,
+    is_tool_status_body,
     strip_chrome,
     substantive_reply_body,
 )
@@ -81,8 +83,7 @@ def test_specimen_12887_progress_is_chrome_only() -> None:
 
 def test_strip_chrome_drops_tool_badges_including_loaded_tools() -> None:
     text = (
-        "Used toys integration, used 3 skills, loaded tools\n\n"
-        "Actual answer paragraph."
+        "Used toys integration, used 3 skills, loaded tools\n\nActual answer paragraph."
     )
     assert strip_chrome(text) == "Actual answer paragraph."
 
@@ -102,6 +103,68 @@ def test_relay_envelope_subject_re() -> None:
     assert RELAY_ENVELOPE_SUBJECT_RE.match("cdp FAILED — a76a67d3")
     assert RELAY_ENVELOPE_SUBJECT_RE.match("cdp UNVERIFIED — a76a67d3")
     assert not RELAY_ENVELOPE_SUBJECT_RE.match("re: handoff")
+
+
+# Phrase-list preamble from archive 4089d9a6 (badge line twice, glyph, timestamp).
+ARCHIVE_BADGE_PREAMBLE = """\
+Used toys integration, loaded tools
+\ue027
+Used toys integration, loaded tools
+just now
+"""
+
+# a:37034 line. Outside TOOL_BADGE_LINE_RE (no "updated tasks" / "loaded a skill").
+UPDATED_TASKS_PREAMBLE = """\
+Updated tasks, loaded tools, loaded a skill
+\ue027
+Updated tasks, loaded tools, loaded a skill
+just now
+"""
+
+OPEN_FORK_CONSULT = """\
+Question: where may harvest completion become the deliverable?
+
+OPEN FORK:
+- DOM-WAIT
+"""
+
+
+def test_archive_badge_preamble_is_chrome_only_not_shape() -> None:
+    assert is_chrome_only(ARCHIVE_BADGE_PREAMBLE)
+    assert not is_tool_status_body(ARCHIVE_BADGE_PREAMBLE)
+
+
+def test_shape_lines_outside_phrase_list_are_tool_status() -> None:
+    browsed = "Browsed files, edited a note."
+    edited_twice = "Edited a note\nEdited a note"
+    assert not is_chrome_only(browsed)
+    assert is_tool_status_body(browsed)
+    assert is_tool_status_body(edited_twice)
+    assert not is_chrome_only(UPDATED_TASKS_PREAMBLE)
+    assert is_tool_status_body(UPDATED_TASKS_PREAMBLE)
+    glyph_once = "Edited a note\n\ue027"
+    assert is_tool_status_body(glyph_once)
+
+
+def test_terse_prose_and_consult_are_not_tool_status() -> None:
+    assert not is_tool_status_body("Fixed it, reran tests.")
+    assert not is_tool_status_body("Done.")
+    assert not is_tool_status_body(SPECIMEN_347_BODY)
+    assert not is_tool_status_body(OPEN_FORK_CONSULT)
+    assert not is_tool_status_body("Edited a note")
+
+
+def test_badge_scrape_change_key_drops_timestamp_keeps_badge() -> None:
+    same = "Browsed files, edited a note."
+    other = "Updated files, edited a note."
+    assert len(same) == len(other)
+    stamped = f"{same}\njust now"
+    ticked = f"{same}\n1 minute ago"
+    rewritten = f"{other}\njust now"
+    assert badge_scrape_change_key(stamped) == badge_scrape_change_key(ticked)
+    assert badge_scrape_change_key(stamped) != badge_scrape_change_key(rewritten)
+    labeled = f"Claude responded: Bound route\n{same}"
+    assert badge_scrape_change_key(labeled) == badge_scrape_change_key(same)
 
 
 def test_is_failed_relay_envelope_subject() -> None:

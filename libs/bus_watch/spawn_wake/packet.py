@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from job_vocab import GENERATE_ADMITTED_JOBS, INLINE_ONLY_JOBS
+
 from bus_watch.doorbell import render_successor_wake
 from bus_watch.fable_lock import current_night_id
 from bus_watch.loop_tape import loop_tape_thread
@@ -11,6 +13,8 @@ from bus_watch.model_pause import model_paused
 from bus_watch.now_row import format_now_line, resolve_now_row
 
 SUCCESSOR_MESSAGE_CAP = 2048
+SUCCESSOR_JOB_UNADMITTED = "successor_job_unadmitted"
+_SUCCESSOR_WIRE_JOBS = GENERATE_ADMITTED_JOBS & INLINE_ONLY_JOBS
 
 
 def build_successor_message(
@@ -82,7 +86,8 @@ def build_dispatch_body(
     ctx = dict(successor_context or {})
     extras = ctx.get("extra_addresses") or policy.get("successor_extra_addresses") or ()
     seat = policy.get("successor_seat") or "cursor-sdk"
-    contract = str(policy.get("successor_contract") or "none")
+    token = str(policy.get("successor_contract") or "none")
+    job = "freeform" if token == "none" else token
     tape = loop_tape_thread(root_id, policy)
     tape_ring = tape if tape != str(root_id) else None
     successor = str(policy.get("successor_model") or "")
@@ -98,14 +103,14 @@ def build_dispatch_body(
         spawn_signal_sources=list(ctx.get("spawn_signal_sources") or []),
         ring=ctx.get("ring") or policy.get("wake_ring") or tape_ring,
         extra_addresses=tuple(extras),
-        contract=contract,
+        contract=token,
         policy=policy,
         successor_model=successor,
     )
     body: dict[str, Any] = {
         "op": "generate",
         "seat": seat,
-        "contract": contract,
+        "job": job,
         # Sit/house generate is not bind-only: a successor that dispositions
         # friction or dispatches implement must not serialize on Lane A's
         # 1-slot write lease (11960 sit queued behind 11959 grok, 2026-09-21).
@@ -125,6 +130,8 @@ def build_dispatch_body(
             else {}
         ),
     }
+    if job not in _SUCCESSOR_WIRE_JOBS:
+        body["_refused"] = SUCCESSOR_JOB_UNADMITTED
     return body
 
 

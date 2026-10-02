@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from implement_admission.check_review_substrate import cursor_role_turn_sender
+
 from systems.frontier_consult.cursor_sdk_generate import CURSOR_SDK_REPLY_SEAT
 from systems.frontier_consult.cursor_sdk_role_delivery import (
     _conforming_check_closeout,
@@ -10,6 +12,20 @@ from systems.frontier_consult.cursor_sdk_role_delivery import (
 )
 from systems.frontier_consult.handoff_response import build_handoff_result
 
+_TABLE_CONTRACTS = (
+    "",
+    "none",
+    "freeform",
+    "check-review",
+    "code-review",
+    "delivery-review",
+    "implement",
+)
+_TABLE_MODELS = (
+    "cursor/grok-4.7",
+    "cursor/gpt-5.6-luna",
+    "cursor/gemini-3.6-flash",
+)
 
 def test_closeout_grammar_follows_job_not_model() -> None:
     findings = "Findings ok."
@@ -20,9 +36,22 @@ def test_closeout_grammar_follows_job_not_model() -> None:
     assert "FILE_EVIDENCE_PATHS:" not in plain
 
 
+def test_role_turn_sender_table() -> None:
+    """Exactly one contract×model cell returns skeptic; the other twenty return None."""
+    hits = []
+    for contract in _TABLE_CONTRACTS:
+        for model in _TABLE_MODELS:
+            sender = cursor_role_turn_sender(contract, model)
+            if sender is not None:
+                hits.append((contract, model, sender))
+    assert hits == [("check-review", "cursor/grok-4.7", "skeptic")]
+    assert len(_TABLE_CONTRACTS) * len(_TABLE_MODELS) == 21
+
+
 def test_poll_hint_stays_cursor_sdk_when_role_bridge_eligible() -> None:
-    """Friction 24229: wait identity = SDK closeout author."""
-    # Admit-time poll_hint must still key on the guaranteed closeout seat.
+    """Friction 24229: bridge may fail closed; wait identity = SDK closeout author."""
+    model = "cursor/grok-4.7"
+    assert cursor_role_turn_sender("check-review", model) == "skeptic"
     fields = build_handoff_result(
         thread_id="5094",
         to_agent="cursor-sdk:dispatch:95b09ed1",
@@ -30,7 +59,7 @@ def test_poll_hint_stays_cursor_sdk_when_role_bridge_eligible() -> None:
     )
     assert fields["reply_from_agent"] == CURSOR_SDK_REPLY_SEAT
     assert fields["poll_hint"]["arguments"]["from_agent"] == CURSOR_SDK_REPLY_SEAT
-    assert fields["poll_hint"]["arguments"]["from_agent"] != "reviewer"
+    assert fields["poll_hint"]["arguments"]["from_agent"] != "skeptic"
 
 
 def test_conforming_closeout_requires_file_evidence_paths() -> None:
