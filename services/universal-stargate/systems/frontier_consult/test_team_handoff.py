@@ -2241,8 +2241,8 @@ def test_v2_seat_claude_cursor_admits(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["to_agent"] == "cursor"
-    assert body["handoff_contract"] == "consult"
-    assert body["handoff_contract_source"] == "default"
+    assert body["handoff_contract"] is None
+    assert body["handoff_contract_source"] == "absent"
 
 
 def test_v2_f1_acceptance_shape_does_not_set_contract(tmp_path: Path) -> None:
@@ -2573,7 +2573,7 @@ def test_d4_explicit_contract_param_admits_implement_route(
                 "op": "handoff",
                 "role": "cursor-implement",
                 "packet_path": _DX_REL,
-                "contract": "implement",
+                "job": "implement",
                 "subject": _GOOD_SUBJECT,
             },
         )
@@ -2627,7 +2627,8 @@ def test_d4_consult_packet_no_acceptance_admits_default(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["handoff_contract"] not in {"none", "answer"}
+    assert body["handoff_contract"] is None
+    assert body["handoff_contract_source"] == "absent"
 
 
 def test_d2_packet_path_prefix_coercion_route(
@@ -2932,7 +2933,9 @@ def test_dd_consult_review_default_on(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["recommended_review"] == "cross-family-reconcile:default-on"
+    assert body["handoff_contract"] is None
+    assert body["handoff_contract_source"] == "absent"
+    assert body["recommended_review"] is None
     assert body.get("recommended_executor") is None
 
 
@@ -3004,7 +3007,7 @@ def test_t3_cursor_sdk_handoff_rejects_seat_not_manual(
             "op": "handoff",
             "seat": "cursor-sdk",
             "packet_path": _GOOD_PACKET,
-            "contract": "implement",
+            "job": "implement",
             "subject": _GOOD_SUBJECT,
         },
     )
@@ -3032,7 +3035,7 @@ def test_t3b_cursor_sdk_generate_admits_and_dispatches_worker(
         _fake_dispatch,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.derive_cursor_sdk_prompt_preamble",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.derive_cursor_sdk_prompt_preamble",
         lambda **_kwargs: "",
     )
 
@@ -3045,7 +3048,7 @@ def test_t3b_cursor_sdk_generate_admits_and_dispatches_worker(
             "op": "generate",
             "seat": "cursor-sdk",
             "dispatch_thread_id": "dispatch-thread-sdk-gen",
-            "contract": "implement",
+            "job": "mechanical",
             "packet_path": _GOOD_PACKET,
             "lane": "B",
         },
@@ -3081,13 +3084,18 @@ def test_t3c_cursor_sdk_generate_consult_uses_message(
         _fake_msg,
     )
 
-    async def _fake_thread_read(**_kwargs: Any) -> str:
-        # Folded wire: consult context comes from the dispatch thread, not messages[].
-        return "Review this design."
+    async def _fake_prompt_resolution(**_kwargs: Any) -> Any:
+        from .dispatch_thread_context import GeneratePromptResolution
+
+        return GeneratePromptResolution(
+            text="Review this design.",
+            prompt_bind_mode="frozen_turn",
+            prompt_turn_number=1,
+        )
 
     monkeypatch.setattr(
-        "systems.frontier_consult.generate_wrap.read_latest_dispatch_thread_body",
-        _fake_thread_read,
+        "systems.frontier_consult.generate_wrap.resolve_generate_prompt_resolution",
+        _fake_prompt_resolution,
     )
 
     client = TestClient(
@@ -3099,7 +3107,7 @@ def test_t3c_cursor_sdk_generate_consult_uses_message(
             "op": "generate",
             "seat": "cursor-sdk",
             "dispatch_thread_id": "dt-consult",
-            "contract": "none",
+            "job": "freeform",
             "lane": "A",
         },
     )
@@ -3123,7 +3131,7 @@ def test_t6a_cursor_sdk_seat_capability(
         _fake_dispatch,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.derive_cursor_sdk_prompt_preamble",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.derive_cursor_sdk_prompt_preamble",
         lambda **_kwargs: "",
     )
 
@@ -3136,7 +3144,7 @@ def test_t6a_cursor_sdk_seat_capability(
             "op": "generate",
             "seat": "cursor-sdk",
             "dispatch_thread_id": "dt-t6a",
-            "contract": "implement",
+            "job": "mechanical",
             "packet_path": _GOOD_PACKET,
             "lane": "B",
         },
@@ -3146,7 +3154,7 @@ def test_t6a_cursor_sdk_seat_capability(
     assert sc["role"] == "cursor-sdk"
     assert sc["substrate"] == "sdk"
     assert sc["tool_surface"] == "sdk"
-    assert sc["resolved_model"] == "cursor/grok-4.7"
+    assert sc["resolved_model"] == "cursor/composer-2.5"
     assert sc["inline_only"] is False
     assert sc["tool_access"] is True
     assert sc["mcp_mechanism"] == "local_native"
@@ -3248,7 +3256,7 @@ def test_t5_cursor_sdk_handoff_seat_not_manual(
             "op": "handoff",
             "seat": "cursor-sdk",
             "packet_path": _GOOD_PACKET,
-            "contract": "implement",
+            "job": "implement",
             "subject": _GOOD_SUBJECT,
         },
     )
@@ -3274,7 +3282,7 @@ def test_t7_handoff_cursor_sdk_rejects_seat_not_manual(
             "op": "handoff",
             "seat": "cursor-sdk",
             "packet_path": _GOOD_PACKET,
-            "contract": "implement",
+            "job": "implement",
             "subject": _GOOD_SUBJECT,
         },
     )

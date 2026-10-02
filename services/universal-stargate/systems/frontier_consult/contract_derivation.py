@@ -74,15 +74,16 @@ def derive_contract(
     role: str | None,
     cortex: CortexReader,
     workspaces_root: Path,
-) -> tuple[str, str]:
-    """Derive handoff contract per F1 order + role fallback for roster-only handoffs.
+) -> tuple[str | None, str]:
+    """Derive handoff contract per F1 order.
 
     Order:
-      0. explicit ``contract`` request param (MCP / route body)
+      0. explicit ``job`` / contract request param (MCP / route body)
       1. ``source_ref`` → entity ``dispatch_lane`` via explicit map
       2. packet front-matter ``contract:`` (YAML or ``**Contract:**`` line)
-      3. roster ``role`` → ``role_default`` (legacy path without grounded source)
-      4. default ``consult``
+      3. roster ``role`` → ``role_default`` when the profile names ``default_contract``
+      4. omitted job → absent (``None``, source ``absent``).
+         No consult, answer, or none default.
     """
     if explicit_contract is not None:
         return explicit_contract, "explicit_param"
@@ -112,4 +113,4 @@ def derive_contract(
         if from_role is not None:
             return from_role
 
-    return "consult", "default"
+    return None, "absent"

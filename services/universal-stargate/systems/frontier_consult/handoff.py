@@ -414,8 +414,8 @@ def check_contract_ambiguity(
     contract_source: str,
     workspaces_root: Path | None = None,
 ) -> None:
-    """Reject default consult when packet task_guidance carries acceptance criteria."""
-    if contract_source != "default":
+    """Reject an omitted job when packet task_guidance carries acceptance criteria."""
+    if contract_source not in {"default", "absent"}:
         return
 
     root = (workspaces_root or _workspaces_root()).resolve()
@@ -975,7 +975,7 @@ async def create_handoff_thread(
     pointer_body: str,
     caller_agent: str | None,
     tags: list[str] | None,
-    handoff_contract: str,
+    handoff_contract: str | None,
     lifecycle_state: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
 ) -> str:
@@ -1013,17 +1013,20 @@ async def create_handoff_thread(
     from_agent = caller_agent or "dispatch"
     from agent_bus_store.disposition import append_bus_lifecycle_tags
 
-    contract_tag = f"contract:{handoff_contract}"
+    contract_tag = (
+        f"contract:{handoff_contract}" if handoff_contract is not None else None
+    )
     if tags is None:
-        effective_tags: list[str] = [
+        effective_tags = [
             f"agent:{tag_agent or to_agent}",
             "type:handoff",
-            contract_tag,
         ]
+        if contract_tag is not None:
+            effective_tags.append(contract_tag)
     else:
         # Append the contract tag to caller-supplied tags (do not replace them).
         effective_tags = list(tags)
-        if contract_tag not in effective_tags:
+        if contract_tag is not None and contract_tag not in effective_tags:
             effective_tags.append(contract_tag)
     # consult threads must survive delivery — default persistent so the
     # Stargate on-behalf close path cannot close them regardless of the

@@ -828,15 +828,13 @@ class TeamHandoffBody(BaseModel):
     ``seat`` — manual seat slug (``claude-web``, ``claude-cursor``, roster aliases).
     ``role`` — handoff roster slug (``web-consult``, ``cursor-implement``, …).
     At least one of ``seat`` or ``role`` is required. Contract is derived server-side
-    (F1: ``source_ref`` dispatch_lane → packet front-matter → role default → consult).
+    (F1: explicit ``job`` → ``source_ref`` dispatch_lane → packet front-matter →
+    role ``default_contract``). An omitted job with no other signal is absent.
 
     At least one of ``source_ref`` or ``packet_path`` must be present.
     ``source_ref`` triggers normalize→materialize (Phase 2 unified admission).
-    ``contract`` — optional explicit override
-    (``sketch`` | ``pure-mechanical`` | ``implement`` | ``none``), highest-priority
-    signal in F1 derivation when set. Omitting it still derives a work-intent,
-    and that derivation defaults to ``consult``. ``consult`` is not a legal
-    override value on this body.
+    ``job`` — optional explicit work-intent, highest-priority signal in F1
+    derivation when set. Omitting it does not default to consult, answer, or none.
     """
 
     model_config = {"extra": "forbid"}

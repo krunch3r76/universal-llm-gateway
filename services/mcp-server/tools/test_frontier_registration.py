@@ -383,7 +383,7 @@ def test_team_dispatch_generate_forwards_source_ref() -> None:
     body = relay_calls[0]["body"]
     assert body["op"] == "generate"
     assert body["source_ref"] == "todo:first-class-wrap-transport"
-    assert body["contract"] == "implement"
+    assert body["job"] == "implement"
     # bare source_ref → no caller packet_path forwarded
     assert "packet_path" not in body
 
@@ -419,7 +419,7 @@ def test_team_dispatch_generate_forwards_conductor_contract() -> None:
     assert len(relay_calls) == 1
     body = relay_calls[0]["body"]
     assert body["source_ref"] == "todo:s4-attended-summon-probe"
-    assert body["contract"] == "conductor"
+    assert body["job"] == "conductor"
     assert "packet_kind" not in body
     assert "packet_path" not in body
 
@@ -464,7 +464,7 @@ def test_team_dispatch_handoff_source_ref_only() -> None:
     assert body == {
         "op": "handoff",
         "seat": "claude-cursor",
-        "contract": "implement",
+        "job": "implement",
         "source_ref": "todo:unified-admission-handoff-source-ref",
         "subject": "Implement source_ref adoption",
     }
@@ -727,9 +727,10 @@ def test_team_dispatch_generate_accepts_subject_with_warning() -> None:
         result = asyncio.run(
             team_dispatch_fn(
                 op="generate",
-                role="reviewer",
-                contract="none",
+                seat="cursor-sdk",
+                contract="freeform",
                 dispatch_thread_id="arc-friction-19803",
+                lane="B",
                 subject="Review CF-1: subject guard",
             )
         )
@@ -771,9 +772,10 @@ def test_team_dispatch_generate_rejects_thread() -> None:
         result = asyncio.run(
             team_dispatch_fn(
                 op="generate",
-                role="reviewer",
-                contract="none",
+                seat="cursor-sdk",
+                contract="freeform",
                 dispatch_thread_id="arc-friction-19803",
+                lane="B",
                 thread="111",
             )
         )
@@ -807,9 +809,10 @@ def test_team_dispatch_to_thread_forwards_subject() -> None:
         result = asyncio.run(
             team_dispatch_fn(
                 op="to_thread",
-                role="reviewer",
-                contract="none",
+                seat="cursor-sdk",
+                contract="freeform",
                 dispatch_thread_id="arc-friction-19803",
+                lane="B",
                 thread="111",
                 subject="Reviewer reply — labelled",
             )
@@ -850,9 +853,10 @@ def test_team_dispatch_forwards_cost_intent_on_generate_and_to_thread() -> None:
         asyncio.run(
             team_dispatch_fn(
                 op="generate",
-                role="reviewer",
-                contract="none",
+                seat="cursor-sdk",
+                contract="freeform",
                 dispatch_thread_id="arc-override-gate",
+                lane="B",
                 model="anthropic/claude-opus-4-8",
                 cost_intent="deliberate_high_cost",
                 cost_intent_reason="operator authorized",
@@ -861,9 +865,10 @@ def test_team_dispatch_forwards_cost_intent_on_generate_and_to_thread() -> None:
         asyncio.run(
             team_dispatch_fn(
                 op="to_thread",
-                role="reviewer",
-                contract="none",
+                seat="cursor-sdk",
+                contract="freeform",
                 dispatch_thread_id="arc-override-gate",
+                lane="B",
                 thread="111",
                 model="anthropic/claude-opus-4-8",
                 cost_intent="deliberate_high_cost",
@@ -935,7 +940,7 @@ def test_team_dispatch_generate_forwards_nest_under() -> None:
             team_dispatch_fn(
                 op="generate",
                 seat="cursor-sdk",
-                contract="none",
+                contract="freeform",
                 dispatch_thread_id="5777",
                 nest_under="parent-dispatch-id",
             )
@@ -1023,7 +1028,7 @@ def test_team_dispatch_generate_forwards_parent_thread() -> None:
             team_dispatch_fn(
                 op="generate",
                 seat="cdp",
-                contract="none",
+                contract="freeform",
                 dispatch_thread_id="11165",
                 model="cdp/opus-5-high",
                 prompt="navigator doorbell",
@@ -1097,7 +1102,7 @@ def test_team_dispatch_generate_forwards_resume_of() -> None:
             team_dispatch_fn(
                 op="generate",
                 seat="cursor-sdk",
-                contract="none",
+                contract="freeform",
                 dispatch_thread_id="5777",
                 reuse_thread="5777",
                 resume_of="parent-dispatch-id",
