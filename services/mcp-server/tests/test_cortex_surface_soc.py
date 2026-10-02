@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -200,6 +201,17 @@ def test_code_descriptor_names_admin_overflow() -> None:
     assert "overflow" in desc.lower()
 
 
+_FRICTION_CATEGORY_SET_RE = re.compile(
+    r"friction\.category ∈ \{([^}]+)\}"
+)
+
+
+def _parse_friction_category_set(desc: str) -> set[str]:
+    match = _FRICTION_CATEGORY_SET_RE.search(desc)
+    assert match is not None, "friction.category ∈ {…} missing from descriptor"
+    return {part.strip() for part in match.group(1).split(",") if part.strip()}
+
+
 def test_descriptor_lists_friction_categories_from_runtime_sot() -> None:
     """tools/list must surface every accepted friction category (a:37199)."""
     from cortex_store.dispatch_ops._shared import _FRICTION_CATEGORIES
@@ -208,8 +220,21 @@ def test_descriptor_lists_friction_categories_from_runtime_sot() -> None:
         desc = render_cortex_tool_description(
             surface, canonical_yaml_path=_CANONICAL
         )
-        assert "friction.category ∈ {" in desc
-        for cat in _FRICTION_CATEGORIES:
-            assert cat in desc, f"{surface} descriptor missing {cat!r}"
+        assert _parse_friction_category_set(desc) == set(_FRICTION_CATEGORIES)
         assert "charter{charter_root, window_index}" in desc
         assert "continuity{root_thread, cp_ordinal}" in desc
+
+
+def test_friction_category_contract_tracks_runtime_sot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Descriptor enum must be generated from the imported frozenset, not a hand copy."""
+    import tools.cortex_named_tools._surface_render as render_mod
+
+    sentinel = frozenset({"__probe_cat_a__", "__probe_cat_b__"})
+    monkeypatch.setattr(render_mod, "_FRICTION_CATEGORIES", sentinel)
+    for surface in ("code", "life"):
+        desc = render_cortex_tool_description(
+            surface, canonical_yaml_path=_CANONICAL
+        )
+        assert _parse_friction_category_set(desc) == set(sentinel)
