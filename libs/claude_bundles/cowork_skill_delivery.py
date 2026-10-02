@@ -535,7 +535,7 @@ def attest_delivery_channels(
         if wrong_channel:
             parts.append(f"wrong_channel={wrong_channel}")
         raise SkillDeliveryError(
-            "required skills fail channel attest after attach + inline seal: "
+            "required skills fail channel attest after attach + inline + induction seal: "
             f"{'; '.join(parts)} (attached={attached_sorted}, "
             f"inlined={inlined_sorted}, induction={induction_sorted}) "
             "— fail closed (friction a:27142)"

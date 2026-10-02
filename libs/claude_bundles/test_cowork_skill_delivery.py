@@ -577,7 +577,7 @@ async def test_send_prompt_attests_panel_observed_slugs() -> None:
     composer = AsyncMock()
     report = LoadedSkillsReport(
         url="https://claude.ai/chat/x",
-        skills=("cdp-operator-proxy",),
+        skills=("reasoning-posture",),
         context_found=True,
         skills_heading_found=True,
         model_label=None,
@@ -622,5 +622,5 @@ async def test_send_prompt_attests_panel_observed_slugs() -> None:
         ),
     ):
         await send_prompt(page, text)
-    assert seen["induction"] == ["cdp-operator-proxy"]
+    assert seen["induction"] == ["reasoning-posture"]
     assert "cdp-operator-proxy" in seen["required"]

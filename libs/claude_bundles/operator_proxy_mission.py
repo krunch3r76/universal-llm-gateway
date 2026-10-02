@@ -422,7 +422,7 @@ def _field_source_without_briefing(rest_body: str) -> str:
 # ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
 _PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
-    r"^purpose\s*[:=]\s*(operator-proxy|mission|operator_proxy)",
+    r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",
     re.IGNORECASE | re.MULTILINE,
 )
 

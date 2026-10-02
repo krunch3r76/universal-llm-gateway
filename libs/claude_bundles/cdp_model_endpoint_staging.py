@@ -65,6 +65,7 @@ class StagedPrompt:
     prompt_uri: str
     ephemeral_root: Path | None
     staged: bool
+    mission: bool
 
 
 def _cortex_uri(rel: str) -> str:
@@ -289,10 +290,17 @@ def stage_cdp_prompt_with_skills(
         if uri.startswith(prefix) or uri.rstrip("/") == prefix.rstrip("/"):
             root = ephemeral_dir(execution_id)
             _stamp_owned_ephemeral_notice(uri, purpose)
+            # Worker re-entry has no prior omit_slash in scope. Recompute from
+            # the same purpose plus the already-staged body (read_prompt_text).
+            from claude_bundles.operator_proxy_mission import purpose_implies_mission
+
             return StagedPrompt(
                 prompt_uri=uri,
                 ephemeral_root=root if root.is_dir() else None,
                 staged=True,
+                mission=purpose_implies_mission(
+                    purpose, read_prompt_text(prompt_uri=uri)
+                ),
             )
 
     effective = ensure_cdp_judgment_skills(skills, purpose=purpose)
@@ -379,10 +387,12 @@ def stage_cdp_prompt_with_skills(
             prompt_uri=str(prompt_uri).strip(),
             ephemeral_root=None,
             staged=False,
+            mission=omit_slash,
         )
     return stage_prompt_uri(
         execution_id=execution_id,
         prompt_text=merged,
+        mission=omit_slash,
     )
 
 
@@ -393,6 +403,7 @@ def stage_prompt_uri(
     prompt_text: str | None = None,
     packet_path: str | None = None,
     sidecar_ref: str | None = None,
+    mission: bool = False,
 ) -> StagedPrompt:
     """Return a cortex:// prompt_uri for satellite submit.
 
@@ -410,6 +421,7 @@ def stage_prompt_uri(
             prompt_uri=_cortex_uri(rel),
             ephemeral_root=dest_dir,
             staged=True,
+            mission=mission,
         )
 
     for candidate in (prompt_uri, sidecar_ref, packet_path):
@@ -421,6 +433,7 @@ def stage_prompt_uri(
                 prompt_uri=raw,
                 ephemeral_root=None,
                 staged=False,
+                mission=False,
             )
         source = resolve_workspaces_path(raw)
         if source is None:
@@ -438,6 +451,7 @@ def stage_prompt_uri(
             prompt_uri=_cortex_uri(rel),
             ephemeral_root=dest_dir,
             staged=True,
+            mission=False,
         )
 
     raise CdpStagingError(

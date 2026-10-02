@@ -381,13 +381,18 @@ def _mock_run_cdp_staging(
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
 
-    def _fake_stage(**_kwargs: Any) -> StagedPrompt:
+    def _fake_stage(**kwargs: Any) -> StagedPrompt:
+        from claude_bundles.operator_proxy_mission import purpose_implies_mission
+
         return StagedPrompt(
             prompt_uri=(
                 f"cortex://notes/system/ephemeral/cdp-endpoint/{execution_id}/prompt.md"
             ),
             ephemeral_root=None,
             staged=True,
+            mission=purpose_implies_mission(
+                kwargs.get("purpose"), kwargs.get("prompt_text")
+            ),
         )
 
     monkeypatch.setattr(

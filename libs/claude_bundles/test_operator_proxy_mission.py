@@ -346,6 +346,25 @@ def test_stage_freeform_body_purpose_induces_mission_skills(tmp_path, monkeypatc
         assert slug in induction
 
 
+def test_staged_prompt_text_runner_would_load_still_implies_mission(
+    tmp_path, monkeypatch
+) -> None:
+    """Staging and the runner share one decision on the sealed prompt.md bytes.
+
+    purpose=freeform; line 2 of the author body is column-0 ``purpose: operator-proxy``.
+    The runner calls ``purpose_implies_mission(purpose, loaded_text)`` on that file.
+    """
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
+        prompt_text="handoff\npurpose: operator-proxy\n",
+        purpose="freeform",
+    )
+    assert staged.staged
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert purpose_implies_mission("freeform", merged)
+
+
 def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(tmp_path, monkeypatch) -> None:
     staged = _stage_under(
         tmp_path,
@@ -435,6 +454,11 @@ def test_prose_quote_of_purpose_is_not_a_mission() -> None:
 def test_column0_purpose_header_is_a_mission() -> None:
     body = "TYPE: DIRECTIVE\npurpose: operator-proxy\n# body\n"
     assert purpose_implies_mission("ask", body)
+
+
+def test_purpose_missionary_prose_not_mission() -> None:
+    body = "TYPE: DIRECTIVE\npurpose: missionary\n# body\n"
+    assert not purpose_implies_mission("ask", body)
 
 
 def test_stage_review_packet_head_with_ask_does_not_induct_operator_proxy(
