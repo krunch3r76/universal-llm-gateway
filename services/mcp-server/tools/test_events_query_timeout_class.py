@@ -5,9 +5,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
+from event_store.query_client_errors import (
+    ERROR_CODE_CLIENT_DEADLINE,
+    ERROR_CODE_SQLITE_BUSY,
+)
 
-from event_store.query_client_errors import ERROR_CODE_CLIENT_DEADLINE, ERROR_CODE_SQLITE_BUSY
 from tools.events import _query_event_service
 
 
