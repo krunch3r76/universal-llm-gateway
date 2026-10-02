@@ -47,6 +47,28 @@ def test_posts_team_dispatch_fields(mock_post: MagicMock) -> None:
 
 
 @patch("stargate_dispatch.client.httpx.post")
+def test_posts_job_freeform(mock_post: MagicMock) -> None:
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"execution_id": "abc", "thread_id": "11960"}
+    mock_post.return_value = mock_resp
+    body = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "job": "freeform",
+        "lane": "B",
+        "prompt": "apply review",
+        "work_key": "agent-bus:11960:review-apply:75:night-1",
+    }
+    payload, status = submit_team_dispatch(body, base_url="http://localhost:9999")
+    assert status == 200
+    assert payload["execution_id"] == "abc"
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["job"] == "freeform"
+    assert sent["lane"] == "B"
+
+
+@patch("stargate_dispatch.client.httpx.post")
 def test_parent_thread_forwarded_to_stargate(mock_post: MagicMock) -> None:
     mock_resp = MagicMock()
     mock_resp.status_code = 202
@@ -73,6 +95,7 @@ def test_parent_thread_forwarded_to_stargate(mock_post: MagicMock) -> None:
 def test_allowed_fields_parent_thread_not_purpose() -> None:
     from stargate_dispatch.client import _ALLOWED_FIELDS
 
+    assert "job" in _ALLOWED_FIELDS
     assert "parent_thread" in _ALLOWED_FIELDS
     assert "skills" in _ALLOWED_FIELDS
     assert "purpose" not in _ALLOWED_FIELDS

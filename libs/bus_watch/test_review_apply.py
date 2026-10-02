@@ -85,7 +85,7 @@ def test_apply_body_is_lane_b_house_generate() -> None:
         review,
     )
     assert body["lane"] == "B"
-    assert body["contract"] == "none"
+    assert body["job"] == "freeform"
     assert body["model"] == "cursor/grok-4.7"
     assert body["_review_apply"] is True
     assert "prompt" not in body
@@ -145,7 +145,7 @@ def test_fire_spawn_does_not_page_review_apply(monkeypatch) -> None:
         submit=lambda body: posted.append(body) or ({"execution_id": "e1"}, 200),
     )
     assert result["status_code"] == 200
-    assert posted and posted[0]["contract"] == "none"
+    assert posted and posted[0]["job"] == "freeform"
     assert "prompt" in posted[0]
     assert "source_ref" not in posted[0]
     assert pages == []

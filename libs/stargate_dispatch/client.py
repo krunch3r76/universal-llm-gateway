@@ -15,6 +15,7 @@ _ALLOWED_FIELDS = frozenset(
         "op",
         "seat",
         "contract",
+        "job",
         "lane",
         "model",
         "packet_path",
