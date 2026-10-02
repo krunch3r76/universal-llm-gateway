@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from threading import Event as _ThreadEvent
@@ -638,6 +639,20 @@ def _stamp_model_knobs_from_outcome(
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
+
+_NEST_UNDER_DISPATCH_ID_HINT = (
+    "nest_under must be a ledger dispatch_id "
+    "(12 hex chars, hyphen, 12 hex chars — e.g. 97d53fe54ef3-71669093), "
+    "not an execution_id UUID."
+)
+
+
+def _nest_under_is_execution_uuid(value: str) -> bool:
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return False
+    return str(parsed) == value.lower()
 
 
 def _stamp_cursor_auth(
@@ -3630,6 +3645,23 @@ async def admit_cursor_dispatch(
     resume_reject = reject_resume_if_ineligible(req)
     if resume_reject is not None:
         return resume_reject
+    # Breaks when nest_under is an execution_id UUID: lookup misses and mint
+    # returns 503 CURSOR_WORKTREE_MINT_FAILED. A non-UUID missing parent still
+    # falls through to that 503.
+    if req.nest_under and _nest_under_is_execution_uuid(req.nest_under):
+        return _reject_pre_admission(
+            req,
+            worker_error_code="nest_under_not_dispatch_id",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                "nest_under is an execution_id UUID; pass the ledger dispatch_id"
+            ),
+            invalid_fields=["nest_under"],
+            retryable=False,
+            validation_stage="nest_under",
+            extra_data={"fix_hint": _NEST_UNDER_DISPATCH_ID_HINT},
+        )
     minted_lane_b = False
     mint_wait_ms = 0.0
     try:

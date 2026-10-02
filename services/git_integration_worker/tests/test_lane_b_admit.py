@@ -535,6 +535,34 @@ def test_explicit_lane_a_refused_with_fix_hint(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_nest_under_execution_uuid_is_422(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """Breaks when nest_under is an execution_id UUID and admit still mints (503)."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="B",
+            nest_under="550e8400-e29b-41d4-a716-446655440000",
+            dispatch_id="child-uuid-nest",
+            execution_id="exec-child-uuid-nest",
+            thread_id="6702",
+            source_ref="todo:child-uuid-nest",
+        ),
+    )
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["code"] == "nest_under_not_dispatch_id"
+    hint = payload["data"]["fix_hint"]
+    assert "dispatch_id" in hint
+    assert "execution_id" in hint
+    assert "12" in hint
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_explicit_lane_b_nest_under_lane_a_parent_is_422(
     _mock_task: MagicMock,
     client: TestClient,
