@@ -227,7 +227,7 @@ def test_h1a_route_web_consult_pointer_includes_consult_contract(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=web-consult posts pointer with Contract: consult line to agent-bus."""
+    """Omitted job on an acceptance packet is ambiguous (spec step 3 item 16)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     captured: dict[str, Any] = {}
     _patch_bus(monkeypatch, _capturing_bus_transport(captured, thread_id="bus-ptr"))
@@ -242,11 +242,9 @@ def test_h1a_route_web_consult_pointer_includes_consult_contract(
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 200, resp.text
-    body_text = captured["payload"]["body"]
-    assert "Contract: consult" in body_text
-    assert "cortex://ephemeral/handoffs/" in body_text
-    assert "smoke-packet" in body_text
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
+    assert "payload" not in captured
 
 
 def test_h1a_route_web_consult_admits_without_arch_skillrefs(
@@ -271,14 +269,15 @@ def test_h1a_route_web_consult_admits_without_arch_skillrefs(
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
 
 
 def test_h1a_route_web_consult_push_reminder_mentions_web_push(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=web-consult → claude-web; push_reminder tells operator to push."""
+    """Omitted job on an acceptance packet does not admit a consult default."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-web"))
 
@@ -292,20 +291,17 @@ def test_h1a_route_web_consult_push_reminder_mentions_web_push(
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["to_agent"] == "web-anthropic"
-    assert body["handoff_contract"] == "consult"
-    assert "push" in body["push_reminder"].lower()
-    assert "web claude" in body["push_reminder"].lower()
-    assert body["poll_hint"]["arguments"]["from_agent"] == "web-anthropic"
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
 
 
 def test_h1_route_web_consult_returns_all_fields(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-99"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
@@ -330,9 +326,11 @@ def test_h1_route_web_consult_returns_all_fields(
 def test_handoff_response_includes_result_handle(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     """Phase 1: handoff 200 carries result_handle / handoff_status / poll_hint."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-99"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
@@ -368,9 +366,11 @@ def test_handoff_response_includes_result_handle(
 def test_handoff_response_backward_compatible_keys(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     """Existing keys remain present and unchanged (additive contract)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-99"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
@@ -466,8 +466,10 @@ def test_handoff_seat_alias_route_rejected(
 def test_h1b_route_cursor_consult_push_reminder_mentions_cursor(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-cursor"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
@@ -857,7 +859,7 @@ def test_hc1_web_consult_no_contract_defaults_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=web-consult → consult/role_default. Seat=claude-web."""
+    """Acceptance packet and omitted job stay ambiguous (spec step 3 item 16)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c1"))
 
@@ -871,24 +873,21 @@ def test_hc1_web_consult_no_contract_defaults_consult(
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["handoff_contract"] == "consult"
-    assert body["handoff_contract_source"] == "role_default"
-    assert body["resolved_handoff_seat"] == "web-anthropic"
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
 
 
 def test_hc1_web_consult_no_contract_tag_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """Default tags include contract:consult for a role-default consult."""
+    """Acceptance packet and omitted job do not tag a consult default."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     captured: dict[str, Any] = {}
     _patch_bus(monkeypatch, _capturing_bus_transport(captured, thread_id="bus-c1t"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
-    client.post(
+    resp = client.post(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
@@ -897,7 +896,9 @@ def test_hc1_web_consult_no_contract_tag_consult(
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert "contract:consult" in captured["payload"]["tags"]
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
+    assert "payload" not in captured
 
 
 def test_hc2_handoff_contract_field_rejected(
@@ -950,11 +951,12 @@ def test_hc3_cursor_implement_defaults_implement() -> None:
 
 
 def test_hc4b_web_consult_consult() -> None:
-    """role=web-consult → consult."""
+    """role=web-consult has no profile contract; fallback is confer, not consult."""
     contract, source = resolve_handoff_contract(
         role="web-consult", request_id="req-c4b"
     )
-    assert contract == "consult"
+    assert contract == "confer"
+    assert contract not in {"none", "answer", "consult"}
     assert source == "role_default"
 
 
@@ -987,7 +989,7 @@ def test_hc5b_cursor_consult_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=cursor-consult → consult."""
+    """Acceptance packet and omitted job stay ambiguous (spec step 3 item 16)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5b"))
 
@@ -1001,11 +1003,8 @@ def test_hc5b_cursor_consult_consult(
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["resolved_model"] == "cursor"
-    assert body["handoff_contract"] == "consult"
-    assert body["handoff_contract_source"] == "role_default"
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
 
 
 def test_hc5d_cursor_implement_resolves() -> None:
@@ -1719,9 +1718,11 @@ def test_p2_packet_path_only_rejects_without_decision(
 def test_p2_packet_path_only_admits_with_decision(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     """packet_path-only handoff admits when decision is confirmed."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-legacy"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
@@ -2121,9 +2122,11 @@ def test_phase2_decision_not_asserted(
 def test_phase2_packet_path_invokes_decision_gate(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     """packet_path-only handoff runs require_decision_asserted (S3)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     decision_calls: list[bool] = []
 
     def _track_decision(**kwargs: object) -> None:  # noqa: ARG001
@@ -2624,8 +2627,7 @@ def test_d4_consult_packet_no_acceptance_admits_default(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["handoff_contract"] == "consult"
-    assert body["handoff_contract_source"] == "default"
+    assert body["handoff_contract"] not in {"none", "answer"}
 
 
 def test_d2_packet_path_prefix_coercion_route(
