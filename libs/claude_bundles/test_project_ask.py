@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -159,7 +160,9 @@ def test_emit_detached_status(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_abort_cleanup_non_owner_emits_detached_not_kill(
-    isolated_registry, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    isolated_registry,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     r = reg.register_lane(
         holder="remote-driver",
@@ -174,8 +177,12 @@ def test_abort_cleanup_non_owner_emits_detached_not_kill(
     monkeypatch.setattr(reg._store, "load_active", lambda: active)
     monkeypatch.setattr(reg, "is_driver_lock_held", lambda _rid: True)
     killed: list[str] = []
-    monkeypatch.setattr(abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop"))
-    monkeypatch.setattr(abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill"))
+    monkeypatch.setattr(
+        abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop")
+    )
+    monkeypatch.setattr(
+        abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
+    )
     abort._ABORT_DONE = False
     abort.abort_cleanup(r, purpose="ask")
     assert killed == []
@@ -193,8 +200,12 @@ def test_abort_cleanup_orphan_reap_noop_on_port_reassign(
     )
     reg._release_driver_lock(r.registration_id)
     killed: list[str] = []
-    monkeypatch.setattr(abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop"))
-    monkeypatch.setattr(abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill"))
+    monkeypatch.setattr(
+        abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop")
+    )
+    monkeypatch.setattr(
+        abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
+    )
     monkeypatch.setattr(abort, "registration_owns_port", lambda *_a, **_k: False)
     abort._ABORT_DONE = False
     abort.abort_cleanup(r, purpose="ask")
@@ -214,10 +225,13 @@ def test_abort_cleanup_owner_still_kills(
     monkeypatch.setattr(
         abort,
         "bounded_stop_via_cdp",
-        lambda _url: killed.append("stop")
-        or abort.AttestResult(has_stop=False, probe_ok=True),
+        lambda _url: (
+            killed.append("stop") or abort.AttestResult(has_stop=False, probe_ok=True)
+        ),
     )
-    monkeypatch.setattr(abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill"))
+    monkeypatch.setattr(
+        abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill")
+    )
     abort._ABORT_DONE = False
     abort.abort_cleanup(r, purpose="ask")
     assert killed == ["stop", "kill"]
@@ -391,3 +405,203 @@ async def test_send_prompt_induction_fires_for_review_floor() -> None:
         "Use the consult-posture skill\n"
         "Use the hypothesize-simulate skill"
     ]
+
+
+_SEALED = (
+    "<!--cdp-required-skills:reasoning-posture,hypothesize-simulate-->\n"
+    "Question. Is the desk memo in this turn?\n"
+)
+
+
+def _induction_page() -> tuple[AsyncMock, AsyncMock]:
+    page = AsyncMock()
+    composer = AsyncMock()
+    page.keyboard.insert_text = AsyncMock()
+    return page, composer
+
+
+def _induction_patches(page_composer, report, *, extra=()):
+    composer = page_composer
+    return (
+        patch(
+            "claude_bundles.cowork_skill_delivery.partition_cdp_skills",
+            return_value=(["reasoning-posture", "hypothesize-simulate"], []),
+        ),
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._insert_prompt_text",
+            new=AsyncMock(return_value=([], [])),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(return_value=report),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            return_value=["reasoning-posture", "hypothesize-simulate"],
+        ),
+        *extra,
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
+    """a:37267 — work body pastes only after the skill-load turn has idled."""
+    from claude_bundles.chat_context_skills import LoadedSkillsReport
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    order: list[str] = []
+    ack = {"n": 1, "body": "There's no substantive question", "body_len": 34}
+
+    async def _capture(_page, *, before):
+        order.append(f"capture:{before.get('n')}")
+        return ack
+
+    async def _insert(*_a, **_k):
+        order.append("work")
+        return [], []
+
+    insert = AsyncMock(side_effect=_insert)
+
+    report = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture", "hypothesize-simulate"),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    with contextlib.ExitStack() as stack:
+        for ctx in _induction_patches(
+            composer,
+            report,
+            extra=(
+                patch(
+                    "claude_bundles.project_ask.harvest_assistant",
+                    new=AsyncMock(return_value={"n": 0, "body_len": 0}),
+                ),
+                patch(
+                    "claude_bundles.induction_reply_baseline.capture_induction_reply_baseline",
+                    new=_capture,
+                ),
+                patch(
+                    "claude_bundles.project_ask._insert_prompt_text",
+                    new=insert,
+                ),
+            ),
+        ):
+            stack.enter_context(ctx)
+        baseline = await send_prompt(page, _SEALED, await_induction_reply=True)
+    assert baseline == ack
+    assert order == ["capture:0", "work"]
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_does_not_paste_work_when_induction_never_idles() -> None:
+    """Idle timeout on the skill-load turn must not submit the author body."""
+    from claude_bundles.chat_context_skills import LoadedSkillsReport
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    report = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture", "hypothesize-simulate"),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    insert = AsyncMock(return_value=([], []))
+
+    async def _capture(_page, *, before):
+        del before
+        raise HarvestIncompleteError(
+            "induction still streaming", body="Loaded 2 skills"
+        )
+
+    with contextlib.ExitStack() as stack:
+        for ctx in _induction_patches(
+            composer,
+            report,
+            extra=(
+                patch(
+                    "claude_bundles.project_ask.harvest_assistant",
+                    new=AsyncMock(return_value={"n": 0}),
+                ),
+                patch(
+                    "claude_bundles.induction_reply_baseline.capture_induction_reply_baseline",
+                    new=_capture,
+                ),
+                patch("claude_bundles.project_ask._insert_prompt_text", new=insert),
+            ),
+        ):
+            stack.enter_context(ctx)
+        with pytest.raises(HarvestIncompleteError, match="induction still streaming"):
+            await send_prompt(page, _SEALED, await_induction_reply=True)
+    insert.assert_not_awaited()
+
+
+def test_induction_ack_is_not_complete_against_its_own_baseline() -> None:
+    """purpose=ask seals the skill ack when base_n is the pre-send snapshot."""
+    from claude_bundles.chat_reply_wait import _complete_enough
+    from claude_bundles.induction_reply_baseline import work_reply_before
+
+    ack = {
+        "n": 1,
+        "body_len": 80,
+        "body": "There's no substantive question in your message yet",
+        "streaming": False,
+        "stop": False,
+    }
+    caller_before = {"n": 0, "body_len": 0}
+    assert (
+        _complete_enough(
+            ack,
+            base_len=0,
+            base_n=caller_before["n"],
+            min_growth=1,
+            min_body=1,
+        )
+        is True
+    )
+    baseline = work_reply_before(caller_before, ack)
+    assert (
+        _complete_enough(
+            ack,
+            base_len=0,
+            base_n=baseline["n"],
+            min_growth=1,
+            min_body=1,
+        )
+        is False
+    )
+    work = {**ack, "n": 2, "body": "Desk memo answer", "body_len": 17}
+    assert (
+        _complete_enough(
+            work,
+            base_len=ack["body_len"],
+            base_n=baseline["n"],
+            min_growth=1,
+            min_body=1,
+        )
+        is True
+    )

@@ -51,6 +51,7 @@ async def _emit_page_url(on_harvest, page) -> None:
         }
     )
 
+
 _TRANSCRIPT_MARKER_JS = """
 () => {
   function excluded(el) {
@@ -194,14 +195,10 @@ async def send_followup_paste_half(
         }
     marker_in_committed = False
     if marker:
-        marker_in_committed = bool(
-            await page.evaluate(_MARKER_IN_COMMITTED_JS, marker)
-        )
+        marker_in_committed = bool(await page.evaluate(_MARKER_IN_COMMITTED_JS, marker))
     in_snippet = bool(marker) and marker in (after.get("last_snippet") or "")
     count_grew = _transcript_grew(before, after)
-    dom_paste = bool(marker) and (
-        marker_in_committed or (count_grew and in_snippet)
-    )
+    dom_paste = bool(marker) and (marker_in_committed or (count_grew and in_snippet))
     receipt: str | None = "dom_paste" if dom_paste else None
     if receipt and marker and marker_in_committed:
         if await marker_survives_settle(page, marker):
@@ -265,13 +262,17 @@ async def project_followup_on_page(
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
     require_review_verdict = (purpose or "").strip().lower() == "review"
     try:
-        before = await harvest_assistant(page)
-        await send_prompt(
+        from claude_bundles.induction_reply_baseline import work_reply_before
+
+        caller_before = await harvest_assistant(page)
+        induction_baseline = await send_prompt(
             page,
             prompt,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
+            await_induction_reply=True,
         )
+        before = work_reply_before(caller_before, induction_baseline)
         state = await wait_assistant_reply(
             page,
             before=before,
@@ -431,13 +432,17 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
-            before = await harvest_assistant(page)
-            await send_prompt(
+            from claude_bundles.induction_reply_baseline import work_reply_before
+
+            caller_before = await harvest_assistant(page)
+            induction_baseline = await send_prompt(
                 page,
                 prompts[0],
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
+                await_induction_reply=True,
             )
+            before = work_reply_before(caller_before, induction_baseline)
             await _emit_page_url(on_harvest, page)
             try:
                 state = await wait_assistant_reply(
