@@ -138,16 +138,25 @@ _REVIEW_ARGS = {
 
 
 def test_nested_filter_forwards_review_and_refuses_implement_spawn() -> None:
-    forwarded, refused = _drive_downstream(_tools_call(_REVIEW_ARGS), review_gate=True)
+    forwarded, refused = _drive_downstream(
+        _tools_call(_REVIEW_ARGS), review_gate=True, seat_thread="1"
+    )
     assert forwarded == _tools_call(_REVIEW_ARGS)
     assert refused is None
+    forwarded, refused = _drive_downstream(_tools_call(_REVIEW_ARGS), review_gate=True)
+    assert forwarded is None
+    assert refused is not None
+    assert refused["error"]["code"] == -32602
     spawn = {
         "op": "generate",
         "seat": "cursor-sdk",
         "contract": "implement",
         "model": "cursor/composer-2.5",
+        "dispatch_thread_id": "1",
     }
-    forwarded, refused = _drive_downstream(_tools_call(spawn), review_gate=True)
+    forwarded, refused = _drive_downstream(
+        _tools_call(spawn), review_gate=True, seat_thread="1"
+    )
     assert forwarded is None
     assert refused is not None
     assert refused["error"]["code"] == -32602
@@ -181,6 +190,24 @@ def test_nested_filter_refuses_panel_dispatch_by_name() -> None:
     assert forwarded is None
     assert refused is not None
     assert "panel_dispatch" in refused["error"]["message"]
+
+
+def test_filtered_non_team_dispatch_forwards_without_seat_thread() -> None:
+    cortex = {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {"name": "cortex", "arguments": {"tool": "entity_get"}},
+    }
+    forwarded, refused = _drive_downstream(cortex, review_gate=True, seat_thread=None)
+    assert forwarded == cortex
+    assert refused is None
+    tools_list = {"jsonrpc": "2.0", "id": 12, "method": "tools/list", "params": {}}
+    forwarded, refused = _drive_downstream(
+        tools_list, review_gate=True, seat_thread=None
+    )
+    assert forwarded == tools_list
+    assert refused is None
 
 
 def test_top_level_unfiltered_forwards_arbitrary_team_dispatch() -> None:
