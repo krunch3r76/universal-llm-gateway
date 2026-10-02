@@ -211,7 +211,12 @@ def test_stargate_intake_refuses_omitted_job_and_consult() -> None:
             source_ref=None,
         )
     assert omitted.value.field == "job"
-    assert omitted.value.code == "job_not_admitted"
+    assert omitted.value.code == "job_missing"
+    assert omitted.value.status_code == 422
+    assert omitted.value.details is not None
+    assert omitted.value.details["event"] == "dispatch.job.refused"
+    assert omitted.value.details["reason"] == "job_missing"
+    assert omitted.value.details["registry_ref"] == "job_vocab:unresolved"
     assert "(omitted)" in omitted.value.reason
 
     with pytest.raises(FrontierEndpointError) as consult:
@@ -234,7 +239,9 @@ def test_stargate_intake_refuses_omitted_job_and_consult() -> None:
             packet_path=None,
             source_ref=None,
         )
-    assert to_thread.value.code == "job_not_admitted"
+    assert to_thread.value.code == "job_missing"
+    assert to_thread.value.details is not None
+    assert to_thread.value.details["reason"] == "job_missing"
 
 
 def test_validating_constructor_rejects_omitted_and_consult() -> None:
@@ -311,7 +318,9 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     )
     omitted_body = json.loads(omitted.body)
     assert omitted.status_code == 422
-    assert omitted_body["error"]["code"] == "job_not_admitted"
+    assert omitted_body["error"]["code"] == "job_missing"
+    assert omitted_body["details"]["reason"] == "job_missing"
+    assert omitted_body["details"]["registry_ref"] == "job_vocab:unresolved"
     assert seen == ["consult", None]
 
     to_thread = await team_dispatch(

@@ -306,7 +306,10 @@ def test_omitted_job_and_consult_are_refused() -> None:
     omitted = reject_unsupported_packet_inputs("generate", None, None, None)
     assert omitted is not None
     assert omitted["field"] == "job"
-    assert omitted["error"]["code"] == "job_not_admitted"
+    assert omitted["error"]["code"] == "job_missing"
+    assert omitted["error"]["event"] == "dispatch.job.refused"
+    assert omitted["error"]["reason"] == "job_missing"
+    assert omitted["error"]["registry_ref"] == "job_vocab:unresolved"
     assert "(omitted)" in omitted["error"]["message"]
 
     consult = reject_unsupported_packet_inputs("generate", "consult", None, None)
@@ -317,7 +320,8 @@ def test_omitted_job_and_consult_are_refused() -> None:
 
     blank = reject_unsupported_packet_inputs("generate", "  ", None, None)
     assert blank is not None
-    assert blank["error"]["code"] == "job_not_admitted"
+    assert blank["error"]["code"] == "job_missing"
+    assert blank["error"]["registry_ref"] == "job_vocab:unresolved"
 
 
 def test_to_thread_refuses_job_outside_its_admitted_set() -> None:

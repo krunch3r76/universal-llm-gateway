@@ -43,13 +43,28 @@ def reject_unsupported_packet_inputs(
     admitted = (
         TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
     )
-    if not wire or wire not in admitted:
-        shown = wire or "(omitted)"
+    if not wire:
         raise FrontierEndpointError(
             request_id=request_id,
             field="job",
             reason=(
-                f"job {shown!r} is not admitted for op={op!r}; "
+                f"job '(omitted)' is not admitted for op={op!r}; "
+                f"must be one of: {', '.join(sorted(admitted))}"
+            ),
+            status_code=422,
+            code="job_missing",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "job_missing",
+                "registry_ref": "job_vocab:unresolved",
+            },
+        )
+    if wire not in admitted:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="job",
+            reason=(
+                f"job {wire!r} is not admitted for op={op!r}; "
                 f"must be one of: {', '.join(sorted(admitted))}"
             ),
             status_code=422,

@@ -63,8 +63,12 @@ def _validation_error(
     field: str = "",
     *,
     code: str = "validation_error",
+    error_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    env: dict[str, Any] = {"error": {"code": code, "message": message}}
+    err: dict[str, Any] = {"code": code, "message": message}
+    if error_fields:
+        err.update(error_fields)
+    env: dict[str, Any] = {"error": err}
     if field:
         env["field"] = field
     return env
@@ -193,10 +197,21 @@ def reject_unsupported_packet_inputs(
     admitted = (
         TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
     )
-    if not wire or wire not in admitted:
-        shown = wire or "(omitted)"
+    if not wire:
         return _validation_error(
-            f"job {shown!r} is not admitted for op={op!r}; "
+            f"job '(omitted)' is not admitted for op={op!r}; "
+            f"must be one of: {', '.join(sorted(admitted))}",
+            field="job",
+            code="job_missing",
+            error_fields={
+                "event": "dispatch.job.refused",
+                "reason": "job_missing",
+                "registry_ref": "job_vocab:unresolved",
+            },
+        )
+    if wire not in admitted:
+        return _validation_error(
+            f"job {wire!r} is not admitted for op={op!r}; "
             f"must be one of: {', '.join(sorted(admitted))}",
             field="job",
             code="job_not_admitted",
