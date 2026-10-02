@@ -208,7 +208,7 @@ class RestartIntentStore:
         path, not insert. ``wait_for_boundary`` defaults to no hard expiry
         unless ``intent_ttl_s`` is set (a:37197).
         """
-        from .restart_intent_expiry import arm_stamps, resolve_intent_ttl_s
+        from .restart_intent_expiry import arm_stamps, join_expires_at, resolve_intent_ttl_s
 
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -220,11 +220,15 @@ class RestartIntentStore:
             if existing is not None:
                 prior = _row_to_intent(existing)
                 wfb = prior.wait_for_boundary or wait_for_boundary
-                ttl = resolve_intent_ttl_s(
-                    wait_for_boundary=wfb, intent_ttl_s=intent_ttl_s
+                clock = datetime.now(UTC)
+                _agent, armed, _ignored = arm_stamps(
+                    prior.caller_agent, now=clock, ttl_s=None
                 )
-                _agent, armed, expires = arm_stamps(
-                    prior.caller_agent, now=datetime.now(UTC), ttl_s=ttl
+                expires = join_expires_at(
+                    wait_for_boundary=wfb,
+                    intent_ttl_s=intent_ttl_s,
+                    prior_expires_at=prior.expires_at,
+                    now=clock,
                 )
                 conn.execute(
                     "UPDATE restart_intents SET armed_at=?, expires_at=?, "
@@ -384,16 +388,20 @@ class RestartIntentStore:
         tick must not — an abandoned intent with only that tick expires.
         ``wait_for_boundary`` without a prior TTL stays unbounded.
         """
-        from .restart_intent_expiry import arm_stamps, resolve_intent_ttl_s
+        from .restart_intent_expiry import arm_stamps, join_expires_at
 
         current = self.get(intent_id)
         if current is None:
             raise KeyError(intent_id)
-        ttl = resolve_intent_ttl_s(
-            wait_for_boundary=current.wait_for_boundary, intent_ttl_s=None
+        clock = datetime.now(UTC)
+        _agent, armed, _ignored = arm_stamps(
+            current.caller_agent, now=clock, ttl_s=None
         )
-        _agent, armed, expires = arm_stamps(
-            current.caller_agent, now=datetime.now(UTC), ttl_s=ttl
+        expires = join_expires_at(
+            wait_for_boundary=current.wait_for_boundary,
+            intent_ttl_s=None,
+            prior_expires_at=current.expires_at,
+            now=clock,
         )
         self._update(intent_id, armed_at=armed, expires_at=expires)
         refreshed = self.get(intent_id)

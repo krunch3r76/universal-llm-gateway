@@ -739,11 +739,14 @@ def giw_wait_for_boundary_from_params(params: dict[str, Any]) -> bool:
 
 
 def giw_intent_ttl_s_from_params(params: dict[str, Any]) -> float | None:
-    """Optional caller arm TTL. Absent → default 600s, or none when wait_for_boundary."""
+    """Optional caller arm TTL. Absent or ≤0 → default (600s, or none when wait_for_boundary)."""
     raw = params.get("intent_ttl_s")
     if raw is None or raw == "":
         return None
-    return float(raw)
+    val = float(raw)
+    if val <= 0:
+        return None
+    return val
 
 
 async def _git_worker_drain_supervised(
