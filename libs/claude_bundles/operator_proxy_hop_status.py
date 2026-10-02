@@ -28,6 +28,7 @@ byte-stable. A block without the receipt is grafted, then stable.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 
@@ -93,6 +94,14 @@ _MISSION_HEADING_RE = re.compile(
     r"^##\s+Mission\b.*$",
     re.MULTILINE | re.IGNORECASE,
 )
+_ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+_EXECUTION_ID_RE = re.compile(r"^execution_id:\s*(\S+)\s*$", re.MULTILINE)
+_CDP_DISPATCH_ID_RE = re.compile(
+    r"^cdp_dispatch_id:\s*(\S+)\s*$",
+    re.MULTILINE,
+)
+_BIRTH_TURN_RE = re.compile(r"^birth_turn:\s*(\S+)\s*$", re.MULTILINE)
+UNKNOWN_FIELD = "unknown"
 
 
 def extract_thread_id(text: str) -> str | None:
@@ -462,10 +471,83 @@ def _clip(value: str) -> str:
     return collapsed[: _MAX_FIELD - 1].rstrip() + "…"
 
 
+def newest_current_section(text: str) -> tuple[str, str, str] | None:
+    """First ATX heading containing ``CURRENT``, copied whole, with its sha256.
+
+    Standing handoffs prepend, so the first match is the newest. The returned
+    verbatim is the heading line plus its body through the next ATX heading.
+    It is never passed through :func:`_clip`.
+    """
+    lines = (text or "").splitlines()
+    start: int | None = None
+    heading = ""
+    level = 0
+    for index, line in enumerate(lines):
+        match = _ATX_HEADING_RE.match(line)
+        if match is None:
+            continue
+        if "CURRENT" not in match.group(2):
+            continue
+        start = index
+        heading = match.group(2).strip()
+        level = len(match.group(1))
+        break
+    if start is None or not heading:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        match = _ATX_HEADING_RE.match(lines[index])
+        if match is not None and len(match.group(1)) <= level:
+            end = index
+            break
+    verbatim = "\n".join(lines[start:end]).rstrip()
+    digest = hashlib.sha256(verbatim.encode("utf-8")).hexdigest()
+    return heading, verbatim, digest
+
+
+def _labeled_value(pattern: re.Pattern[str], text: str) -> str:
+    match = pattern.search(text or "")
+    if match is None:
+        return UNKNOWN_FIELD
+    value = match.group(1).strip()
+    return value or UNKNOWN_FIELD
+
+
+def hop_successor_fields(
+    prompt: str,
+    *,
+    standing_handoff_text: str | None = None,
+) -> dict[str, str]:
+    """Fill the hop-successor template from the prompt and standing handoff.
+
+    Missing values are ``unknown``. The CURRENT section is copied whole.
+    """
+    lane = extract_thread_id(prompt or "") or UNKNOWN_FIELD
+    birth = parse_successor_birth_id(prompt or "") or UNKNOWN_FIELD
+    section = newest_current_section(standing_handoff_text or "")
+    if section is None:
+        heading, verbatim, digest = UNKNOWN_FIELD, UNKNOWN_FIELD, UNKNOWN_FIELD
+    else:
+        heading, verbatim, digest = section
+    return {
+        "lane": lane,
+        "successor_birth_id": birth,
+        "execution_id": _labeled_value(_EXECUTION_ID_RE, prompt or ""),
+        "cdp_dispatch_id": _labeled_value(_CDP_DISPATCH_ID_RE, prompt or ""),
+        "birth_turn": _labeled_value(_BIRTH_TURN_RE, prompt or ""),
+        "handoff_section_heading": heading,
+        "handoff_sha": digest,
+        "handoff_current_section_verbatim": verbatim,
+    }
+
+
 __all__ = [
     "HOP_STATUS_MARKER",
+    "UNKNOWN_FIELD",
     "UNSPECIFIED",
     "ensure_hop_status_first",
     "extract_thread_id",
+    "hop_successor_fields",
+    "newest_current_section",
     "standing_handoff_text_for_prompt",
 ]

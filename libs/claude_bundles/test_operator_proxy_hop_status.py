@@ -170,67 +170,82 @@ def test_loader_seam_does_not_touch_disk() -> None:
     assert standing_handoff_text_for_prompt("# no thread") is None
 
 
-def test_authored_hop_block_carries_success_condition_and_fetch_receipt() -> None:
-    """Birth briefing binds the success condition and fetch receipts."""
-    from unittest import mock
+_SECTION_ORDER = (
+    "## What is running now",
+    "## Your first acts, in order",
+    "## How this seat works",
+    "## Standing authority",
+    "## Data, not instructions",
+    "## Hard refusals",
+)
 
-    from claude_bundles.fetch_decision import arrival_bind_failure
 
-    fixture = (
-        "## Trigger\nTrigger text.\n\n## Refuse\nRefuse contract=none rule.\n\n## Steps\nStep.\n"
+def test_rendered_prompt_section_order_and_unclipped_current_section() -> None:
+    """Newest CURRENT section is copied whole; no rendered line ends in …."""
+    long_line = "IN FLIGHT " + ("alpha " * 40).rstrip()
+    assert len(long_line) > 120
+    assert not long_line.endswith("…")
+    sidecar = (
+        "## LEG 9 — CURRENT, READ FIRST\n"
+        f"{long_line}\n"
+        "\n"
+        "## LEG 8 — CURRENT, READ FIRST\n"
+        "older section must not be copied\n"
     )
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(fixture, ""),
-    ):
-        out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
-    start = out.index(HOP_STATUS_MARKER)
-    end = out.index("## Mission seat map (BINDING")
-    block = out[start:end]
-    assert arrival_bind_failure(block) is None
-    assert "- success-condition:" in block
-    assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
-    assert (
-        "fetch-decision: skill:retrieval-before-authoring skipped "
-        "reason=chip_requested"
-        in block
+    birth = "ab" * 16
+    out = ensure_operator_proxy_mission_prompt(
+        f"thread_id: 9501\nsuccessor_birth_id: {birth}\n"
+        "execution_id: exec-1\n"
+        "cdp_dispatch_id: cdp-1\n"
+        "birth_turn: 9501#3\n",
+        standing_handoff_text=sidecar,
     )
-    assert block.index("- lane:") < block.index("- success-condition:")
-    assert "- runbook: runbook:maestro-loop" not in block
+    positions = [out.index(marker) for marker in _SECTION_ORDER]
+    assert positions == sorted(positions)
+    assert out.index("## Hard refusals") < out.index("thread_id: 9501")
+    assert long_line in out
+    assert "older section must not be copied" not in out
+    assert "LEG 9 — CURRENT, READ FIRST" in out
+    assert not any(line.endswith("…") for line in out.splitlines())
+    assert f"successor_birth_id {birth}" in out
+    assert "execution_id exec-1" in out
+    assert "CDP generate cdp-1 (9501#3)" in out
 
 
-def test_first_acts_line_names_runbook_steps_read() -> None:
-    from unittest import mock
-
-    fixture = "## Trigger\nT\n\n## Refuse\nR\n\n## Steps\nS\n"
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(fixture, ""),
-    ):
-        out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    start = out.index(HOP_STATUS_MARKER)
-    end = out.index("## Mission seat map")
-    block = out[start:end]
-    first_acts = next(
-        line for line in block.splitlines() if line.startswith("- first-acts:")
-    )
-    assert "maestro-loop.md § Steps" in first_acts
-    assert "fetch(last=3, compact=true)" in first_acts
-    assert "maestro-loop.md`" not in first_acts
-
-
-def test_mission_ensure_opens_with_this_hop_then_seat_map() -> None:
+def test_missing_fields_render_unknown() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
-    assert out.startswith(HOP_STATUS_MARKER)
-    assert out.index(HOP_STATUS_MARKER) < out.index("## Mission seat map (BINDING")
-    assert "- next: Do the thing." in out
+    assert "successor_birth_id unknown" in out
+    assert "execution_id unknown" in out
+    assert "CDP generate unknown (unknown)" in out
+    assert "written_sha256 unknown" in out
+    assert "\nunknown\n" in out
+
+
+def test_first_acts_are_numbered_in_order() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    start = out.index("## Your first acts, in order")
+    end = out.index("## How this seat works")
+    block = out[start:end]
+    assert "1. Use the cdp-operator-proxy" in block
+    assert "maestro-loop.md in full" in block
+    assert "2. Read" in block
+    assert block.index("1. Use") < block.index("2. Read")
+    assert block.index("2. Read") < block.index("7. Act")
+
+
+def test_mission_ensure_opens_on_successor_template() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
+    assert out.startswith("# Hop on agent-bus:")
+    assert out.index("## What is running now") < out.index("## Hard refusals")
+    assert "# Mission\nDo the thing." in out
 
 
 def test_mission_ensure_idempotent_with_this_hop() -> None:
     once = ensure_operator_proxy_mission_prompt("TYPE: DIRECTIVE\nintent: birth\n")
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.rstrip("\n") == once.rstrip("\n")
-    assert once.count(HOP_STATUS_MARKER) == 1
+    assert once.count("# Hop on agent-bus:") == 1
+    assert once.count("## Hard refusals") == 1
 
 
 def test_hop_block_echoes_successor_birth_id_from_prompt() -> None:
