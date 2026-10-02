@@ -1209,6 +1209,137 @@ def test_refuse_generate_wire_miss_mission_kind_none_refuses_own_gate(
     assert exc.value.code == "cdp_external_gate_live"
 
 
+def _live_operator_proxy_snap() -> dict[str, Any]:
+    return {
+        "rows": [
+            {
+                "execution_id": "f96a2cac-98f5-45cf-b6a8-2bbbba6759d0",
+                "parent_thread": "14394",
+                "status": "running",
+                "stream_state": "running",
+                "purpose": "operator-proxy",
+                "registration_id": "c1caf180",
+            }
+        ]
+    }
+
+
+def _stub_cdp_generate_after_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from claude_bundles import cdp_model_endpoint_staging as staging
+
+    from systems.frontier_consult import cdp_generate as mod
+
+    monkeypatch.setattr(staging, "ephemeral_dir", lambda _eid: tmp_path)
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(
+        mod,
+        "admit_handoff_dispatch",
+        AsyncMock(return_value=MagicMock(reason="ok")),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "14394", "from_agent": "web-anthropic"},
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
+
+    async def _worker(**kwargs: Any) -> None:
+        del kwargs
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _worker)
+
+
+@pytest.mark.asyncio
+async def test_ac12_second_session_gate_hop_exempt_code_review_clear(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Item 12 — second session=operator-proxy on a live parent_thread is 409.
+
+    Breaks when a second generate on the same parent_thread is admitted
+    (missing occupancy), when the 409 names a field other than session,
+    when mission_kind=hop refuses its own registered generate, or when
+    job=code-review takes the operator-lane 409.
+    """
+    from fastapi import Response
+
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: _live_operator_proxy_snap(),
+    )
+    _stub_cdp_generate_after_gate(monkeypatch, tmp_path)
+
+    second = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="14394",
+        parent_thread="14394",
+        prompt="Second gate.\n",
+        session="operator-proxy",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-ac12-second",
+            body=second,
+            response=Response(),
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.code == "cdp_external_gate_live"
+    assert exc.value.field == "session"
+
+    hop = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="14394",
+        parent_thread="14394",
+        prompt="Hop own generate.\n",
+        session="operator-proxy",
+        mission_kind="hop",
+        predecessor_registration_id="c1caf180",
+    )
+    hop_response = Response()
+    hop_result = await dispatch_cdp_generate(
+        request_id="req-ac12-hop",
+        body=hop,
+        response=hop_response,
+    )
+    assert 200 <= hop_response.status_code < 300
+    assert hop_result["execution_id"]
+
+    review = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="14394",
+        parent_thread="14394",
+        prompt="Review the diff.\n",
+    )
+    review_response = Response()
+    review_result = await dispatch_cdp_generate(
+        request_id="req-ac12-review",
+        body=review,
+        response=review_response,
+    )
+    assert review_response.status_code != 409
+    assert 200 <= review_response.status_code < 300
+    assert review_result["execution_id"]
+    assert review_result.get("error", {}).get("code") != "cdp_external_gate_live"
+
+
 def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1246,7 +1377,7 @@ def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
 def test_hop_mismatched_registration_refuses_even_with_sole_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fail-closed: non-matching predecessor_registration_id does not sole-gate exempt."""
+    """Fail-closed: mismatched predecessor_registration_id does not sole-gate exempt."""
     from systems.frontier_consult.admission import FrontierEndpointError
     from systems.frontier_consult.cdp_generate import (
         refuse_second_external_gate_at_fire,

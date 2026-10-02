@@ -205,6 +205,7 @@ def refuse_second_external_gate_at_fire(
     exclude_execution_id: str | frozenset[str] | set[str] | None = None,
     hop_own_generate: bool = False,
     predecessor_registration_id: str | None = None,
+    error_field: str = "purpose",
 ) -> None:
     """P1.3 — refuse a second gate while one is still streaming for the lane.
 
@@ -232,7 +233,7 @@ def refuse_second_external_gate_at_fire(
     if _live_external_gate_for_lane(snap, lane, exclude_execution_id=exclude):
         raise FrontierEndpointError(
             request_id=request_id,
-            field="purpose",
+            field=error_field,
             reason=(
                 f"external CDP gate already live for parent_thread={lane!r}; "
                 "wait for harvest before firing another gate"
@@ -251,6 +252,7 @@ def _refuse_external_gate_for_generate(
     execution_id: str,
     mission_kind: str | None,
     predecessor_registration_id: str | None,
+    error_field: str = "purpose",
 ) -> None:
     """Fire-gate. Hop commissions exclude the caller's own generate only."""
     hop = (mission_kind or "").strip().lower() == "hop"
@@ -262,6 +264,7 @@ def _refuse_external_gate_for_generate(
         exclude_execution_id=execution_id,
         hop_own_generate=hop,
         predecessor_registration_id=(predecessor_registration_id if hop else None),
+        error_field=error_field,
     )
 
 
@@ -481,12 +484,14 @@ async def dispatch_cdp_generate(
     session_raw = getattr(body, "session", None)
     # Omitted session is the judgment floor. Do not infer ``ask`` from the
     # model, and do not read a ``purpose=`` line out of the prompt.
-    if isinstance(session_raw, str) and session_raw.strip():
+    session_bound = isinstance(session_raw, str) and bool(session_raw.strip())
+    if session_bound:
         purpose = session_raw.strip()
     elif isinstance(purpose_raw, str) and purpose_raw.strip():
         purpose = infer_cdp_purpose(purpose_raw.strip(), model)
     else:
         purpose = None
+    gate_error_field = "session" if session_bound else "purpose"
     try:
         staged = _stage_inputs(
             execution_id=execution_id,
@@ -547,6 +552,7 @@ async def dispatch_cdp_generate(
             predecessor_registration_id=getattr(
                 body, "predecessor_registration_id", None
             ),
+            error_field=gate_error_field,
         )
     elif (purpose or "").strip().lower() in _LANE_BIND_PURPOSES:
         parent_thread, mission_kind = default_operator_seat_binding(
@@ -565,6 +571,7 @@ async def dispatch_cdp_generate(
             predecessor_registration_id=getattr(
                 body, "predecessor_registration_id", None
             ),
+            error_field=gate_error_field,
         )
 
     thread_subject = f"cdp generate — {request_id}"
