@@ -2359,7 +2359,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `frontier.sdk.conductor.hop.declared` | `dispatch_id`, `thread_id`, `hop_seq`, `hop_reason`, `row_closed?` | Closeout carried ROW_HOP before terminal transition. |
 | `frontier.sdk.conductor.hop.lineage_stamped` | `dispatch_id`, `predecessor_dispatch_id`, `thread_id`, `hop_seq`, `hop_admitted_by` | Lineage stamp applied during ledger admit transaction. |
 | `frontier.sdk.conductor.hop.park_harvest` | `dispatch_id`, `thread_id`, `summoning_thread_id`, `hop_seq` | Terminal park-harvest classification — harvest still owed after exit-persist. |
-| `frontier.sdk.conductor.hop.park_released` | `parked_dispatch_id`, `thread_id`, `caller_agent`, `work_key?` | Explicit ``hop_park_release`` cleared a mission park hold. |
+| `frontier.sdk.conductor.hop.park_released` | `parked_dispatch_id`, `thread_id`, `caller_agent`, `work_key?` | One budget-park row whose ``hop_park_released_at`` stamp committed with an admit that set ``hop_park_release``; emitted after that commit, once per released row. |
 | `frontier.sdk.conductor.hop.parked` | `dispatch_id`, `thread_id`, `hop_seq`, `reason` | Hop budget exhausted; mission parked on worker thread. |
 | `frontier.sdk.conductor.hop.skipped` | `dispatch_id`, `thread_id`, `hop_seq`, `gate` | Reactor exited without POST — observability for silent skip paths. |
 | `frontier.sdk.conductor.hop.watchdog_fired` | `last_dispatch_id`, `thread_id`, `hop_seq` | GIW sweep fired a owed successor the reactor did not admit. |
