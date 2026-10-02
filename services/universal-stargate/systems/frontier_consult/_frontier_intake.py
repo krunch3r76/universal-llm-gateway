@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS
+from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS, job_record
 
 from .service import FrontierEndpointError
 
@@ -55,24 +55,14 @@ def reject_unsupported_packet_inputs(
             status_code=422,
             code="job_not_admitted",
         )
-    if wire in {"none", "pure-mechanical"} and source_ref is not None:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="source_ref",
-            reason=(
-                f"source_ref is forbidden for contract={wire!r}; "
-                "pick a materializer contract"
-            ),
-            status_code=422,
-            code=f"{wire}_with_source_ref",
-        )
-    if wire == "none" and stop_after:
+    record = job_record(wire)
+    if not record.stop_after_allowed and stop_after:
         raise FrontierEndpointError(
             request_id=request_id,
             field="stop_after",
-            reason="stop_after is forbidden with job='freeform'",
+            reason=f"stop_after is forbidden for job={wire!r}",
             status_code=422,
-            code="none_with_stop_after",
+            code="stop_after_not_allowed",
         )
 
 

@@ -281,7 +281,7 @@ def test_team_dispatch_generate_forwards_server_tools() -> None:
             team_dispatch_fn(
                 op="generate",
                 role="reviewer",
-                contract="none",
+                contract="freeform",
                 dispatch_thread_id="thread-dispatch-1",
                 server_tools=False,
             )
