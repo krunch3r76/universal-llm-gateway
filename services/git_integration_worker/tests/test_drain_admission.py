@@ -386,10 +386,12 @@ def test_arm_holder_keeps_admits_open_until_activate(events: SimpleNamespace) ->
         intent_id="i-arm",
         drain_epoch=epoch,
         arm="holder:holder-1",
+        deadline_s=30.0,
     )
     assert snap["armed"] is True
     assert snap["draining"] is False
     assert snap["arm"] == "holder:holder-1"
+    assert snap["deadline_at"] is None  # AC5: GIW clock starts on activate
     assert events.started == []
     # New admits still succeed while armed.
     ticket = controller.try_admit("cursor_sdk", op_id="other", route="/r")
@@ -398,6 +400,8 @@ def test_arm_holder_keeps_admits_open_until_activate(events: SimpleNamespace) ->
     assert activated is True
     assert controller.is_draining() is True
     assert len(events.started) == 1
+    after = controller.drain_state()
+    assert after["deadline_at"] is not None
     with pytest.raises(Draining503):
         controller.try_admit("cursor_sdk", op_id="blocked", route="/r")
 

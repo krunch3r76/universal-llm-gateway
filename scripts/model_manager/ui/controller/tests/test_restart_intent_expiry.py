@@ -277,7 +277,7 @@ async def test_expiry_release_failure_stays_pending_and_next_tick_cancels(
         reconcile_interval_s=0.0,
         deadline_s=60.0,
     )
-    outcome = await supervisor._await_drain_completed(
+    outcome, _start = await supervisor._await_drain_completed(
         store.get(intent.intent_id), time.monotonic() + 60.0, time.monotonic()
     )
     assert outcome == "cancelled"
