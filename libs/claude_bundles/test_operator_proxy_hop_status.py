@@ -215,6 +215,7 @@ def test_first_acts_line_names_runbook_steps_read() -> None:
         line for line in block.splitlines() if line.startswith("- first-acts:")
     )
     assert "maestro-loop.md § Steps" in first_acts
+    assert "fetch(last=3, compact=true)" in first_acts
     assert "maestro-loop.md`" not in first_acts
 
 

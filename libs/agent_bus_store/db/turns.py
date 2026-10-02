@@ -359,7 +359,11 @@ def get_turns(
 
     sql = f"SELECT {select} FROM turns {where} {order} {limit}"
     close_candidates: set[str] = set()
-    with write_connect() as conn:
+    # Pure tip/page reads must not take the write FIFO — hop-successor
+    # fetch(last=N) on a busy root otherwise waits behind writers until the
+    # MCP relay's 30s budget (friction a:37201). mark_read still needs IMMEDIATE.
+    conn_cm = write_connect() if mark_read else connect()
+    with conn_cm as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
         if mark_read:

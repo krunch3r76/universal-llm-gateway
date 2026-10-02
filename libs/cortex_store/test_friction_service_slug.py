@@ -88,6 +88,10 @@ def test_op_friction_accepts_qualified_service(monkeypatch) -> None:
         "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._resolve_friction_owner_entity_id",
+        lambda eid: eid,
+    )
 
     result = _op_friction(
         service="service:agent-bus",
@@ -115,6 +119,10 @@ def test_op_friction_accepts_expanded_categories(monkeypatch, category: str) -> 
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._resolve_friction_owner_entity_id",
+        lambda eid: eid,
     )
 
     extra: dict[str, object] = {}
@@ -159,6 +167,10 @@ def test_execute_op_friction_json_string_routes_service(monkeypatch) -> None:
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.record",
         lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._resolve_friction_owner_entity_id",
+        lambda eid: eid,
     )
 
     payload = {
@@ -241,6 +253,10 @@ def test_op_friction_owner_bare_slug(monkeypatch) -> None:
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._resolve_friction_owner_entity_id",
+        lambda eid: eid,
     )
 
     result = _op_friction(
@@ -345,6 +361,10 @@ def test_op_friction_both_owner_service_equal_ok(monkeypatch) -> None:
         "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._resolve_friction_owner_entity_id",
+        lambda eid: eid,
+    )
 
     result = _op_friction(
         owner="mcp-server",
@@ -380,6 +400,12 @@ def _patch_friction_create(monkeypatch, captured: dict[str, object]) -> None:
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
+    )
+    # Service owners now resolve; identity-stub keeps hermetic create-path tests
+    # from needing a migrated DB (underscore→hyphen covered separately).
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._resolve_friction_owner_entity_id",
+        lambda eid: eid,
     )
 
 
@@ -419,3 +445,109 @@ def test_op_friction_feature_explicit_actionable_is_honoured(monkeypatch) -> Non
     attrs = captured.get("attributes") or {}
     assert attrs.get("actionable") is True
     assert "defer_enqueue" not in attrs
+
+
+def test_op_friction_underscore_service_resolves_to_hyphen(
+    migrated_db_path, monkeypatch
+) -> None:
+    """a:37201 — tool/manage slug agent_bus must land on service:agent-bus."""
+    from cortex_store import db as cortex_db
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT INTO entities (id, type, name, lifecycle) VALUES (?, ?, ?, ?)",
+            ("service:agent-bus", "service", "Agent Bus", "active"),
+        )
+        conn.commit()
+
+    captured: dict[str, object] = {}
+
+    def fake_create(body: dict[str, object]) -> dict[str, object]:
+        captured.update(body)
+        return {"item": {"id": 1}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
+        lambda *a, **k: None,
+    )
+
+    result = _op_friction(
+        owner="service:agent_bus",
+        category="tool_error",
+        note="underscore owner alias probe",
+        agent="pytest",
+    )
+    assert "error" not in result, result
+    assert captured["entity_id"] == "service:agent-bus"
+
+
+def test_op_friction_bare_underscore_slug_resolves(
+    migrated_db_path, monkeypatch
+) -> None:
+    from cortex_store import db as cortex_db
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT INTO entities (id, type, name, lifecycle) VALUES (?, ?, ?, ?)",
+            ("service:agent-bus", "service", "Agent Bus", "active"),
+        )
+        conn.commit()
+
+    captured: dict[str, object] = {}
+
+    def fake_create(body: dict[str, object]) -> dict[str, object]:
+        captured.update(body)
+        return {"item": {"id": 1}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
+        lambda *a, **k: None,
+    )
+
+    result = _op_friction(
+        service="agent_bus",
+        category="tool_error",
+        note="bare underscore slug",
+        agent="pytest",
+    )
+    assert "error" not in result, result
+    assert captured["entity_id"] == "service:agent-bus"
+
+
+def test_op_friction_missing_underscore_service_steers_hyphen(
+    migrated_db_path, monkeypatch
+) -> None:
+    """404-with-hint when neither underscore nor hyphen entity exists."""
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    create_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        lambda body: create_calls.append(body) or {"item": {"id": 1}},
+    )
+
+    result = _op_friction(
+        owner="service:no_such_bus",
+        category="tool_error",
+        note="steer probe",
+        agent="pytest",
+    )
+    assert "error" in result
+    assert result["status_code"] == 404
+    assert "service:no-such-bus" in result["error"]
+    assert "hyphens" in result["error"]
+    assert create_calls == []

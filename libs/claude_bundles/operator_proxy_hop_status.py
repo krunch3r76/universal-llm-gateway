@@ -49,7 +49,7 @@ _FIRST_ACTS_LINE = (
     "- first-acts: read cortex://notes/runbooks/maestro-loop.md § Steps → "
     "skill reloads (`lane-act-gates` with the birth slugs) → "
     "handoff head (fs offset=0 limit=50) → journal → "
-    "fetch(last=3) → mark_read(through_turn, agent=web-anthropic) → send "
+    "fetch(last=3, compact=true) → mark_read(through_turn, agent=web-anthropic) → send "
     "TYPE: SEAT_REGISTRATION quoting successor_birth_id"
 )
 _RULE_PLUS_SPECIMEN_LINE = (

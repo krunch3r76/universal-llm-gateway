@@ -49,6 +49,45 @@ _FRICTION_DEFAULT_CONFIDENCE = "hypothesized"
 _FRICTION_DEFAULT_SCORE = 0.5
 
 
+def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
+    """Resolve friction owner to a live entity id, or an error payload.
+
+    Service owners historically skipped ``resolve_entity_reference``, so
+    ``service:agent_bus`` (tool/manage underscore) 404'd while the canonical
+    entity is ``service:agent-bus`` (friction a:37201). Soft ``_``→``-`` retry
+    only after an exact miss so underscore-canonical services stay exact-first.
+    """
+    with cortex_conn() as conn:
+        try:
+            return resolve_entity_reference(conn, entity_id, label="owner").entity_id
+        except HTTPException as exc:
+            if owner_type_of(entity_id) == "service":
+                slug = entity_id.removeprefix("service:")
+                if "_" in slug:
+                    alt = f"service:{slug.replace('_', '-')}"
+                    try:
+                        return resolve_entity_reference(
+                            conn, alt, label="owner"
+                        ).entity_id
+                    except HTTPException:
+                        return {
+                            "error": (
+                                f"owner {entity_id} not found ({exc.detail}); "
+                                f"canonical service ids use hyphens "
+                                f"(try {alt!r}). Create the entity before "
+                                "logging friction against it."
+                            ),
+                            "status_code": 404,
+                        }
+            return {
+                "error": (
+                    f"owner {entity_id} not found ({exc.detail}); "
+                    "create the entity before logging friction against it."
+                ),
+                "status_code": exc.status_code,
+            }
+
+
 def _resolve_friction_confidence(
     confidence: str | None,
     confidence_score: float | None,
@@ -203,16 +242,10 @@ def _op_friction(
             "error": f"Unsupported owner namespace in {owner_arg!r}. Allowed prefixes: service:, agent_skill:, ai_agent: (or a bare slug -> service:)."
         }
     entity_id = owner_entity_id(owner_arg)
-    if owner_type_of(entity_id) != "service":
-        with cortex_conn() as conn:
-            try:
-                resolved = resolve_entity_reference(conn, entity_id, label="owner")
-            except HTTPException as exc:
-                return {
-                    "error": f"owner {entity_id} not found ({exc.detail}); create the entity before logging friction against it.",
-                    "status_code": exc.status_code,
-                }
-        entity_id = resolved.entity_id
+    resolved_owner = _resolve_friction_owner_entity_id(entity_id)
+    if isinstance(resolved_owner, dict):
+        return resolved_owner
+    entity_id = resolved_owner
     provenance_attrs, prov_err = _build_friction_provenance_attrs(
         charter_root=charter_root,
         window_index=window_index,
