@@ -22,7 +22,7 @@ _REVIEW = {
     "op": "generate",
     "model": "cdp/opus-5",
     "purpose": "review",
-    "contract": "none",
+    "contract": "freeform",
     "prompt": "diff",
     "dispatch_thread_id": "12988",
 }
@@ -135,6 +135,14 @@ def test_allowlist_refuses_confused_deputy_and_foreign_thread() -> None:
     assert not is_review_class_call({**_REVIEW, "contract": None})
     assert not is_review_class_call(_REVIEW, seat_thread="999")
     assert is_review_class_call(_REVIEW, seat_thread="12988")
+    freeform = {**_REVIEW, "model": "cdp/opus-5.5"}
+    assert is_review_class_call(freeform, seat_thread="12988")
+    assert is_review_class_call(
+        {**freeform, "contract": "delivery-review"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**freeform, "contract": "none"}, seat_thread="12988"
+    )
     assert is_review_class_call(
         {**_REVIEW, "parent_thread": "12988"}, seat_thread="12988"
     )

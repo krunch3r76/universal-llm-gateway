@@ -69,13 +69,16 @@ per-G-row one. Default posture once running:
 - **After-ship `cdp/opus-5.5` code review (a:32146) is a stronger-model gate, not
   a background nicety.** On codework that claims land / cert / terminal `DONE`:
   **review harvest ≺ land ≺ DONE** (dogfood 10013 / a:32221–32222; 9638 hop3 /
-  a:32226). Fire `team_dispatch(model=cdp/opus-5.5, job=delivery-review, …)`
-  and **harvest a real verdict body** before those claims. Filtered nested
+  a:32226). Fire `team_dispatch` with `op=generate`, `purpose=review`,
+  `contract=freeform`, `model` in `{cdp/opus-5, cdp/opus-5.5, cdp/fable}`,
+  prompt set, and `dispatch_thread_id` equal to this worker thread. Omit
+  `parent_thread` or set it equal to that thread. The predicate also accepts
+  `contract=delivery-review`. `job=delivery-review` is the genre line inside
+  the prompt, not the `contract` argument.
+  **Harvest a real verdict body** before those claims. Filtered nested
   seats (`implement` / `pure-mechanical`) see that same call on `tools/list`. The
   stdio bridge refuses a `tools/call` outside the contract primary list, and
-  refuses `team_dispatch` unless the arguments are the review shape
-  (`op=generate`, `job=delivery-review`, `model` in `cdp/opus-5` | `cdp/opus-5.5` |
-  `cdp/fable`, `job=freeform`, no other keys). That bound is the bridge
+  refuses `team_dispatch` unless the arguments are that review shape. That bound is the bridge
   process for the filtered seat; it is not a server-side identity check on
   `/mcp/code`. A consult already admitted and still healthy is not a skip.
   Review leg — one dispatch, one wait.

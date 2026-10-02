@@ -130,7 +130,7 @@ _REVIEW_ARGS = {
     "op": "generate",
     "model": "cdp/opus-5",
     "purpose": "review",
-    "contract": "none",
+    "contract": "freeform",
     "prompt": "diff",
     "dispatch_thread_id": "1",
 }
