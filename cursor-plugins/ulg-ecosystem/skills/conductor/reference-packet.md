@@ -43,7 +43,7 @@ Required in `<scope>` / `<invariants>`:
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `liaison`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
-  implement, **G6** = `cdp/opus-5.5` `job=delivery-review` `reasoning_effort="high"`
+  implement, **G6** = `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review`
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
   `conductor_profile=fable-scarce`**) on the **lane branch diff** (sidecar **R1**).
   **G7** = merge/land (sidecar **L1**).
@@ -107,7 +107,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
 | G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |
-| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, purpose=review, dispatch_thread_id=<worker>, parent_thread=<summoning or worker>, prompt=<body>)`; prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines; one `poll_hint` wait, `NEXT_ADMIT: harvest <execution_id>` in the hop CHECKPOINT; distinct from the attended G5 closer) |
+| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<summoning or worker>, prompt=<body>)`; prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines; one `poll_hint` wait, `NEXT_ADMIT: harvest <execution_id>` in the hop CHECKPOINT; distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
 **Scoreboard tip template (worked example — sparse birth):**

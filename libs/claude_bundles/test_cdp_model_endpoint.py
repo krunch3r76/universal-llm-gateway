@@ -318,9 +318,7 @@ def test_inline_only_prepend_ignores_omit_slash_flag() -> None:
     inline_only = ["investigation-economy"]
     assert prepend_cdp_dispatch_skills(
         body, inline_only, omit_slash_prefix=True
-    ) == prepend_cdp_dispatch_skills(
-        body, inline_only, omit_slash_prefix=False
-    )
+    ) == prepend_cdp_dispatch_skills(body, inline_only, omit_slash_prefix=False)
 
 
 def test_stage_cortex_passthrough(
@@ -619,6 +617,104 @@ def test_run_cdp_generate_parent_thread_on_submit_request(
     )
     assert captured
     assert captured[0].parent_thread == "10479"
+
+
+def test_run_cdp_generate_submit_purpose_defaults_to_ask_when_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Omitted purpose: staging stays None; SubmitProjectAskRequest gets ask."""
+    from cdp_ask.models import SubmitProjectAskRequest
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-purpose-none")
+    captured: list[SubmitProjectAskRequest] = []
+
+    class _FakeAsk:
+        def submit(
+            self, submit_req: SubmitProjectAskRequest, **kwargs: Any
+        ) -> dict[str, Any]:
+            captured.append(submit_req)
+            return {
+                "execution_id": "sat-purpose",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+            }
+
+        def poll(self, execution_id: str, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "execution_id": execution_id,
+                "status": "complete",
+                "completion_phase": "content_proof",
+                "content_proof_uri": "cortex://notes/system/threads/proof.md",
+                "body": "done",
+                "body_len": 4,
+            }
+
+    run_cdp_generate(
+        execution_id="dispatch-purpose-none",
+        model_id="cdp/opus-5.5",
+        prompt_text="Review the diff.",
+        purpose=None,
+        poll_interval_s=0,
+        ask_client=_FakeAsk(),  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert _recorded_staging_kwargs[-1]["purpose"] is None
+    assert captured
+    assert captured[0].purpose == "ask"
+
+
+def test_run_cdp_generate_sonnet_omitted_purpose_submits_ask(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """infer_cdp_purpose(None, sonnet) is produce; submit still uses ask.
+
+    Breaks when omitted purpose on cdp/sonnet-5 is forwarded as produce,
+    so purpose_kill_default parks the browser instead of closing it.
+    """
+    from cdp_ask.models import SubmitProjectAskRequest
+
+    from claude_bundles import project_ask_abort as paa
+    from claude_bundles.cdp_skill_profiles import infer_cdp_purpose
+
+    assert infer_cdp_purpose(None, "cdp/sonnet-5") == "produce"
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-sonnet-purpose-none")
+    captured: list[SubmitProjectAskRequest] = []
+
+    class _FakeAsk:
+        def submit(
+            self, submit_req: SubmitProjectAskRequest, **kwargs: Any
+        ) -> dict[str, Any]:
+            captured.append(submit_req)
+            return {
+                "execution_id": "sat-sonnet",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+            }
+
+        def poll(self, execution_id: str, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "execution_id": execution_id,
+                "status": "complete",
+                "completion_phase": "content_proof",
+                "content_proof_uri": "cortex://notes/system/threads/proof.md",
+                "body": "done",
+                "body_len": 4,
+            }
+
+    run_cdp_generate(
+        execution_id="dispatch-sonnet-purpose-none",
+        model_id="cdp/sonnet-5",
+        prompt_text="Write the paragraph.",
+        purpose=None,
+        poll_interval_s=0,
+        ask_client=_FakeAsk(),  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert captured
+    assert captured[0].purpose == "ask"
+    assert paa.purpose_kill_default(captured[0].purpose) is True
 
 
 def test_run_cdp_generate_stall_wall_clock(

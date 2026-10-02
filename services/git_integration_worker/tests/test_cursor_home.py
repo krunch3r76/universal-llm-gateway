@@ -437,3 +437,51 @@ def test_dispatch_home_points_venvs_at_operator_not_as_interpreter_root(
     assert dispatched_python.resolve() == operator_python.resolve()
     assert operator_python.resolve().is_relative_to(real.resolve())
     assert not operator_python.resolve().is_relative_to(home.resolve())
+
+
+def test_dispatch_home_points_playwright_browsers_at_operator_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$HOME/.cache/ms-playwright must resolve under dispatch HOME (a:37291)."""
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    operator_browsers = real / ".cache" / "ms-playwright"
+    (operator_browsers / "chromium_headless_shell-1208").mkdir(parents=True)
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home(
+        "auto-playwright-a37291", real_home=real, root=root
+    )
+    pointer = home / ".cache" / "ms-playwright"
+    assert pointer.is_symlink()
+    assert pointer.resolve() == operator_browsers.resolve()
+    assert (pointer / "chromium_headless_shell-1208").is_dir()
+    assert not operator_browsers.resolve().is_relative_to(home.resolve())
+
+
+def test_dispatch_home_skips_playwright_pointer_when_operator_cache_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No operator cache ⇒ no dangling ms-playwright path under dispatch HOME."""
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("auto-no-playwright", real_home=real, root=root)
+    assert not (home / ".cache" / "ms-playwright").exists()
+
+
+def test_dispatch_home_keeps_existing_playwright_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real ms-playwright directory under the home is not replaced by a symlink."""
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    (real / ".cache" / "ms-playwright").mkdir(parents=True)
+    root = tmp_path / "homes"
+    home = root / "auto-playwright-dir-exists-home"
+    occupied = home / ".cache" / "ms-playwright"
+    occupied.mkdir(parents=True)
+    (occupied / "local-marker").write_text("keep", encoding="utf-8")
+    setup_cursor_dispatch_home("auto-playwright-dir-exists", real_home=real, root=root)
+    assert occupied.is_dir()
+    assert not occupied.is_symlink()
+    assert (occupied / "local-marker").read_text(encoding="utf-8") == "keep"

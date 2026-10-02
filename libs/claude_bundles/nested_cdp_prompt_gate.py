@@ -108,6 +108,8 @@ def body_target_tokens(author_body: str) -> set[str]:
     tokens: set[str] = set()
     for match in _BODY_TODO.finditer(text):
         tokens.add(f"todo:{match.group(1)}")
+    for match in re.finditer(r"(?i)\bfriction:(\d+)\b", text):
+        tokens.add(f"friction:{match.group(1)}")
     for match in re.finditer(r"(?im)^gate_path\s*=\s*(\w+)\b", text):
         tokens.add(f"gate_path={match.group(1).upper()}")
         tokens.add(match.group(1).upper())

@@ -8,8 +8,6 @@ import pytest
 
 from claude_bundles.operator_proxy_mission import (
     _BRIEFING_BLOCK,
-    _PURPOSE_DOC,
-    _PURPOSE_HEADER_LINES,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
     MISSION_SKILL_SLUGS,
@@ -27,8 +25,10 @@ def test_purpose_recognition() -> None:
     assert is_operator_proxy_mission_purpose("mission")
     assert is_operator_proxy_mission_purpose("OPERATOR_PROXY")
     assert not is_operator_proxy_mission_purpose("ask")
-    assert purpose_implies_mission("ask", "purpose: mission\n# Body")
+    # Body text is not a mission selector (fork 12 / AC3).
+    assert not purpose_implies_mission("ask", "purpose: mission\n# Body")
     assert not purpose_implies_mission("ask", "# Sealed R-admit")
+    assert purpose_implies_mission("operator-proxy", "# Body without header")
 
 
 _SECTION_ORDER = (
@@ -237,13 +237,13 @@ def test_stage_freeform_body_purpose_does_not_induce_mission_skills(
     assert "cdp-operator-proxy" not in induction
 
 
-def test_staged_prompt_text_runner_would_load_still_implies_mission(
+def test_staged_prompt_text_runner_does_not_imply_mission_from_body(
     tmp_path, monkeypatch
 ) -> None:
-    """Staging and the runner share one decision on the sealed prompt.md bytes.
+    """Staging and the runner share wire-only mission selection.
 
     purpose=freeform; line 2 of the author body is column-0 ``purpose: operator-proxy``.
-    The runner calls ``purpose_implies_mission(purpose, loaded_text)`` on that file.
+    Neither ``staged.mission`` nor ``purpose_implies_mission`` treat that as a mission.
     """
     staged = _stage_under(
         tmp_path,
@@ -253,18 +253,14 @@ def test_staged_prompt_text_runner_would_load_still_implies_mission(
     )
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
-    assert purpose_implies_mission("freeform", merged)
+    assert staged.mission is False
+    assert not purpose_implies_mission("freeform", merged)
 
 
-def test_header_on_body_line_40_survives_authority_line_shift(
+def test_body_purpose_header_does_not_set_mission_after_seal(
     tmp_path, monkeypatch
 ) -> None:
-    """Column-0 header on author body line 40 stays a mission after the seal.
-
-    Staging prepends the skills authority line, so the header sits on merged
-    line 41 or later. ``staged.mission`` and ``purpose_implies_mission`` on
-    the loaded prompt.md must agree.
-    """
+    """A column-0 purpose header in the author body is not a mission after seal."""
     body = ("\n" * 39) + "purpose: operator-proxy\n"
     staged = _stage_under(
         tmp_path,
@@ -274,20 +270,14 @@ def test_header_on_body_line_40_survives_authority_line_shift(
     )
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
-    assert (
-        _PURPOSE_DOC.search(
-            "\n".join(merged.splitlines()[:_PURPOSE_HEADER_LINES])
-        )
-        is None
-    )
-    assert staged.mission is True
-    assert purpose_implies_mission("freeform", merged) is True
+    assert staged.mission is False
+    assert purpose_implies_mission("freeform", merged) is False
 
 
-def test_inline_class_slug_shift_keeps_body_line_5_header(
+def test_inline_skills_do_not_make_body_purpose_a_mission(
     tmp_path, monkeypatch
 ) -> None:
-    """An inline skills block must not push a body-line-5 header out of the window."""
+    """Inline skills plus a body purpose line still leave mission False on freeform."""
     body = "line1\nline2\nline3\nline4\npurpose: operator-proxy\n"
     staged = _stage_under(
         tmp_path,
@@ -299,14 +289,8 @@ def test_inline_class_slug_shift_keeps_body_line_5_header(
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert '<skill slug="investigation-economy"' in merged
-    assert (
-        _PURPOSE_DOC.search(
-            "\n".join(merged.splitlines()[:_PURPOSE_HEADER_LINES])
-        )
-        is None
-    )
-    assert staged.mission is True
-    assert purpose_implies_mission("freeform", merged) is True
+    assert staged.mission is False
+    assert purpose_implies_mission("freeform", merged) is False
 
 
 def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(tmp_path, monkeypatch) -> None:
@@ -397,9 +381,10 @@ def test_prose_quote_of_purpose_is_not_a_mission() -> None:
     assert not purpose_implies_mission("ask", body)
 
 
-def test_column0_purpose_header_is_a_mission() -> None:
+def test_column0_purpose_header_is_not_a_mission() -> None:
+    """Retired 14181-r2 item 1: body header alone does not imply mission (fork 12)."""
     body = "TYPE: DIRECTIVE\npurpose: operator-proxy\n# body\n"
-    assert purpose_implies_mission("ask", body)
+    assert not purpose_implies_mission("ask", body)
 
 
 def test_purpose_missionary_prose_not_mission() -> None:

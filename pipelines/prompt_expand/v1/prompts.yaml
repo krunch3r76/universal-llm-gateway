@@ -18,9 +18,10 @@ prompts:
       - Never prescribe the route — invite the model to choose and report it (free-strategy).
       - Do not launder inference as citation; derived summaries are not evidence.
 
-      Scope list (retrieve before author, model reader): llm_prompting,
-      suggestion_orientation, prompt_injection, agent_skills_research.
-      writing is human craft, not this list.
+      Scope list (retrieve before author, model reader): required
+      llm_prompting, claude_api, prompt_injection, agent_skills_research;
+      skill_compilation when the job is about skills; suggestion_orientation
+      optional. writing is human craft, not this list.
     template: ""
 
   author_cdp:

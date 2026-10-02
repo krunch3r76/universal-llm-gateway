@@ -20,6 +20,9 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_dispatch_playwright import (
+    link_operator_playwright_browsers,
+)
 from services.git_integration_worker.cursor_seat_overlay import (
     apply_cursor_sdk_seat_overlay,
 )
@@ -327,7 +330,8 @@ def setup_cursor_dispatch_home(
     from the operator home, then strips copied ``vortex-code``/``vortex-life``
     entries so Cursor does not classify those names as OAuth on this seat.
     ``$HOME/.venvs`` is a pointer at the operator venv, not a copied
-    interpreter root.
+    interpreter root. ``$HOME/.cache/ms-playwright`` is the same pattern for
+    the operator Playwright browser cache (a:37291).
     """
     home = dispatch_home_path(dispatch_id, root=root)
     real = operator_real_home(explicit=real_home)
@@ -382,6 +386,7 @@ def setup_cursor_dispatch_home(
     apply_cursor_sdk_seat_overlay(cursor_dir)
     seed_dispatch_git_identity(home, dispatch_id)
     _link_operator_venv(home, real)
+    link_operator_playwright_browsers(home, real)
     return home
 
 

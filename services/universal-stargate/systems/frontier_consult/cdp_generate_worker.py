@@ -401,7 +401,7 @@ async def run_cdp_worker(
     harvest_source: str = "auto",
     expected_size: str = "auto",
     download_output: bool = False,
-    purpose: str = "ask",
+    purpose: str | None = None,
     mission_kind: str | None = None,
     parent_thread: str | None = None,
     topic: str | None = None,
@@ -548,7 +548,7 @@ async def run_cdp_worker(
         )
 
     fallback_model = review_fallback_model(
-        purpose=purpose,
+        contract=contract,
         model_id=model_id,
         stall_stage=result.stall_stage,
     )

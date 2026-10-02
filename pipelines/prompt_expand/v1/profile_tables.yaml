@@ -5,6 +5,7 @@ profiles:
     executor_tier: frontier
     retrieve_scopes:
       - llm_prompting
+      - claude_api
       - suggestion_orientation
       - prompt_injection
       - agent_skills_research
@@ -14,6 +15,7 @@ profiles:
     executor_tier: frontier
     retrieve_scopes:
       - llm_prompting
+      - claude_api
       - suggestion_orientation
       - prompt_injection
       - agent_skills_research
@@ -23,6 +25,7 @@ profiles:
     executor_tier: frontier
     retrieve_scopes:
       - llm_prompting
+      - claude_api
       - prompt_injection
     elicitation: false
   - contract: implement
@@ -30,6 +33,7 @@ profiles:
     executor_tier: small
     retrieve_scopes:
       - llm_prompting
+      - claude_api
       - prompt_injection
     elicitation: false
   - contract: "*"
@@ -37,6 +41,7 @@ profiles:
     executor_tier: frontier
     retrieve_scopes:
       - llm_prompting
+      - claude_api
       - prompt_injection
     elicitation: false
   - contract: "*"
@@ -44,6 +49,7 @@ profiles:
     executor_tier: small
     retrieve_scopes:
       - llm_prompting
+      - claude_api
       - prompt_injection
     elicitation: false
 targets:

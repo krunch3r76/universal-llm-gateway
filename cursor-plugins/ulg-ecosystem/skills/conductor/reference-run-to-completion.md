@@ -69,12 +69,11 @@ per-G-row one. Default posture once running:
 - **After-ship `cdp/opus-5.5` code review (a:32146) is a stronger-model gate, not
   a background nicety.** On codework that claims land / cert / terminal `DONE`:
   **review harvest ≺ land ≺ DONE** (dogfood 10013 / a:32221–32222; 9638 hop3 /
-  a:32226). Fire `team_dispatch` with `op=generate`, `job=delivery-review`,
-  `contract=freeform`, `model` in `{cdp/opus-5, cdp/opus-5.5, cdp/fable}`,
-  prompt set, and `dispatch_thread_id` equal to this worker thread. Omit
-  `parent_thread` or set it equal to that thread. The predicate also accepts
-  `contract=delivery-review`. `job=delivery-review` is the genre line inside
-  the prompt, not the `contract` argument.
+  a:32226). Fire `team_dispatch` with `op=generate`, `contract=delivery-review`,
+  `model` in `{cdp/opus-5, cdp/opus-5.5, cdp/fable}`, prompt set, and
+  `dispatch_thread_id` equal to this worker thread. Omit `purpose`, `role`, and
+  `parent_thread`, or set `parent_thread` equal to that thread. `job=delivery-review`
+  is the genre line inside the prompt, not a separate call argument.
   **Harvest a real verdict body** before those claims. Filtered nested
   seats (`implement` / `pure-mechanical`) see that same call on `tools/list`. The
   stdio bridge refuses a `tools/call` outside the contract primary list, and
@@ -83,7 +82,7 @@ per-G-row one. Default posture once running:
   `/mcp/code`. A consult already admitted and still healthy is not a skip.
   Review leg — one dispatch, one wait.
   1. Evidence before the dispatch. Before the single G6 team_dispatch, write an evidence block into the review body: git diff --stat <base>..HEAD; the pre-land suite summary lines the spec names (same command on base and on tip); and gen-event-catalog check output when the diff touches a docstring that feeds a generated catalog region. A line that was not run is `evidence: absent — <name>` only when it cannot run in this row — name why. Run that missing command before the review dispatch. Do not discover the gap by receiving a WITHHOLD and then starting another row.
-  2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, purpose=review, dispatch_thread_id=<this worker thread id>, parent_thread=<summoning_thread_id, else this worker thread id>, prompt=<body>); the body carries job=delivery-review and retrieval_report: cortex://… each on its own line, plus the evidence block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row does not search the repo for that contract. G5 ratify stays the purpose=ask sentence above.
+  2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<this worker thread id>, parent_thread omitted or equal to that same thread id, prompt=<body>); filtered nested implement seats must not set a foreign summoning parent. The body carries job=delivery-review and retrieval_report: cortex://… each on its own line, plus the evidence block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row does not search the repo for that contract. G5 ratify stays the purpose=ask sentence above.
   3. One wait, then stop. Wait once with agent_bus tool=wait bound to that dispatch's poll_hint and execution_id. If the store is still running after that wait, write poll_hint and execution_id into the hop CHECKPOINT, add NEXT_ADMIT: harvest <execution_id>, and end with stop: ROW_HOP. Do not chain agent_bus_read. A successor whose CHECKPOINT carries a G6 execution_id harvests that id and does not dispatch G6. A second verdict on the same gate is commentary unless the scoreboard Stops stamp changes.
   CDP consult refused or failed (including `X display exhausted`, `Chrome on :9225 did not reach CDP`, empty body,
   `stall_stage=mark_terminal`, `stall_stage=completed_without_proof`): do not wait and do not retry the CDP pool.

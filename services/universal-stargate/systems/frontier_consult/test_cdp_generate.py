@@ -1645,6 +1645,137 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
 
 
 @pytest.mark.asyncio
+async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted session and purpose: worker wire stays None; explicit values pass through.
+
+    Breaks when staging receives ask on admit (arch skill floor) or when explicit
+    purpose/session fail to reach run_cdp_worker unchanged.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    staged_calls: list[dict[str, object]] = []
+
+    def _stage_inputs(**kwargs: object) -> MagicMock:
+        staged_calls.append(dict(kwargs))
+        return MagicMock(
+            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
+        )
+
+    monkeypatch.setattr(mod, "_stage_inputs", _stage_inputs)
+    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(
+        mod,
+        "admit_handoff_dispatch",
+        AsyncMock(return_value=MagicMock(reason="ok")),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
+
+    captured: list[dict[str, object]] = []
+    pending: list[object] = []
+
+    async def _fake_worker(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    def _capture_task(coro: object, **kwargs: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _fake_worker)
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        dispatch_thread_id="14638",
+        model="cdp/opus-5.5",
+        prompt="Review the diff.\n",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-purpose-default",
+        body=body,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured
+    assert captured[0]["purpose"] is None
+    assert staged_calls
+    assert staged_calls[0]["purpose"] is None
+
+    captured.clear()
+    pending.clear()
+    staged_calls.clear()
+
+    body_explicit = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        dispatch_thread_id="14638",
+        model="cdp/opus-5.5",
+        prompt="Explicit purpose.\n",
+        purpose="ask",
+    )
+    await mod.dispatch_cdp_generate(
+        request_id="req-purpose-explicit",
+        body=body_explicit,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured[0]["purpose"] == "ask"
+    assert staged_calls[0]["purpose"] == "ask"
+
+    captured.clear()
+    pending.clear()
+    staged_calls.clear()
+
+    body_session = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        dispatch_thread_id="14638",
+        model="cdp/opus-5.5",
+        prompt="Session bound.\n",
+        session="produce",
+    )
+    await mod.dispatch_cdp_generate(
+        request_id="req-purpose-session",
+        body=body_session,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured[0]["purpose"] == "produce"
+    assert staged_calls[0]["purpose"] == "produce"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_cdp_generate_forwards_generation_options(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

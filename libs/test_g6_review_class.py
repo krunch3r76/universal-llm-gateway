@@ -10,6 +10,7 @@ sys.path.insert(0, str(REPO_ROOT / "libs"))
 
 from g6_review_class import (  # noqa: E402
     FALLBACK_MODEL,
+    REVIEW_CONTRACT,
     adopt_review_fallback,
     fallback_wall_s,
     is_review_class_call,
@@ -21,9 +22,8 @@ from g6_review_class import (  # noqa: E402
 _REVIEW = {
     "op": "generate",
     "model": "cdp/opus-5",
-    "purpose": "review",
-    "contract": "freeform",
-    "prompt": "diff",
+    "contract": REVIEW_CONTRACT,
+    "prompt": "job=delivery-review\nretrieval_report: cortex://notes/x\n",
     "dispatch_thread_id": "12988",
 }
 
@@ -34,6 +34,9 @@ def test_nested_review_call_is_admitted() -> None:
         {**_REVIEW, "model": "cdp/opus-5.5"}, seat_thread="12988"
     )
     assert is_review_class_call({**_REVIEW, "model": "cdp/fable"}, seat_thread="12988")
+    bare = {k: v for k, v in _REVIEW.items() if k != "purpose"}
+    assert "purpose" not in bare
+    assert is_review_class_call(bare, seat_thread="12988")
     message = {
         "jsonrpc": "2.0",
         "id": 7,
@@ -45,6 +48,65 @@ def test_nested_review_call_is_admitted() -> None:
     refusal = refuse_filtered_team_dispatch(message)
     assert refusal is not None
     assert refusal["error"]["code"] == -32602
+
+
+def test_purpose_review_is_refused_including_freeform() -> None:
+    assert not is_review_class_call(
+        {
+            "op": "generate",
+            "model": "cdp/opus-5.5",
+            "contract": "freeform",
+            "purpose": "review",
+            "prompt": "x",
+            "dispatch_thread_id": "12988",
+        },
+        seat_thread="12988",
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "purpose": "review"}, seat_thread="12988"
+    )
+    message = {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "tools/call",
+        "params": {
+            "name": "team_dispatch",
+            "arguments": {
+                "op": "generate",
+                "model": "cdp/opus-5.5",
+                "contract": "freeform",
+                "purpose": "review",
+                "prompt": "x",
+                "dispatch_thread_id": "12988",
+            },
+        },
+    }
+    refusal = refuse_filtered_team_dispatch(message, seat_thread="12988")
+    assert refusal is not None
+    msg = refusal["error"]["message"]
+    assert "contract=delivery-review" in msg
+    assert "job=delivery-review" not in msg.split("prompt")[0]
+
+
+def test_refusal_message_names_contract_not_job_argument() -> None:
+    spawn = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "contract": "implement",
+        "model": "cursor/composer-2.5",
+        "dispatch_thread_id": "1",
+    }
+    message = {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "tools/call",
+        "params": {"name": "team_dispatch", "arguments": spawn},
+    }
+    refusal = refuse_filtered_team_dispatch(message, seat_thread="1")
+    assert refusal is not None
+    text = refusal["error"]["message"]
+    assert "contract=delivery-review" in text
+    assert "job=delivery-review," not in text
 
 
 def test_nested_arbitrary_dispatch_is_refused() -> None:
@@ -99,10 +161,10 @@ def test_non_team_dispatch_is_not_refused() -> None:
     assert refuse_filtered_team_dispatch(message) is None
 
 
-def test_fallback_only_for_opus_review_without_proof() -> None:
+def test_fallback_only_for_delivery_review_opus_without_proof() -> None:
     assert (
         review_fallback_model(
-            purpose="review",
+            contract=REVIEW_CONTRACT,
             model_id="cdp/opus-5",
             stall_stage="completed_without_proof",
         )
@@ -110,7 +172,7 @@ def test_fallback_only_for_opus_review_without_proof() -> None:
     )
     assert (
         review_fallback_model(
-            purpose="review",
+            contract=REVIEW_CONTRACT,
             model_id="cdp/opus-5.5",
             stall_stage="completed_without_proof",
         )
@@ -118,7 +180,15 @@ def test_fallback_only_for_opus_review_without_proof() -> None:
     )
     assert (
         review_fallback_model(
-            purpose="review",
+            contract=REVIEW_CONTRACT,
+            model_id="cdp/opus-5.5-high",
+            stall_stage="completed_without_proof",
+        )
+        == FALLBACK_MODEL
+    )
+    assert (
+        review_fallback_model(
+            contract=REVIEW_CONTRACT,
             model_id="cdp/fable",
             stall_stage="completed_without_proof",
         )
@@ -126,7 +196,7 @@ def test_fallback_only_for_opus_review_without_proof() -> None:
     )
     assert (
         review_fallback_model(
-            purpose="ask",
+            contract="freeform",
             model_id="cdp/opus-5",
             stall_stage="completed_without_proof",
         )
@@ -134,7 +204,7 @@ def test_fallback_only_for_opus_review_without_proof() -> None:
     )
     assert (
         review_fallback_model(
-            purpose="review",
+            contract=REVIEW_CONTRACT,
             model_id="cdp/opus-5",
             stall_stage="mark_terminal",
         )
@@ -157,18 +227,18 @@ def test_allowlist_refuses_confused_deputy_and_foreign_thread() -> None:
     assert not is_review_class_call({**_REVIEW, "contract": None}, seat_thread="12988")
     assert not is_review_class_call(_REVIEW, seat_thread="999")
     assert is_review_class_call(_REVIEW, seat_thread="12988")
-    freeform = {**_REVIEW, "model": "cdp/opus-5.5"}
-    assert is_review_class_call(freeform, seat_thread="12988")
-    assert is_review_class_call(
-        {**freeform, "contract": "delivery-review"}, seat_thread="12988"
+    opus55 = {**_REVIEW, "model": "cdp/opus-5.5"}
+    assert is_review_class_call(opus55, seat_thread="12988")
+    assert not is_review_class_call(
+        {**opus55, "contract": "freeform"}, seat_thread="12988"
     )
     assert not is_review_class_call(
-        {**freeform, "contract": "none"}, seat_thread="12988"
+        {**opus55, "contract": "none"}, seat_thread="12988"
     )
-    assert not is_review_class_call({**freeform, "prompt": None}, seat_thread="12988")
-    assert not is_review_class_call({**freeform, "prompt": ""}, seat_thread="12988")
+    assert not is_review_class_call({**opus55, "prompt": None}, seat_thread="12988")
+    assert not is_review_class_call({**opus55, "prompt": ""}, seat_thread="12988")
     assert not is_review_class_call(
-        {k: v for k, v in freeform.items() if k != "prompt"}, seat_thread="12988"
+        {k: v for k, v in opus55.items() if k != "prompt"}, seat_thread="12988"
     )
     assert is_review_class_call(
         {**_REVIEW, "parent_thread": "12988"}, seat_thread="12988"

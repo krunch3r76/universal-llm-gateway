@@ -213,6 +213,7 @@ def test_build_bridge_command_omits_optional_pairs(tmp_path, monkeypatch) -> Non
     assert f"PATH={repo_venv / 'bin'}" in bare
     assert not any(a.startswith("CURSOR_SDK_DISPATCH_ID=") for a in bare)
     assert not any(a.startswith("GIT_") for a in bare)
+    assert not any(a.startswith("PLAYWRIGHT_BROWSERS_PATH=") for a in bare)
 
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     full = build_bridge_command(
@@ -226,6 +227,26 @@ def test_build_bridge_command_omits_optional_pairs(tmp_path, monkeypatch) -> Non
     assert full[-1] == sys.executable
     assert full.index("CURSOR_SDK_DISPATCH_ID=disp-x") < full.index(
         "GIT_AUTHOR_NAME=cursor-sdk/disp-x"
+    )
+
+
+def test_build_bridge_command_sets_playwright_browsers_path_when_cache_exists(
+    tmp_path: Path,
+) -> None:
+    """Operator ms-playwright cache ⇒ PLAYWRIGHT_BROWSERS_PATH on the env shim (a:37291)."""
+    real = tmp_path / "operator-home"
+    browsers = real / ".cache" / "ms-playwright"
+    browsers.mkdir(parents=True)
+    command = build_bridge_command(
+        bridge_bin=sys.executable,
+        dispatch_home=tmp_path / "dispatch-home",
+        repo_venv=None,
+        real_home=real,
+        dispatch_id=None,
+    )
+    assert f"PLAYWRIGHT_BROWSERS_PATH={browsers}" in command
+    assert command.index(f"HOME={tmp_path / 'dispatch-home'}") < command.index(
+        f"PLAYWRIGHT_BROWSERS_PATH={browsers}"
     )
 
 
@@ -475,7 +496,9 @@ def test_shell_cwd_preload_bare_bash_pwd_is_fallback(tmp_path: Path) -> None:
     assert proc.stdout.strip() == str(lane)
 
 
-def test_command_argv_includes_preload_when_lane_path_set(tmp_path, monkeypatch) -> None:
+def test_command_argv_includes_preload_when_lane_path_set(
+    tmp_path, monkeypatch
+) -> None:
     """Lane launch arms the preload env and leaves Popen cwd unset.
 
     SDK-appended filesystem paths and callback URLs must be absolute. The
@@ -535,15 +558,18 @@ def test_command_argv_includes_preload_when_lane_path_set(tmp_path, monkeypatch)
     for flag in ("--workspace", "--state-root", "--tool-callback-url"):
         assert flag in tail, flag
         value = tail[tail.index(flag) + 1]
-        assert os.path.isabs(value) or value.startswith("http://") or value.startswith(
-            "https://"
+        assert (
+            os.path.isabs(value)
+            or value.startswith("http://")
+            or value.startswith("https://")
         ), value
     assert captured["cwd"] is None
 
 
 def _preload_path() -> Path:
     return (
-        Path(bridge_launch.__file__).resolve().parent / "cursor_sdk_shell_cwd_preload.cjs"
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
     )
 
 
@@ -557,7 +583,9 @@ def _armed_preload_env(lane: Path, *, align: bool) -> dict[str, str]:
     return armed
 
 
-def _run_node(node: Path, args: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def _run_node(
+    node: Path, args: list[str], env: dict[str, str], cwd: Path
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(node), *args],
         capture_output=True,
@@ -696,7 +724,9 @@ def test_shell_cwd_preload_respects_explicit_valid_cwd(tmp_path: Path) -> None:
         "child.on('close', (code) => process.exit(code == null ? 1 : code));\n",
         encoding="utf-8",
     )
-    proc = _run_node(node, [str(probe), str(other)], _armed_preload_env(lane, align=True), tmp_path)
+    proc = _run_node(
+        node, [str(probe), str(other)], _armed_preload_env(lane, align=True), tmp_path
+    )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == str(other)
 
@@ -798,7 +828,9 @@ def test_shell_cwd_preload_invalid_fallback_stderr(tmp_path: Path) -> None:
     assert "/nonexistent/for/shell_cwd_test" in proc.stderr
 
 
-def test_launch_sdk_bridge_align_flag_follows_context_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_launch_sdk_bridge_align_flag_follows_context_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``launch_sdk_bridge`` maps lane B to CURSOR_SDK_SHELL_ALIGN_CWD and lane A omits it.
 
     Flag-level ``build_bridge_command(align_shell_cwd=)`` tests do not cover
@@ -808,7 +840,9 @@ def test_launch_sdk_bridge_align_flag_follows_context_lane(tmp_path: Path, monke
     import httpx
 
     from services.git_integration_worker.config import WorkerConfig
-    from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
+    from services.git_integration_worker.cursor_sdk_capture_binding import (
+        CaptureBinding,
+    )
     from services.git_integration_worker.cursor_sdk_dispatch_context import (
         SdkDispatchContext,
     )

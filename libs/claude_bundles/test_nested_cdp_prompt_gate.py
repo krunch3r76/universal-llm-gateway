@@ -162,6 +162,20 @@ def test_happy_path_with_report(
     enforce_nested_cdp_prompt_gates(body=body, author_body=body, purpose="review")
 
 
+def test_friction_target_binds_delivery_review_width(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _COMPLETE_REPORT.replace("target: todo:demo", "target: friction:37313")
+    uri = _write_report(tmp_path, monkeypatch, body=report)
+    body = (
+        f"retrieval_report: {uri}\n"
+        "job=delivery-review\n"
+        "gate_path=review\n"
+        "friction:37313\n"
+    )
+    assert enforce_retrieval_report(body) == uri
+
+
 def test_report_target_mismatch_refuses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
