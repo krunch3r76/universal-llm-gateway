@@ -372,20 +372,35 @@ def resolve_followup_prompt(req: object) -> str:
 
     Prefer ``prompt_uri`` for large advisories. Raises ``ValueError`` when all
     ingress fields are absent (caller maps to ``no_prompt``).
+
+    a:37183 A2 — conductor nested CDP width / SKEPTIC chrome gates also run on
+    the G2 follow-up paste path (``cse_session(op=followup)``), not only
+    ``stage_cdp_prompt_with_skills``.
     """
     prompt_text = getattr(req, "prompt_text", None)
     prompt_uri = getattr(req, "prompt_uri", None)
     prompt_path = getattr(req, "prompt_path", None)
     if prompt_text and str(prompt_text).strip():
-        return str(prompt_text).strip()
-    if prompt_uri and str(prompt_uri).strip():
-        return _load_prompt_uri(str(prompt_uri).strip())
-    if prompt_path and str(prompt_path).strip():
+        text = str(prompt_text).strip()
+    elif prompt_uri and str(prompt_uri).strip():
+        text = _load_prompt_uri(str(prompt_uri).strip())
+    elif prompt_path and str(prompt_path).strip():
         path = resolve_prompt_path(str(prompt_path).strip(), project_root_base())
         if not path.is_file():
             raise ValueError(f"prompt_path not found: {prompt_path!r}")
-        return path.read_text(encoding="utf-8")
-    raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
+        text = path.read_text(encoding="utf-8")
+    else:
+        raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
+    from claude_bundles.nested_cdp_prompt_gate import (
+        NestedCdpPromptGateError,
+        enforce_nested_cdp_prompt_gates,
+    )
+
+    try:
+        enforce_nested_cdp_prompt_gates(body=text, author_body=text)
+    except NestedCdpPromptGateError:
+        raise
+    return text
 
 
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:

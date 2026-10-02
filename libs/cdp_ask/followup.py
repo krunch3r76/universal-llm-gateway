@@ -12,6 +12,7 @@ import uuid
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.nested_cdp_prompt_gate import NestedCdpPromptGateError
 from claude_bundles.project_ask_conversation import send_followup_paste_half
 
 from cdp_ask.execution_store import ExecutionStore
@@ -211,6 +212,8 @@ async def execute_followup(
     """Resolve identity, paste prompt into live CSE, return paste proof."""
     try:
         prompt = await asyncio.to_thread(resolve_followup_prompt, req)
+    except NestedCdpPromptGateError as exc:
+        return fail_followup(exc.code, detail=exc.reason)
     except ValueError:
         return fail_followup("no_prompt")
 

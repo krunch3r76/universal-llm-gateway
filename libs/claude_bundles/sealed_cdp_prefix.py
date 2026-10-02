@@ -111,7 +111,12 @@ def peel_sealed_cdp_skill_prefix(
     return attach, inline, rest
 
 
-def ensure_review_reading_charter(text: str, purpose: str | None) -> str:
+def ensure_review_reading_charter(
+    text: str,
+    purpose: str | None,
+    *,
+    author_body: str | None = None,
+) -> str:
     """Place the reading-review line after the skill hash. Idempotent under peel.
 
     ``purpose=review`` delivery/code-review only. The packet carries the code.
@@ -119,15 +124,17 @@ def ensure_review_reading_charter(text: str, purpose: str | None) -> str:
     seat's reject grounds.
 
     a:37183 — never inject this chrome onto G4 / SKEPTIC / adversarial-spec
-    bodies; those are spec-skeptic seats, not delivery review.
+    *author* bodies; those are spec-skeptic seats, not delivery review.
+    Shape detection uses ``author_body`` when provided (A1 — pre-skill text).
     """
     if (purpose or "").strip().lower() != "review":
         return text
     from claude_bundles.nested_cdp_prompt_gate import is_skeptic_shaped
 
-    if is_skeptic_shaped(text):
+    shape_src = author_body if author_body is not None else text
+    if is_skeptic_shaped(shape_src):
         return text
-    if "the packet carries the code under review" in text:
+    if "the packet carries the code under review" in text.casefold():
         return text
     marker = "Hash these skills from your local skill server"
     idx = text.find(marker)

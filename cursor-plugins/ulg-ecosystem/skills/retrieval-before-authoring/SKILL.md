@@ -58,8 +58,8 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 7. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
    Falsifier: on that step: inference laundered as a corpus citation.
 
-8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment. For a nested CDP prompt (`team_dispatch(model=cdp/…)` / conductor G1·G2·G4·G6), the report is a **sidecar artifact**, not chat prose: write `cortex://notes/…/retrieval-report.md` with headings `## Queries`, `## Yields`, `## Choice-to-evidence` (include `weak_match` / null off-topic yields), and put `retrieval_report: cortex://…` on its own line in the prompt body so admit can refuse a missing or incomplete bundle (a:37183 · `nested_cdp_prompt_gate`).
-   Falsifier: on that step: dispatch without the report bundle, or a nested CDP prompt without a resolvable `retrieval_report:` citation.
+8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment. For a nested CDP prompt (`team_dispatch(model=cdp/…)` / `cse_session(op=followup)` / conductor G1·G2·G4·G6), the report is a **sidecar artifact**, not chat prose: write `cortex://notes/…/retrieval-report.md` with a `target:` line binding the prompt (`todo:…` / `G4` / `gate_path=SKEPTIC` / `adversarial-spec`), headings `## Queries`, `## Yields`, `## Choice-to-evidence` (each section non-empty; include `weak_match` / null off-topic yields), and put `retrieval_report: cortex://…` on its own line in the **author** prompt body so admit can refuse a missing, unbound, or incomplete bundle (a:37183 · A1–A4 · `nested_cdp_prompt_gate`).
+   Falsifier: on that step: dispatch without the report bundle, or a nested CDP prompt without a resolvable `retrieval_report:` citation bound by `target:`.
 
 ## Falsifier
 
