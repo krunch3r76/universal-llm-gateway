@@ -1206,6 +1206,15 @@ def _run_sdk_sync(
         budget_window = selected_context_window_tokens(resolved_model, knob_summary)
         run_started = time.monotonic()
 
+        from services.git_integration_worker.cursor_sdk_row_density_harness_meter import (
+            DensityHarnessStreamHook,
+        )
+
+        density_harness = DensityHarnessStreamHook(
+            dispatch_id=ctx.dispatch_id,
+            user_text=prompt,
+        )
+
         def _on_tool_call(observation: object = None) -> None:
             live_counter.note_progress(observation)
             if observation is not None:
@@ -1218,6 +1227,15 @@ def _run_sdk_sync(
                     tool_name=str(getattr(observation, "tool_name", "") or ""),
                     status=str(getattr(observation, "status", "") or ""),
                     args=getattr(observation, "args", None),
+                )
+            if str(ctx.handoff_contract or "").lower() == "conductor":
+                from services.git_integration_worker.conductor_hop_watchdog import (
+                    maybe_tick_density_harness_steer,
+                )
+
+                maybe_tick_density_harness_steer(
+                    dispatch_id=ctx.dispatch_id,
+                    tool_call_count=live_counter.value(),
                 )
             touch_bridge_read_deadline(
                 client,
@@ -1330,6 +1348,7 @@ def _run_sdk_sync(
                 execution_id=execution_id,
                 on_tool_call=_on_tool_call,
                 on_usage=_on_usage,
+                density_harness=density_harness,
             )
             result = run.wait()
             usage_record = finalize_dispatch_usage(
@@ -1810,10 +1829,14 @@ async def reconcile_stale_leases(
         )
     for lease_key in await asyncio.to_thread(queue_stall_lease_keys, ledger):
         emit_write_lease_queue_stalled(source_repo=lease_key)
+    from services.git_integration_worker.conductor_hop_watchdog import (
+        sweep_density_harness_steers,
+    )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
         sweep_conductor_hop_watchdog,
     )
 
+    await asyncio.to_thread(sweep_density_harness_steers, ledger)
     await sweep_conductor_hop_watchdog(ledger)
 
 
