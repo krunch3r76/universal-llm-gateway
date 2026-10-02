@@ -87,6 +87,7 @@ def test_apply_body_is_lane_b_house_generate() -> None:
     assert body["lane"] == "B"
     assert body["job"] == "freeform"
     assert body["model"] == "cursor/grok-4.7"
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
     assert body["_review_apply"] is True
     assert "prompt" not in body
     assert "source_ref" not in body
@@ -149,6 +150,37 @@ def test_fire_spawn_does_not_page_review_apply(monkeypatch) -> None:
     assert "prompt" in posted[0]
     assert "source_ref" not in posted[0]
     assert pages == []
+
+
+def test_review_apply_wire_reaches_stargate_with_job(monkeypatch) -> None:
+    sent: list[dict] = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {"execution_id": "e1"}
+
+    monkeypatch.setattr(
+        "stargate_dispatch.client.httpx.post",
+        lambda url, json, timeout: sent.append(json) or _Resp(),
+    )
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.page_liaison", lambda *a: None)
+    digest = _digest_with_review()
+    result = fire_spawn(
+        "11960",
+        digest["policy"],
+        {},
+        digest=digest,
+        leftover={"leftover": "sit", "reason": "sit_no_todo", "todo": None},
+    )
+    assert result["status_code"] == 200
+    wire = sent[0]
+    assert wire["job"] == "freeform"
+    assert wire["lane"] == "B"
+    assert "ALL suggestions" in wire["prompt"]
+    assert not {"contract", "message", "tags", "subject"} & wire.keys()
+    assert not any(k.startswith("_") for k in wire)
 
 
 def test_tick_latches_review_apply_key() -> None:

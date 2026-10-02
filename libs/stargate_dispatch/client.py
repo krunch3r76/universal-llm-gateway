@@ -25,7 +25,6 @@ _ALLOWED_FIELDS = frozenset(
         "work_key",
         "timeout_seconds",
         "tags",
-        "prompt",
         "source_ref",
         "caller_agent",
         "cost_intent",

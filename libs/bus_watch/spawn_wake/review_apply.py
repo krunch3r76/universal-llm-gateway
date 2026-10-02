@@ -13,6 +13,7 @@ from typing import Any
 
 from bus_watch.fable_lock import current_night_id
 from bus_watch.loop_tape import loop_tape_thread
+from bus_watch.spawn_wake.packet import successor_model_fields
 
 REVIEW_APPLY = "review_apply"
 _KEEP = 200
@@ -170,8 +171,7 @@ def build_review_apply_body(
         "_review_apply": True,
         "_review_key": key,
     }
-    if model := policy.get("successor_model"):
-        body["model"] = model
+    body.update(successor_model_fields(policy))
     return body
 
 
