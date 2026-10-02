@@ -187,32 +187,36 @@ def test_hop_relay_body_omits_predecessor_when_registration_absent() -> None:
 def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     captured: dict[str, object] = {}
 
-    def fake_impl(**kwargs):
+    async def fake_relay(**kwargs: object) -> dict[str, object]:
         captured.update(kwargs)
         return {
             "auto_handler_status": "auto-handler-live",
-            "thread": {"id": "77"},
-            "turn": {"turn_number": 2},
+            "execution_id": "ex-hop-77",
         }
 
-    with (
-        patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
-        patch("tools.agent_bus.hop._request_impl", side_effect=fake_impl),
-        patch("tools.agent_bus.hop.record"),
-    ):
-        result = _hop_dispatch(
-            thread="77",
-            reason="mcp-restart-healthy",
-            from_agent="web-anthropic",
-        )
-    assert captured["continuity_hop"] is True
-    assert captured["contract"] == "answer"
-    assert captured["new_slug"] is None
-    assert captured["thread"] == "77"
-    assert captured["sidecar_content"] is None
-    assert captured["allow_long_body"] is True
-    assert captured["enqueue_body"] == captured["body"]
-    body = str(captured["body"])
+    async def run() -> dict[str, object]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="77",
+                reason="mcp-restart-healthy",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
+    body_payload = captured["body"]
+    assert body_payload["mission_kind"] == "hop"
+    assert body_payload["parent_thread"] == "77"
+    assert body_payload["dispatch_thread_id"] == "77"
+    assert body_payload["op"] == "generate"
+    body = str(body_payload["prompt"])
     first = next(line for line in body.splitlines() if line.strip())
     assert first == "TYPE: CONTINUITY_HANDOFF"
     assert "source: agent-bus-hop-verb" in body
@@ -228,24 +232,33 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
 
 
 def test_hop_degrades_when_auto_dead() -> None:
-    with (
-        patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
-        patch(
-            "tools.agent_bus.hop._request_impl",
-            return_value={
-                "auto_handler_status": "no-auto-handler",
-                "enqueue_failure": {"reason": "no_live_handler", "terminal_park": True},
-                "thread": {"id": "77"},
-                "turn": {"turn_number": 1},
+    async def fake_relay(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        return {
+            "auto_handler_status": "no-auto-handler",
+            "enqueue_failure": {
+                "reason": "no_live_handler",
+                "terminal_park": True,
             },
-        ),
-        patch("tools.agent_bus.hop.record"),
-    ):
-        result = _hop_dispatch(
-            thread=77,
-            reason="mcp-restart-healthy",
-            from_agent="web-anthropic",
-        )
+        }
+
+    async def run() -> dict[str, object]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread=77,
+                reason="mcp-restart-healthy",
+                from_agent="web-anthropic",
+            )
+
+    result = asyncio.run(run())
     assert result["auto_handler_status"] == "no-auto-handler"
     assert result["continuity_hop"] is True
     assert result["enqueue_failure"]["terminal_park"] is True

@@ -19,7 +19,7 @@ def test_resolve_prompt_preamble_none_inferred_is_freeform() -> None:
     text = resolve_prompt_preamble(
         handoff_contract=None,
         prompt_preamble=None,
-        inferred_contract="none",
+        inferred_contract="freeform",
     )
     assert text.startswith("/reasoning-posture")
     assert "Use the `reasoning-posture` skill" in text
@@ -66,7 +66,7 @@ def test_resolve_prompt_preamble_preserves_custom_preamble() -> None:
 
 def test_resolve_prompt_preamble_none_skips_judgment_stack() -> None:
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="freeform",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -79,7 +79,7 @@ def test_resolve_prompt_preamble_none_skips_judgment_stack() -> None:
 
 def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
     text = resolve_prompt_preamble(
-        handoff_contract="consult",
+        handoff_contract="sketch",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -91,13 +91,13 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
 
 def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> None:
     consult = resolve_prompt_preamble(
-        handoff_contract="consult",
+        handoff_contract="sketch",
         prompt_preamble=None,
         inferred_contract=None,
     )
     assert "Use the `hypothesize-simulate` skill" in consult
     residual = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="freeform",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -112,7 +112,7 @@ def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> No
 
 @pytest.mark.parametrize(
     "contract",
-    ["implement", "pure-mechanical", "propagate", "execute", "answer", "ask"],
+    ["implement", "mechanical", "propagate", "execute", "answer", "ask"],
 )
 def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
     contract: str,
@@ -129,7 +129,7 @@ def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
 def test_resolve_prompt_preamble_none_freeform_preserves_packet_text() -> None:
     existing = "Use the `reasoning-posture` skill — already in packet.\nDo the work."
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="freeform",
         prompt_preamble=None,
         inferred_contract=None,
         existing_text=existing,
@@ -452,7 +452,7 @@ def test_lane_b_worktree_preamble_reaches_freeform_packet() -> None:
     text = resolve_prompt_preamble(
         handoff_contract=None,
         prompt_preamble=None,
-        inferred_contract="none",
+        inferred_contract="freeform",
         lane="B",
         has_packet_path=True,
         lane_worktree=_LANE_B_WORKTREE_PATH,
