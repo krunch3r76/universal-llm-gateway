@@ -43,7 +43,7 @@ Required in `<scope>` / `<invariants>`:
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`job=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `liaison`) and does not author G-rows, Sketch, or `job=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
-  implement, **G6** = `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, …)` with prompt line `job=delivery-review` and `reasoning_effort="high"`
+  implement, **G6** = `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, reasoning_effort="high", …)` with prompt line `job=delivery-review`
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under
   `conductor_profile=fable-scarce`**) on the **lane branch diff** (sidecar **R1**).
   **G7** = merge/land (sidecar **L1**).

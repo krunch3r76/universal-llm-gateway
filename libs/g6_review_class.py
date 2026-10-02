@@ -14,6 +14,7 @@ from typing import Any
 REVIEW_CONTRACT = "delivery-review"
 FALLBACK_MODEL = "cdp/fable"
 PRIMARY_REVIEW_MODELS = frozenset({"cdp/opus-5", "cdp/opus-5.5"})
+_PRIMARY_REVIEW_FAMILIES = frozenset({"opus-5", "opus-5.5"})
 # ``cdp/fable`` is an allowed entry model when the seat already knows Opus
 # returned without proof. Automatic retry does not chain: fable is not primary.
 REVIEW_MODELS = PRIMARY_REVIEW_MODELS | {FALLBACK_MODEL}
@@ -51,6 +52,17 @@ def _present(value: Any) -> bool:
     if value == "" or value == [] or value == {}:
         return False
     return True
+
+
+def _primary_review_family(model_id: str | None) -> str | None:
+    """Effort-stripped picker family for Opus primary detection (e.g. opus-5.5-high → opus-5.5)."""
+    from claude_bundles.chat_model_match import normalize_picker_request, parse_model_request
+
+    picker = normalize_picker_request((model_id or "").strip())
+    if not picker:
+        return None
+    family, _effort = parse_model_request(picker)
+    return family if family in _PRIMARY_REVIEW_FAMILIES else None
 
 
 def fallback_wall_s(primary_wall_s: float) -> float:
@@ -113,7 +125,7 @@ def review_fallback_model(
         return None
     if stall_stage != STALL_COMPLETED_WITHOUT_PROOF:
         return None
-    if (model_id or "").strip() not in PRIMARY_REVIEW_MODELS:
+    if _primary_review_family(model_id) is None:
         return None
     return FALLBACK_MODEL
 

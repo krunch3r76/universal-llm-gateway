@@ -181,6 +181,14 @@ def test_fallback_only_for_delivery_review_opus_without_proof() -> None:
     assert (
         review_fallback_model(
             contract=REVIEW_CONTRACT,
+            model_id="cdp/opus-5.5-high",
+            stall_stage="completed_without_proof",
+        )
+        == FALLBACK_MODEL
+    )
+    assert (
+        review_fallback_model(
+            contract=REVIEW_CONTRACT,
             model_id="cdp/fable",
             stall_stage="completed_without_proof",
         )
