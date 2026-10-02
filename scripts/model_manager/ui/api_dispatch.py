@@ -771,8 +771,8 @@ async def _git_worker_drain_supervised(
     ``park_live`` defaults true: after ``PARK_LIVE_GRACE_S`` the sweep parks
     resume-eligible cursor-sdk occupants so the drain does not wait out a
     heartbeating job. Explicit false drain-waits every occupant.
-    ``wait_for_boundary`` defers begin_drain until idle so admits stay open
-    during a long occupant row (a:37197).
+    ``wait_for_boundary`` arms GIW begin-drain with ``arm=idle|holder:<id>``
+    so admits stay open until the named holder's row boundary (a:37197).
     """
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for(action),

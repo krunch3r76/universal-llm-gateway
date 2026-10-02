@@ -125,6 +125,12 @@ class WorkAdmissionController:
     _drain_started_at: datetime | None = None
     _drain_started_monotonic: float | None = None
     _deadline_at: datetime | None = None
+    # wait_for_boundary arm (a:37197): admits stay open until flip
+    _armed: bool = False
+    _arm_kind: str | None = None  # "idle" | "holder"
+    _arm_holder_id: str | None = None
+    _armed_reason: str | None = None
+    _armed_deadline_s: float | None = None
     _tickets: dict[str, Ticket] = field(default_factory=dict)
     _tracked_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _completed_epochs: set[int] = field(default_factory=set)
@@ -264,24 +270,121 @@ class WorkAdmissionController:
         intent_id: str,
         drain_epoch: int,
         deadline_s: float | None = None,
+        arm: str | None = None,
     ) -> dict[str, Any]:
-        """Enter the drain epoch (idempotent on ``intent_id``+``drain_epoch``).
+        """Enter a drain epoch (idempotent on ``intent_id``+``drain_epoch``).
 
-        Sets the drain flag/epoch and emits ``git_worker.drain.started`` exactly
-        once per epoch. The flag clears on process restart OR via
-        ``release_drain`` / ``POST .../cancel-drain`` when manage cancels the
-        matching restart intent (survival condition 1). If the worker is already
-        idle at drain start, ``git_worker.drain.completed`` is emitted promptly
-        via the idle re-check (epoch-guarded), so a manage supervisor that
-        begins a drain on a quiescent worker is not left waiting on an event
-        that a 1→0 transition would otherwise never produce.
+        Default (``arm`` omitted/None): flip ``_draining`` immediately and emit
+        ``git_worker.drain.started`` — legacy admit-freeze path.
+
+        ``arm="idle"`` or ``arm="holder:<dispatch_id>"`` (a:37197): bind the
+        epoch/intent without flipping ``_draining`` so admits stay open until
+        ``maybe_activate_armed_drain`` / idle activation. Immediate activate when
+        the arm condition already holds (already idle, or named holder absent).
         """
         if (
-            self._draining
-            and self._intent_id == intent_id
+            self._intent_id == intent_id
             and self._drain_epoch == drain_epoch
+            and (self._draining or self._armed)
         ):
             return self.drain_state()  # idempotent re-drive, no re-emit
+
+        arm_kind, arm_holder = _parse_drain_arm(arm)
+        if arm_kind is None:
+            self._clear_arm_fields()
+            self._activate_drain(
+                reason=reason,
+                intent_id=intent_id,
+                drain_epoch=drain_epoch,
+                deadline_s=deadline_s,
+            )
+            return self.drain_state()
+
+        self._progress.reset(time.monotonic())
+        self._draining = False
+        self._drain_epoch = drain_epoch
+        self._intent_id = intent_id
+        self._drain_started_at = None
+        self._drain_started_monotonic = None
+        self._deadline_at = None
+        self._armed = True
+        self._arm_kind = arm_kind
+        self._arm_holder_id = arm_holder
+        self._armed_reason = reason
+        self._armed_deadline_s = deadline_s
+        logger.info(
+            "drain armed (admits open): intent_id=%s epoch=%s arm=%s holder=%s",
+            intent_id,
+            drain_epoch,
+            arm_kind,
+            arm_holder,
+        )
+        if self._arm_condition_met():
+            self._activate_armed_drain()
+        return self.drain_state()
+
+    def maybe_activate_armed_drain(self, *, dispatch_id: str) -> bool:
+        """Flip an armed drain when the named holder terminals (before hop).
+
+        Call after ``ledger.mark_terminal`` and before
+        ``maybe_fire_conductor_hop_reactor``. Returns True when this call
+        activated draining.
+        """
+        if not self._armed or self._draining:
+            return False
+        if self._arm_kind == "holder":
+            if self._arm_holder_id != dispatch_id:
+                return False
+            self._activate_armed_drain()
+            return True
+        if self._arm_kind == "idle" and self.active_count() == 0:
+            self._activate_armed_drain()
+            return True
+        return False
+
+    def _arm_condition_met(self) -> bool:
+        if not self._armed:
+            return False
+        if self._arm_kind == "idle":
+            return self.active_count() == 0
+        if self._arm_kind == "holder":
+            holder = self._arm_holder_id or ""
+            if not holder:
+                return True
+            return not any(
+                (op.get("op_id") or op.get("dispatch_id")) == holder
+                for op in self.active_ops()
+                if isinstance(op, dict)
+            )
+        return False
+
+    def _maybe_activate_armed_idle(self) -> None:
+        if not self._armed or self._draining or self._arm_kind != "idle":
+            return
+        if self.active_count() == 0:
+            self._activate_armed_drain()
+
+    def _activate_armed_drain(self) -> None:
+        reason = self._armed_reason or "armed drain activate"
+        intent_id = self._intent_id or ""
+        epoch = self._drain_epoch
+        deadline_s = self._armed_deadline_s
+        self._clear_arm_fields()
+        self._activate_drain(
+            reason=reason,
+            intent_id=intent_id,
+            drain_epoch=epoch,
+            deadline_s=deadline_s,
+        )
+
+    def _activate_drain(
+        self,
+        *,
+        reason: str,
+        intent_id: str,
+        drain_epoch: int,
+        deadline_s: float | None,
+    ) -> None:
         self._progress.reset(time.monotonic())
         self._draining = True
         self._drain_epoch = drain_epoch
@@ -304,22 +407,25 @@ class WorkAdmissionController:
             active_ops=self.active_ops(),
         )
         self._maybe_emit_drain_completed()
-        return self.drain_state()
+
+    def _clear_arm_fields(self) -> None:
+        self._armed = False
+        self._arm_kind = None
+        self._arm_holder_id = None
+        self._armed_reason = None
+        self._armed_deadline_s = None
 
     def release_drain(self, *, intent_id: str, drain_epoch: int) -> dict[str, Any]:
-        """Clear ``_draining`` when ``(intent_id, drain_epoch)`` matches current.
+        """Clear draining or armed state when ``(intent_id, drain_epoch)`` matches.
 
-        Idempotent no-op on mismatch or when not draining — returns the current
-        ``drain_state()`` either way. Does not SIGTERM or mutate tickets; the
+        Idempotent no-op on mismatch. Does not SIGTERM or mutate tickets; the
         manage cancel path calls this so admission reopens without process death
         (pairing requirement with store ``cancel``).
         """
-        if (
-            self._draining
-            and self._intent_id == intent_id
-            and self._drain_epoch == drain_epoch
-        ):
+        matches = self._intent_id == intent_id and self._drain_epoch == drain_epoch
+        if matches and (self._draining or self._armed):
             self._draining = False
+            self._clear_arm_fields()
             self._intent_id = None
             self._deadline_at = None
             self._drain_started_at = None
@@ -337,7 +443,9 @@ class WorkAdmissionController:
         Auto ``mark_done`` does not call ``close_ticket``. Worker loops invoke
         this so an idle drain converges as soon as the last claimed Auto job
         terminalizes rather than waiting on the supervisor reconcile poll.
+        Also activates an ``arm=idle`` wait when occupancy hits zero.
         """
+        self._maybe_activate_armed_idle()
         self._maybe_emit_drain_completed()
 
     def close_ticket(self, op_id: str, *, terminal_status: str) -> None:
@@ -356,6 +464,7 @@ class WorkAdmissionController:
             ticket.kind,
             terminal_status,
         )
+        self._maybe_activate_armed_idle()
         self._maybe_emit_drain_completed()
 
     def create_tracked_task(
@@ -370,6 +479,7 @@ class WorkAdmissionController:
 
         def _on_done(done: asyncio.Task[Any]) -> None:
             self._tracked_tasks.discard(done)
+            self._maybe_activate_armed_idle()
             self._maybe_emit_drain_completed()
 
         task.add_done_callback(_on_done)
@@ -397,8 +507,16 @@ class WorkAdmissionController:
             if self._draining
             else False
         )
+        arm_label = None
+        if self._armed:
+            if self._arm_kind == "holder" and self._arm_holder_id:
+                arm_label = f"holder:{self._arm_holder_id}"
+            else:
+                arm_label = self._arm_kind
         return {
             "draining": self._draining,
+            "armed": self._armed,
+            "arm": arm_label,
             "drain_epoch": self._drain_epoch,
             "intent_id": self._intent_id,
             "worker_id": self.worker_id,
@@ -471,3 +589,21 @@ def _timedelta_s(seconds: float):
     from datetime import timedelta
 
     return timedelta(seconds=seconds)
+
+def _parse_drain_arm(arm: str | None) -> tuple[str | None, str | None]:
+    """Return ``(kind, holder_id)`` for begin_drain arm; kind None = immediate."""
+    if arm is None:
+        return None, None
+    raw = str(arm).strip()
+    if not raw:
+        return None, None
+    lower = raw.lower()
+    if lower == "idle":
+        return "idle", None
+    if lower.startswith("holder:"):
+        holder = raw.split(":", 1)[1].strip()
+        if not holder:
+            raise ValueError("arm=holder: requires a dispatch_id")
+        return "holder", holder
+    raise ValueError(f"unsupported begin_drain arm={arm!r}")
+

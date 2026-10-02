@@ -197,16 +197,16 @@ class GitWorkerDrainSupervisor:
         deadline = t0 + self.deadline_s
         timeout_alerted = False
         try:
-            if intent.wait_for_boundary and intent.drain_epoch is None:
-                from .restart_intent_boundary_wait import wait_for_idle_boundary
-
-                idle = await wait_for_idle_boundary(self, intent, t0=t0)
-                if not idle or await self._abort_if_requested(intent):
-                    return
             begun = await begin_drain_or_wait(self, intent, t0=t0)
             if await self._abort_if_requested(intent) or begun is None:
                 return
             intent = begun
+            # a:37197 — drain clock starts when begin_drain returns (armed or
+            # immediate), not at supervise entry, so a long armed wait does not
+            # spuriously trip the deadline alert.
+            if intent.wait_for_boundary:
+                t0 = time.monotonic()
+                deadline = t0 + self.deadline_s
             if intent.park_live:
                 await self._park_live_after_grace(intent)
             while True:
@@ -299,25 +299,34 @@ class GitWorkerDrainSupervisor:
 
     # --------------------------------------------------------------- step 1
     async def _begin_drain(self, intent: Intent) -> Intent:
-        """Flip the worker drain epoch; persist the returned generation identity.
+        """Flip or arm the worker drain epoch; persist the returned generation.
 
         Fresh intent (no stored epoch): read drain-state to derive next epoch.
         Reconcile (epoch already stored): re-drive with the SAME epoch — the
         worker's begin-drain is idempotent on (intent_id, drain_epoch).
+
+        ``wait_for_boundary`` passes ``arm=idle|holder:<id>`` so GIW keeps
+        admits open until the row-boundary flip (a:37197).
         """
         if intent.drain_epoch is None:
             current = await self.drain_state()
             target_epoch = int(current.get("drain_epoch", 0) or 0) + 1
         else:
+            current = None
             target_epoch = intent.drain_epoch
-        snapshot = await self.begin_drain(
-            {
-                "reason": intent.reason or "manage deferred restart",
-                "intent_id": intent.intent_id,
-                "drain_epoch": target_epoch,
-                "deadline_s": self.deadline_s,
-            }
-        )
+        body: dict[str, Any] = {
+            "reason": intent.reason or "manage deferred restart",
+            "intent_id": intent.intent_id,
+            "drain_epoch": target_epoch,
+            "deadline_s": self.deadline_s,
+        }
+        if intent.wait_for_boundary:
+            from .restart_intent_boundary_wait import resolve_drain_arm
+
+            if current is None:
+                current = await self.drain_state()
+            body["arm"] = resolve_drain_arm(current)
+        snapshot = await self.begin_drain(body)
         epoch = int(snapshot.get("drain_epoch", target_epoch))
         worker_id = snapshot.get("worker_id")
         worker_started_at = snapshot.get("worker_started_at")

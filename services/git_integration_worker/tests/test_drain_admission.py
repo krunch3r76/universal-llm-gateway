@@ -299,6 +299,8 @@ def test_drain_state_shape(events: SimpleNamespace) -> None:
     state = controller.drain_state()
     assert set(state) == {
         "draining",
+        "armed",
+        "arm",
         "drain_epoch",
         "intent_id",
         "worker_id",
@@ -312,6 +314,8 @@ def test_drain_state_shape(events: SimpleNamespace) -> None:
         "stalled",
     }
     assert state["draining"] is False
+    assert state["armed"] is False
+    assert state["arm"] is None
     assert state["active_count"] == 0
     assert state["deadline_at"] is None
 
@@ -370,3 +374,76 @@ def test_begin_drain_idempotent(events: SimpleNamespace) -> None:
     assert len(events.started) == n_started  # no second drain.started
     assert first["drain_epoch"] == second["drain_epoch"] == epoch
     assert second["draining"] is True
+
+
+def test_arm_holder_keeps_admits_open_until_activate(events: SimpleNamespace) -> None:
+    controller = _controller()
+    # Ticket (not ledger alone) — unit fixture may omit live projections.
+    controller.try_admit("cursor_sdk", op_id="holder-1", route="/r")
+    epoch = controller.next_epoch()
+    snap = controller.begin_drain(
+        reason="a37197",
+        intent_id="i-arm",
+        drain_epoch=epoch,
+        arm="holder:holder-1",
+    )
+    assert snap["armed"] is True
+    assert snap["draining"] is False
+    assert snap["arm"] == "holder:holder-1"
+    assert events.started == []
+    # New admits still succeed while armed.
+    ticket = controller.try_admit("cursor_sdk", op_id="other", route="/r")
+    assert ticket.op_id == "other"
+    activated = controller.maybe_activate_armed_drain(dispatch_id="holder-1")
+    assert activated is True
+    assert controller.is_draining() is True
+    assert len(events.started) == 1
+    with pytest.raises(Draining503):
+        controller.try_admit("cursor_sdk", op_id="blocked", route="/r")
+
+
+def test_arm_idle_activates_when_empty(events: SimpleNamespace) -> None:
+    controller = _controller()
+    epoch = controller.next_epoch()
+    snap = controller.begin_drain(
+        reason="idle",
+        intent_id="i-idle",
+        drain_epoch=epoch,
+        arm="idle",
+    )
+    # Already idle → activate immediately.
+    assert snap["draining"] is True
+    assert snap["armed"] is False
+    assert len(events.started) == 1
+    assert len(events.completed) == 1
+
+
+def test_arm_idle_waits_for_occupancy_clear(events: SimpleNamespace) -> None:
+    controller = _controller()
+    controller.try_admit("git_integrate", op_id="busy", route="/r")
+    epoch = controller.next_epoch()
+    snap = controller.begin_drain(
+        reason="idle-wait",
+        intent_id="i-idle2",
+        drain_epoch=epoch,
+        arm="idle",
+    )
+    assert snap["armed"] is True
+    assert snap["draining"] is False
+    assert events.started == []
+    controller.close_ticket("busy", terminal_status="completed")
+    assert controller.is_draining() is True
+    assert len(events.started) == 1
+
+
+def test_release_clears_armed_without_draining(events: SimpleNamespace) -> None:
+    controller = _controller()
+    controller.try_admit("cursor_sdk", op_id="h1", route="/r")
+    epoch = controller.next_epoch()
+    controller.begin_drain(
+        reason="r", intent_id="i-rel", drain_epoch=epoch, arm="holder:h1"
+    )
+    released = controller.release_drain(intent_id="i-rel", drain_epoch=epoch)
+    assert released["armed"] is False
+    assert released["draining"] is False
+    assert controller.maybe_activate_armed_drain(dispatch_id="h1") is False

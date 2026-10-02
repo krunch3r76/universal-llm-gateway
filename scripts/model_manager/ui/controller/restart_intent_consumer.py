@@ -62,10 +62,15 @@ def drain_deferred_result(
     waiting = intent.wait_for_boundary and intent.drain_epoch is None
     state = "waiting_for_boundary" if waiting else "draining"
     default_reason = (
-        "waiting for GIW idle/row boundary before begin_drain; admits stay open "
-        "until drain_epoch is set (a:37197)"
+        "wait_for_boundary: GIW begin-drain will arm (admits open) until "
+        "named-holder terminal or idle; epoch not yet posted (a:37197)"
         if waiting
-        else "draining; completion delivered via git_worker.drain events"
+        else (
+            "draining or armed on GIW; completion via git_worker.drain events "
+            "(wait_for_boundary keeps admits open while GIW reports armed=true)"
+            if intent.wait_for_boundary
+            else "draining; completion delivered via git_worker.drain events"
+        )
     )
     result = {
         "status": "deferred",
@@ -81,10 +86,11 @@ def drain_deferred_result(
         "reason": reason or default_reason,
         "caller_must_exit_to_release_lease": True,
         "guidance": (
-            "wait_for_boundary arm: GIW admits remain open until begin_drain. "
-            "Query restart_intent_status / busy_status; do not poll-rearm on the "
-            "legacy 600s window when expires_at is null."
-            if waiting
+            "wait_for_boundary: GIW admits remain open until the armed drain "
+            "flips (_draining). Query restart_intent_status / busy_status / "
+            "drain-state.armed; do not poll-rearm on the legacy 600s window "
+            "when expires_at is null."
+            if intent.wait_for_boundary
             else (
                 "If you hold the git_integration_worker write lease (cursor-sdk), "
                 "exit this dispatch now — do not wait_healthy in-window. "

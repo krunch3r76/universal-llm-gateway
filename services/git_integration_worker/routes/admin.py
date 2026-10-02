@@ -79,12 +79,16 @@ class BeginDrainRequest(BaseModel):
 
     Carries the manage restart-intent identity and target drain epoch so the
     worker can enter an idempotent drain generation.
+
+    ``arm`` (a:37197): omit for immediate drain; ``idle`` or ``holder:<id>``
+    keeps admits open until the arm condition flips ``_draining``.
     """
 
     reason: str
     intent_id: str
     drain_epoch: int
     deadline_s: float | None = None
+    arm: str | None = None
 
 
 class CseHolderUpsertRequest(BaseModel):
@@ -176,8 +180,9 @@ def _controller(request: Request) -> WorkAdmissionController:
 
 @router.post("/begin-drain", summary="Enter the drain epoch (idempotent).")
 async def begin_drain(req: BeginDrainRequest, request: Request) -> dict[str, Any]:
-    """Close admission and emit ``git_worker.drain.started``. Idempotent on
-    ``intent_id``+``drain_epoch``. Returns the drain-state snapshot.
+    """Close admission (or arm a deferred flip) and emit drain signals.
+
+    Idempotent on ``intent_id``+``drain_epoch``. Returns the drain-state snapshot.
     """
     controller = _controller(request)
     snapshot = controller.begin_drain(
@@ -185,6 +190,7 @@ async def begin_drain(req: BeginDrainRequest, request: Request) -> dict[str, Any
         intent_id=req.intent_id,
         drain_epoch=req.drain_epoch,
         deadline_s=req.deadline_s,
+        arm=req.arm,
     )
     return snapshot
 

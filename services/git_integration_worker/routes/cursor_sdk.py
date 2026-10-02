@@ -1516,6 +1516,14 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    # a:37197 — flip armed wait_for_boundary drain BEFORE hop successor admit
+    try:
+        controller.maybe_activate_armed_drain(dispatch_id=dispatch_id)
+    except Exception:  # noqa: BLE001 — armed flip must not block terminal
+        logger.exception(
+            "armed drain activate failed dispatch_id=%s",
+            dispatch_id,
+        )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
         conductor_has_live_nested,
     )

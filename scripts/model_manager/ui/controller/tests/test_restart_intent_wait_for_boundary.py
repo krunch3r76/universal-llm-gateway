@@ -218,8 +218,8 @@ def test_join_and_rearm_preserve_wait_mode_caller_ttl(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_wait_for_boundary_defers_begin_drain_until_idle(tmp_path) -> None:
-    """Concurrency / ROW_HOP: begin_drain only after active_count hits 0."""
+async def test_wait_for_boundary_begin_drain_passes_holder_arm(tmp_path) -> None:
+    """Sole active op → begin_drain fires immediately with arm=holder:<id>."""
     store = RestartIntentStore(tmp_path / "restart-intents.db")
     intent = store.create_intent(
         service="git_integration_worker",
@@ -234,34 +234,34 @@ async def test_wait_for_boundary_defers_begin_drain_until_idle(tmp_path) -> None
         "drain_epoch": 1,
         "worker_id": "w",
         "worker_started_at": "t0",
-        "active_count": 0,
-        "draining": True,
+        "active_count": 1,
+        "draining": False,
+        "armed": True,
+        "arm": "holder:sole-1",
     }
     worker = _Worker(
         [
-            {"active_count": 1, "draining": False, "drain_epoch": 0},
-            {"active_count": 1, "draining": False, "drain_epoch": 0},
-            {"active_count": 0, "draining": False, "drain_epoch": 0},
             {
-                "active_count": 0,
-                "draining": True,
-                "drain_epoch": 1,
-                "worker_id": "w",
-                "worker_started_at": "t0",
+                "active_count": 1,
+                "draining": False,
+                "drain_epoch": 0,
+                "active_ops": [{"op_id": "sole-1", "kind": "cursor_sdk"}],
             },
         ],
         begin,
     )
     sup = _supervisor(store, worker)
     await _supervise_until(sup, intent, done=lambda: bool(worker.begun), hold_s=2.0)
-    assert worker.begun, "begin_drain must fire after idle"
+    assert worker.begun, "begin_drain must fire immediately when armed"
+    assert worker.begun[0].get("arm") == "holder:sole-1"
     stored = store.get(intent.intent_id)
     assert stored is not None
     assert stored.drain_epoch == 1
 
 
 @pytest.mark.asyncio
-async def test_wait_for_boundary_no_begin_while_busy(tmp_path) -> None:
+async def test_wait_for_boundary_multi_busy_arms_idle(tmp_path) -> None:
+    """Overlapping occupants → arm=idle (admits open until fleet idle)."""
     store = RestartIntentStore(tmp_path / "restart-intents.db")
     intent = store.create_intent(
         service="git_integration_worker",
@@ -272,17 +272,35 @@ async def test_wait_for_boundary_no_begin_while_busy(tmp_path) -> None:
         caller_agent="cursor",
     )
     worker = _Worker(
-        [{"active_count": 2, "draining": False, "drain_epoch": 0}],
-        {"drain_epoch": 1, "worker_id": "w", "worker_started_at": "t0"},
+        [
+            {
+                "active_count": 2,
+                "draining": False,
+                "drain_epoch": 0,
+                "active_ops": [
+                    {"op_id": "a", "kind": "cursor_sdk"},
+                    {"op_id": "b", "kind": "cursor_sdk"},
+                ],
+            }
+        ],
+        {
+            "drain_epoch": 1,
+            "worker_id": "w",
+            "worker_started_at": "t0",
+            "armed": True,
+            "arm": "idle",
+            "draining": False,
+        },
     )
     sup = _supervisor(store, worker)
-    await _supervise_until(sup, intent, hold_s=0.2)
-    assert worker.begun == []
+    await _supervise_until(sup, intent, done=lambda: bool(worker.begun), hold_s=1.0)
+    assert len(worker.begun) == 1
+    assert worker.begun[0].get("arm") == "idle"
 
 
 @pytest.mark.asyncio
-async def test_wait_for_boundary_caller_ttl_expires_without_begin(tmp_path) -> None:
-    """Wrong ordering / abandon: TTL cancel before boundary releases without begin."""
+async def test_wait_for_boundary_caller_ttl_expires_after_arm(tmp_path) -> None:
+    """Caller TTL cancels via expire_via_cancel even when an arm was posted."""
     store = RestartIntentStore(tmp_path / "restart-intents.db")
     intent = store.create_intent(
         service="git_integration_worker",
@@ -293,22 +311,41 @@ async def test_wait_for_boundary_caller_ttl_expires_without_begin(tmp_path) -> N
         intent_ttl_s=0.05,
         caller_agent="cursor",
     )
-    # Force past expiry immediately for the tick path.
     past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
     store._update(intent.intent_id, expires_at=past)
-    intent = store.get(intent.intent_id)
-    assert intent is not None
-
-    worker = _Worker(
-        [{"active_count": 1, "draining": False, "drain_epoch": 0}],
-        {"drain_epoch": 1, "worker_id": "w", "worker_started_at": "t0"},
+    store.set_drain_epoch(
+        intent.intent_id,
+        drain_epoch=1,
+        worker_id="w",
+        worker_started_at="t0",
     )
-    sup = _supervisor(store, worker, progress_interval_s=0.01)
-    await _supervise_until(sup, intent, hold_s=0.5)
-    assert worker.begun == []
+    released: list[tuple[str, int]] = []
+
+    async def _release(iid: str, epoch: int) -> dict[str, Any]:
+        released.append((iid, epoch))
+        return {"draining": False, "armed": False}
+
+    assert await expire_via_cancel(
+        store, intent.intent_id, release_drain=_release
+    )
+    assert released == [(intent.intent_id, 1)]
     stored = store.get(intent.intent_id)
     assert stored is not None
     assert stored.status == "cancelled"
+
+
+def test_resolve_drain_arm_helpers() -> None:
+    from scripts.model_manager.ui.controller.restart_intent_boundary_wait import (
+        resolve_drain_arm,
+    )
+
+    assert resolve_drain_arm(None) == "idle"
+    assert resolve_drain_arm({"active_ops": []}) == "idle"
+    assert resolve_drain_arm({"active_ops": [{"op_id": "x"}]}) == "holder:x"
+    assert (
+        resolve_drain_arm({"active_ops": [{"op_id": "a"}, {"op_id": "b"}]})
+        == "idle"
+    )
 
 
 @pytest.mark.asyncio
