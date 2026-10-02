@@ -33,7 +33,11 @@ from claude_bundles.chat_model_select import (
     picker_attests_request,
     select_model,
 )
-from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
+from claude_bundles.chat_reply_wait import (
+    HarvestIncomplete,
+    harvest_assistant,
+    wait_assistant_reply,
+)
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     goto_fresh_compose,
@@ -759,6 +763,20 @@ async def project_ask_on_page(
             harvest_provenance=harvest_provenance,
             artifact_cards=tuple(cards),
             artifact_cards_unresolved=False,
+        )
+    except HarvestIncomplete as exc:
+        # a:37226 — preserve nonzero last scrape; bare Exception path zeroed body.
+        partial = strip_thinking_prefix(exc.body or "")
+        return ProjectAskResult(
+            ok=False,
+            body=partial,
+            url=page.url or "",
+            project_uuid=project_uuid,
+            project_url=dest,
+            model={},
+            body_len=len(partial),
+            delete_after=None,
+            error=str(exc),
         )
     except Exception as exc:  # noqa: BLE001 — surface to CLI ledger; ¬delete
         return ProjectAskResult(

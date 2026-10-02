@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
+from claude_bundles.chat_reply_wait import (
+    HarvestIncomplete,
+    harvest_assistant,
+    wait_assistant_reply,
+)
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     pick_chat_page,
@@ -323,6 +327,20 @@ async def project_followup_on_page(
             artifact_cards=tuple(cards),
             artifact_cards_unresolved=False,
         )
+    except HarvestIncomplete as exc:
+        # a:37226 — preserve nonzero last scrape on follow-up timeout.
+        partial = strip_thinking_prefix(exc.body or "")
+        return ProjectAskResult(
+            ok=False,
+            body=partial,
+            url=page.url or "",
+            project_uuid=project_uuid or "",
+            project_url=dest,
+            model={},
+            body_len=len(partial),
+            delete_after=None,
+            error=str(exc),
+        )
     except Exception as exc:  # noqa: BLE001
         return ProjectAskResult(
             ok=False,
@@ -421,16 +439,33 @@ async def run_project_conversation(
                 satellite_execution_id=satellite_execution_id,
             )
             await _emit_page_url(on_harvest, page)
-            state = await wait_assistant_reply(
-                page,
-                before=before,
-                timeout_s=timeout_s,
-                poll_ms=500,
-                min_growth=min_growth,
-                min_body=min_body,
-                on_harvest=on_harvest,
-                require_review_verdict=require_review_verdict,
-            )
+            try:
+                state = await wait_assistant_reply(
+                    page,
+                    before=before,
+                    timeout_s=timeout_s,
+                    poll_ms=500,
+                    min_growth=min_growth,
+                    min_body=min_body,
+                    on_harvest=on_harvest,
+                    require_review_verdict=require_review_verdict,
+                )
+            except HarvestIncomplete as exc:
+                # a:37226 — compose first-turn timeout must keep last scrape.
+                partial = strip_thinking_prefix(exc.body or "")
+                return [
+                    ProjectAskResult(
+                        ok=False,
+                        body=partial,
+                        url=page.url or "",
+                        project_uuid="",
+                        project_url=url,
+                        model=model_info,
+                        body_len=len(partial),
+                        delete_after=None,
+                        error=str(exc),
+                    )
+                ]
             body = strip_thinking_prefix(state.get("body") or "")
             try:
                 attested = _attest_model(model, state, model_info)

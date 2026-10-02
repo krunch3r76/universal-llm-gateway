@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 # Merits verdict tokens (closed set). Hyphen spellings normalize before classify.
+# RETURN_TO_DESIGN precedes RETURN so the longer prompt-vocab token wins (a:37226).
 _TOKEN_PATTERN = (
     r"ADMIT_WITH_AMENDMENTS|ADMIT|"
     r"RATIFY_WITH_CONDITIONS|RATIFY-WITH-CONDITIONS|RATIFY|"
-    r"REJECT|RETURN|SCOPE-DRIFT|SCOPE_DRIFT"
+    r"REJECT|RETURN_TO_DESIGN|RETURN-TO-DESIGN|RETURN|SCOPE-DRIFT|SCOPE_DRIFT"
 )
 _MERITS_RE = re.compile(
     rf"\*{{0,2}}\b(?:Merits(?:\s+(?:verdict|disposition))?|merits)\b\*{{0,2}}"
@@ -56,10 +57,21 @@ class ParsedVerdict:
 
 
 def normalize_verdict_token(raw: str) -> str:
-    """Uppercase and map hyphen aliases to underscore forms before classify."""
+    """Uppercase and map hyphen aliases to underscore forms before classify.
+
+    Prompt vocabulary ``RETURN_TO_DESIGN`` (cheap-recon / code-review) collapses
+    to canonical ``RETURN`` so harvest and R-admit share one BLOCK token (a:37226).
+    """
     token = raw.strip().upper()
     token = token.replace("RATIFY-WITH-CONDITIONS", "RATIFY_WITH_CONDITIONS")
     token = token.replace("SCOPE_DRIFT", "SCOPE-DRIFT")
+    token = token.replace("RETURN-TO-DESIGN", "RETURN_TO_DESIGN")
+    if token == "RETURN_TO_DESIGN":
+        return "RETURN"
+    if token.startswith("RETURN_TO_DESIGN"):
+        rest = token[len("RETURN_TO_DESIGN") :]
+        if rest and rest[0] in " \t—-(":
+            return "RETURN" + rest
     return token
 
 

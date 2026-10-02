@@ -331,3 +331,46 @@ async def test_converse_path_threads_ids_via_project_ask_on_page() -> None:
     kwargs = on_page.call_args.kwargs
     assert kwargs.get("stargate_execution_id") == "sg-exec-corr-2"
     assert kwargs.get("execution_id") == "sat-exec-corr-2"
+
+
+@pytest.mark.asyncio
+async def test_followup_harvest_incomplete_preserves_nonzero_body() -> None:
+    """a:37226 — timeout with last>0 must not return FAILED body_len=0."""
+    from claude_bundles.chat_reply_wait import HarvestIncomplete
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_01DySavjf3QUK1oDU9NC9McG"
+    partial = "Review opening with RETURN_TO_DESIGN… " + ("x" * 200)
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 1}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(
+                side_effect=HarvestIncomplete(
+                    "timed out incomplete (base_len=0, last=6969, n=6) — ¬delete",
+                    body=partial,
+                )
+            ),
+        ),
+    ):
+        result = await project_followup_on_page(
+            page,
+            "follow up",
+            model="opus-5",
+            project_uuid="",
+            purpose="review",
+        )
+
+    assert result.ok is False
+    assert "timed out incomplete" in (result.error or "")
+    assert result.body == partial
+    assert result.body_len == len(partial)
+    assert result.body_len > 0

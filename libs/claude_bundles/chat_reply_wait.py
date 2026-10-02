@@ -283,7 +283,28 @@ async def harvest_assistant(page, *, min_msg_chars: int = 40) -> dict:
 
 
 class HarvestIncomplete(RuntimeError):
-    """Turn did not satisfy complete(turn) — caller must ¬delete."""
+    """Turn did not satisfy complete(turn) — caller must ¬delete.
+
+    ``body`` is the last scraped assistant text when present so callers can
+    still surface a nonzero partial harvest on the bus instead of
+    ``FAILED body_len=0`` (a:37226 / agent-bus:14163#3).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        body: str = "",
+        state: dict | None = None,
+    ) -> None:
+        super().__init__(message)
+        if body:
+            self.body = body
+        elif state is not None:
+            self.body = str(state.get("body") or "")
+        else:
+            self.body = ""
+        self.state = state
 
 
 def _is_cowork_cse_url(url: str) -> bool:
@@ -553,8 +574,12 @@ async def wait_assistant_reply(
     ):
         return state
     if _fatal_error_banner(state):
-        raise HarvestIncomplete(_error_banner_message(state, on_timeout=True))
+        raise HarvestIncomplete(
+            _error_banner_message(state, on_timeout=True),
+            state=state,
+        )
     raise HarvestIncomplete(
         f"timed out incomplete (base_len={base_len}, last={state.get('body_len')}, "
-        f"n={state.get('n')}) — ¬delete"
+        f"n={state.get('n')}) — ¬delete",
+        state=state,
     )

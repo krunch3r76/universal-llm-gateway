@@ -9,6 +9,7 @@ from review_verdict import (
     format_canonical_gate6_block,
     format_canonical_merits_line,
     gate6_affirmative_disposition,
+    has_parseable_verdict,
     parse_any_review_body,
     parse_gate6_markdown,
     parse_merits_line,
@@ -212,3 +213,41 @@ def test_a2_blocked_verdict_wins_over_ratify() -> None:
     assert parsed.action is VerdictAction.BLOCKED
     assert parsed.token == "REJECT"
     assert gate6_affirmative_disposition(body) is False
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "body",
+    [
+        "VERDICT: RETURN_TO_DESIGN",
+        "VERDICT: RETURN-TO-DESIGN",
+        "Merits: RETURN_TO_DESIGN",
+        "**Verdict:** **RETURN_TO_DESIGN**",
+        "RETURN_TO_DESIGN",
+        "VERDICT: RETURN_TO_DESIGN — redesign the boundary",
+    ],
+)
+def test_return_to_design_aliases_to_return_block(body: str) -> None:
+    """a:37226 — prompt vocab RETURN_TO_DESIGN seals harvest as BLOCKED/RETURN."""
+    parsed = parse_any_review_body(body)
+    assert has_parseable_verdict(body) is True
+    assert parsed.action is VerdictAction.BLOCKED
+    assert parsed.token == "RETURN"
+    assert parsed.reason == "r_verdict_blocked"
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "body",
+    [
+        "VERDICT: RETURN — redesign the boundary",
+        "VERDICT: RETURN",
+        "Merits: RETURN",
+        "VERDICT: REJECT — scope",
+    ],
+)
+def test_return_reject_trailing_prose_unregressed(body: str) -> None:
+    parsed = parse_any_review_body(body)
+    assert has_parseable_verdict(body) is True
+    assert parsed.action is VerdictAction.BLOCKED
+    assert parsed.reason == "r_verdict_blocked"

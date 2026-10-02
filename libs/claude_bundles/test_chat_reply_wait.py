@@ -129,6 +129,54 @@ async def test_idle_without_growth_raises(advance_clock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_timeout_with_nonzero_body_carries_partial(advance_clock) -> None:
+    """a:37226 — HarvestIncomplete must retain last scrape when last≫0."""
+    before = _state(body_len=0, n=0)
+    # Mid-review prose: nonzero body, no sealed verdict → require_review stays open.
+    partial = (
+        "Review opening for the boundary redesign.\n"
+        "Still gathering evidence; no sealed VERDICT line yet. " + ("x" * 80)
+    )
+    page = _FakePage(
+        [
+            _state(body_len=len(partial), n=1, body=partial, streaming=False, stop=False)
+            for _ in range(20)
+        ]
+    )
+    with pytest.raises(HarvestIncomplete, match="timed out incomplete") as exc:
+        await wait_assistant_reply(
+            page,
+            before=before,
+            timeout_s=1,
+            poll_ms=500,
+            min_growth=50,
+            min_body=40,
+            stable_polls=2,
+            require_review_verdict=True,
+        )
+    assert f"last={len(partial)}" in str(exc.value)
+    assert exc.value.body == partial
+    assert len(exc.value.body) > 0
+
+
+def test_review_verdict_gate_accepts_return_to_design() -> None:
+    """a:37226 — prompt-vocab RETURN_TO_DESIGN seals purpose=review harvest."""
+    body = "Findings…\n\nMerits: RETURN_TO_DESIGN\n"
+    state = _state(body_len=len(body), n=1, streaming=False, stop=False, body=body)
+    assert (
+        _complete_enough(
+            state,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+            require_review_verdict=True,
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
 async def test_error_banner_idle_raises_on_timeout_with_match(advance_clock) -> None:
     """Idle+banner waits the idle budget then fails with matched phrase (25654)."""
     before = _state(body_len=0, n=0)
