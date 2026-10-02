@@ -33,11 +33,11 @@ def snapshot() -> dict[str, Any]:
     """Return query-path fields suitable for /health and operator triage."""
     with _lock:
         if _last_completed_monotonic is None:
-            since: float | None = None
+            age_ms: float | None = None
         else:
-            since = time.monotonic() - _last_completed_monotonic
+            age_ms = (time.monotonic() - _last_completed_monotonic) * 1000.0
         return {
-            "seconds_since_last_query": since,
+            "query_completed_age_ms": age_ms,
             "last_query_duration_s": _last_duration_s,
             "event_loop_lag_ms": _event_loop_lag_ms,
         }

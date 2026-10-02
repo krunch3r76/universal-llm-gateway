@@ -1,9 +1,4 @@
-"""Acceptance tests for query-path diagnosability (spec S4b items 1–6 on HEAD).
-
-Maps cortex spec field names to shipped API: ``query_path.seconds_since_last_query``
-(completion age), ``error_code=sqlite_busy`` (lock wait), not ``query_completed_age_ms``
-/ ``error_class=lock_wait``.
-"""
+"""Acceptance tests for query-path diagnosability (spec S4b items 1–6, 8 on HEAD)."""
 
 from __future__ import annotations
 
@@ -18,11 +13,13 @@ from fastapi.testclient import TestClient
 
 from event_store.errors import EventStoreBusyError
 from event_store.query import create_query_router
+from event_store.query_client_errors import ERROR_CLASS_CLIENT_DEADLINE, ERROR_CLASS_LOCK_WAIT
 from event_store.query_path_health import (
     run_event_loop_lag_probe,
     set_event_loop_lag_ms,
     snapshot,
 )
+from event_store.server import create_app
 from event_store.store import EventStore
 
 
@@ -46,8 +43,17 @@ def client() -> TestClient:
                 }
             ]
         )
-        yield
-        await store.close()
+        lag_task = asyncio.create_task(run_event_loop_lag_probe())
+        _app.state.event_loop_lag_probe_task = lag_task
+        try:
+            yield
+        finally:
+            lag_task.cancel()
+            try:
+                await lag_task
+            except asyncio.CancelledError:
+                pass
+            await store.close()
 
     class _StubIngest:
         def get_metrics(self) -> dict[str, int]:
@@ -69,9 +75,9 @@ def test_ac1_health_includes_query_path_and_identity(client: TestClient) -> None
     assert "code_version" in body
     qp = body["query_path"]
     assert "event_loop_lag_ms" in qp
-    assert "seconds_since_last_query" in qp
+    assert "query_completed_age_ms" in qp
+    assert "seconds_since_last_query" not in qp
     assert "last_query_duration_s" in qp
-    assert qp["event_loop_lag_ms"] is None
 
 
 def test_ac1_health_does_not_touch_store_on_get(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,28 +89,33 @@ def test_ac1_health_does_not_touch_store_on_get(client: TestClient, monkeypatch:
     assert resp.status_code == 200
 
 
-# AC2 — lag sample is updated by the heartbeat helper (started from server serve() on HEAD).
+# AC2 — lag heartbeat starts from create_app lifespan (task ref on app.state).
 def test_ac2_lag_sample_readable_via_setter() -> None:
     set_event_loop_lag_ms(25.0)
     assert snapshot()["event_loop_lag_ms"] == 25.0
 
 
 @pytest.mark.asyncio
-async def test_ac2_run_event_loop_lag_probe_updates_snapshot() -> None:
-    task = asyncio.create_task(run_event_loop_lag_probe(interval_s=0.02))
-    try:
+async def test_ac2_create_app_lifespan_starts_lag_probe() -> None:
+    store = EventStore(":memory:")
+    await store.open()
+
+    class _StubIngest:
+        def get_metrics(self) -> dict[str, int]:
+            return {}
+
+    app = create_app(store, set(), _StubIngest())  # type: ignore[arg-type]
+    async with app.router.lifespan_context(app):
+        assert getattr(app.state, "event_loop_lag_probe_task", None) is not None
         await asyncio.sleep(0.08)
-    finally:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    assert snapshot()["event_loop_lag_ms"] is not None
+        assert snapshot()["event_loop_lag_ms"] is not None
+    await store.close()
 
 
-# AC3 — successful /v1/query stamps completion age; no query yet leaves age unset.
+# AC3 — finished /v1/query stamps completion age; 503 lock-wait included; no query yet unset.
 def test_ac3_no_query_leaves_completion_age_unset(client: TestClient) -> None:
     qp = client.get("/health").json()["query_path"]
-    assert qp["seconds_since_last_query"] is None
+    assert qp["query_completed_age_ms"] is None
     assert qp["last_query_duration_s"] is None
 
 
@@ -114,9 +125,25 @@ def test_ac3_finished_query_stamps_completion_age(client: TestClient) -> None:
         json={"type": "sql", "sql": "SELECT signal FROM events LIMIT 1"},
     )
     qp = client.get("/health").json()["query_path"]
-    assert qp["seconds_since_last_query"] is not None
+    assert qp["query_completed_age_ms"] is not None
     assert qp["last_query_duration_s"] is not None
-    assert qp["seconds_since_last_query"] <= 2.0
+    assert qp["query_completed_age_ms"] <= 2000.0
+
+
+def test_ac3_lock_wait_503_stamps_completion_age(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _busy(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise EventStoreBusyError("database is locked")
+
+    monkeypatch.setattr(EventStore, "query", _busy)
+    resp = client.post(
+        "/v1/query",
+        json={"type": "sql", "sql": "SELECT 1"},
+    )
+    assert resp.status_code == 503
+    qp = client.get("/health").json()["query_path"]
+    assert qp["query_completed_age_ms"] is not None
 
 
 # AC4 — lenient store.query swallows non-busy sqlite errors; busy re-raises.
@@ -148,22 +175,22 @@ async def test_ac4_lenient_reraises_sqlite_busy() -> None:
         await store.query("SELECT 1", raise_on_error=False)
 
 
-# AC5 — named operation busy → 503 + error_code, not HTTP 200 empty rows.
-def test_ac5_named_operation_busy_returns_503(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "event_store.query.execute_operation",
-        AsyncMock(
-            return_value={"error": "database is locked", "error_code": "sqlite_busy"}
-        ),
-    )
+# AC5 — named operation busy via dispatch → store → 503 + error_class lock_wait.
+def test_ac5_named_operation_busy_via_store_returns_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _busy(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise EventStoreBusyError("database is locked")
+
+    monkeypatch.setattr(EventStore, "query", _busy)
     resp = client.post(
         "/v1/query",
         json={"type": "operation", "name": "stack-last-started", "params": {}},
     )
     assert resp.status_code == 503
     body = resp.json()
-    assert body["error_code"] == "sqlite_busy"
-    assert "rows" not in body or body.get("count", 1) != 0
+    assert body["error_class"] == ERROR_CLASS_LOCK_WAIT
+    assert "wait" in body["error"].lower()
 
 
 def test_ac5_named_operation_non_busy_sqlite_stays_lenient(
@@ -181,7 +208,7 @@ def test_ac5_named_operation_non_busy_sqlite_stays_lenient(
     assert resp.json()["type"] == "result"
 
 
-# AC6 — busy on structured/raw → 503 sqlite_busy; syntax stays 400 without busy code.
+# AC6 — busy on structured/raw → 503 lock_wait; syntax stays 400 without lock_wait.
 def test_ac6_structured_query_busy_returns_503(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     async def _busy(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
         raise EventStoreBusyError("database is locked")
@@ -192,7 +219,7 @@ def test_ac6_structured_query_busy_returns_503(client: TestClient, monkeypatch: 
         json={"type": "query", "filter": {"signal": "test.signal"}},
     )
     assert resp.status_code == 503
-    assert resp.json()["error_code"] == "sqlite_busy"
+    assert resp.json()["error_class"] == ERROR_CLASS_LOCK_WAIT
 
 
 def test_ac6_raw_sql_bad_column_not_busy(client: TestClient) -> None:
@@ -202,7 +229,7 @@ def test_ac6_raw_sql_bad_column_not_busy(client: TestClient) -> None:
     )
     assert resp.status_code == 400
     body = resp.json()
-    assert body.get("error_code") != "sqlite_busy"
+    assert body.get("error_class") != ERROR_CLASS_LOCK_WAIT
     assert "no such column" in body["error"].lower()
 
 
@@ -216,4 +243,15 @@ def test_ac6_raw_sql_busy_returns_503(client: TestClient, monkeypatch: pytest.Mo
         json={"type": "sql", "sql": "SELECT 1"},
     )
     assert resp.status_code == 503
-    assert resp.json()["error_code"] == "sqlite_busy"
+    assert resp.json()["error_class"] == ERROR_CLASS_LOCK_WAIT
+
+
+# AC7/8 — client deadline envelope (local route) states 10s deadline; no narrow-query hint.
+def test_ac7_client_deadline_envelope_text() -> None:
+    from event_store.query_client_errors import envelope_client_deadline
+
+    env = envelope_client_deadline()
+    assert env["error_class"] == ERROR_CLASS_CLIENT_DEADLINE
+    assert "10s client deadline" in env["error"]
+    assert "narrower query" not in env["error"].lower()
+    assert "query_completed_age_ms" in env["error"]

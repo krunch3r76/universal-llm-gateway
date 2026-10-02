@@ -153,7 +153,7 @@ def main() -> None:
 
     try:
         result = _query(args.socket, body)
-        if result.get("error_code") in ("sqlite_busy", "client_deadline"):
+        if result.get("error_class") in ("lock_wait", "client_deadline"):
             print(json.dumps(result, indent=indent, default=str), file=sys.stderr)
             sys.exit(1)
     except FileNotFoundError:

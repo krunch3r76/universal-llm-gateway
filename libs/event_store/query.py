@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 from typing import Any
 
 from deploy_identity.code_version import resolve_code_version
@@ -22,12 +23,18 @@ from fastapi.responses import JSONResponse
 from .errors import EventStoreBusyError
 from .ingest import IngestServer
 from .operations import execute_operation, list_operations
+from .query_client_errors import ERROR_CLASS_LOCK_WAIT, lock_wait_body
+from .query_path_health import record_query_completed
 from .query_path_health import snapshot as query_path_snapshot
 from .store import EventStore
 
 logger = logging.getLogger(__name__)
 
 _MAX_QUERY_ROWS = 1000
+
+
+def _stamp_query_finished(started: float) -> None:
+    record_query_completed(time.perf_counter() - started)
 _ALLOWED_SQL_PREFIXES = ("SELECT", "EXPLAIN")
 
 
@@ -72,8 +79,12 @@ def create_query_router(
                     {"error": "Field 'params' must be an object"},
                     status_code=400,
                 )
-            result = await execute_operation(name, params, store)
-            if result.get("error_code") == "sqlite_busy":
+            started = time.perf_counter()
+            try:
+                result = await execute_operation(name, params, store)
+            finally:
+                _stamp_query_finished(started)
+            if result.get("error_class") == ERROR_CLASS_LOCK_WAIT:
                 return JSONResponse(result, status_code=503)
             return JSONResponse({"type": "result", "operation": name, **result})
 
@@ -183,14 +194,15 @@ async def _structured_query(data: dict[str, Any], store: EventStore) -> JSONResp
     sql = f"SELECT * FROM events WHERE {where} ORDER BY seq DESC LIMIT ?"
     params.append(limit)
 
+    started = time.perf_counter()
     try:
-        rows = await store.query(sql, tuple(params), limit=limit)
-    except EventStoreBusyError as e:
-        return JSONResponse(
-            {"error": str(e), "error_code": "sqlite_busy"},
-            status_code=503,
-        )
-    return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
+        try:
+            rows = await store.query(sql, tuple(params), limit=limit)
+        except EventStoreBusyError as e:
+            return JSONResponse(lock_wait_body(str(e)), status_code=503)
+        return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
+    finally:
+        _stamp_query_finished(started)
 
 
 async def _raw_sql(data: dict[str, Any], store: EventStore) -> JSONResponse:
@@ -219,24 +231,25 @@ async def _raw_sql(data: dict[str, Any], store: EventStore) -> JSONResponse:
         )
 
     limit = min(data.get("limit", 100), _MAX_QUERY_ROWS)
+    started = time.perf_counter()
     try:
-        rows = await store.query(
-            sql, tuple(raw_params), limit=limit, raise_on_error=True
-        )
-    except EventStoreBusyError as e:
-        return JSONResponse(
-            {"error": str(e), "error_code": "sqlite_busy"},
-            status_code=503,
-        )
-    except sqlite3.Error as e:
-        # Surface malformed SQL (bad column, syntax error, etc.) as a 400
-        # instead of silently returning []. The escape hatch is only useful
-        # if failures are visible; silent-empty looks like "no data" and
-        # causes agents to chase ghosts. Columns of `events`: seq, event_id,
-        # signal, role, scope, ts_unix_ms, timestamp, source, request_id,
-        # execution_id, model_id, gateway_id, payload.
-        return JSONResponse(
-            {"error": f"SQL error: {e}", "sql": sql[:200]},
-            status_code=400,
-        )
-    return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
+        try:
+            rows = await store.query(
+                sql, tuple(raw_params), limit=limit, raise_on_error=True
+            )
+        except EventStoreBusyError as e:
+            return JSONResponse(lock_wait_body(str(e)), status_code=503)
+        except sqlite3.Error as e:
+            # Surface malformed SQL (bad column, syntax error, etc.) as a 400
+            # instead of silently returning []. The escape hatch is only useful
+            # if failures are visible; silent-empty looks like "no data" and
+            # causes agents to chase ghosts. Columns of `events`: seq, event_id,
+            # signal, role, scope, ts_unix_ms, timestamp, source, request_id,
+            # execution_id, model_id, gateway_id, payload.
+            return JSONResponse(
+                {"error": f"SQL error: {e}", "sql": sql[:200]},
+                status_code=400,
+            )
+        return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
+    finally:
+        _stamp_query_finished(started)

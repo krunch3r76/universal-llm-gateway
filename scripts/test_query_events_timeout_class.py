@@ -24,11 +24,14 @@ def _load_cli() -> Any:
     return module
 
 
-def test_ac8_sqlite_busy_prints_json_and_exits_nonzero(
+def test_ac8_lock_wait_prints_json_and_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cli = _load_cli()
-    busy = {"error": "database is locked", "error_code": "sqlite_busy"}
+    busy = {
+        "error": "Event store waited on a database lock: database is locked",
+        "error_class": "lock_wait",
+    }
     monkeypatch.setattr(cli, "_query", lambda *_a, **_k: busy)
     monkeypatch.setattr(sys, "argv", ["query-events", "--op", "operations"])
     with pytest.raises(SystemExit) as exc:
@@ -36,7 +39,8 @@ def test_ac8_sqlite_busy_prints_json_and_exits_nonzero(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     parsed = json.loads(err.strip())
-    assert parsed["error_code"] == "sqlite_busy"
+    assert parsed["error_class"] == "lock_wait"
+    assert "lock_wait" in err
 
 
 def test_ac8_client_deadline_prints_json_and_exits_nonzero(
@@ -44,8 +48,8 @@ def test_ac8_client_deadline_prints_json_and_exits_nonzero(
 ) -> None:
     cli = _load_cli()
     deadline = {
-        "error": "Event query timed out before the server responded.",
-        "error_code": "client_deadline",
+        "error": "Event query read timed out: the 10s client deadline fired before the server responded.",
+        "error_class": "client_deadline",
     }
     monkeypatch.setattr(cli, "_query", lambda *_a, **_k: deadline)
     monkeypatch.setattr(sys, "argv", ["query-events", "--op", "stack-last-started"])
@@ -54,7 +58,34 @@ def test_ac8_client_deadline_prints_json_and_exits_nonzero(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     parsed = json.loads(err.strip())
-    assert parsed["error_code"] == "client_deadline"
+    assert parsed["error_class"] == "client_deadline"
+    assert "client_deadline" in err
+
+
+def test_ac8_read_timeout_does_not_print_query_failed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_cli()
+
+    class _TimeoutClient:
+        def __enter__(self) -> _TimeoutClient:
+            return self
+
+        def __exit__(self, *_a: object) -> bool:
+            return False
+
+        def post(self, *_a: object, **_k: object) -> None:
+            raise httpx.ReadTimeout("read timed out")
+
+    monkeypatch.setattr(httpx, "HTTPTransport", lambda *a, **k: object())
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _TimeoutClient())
+    monkeypatch.setattr(sys, "argv", ["query-events", "--op", "operations"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Query failed:" not in err
+    assert "client_deadline" in err
 
 
 def test_ac8_other_http_error_prints_server_json_body(

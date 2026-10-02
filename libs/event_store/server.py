@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,21 @@ def create_app(
     subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
 ) -> FastAPI:
     """Build the FastAPI query/subscribe application."""
-    app = FastAPI(title="Event Store")
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+        lag_task = asyncio.create_task(run_event_loop_lag_probe())
+        app.state.event_loop_lag_probe_task = lag_task
+        try:
+            yield
+        finally:
+            lag_task.cancel()
+            try:
+                await lag_task
+            except asyncio.CancelledError:
+                pass
+
+    app = FastAPI(title="Event Store", lifespan=_lifespan)
     query_router = create_query_router(store, ingest, subscriber_queues)
     subscribe_router = create_subscribe_router(
         store, subscriber_queues, subscriber_queue_maxsize=subscriber_queue_maxsize
@@ -261,7 +276,6 @@ async def run_service(
             ]
         )
         started = True
-        asyncio.create_task(run_event_loop_lag_probe())
 
         if persist:
             retention_task = asyncio.create_task(

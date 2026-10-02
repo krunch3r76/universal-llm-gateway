@@ -48,6 +48,7 @@ from .operations_trace import (
     _stack_last_started,
     _verify_tool_execution,
 )
+from .query_client_errors import lock_wait_body
 from .store import EventStore
 
 logger = get_logger(__name__)
@@ -104,7 +105,7 @@ async def execute_operation(
         return await _DISPATCH[name](params, store)
     except EventStoreBusyError as e:
         logger.warning("Operation %s blocked on SQLITE_BUSY params=%s", name, params)
-        return {"error": str(e), "error_code": "sqlite_busy"}
+        return lock_wait_body(str(e))
     except Exception as e:
         logger.exception("Operation %s failed with params=%s", name, params)
         return {"error": "Operation failed", "error_type": e.__class__.__name__}
