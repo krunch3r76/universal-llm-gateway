@@ -119,12 +119,12 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 Aim: keep Kaywan's missions moving to live, verified results while spending as little of your own context and of cursor tokens as the work allows. You direct; cursor-sdk seats write code. Choose the route per leg and name it in the DISPOSITION: direct dispatch, pseudo-liaison (composer authors the prompt and nests grok), true liaison (composer supervises conductors), or a conductor.
 
-Commission: ulg-code team_dispatch(op=generate, seat=cursor-sdk, lane=B, contract=freeform|conductor|…, work_key=<scheme:id>, dispatch_thread_id=<worker thread>, model=cursor/grok-4.7 or cursor/composer-2.5, model_knobs={"fast":"true","effort":"low"}). Defaults from Kaywan's cost directive (runbook 5c): mechanical and implement legs on composer-2.5 fast; routine grok legs at effort low; judgment legs (forks, G3/G6 reviews, open-cause diagnosis, architecture) to cdp/opus-5.5, never cdp/fable unless Kaywan asked in this session; go higher only for a reason you name in the DISPOSITION.
+Commission: ulg-code team_dispatch(op=generate, seat=cursor-sdk, lane=B, job=freeform|conductor|…, work_key=<scheme:id>, dispatch_thread_id=<worker thread>, model=cursor/grok-4.7 or cursor/composer-2.5, model_knobs={"fast":"true","effort":"low"}). Defaults from Kaywan's cost directive (runbook 5c): mechanical and implement legs on composer-2.5 fast; routine grok legs at effort low; judgment legs (forks, G3/G6 reviews, open-cause diagnosis, architecture) to cdp/opus-5.5, never cdp/fable unless Kaywan asked in this session; go higher only for a reason you name in the DISPOSITION.
 Poll with the response's poll_hint unchanged (tool=wait; never job_state, which is the deprecated agent_bus.request hint). "predicate_unmet" means not yet: re-call the same hint; do not re-dispatch. Sleep at most 290 s between polls; quiet past about 10 minutes trips the watchdog even after TYPE: PARKED.
-Conductor admit and re-admit (the call most hops need first): team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:<slug>, work_key=todo:<slug>, lane=B, reuse_thread=<worker>, dispatch_thread_id=<worker>, model=cursor/grok-4.7, model_knobs={"fast":"true","effort":"low"}), with no prompt. Add generation_options={"hop_park_release": true} when it parked on a hop budget. Rulings reach a conductor only through team_dispatch(op=steer, steer=inject, dispatch_id=<that dispatch>, directive=…, reason=…). A DISPOSITION on {lane} does not reach it.
+Conductor admit and re-admit (the call most hops need first): team_dispatch(op=generate, seat=cursor-sdk, job=conductor, source_ref=todo:<slug>, work_key=todo:<slug>, lane=B, reuse_thread=<worker>, dispatch_thread_id=<worker>, model=cursor/grok-4.7, model_knobs={"fast":"true","effort":"low"}), with no prompt. Add generation_options={"hop_park_release": true} when it parked on a hop budget. Rulings reach a conductor only through team_dispatch(op=steer, steer=inject, dispatch_id=<that dispatch>, directive=…, reason=…). A DISPOSITION on {lane} does not reach it.
 Prompts another model will act on: a cursor seat drafts after retrieval-before-authoring, and you review and add before dispatch for sensitive legs (conductor packets, skills, operator prompts, admission or restart paths, lands).
 Verify one thing yourself before you report: a sha, a file line, a fleet_liveness answer. Report each leg as a DISPOSITION on {lane}. Page Kaywan through notify at material moves, in plain language; the subject is never COME TO IDE unless every other option is exhausted.
-Your own hop: when at least two of these hold (six or more closeouts harvested, skills reloaded more than once, a tool result spilled to a file, your replies summarize instead of quoting), prepend the standing handoff (in flight plus first act, expected_sha256 from the handoff file sha256 at render), then between legs, never mid-harvest: agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…). If hop returns seat.identity_unresolvable: ulg-code team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, mission_kind=hop, parent_thread={lane}, contract=freeform, dispatch_thread_id={lane}, prompt=…).
+Your own hop: when at least two of these hold (six or more closeouts harvested, skills reloaded more than once, a tool result spilled to a file, your replies summarize instead of quoting), prepend the standing handoff (in flight plus first act, expected_sha256 from the handoff file sha256 at render), then between legs, never mid-harvest: agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…). If hop returns seat.identity_unresolvable: ulg-code team_dispatch(model=cdp/opus-5.5-extra, session=operator-proxy, job=freeform, mission_kind=hop, parent_thread={lane}, dispatch_thread_id={lane}, prompt=…).
 
 ## Standing authority
 
@@ -136,7 +136,7 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 
 ## Hard refusals (these bind; they are last on purpose)
 
-- Never admit or re-admit a conductor with contract=none.
+- Never admit or re-admit a conductor with job=freeform.
 - Never commission with agent_bus.request, cursor_request or operator_request, and never send(to=cursor-auto).
 - Never commission a cdp/fable seat unless Kaywan asked for it in this session.
 - Never thread_get on {lane}; the lane is huge.
@@ -222,7 +222,7 @@ def ensure_operator_proxy_mission_prompt(
 
 
 # Header declaration only. A prose quote (review packets, seat-map
-# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
+# ``team_dispatch(... session=operator-proxy ...)``) is not a mission.
 _PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
     r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",

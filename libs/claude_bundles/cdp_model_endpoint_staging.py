@@ -276,6 +276,7 @@ def stage_cdp_prompt_with_skills(
     )
     from claude_bundles.operator_proxy_mission import (
         MISSION_SKILL_SLUGS,
+        is_operator_proxy_mission_purpose,
         purpose_implies_mission,
     )
     from claude_bundles.sealed_cdp_prefix import ensure_review_reading_charter
@@ -312,6 +313,19 @@ def stage_cdp_prompt_with_skills(
         packet_path=packet_path,
         sidecar_ref=sidecar_ref,
     )
+    from claude_bundles.operator_proxy_mission import (
+        ensure_operator_proxy_mission_prompt,
+        is_operator_proxy_mission_purpose,
+    )
+
+    if is_operator_proxy_mission_purpose(purpose):
+        from claude_bundles.operator_proxy_hop_status import standing_handoff_text_for_prompt
+
+        body = ensure_operator_proxy_mission_prompt(
+            body,
+            standing_handoff_text=standing_handoff_text_for_prompt(body),
+            execution_id=execution_id,
+        )
     from agent_bus_store.house_pools import (
         PoolsParseError,
         apply_fable_house_staging,
@@ -338,10 +352,13 @@ def stage_cdp_prompt_with_skills(
 
     slash_slugs, _inline_slugs = partition_cdp_skills(effective)
     # Induction turn covers every shared_sync slug; slash lines would double-load.
-    # StagedPrompt.mission stays the purpose/header predicate — omit_slash is wider.
+    # StagedPrompt.mission stays the purpose/header predicate for the worker.
+    # Mission skill floor and hop briefing bind only from session/purpose wire,
+    # not from a quoted purpose= line in the author body (typed-job fork 8).
     mission = purpose_implies_mission(purpose, body)
-    omit_slash = mission or bool(slash_slugs)
-    if mission:
+    mission_window = is_operator_proxy_mission_purpose(purpose)
+    omit_slash = mission_window or bool(slash_slugs)
+    if mission_window:
         have = {s.lstrip("/").lower() for s in effective}
         for slug in reversed(MISSION_SKILL_SLUGS):
             if slug.lower() not in have:

@@ -32,6 +32,8 @@ _KEEP_LIST = frozenset(
         "libs/dispatch_knob_policy/__init__.py",
         "cursor-plugins/ulg-ecosystem/skills/hypothesize-simulate/SKILL.md",
         "scripts/model_manager/ui/controller/charter_runner/window_terminal_contract.py",
+        "libs/claude_bundles/induction_reply_baseline.py",
+        "cursor-plugins/ulg-ecosystem/skills/reasoning-posture/reference.md",
     }
 )
 

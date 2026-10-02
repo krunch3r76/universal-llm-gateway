@@ -170,8 +170,8 @@ only handoff on `team_dispatch` (not `generate`).
 | **Bound implement** (→ Web) | `web-implement` | `web-anthropic` | push bus message |
 
 **Bound implement has two seats** (response `handoff_contract=implement` when the request sets
-`job=implement`; the role slug does not derive contract): `role=cursor-implement, job=implement` → seat
-`cursor` (open IDE thread), and `role=web-implement, job=implement` → seat `web-anthropic` (operator push).
+`job=implement`; seat picks the surface, not a retired role slug): `seat=cursor, job=implement` → seat
+`cursor` (open IDE thread), and `seat=web-anthropic, job=implement` → seat `web-anthropic` (operator push).
 Both require acceptance criteria in `<task_guidance>`; the implement guardrails (acceptance-criteria lint,
 implement pointer line, `contract:implement` tag) key on `handoff_contract` from the typed `job` + seat,
 not on role name alone. Distinct from

@@ -670,7 +670,8 @@ async def test_session_operator_proxy_or_mission_admits_briefing_and_chip(
         monkeypatch, tmp_path, session=session, request_id=f"req-{session}"
     )
     assert result["resolved_job"] == "freeform"
-    assert "Mission seat map" in staged
+    assert "# Hop on agent-bus:" in staged
+    assert "## Hard refusals" in staged
     assert "cdp-operator-proxy" in staged
 
 
@@ -688,7 +689,8 @@ async def test_session_ask_admits_architecture_floor_without_chip(
     )
     assert "architecture-invariants" in staged
     assert "ulg-architecture" in staged
-    assert "Mission seat map" not in staged
+    assert "# Hop on agent-bus:" not in staged
+    assert "## Hard refusals" not in staged
     assert "cdp-operator-proxy" not in staged
 
 

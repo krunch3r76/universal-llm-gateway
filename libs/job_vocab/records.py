@@ -47,7 +47,7 @@ class JobRecord:
     def delivery_role(self) -> str:
         """check-review delivers as reviewer. Every other job leaves it empty.
 
-        Spec step 3: check-review sets delivery_role=reviewer. freeform,
+        Spec step 3: check-review sets delivery_role to reviewer. freeform,
         code-review, and delivery-review copy the old none row with the
         field empty. Breaks when a generate return reads a missing attribute
         and drops resolved_job.

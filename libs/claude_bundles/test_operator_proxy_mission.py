@@ -176,9 +176,11 @@ def test_refuse_bullets_map_to_template_lines() -> None:
     bullets = _refuse_bullets(_runbook_for_refuse_coverage())
     assert len(bullets) == len(_REFUSE_BULLET_KEYWORDS)
     template_lines = _BRIEFING_BLOCK.splitlines()
+    template_aliases = {"contract=none": "job=freeform"}
     for bullet, keyword in zip(bullets, _REFUSE_BULLET_KEYWORDS, strict=True):
         assert keyword in bullet
-        assert any(keyword in line for line in template_lines)
+        template_key = template_aliases.get(keyword, keyword)
+        assert any(template_key in line for line in template_lines)
 
 
 def test_rendered_prompt_is_under_the_old_briefing() -> None:
@@ -188,7 +190,7 @@ def test_rendered_prompt_is_under_the_old_briefing() -> None:
     for needle in (
         "2000 characters",
         "poll_hint",
-        "contract=conductor",
+        "job=conductor",
         "git_integration_worker",
         "porcelain_raw_open",
         "send_later",
@@ -218,8 +220,10 @@ def _induction_slugs(merged: str) -> list[str]:
     return partition_cdp_skills(authority)[0]
 
 
-def test_stage_freeform_body_purpose_induces_mission_skills(tmp_path, monkeypatch) -> None:
-    """purpose=freeform plus a body `purpose: operator-proxy` is a mission."""
+def test_stage_freeform_body_purpose_does_not_induce_mission_skills(
+    tmp_path, monkeypatch
+) -> None:
+    """job=freeform with a quoted body purpose line does not get mission chips."""
     staged = _stage_under(
         tmp_path,
         monkeypatch,
@@ -230,8 +234,7 @@ def test_stage_freeform_body_purpose_induces_mission_skills(tmp_path, monkeypatc
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert not merged.lstrip().startswith("/")
     induction = _induction_slugs(merged)
-    for slug in MISSION_SKILL_SLUGS:
-        assert slug in induction
+    assert "cdp-operator-proxy" not in induction
 
 
 def test_staged_prompt_text_runner_would_load_still_implies_mission(
@@ -364,7 +367,7 @@ def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
     assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
     assert out.index("## Hop request (data)") < out.index("## Hard refusals")
     assert out.index("# Mission") < out.index("## Hard refusals")
-    assert "contract=none" in out.split("## Hard refusals", 1)[1]
+    assert "job=freeform" in out.split("## Hard refusals", 1)[1]
     assert "Author the standing handoff before you leave." in out
     assert "execution_id unknown" not in out
 
