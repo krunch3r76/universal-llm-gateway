@@ -157,6 +157,7 @@ from services.rag.chunk_filters import chunk_is_noise, chunk_metadata_is_noise
 from services.rag.metadata_boost import apply_metadata_boost
 
 from .context_formatting import ChunkData, format_context, merge_adjacent_chunks
+from .empty_reason import classify_accepted_scope_empty_reason
 from .query_coverage_bias import apply_query_coverage_bias
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import build_facet_pool as _build_facet_pool
@@ -487,6 +488,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     ),
                     "scope_rejected": False,
                     "scope_source": _SCOPE_SOURCE_CLASSIFIER,
+                    "empty_reason": "retrieval_skipped",
                 },
             )
 
@@ -525,6 +527,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     ),
                     "scope_rejected": False,
                     "scope_source": _SCOPE_SOURCE_CLASSIFIER,
+                    "empty_reason": "out_of_scope",
                 },
             )
 
@@ -1574,14 +1577,13 @@ class RagMultiRetrieveHandler(BaseHandler):
         )
         # Distinguish accepted-scope zero yields so MCP/authors cannot read the
         # no-results sentinel as "corpus missing" or a transport outage.
-        empty_reason: str | None = None
-        if len(merged) == 0:
-            if junk_wiped_all:
-                empty_reason = "junk_filtered"
-            elif total_raw == 0:
-                empty_reason = "index_miss"
-            else:
-                empty_reason = "filtered"
+        empty_reason = classify_accepted_scope_empty_reason(
+            chunks_after_merge=len(merged),
+            junk_wiped_all=junk_wiped_all,
+            total_raw=total_raw,
+            queries_succeeded=len(successful),
+            queries_attempted=len(results_per_query),
+        )
         _retrieval_seconds = _time.monotonic() - _retrieval_start
         chunks_per_query = [len(r) for r in successful]
         rrf_scores_list = list(merged_scores.values())

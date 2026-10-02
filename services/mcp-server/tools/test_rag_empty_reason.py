@@ -33,7 +33,7 @@ def _zero_response(*, empty_reason: str | None = None) -> dict:
     }
 
 
-def test_ok_zero_without_empty_reason_gets_index_miss(monkeypatch) -> None:
+def test_ok_zero_without_empty_reason_gets_unreported(monkeypatch) -> None:
     """Pre-fix hazard: ok+sentinel+0 with no distinguisher is unreadable."""
 
     monkeypatch.setattr(
@@ -51,8 +51,28 @@ def test_ok_zero_without_empty_reason_gets_index_miss(monkeypatch) -> None:
     assert env["status"] == "ok"
     assert env["context"] == _SENTINEL
     assert env["retrieval"]["chunks_found"] == 0
-    assert env["retrieval"]["empty_reason"] == "index_miss"
+    assert env["retrieval"]["empty_reason"] == "unreported"
     assert "retryable" not in env
+
+
+def test_chunks_found_none_does_not_synthesize_empty_reason(monkeypatch) -> None:
+    body = _zero_response()
+    body["pipeline"]["retrieval"]["chunks_found"] = None
+
+    monkeypatch.setattr(
+        _rag_search_exec,
+        "pipeline_call",
+        lambda *args, **kwargs: body,
+    )
+    env = _rag_search_exec.run_rag_search(
+        "missing count",
+        scope="llm_prompting",
+        prefixes=None,
+        pipeline_options={},
+        unscoped=False,
+    )
+    assert env["status"] == "ok"
+    assert "empty_reason" not in env["retrieval"]
 
 
 def test_pipeline_empty_reason_is_preserved(monkeypatch) -> None:

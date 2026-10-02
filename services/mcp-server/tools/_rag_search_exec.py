@@ -197,13 +197,15 @@ def _annotate_accepted_scope_empty(envelope: dict[str, Any]) -> dict[str, Any]:
     Transport rejections already have ``scope_rejection_reason`` /
     ``retrieval_rejection_reason``. A true index miss (or post-filter wipe)
     used to return only the no-results sentinel under ``status: ok``, which
-    authors read as a null corpus. Default missing reasons to ``index_miss``.
+    authors read as a null corpus. When the pipeline omitted a reason (older
+    binary), synthesize ``unreported`` — not ``index_miss``, which claims a
+    search ran.
     """
     retrieval = envelope.get("retrieval")
     if not isinstance(retrieval, dict):
         return envelope
     chunks_found = retrieval.get("chunks_found")
-    if chunks_found not in (0, None):
+    if chunks_found != 0:
         return envelope
     if retrieval.get("empty_reason"):
         return envelope
@@ -215,7 +217,7 @@ def _annotate_accepted_scope_empty(envelope: dict[str, Any]) -> dict[str, Any]:
         return envelope
     annotated = dict(envelope)
     annotated_retrieval = dict(retrieval)
-    annotated_retrieval["empty_reason"] = "index_miss"
+    annotated_retrieval["empty_reason"] = "unreported"
     annotated["retrieval"] = annotated_retrieval
     return annotated
 
