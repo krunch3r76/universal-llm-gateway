@@ -624,6 +624,7 @@ async def team_dispatch(
                 (getattr(body, "generation_options", None) or {}).get("stop_after")
             ),
             session=getattr(body, "session", None),
+            model=getattr(body, "model", None),
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())

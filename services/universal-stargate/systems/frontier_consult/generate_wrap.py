@@ -548,6 +548,14 @@ async def dispatch_cursor_sdk_generate_route(
                 result["warnings"] = list(result.get("warnings") or []) + [
                     split_warning
                 ]
+        if isinstance(result, dict):
+            from job_vocab import job_record
+
+            record = job_record(body.job or "")
+            if record is not None:
+                result["resolved_job"] = record.name
+                result["delivery_role"] = record.delivery_role
+                result["registry_ref"] = record.registry_ref
         if isinstance(result, dict) and wrap.materialized:
             result["materialization_mode"] = "auto"
             if wrap.warnings:

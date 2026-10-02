@@ -8,31 +8,22 @@ from systems.frontier_consult.cursor_sdk_generate import CURSOR_SDK_REPLY_SEAT
 from systems.frontier_consult.cursor_sdk_role_delivery import (
     _conforming_check_closeout,
     build_role_labeled_turn_body,
-    resolve_delivery_from_role,
-    should_bridge_cursor_check_review,
+    closeout_for_job,
 )
 from systems.frontier_consult.handoff_response import build_handoff_result
 
 
-def test_should_bridge_residual_luna() -> None:
-    assert should_bridge_cursor_check_review(
-        contract="none",
-        resolved_model="cursor/gpt-5.6-luna",
-    )
-    assert not should_bridge_cursor_check_review(
-        contract="implement",
-        resolved_model="cursor/gpt-5.6-luna",
-    )
+def test_closeout_grammar_follows_job_not_model() -> None:
+    findings = "Findings ok."
+    shaped = closeout_for_job("check-review", findings)
+    assert "FILE_EVIDENCE_PATHS:" in shaped
+    plain = closeout_for_job("freeform", findings)
+    assert plain == findings
+    assert "FILE_EVIDENCE_PATHS:" not in plain
 
 
 def test_poll_hint_stays_cursor_sdk_when_role_bridge_eligible() -> None:
-    """Friction 24229: bridge may fail closed; wait identity = SDK closeout author."""
-    model = "cursor/gpt-5.6-luna"
-    assert should_bridge_cursor_check_review(
-        contract="none",
-        resolved_model=model,
-    )
-    assert resolve_delivery_from_role(model) == "reviewer"
+    """Friction 24229: wait identity = SDK closeout author."""
     # Admit-time poll_hint must still key on the guaranteed closeout seat.
     fields = build_handoff_result(
         thread_id="5094",

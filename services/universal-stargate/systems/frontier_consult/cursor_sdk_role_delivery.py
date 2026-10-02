@@ -8,10 +8,6 @@ import re
 from dataclasses import dataclass
 
 import httpx
-from implement_admission.check_review_substrate import (
-    cursor_delivery_from_role,
-    is_cursor_check_review_model,
-)
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
@@ -68,12 +64,20 @@ def build_role_labeled_turn_body(findings: str, file_paths: list[str]) -> str:
     return "\n".join(lines)
 
 
-def should_bridge_cursor_check_review(
-    *,
-    contract: str,
-    resolved_model: str,
-) -> bool:
-    return contract == "none" and is_cursor_check_review_model(resolved_model)
+def closeout_for_job(job: str, body: str) -> str:
+    """Findings plus FILE_EVIDENCE_PATHS only when the job is check-review."""
+    if (job or "").strip().lower() != "check-review":
+        return body
+    parsed = _conforming_check_closeout(body)
+    if parsed is None:
+        findings = _extract_findings_text(body)
+        if not findings.strip():
+            return body
+        return build_role_labeled_turn_body(findings, [])
+    findings, paths = parsed
+    if _FILE_EVIDENCE_HEADER.search(findings) and paths:
+        return findings if findings.endswith("\n") else findings
+    return build_role_labeled_turn_body(findings, paths)
 
 
 async def post_role_labeled_check_turn(
@@ -124,6 +128,3 @@ async def post_role_labeled_check_turn(
         )
     return RoleDeliveryOutcome(posted=True, body_chars=len(body))
 
-
-def resolve_delivery_from_role(resolved_model: str) -> str | None:
-    return cursor_delivery_from_role(resolved_model)

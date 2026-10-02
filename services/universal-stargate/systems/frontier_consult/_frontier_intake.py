@@ -35,6 +35,7 @@ def reject_unsupported_packet_inputs(
     packet_kind: str | None = None,
     stop_after: str | None = None,
     session: str | None = None,
+    model: str | None = None,
 ) -> None:
     """Mirror MCP predicates 3/4/5 for Stargate HTTP admit."""
     reject_retired_packet_kind(packet_kind, request_id=request_id)
@@ -88,6 +89,19 @@ def reject_unsupported_packet_inputs(
                 "event": "dispatch.job.refused",
                 "reason": "job_unknown",
                 "registry_ref": parsed.registry_ref,
+            },
+        )
+    if wire == "check-review" and not (model or "").strip():
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason="job=check-review requires an explicit model on the check-review allowlist",
+            status_code=422,
+            code="handle_forbidden",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "handle_forbidden",
+                "registry_ref": "job_vocab:check-review",
             },
         )
     if wire not in admitted:

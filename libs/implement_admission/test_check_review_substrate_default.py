@@ -8,7 +8,6 @@ from implement_admission.check_review_substrate import (
     CHECK_REVIEW_DECISION_CITATION,
     CURSOR_CHECK_REVIEW_MODELS,
     coerce_check_review_omit_to_cursor_seat,
-    evaluate_check_review_admission,
     is_cursor_check_review_model,
     load_check_review_default_model,
     resolve_check_review_model,
@@ -35,25 +34,19 @@ def test_standing_default_is_judgment_grok() -> None:
     assert "cursor/gpt-5.6-terra" not in entry["model"]
 
 
-def test_cursor_check_review_allowlist_is_grok_only() -> None:
-    assert CURSOR_CHECK_REVIEW_MODELS == frozenset({"cursor/grok-4.7"})
-    for retired in (
-        "cursor/muse-spark-1.3",
-        "cursor/claude-fable-5-1",
-        "cursor/gpt-5.6-terra",
-        "cursor/gpt-5.6-sol",
-        "cursor/gpt-5.6-luna",
-    ):
-        assert retired not in CURSOR_CHECK_REVIEW_MODELS
-        assert is_cursor_check_review_model(retired) is False
-        assert (
-            evaluate_check_review_admission(
-                "cursor-sdk",
-                retired,
-                api_role_with_cursor_on_api_profile=False,
-            )
-            is None
-        )
+def test_cursor_check_review_allowlist_is_six_ids() -> None:
+    assert CURSOR_CHECK_REVIEW_MODELS == frozenset(
+        {
+            "cursor/muse-spark-1.3",
+            "cursor/claude-fable-5-1",
+            "cursor/gpt-5.6-terra",
+            "cursor/gpt-5.6-sol",
+            "cursor/gpt-5.6-luna",
+            "cursor/grok-4.7",
+        }
+    )
+    for model in CURSOR_CHECK_REVIEW_MODELS:
+        assert is_cursor_check_review_model(model) is True
 
 
 def test_route_policy_conformance() -> None:
@@ -64,8 +57,7 @@ def test_resolve_reviewer_omit_uses_cursor_default() -> None:
     resolution = resolve_check_review_model("reviewer", None)
     assert resolution.resolved_model == "cursor/grok-4.7"
     assert resolution.substrate == "cursor-sdk"
-    # grok-4.7 is a reasoner; cursor_delivery_from_role maps it to skeptic.
-    assert resolution.delivery_from_role == "skeptic"
+    assert resolution.delivery_from_role == "reviewer"
 
 
 def test_coerce_omit_reviewer_to_cursor_seat() -> None:

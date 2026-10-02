@@ -2124,6 +2124,21 @@ async def _deliver_sdk_closeout(
     }
 
     closeout_contract = sdk_contract_or_missing(req.handoff_contract)
+    from systems.frontier_consult.cursor_sdk_role_delivery import closeout_for_job
+
+    shaped = closeout_for_job(closeout_contract, delivery.body)
+    if shaped != delivery.body:
+        from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+            CloseoutDelivery,
+        )
+
+        delivery = CloseoutDelivery(
+            body=shaped,
+            sidecar_ref=delivery.sidecar_ref,
+            sidecar_path=delivery.sidecar_path,
+            full_result_bytes=len(shaped.encode("utf-8")),
+            closeout_status=delivery.closeout_status,
+        )
     closeout_reply_kwargs = {
         "thread_id": req.thread_id,
         "to_agent": reply_to,
@@ -2147,32 +2162,6 @@ async def _deliver_sdk_closeout(
         bus_result = await bus.reply(**closeout_reply_kwargs)
 
     if bus_result.status_code < 400:
-        contract = sdk_contract_or_missing(req.handoff_contract)
-        try:
-            from systems.frontier_consult.cursor_sdk_role_delivery import (
-                post_role_labeled_check_turn,
-                resolve_delivery_from_role,
-                should_bridge_cursor_check_review,
-            )
-
-            if should_bridge_cursor_check_review(
-                contract=contract,
-                resolved_model=req.model,
-            ):
-                delivery_role = resolve_delivery_from_role(req.model)
-                if delivery_role:
-                    bridge_source = (outcome.body or delivery.body or "").strip()
-                    await post_role_labeled_check_turn(
-                        thread_id=req.thread_id,
-                        to_agent=reply_to,
-                        delivery_from_role=delivery_role,
-                        closeout_body=bridge_source,
-                    )
-        except Exception:
-            logger.exception(
-                "cursor check/review role bridge failed: dispatch_id=%s",
-                req.dispatch_id,
-            )
         # model_knobs_requested: emitted ModelSelection.params (or rebuild at
         # closeout); queued/dispatched stamps use the same build path at admit.
         # Missing SDK requestId is an observability gap (R F-1), not a crash.

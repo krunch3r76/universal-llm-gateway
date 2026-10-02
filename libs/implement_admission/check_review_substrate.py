@@ -32,6 +32,11 @@ CHECK_REVIEW_DECISION_CITATION = "decision:code-review-panel-cursor-substrate"
 CHECK_REVIEW_API_ROLES = frozenset({"reviewer", "skeptic"})
 CURSOR_CHECK_REVIEW_MODELS = frozenset(
     {
+        "cursor/muse-spark-1.3",
+        "cursor/claude-fable-5-1",
+        "cursor/gpt-5.6-terra",
+        "cursor/gpt-5.6-sol",
+        "cursor/gpt-5.6-luna",
         "cursor/grok-4.7",
     }
 )
@@ -228,20 +233,6 @@ def independently_measured(left: ConsultantIdentity, right: ConsultantIdentity) 
     return left.rung != right.rung
 
 
-def cursor_delivery_from_role(model: str) -> str | None:
-    """Map cursor check/review model to gate-readable bus author role."""
-    bare = ModelId.parse(model).api_model_id.lower()
-    if bare.startswith("claude-fable"):
-        return "reviewer"
-    if bare.startswith("muse-spark"):
-        return "reviewer"
-    if bare.startswith("gpt-5.6") or bare == "gpt-5.5":
-        return "reviewer"
-    if bare.startswith("grok-4.7"):
-        return "skeptic"
-    return None
-
-
 def is_cursor_check_review_model(model: str) -> bool:
     """True when ``model`` is in the standing cursor check/review allowlist."""
     return model.strip().lower() in CURSOR_CHECK_REVIEW_MODELS
@@ -283,7 +274,7 @@ def resolve_check_review_model(
 
     backend = ModelId.parse(resolved).backend_type
     if backend == "cursor_sdk":
-        delivery = cursor_delivery_from_role(resolved)
+        delivery = "reviewer" if is_cursor_check_review_model(resolved) else None
         return CheckReviewResolution(
             resolved_model=resolved,
             substrate="cursor-sdk",
@@ -358,8 +349,8 @@ def evaluate_check_review_admission(
 
         bare = canonical_cursor_bare_id(model)
         cap = CURSOR_MODEL_CAPABILITIES.get(bare)
-        delivery = cursor_delivery_from_role(model)
-        if delivery and cap and cap.instruction_profile == _MECHANICAL_PROFILE:
+        on_allowlist = is_cursor_check_review_model(model)
+        if on_allowlist and cap and cap.instruction_profile == _MECHANICAL_PROFILE:
             return CheckReviewAdmissionReject(
                 field="model",
                 reason=f"model {model!r} profile_mismatch for check/review delivery",
