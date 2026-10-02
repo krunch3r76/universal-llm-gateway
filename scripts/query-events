@@ -78,12 +78,24 @@ def _parse_kv(items: list[str]) -> dict[str, str]:
 def _query(socket_path: str, body: dict[str, Any]) -> dict[str, Any]:
     """Synchronous HTTP POST to event service over UDS."""
     import httpx
+    from event_store.query_client_errors import (
+        envelope_client_deadline,
+        envelope_from_http_status_error,
+    )
 
     transport = httpx.HTTPTransport(uds=socket_path)
-    with httpx.Client(transport=transport, timeout=10.0) as client:
-        resp = client.post("http://localhost/v1/query", json=body)
-        resp.raise_for_status()
-        return resp.json()
+    try:
+        with httpx.Client(transport=transport, timeout=10.0) as client:
+            resp = client.post("http://localhost/v1/query", json=body)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.ReadTimeout:
+        return envelope_client_deadline()
+    except httpx.HTTPStatusError as exc:
+        busy = envelope_from_http_status_error(exc)
+        if busy is not None:
+            return busy
+        raise
 
 
 async def _subscribe(
@@ -141,6 +153,9 @@ def main() -> None:
 
     try:
         result = _query(args.socket, body)
+        if result.get("error_class") in ("lock_wait", "client_deadline"):
+            print(json.dumps(result, indent=indent, default=str), file=sys.stderr)
+            sys.exit(1)
     except FileNotFoundError:
         print(
             "Event service socket not found. Is the event service running?",

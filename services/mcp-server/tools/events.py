@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from event_store.query_client_errors import (
+    envelope_client_deadline,
+    envelope_from_http_status_error,
+)
 from mcp_events import monotonic_now, record
 from transport_utils import make_sync_client
 
@@ -125,13 +129,14 @@ def _query_event_service(
             )
         }
     except httpx.ReadTimeout:
-        return {
-            "error": "Event query timed out. Try a narrower query or increase limits."
-        }
+        return envelope_client_deadline()
     except httpx.ConnectError as e:
         logger.error("Event service not reachable: %s", e, exc_info=True)
         return {"error": f"Event service not reachable: {e}"}
     except httpx.HTTPStatusError as e:
+        busy = envelope_from_http_status_error(e)
+        if busy is not None:
+            return busy
         logger.error(
             "Event service returned error status: %s, response: %s",
             e.response.status_code,

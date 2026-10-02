@@ -13,8 +13,10 @@ from universal_logging import get_logger
 
 from .dispatch_economics_pricing import dispatch_economics_dollar_equivalents
 from .dispatch_economics_rollup import dispatch_economics_token_rollup
+from .errors import EventStoreBusyError
 from .operation_catalog import get_operation
 from .operation_types import OperationCallable
+from .operations_charter_tick import manage_charter_tick_audit
 from .operations_delivery_audit import (
     _delivery_audit_artifacts,
     _delivery_audit_baseline_campaign,
@@ -22,7 +24,6 @@ from .operations_delivery_audit import (
     _delivery_audit_selfassess,
     _delivery_audit_token_rollup,
 )
-from .operations_charter_tick import manage_charter_tick_audit
 from .operations_densify_review import (
     _densify_review_admitted,
     _densify_review_outcome,
@@ -47,6 +48,7 @@ from .operations_trace import (
     _stack_last_started,
     _verify_tool_execution,
 )
+from .query_client_errors import lock_wait_body
 from .store import EventStore
 
 logger = get_logger(__name__)
@@ -101,6 +103,9 @@ async def execute_operation(
 
     try:
         return await _DISPATCH[name](params, store)
+    except EventStoreBusyError as e:
+        logger.warning("Operation %s blocked on SQLITE_BUSY params=%s", name, params)
+        return lock_wait_body(str(e))
     except Exception as e:
         logger.exception("Operation %s failed with params=%s", name, params)
         return {"error": "Operation failed", "error_type": e.__class__.__name__}

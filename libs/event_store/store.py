@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .errors import EventStoreBusyError, is_sqlite_busy
 from .retention import HEARTBEAT_SIGNALS
 from .schema import _SCHEMA_SQL, migrate_correlation_taxonomy_columns
 
@@ -300,9 +301,12 @@ class EventStore:
             return [dict(row) for row in cursor.fetchmany(limit)]
 
         try:
-            return await asyncio.to_thread(read)
+            rows = await asyncio.to_thread(read)
+            return rows
         except sqlite3.Error as e:
             logger.error("Query failed: %s params=%s - %s", sql[:120], params, e)
+            if is_sqlite_busy(e):
+                raise EventStoreBusyError(str(e)) from e
             if raise_on_error:
                 raise
             return []
