@@ -349,6 +349,84 @@ def test_resolve_drain_arm_helpers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wait_for_boundary_deadline_defers_until_draining(tmp_path) -> None:
+    """AC5: armed-open-admits must not burn the manage drain deadline.
+
+    Breaks if deferral is omitted: a past deadline while ``armed`` would
+    immediately return timeout (prod GIT_WORKER_DRAIN_DEADLINE_S=600 under a
+    long conductor holder).
+    """
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="ac5-defer",
+        wait_for_boundary=True,
+        park_live=False,
+        caller_agent="cursor",
+    )
+    store.set_drain_epoch(
+        intent.intent_id,
+        drain_epoch=1,
+        worker_id="w",
+        worker_started_at="t0",
+    )
+    phase = {"n": 0}
+
+    async def drain_state() -> dict[str, Any]:
+        phase["n"] += 1
+        if phase["n"] < 4:
+            return {
+                "draining": False,
+                "armed": True,
+                "arm": "holder:sole-1",
+                "active_count": 1,
+                "drain_epoch": 1,
+                "worker_id": "w",
+                "worker_started_at": "t0",
+                "active_ops": [{"op_id": "sole-1"}],
+            }
+        return {
+            "draining": True,
+            "armed": False,
+            "active_count": 0,
+            "drain_epoch": 1,
+            "worker_id": "w",
+            "worker_started_at": "t0",
+            "active_ops": [],
+        }
+
+    def subscribe(_seq: int):
+        raise RuntimeError("no subscription")
+
+    async def _noop(*_a, **_k) -> dict[str, Any]:
+        return {}
+
+    supervisor = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=_noop,
+        drain_state=drain_state,
+        subscribe_events=subscribe,
+        kill=_noop,
+        deadline_s=0.05,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+    )
+    past_deadline = time.monotonic() - 10.0
+    t_before = time.monotonic()
+    outcome, effective_start = await supervisor._await_drain_completed(
+        store.get(intent.intent_id),
+        past_deadline,
+        t_before,
+        defer_deadline_until_draining=True,
+    )
+    assert outcome == "converged"
+    assert effective_start >= t_before
+    assert phase["n"] >= 4
+
+
+@pytest.mark.asyncio
 async def test_partial_drain_release_failure_leaves_pending(tmp_path) -> None:
     """Partial failure: expiry release boom leaves pending_drain (existing contract)."""
     store = RestartIntentStore(tmp_path / "restart-intents.db")

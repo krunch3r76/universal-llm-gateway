@@ -201,16 +201,23 @@ class GitWorkerDrainSupervisor:
             if await self._abort_if_requested(intent) or begun is None:
                 return
             intent = begun
-            # a:37197 — drain clock starts when begin_drain returns (armed or
-            # immediate), not at supervise entry, so a long armed wait does not
-            # spuriously trip the deadline alert.
-            if intent.wait_for_boundary:
-                t0 = time.monotonic()
-                deadline = t0 + self.deadline_s
+            # a:37227 AC5 — wait_for_boundary drain clock starts when GIW
+            # activates (_draining=True), not when arm is posted. Arm-post
+            # reset burned GIT_WORKER_DRAIN_DEADLINE_S (often 600s) during the
+            # armed-open-admits window that wait_for_boundary exists to cover.
+            defer_deadline = bool(intent.wait_for_boundary)
             if intent.park_live:
                 await self._park_live_after_grace(intent)
             while True:
-                outcome = await self._await_drain_completed(intent, deadline, t0)
+                outcome, t0 = await self._await_drain_completed(
+                    intent,
+                    deadline,
+                    t0,
+                    defer_deadline_until_draining=defer_deadline,
+                )
+                # After the first await, the deferral has either fired or the
+                # loop exited; subsequent timeout re-arms use a live deadline.
+                defer_deadline = False
                 if outcome == _AWAIT_CANCELLED:
                     if await self._abort_if_requested(intent):
                         return
@@ -470,23 +477,34 @@ class GitWorkerDrainSupervisor:
 
     # --------------------------------------------------------------- step 2
     async def _await_drain_completed(
-        self, intent: Intent, deadline: float, start: float
-    ) -> str:
+        self,
+        intent: Intent,
+        deadline: float,
+        start: float,
+        *,
+        defer_deadline_until_draining: bool = False,
+    ) -> tuple[str, float]:
         """Await drain convergence, idle escalate, deadline timeout, or cancel.
 
-        Returns ``converged`` | ``idle`` | ``timeout`` | ``cancelled`` |
-        ``dead`` | ``handed_off``. Unified loop: matching ``drain.completed``
-        plus drain-state reconcile plus optional idle-on-no-progress (recycle
-        mode). No snapshot for the confirm window, and a health/pid probe that
-        does not see a process, returns ``dead`` before the deadline is
-        consulted. A snapshot that arrives is not dead, whatever its pid
-        field contains. A live occupant past the ceiling is the alert-only
-        timeout.
+        Returns ``(outcome, effective_start)`` where outcome is ``converged`` |
+        ``idle`` | ``timeout`` | ``cancelled`` | ``dead`` | ``handed_off``.
+        Unified loop: matching ``drain.completed`` plus drain-state reconcile
+        plus optional idle-on-no-progress (recycle mode). No snapshot for the
+        confirm window, and a health/pid probe that does not see a process,
+        returns ``dead`` before the deadline is consulted. A snapshot that
+        arrives is not dead, whatever its pid field contains. A live occupant
+        past the ceiling is the alert-only timeout.
+
+        When ``defer_deadline_until_draining`` (wait_for_boundary arm), the
+        drain deadline does not start until GIW reports ``draining=True`` —
+        the armed-open-admits window must not burn the clock (a:37227 AC5).
+        ``effective_start`` is updated to that activation instant.
         """
         last_progress = start
         probe_fail_streak = 0
         probe_unreachable_alerted = False
         generation_gone_streak = 0
+        deadline_armed = not defer_deadline_until_draining
         probe_unreachable_threshold = _polls_for_window(
             _liveness.unreachable_window_s(), self.reconcile_interval_s
         )
@@ -503,7 +521,7 @@ class GitWorkerDrainSupervisor:
         try:
             while True:
                 if self._abort_kind(intent) is not None:
-                    return _AWAIT_CANCELLED
+                    return _AWAIT_CANCELLED, start
                 now = time.monotonic()
                 if now - last_progress >= self.progress_interval_s:
                     await self._emit_progress(intent, now - start)
@@ -520,25 +538,40 @@ class GitWorkerDrainSupervisor:
                         )
                         expired = False
                     if expired:
-                        return _AWAIT_CANCELLED
+                        return _AWAIT_CANCELLED, start
                     last_progress = now
                 snapshot = await self._safe_drain_state()
                 if snapshot is not None:
                     self._last_probe_snapshot = snapshot
                     probe_fail_streak = 0
                     probe_unreachable_alerted = False
+                    if (
+                        defer_deadline_until_draining
+                        and not deadline_armed
+                        and bool(snapshot.get("draining"))
+                    ):
+                        start = time.monotonic()
+                        deadline = start + self.deadline_s
+                        deadline_armed = True
+                        last_progress = start
+                        logger.info(
+                            "wait_for_boundary drain clock started on activate: "
+                            "intent_id=%s deadline_s=%s",
+                            intent.intent_id,
+                            self.deadline_s,
+                        )
                     if self._generation_gone(snapshot, intent):
                         generation_gone_streak += 1
                         if generation_gone_streak >= generation_gone_threshold:
                             if await self._reconcile_observed_start(intent, snapshot):
-                                return _AWAIT_HANDED_OFF
-                            return _AWAIT_GENERATION_GONE
+                                return _AWAIT_HANDED_OFF, start
+                            return _AWAIT_GENERATION_GONE, start
                     else:
                         generation_gone_streak = 0
                     if self._drain_state_matches(snapshot, intent):
-                        return _AWAIT_CONVERGED
+                        return _AWAIT_CONVERGED, start
                     if await self._idle_gate_tripped(snapshot, now, start):
-                        return _AWAIT_IDLE
+                        return _AWAIT_IDLE, start
                 else:
                     generation_gone_streak = 0
                     probe_fail_streak += 1
@@ -559,11 +592,12 @@ class GitWorkerDrainSupervisor:
                             miss_threshold=probe_unreachable_threshold,
                             health_pid_absent=absent,
                         ):
-                            return _AWAIT_DEAD
+                            return _AWAIT_DEAD, start
                 # The dead predicate already returned above. A live occupant
-                # past the ceiling is alert-only and does not start.
-                if now >= deadline:
-                    return _AWAIT_TIMEOUT
+                # past the ceiling is alert-only and does not start. Armed
+                # wait_for_boundary must not trip before activation.
+                if deadline_armed and now >= deadline:
+                    return _AWAIT_TIMEOUT, start
                 if agen is None:
                     await asyncio.sleep(self.reconcile_interval_s)
                     continue
@@ -585,7 +619,7 @@ class GitWorkerDrainSupervisor:
                 if isinstance(seq, int):
                     self.store.set_last_seen_seq(intent.intent_id, seq)
                 if self._event_matches(ev, intent):
-                    return _AWAIT_CONVERGED
+                    return _AWAIT_CONVERGED, start
         finally:
             if agen is not None:
                 await _aclose(agen)
