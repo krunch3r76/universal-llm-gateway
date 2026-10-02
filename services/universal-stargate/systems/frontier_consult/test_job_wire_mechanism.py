@@ -16,6 +16,7 @@ import pytest
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from fastapi import Response
 from job_vocab import HYPOTHESIZE_ON_JOBS, job_record
+
 from systems.frontier_consult.admission import FrontierEndpointError
 from systems.frontier_consult.cdp_generate_worker import run_cdp_worker
 from systems.frontier_consult.route import (
