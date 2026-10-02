@@ -143,6 +143,11 @@ def test_allowlist_refuses_confused_deputy_and_foreign_thread() -> None:
     assert not is_review_class_call(
         {**freeform, "contract": "none"}, seat_thread="12988"
     )
+    assert not is_review_class_call({**freeform, "prompt": None}, seat_thread="12988")
+    assert not is_review_class_call({**freeform, "prompt": ""}, seat_thread="12988")
+    assert not is_review_class_call(
+        {k: v for k, v in freeform.items() if k != "prompt"}, seat_thread="12988"
+    )
     assert is_review_class_call(
         {**_REVIEW, "parent_thread": "12988"}, seat_thread="12988"
     )

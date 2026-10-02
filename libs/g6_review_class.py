@@ -38,7 +38,8 @@ ALLOWED_ARGUMENT_KEYS = frozenset(
 _REFUSAL_MESSAGE = (
     "team_dispatch on a filtered cursor-sdk seat is review-class only "
     "(op=generate, purpose=review, contract in {freeform, delivery-review}, "
-    "model in {cdp/opus-5, cdp/opus-5.5, cdp/fable}). "
+    "model in {cdp/opus-5, cdp/opus-5.5, cdp/fable}, prompt set, "
+    "dispatch_thread_id = this seat's thread, parent_thread omitted or equal). "
     "seat, role, nest_under, lane, packet_path, and source_ref are refused."
 )
 
@@ -79,6 +80,8 @@ def is_review_class_call(
     if args.get("model") not in REVIEW_MODELS:
         return False
     if args.get("contract") not in {"freeform", "delivery-review"}:
+        return False
+    if not _present(args.get("prompt")):
         return False
     if seat_thread:
         if str(args.get("dispatch_thread_id") or "") != seat_thread:

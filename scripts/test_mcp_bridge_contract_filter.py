@@ -104,7 +104,7 @@ def _tools_call(arguments: dict) -> dict:
 
 
 def _drive_downstream(
-    message: dict, *, review_gate: bool
+    message: dict, *, review_gate: bool, seat_thread: str | None = None
 ) -> tuple[dict | None, dict | None]:
     client_in = io.BytesIO()
     write_framed_message(client_in, message)
@@ -117,6 +117,7 @@ def _drive_downstream(
         pending_methods={},
         review_gate=review_gate,
         allow=frozenset({"team_dispatch", "cortex"}) if review_gate else None,
+        seat_thread=seat_thread,
         client_out=client_out,
     )
     child_in.seek(0)
@@ -150,6 +151,23 @@ def test_nested_filter_forwards_review_and_refuses_implement_spawn() -> None:
     assert forwarded is None
     assert refused is not None
     assert refused["error"]["code"] == -32602
+
+
+def test_nested_filter_binds_thread_and_refuses_contract_none() -> None:
+    forwarded, refused = _drive_downstream(
+        _tools_call(_REVIEW_ARGS), review_gate=True, seat_thread="1"
+    )
+    assert forwarded == _tools_call(_REVIEW_ARGS) and refused is None
+    for bad in (
+        {**_REVIEW_ARGS, "contract": "none"},
+        {**_REVIEW_ARGS, "dispatch_thread_id": "2"},
+        {**_REVIEW_ARGS, "parent_thread": "2"},
+    ):
+        forwarded, refused = _drive_downstream(
+            _tools_call(bad), review_gate=True, seat_thread="1"
+        )
+        assert forwarded is None
+        assert refused["error"]["code"] == -32602
 
 
 def test_nested_filter_refuses_panel_dispatch_by_name() -> None:
