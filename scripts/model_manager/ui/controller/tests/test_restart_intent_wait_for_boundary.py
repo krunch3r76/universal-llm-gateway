@@ -186,6 +186,35 @@ def test_param_helpers() -> None:
     assert giw_wait_for_boundary_from_params({"wait_for_boundary": True}) is True
     assert giw_intent_ttl_s_from_params({}) is None
     assert giw_intent_ttl_s_from_params({"intent_ttl_s": 45}) == 45.0
+    assert giw_intent_ttl_s_from_params({"intent_ttl_s": 0}) is None
+    assert giw_intent_ttl_s_from_params({"intent_ttl_s": -1}) is None
+
+
+def test_join_and_rearm_preserve_wait_mode_caller_ttl(tmp_path) -> None:
+    """Wrong ordering: a TTL-less join/rearm must not wipe wait_for_boundary expires_at."""
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    first = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="ttl",
+        wait_for_boundary=True,
+        intent_ttl_s=90.0,
+        caller_agent="cursor",
+    )
+    assert first.expires_at is not None
+    joined = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="join",
+        wait_for_boundary=True,
+        caller_agent="other",
+    )
+    assert joined.intent_id == first.intent_id
+    assert joined.expires_at == first.expires_at
+    rearms = store.rearm(first.intent_id)
+    assert rearms.expires_at == first.expires_at
 
 
 @pytest.mark.asyncio

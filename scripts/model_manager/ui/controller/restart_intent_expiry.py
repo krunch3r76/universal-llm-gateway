@@ -31,6 +31,29 @@ def resolve_intent_ttl_s(
     return INTENT_EXPIRY_WINDOW_S
 
 
+def join_expires_at(
+    *,
+    wait_for_boundary: bool,
+    intent_ttl_s: float | None,
+    prior_expires_at: str | None,
+    now: datetime,
+) -> str | None:
+    """Join/rearm expiry: explicit TTL refreshes; wait_for_boundary keeps prior.
+
+    A joining call that omits ``intent_ttl_s`` must not wipe a caller-set
+    ``expires_at`` on a wait_for_boundary arm (wrong-ordering join).
+    """
+    if intent_ttl_s is not None:
+        _agent, _armed, expires = arm_stamps("join", now=now, ttl_s=float(intent_ttl_s))
+        return expires
+    if wait_for_boundary:
+        return prior_expires_at
+    _agent, _armed, expires = arm_stamps(
+        "join", now=now, ttl_s=INTENT_EXPIRY_WINDOW_S
+    )
+    return expires
+
+
 def arm_stamps(
     caller_agent: str | None,
     *,
