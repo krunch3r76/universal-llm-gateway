@@ -58,6 +58,9 @@ from services.git_integration_worker.cursor_models import (
 from services.git_integration_worker.cursor_sdk_association import (
     build_dispatch_association_fields,
 )
+from services.git_integration_worker.cursor_sdk_conductor_skill_trim import (
+    trim_conductor_skill_catalog,
+)
 from services.git_integration_worker.cursor_sdk_bridge_launch import (
     launch_sdk_bridge,
 )
@@ -1141,6 +1144,14 @@ def _run_sdk_sync(
                 result=mount_result,
                 execution_id=execution_id,
             )
+    # After overlay (inside setup) and skills= staging. Shared by generate,
+    # queued promote, hop successor admits, the hop watchdog, and park-resume
+    # children — each reaches this function.
+    trim_conductor_skill_catalog(
+        dispatch_home / ".cursor",
+        contract=ctx.handoff_contract,
+        extra_slugs=skills,
+    )
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
     try:
