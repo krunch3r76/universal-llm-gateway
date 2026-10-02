@@ -175,8 +175,9 @@ only handoff on `team_dispatch` (not `generate`).
 Both require acceptance criteria in `<task_guidance>`; the implement guardrails (acceptance-criteria lint,
 implement pointer line, `contract:implement` tag) key on `handoff_contract` from the typed `job` + seat,
 not on role name alone. Distinct from
-the `*-consult` reasoning roles (omitted `job` → `handoff_contract` absent — they cannot raise the implement
-guardrails). `model` and `handoff_contract` are not accepted on the handoff request — pick the
+the `*-consult` reasoning roles (the role supplies no contract — with `job` omitted,
+`handoff_contract` comes from `source_ref` / packet `contract:` or is `absent`; the role
+alone cannot raise the implement guardrails). `model` and `handoff_contract` are not accepted on the handoff request — pick the
 slug whose `{platform}-{contract}` encodes your intent. Web-native bound work without a
 fresh-thread handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
 
