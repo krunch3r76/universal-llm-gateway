@@ -469,6 +469,7 @@ async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
     page, composer = _induction_page()
     order: list[str] = []
     ack = {"n": 1, "body": "There's no substantive question", "body_len": 34}
+    harvest = AsyncMock(return_value={"n": 0, "body_len": 0})
 
     async def _capture(_page, *, before):
         order.append(f"capture:{before.get('n')}")
@@ -496,7 +497,7 @@ async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
             extra=(
                 patch(
                     "claude_bundles.project_ask.harvest_assistant",
-                    new=AsyncMock(return_value={"n": 0, "body_len": 0}),
+                    new=harvest,
                 ),
                 patch(
                     "claude_bundles.induction_reply_baseline.capture_induction_reply_baseline",
@@ -512,6 +513,7 @@ async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
         baseline = await send_prompt(page, _SEALED, await_induction_reply=True)
     assert baseline == ack
     assert order == ["capture:0", "work"]
+    harvest.assert_awaited_once_with(page, min_msg_chars=10)
 
 
 @pytest.mark.asyncio

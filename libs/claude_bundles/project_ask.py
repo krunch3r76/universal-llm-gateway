@@ -516,7 +516,13 @@ async def send_prompt(
     induction_observed: list[str] = []
     reply_baseline: dict | None = None
     if induction_slugs:
-        pre_induction = await harvest_assistant(page) if await_induction_reply else None
+        # Same floor as wait_assistant_reply polls (10). The harvest default of 40
+        # drops a short prior turn from base_n, so the first poll looks like a new turn.
+        pre_induction = (
+            await harvest_assistant(page, min_msg_chars=10)
+            if await_induction_reply
+            else None
+        )
         induction_text = render_skill_induction(induction_slugs)
         await composer.click(force=True)
         await page.wait_for_timeout(200)
@@ -675,7 +681,7 @@ async def project_ask_on_page(
             )
         from claude_bundles.induction_reply_baseline import work_reply_before
 
-        caller_before = await harvest_assistant(page)
+        caller_before = await harvest_assistant(page, min_msg_chars=10)
         induction_baseline = await send_prompt(
             page,
             prompt,

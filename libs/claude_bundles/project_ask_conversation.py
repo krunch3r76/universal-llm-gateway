@@ -264,7 +264,7 @@ async def project_followup_on_page(
     try:
         from claude_bundles.induction_reply_baseline import work_reply_before
 
-        caller_before = await harvest_assistant(page)
+        caller_before = await harvest_assistant(page, min_msg_chars=10)
         induction_baseline = await send_prompt(
             page,
             prompt,
@@ -434,7 +434,7 @@ async def run_project_conversation(
                 ]
             from claude_bundles.induction_reply_baseline import work_reply_before
 
-            caller_before = await harvest_assistant(page)
+            caller_before = await harvest_assistant(page, min_msg_chars=10)
             induction_baseline = await send_prompt(
                 page,
                 prompts[0],
