@@ -12,12 +12,21 @@ pytestmark = pytest.mark.offline
 
 
 def _client() -> TestClient:
+    """Post through the production validation handler without edge-auth middleware."""
     root = Path(__file__).resolve().parents[4]
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "services" / "universal-stargate"))
-    from systems.proxy.app import app
+    from fastapi import FastAPI
+    from fastapi.exceptions import RequestValidationError
 
-    return TestClient(app)
+    from systems.frontier_consult.route import team_router
+    from systems.proxy.app import validation_exception_handler
+
+    surface = FastAPI()
+    surface.include_router(team_router)
+    surface.add_exception_handler(RequestValidationError, validation_exception_handler)
+    return TestClient(surface)
+
 
 _BASE = {
     "op": "generate",
