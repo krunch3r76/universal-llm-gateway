@@ -115,7 +115,12 @@ def test_turn_ended_on_interaction_update_events_path(
     result = observe_run_stream(
         run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
     )
-    assert result.usage == {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}
+    assert result.usage == {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20,
+        "total_tokens_basis": "exclusive_sum",
+    }
     assert result.usage_capture_status == "captured"
 
 
@@ -130,7 +135,10 @@ def test_token_delta_on_interaction_update_events_path(
     result = observe_run_stream(
         run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
     )
-    assert result.usage == {"total_tokens": 99}
+    assert result.usage == {
+        "total_tokens": 99,
+        "total_tokens_basis": "exclusive_sum",
+    }
     assert result.usage_capture_status == "partial"
 
 
@@ -338,6 +346,7 @@ def test_turn_ended_usage_normalized_on_stream(_capture_emitted: list[Any]) -> N
         "input_tokens": 100,
         "output_tokens": 50,
         "total_tokens": 150,
+        "total_tokens_basis": "wire",
     }
     assert result.usage_capture_status == "captured"
 
@@ -352,7 +361,12 @@ def test_mixed_turn_usage_is_partial(_capture_emitted: list[Any]) -> None:
     result = observe_run_stream(
         run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
     )
-    assert result.usage == {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+    assert result.usage == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "total_tokens_basis": "exclusive_sum",
+    }
     assert result.usage_capture_status == "partial"
 
 
@@ -363,7 +377,10 @@ def test_token_delta_fallback_when_turn_usage_missing(
     result = observe_run_stream(
         run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
     )
-    assert result.usage == {"total_tokens": 42}
+    assert result.usage == {
+        "total_tokens": 42,
+        "total_tokens_basis": "exclusive_sum",
+    }
     assert result.usage_capture_status == "partial"
 
 
@@ -382,6 +399,8 @@ def test_normalize_usage_map_handles_prompt_completion_aliases() -> None:
         "input_tokens": 7,
         "output_tokens": 3,
         "total_tokens": 10,
+        "total_tokens_basis": "exclusive_sum",
+        "_total_basis": "exclusive_sum",
         "_total_derived": True,
     }
 
@@ -404,6 +423,8 @@ def test_normalize_usage_map_handles_camel_case_bridge_keys() -> None:
         "cache_read_tokens": 10,
         "cache_write_tokens": 2,
         "total_tokens": 150,
+        "total_tokens_basis": "inclusive",
+        "_total_basis": "inclusive",
         "_total_derived": True,
     }
 
@@ -427,6 +448,7 @@ def test_normalize_usage_map_cursor_inclusive_specimen_bab548() -> None:
     assert normalized["output_tokens"] == 15131
     assert normalized["total_tokens"] == 3577994 + 15131
     assert normalized["total_tokens"] == 3593125
+    assert normalized.get("total_tokens_basis") == "inclusive"
     assert normalized.get("_total_derived") is True
     assert normalized["reasoning_tokens"] == 7558
 
@@ -449,6 +471,8 @@ def test_normalize_usage_map_exclusive_when_cache_exceeds_input() -> None:
         "cache_read_tokens": 1952379,
         "cache_write_tokens": 120467,
         "total_tokens": 2078986,
+        "total_tokens_basis": "wire",
+        "_total_basis": "wire",
     }
 
 
@@ -480,6 +504,7 @@ def test_sdk_usage_message_on_sdk_message_events_path(
         "input_tokens": 20,
         "output_tokens": 10,
         "total_tokens": 30,
+        "total_tokens_basis": "wire",
     }
     assert result.usage_capture_status == "captured"
 
@@ -510,6 +535,7 @@ def test_finalize_stream_capture_usage_from_run_wait() -> None:
         "cache_read_tokens": 20,
         "cache_write_tokens": 5,
         "total_tokens": 150,
+        "total_tokens_basis": "inclusive",
     }
     assert finalized.usage_capture_status == "captured"
 
@@ -540,6 +566,7 @@ def test_finalize_prefers_post_wait_and_marks_reconciled_delta() -> None:
         "input_tokens": 100,
         "output_tokens": 50,
         "total_tokens": 160,
+        "total_tokens_basis": "wire",
     }
     assert finalized.usage_capture_status == "reconciled_delta"
 
@@ -569,31 +596,26 @@ def test_finalize_prefers_captured_when_post_wait_has_total_over_stream_partial(
         "input_tokens": 10,
         "output_tokens": 5,
         "total_tokens": 15,
+        "total_tokens_basis": "wire",
     }
 
 
-def test_finalize_skips_reconciled_delta_when_stream_total_was_recomputed() -> None:
-    """R finding #1 — do not compare recomputed stream total vs corrected post-wait."""
+def test_finalize_skips_reconciled_delta_when_bases_differ() -> None:
+    """A1 — do not compare when stream and post-wait bases differ."""
     stream_usage, _status = normalize_usage_map(
         {
             "input_tokens": 10,
             "output_tokens": 5,
-            "cache_read_tokens": 10,
-            # no wire total → inclusive honest 15 + _total_derived
+            # no cache → exclusive_sum when no wire total
         }
     )
     assert stream_usage is not None
-    assert stream_usage.get("_total_derived") is True
+    assert stream_usage.get("total_tokens_basis") == "exclusive_sum"
     assert stream_usage["total_tokens"] == 15
 
     capture = StreamCapture(
         tool_calls=(),
-        usage={
-            "input_tokens": 10,
-            "output_tokens": 5,
-            "cache_read_tokens": 10,
-            "total_tokens": 15,
-        },
+        usage=dict(stream_usage),
         usage_capture_status="captured",
         usage_total_derived=True,
     )
@@ -609,19 +631,70 @@ def test_finalize_skips_reconciled_delta_when_stream_total_was_recomputed() -> N
                 "input_tokens": 10,
                 "output_tokens": 5,
                 "cache_read_tokens": 10,
-                # Wire double-count 25; normalize corrects to 15 (derived).
+                # Inclusive correction → basis inclusive, total 15
                 "total_tokens": 25,
             }
         ),
     )
+    # Same numeric total, different basis → captured (not reconciled_delta).
     assert finalized.usage_capture_status == "captured"
-    assert finalized.usage == {
-        "input_tokens": 10,
-        "output_tokens": 5,
-        "cache_read_tokens": 10,
-        "total_tokens": 15,
-    }
+    assert finalized.usage is not None
+    assert finalized.usage["total_tokens"] == 15
+    assert finalized.usage["total_tokens_basis"] == "inclusive"
     assert "_total_derived" not in (finalized.usage or {})
+
+
+def test_finalize_reconciled_delta_same_inclusive_basis() -> None:
+    """A1 falsifier — bab548-shaped stream vs differing post-wait, same basis."""
+    stream_usage, _status = normalize_usage_map(
+        {
+            "inputTokens": 3577994,
+            "outputTokens": 15131,
+            "cacheReadTokens": 3322624,
+            "cacheWriteTokens": 0,
+            "totalTokens": 6915749,
+        }
+    )
+    assert stream_usage is not None
+    assert stream_usage["total_tokens"] == 3593125
+    assert stream_usage["total_tokens_basis"] == "inclusive"
+
+    capture = StreamCapture(
+        tool_calls=(),
+        usage={
+            "input_tokens": 3577994,
+            "output_tokens": 15131,
+            "cache_read_tokens": 3322624,
+            "cache_write_tokens": 0,
+            "total_tokens": 3593125,
+            "total_tokens_basis": "inclusive",
+            "_total_basis": "inclusive",
+            "_total_derived": True,
+        },
+        usage_capture_status="captured",
+        usage_total_derived=True,
+    )
+
+    @dataclass
+    class _FakeRunResult:
+        usage: dict[str, int]
+
+    finalized = finalize_stream_capture_usage(
+        capture,
+        run=_FakeRunResult(
+            usage={
+                "inputTokens": 3000000,
+                "outputTokens": 10000,
+                "cacheReadTokens": 2800000,
+                "cacheWriteTokens": 0,
+                "totalTokens": 5810000,
+            }
+        ),
+    )
+    assert finalized.usage_capture_status == "reconciled_delta"
+    assert finalized.usage is not None
+    assert finalized.usage["total_tokens"] == 3010000
+    assert finalized.usage["total_tokens_basis"] == "inclusive"
 
 
 @dataclass

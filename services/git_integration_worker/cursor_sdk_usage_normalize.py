@@ -5,18 +5,20 @@ breakdown. Stream ``SDKUsageMessage`` / turn-ended payloads supply per-turn
 breakdown and status nuance. ``reasoning_tokens`` is optional enrichment
 (subset of output) — never added into ``total_tokens``.
 
-Cache / total semantics (friction a:37158): Cursor SDK ``TokenUsage`` on the
-local agent store reports ``inputTokens`` **including** cache reads (observed
-on 80/80 recent ledger rows: ``cache_read ≤ input``; wire
-``totalTokens = input + output + cache_read + cache_write`` therefore
+Cache / total semantics (friction a:37158 + review A1/A2): Cursor SDK
+``TokenUsage`` on the local agent store reports ``inputTokens`` **including**
+cache reads (observed on 80/80 recent ledger rows: ``cache_read ≤ input``;
+wire ``totalTokens = input + output + cache_read + cache_write`` therefore
 double-counts cache). Dashboard/Admin API rows can show ``cache ≫ input``
 (exclusive columns) — when that shape appears, keep the exclusive sum.
 
 Honest dashboard-comparable ``total_tokens`` for the inclusive Cursor shape is
-``input + output`` (cache fields remain as breakdown). When the honest total
-differs from wire or is recomputed, tag ``_total_derived`` so reconcile never
-compares heterogeneous formulas (R finding #1 / path-sim 5361). Tag is stripped
-before emit.
+``input + output`` (cache fields remain as breakdown). Every normalized map
+carries public ``total_tokens_basis`` ∈ {``inclusive``, ``wire``,
+``exclusive_sum``}. Reconcile compares totals only when both sides share the
+same basis (A1). Internal ``_total_derived`` remains True when basis ≠
+``wire`` for StreamCapture compatibility; underscore tags are stripped before
+emit.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 UsageCaptureStatus = Literal["captured", "partial", "missing", "reconciled_delta"]
+TotalTokensBasis = Literal["inclusive", "wire", "exclusive_sum"]
 
 _INPUT_TOKEN_KEYS = ("input_tokens", "prompt_tokens", "input", "inputTokens")
 _OUTPUT_TOKEN_KEYS = ("output_tokens", "completion_tokens", "output", "outputTokens")
@@ -34,6 +37,8 @@ _CACHE_WRITE_KEYS = ("cache_write_tokens", "cacheWriteTokens")
 _REASONING_KEYS = ("reasoning_tokens", "reasoningTokens")
 _SPEND_PASS_THROUGH_KEYS = ("cost_usd", "credits", "spend", "cost")
 TOTAL_DERIVED_KEY = "_total_derived"
+TOTAL_BASIS_KEY = "_total_basis"
+TOTAL_TOKENS_BASIS_FIELD = "total_tokens_basis"
 _SUM_FIELDS = (
     "input_tokens",
     "output_tokens",
@@ -50,10 +55,11 @@ def _input_includes_cache(
 ) -> bool:
     """True when cache_read looks like a subset of input (Cursor SDK shape).
 
-    ``cache_read > input`` is the Admin/dashboard exclusive shape — do not
-    rewrite those totals. Absent cache_read ⇒ no inclusive correction.
+    Requires a positive ``cache_read``: ``0`` is not a signal (FakeUsage /
+    sparse payloads). ``cache_read > input`` is the Admin/dashboard exclusive
+    shape — do not rewrite those totals. Absent cache_read ⇒ no correction.
     """
-    if input_tokens is None or cache_read is None:
+    if input_tokens is None or cache_read is None or cache_read == 0:
         return False
     return cache_read <= input_tokens
 
@@ -75,6 +81,24 @@ def _honest_total_tokens(
         if value is not None
     ]
     return sum(parts) if parts else None
+
+
+def _usage_basis(usage: Mapping[str, Any] | None) -> TotalTokensBasis | None:
+    if not usage:
+        return None
+    public = usage.get(TOTAL_TOKENS_BASIS_FIELD)
+    if public in ("inclusive", "wire", "exclusive_sum"):
+        return public  # type: ignore[return-value]
+    internal = usage.get(TOTAL_BASIS_KEY)
+    if internal in ("inclusive", "wire", "exclusive_sum"):
+        return internal  # type: ignore[return-value]
+    # Legacy pre-A1 maps: derived bool ⇒ unknown formula; treat as exclusive_sum
+    # only when no basis was recorded and _total_derived is set.
+    if usage.get(TOTAL_DERIVED_KEY):
+        return "exclusive_sum"
+    if usage.get("total_tokens") is not None:
+        return "wire"
+    return None
 
 
 def public_usage(usage: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -136,9 +160,9 @@ def normalize_usage_map(raw: Mapping[str, Any]) -> tuple[dict[str, Any] | None, 
     For Cursor-inclusive payloads (``cache_read ≤ input``), emit honest
     ``total_tokens = input + output`` even when wire ``totalTokens`` double-counts
     cache (a:37158). Exclusive shape (``cache_read > input``) keeps wire total
-    when present, else ``input + output + cache_read + cache_write``. Any
-    recomputed or corrected total is tagged ``_total_derived``.
-    ``reasoning_tokens`` is a subset of output — never added into total.
+    when present, else ``input + output + cache_read + cache_write``. Emits
+    public ``total_tokens_basis`` and keeps ``_total_derived`` when basis ≠
+    ``wire``. ``reasoning_tokens`` is a subset of output — never added into total.
     """
     input_tokens = _first_token_count(raw, _INPUT_TOKEN_KEYS)
     output_tokens = _first_token_count(raw, _OUTPUT_TOKEN_KEYS)
@@ -154,25 +178,24 @@ def normalize_usage_map(raw: Mapping[str, Any]) -> tuple[dict[str, Any] | None, 
         and cache_write is None
     ):
         return None, False
-    total_derived = False
+
     honest = _honest_total_tokens(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read=cache_read,
         cache_write=cache_write,
     )
+    basis: TotalTokensBasis
     if _input_includes_cache(input_tokens=input_tokens, cache_read=cache_read):
         total_tokens = honest
-        if total_tokens is not None and total_tokens != wire_total:
-            total_derived = True
-        elif wire_total is None and total_tokens is not None:
-            total_derived = True
+        basis = "inclusive"
     elif wire_total is None:
         total_tokens = honest
-        if total_tokens is not None:
-            total_derived = True
+        basis = "exclusive_sum"
     else:
         total_tokens = wire_total
+        basis = "wire"
+
     normalized: dict[str, Any] = {}
     if input_tokens is not None:
         normalized["input_tokens"] = input_tokens
@@ -184,7 +207,9 @@ def normalize_usage_map(raw: Mapping[str, Any]) -> tuple[dict[str, Any] | None, 
         normalized["cache_write_tokens"] = cache_write
     if total_tokens is not None:
         normalized["total_tokens"] = total_tokens
-    if total_derived:
+    normalized[TOTAL_TOKENS_BASIS_FIELD] = basis
+    normalized[TOTAL_BASIS_KEY] = basis
+    if basis != "wire":
         normalized[TOTAL_DERIVED_KEY] = True
     if reasoning is not None:
         normalized["reasoning_tokens"] = reasoning
@@ -211,6 +236,20 @@ def sum_normalized_usages(items: tuple[dict[str, Any], ...]) -> dict[str, Any]:
             if key in item:
                 aggregated[key] = item[key]
                 break
+    bases = {_usage_basis(item) for item in items}
+    bases.discard(None)
+    if len(bases) == 1:
+        basis = next(iter(bases))
+        assert basis is not None
+        aggregated[TOTAL_TOKENS_BASIS_FIELD] = basis
+        aggregated[TOTAL_BASIS_KEY] = basis
+        if basis != "wire":
+            aggregated[TOTAL_DERIVED_KEY] = True
+    elif bases:
+        # Mixed bases → do not claim a comparable aggregate total basis.
+        aggregated[TOTAL_TOKENS_BASIS_FIELD] = "exclusive_sum"
+        aggregated[TOTAL_BASIS_KEY] = "exclusive_sum"
+        aggregated[TOTAL_DERIVED_KEY] = True
     return aggregated
 
 
@@ -257,15 +296,17 @@ def aggregate_stream_usage(
 
     if normalized_turns:
         aggregated = sum_normalized_usages(tuple(normalized_turns))
-        # Any turn used a recomputed total → aggregate total is not wire-pure.
-        if any(turn.get(TOTAL_DERIVED_KEY) for turn in normalized_turns):
-            aggregated[TOTAL_DERIVED_KEY] = True
         if mixed_turns:
             return aggregated, "partial"
         return aggregated, "captured"
 
     if token_delta_sum > 0:
-        return {TOTAL_DERIVED_KEY: True, "total_tokens": token_delta_sum}, "partial"
+        return {
+            TOTAL_DERIVED_KEY: True,
+            TOTAL_BASIS_KEY: "exclusive_sum",
+            TOTAL_TOKENS_BASIS_FIELD: "exclusive_sum",
+            "total_tokens": token_delta_sum,
+        }, "partial"
 
     return None, "missing"
 
@@ -288,7 +329,7 @@ def finalize_usage_with_post_wait(
     run: Any = None,
     result: Any = None,
 ) -> tuple[dict[str, Any] | None, UsageCaptureStatus]:
-    """Apply post-wait authority; reconcile against stream totals when both present."""
+    """Apply post-wait authority; reconcile same-basis totals when both present."""
     payload = _post_wait_payload(run=run, result=result)
     if payload is None:
         return public_usage(stream_usage), stream_status
@@ -307,15 +348,15 @@ def finalize_usage_with_post_wait(
 
     stream_total = coerce_non_negative_int(stream_usage.get("total_tokens"))
     post_total = coerce_non_negative_int(normalized.get("total_tokens"))
-    stream_derived = bool(stream_usage.get(TOTAL_DERIVED_KEY))
-    post_derived = bool(normalized.get(TOTAL_DERIVED_KEY))
-    # Only wire-vs-wire deltas earn reconciled_delta (R finding #1).
+    stream_basis = _usage_basis(stream_usage)
+    post_basis = _usage_basis(normalized)
+    # A1: same-basis deltas earn reconciled_delta (not wire-only).
     if (
         stream_total is not None
         and post_total is not None
         and stream_total != post_total
-        and not stream_derived
-        and not post_derived
+        and stream_basis is not None
+        and stream_basis == post_basis
     ):
         return public, "reconciled_delta"
     # Authoritative post-wait with a total is captured even if stream was holey

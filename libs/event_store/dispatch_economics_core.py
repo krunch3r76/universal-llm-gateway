@@ -54,6 +54,7 @@ def map_sdk_row(row: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         "cache_read_tokens": int_or_none(usage.get("cache_read_tokens")),
         "cache_write_tokens": int_or_none(usage.get("cache_write_tokens")),
         "total_tokens": int_or_none(usage.get("total_tokens")),
+        "total_tokens_basis": usage.get("total_tokens_basis"),
         "rollup_row_id": rollup_row_id(_SUBSTRATE_SDK, primary_key, row.get("seq")),
     }
 

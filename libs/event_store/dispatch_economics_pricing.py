@@ -154,8 +154,47 @@ def _select_wire(
     return None, None
 
 
+def _prompt_includes_cache(row: dict[str, Any]) -> bool:
+    """True when prompt_tokens already include cache tiers (Cursor SDK shape).
+
+    Prefer public ``total_tokens_basis`` from normalize (A2). Absent that, infer
+    inclusive when ``cache_read ≤ prompt`` (same detector as a:37158).
+    """
+    basis = row.get("total_tokens_basis")
+    if basis == "inclusive":
+        return True
+    if basis in ("wire", "exclusive_sum"):
+        return False
+    prompt = row.get("prompt_tokens")
+    cache_read = row.get("cache_read_tokens")
+    if prompt is None or cache_read is None or cache_read == 0:
+        return False
+    return cache_read <= prompt
+
+
+def _uncached_prompt_tokens(row: dict[str, Any]) -> int | None:
+    """Billable uncached input when prompt is cache-inclusive; else prompt as-is."""
+    prompt = row.get("prompt_tokens")
+    if prompt is None:
+        return None
+    if not _prompt_includes_cache(row):
+        return prompt
+    uncached = prompt
+    cache_read = row.get("cache_read_tokens")
+    cache_write = row.get("cache_write_tokens")
+    if cache_read is not None:
+        uncached -= cache_read
+    if cache_write is not None:
+        uncached -= cache_write
+    return max(0, uncached)
+
+
 def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
-    """Estimate USD from token tiers × rates (cache tiers skipped when rate is None)."""
+    """Estimate USD from token tiers × rates (cache tiers skipped when rate is None).
+
+    When ``prompt_tokens`` is cache-inclusive (a:37158 A3), charge only the
+    uncached remainder at the input rate so cache is not billed twice.
+    """
     prompt = row.get("prompt_tokens")
     completion = row.get("completion_tokens")
     cache_write = row.get("cache_write_tokens")
@@ -169,8 +208,9 @@ def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
         return None
     total = 0.0
     has_component = False
-    if prompt is not None:
-        total += (prompt / 1_000_000) * rate.input_rate_per_m
+    billable_prompt = _uncached_prompt_tokens(row)
+    if billable_prompt is not None:
+        total += (billable_prompt / 1_000_000) * rate.input_rate_per_m
         has_component = True
     if cache_write is not None and rate.cache_write_rate_per_m is not None:
         total += (cache_write / 1_000_000) * rate.cache_write_rate_per_m

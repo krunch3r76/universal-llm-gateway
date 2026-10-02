@@ -165,6 +165,8 @@ def test_price_row_uses_knobs_in_join_key() -> None:
         "completion_tokens": 1_000_000,
         "cache_read_tokens": 1_000_000,
         "cache_write_tokens": None,
+        # Knobs join-key specimen: exclusive columns (not Cursor-inclusive).
+        "total_tokens_basis": "exclusive_sum",
     }
     priced = _price_row(row, None)
     assert priced["cost_source"] == "rate_x_tokens"
@@ -380,38 +382,62 @@ def test_multi_member_sdk_wire_not_dropped_when_pipeline_wins_tokens() -> None:
 
 
 def test_rate_x_tokens_includes_cache_when_rates_present() -> None:
-    """Cache tiers contribute when the rate row has cache_* rates (Composer: read only)."""
+    """Cache tiers contribute; inclusive prompt nets cache out of input rate (A3)."""
     row = {
         "model_id": "cursor/composer-2.5",
         "prompt_tokens": 1_000_000,
         "completion_tokens": 1_000_000,
         "cache_read_tokens": 500_000,
+        "total_tokens_basis": "inclusive",
     }
     priced = _price_row(row, None)
     assert priced["cost_source"] == "rate_x_tokens"
-    # 1.0*0.5 + 0.5*0.2 + 1.0*2.5 = 0.5 + 0.1 + 2.5 = 3.1
-    assert priced["cost_usd"] == pytest.approx(3.1)
+    # uncached 0.5*0.5 + cache_read 0.5*0.2 + out 1.0*2.5 = 0.25 + 0.1 + 2.5 = 2.85
+    assert priced["cost_usd"] == pytest.approx(2.85)
     assert priced["cache_read_rate_per_m"] == 0.2
     assert priced["cache_write_rate_per_m"] is None
 
 
-def test_opus_fixture_four_term_estimate_matches_cursor_billing() -> None:
-    """Friction 25728: Opus 4.8 fixture → ~$57 (not ~$152 prompt+completion-only)."""
+def test_opus_fixture_inclusive_prompt_avoids_double_charge() -> None:
+    """a:37158 A3 — Opus fixture with inclusive prompt nets cache from input rate."""
     row = {
         "model_id": "cursor/claude-opus-4-8",
         "prompt_tokens": 9_840_000,
         "completion_tokens": 57_000,
         "cache_read_tokens": 9_640_000,
         "cache_write_tokens": 203_000,
+        "total_tokens_basis": "inclusive",
     }
     priced = _price_row(row, None)
     assert priced["cost_source"] == "rate_x_tokens"
-    # 9.84*5 + 0.203*6.25 + 9.64*0.5 + 0.057*25 = 49.2 + 1.26875 + 4.82 + 1.425
-    assert priced["cost_usd"] == pytest.approx(56.71375, abs=0.05)
+    # uncached max(0, 9.84-9.64-0.203)=0; + 0.203*6.25 + 9.64*0.5 + 0.057*25
+    assert priced["cost_usd"] == pytest.approx(7.51375, abs=0.05)
     assert priced["input_rate_per_m"] == 5.0
     assert priced["cache_write_rate_per_m"] == 6.25
     assert priced["cache_read_rate_per_m"] == 0.5
     assert priced["output_rate_per_m"] == 25.0
+
+
+def test_rate_x_tokens_exclusive_when_cache_exceeds_prompt() -> None:
+    """Admin exclusive shape (cache ≫ prompt) keeps additive rate×tokens."""
+    row = {
+        "model_id": "cursor/claude-opus-4-8",
+        "prompt_tokens": 66,
+        "completion_tokens": 6074,
+        "cache_read_tokens": 1_952_379,
+        "cache_write_tokens": 120_467,
+        "total_tokens_basis": "wire",
+    }
+    priced = _price_row(row, None)
+    assert priced["cost_source"] == "rate_x_tokens"
+    # (66/1e6)*5 + (120467/1e6)*6.25 + (1952379/1e6)*0.5 + (6074/1e6)*25
+    expected = (
+        (66 / 1_000_000) * 5.0
+        + (120_467 / 1_000_000) * 6.25
+        + (1_952_379 / 1_000_000) * 0.5
+        + (6_074 / 1_000_000) * 25.0
+    )
+    assert priced["cost_usd"] == pytest.approx(expected, abs=0.05)
 
 
 def test_unavailable_when_no_rate_and_no_wire() -> None:
