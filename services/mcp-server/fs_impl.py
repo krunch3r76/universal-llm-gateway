@@ -141,6 +141,7 @@ def fs_impl(
         path=path,
         paths=paths,
         for_write=op in _PATH_WRITE_OPS,
+        resolve_batch=op == "read_multi",
     )
     if call.error is not None:
         return {"error": call.error}

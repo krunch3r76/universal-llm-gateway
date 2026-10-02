@@ -129,3 +129,43 @@ def test_read_multi_mixed_sandboxes_refuse(cortex_root: Path) -> None:
     )
     assert "error" in result
     assert "one sandbox" in result["error"]
+
+
+def test_life_read_multi_workspaces_uri_no_sandbox_no_conflict(
+    cortex_root: Path,
+) -> None:
+    """B1: life empty path= must not force cortex onto workspaces:// paths."""
+    from tools.filesystem._batch_ingress import prepare_fs_call_ingress
+
+    uri = "workspaces://universal-llm-gateway/README.md"
+    call = prepare_fs_call_ingress(
+        surface="life",
+        sandbox="",
+        path="",
+        paths=[uri],
+        for_write=False,
+        resolve_batch=True,
+    )
+    assert call.error is None, call.error
+    assert call.sandbox == "workspaces"
+    assert call.batch_originals == [uri]
+    assert call.paths == ["universal-llm-gateway/README.md"]
+
+
+def test_life_read_multi_schemeless_still_defaults_cortex(
+    cortex_root: Path,
+) -> None:
+    from tools.filesystem._batch_ingress import prepare_fs_call_ingress
+
+    rel = "notes/system/specs/life-schemeless.md"
+    call = prepare_fs_call_ingress(
+        surface="life",
+        sandbox="",
+        path="",
+        paths=[rel],
+        for_write=False,
+        resolve_batch=True,
+    )
+    assert call.error is None, call.error
+    assert call.sandbox == "cortex"
+    assert call.paths == [rel]
