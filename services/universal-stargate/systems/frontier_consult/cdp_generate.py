@@ -27,6 +27,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
 from claude_bundles.cdp_skill_profiles import infer_cdp_purpose
 from claude_bundles.chat_model_match import compose_cdp_model_with_effort
 from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
+from job_vocab import job_record
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
@@ -707,6 +708,7 @@ async def dispatch_cdp_generate(
 
     worker_task.add_done_callback(_log_worker_done)
 
+    record = job_record(contract) if contract else None
     handoff_fields = build_handoff_result(
         thread_id=str(thread_id),
         to_agent=CDP_REPLY_FROM,
@@ -733,6 +735,7 @@ async def dispatch_cdp_generate(
         "reply_from_agent": CDP_REPLY_FROM,
         "resolved_model": model,
         "resolved_job": contract,
+        "delivery_role": record.delivery_role if record else "",
         "registry_ref": (
             f"job_vocab:{contract}" if contract else "job_vocab:unresolved"
         ),
