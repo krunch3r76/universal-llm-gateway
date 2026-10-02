@@ -28,6 +28,7 @@ from bus_watch.spawn_pending import (
     row_is_terminal,
 )
 from bus_watch.spawn_wake.packet import (
+    SUCCESSOR_JOB_UNADMITTED,
     _wire_submit_body,
     build_dispatch_body,
     successor_context_from_digest,
@@ -381,10 +382,10 @@ def fire_spawn(
             "leftover": verdict,
             "body": None,
         }
-    if body and body.get("_refused") == "model_paused":
+    if body and body.get("_refused") in ("model_paused", SUCCESSOR_JOB_UNADMITTED):
         return {
             "status_code": 0,
-            "refused": "model_paused",
+            "refused": str(body["_refused"]),
             "quiet_refusal": True,
             "body": body,
             "leftover": verdict,
@@ -393,7 +394,7 @@ def fire_spawn(
         body is not None
         and not body.get("model")
         and verdict.get("leftover") != LEFTOVER_PLAY
-        and body.get("contract") != "implement"
+        and body.get("job") != "implement"
     ):
         # Sit/house generate: never let the wire pick a model.
         return {
@@ -941,11 +942,11 @@ def tick_spawn_on_wake(
             "refused": _WORK_KEY_UNPARSEABLE,
             "body": body,
         }
-    if body and body.get("_refused") == "model_paused":
+    if body and body.get("_refused") in ("model_paused", SUCCESSOR_JOB_UNADMITTED):
         return {
             "action": "hold",
             "evaluation": evaluation,
-            "refused": "model_paused",
+            "refused": str(body["_refused"]),
             "body": body,
         }
     if dry_run:
