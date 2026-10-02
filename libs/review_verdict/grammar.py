@@ -197,7 +197,7 @@ def parse_any_review_body(text: str) -> ParsedVerdict:
 def has_parseable_verdict(text: str) -> bool:
     """True when any accepted review-verdict grammar yields a token.
 
-    Used as the harvest/proof gate for ``purpose=review`` so skill-induction
+    Used as the harvest/proof gate for ``job=delivery-review`` so skill-induction
     acks and mid-tool prose cannot seal a CDP review (a:37156 / a:37034).
     """
     return parse_any_review_body(text).token is not None

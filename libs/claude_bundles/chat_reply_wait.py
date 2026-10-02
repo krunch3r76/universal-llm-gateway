@@ -374,7 +374,7 @@ def _complete_enough(
     """Structural turn complete — ¬ a prose-length gate.
 
     ``min_growth`` / ``min_body`` remain for call-site compat; ignored here.
-    ``require_review_verdict`` (purpose=review): refuse skill-induction /
+    ``require_review_verdict`` (job=delivery-review): refuse skill-induction /
     mid-tool prose that lacks a parseable verdict line (a:37156 / a:37034).
     """
     del min_growth, min_body, base_len
@@ -455,7 +455,7 @@ async def wait_assistant_reply(
     ``on_harvest`` receives each successful sample (held-page only — dual-completion
     ladder consumers must not open a competing CDP connect; friction 25671).
 
-    ``require_review_verdict``: when True (``purpose=review``), structural idle
+    ``require_review_verdict``: when True (``job=delivery-review``), structural idle
     alone is not enough — the harvested body must carry a parseable verdict.
     """
     msg_floor = min_msg_chars if min_msg_chars is not None else 10

@@ -633,7 +633,7 @@ async def project_ask_on_page(
     ``execution_id`` remains the **satellite** admit id (archive path only).
     ``stargate_execution_id`` is the Stargate seating id threaded into skill
     delivery attest (payload key ``execution_id``).
-    ``purpose=review`` keeps harvest open until a parseable VERDICT lands
+    ``job=delivery-review`` keeps harvest open until a parseable VERDICT lands
     (a:37156 skill-induction seal).
     """
     dest = project_url(project_uuid)

@@ -37,7 +37,7 @@ ALLOWED_ARGUMENT_KEYS = frozenset(
 
 _REFUSAL_MESSAGE = (
     "team_dispatch on a filtered cursor-sdk seat is review-class only "
-    "(op=generate, purpose=review, contract in {freeform, delivery-review}, "
+    "(op=generate, job=delivery-review, contract in {freeform, delivery-review}, "
     "model in {cdp/opus-5, cdp/opus-5.5, cdp/fable}, prompt set, "
     "dispatch_thread_id = this seat's thread, parent_thread omitted or equal). "
     "seat, role, nest_under, lane, packet_path, and source_ref are refused."

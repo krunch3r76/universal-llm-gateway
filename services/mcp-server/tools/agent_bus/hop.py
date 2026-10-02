@@ -132,7 +132,7 @@ async def _hop_dispatch(
         "model": model,
         "prompt": full_body,
         "job": "freeform",
-        "purpose": "operator-proxy",
+        "session": "operator-proxy",
         "mission_kind": "hop",
         "parent_thread": thread_id,
         "dispatch_thread_id": thread_id,

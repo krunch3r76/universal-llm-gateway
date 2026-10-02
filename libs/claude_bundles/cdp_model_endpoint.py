@@ -137,7 +137,7 @@ def _is_chrome_only_body(body: str) -> bool:
 
 
 def _review_lacks_verdict(purpose: str, body: str) -> bool:
-    """True when purpose=review and body has no parseable verdict (a:37156)."""
+    """True when job=delivery-review and body has no parseable verdict (a:37156)."""
     if (purpose or "").strip().lower() != "review":
         return False
     from review_verdict.grammar import has_parseable_verdict
@@ -487,7 +487,7 @@ def result_from_snapshot(
     Reconcile uses this — must not call ``run_cdp_generate``. Fail-closed: running
     legs and transient poll errors (no ``status`` field) return None.
 
-    ``purpose=review`` without a parseable verdict returns None so reconcile
+    ``job=delivery-review`` without a parseable verdict returns None so reconcile
     cannot race the worker keep-poll (a:37156 F1 / dogfood WITHHOLD).
     """
     if snapshot.get("error") and "status" not in snapshot:
@@ -895,7 +895,7 @@ def run_cdp_generate(
 
         if _has_proof(snapshot):
             body = str(snapshot.get("body") or "")
-            # purpose=review: skill-induction / mid-tool prose is not proof
+            # job=delivery-review: skill-induction / mid-tool prose is not proof
             # (a:37156 / a:37034). Keep polling like chrome-only completed.
             if _review_lacks_verdict(purpose, body):
                 sleep(poll_interval_s)

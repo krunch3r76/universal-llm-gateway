@@ -119,7 +119,7 @@ def ensure_review_reading_charter(
 ) -> str:
     """Place the reading-review line after the skill hash. Idempotent under peel.
 
-    ``purpose=review`` delivery/code-review only. The packet carries the code.
+    ``job=delivery-review`` delivery/code-review only. The packet carries the code.
     CDP reads the live tree. Checkout, pytest, and quality_gate are not this
     seat's reject grounds.
 

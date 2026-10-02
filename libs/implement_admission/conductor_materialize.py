@@ -419,7 +419,7 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
             f"({g3_g5_score_ratify_clause()}) "
             "(do-not-fight / likely-optimal) via "
             "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
-            "purpose=ask, dispatch_thread_id=<this worker thread id>).",
+            "session=ask, dispatch_thread_id=<this worker thread id>).",
             "Explicit see-score: ROW_PINNED at G3 + ping.",
         ]
     ac = [
@@ -439,13 +439,13 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
             "Run that missing command before the review dispatch. Do not discover "
             "the gap by receiving a WITHHOLD and then starting another row. "
             "2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, "
-            "contract=freeform, purpose=review, dispatch_thread_id=<this worker "
+            "contract=freeform, job=delivery-review, dispatch_thread_id=<this worker "
             "thread id>, parent_thread=<summoning_thread_id, else this worker "
             "thread id>, prompt=<body>); the body carries job=delivery-review and "
             "retrieval_report: cortex://… each on its own line, plus the evidence "
             "block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row "
             "does not search the repo for that contract. G5 ratify stays the "
-            "purpose=ask sentence above. "
+            "session=ask sentence above. "
             "3. One wait, then stop. Wait once with agent_bus tool=wait bound to "
             "that dispatch's poll_hint and execution_id. If the store is still "
             "running after that wait, write poll_hint and execution_id into the "
