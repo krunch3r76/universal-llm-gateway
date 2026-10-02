@@ -64,7 +64,8 @@ async def test_team_dispatch_omitted_lane_returns_422() -> None:
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="5777",
-        job="implement",
+        # packet_path is outside implement's handle set; freeform admits it.
+        job="freeform",
         packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
@@ -96,7 +97,8 @@ async def test_team_dispatch_nest_under_omits_lane_still_admits(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="5777",
-        job="implement",
+        # packet_path is outside implement's handle set; freeform admits it.
+        job="freeform",
         packet_path="tmp/reviews/packet.md",
         nest_under="parent-disp",
     )

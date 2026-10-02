@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 from implement_admission.dense_spec_schema import dense_spec_hash_uri, dense_spec_sha256
 
-from systems.frontier_consult.admission import FrontierEndpointError
-from systems.frontier_consult.implement_ready_gate import (
-    _read_dense_spec_text,
-    require_implement_ready,
+from implement_admission.implement_ready_gate_resolve import (
+    read_dense_spec_text as _read_dense_spec_text,
 )
+from systems.frontier_consult.admission import FrontierEndpointError
+from systems.frontier_consult.implement_ready_gate import require_implement_ready
 
 _TODO = "todo:densification-implement-admission-gate"
 _SPEC = "cortex://notes/system/specs/densification-implement-admission-gate.md"

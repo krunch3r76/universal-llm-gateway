@@ -14,6 +14,7 @@ from skills_mount import ResolvedSkillBundle
 from systems.pipeline.core.execution.async_tracker import PipelineExecutionTracker
 
 from .api_role_generate import dispatch_api_role_generate
+from .dispatch_thread_context import GeneratePromptResolution
 from .route import TeamDispatchGenerateBody
 from .service import (
     FrontierEndpointError,
@@ -1400,9 +1401,12 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
             return_value=("reviewer", "openai", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="hello",
+            # resolve_generate_prompt_resolution (renamed from read_latest_dispatch_thread_body).
+            return_value=GeneratePromptResolution(
+                text="hello", prompt_bind_mode="latest"
+            ),
         ),
     ):
         result = await dispatch_api_role_generate(
@@ -1481,9 +1485,12 @@ async def test_api_role_generate_skills_non_openai_admits(
             return_value=("reviewer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="hello",
+            # resolve_generate_prompt_resolution (renamed from read_latest_dispatch_thread_body).
+            return_value=GeneratePromptResolution(
+                text="hello", prompt_bind_mode="latest"
+            ),
         ),
     ):
         result = await dispatch_api_role_generate(

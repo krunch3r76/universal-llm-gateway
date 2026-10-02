@@ -293,7 +293,8 @@ async def test_dispatch_uses_residual_contract() -> None:
         await dispatch_skill_suggest(request_id="req-contract", body=body)
 
     dispatch.assert_awaited_once()
-    assert dispatch.await_args.kwargs["contract"] == "none"
+    # Residual skill-suggest worker job is freeform (HYPOTHESIZE_ON_JOBS includes freeform).
+    assert dispatch.await_args.kwargs["contract"] == "freeform"
     inspect.signature(dispatch_cursor_sdk_generate).bind(
         **dispatch.await_args.kwargs
     )

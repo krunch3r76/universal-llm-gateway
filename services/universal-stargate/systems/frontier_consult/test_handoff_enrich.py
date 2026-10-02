@@ -36,7 +36,7 @@ active_project_tag: project:test
 cortex_brief_confirmed: true
 related_thread_ids: ["2235", "2229"]
 todo: todo:sample-todo
-contract: consult
+contract: confer
 ---
 
 <scope>Stargate MCP routing surface change.</scope>
@@ -88,12 +88,12 @@ def test_consult_enrich_stamps_libs_and_pipeline_notice() -> None:
     )
     assert "Primitives in libs/ are often the right tool" in result.text
     assert "Pipelines are always in scope" in result.text
-    sketch = _THIN_WEB_PACKET.replace("contract: consult", "contract: sketch")
+    sketch = _THIN_WEB_PACKET.replace("contract: confer", "contract: sketch")
     sketched = enrich_handoff_packet(
         sketch, cortex=_StubCortex(), handoff_contract="sketch"
     )
     assert "Primitives in libs/" in sketched.text
-    implement = _THIN_WEB_PACKET.replace("contract: consult", "contract: implement")
+    implement = _THIN_WEB_PACKET.replace("contract: confer", "contract: implement")
     implemented = enrich_handoff_packet(
         implement, cortex=_StubCortex(), handoff_contract="implement"
     )
@@ -124,7 +124,7 @@ def test_enrich_merges_task_frontmatter_required_skills() -> None:
 ---
 active_project_tag: project:test
 task: task:sample-task
-contract: consult
+contract: confer
 ---
 
 <scope>ULG MCP routing surface change.</scope>
@@ -171,7 +171,7 @@ def test_enrich_injects_reasoning_posture_on_consult() -> None:
 
 def test_enrich_skips_judgment_skills_on_freeform_none() -> None:
     """``none`` is freeform for harness/hypothesize; posture still attaches."""
-    packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: none")
+    packet = _THIN_WEB_PACKET.replace("contract: confer", "contract: none")
     cortex = _StubCortex()
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" in result.skills_added
@@ -180,7 +180,7 @@ def test_enrich_skips_judgment_skills_on_freeform_none() -> None:
 
 def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
     """Route-derived contract wins when the packet omits frontmatter contract."""
-    packet = _THIN_WEB_PACKET.replace("contract: consult\n", "")
+    packet = _THIN_WEB_PACKET.replace("contract: confer\n", "")
     cortex = _StubCortex()
     skipped = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" not in skipped.skills_added
@@ -191,7 +191,7 @@ def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
 
 
 def test_enrich_skips_reasoning_posture_on_implement() -> None:
-    packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: implement")
+    packet = _THIN_WEB_PACKET.replace("contract: confer", "contract: implement")
     cortex = _StubCortex()
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" not in result.skills_added

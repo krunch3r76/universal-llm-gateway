@@ -59,6 +59,7 @@ def test_non_cursor_empty_allowed_models_unaffected_by_denylist(
         addenda=(),
         allowed_models=(),
         api_dispatchable=True,
+        mcp_surface="none",
     )
     resolved_model = "openai/gpt-5.5"
     blocked = False

@@ -828,8 +828,9 @@ class TeamHandoffBody(BaseModel):
     ``seat`` — manual seat slug (``claude-web``, ``claude-cursor``, roster aliases).
     ``role`` — handoff roster slug (``web-consult``, ``cursor-implement``, …).
     At least one of ``seat`` or ``role`` is required. Contract is derived server-side
-    (F1: explicit ``job`` → ``source_ref`` dispatch_lane → packet front-matter →
-    role ``default_contract``). An omitted job with no other signal is absent.
+    (F1: explicit ``job`` → ``source_ref`` dispatch_lane → packet front-matter).
+    Spec step 3 item 16: an omitted job with no other signal is absent. A role
+    does not fill implement. Senders that need implement state ``job=implement``.
 
     At least one of ``source_ref`` or ``packet_path`` must be present.
     ``source_ref`` triggers normalize→materialize (Phase 2 unified admission).

@@ -9,7 +9,7 @@ from fastapi import Response
 from fastapi.responses import JSONResponse
 
 from .admission import FrontierEndpointError
-from .dispatch_thread_context import as_user_message
+from .dispatch_thread_context import GeneratePromptResolution, as_user_message
 from .route import TeamDispatchGenerateBody
 
 _PACKET_BODY = """<scope>
@@ -65,8 +65,11 @@ async def test_dispatch_api_role_generate_packet_path_admits_with_packet_body(
             return_value=tmp_path,
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
+            return_value=GeneratePromptResolution(
+                text=_PACKET_BODY, prompt_bind_mode="explicit_external"
+            ),
         ) as read_thread,
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -77,7 +80,8 @@ async def test_dispatch_api_role_generate_packet_path_admits_with_packet_body(
             response=response,
         )
 
-    read_thread.assert_not_awaited()
+    # resolve_generate_prompt_resolution is the prompt bind, including packet_path.
+    read_thread.assert_awaited()
     req = dispatch.await_args.args[0]
     assert req.messages == as_user_message(_PACKET_BODY)
     assert result["thread_id"] == "1610"
@@ -128,8 +132,11 @@ async def test_dispatch_api_role_generate_packet_path_messages_equal_packet_body
             return_value=tmp_path,
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
+            return_value=GeneratePromptResolution(
+                text=_PACKET_BODY, prompt_bind_mode="explicit_external"
+            ),
         ) as read_thread,
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -140,7 +147,8 @@ async def test_dispatch_api_role_generate_packet_path_messages_equal_packet_body
             response=response,
         )
 
-    read_thread.assert_not_awaited()
+    # resolve_generate_prompt_resolution is the prompt bind, including packet_path.
+    read_thread.assert_awaited()
     req = dispatch.await_args.args[0]
     assert req.messages == as_user_message(_PACKET_BODY)
 
@@ -240,9 +248,12 @@ async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> N
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -287,7 +298,7 @@ async def test_dispatch_api_role_generate_empty_thread_raises_422() -> None:
 
     with (
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
             side_effect=FrontierEndpointError(
                 request_id="req-empty",
@@ -363,9 +374,12 @@ async def test_dispatch_api_role_generate_json_response_posts_failure_turn() -> 
             new_callable=AsyncMock,
         ) as failure_turn,
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -413,9 +427,12 @@ async def test_dispatch_api_role_generate_dict_error_posts_failure_turn() -> Non
             new_callable=AsyncMock,
         ) as failure_turn,
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -464,9 +481,12 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -510,9 +530,12 @@ async def test_api_generate_default_on_recommended_review() -> None:
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -557,9 +580,12 @@ async def test_api_generate_trivial_present_null_review() -> None:
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
     ):
         from .api_role_generate import dispatch_api_role_generate
@@ -617,9 +643,12 @@ async def test_api_role_generate_reuses_dispatch_prompt_thread() -> None:
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
         patch(
             "systems.frontier_consult.api_role_generate._emit_dispatch_thread_event",
@@ -682,9 +711,12 @@ async def test_api_role_generate_split_thread_mints_despite_reusable_arc() -> No
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value="ping",
+            # resolve_generate_prompt_resolution returns GeneratePromptResolution, not str.
+            return_value=GeneratePromptResolution(
+                text="ping", prompt_bind_mode="latest"
+            ),
         ),
         patch(
             "systems.frontier_consult.api_role_generate._emit_dispatch_thread_event",

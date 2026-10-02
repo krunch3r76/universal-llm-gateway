@@ -522,18 +522,17 @@ def resolve_handoff_target(
 
 
 def resolve_handoff_contract(
-    *,
-    role: str,
-    request_id: str,
-) -> tuple[str, str]:
-    """Resolve handoff work-intent from ``role`` only (roster-slug fallback path)."""
-    _ = request_id
-    from .contract_derivation import contract_from_role
+    role: str | None = None,
+    request_id: str = "",
+) -> tuple[None, str]:
+    """Absent in, absent out (spec step 3 item 16).
 
-    from_role = contract_from_role(role)
-    if from_role is not None:
-        return from_role
-    return "confer", "role_default"
+    A role does not supply a job. ``resolve_handoff_contract(None)`` returns
+    absent and does not return ``none`` or ``answer``. Senders that need
+    implement state ``job=implement``.
+    """
+    _ = role, request_id
+    return None, "absent"
 
 
 def _cursor_sdk_omit_model(*, request_id: str, job: str | None = None) -> str:

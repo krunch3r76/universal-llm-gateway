@@ -116,7 +116,11 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-1/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n/consult-posture\n")
+    # Spec fork 8 / staging marker (cdp_model_endpoint_staging.stage_cdp_prompt_with_skills):
+    # shared_sync floor is the cdp-required-skills marker, not a leading slash block.
+    assert (
+        "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
+    )
     assert "## ask" in text
     assert staged.staged is True
 
@@ -138,7 +142,8 @@ def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) 
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-light/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    # Omitted skills: judgment floor only (spec acceptance item 3; reasoning-posture).
+    assert "<!--cdp-required-skills:reasoning-posture-->" in text
     assert "## light" in text
     assert staged.staged is True
     assert "<skills_inline>" not in text
@@ -162,8 +167,12 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-2/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    # Judgment skill always prepended as slash; caller non-Claude stays inline.
-    assert text.startswith("/reasoning-posture\n")
+    # Judgment skill is the marker; caller non-Claude stays inline.
+    # stage_cdp_prompt_with_skills (spec acceptance item 3 judgment floor).
+    # render_cdp_required_authority: floor plus the inlined non-Claude slug.
+    assert (
+        "<!--cdp-required-skills:reasoning-posture,investigation-economy-->" in text
+    )
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -210,7 +219,11 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    # stage_cdp_prompt_with_skills: marker, not a leading slash.
+    # render_cdp_required_authority: caller slug then the judgment floor.
+    assert (
+        "<!--cdp-required-skills:investigation-economy,reasoning-posture-->" in text
+    )
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text

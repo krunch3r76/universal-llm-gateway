@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi import Response
-from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from .admission import FrontierEndpointError, resolve_cursor_sdk_generate_target
 from .conftest import dispatch_cursor_sdk_generate_mock
@@ -27,23 +27,17 @@ def test_cloud_role_with_cursor_model_rejects_sdk_substrate_required() -> None:
 async def test_team_dispatch_cloud_role_cursor_model_rejects_before_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    body = TeamDispatchGenerateBody(
-        op="generate",
-        role="reviewer",
-        model="cursor/claude-sonnet-5",
-        dispatch_thread_id="todo:arc",
-        job="freeform",
-    )
-    result = await team_dispatch(body, Response())
-
-    assert isinstance(result, JSONResponse)
-    assert result.status_code == 422
-    payload = result.body.decode()
-    assert (
-        "sdk_substrate_required" in payload
-        or "seat_unknown" in payload
-        or "substrate_model_role_conflict" in payload
-    )
+    # role is a registry job alias; reviewer is not a job id.
+    with pytest.raises(ValidationError) as excinfo:
+        TeamDispatchGenerateBody(
+            op="generate",
+            role="reviewer",
+            model="cursor/claude-sonnet-5",
+            dispatch_thread_id="todo:arc",
+            job="freeform",
+        )
+    assert "not a registry job" in str(excinfo.value)
+    assert "reviewer" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
@@ -73,5 +67,12 @@ async def test_cursor_sdk_role_with_cursor_model_still_admits(
     )
     result = await team_dispatch(body, Response())
 
-    assert result == {"execution_id": "exec-1", "thread_id": "t1"}
+    # Spec fork 18: generate return carries resolved_job, delivery_role, registry_ref.
+    assert result == {
+        "execution_id": "exec-1",
+        "thread_id": "t1",
+        "resolved_job": "freeform",
+        "delivery_role": "",
+        "registry_ref": "job_vocab:freeform",
+    }
     sdk_mock.assert_awaited_once()

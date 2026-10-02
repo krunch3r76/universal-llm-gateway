@@ -157,17 +157,20 @@ async def test_f22100_cursor_sdk_no_packet_pointer_matches_api_role_shape(
     for name in (
         "emit_sdk_generate_requested",
         "emit_sdk_thread_created",
-        "emit_sdk_worker_outcome",
     ):
         monkeypatch.setattr(
-            f"systems.frontier_consult.cursor_sdk_generate.{name}",
+            f"systems.frontier_consult.cursor_sdk_generate_prepare.{name}",
             lambda **_kw: None,
         )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.admit_handoff_dispatch",
+        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        lambda **_kw: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_prepare.admit_handoff_dispatch",
         AsyncMock(),
     )
-    worker = AsyncMock(return_value=(True, None))
+    worker = AsyncMock(return_value=(True, {}))
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate."
         "dispatch_cursor_sdk_worker_message",
@@ -180,7 +183,7 @@ async def test_f22100_cursor_sdk_no_packet_pointer_matches_api_role_shape(
         return "4117"
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         _capture_create,
     )
 

@@ -25,32 +25,33 @@ def _bus_db(tmp_path, monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.asyncio
 async def test_reuse_thread_no_create(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC7: reuse_thread skips create_handoff_thread, posts pointer turn."""
-    mock_post = AsyncMock()
+    # post_pointer_turn's return is pointer_turn (cursor_sdk_generate_prepare).
+    mock_post = AsyncMock(return_value=1)
     mock_create = AsyncMock()
     emitted: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        "systems.frontier_consult.handoff.post_pointer_turn",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.post_pointer_turn",
         mock_post,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         mock_create,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_thread_created",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.emit_sdk_thread_created",
         lambda **kwargs: emitted.append(dict(kwargs)),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.admit_handoff_dispatch",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.admit_handoff_dispatch",
         AsyncMock(),
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
-        AsyncMock(return_value=(True, None)),
+        AsyncMock(return_value=(True, {})),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_generate_requested",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.emit_sdk_generate_requested",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
@@ -122,23 +123,23 @@ async def test_create_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     emitted: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         mock_create,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_thread_created",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.emit_sdk_thread_created",
         lambda **kwargs: emitted.append(dict(kwargs)),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.admit_handoff_dispatch",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.admit_handoff_dispatch",
         AsyncMock(),
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
-        AsyncMock(return_value=(True, None)),
+        AsyncMock(return_value=(True, {})),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_generate_requested",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.emit_sdk_generate_requested",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
@@ -168,14 +169,14 @@ async def test_generate_forwards_execution_id_to_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC1/AC7: worker dispatch receives execution_id and caller_agent."""
-    worker_mock = AsyncMock(return_value=(True, None))
+    worker_mock = AsyncMock(return_value=(True, {}))
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         AsyncMock(return_value="thread-1"),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.admit_handoff_dispatch",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.admit_handoff_dispatch",
         AsyncMock(),
     )
     monkeypatch.setattr(
@@ -183,11 +184,11 @@ async def test_generate_forwards_execution_id_to_worker(
         worker_mock,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_generate_requested",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.emit_sdk_generate_requested",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_thread_created",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.emit_sdk_thread_created",
         lambda **_kwargs: None,
     )
     monkeypatch.setattr(
@@ -234,8 +235,9 @@ def test_worker_dispatch_failed_event_carries_execution_id(
         thread_id="thread-fail",
         execution_id="exec-fail-event",
         worker_ok=False,
-        worker_warning="worker unreachable",
+        worker_detail={},
     )
 
     assert captured[0]["execution_id"] == "exec-fail-event"
-    assert captured[0]["error"] == "worker unreachable"
+    # emit_sdk_worker_outcome publishes FrontierSdkWorkerDispatchFailed.error.
+    assert captured[0]["error"] == "worker_dispatch: failed"

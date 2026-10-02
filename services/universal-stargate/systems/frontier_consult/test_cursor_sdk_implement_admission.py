@@ -17,6 +17,7 @@ cortex:notes/system/threads/1724-messages-fold-implement-densify-findings.md.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -76,18 +77,16 @@ async def test_cursor_sdk_implement_admits_without_messages(
     )
     result = await team_dispatch(body, Response())
 
-    assert result == {"execution_id": "exec-1", "thread_id": "1726"}
-    # The implement corpus is the packet — the dispatch thread is never read,
-    # so no "user message required" gate can fire on this path.
+    # implement handle set is source_ref only (_reject_handles_outside_record).
+    payload = json.loads(result.body)
+    assert result.status_code == 422
+    assert payload["field"] == "packet_path"
+    assert payload["error"]["code"] == "handle_forbidden"
+    assert payload["details"]["reason"] == "handle_forbidden"
+    assert payload["details"]["registry_ref"] == "job_vocab:implement"
+    assert "execution_id" not in payload
     thread_read.assert_not_awaited()
-    sdk_mock.assert_awaited_once()
-    kwargs = sdk_mock.await_args.kwargs
-    assert kwargs["contract"] == "implement"
-    assert kwargs["packet_path"] == "tmp/reviews/packet.md"
-    assert kwargs["message_text"] == ""  # source_text="" for implement
-    assert kwargs["parent_dispatch_thread_id"] == "todo:some-arc"
-    assert kwargs.get("reuse_thread") is None
-    assert kwargs.get("bus_lifecycle") is None  # defaults ephemeral inside orchestrator
+    sdk_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -115,7 +114,14 @@ async def test_cursor_sdk_residual_packet_skips_dispatch_thread(
     )
     result = await team_dispatch(body, Response())
 
-    assert result == {"execution_id": "exec-light", "thread_id": "1730"}
+    # Spec fork 18: generate return carries resolved_job, delivery_role, registry_ref.
+    assert result == {
+        "execution_id": "exec-light",
+        "thread_id": "1730",
+        "resolved_job": "freeform",
+        "delivery_role": "",
+        "registry_ref": "job_vocab:freeform",
+    }
     thread_read.assert_not_awaited()
     sdk_mock.assert_awaited_once()
     kwargs = sdk_mock.await_args.kwargs
@@ -272,11 +278,15 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
     )
     result = await team_dispatch(body, Response())
 
+    # Spec fork 18: generate return carries resolved_job, delivery_role, registry_ref.
     assert result == {
         "execution_id": "exec-wrap",
         "thread_id": "1728",
         "materialization_mode": "auto",
         "warnings": ["executor-absent"],
+        "resolved_job": "implement",
+        "delivery_role": "",
+        "registry_ref": "job_vocab:implement",
     }
     prompt_resolution.assert_not_awaited()
     sdk_mock.assert_awaited_once()
@@ -389,9 +399,12 @@ async def test_cursor_sdk_implement_packet_path_no_materialization_mode(
     )
     result = await team_dispatch(body, Response())
 
-    assert result == {"execution_id": "exec-inline", "thread_id": "1729"}
-    assert "materialization_mode" not in result
-    assert prepare_calls == [True]
+    # implement refuses packet_path before materialization (_reject_handles_outside_record).
+    payload = json.loads(result.body)
+    assert result.status_code == 422
+    assert payload["field"] == "packet_path"
+    assert payload["error"]["code"] == "handle_forbidden"
+    assert "materialization_mode" not in payload
+    assert prepare_calls == []
     thread_read.assert_not_awaited()
-    sdk_mock.assert_awaited_once()
-    assert sdk_mock.await_args.kwargs["packet_path"] == "tmp/reviews/packet.md"
+    sdk_mock.assert_not_awaited()

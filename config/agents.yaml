@@ -365,7 +365,6 @@ roles:
     default_family: claude
     default_platform: web
     default_model: null
-    default_contract: implement
 
   cursor-consult:
     description: "Cursor consult handoff — fresh packet context + operator tier (Opus); reviews, projects, exploration, architecture"
@@ -379,7 +378,6 @@ roles:
     default_family: claude
     default_platform: cursor
     default_model: null
-    default_contract: implement
 
   reviewer:
     description: "Review and audit with reliable MCP writes. Code-lane standing default: cursor/grok-4.7 via route_policy.yaml workflows.check_review (decision:code-review-panel-cursor-substrate); job=freeform omit-model coerces to seat=cursor-sdk. Explicit model=openai/* keeps API (life / checkout-free). Judgment / path-sim R-admit → CDP. Life/writing: Terra standing, or google/gemini-3.6-flash as MCP-capable peer. Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 OPERATOR-GATED (explicit auth; not standing default)."

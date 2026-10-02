@@ -218,18 +218,17 @@ async def test_wrap_decision_not_asserted_returns_422(
 @pytest.mark.asyncio
 @pytest.mark.offline
 async def test_wrap_role_not_admitted_for_non_sdk_role() -> None:
-    body = TeamDispatchGenerateBody(
-        op="generate",
-        role="reviewer",
-        dispatch_thread_id="thread:arc",
-        job="wrap",
-        source_ref="todo:slug",
-    )
-    result = await team_dispatch(body, Response())
-
-    assert isinstance(result, JSONResponse)
-    assert result.status_code == 422
-    assert b"wrap_role_not_admitted" in result.body
+    # role is a registry job alias; reviewer is not a job id.
+    with pytest.raises(ValidationError) as excinfo:
+        TeamDispatchGenerateBody(
+            op="generate",
+            role="reviewer",
+            dispatch_thread_id="thread:arc",
+            job="wrap",
+            source_ref="todo:slug",
+        )
+    assert "not a registry job" in str(excinfo.value)
+    assert "reviewer" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

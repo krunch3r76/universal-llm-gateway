@@ -6,9 +6,6 @@ import re
 from pathlib import Path
 from typing import Any, Protocol
 
-from agent_seat.profiles import load_roles
-from agent_seat.registry import normalize_agent_slug
-
 from .executor_resolution import (
     derive_recommended_executor,  # noqa: F401 — packet surface
 )
@@ -58,14 +55,6 @@ def _contract_from_packet_text(text: str) -> str | None:
     return None
 
 
-def contract_from_role(role: str) -> tuple[str, str] | None:
-    canonical = normalize_agent_slug(role)
-    role_profile = load_roles().get(canonical)
-    if role_profile is not None and role_profile.default_contract is not None:
-        return role_profile.default_contract, "role_default"
-    return None
-
-
 def derive_contract(
     *,
     explicit_contract: str | None = None,
@@ -81,9 +70,10 @@ def derive_contract(
       0. explicit ``job`` / contract request param (MCP / route body)
       1. ``source_ref`` → entity ``dispatch_lane`` via explicit map
       2. packet front-matter ``contract:`` (YAML or ``**Contract:**`` line)
-      3. roster ``role`` → ``role_default`` when the profile names ``default_contract``
-      4. omitted job → absent (``None``, source ``absent``).
-         No consult, answer, or none default.
+      3. omitted job → absent (``None``, source ``absent``).
+         Spec step 3 item 16: absent in, absent out. No role default.
+         No consult, answer, or none default. Senders that need implement
+         state ``job=implement``.
     """
     if explicit_contract is not None:
         return explicit_contract, "explicit_param"
@@ -108,9 +98,5 @@ def derive_contract(
             if from_packet is not None:
                 return from_packet, "packet_frontmatter"
 
-    if role:
-        from_role = contract_from_role(role)
-        if from_role is not None:
-            return from_role
-
+    _ = role
     return None, "absent"

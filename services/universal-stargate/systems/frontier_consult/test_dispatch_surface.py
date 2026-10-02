@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from .admission import verify_thread_writable
+from .admission import FrontierEndpointError, verify_thread_writable
 from .route import (
     FrontierDispatchGenerateBody,
     FrontierDispatchToThreadBody,
@@ -65,7 +65,7 @@ def test_to_thread_propagates_subject_as_reply_subject() -> None:
     """Caller-supplied subject lands on reply_subject for the on-behalf turn."""
     body = TeamDispatchToThreadBody(
         op="to_thread",
-        role="reviewer",
+        role="gatherer",
         dispatch_thread_id="dispatch-thread-1",
         thread="1051",
         subject="Re: plan-promotion review",
@@ -79,7 +79,7 @@ def test_to_thread_omits_reply_subject_when_unset() -> None:
     """No subject ⇒ no reply_subject (delivery handler auto-derives)."""
     body = TeamDispatchToThreadBody(
         op="to_thread",
-        role="reviewer",
+        role="gatherer",
         dispatch_thread_id="dispatch-thread-1",
         thread="1051",
         job="freeform",
@@ -155,8 +155,26 @@ def test_generate_rejects_inline_prompt_on_non_prompt_contract(
     }
     if contract == "wrap":
         kwargs["source_ref"] = "todo:x"
-    with pytest.raises(ValidationError):
-        TeamDispatchGenerateBody(**kwargs)  # type: ignore[arg-type]
+        with pytest.raises(ValidationError):
+            TeamDispatchGenerateBody(**kwargs)  # type: ignore[arg-type]
+        return
+    # implement admits prompt at the model; intake refuses it (handle set).
+    from job_vocab.records import job_record
+
+    from systems.frontier_consult._frontier_intake import _reject_handles_outside_record
+
+    body = TeamDispatchGenerateBody(**kwargs)  # type: ignore[arg-type]
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        _reject_handles_outside_record(
+            request_id="req-inline-prompt",
+            record=job_record("implement"),
+            prompt=body.prompt,
+            packet_path=None,
+            sidecar_ref=None,
+            source_ref=None,
+        )
+    assert excinfo.value.code == "handle_forbidden"
+    assert excinfo.value.field == "prompt"
 
 
 def test_to_thread_rejects_prompt_plus_sidecar_ref() -> None:

@@ -36,19 +36,22 @@ def _common_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "emit_sdk_generate_requested",
         "emit_sdk_thread_created",
-        "emit_sdk_worker_outcome",
     ):
         monkeypatch.setattr(
-            f"systems.frontier_consult.cursor_sdk_generate.{name}",
+            f"systems.frontier_consult.cursor_sdk_generate_prepare.{name}",
             lambda **_kw: None,
         )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.admit_handoff_dispatch",
+        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        lambda **_kw: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_prepare.admit_handoff_dispatch",
         AsyncMock(),
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
-        AsyncMock(return_value=(True, None)),
+        AsyncMock(return_value=(True, {})),
     )
 
 
@@ -67,7 +70,7 @@ async def test_new_thread_recipient_scoped_to_execution_id(
         return "thread-new-scoped"
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         _capture_create,
     )
 
@@ -105,13 +108,14 @@ async def test_reuse_thread_recipient_scoped_to_execution_id(
 
     async def _capture_post(**kwargs):
         post_kwargs.append(kwargs)
+        return 1
 
     monkeypatch.setattr(
-        "systems.frontier_consult.handoff.post_pointer_turn",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.post_pointer_turn",
         _capture_post,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         AsyncMock(),
     )
 
@@ -160,7 +164,7 @@ async def test_two_dispatch_bus_isolation(monkeypatch: pytest.MonkeyPatch) -> No
         return str(thread_row["id"])
 
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.create_handoff_thread",
+        "systems.frontier_consult.cursor_sdk_generate_prepare.create_handoff_thread",
         _create_and_insert,
     )
 

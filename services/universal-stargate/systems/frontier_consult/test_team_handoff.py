@@ -515,6 +515,7 @@ def test_h1c_route_cursor_implement_push_reminder_mentions_cursor(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -556,19 +557,20 @@ def test_h1d_web_implement_target_resolves() -> None:
 
 
 def test_h1d_web_implement_defaults_implement() -> None:
-    """role=web-implement → implement (RoleProfile.default_contract)."""
+    """role=web-implement gives no job. Spec step 3 item 16: absent in, absent out."""
     contract, source = resolve_handoff_contract(
         role="web-implement", request_id="req-wi-c"
     )
-    assert contract == "implement"
-    assert source == "role_default"
+    assert contract is None
+    assert contract not in {"none", "answer"}
+    assert source == "absent"
 
 
 def test_h1d_route_web_implement_seat_and_contract(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=web-implement → claude-web + implement contract (role_default)."""
+    """role=web-implement needs job=implement. Spec step 3 item 16: role does not fill it."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-wi"))
 
@@ -578,6 +580,7 @@ def test_h1d_route_web_implement_seat_and_contract(
         json={
             "op": "handoff",
             "role": "web-implement",
+            "job": "implement",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -587,7 +590,7 @@ def test_h1d_route_web_implement_seat_and_contract(
     assert body["to_agent"] == "web-anthropic"
     assert body["resolved_handoff_seat"] == "web-anthropic"
     assert body["handoff_contract"] == "implement"
-    assert body["handoff_contract_source"] == "role_default"
+    assert body["handoff_contract_source"] == "explicit_param"
     assert "push" in body["push_reminder"].lower()
     assert body["poll_hint"]["arguments"]["from_agent"] == "web-anthropic"
 
@@ -607,6 +610,7 @@ def test_h1d_route_web_implement_pointer_and_tag(
         json={
             "op": "handoff",
             "role": "web-implement",
+            "job": "implement",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -942,29 +946,37 @@ def test_hc2b_model_field_rejected(
 
 
 def test_hc3_cursor_implement_defaults_implement() -> None:
-    """role=cursor-implement → implement (RoleProfile)."""
+    """role=cursor-implement gives no job. Spec step 3 item 16: absent."""
     contract, source = resolve_handoff_contract(
         role="cursor-implement", request_id="req-c3"
     )
-    assert contract == "implement"
-    assert source == "role_default"
+    assert contract is None
+    assert contract not in {"none", "answer"}
+    assert source == "absent"
+
+
+def test_resolve_handoff_contract_none_is_absent() -> None:
+    """Spec verification near line 472: resolve_handoff_contract(None) is not none or answer."""
+    result = resolve_handoff_contract(None)
+    assert result[0] not in {"none", "answer"}
+    assert result == (None, "absent")
 
 
 def test_hc4b_web_consult_consult() -> None:
-    """role=web-consult has no profile contract; fallback is confer, not consult."""
+    """role=web-consult does not lock confer. Spec step 3 item 16: absent."""
     contract, source = resolve_handoff_contract(
         role="web-consult", request_id="req-c4b"
     )
-    assert contract == "confer"
-    assert contract not in {"none", "answer", "consult"}
-    assert source == "role_default"
+    assert contract is None
+    assert contract not in {"none", "answer", "confer"}
+    assert source == "absent"
 
 
 def test_hc5_cursor_implement_route(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=cursor-implement → claude-cursor + implement."""
+    """role=cursor-implement needs job=implement. Spec step 3 item 16."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5"))
 
@@ -974,6 +986,7 @@ def test_hc5_cursor_implement_route(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -982,7 +995,7 @@ def test_hc5_cursor_implement_route(
     body = resp.json()
     assert body["resolved_model"] == "cursor"
     assert body["handoff_contract"] == "implement"
-    assert body["handoff_contract_source"] == "role_default"
+    assert body["handoff_contract_source"] == "explicit_param"
 
 
 def test_hc5b_cursor_consult_consult(
@@ -1636,6 +1649,7 @@ def test_p2_source_ref_admits_and_creates_thread(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": "todo:relay-bounded-single",
             "subject": _GOOD_SUBJECT,
         },
@@ -1770,6 +1784,7 @@ def test_p2_both_present_hash_match_admits(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": source_ref,
             "packet_path": rel,
             "subject": _GOOD_SUBJECT,
@@ -1862,6 +1877,7 @@ def test_p2_both_present_hash_absent_stamps_and_admits(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": source_ref,
             "packet_path": rel,
             "subject": _GOOD_SUBJECT,
@@ -1902,6 +1918,7 @@ def test_p2_materialized_dual_root_projects_parent(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": "todo:relay-bounded-single",
             "subject": _GOOD_SUBJECT,
         },
@@ -1941,6 +1958,7 @@ def test_p2_materialized_dual_root_repo(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": "todo:relay-bounded-single",
             "subject": _GOOD_SUBJECT,
         },
@@ -2000,6 +2018,7 @@ def test_phase2_source_ref_admits(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": "todo:unified-admission-phase2-implement",
             "subject": _GOOD_SUBJECT,
         },
@@ -2047,6 +2066,7 @@ def test_materialization_present_false_surfaces_warning(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": "todo:unified-admission-phase2-implement",
             "subject": _GOOD_SUBJECT,
         },
@@ -2520,6 +2540,7 @@ def test_materialization_mode_packet_path_only_with_frontmatter(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "packet_path": _PV_REL,
             "subject": _GOOD_SUBJECT,
         },
@@ -2732,6 +2753,7 @@ def test_s4_packet_source_ref_passthrough_admits_enforce(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": source_ref,
             "subject": _GOOD_SUBJECT,
         },
@@ -2810,6 +2832,7 @@ def test_s4_packet_lane_skips_gate_b_both_present(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "source_ref": source_ref,
             "packet_path": rel,
             "subject": _GOOD_SUBJECT,
@@ -2897,6 +2920,7 @@ def test_dd_implement_default_composer_fields(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "packet_path": _DD_REL,
             "subject": _GOOD_SUBJECT,
         },
@@ -2955,6 +2979,7 @@ def test_dd_acceptance_gate_unchanged(
         json={
             "op": "handoff",
             "role": "cursor-implement",
+            "job": "implement",
             "packet_path": _DD_REL,
             "subject": _GOOD_SUBJECT,
         },
