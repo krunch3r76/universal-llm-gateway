@@ -2,13 +2,15 @@
 
 The IDE tail stays quiet while the conductor posts ordinary turns. It prints
 a single line and exits when the log shows a closeout, or when the conductor
-reports a stall.
+reports a stall. A poller that dies before writing a terminal state is a
+stall too: otherwise the seat waits on a state file that will never exist.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -56,11 +58,63 @@ def _last_wake(text: str) -> str | None:
     return found
 
 
+def _pid_path(state_path: Path) -> Path:
+    name = state_path.name
+    suffix = ".state.json"
+    if name.endswith(suffix):
+        return state_path.with_name(f"{name[: -len(suffix)]}.pid")
+    return state_path.with_name(f"{state_path.stem}.pid")
+
+
+def _poller_alive(state_path: Path) -> bool | None:
+    """Whether the supervised pid is alive.
+
+    None means there is no pid file yet, so the tail must keep waiting.
+    False means the poller is gone and will not write state.
+    """
+    pid_path = _pid_path(state_path)
+    if not pid_path.is_file():
+        return None
+    raw = pid_path.read_text(encoding="utf-8", errors="replace").strip()
+    if not raw.isdigit():
+        return None
+    try:
+        os.kill(int(raw), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _exit_reason(log_path: Path) -> str:
+    """Last human line in the poller log, skipping banners and JSON events."""
+    if not log_path.is_file():
+        return "poller exited before writing state"
+    lines = [
+        line.strip()
+        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
+    for line in reversed(lines):
+        if line.startswith(("{", "[DEBUG]", "✅")):
+            continue
+        if line.startswith(_STALL_PREFIX):
+            continue
+        return line[:240]
+    return "poller exited before writing state"
+
+
 def follow(*, log_path: Path, state_path: Path, poll_s: float = 0.5) -> int:
     """Block until a finish or stall line, print it, and return 0.
 
     A terminal state file with no wake line still returns, and names the
-    state so the seat is not left hanging on an expired poller.
+    state so the seat is not left hanging on an expired poller. A dead
+    poller pid with no terminal state returns 1 and prints the log's
+    last error: argparse can SystemExit after start's liveness check,
+    and the state file is never created.
     """
     offset = 0
     while True:
@@ -84,6 +138,10 @@ def follow(*, log_path: Path, state_path: Path, poll_s: float = 0.5) -> int:
             wake = _last_wake(prior)
             print(wake or f"{_STALL_PREFIX} watcher_{status}", flush=True)
             return 0
+        if _poller_alive(state_path) is False:
+            reason = _exit_reason(log_path)
+            print(f"{_STALL_PREFIX} watcher_exited {reason}", flush=True)
+            return 1
         time.sleep(poll_s)
 
 
