@@ -27,8 +27,13 @@ _REPO = Path(__file__).resolve().parents[2]
 def test_render_bundle_reasoning_posture_uses_new_description() -> None:
     path = _REPO / "cursor-plugins/ulg-ecosystem/skills/reasoning-posture/SKILL.md"
     raw = path.read_text(encoding="utf-8")
+    lint_msg = lint_frontmatter_description("reasoning-posture", raw)
+    assert lint_msg is None
+    fm, body = parse_frontmatter(raw)
+    desc = str(fm.get("description") or "").strip()
+    assert len(desc) <= MAX_SKILL_DESCRIPTION_LEN
+    assert desc.startswith("How to reason when you judge")
     rendered = render_bundle("reasoning-posture", raw)
-    assert "How to reason on a turn that judges" in rendered
     assert "Posture for substantive reasoning turns" not in rendered
     assert "## Six rules" not in rendered
     assert "Before the merits" in rendered

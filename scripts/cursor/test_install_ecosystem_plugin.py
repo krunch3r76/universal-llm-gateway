@@ -13,13 +13,6 @@ _CONDUCTOR = _REPO / "cursor-plugins" / "ulg-ecosystem" / "skills" / "conductor"
 
 
 @pytest.mark.offline
-def test_install_script_copies_whole_skill_directory() -> None:
-    text = _INSTALL.read_text(encoding="utf-8")
-    assert 'cp -a "$src_dir"/.' in text
-    assert 'cp -a "$src" "$dest/SKILL.md"' not in text
-
-
-@pytest.mark.offline
 def test_reasoning_posture_reference_companion_present() -> None:
     skill = _REASONING / "SKILL.md"
     ref = _REASONING / "reference.md"

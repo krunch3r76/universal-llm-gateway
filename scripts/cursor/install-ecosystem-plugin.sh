@@ -145,19 +145,28 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 
   # SoT = plugin tree (sole Cursor discovery). Fallback: hub .cursor only.
   # ¬ .claude/skills — shared_sync staging is out-of-tree; census there is duplex.
-  src_dir=""
+  src=""
   if [[ -f "$PLUGIN_SRC/skills/$slug/SKILL.md" ]]; then
-    src_dir="$PLUGIN_SRC/skills/$slug"
+    src="$PLUGIN_SRC/skills/$slug/SKILL.md"
   elif [[ -f "$ULG_ROOT/.cursor/skills/$slug/SKILL.md" ]]; then
-    src_dir="$ULG_ROOT/.cursor/skills/$slug"
+    src="$ULG_ROOT/.cursor/skills/$slug/SKILL.md"
   else
     echo "  MISSING skill body: $slug" >&2
     MISSING=$((MISSING + 1))
     continue
   fi
 
-  cp -a "$src_dir"/. "$dest/"
-  echo "  skill: $slug ← $src_dir/"
+  cp -a "$src" "$dest/SKILL.md"
+  # Copy companion files if present next to SoT
+  src_dir="$(dirname "$src")"
+  shopt -s nullglob
+  for extra in "$src_dir"/*; do
+    base="$(basename "$extra")"
+    [[ "$base" == "SKILL.md" ]] && continue
+    [[ -f "$extra" ]] && cp -a "$extra" "$dest/"
+  done
+  shopt -u nullglob
+  echo "  skill: $slug ← $src"
 done < "$CENSUS"
 
 [[ "$MISSING" -eq 0 ]] || die "$MISSING skill(s) missing from census"

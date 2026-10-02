@@ -1,6 +1,6 @@
 ---
 name: reasoning-posture
-description: "How to reason on a turn that judges, reviews, diagnoses or decides: pin the question and what is out of scope, steelman before critique, label confidence by kind, answer directly, check the source before conceding, correct once, take one bounded step with its check before anything that depends on it."
+description: "How to reason when you judge, review, diagnose or decide: pin the question and scope, steelman first, label confidence, answer directly, verify before conceding, correct once, take one bounded step."
 alwaysApply: true
 trigger_match_terms: ["reasoning-posture", "reasoning_posture", "steelman", "out of scope", "root cause", "code review", "design review", "architecture fork", "verdict", "calibrated confidence", "bounded step"]
 ---
