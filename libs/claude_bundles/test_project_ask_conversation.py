@@ -374,3 +374,58 @@ async def test_followup_harvest_incomplete_preserves_nonzero_body() -> None:
     assert result.body == partial
     assert result.body_len == len(partial)
     assert result.body_len > 0
+
+
+@pytest.mark.asyncio
+async def test_compose_harvest_incomplete_preserves_nonzero_body() -> None:
+    """a:37226 review A2 — compose-first path must keep last scrape."""
+    from claude_bundles.chat_reply_wait import HarvestIncomplete
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/new"
+    partial = "Compose review mid-body without sealed verdict. " + ("y" * 120)
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Model: Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(
+                side_effect=HarvestIncomplete(
+                    "timed out incomplete (base_len=0, last=6969, n=6) — ¬delete",
+                    body=partial,
+                )
+            ),
+        ),
+    ):
+        results = await run_project_conversation(
+            ["first prompt"],
+            model="opus-5",
+            purpose="review",
+            delete_after=False,
+        )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].body == partial
+    assert results[0].body_len == len(partial)
+    assert results[0].body_len > 0
+    assert "timed out incomplete" in (results[0].error or "")

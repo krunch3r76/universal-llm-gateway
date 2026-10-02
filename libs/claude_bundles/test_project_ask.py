@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from claude_bundles import cdp_registry as reg
 from claude_bundles import project_ask_abort as abort
+from claude_bundles.chat_reply_wait import HarvestIncomplete
 from claude_bundles.chat_session_hygiene import _page_score
 from claude_bundles.project_ask import (
     archive_harvest,
+    project_ask_on_page,
     read_archive_execution_id,
     strip_thinking_prefix,
     submit_control_names,
@@ -268,3 +270,49 @@ async def test_submit_composer_draft_auto_refuses(
     with pytest.raises(RuntimeError, match="cowork dispatch refused"):
         await _submit_composer_draft(AsyncMock(), composer=AsyncMock(), draft_text="hi")
     click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_project_ask_on_page_harvest_incomplete_preserves_body() -> None:
+    """a:37226 review A2 — project_ask_on_page must keep last scrape."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_01DySavjf3QUK1oDU9NC9McG"
+    partial = "Project ask review mid-body. " + ("z" * 150)
+
+    with (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"count": 1}),
+        ),
+        patch(
+            "claude_bundles.project_ask.send_prompt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                side_effect=HarvestIncomplete(
+                    "timed out incomplete (base_len=0, last=6969, n=6) — ¬delete",
+                    body=partial,
+                )
+            ),
+        ),
+    ):
+        result = await project_ask_on_page(
+            page,
+            "review prompt",
+            project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
+            model="opus-5",
+            delete_after=False,
+            purpose="review",
+        )
+
+    assert result.ok is False
+    assert result.body == partial
+    assert result.body_len == len(partial)
+    assert result.body_len > 0
+    assert "timed out incomplete" in (result.error or "")
