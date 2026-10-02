@@ -712,6 +712,7 @@ async def dispatch_cdp_generate(
 
     prompt_for_topic = prompt if isinstance(prompt, str) else None
     dispatch_topic = extract_cdp_dispatch_topic(prompt_for_topic)
+    worker_purpose = purpose if purpose is not None else "ask"
     worker_kwargs: dict[str, Any] = {
         "execution_id": execution_id,
         "model_id": str(model),
@@ -721,7 +722,7 @@ async def dispatch_cdp_generate(
         "request_id": request_id,
         "pointer_turn": after_turn,
         "max_wall_s": float(timeout_seconds) if timeout_seconds else None,
-        "purpose": purpose,
+        "purpose": worker_purpose,
         "mission_kind": mission_kind,
         "parent_thread": parent_thread,
         "topic": dispatch_topic,
