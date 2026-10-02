@@ -123,15 +123,26 @@ def retain_stream_prose(
     *,
     dispatch_id: str,
     local: list[RunLine],
+    density_harness: Any | None = None,
 ) -> None:
     """Keep assistant text and thinking from one stream event or fallback message."""
     if _is_stream_event(event):
         for attr in ("sdk_message", "interaction_update", "step"):
             piece = getattr(event, attr, None)
             if piece is not None:
-                _retain_piece(piece, dispatch_id=dispatch_id, local=local)
+                _retain_piece(
+                    piece,
+                    dispatch_id=dispatch_id,
+                    local=local,
+                    density_harness=density_harness,
+                )
         return
-    _retain_piece(event, dispatch_id=dispatch_id, local=local)
+    _retain_piece(
+        event,
+        dispatch_id=dispatch_id,
+        local=local,
+        density_harness=density_harness,
+    )
 
 
 def _is_stream_event(event: Any) -> bool:
@@ -141,13 +152,24 @@ def _is_stream_event(event: Any) -> bool:
     )
 
 
-def _retain_piece(piece: Any, *, dispatch_id: str, local: list[RunLine]) -> None:
+def _retain_piece(
+    piece: Any,
+    *,
+    dispatch_id: str,
+    local: list[RunLine],
+    density_harness: Any | None = None,
+) -> None:
     extracted = _prose(piece)
     if extracted is None:
         return
     kind, text = extracted
     if not text or not str(text).strip():
         return
+    if density_harness is not None:
+        try:
+            density_harness.note_prose(text)
+        except Exception:  # noqa: BLE001 — meter must not break capture
+            pass
     from services.git_integration_worker.cursor_sdk_supersede import (
         live_run_for_dispatch,
     )

@@ -742,6 +742,40 @@ def _merge_record_json_conn(
     )
 
 
+def _merge_record_json_subobject_conn(
+    conn: sqlite3.Connection,
+    *,
+    dispatch_id: str,
+    subkey: str,
+    patch: dict[str, Any],
+) -> None:
+    row = conn.execute(
+        "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (dispatch_id,),
+    ).fetchone()
+    if row is None:
+        return
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    sub = data.get(subkey)
+    if not isinstance(sub, dict):
+        sub = {}
+    for key, value in patch.items():
+        if value is None:
+            sub.pop(key, None)
+        else:
+            sub[key] = value
+    data[subkey] = sub
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+        (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+    )
+
+
 def _resume_parent_work_key_exempt(conn: sqlite3.Connection, *, resume_of: str) -> bool:
     """True when the ``resume_of`` parent is a lineage the child may re-enter.
 
@@ -1911,22 +1945,19 @@ class CursorDispatchLedger:
         and closeout ``hop_declared`` via ``merge_hop_patch`` or this method.
         """
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-                (dispatch_id,),
-            ).fetchone()
-            if row is None:
-                return
-            try:
-                data = json.loads(row["record_json"] or "{}")
-            except json.JSONDecodeError:
-                data = {}
-            if not isinstance(data, dict):
-                data = {}
-            data.update(patch)
-            conn.execute(
-                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
-                (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+            _merge_record_json_conn(conn, dispatch_id=dispatch_id, patch=patch)
+
+    def merge_record_json_subobject(
+        self,
+        *,
+        dispatch_id: str,
+        subkey: str,
+        patch: dict[str, Any],
+    ) -> None:
+        """Shallow-merge ``patch`` into ``record_json[subkey]`` without clobbering it."""
+        with self._connect() as conn:
+            _merge_record_json_subobject_conn(
+                conn, dispatch_id=dispatch_id, subkey=subkey, patch=patch
             )
 
     def cancel_dispatch(

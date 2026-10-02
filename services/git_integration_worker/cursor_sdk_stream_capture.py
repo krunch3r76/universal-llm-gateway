@@ -326,6 +326,7 @@ def observe_run_stream(
     execution_id: str | None = None,
     on_tool_call: Callable[[ToolCallObservation], None] | None = None,
     on_usage: Callable[[Mapping[str, Any] | None], None] | None = None,
+    density_harness: Any | None = None,
 ) -> StreamCapture:
     """Drain run events, emitting one ``frontier.sdk.worker.toolcall`` event
     per tool call (on terminal status, or flushed at end-of-stream if the call
@@ -349,6 +350,19 @@ def observe_run_stream(
 
     def _emit(call_id: str, message: Any) -> None:
         observation = _observation_from_message(message)
+        if density_harness is not None:
+            try:
+                density_harness.note_tool_call(
+                    arg_bytes=observation.arg_bytes,
+                    result_bytes=observation.result_bytes,
+                    status=observation.status,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "density_harness tool hook failed: dispatch_id=%s",
+                    dispatch_id,
+                    exc_info=True,
+                )
         if on_tool_call is not None:
             try:
                 on_tool_call(observation)
@@ -400,7 +414,12 @@ def observe_run_stream(
     try:
         if callable(events_fn):
             for event in events_fn():
-                retain_stream_prose(event, dispatch_id=dispatch_id, local=retained)
+                retain_stream_prose(
+                    event,
+                    dispatch_id=dispatch_id,
+                    local=retained,
+                    density_harness=density_harness,
+                )
                 interaction = getattr(event, "interaction_update", None)
                 if interaction is not None:
                     _record_usage_message(
@@ -430,7 +449,12 @@ def observe_run_stream(
         else:
             for message in run.stream():
                 _note_provider_status(message, provider_errors)
-                retain_stream_prose(message, dispatch_id=dispatch_id, local=retained)
+                retain_stream_prose(
+                    message,
+                    dispatch_id=dispatch_id,
+                    local=retained,
+                    density_harness=density_harness,
+                )
                 _record_usage_message(
                     message,
                     turn_usages=turn_usages,
@@ -448,6 +472,16 @@ def observe_run_stream(
     for call_id, message in latest.items():
         if call_id not in emitted:
             _emit(call_id, message)
+
+    if density_harness is not None:
+        try:
+            density_harness.flush()
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "density_harness flush failed: dispatch_id=%s",
+                dispatch_id,
+                exc_info=True,
+            )
 
     usage, usage_capture_status = aggregate_stream_usage(
         turn_usages=tuple(turn_usages),
