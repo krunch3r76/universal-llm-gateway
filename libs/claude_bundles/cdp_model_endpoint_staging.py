@@ -325,10 +325,10 @@ def stage_cdp_prompt_with_skills(
             raise CdpStagingError(str(exc), code="pool_blocked") from exc
     from claude_bundles.operator_proxy_mission import (
         MISSION_SKILL_SLUGS,
-        is_operator_proxy_mission_purpose,
+        purpose_implies_mission,
     )
 
-    omit_slash = is_operator_proxy_mission_purpose(purpose)
+    omit_slash = purpose_implies_mission(purpose, body)
     if omit_slash:
         have = {s.lstrip("/").lower() for s in effective}
         for slug in reversed(MISSION_SKILL_SLUGS):

@@ -1,7 +1,3 @@
-[DEBUG] Workspace validation for /mnt/torus/projects/universal-llm-gateway: 3/3 markers - VALID
-  ✅ .git
-  ✅ config/models/ (legacy config/model_catalog.yaml also present)
-  ✅ services/ and libs/
 # Maestro loop
 
 ## Trigger

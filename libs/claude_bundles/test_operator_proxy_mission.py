@@ -174,7 +174,8 @@ def test_skill_surface_introspects_instead_of_asserting_loaded() -> None:
     ):
         assert f"`{slug}`" in out
     assert "decision:operator-proxy-skill-surface-split" in out
-    assert "request**, not" in out or "request, not a receipt" in out.lower()
+    assert "induction turn (`Use the <slug> skill`) is" in out
+    assert "Context → Skills panel is the receipt" in out
 
 
 _RUNBOOK_FIXTURE = """\
@@ -247,10 +248,10 @@ def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
     assert "runbook:maestro-loop skipped reason=not_in_context" not in block
 
 
-# Render lengths for TYPE: CONTINUITY_HANDOFF + # body (2026-10-02):
-# - pre-trim baseline: 42031 (measured opening)
-# - lane-14181 @ cdc14894a (before slash removal): 42019
-_PRE_CDC14894A_MISSION_PROMPT_LEN = 42019
+# 42019 is the render length before lane-14181 started (not the render at
+# cdc14894a). 42031 had no in-tree source and was dropped.
+# Render at this head (live maestro runbook, TYPE: CONTINUITY_HANDOFF + # body): 38897.
+_PRE_LANE_MISSION_PROMPT_LEN = 42019
 _DISTINCTIVE_REFUSE_SENTENCE = "Re-arming `send_later` as a heartbeat."
 _RUNBOOK_REFUSE_FIXTURE_PATH = (
     Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_2124_fixture.txt"
@@ -267,7 +268,10 @@ def _runbook_body_for_opening_trim() -> str:
 
 
 def test_operator_opening_trim_metrics_with_real_runbook() -> None:
-    """Post-trim must be ≥2000 below cdc14894a (42019); post-amend records new len."""
+    """Post-trim must be ≥2000 below the pre-lane length (42019).
+
+    Render at this head with the live maestro runbook is 38897.
+    """
     from claude_bundles.runbook_excerpt import extract_sections
 
     body = _runbook_body_for_opening_trim()
@@ -279,7 +283,7 @@ def test_operator_opening_trim_metrics_with_real_runbook() -> None:
     ):
         out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
     post_len = len(out)
-    assert post_len <= _PRE_CDC14894A_MISSION_PROMPT_LEN - 2000
+    assert post_len <= _PRE_LANE_MISSION_PROMPT_LEN - 2000
     block = _hop_block(out)
     sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
     assert _DISTINCTIVE_REFUSE_SENTENCE in block
@@ -307,24 +311,76 @@ def test_operator_opening_trim_metrics_with_real_runbook() -> None:
     assert "investigate`, `freeform`, and `conductor`" in out
 
 
-def test_stage_operator_proxy_omits_slash_keeps_use_line_authority() -> None:
-    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+def _stage_under(tmp_path, monkeypatch, **kwargs):
+    from claude_bundles import cdp_model_endpoint_staging as staging
 
-    exec_id = "test-exec-amend-14181"
-    staged = stage_cdp_prompt_with_skills(
-        execution_id=exec_id,
+    monkeypatch.setattr(staging, "ephemeral_dir", lambda _eid: tmp_path)
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    return staging.stage_cdp_prompt_with_skills(execution_id="ignored", **kwargs)
+
+
+def _induction_slugs(merged: str) -> list[str]:
+    from claude_bundles.cowork_skill_delivery import (
+        extract_cdp_required_authority,
+        partition_cdp_skills,
+    )
+
+    authority = extract_cdp_required_authority(merged)
+    assert authority is not None
+    return partition_cdp_skills(authority)[0]
+
+
+def test_stage_freeform_body_purpose_induces_mission_skills(tmp_path, monkeypatch) -> None:
+    """purpose=freeform plus a body `purpose: operator-proxy` is a mission."""
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
+        prompt_text="handoff\npurpose: operator-proxy\n",
+        purpose="freeform",
+    )
+    assert staged.staged
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert not merged.lstrip().startswith("/")
+    induction = _induction_slugs(merged)
+    for slug in MISSION_SKILL_SLUGS:
+        assert slug in induction
+
+
+def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(tmp_path, monkeypatch) -> None:
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
         prompt_text="TYPE: CONTINUITY_HANDOFF\n# body\n",
         purpose="operator-proxy",
     )
     assert staged.staged
-    from claude_bundles.cdp_model_endpoint_staging import ephemeral_dir
-
-    merged = (ephemeral_dir(exec_id) / "prompt.md").read_text(encoding="utf-8")
-    assert not merged.lstrip().startswith("/cdp-operator-proxy")
-    marker, _rest = merged.split("-->", 1)
-    assert marker.startswith("<!--cdp-required-skills:")
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert not merged.lstrip().startswith("/")
+    induction = _induction_slugs(merged)
     for slug in MISSION_SKILL_SLUGS:
-        assert slug in marker
+        assert slug in induction
+
+
+def test_attest_induction_channel_covers_shared_sync_without_attach() -> None:
+    """Slash lines absent: panel-observed slugs are delivered_via=induction."""
+    from claude_bundles.cowork_skill_delivery import (
+        attest_delivery_channels,
+        ledger_skills_channels,
+    )
+
+    rows = ledger_skills_channels(
+        ["cdp-operator-proxy"],
+        attached=[],
+        inlined=[],
+        induction=["cdp-operator-proxy"],
+    )
+    assert rows == [{"slug": "cdp-operator-proxy", "delivered_via": "induction"}]
+    assert attest_delivery_channels(
+        ["cdp-operator-proxy"],
+        attached=[],
+        inlined=[],
+        induction=["cdp-operator-proxy"],
+    ) == ["cdp-operator-proxy"]
 
 
 def test_mission_prompt_runbook_missing_still_has_success_condition() -> None:

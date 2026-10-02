@@ -452,14 +452,17 @@ def attest_delivery_channels(
     *,
     attached: list[str],
     inlined: list[str],
+    induction: list[str] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> list[str]:
     """Fail closed when a required slug lacks the correct delivery channel.
 
     Channel by ``surface_class`` (friction a:27142 / 26986 / 24594):
-    - ``shared_sync`` → **must** be in ``attached`` (``+`` → Skills). Inline
-      alone / slash-manifest-only does not count.
+    - ``shared_sync`` → **must** be in ``attached`` (``+`` → Skills) or in
+      ``induction`` (Context → Skills panel slugs already observed;
+      ``delivered_via=induction``). Inline alone / slash-manifest-only does
+      not count.
     - All other surfaces, ``life_local`` included → **must** be in ``inlined``
       (``<skills_inline>``), which is the channel ``partition_cdp_skills``
       actually uses for them.
@@ -483,13 +486,14 @@ def attest_delivery_channels(
     catalog = get_skill_catalog()
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
     missing: list[str] = []
     wrong_channel: list[str] = []
     for raw in required:
         entry = catalog.get(raw)
         slug = entry.slug
         if _attach_only_surface(entry.surface_class):
-            if slug in attached_set:
+            if slug in attached_set or slug in induction_set:
                 continue
             if slug in inlined_set:
                 wrong_channel.append(slug)
@@ -504,8 +508,12 @@ def attest_delivery_channels(
                 missing.append(slug)
     attached_sorted = sorted(attached_set)
     inlined_sorted = sorted(inlined_set)
+    induction_sorted = sorted(induction_set)
     rows = ledger_skills_channels(
-        required, attached=attached_sorted, inlined=inlined_sorted
+        required,
+        attached=attached_sorted,
+        inlined=inlined_sorted,
+        induction=induction_sorted,
     )
     stargate_id = str(execution_id or "")
     sat_id = str(satellite_execution_id or "")
@@ -548,22 +556,30 @@ def ledger_skills_channels(
     *,
     attached: list[str],
     inlined: list[str],
+    induction: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build one ledger row per requested slug with ``delivered_via`` channel.
 
-    ``attach`` / ``inline`` only when the channel matches ``surface_class``;
-    otherwise ``undelivered`` (incl. wrong-channel). Callers assert
+    ``attach`` / ``inline`` / ``induction`` only when the channel matches
+    ``surface_class`` (induction counts for ``shared_sync``); otherwise
+    ``undelivered`` (incl. wrong-channel). Callers assert
     ``len(rows) == len(required)`` before treating a dispatch as skill-backed.
     """
     catalog = get_skill_catalog()
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
     rows: list[dict[str, str]] = []
     for raw in required:
         entry = catalog.get(raw)
         slug = entry.slug
         if _attach_only_surface(entry.surface_class):
-            via = "attach" if slug in attached_set else "undelivered"
+            if slug in induction_set:
+                via = "induction"
+            elif slug in attached_set:
+                via = "attach"
+            else:
+                via = "undelivered"
         else:
             via = "inline" if slug in inlined_set else "undelivered"
         rows.append({"slug": slug, "delivered_via": via})

@@ -1,8 +1,9 @@
 """Skill-introspection block for the operator-proxy mission briefing.
 
-The leading ``/<slug>`` lines are a request, not a receipt — composer
-``+`` → Skills attach can silently no-op. This block tells the seat to
-test whether it actually holds each required body and close gaps via
+The induction turn (``Use the <slug> skill``) is the request; the
+Context → Skills panel is the receipt. Composer ``+`` → Skills attach
+can silently no-op. This block tells the seat to test whether it
+actually holds each required body and close gaps via
 ``Use the `<slug>` skill`` (probe-confirmed fetch on web-anthropic).
 
 A Skill-tool ``download failed`` on a required slug is not ``not_found``.
@@ -43,9 +44,10 @@ def skill_introspection_block(slugs: tuple[str, ...]) -> str:
     required = ", ".join(f"`{s}`" for s in slugs if str(s).strip())
     carve = ", ".join(f"`{s}`" for s in _CURSOR_ONLY_NOT_HERE)
     return f"""\
-**Skill surface (BINDING):** the leading `/<slug>` lines are a **request**, not
-a receipt. Composer `+` → Skills attach can silently no-op; a chip you did not
-get produces no error. Required on this seat: {required}.
+**Skill surface (BINDING):** the induction turn (`Use the <slug> skill`) is
+the **request**; the Context → Skills panel is the receipt. Composer `+` →
+Skills attach can silently no-op; a chip you did not get produces no error.
+Required on this seat: {required}.
 
 **Introspect (functional, one pass at birth):** for each required slug, before
 the first act it governs, confirm you hold its body — if you cannot state its

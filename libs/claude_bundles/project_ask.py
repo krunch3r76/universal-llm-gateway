@@ -300,6 +300,7 @@ async def _insert_prompt_text(
     composer,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
+    induction_observed: list[str] | None = None,
 ) -> tuple[list[str], tuple[str, ...]]:
     """Fill the composer: attach Claude skills via + menu, then paste body.
 
@@ -361,6 +362,7 @@ async def _insert_prompt_text(
             required,
             attached=attached,
             inlined=inline_slugs,
+            induction=list(induction_observed or []),
             execution_id=str(stargate_execution_id or ""),
             satellite_execution_id=str(satellite_execution_id or ""),
         )
@@ -502,6 +504,7 @@ async def send_prompt(
     await clear_composer_verified(page, composer)
     await page.wait_for_timeout(180)
 
+    induction_observed: list[str] = []
     if induction_slugs:
         induction_text = render_skill_induction(induction_slugs)
         await composer.click(force=True)
@@ -509,7 +512,8 @@ async def send_prompt(
         await page.keyboard.insert_text(induction_text)
         await page.wait_for_timeout(600)
         await _submit_composer_draft(page, composer=composer, draft_text=induction_text)
-        await wait_for_induction_panel(page, induction_slugs)
+        panel = await wait_for_induction_panel(page, induction_slugs)
+        induction_observed = list(panel.skills)
         await clear_composer_verified(page, composer)
         await page.wait_for_timeout(180)
 
@@ -519,6 +523,7 @@ async def send_prompt(
         composer=composer,
         stargate_execution_id=stargate_execution_id,
         satellite_execution_id=satellite_execution_id,
+        induction_observed=induction_observed,
     )
     await page.wait_for_timeout(600)
 
