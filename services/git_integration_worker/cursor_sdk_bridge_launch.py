@@ -135,8 +135,8 @@ def build_bridge_command(
     appended only when ``align_shell_cwd`` is true (lane B). The preload
     chdirs and fills an empty bash cwd only then; the missing-directory
     rewrite stays armed for every lane. Pinned ``Popen`` still has no ``cwd=``.
-    Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]``; writes
-    nothing.
+    Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]`` and stats
+    ``<real_home>/.cache/ms-playwright``; writes nothing.
     """
     if not os.path.isabs(bridge_bin) or "=" in bridge_bin or bridge_bin.startswith("-"):
         raise ValueError(

@@ -467,3 +467,21 @@ def test_dispatch_home_skips_playwright_pointer_when_operator_cache_absent(
     root = tmp_path / "homes"
     home = setup_cursor_dispatch_home("auto-no-playwright", real_home=real, root=root)
     assert not (home / ".cache" / "ms-playwright").exists()
+
+
+def test_dispatch_home_keeps_existing_playwright_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real ms-playwright directory under the home is not replaced by a symlink."""
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    (real / ".cache" / "ms-playwright").mkdir(parents=True)
+    root = tmp_path / "homes"
+    home = root / "auto-playwright-dir-exists-home"
+    occupied = home / ".cache" / "ms-playwright"
+    occupied.mkdir(parents=True)
+    (occupied / "local-marker").write_text("keep", encoding="utf-8")
+    setup_cursor_dispatch_home("auto-playwright-dir-exists", real_home=real, root=root)
+    assert occupied.is_dir()
+    assert not occupied.is_symlink()
+    assert (occupied / "local-marker").read_text(encoding="utf-8") == "keep"
