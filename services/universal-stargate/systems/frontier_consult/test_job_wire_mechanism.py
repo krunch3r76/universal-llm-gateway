@@ -658,12 +658,27 @@ async def test_cdp_delivery_review_return_keeps_empty_delivery_role(
     Breaks when purpose is inferred from the model and the operator-lane
     bind runs (409 cdp_external_gate_live), or when delivery_role is filled
     so the closeout takes the check-review FILE_EVIDENCE_PATHS grammar.
+    Also breaks when sitecustomize has already bound hub job_vocab (role_turn)
+    and the return reads a missing delivery_role.
     """
+    import importlib
+    import sys
+    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock
+
+    lane_libs = str(Path(__file__).resolve().parents[4] / "libs")
+    if lane_libs in sys.path:
+        sys.path.remove(lane_libs)
+    sys.path.insert(0, lane_libs)
+    for key in list(sys.modules):
+        if key == "job_vocab" or key.startswith("job_vocab."):
+            del sys.modules[key]
 
     from claude_bundles import cdp_model_endpoint_staging as staging
 
     from systems.frontier_consult import cdp_generate as mod
+
+    mod = importlib.reload(mod)
 
     def _binding_must_not_run(**kwargs: Any) -> tuple[str | None, str | None]:
         raise AssertionError(f"default_operator_seat_binding called: {kwargs}")
