@@ -1,4 +1,4 @@
-"""Drift gate: canonical.yaml team_dispatch contract enums vs code vocabulary."""
+"""Drift gate: canonical.yaml + live descriptor vs job_vocab admit sets."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ import re
 from pathlib import Path
 
 import pytest
-from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS, TO_THREAD_CONTRACTS
+from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS
 
 REPO = Path(__file__).resolve().parent.parent
 CANONICAL = REPO / "config/mcp/canonical.yaml"
+FRONTIER = REPO / "services/mcp-server/tools/frontier.py"
 
 
 def _contract_enums_for_tool(text: str, tool_name: str) -> frozenset[str]:
@@ -24,12 +25,31 @@ def _contract_enums_for_tool(text: str, tool_name: str) -> frozenset[str]:
 
 
 @pytest.mark.offline
-def test_canonical_to_thread_contract_enum_matches_vocab() -> None:
+def test_canonical_generate_contract_enum_matches_job_vocab() -> None:
     text = CANONICAL.read_text(encoding="utf-8")
-    for tool in ("team_dispatch_generate", "team_dispatch_to_thread"):
-        assert _contract_enums_for_tool(text, tool) == TO_THREAD_CONTRACTS
+    assert _contract_enums_for_tool(text, "team_dispatch_generate") == (
+        GENERATE_ADMITTED_JOBS
+    )
 
 
 @pytest.mark.offline
-def test_team_dispatch_contracts_cover_materializer_and_residual() -> None:
-    assert TEAM_DISPATCH_CONTRACTS >= {"sketch", "implement", "wrap", "conductor", "none"}
+def test_canonical_to_thread_contract_enum_matches_job_vocab() -> None:
+    text = CANONICAL.read_text(encoding="utf-8")
+    assert _contract_enums_for_tool(text, "team_dispatch_to_thread") == (
+        TO_THREAD_ADMITTED_JOBS
+    )
+
+
+@pytest.mark.offline
+def test_frontier_description_interpolates_job_vocab() -> None:
+    """Prose shell must not re-list retired none/pure-mechanical tokens."""
+    source = FRONTIER.read_text(encoding="utf-8")
+    assert "GENERATE_JOBS" in source
+    assert "TO_THREAD_JOBS" in source
+    assert "_format_team_dispatch_description" in source
+    # Retired tokens must not appear as taught generate contracts in the template.
+    assert "`none`" not in source
+    assert "`pure-mechanical`" not in source
+    assert "Allowed on every admitted " in source
+    assert "generate job." in source
+    assert "including none" not in source

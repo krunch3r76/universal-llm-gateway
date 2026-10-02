@@ -4575,7 +4575,7 @@ tools:
     tool: team_dispatch
     substrate_qualified: user-vortex__team_dispatch
   fol_descriptor: "∀ role ∈ GenerateRoles ∧ dispatch_thread_id ∈ AgentBusThread ∧ contract
-    ∈ {sketch,pure-mechanical,implement}:\n  team_dispatch(op=generate, role, dispatch_thread_id,
+    ∈ GENERATE_ADMITTED_JOBS (job_vocab):\n  team_dispatch(op=generate, role, dispatch_thread_id,
     contract, packet_path?) ⟹\n    execution_id ∈ UUIDv4 ∧ auto-provisions a result thread
     ∧ Stargate posts the role reply ON-BEHALF to it\n    ∧ poll poll_hint (agent-bus wait)
     for content — NOT pipeline(op=result)\n    ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}\n\
@@ -4596,7 +4596,7 @@ tools:
     \  contract=implement is the materialized work-item path (source_ref required; inline prompt
     refused) — not a generic repo-write. Ad-hoc edits use job=freeform with prompt or packet_path.\n\
     \  Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate
-    across {none,sketch,pure-mechanical,implement}; source_ref is the materializer input
+    across GENERATE_ADMITTED_JOBS; source_ref is the materializer input
     (implement|wrap|sketch|conductor), not the generic write channel; dispatch-thread
     latest turn is fallback when no packet;\n  poll via poll_hint (agent-bus wait), NOT pipeline(op=result),
     until the execution registry (Track 2).\n¬ web-consult/web-implement/cursor-consult/cursor-implement
@@ -4628,10 +4628,17 @@ tools:
       contract:
         type: string
         enum:
+        - check-review
+        - code-review
+        - conductor
+        - confer
+        - delivery-review
+        - freeform
         - implement
-        - none
-        - pure-mechanical
+        - investigate
+        - mechanical
         - sketch
+        - wrap
       mcp:
         type: boolean
       skills:
@@ -4663,7 +4670,7 @@ tools:
     tool: team_dispatch_to_thread
     substrate_qualified: user-vortex__team_dispatch_to_thread
   fol_descriptor: "∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ AgentBusThread
-    ∧ contract ∈ {sketch,pure-mechanical}:\n  team_dispatch(op=to_thread, role, dispatch_thread_id,
+    ∧ contract ∈ TO_THREAD_ADMITTED_JOBS (job_vocab):\n  team_dispatch(op=to_thread, role, dispatch_thread_id,
     contract, thread) ⟹\n    Stargate posts the role reply on its behalf to thread after dispatch
     completes.\n  Context is read from dispatch_thread_id's latest agent-bus turn; messages[]
     is not a parameter.\nGenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\n\
@@ -4696,9 +4703,9 @@ tools:
       contract:
         type: string
         enum:
+        - freeform
         - implement
-        - none
-        - pure-mechanical
+        - mechanical
         - sketch
       mcp:
         type: boolean

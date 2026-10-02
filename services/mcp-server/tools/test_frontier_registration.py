@@ -11,7 +11,7 @@ import inspect
 from typing import Any
 from unittest.mock import patch
 
-from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS
+from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS
 
 from tools.frontier import register_frontier_tools
 
@@ -118,16 +118,45 @@ def test_team_dispatch_source_ref_signature() -> None:
     assert sig.parameters["source_ref"].default is None
 
 
-def test_team_dispatch_contract_signature_six_values() -> None:
+def test_team_dispatch_contract_signature_admits_job_vocab() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
 
     sig = inspect.signature(recorder.functions["team_dispatch"])
     assert sig.parameters["contract"].annotation is not None
-    assert TEAM_DISPATCH_CONTRACTS == frozenset(
-        {"sketch", "implement", "wrap", "conductor", "pure-mechanical", "none"}
-    )
+    doc = recorder.functions["team_dispatch"].__doc__ or ""
+    for job in GENERATE_ADMITTED_JOBS:
+        assert f"`{job}`" in doc, f"missing admitted job {job!r} in descriptor"
+    assert "`none`" not in doc
+    assert "`pure-mechanical`" not in doc
     assert "packet_kind" not in sig.parameters
+
+    generate_line = next(
+        line for line in doc.splitlines() if line.strip().startswith("**generate:**")
+    )
+    to_thread_line = next(
+        line for line in doc.splitlines() if line.strip().startswith("**to_thread:**")
+    )
+    for job in GENERATE_ADMITTED_JOBS:
+        assert f"`{job}`" in generate_line, job
+    for job in TO_THREAD_ADMITTED_JOBS:
+        assert f"`{job}`" in to_thread_line, job
+    # Generate-only jobs must not appear as taught to_thread contracts.
+    for job in GENERATE_ADMITTED_JOBS - TO_THREAD_ADMITTED_JOBS:
+        assert f"`{job}`" not in to_thread_line, job
+
+    from typing import get_args, get_type_hints
+
+    from pydantic.fields import FieldInfo
+
+    work_key_hint = get_type_hints(
+        recorder.functions["team_dispatch"], include_extras=True
+    )["work_key"]
+    work_key_fields = [a for a in get_args(work_key_hint) if isinstance(a, FieldInfo)]
+    assert work_key_fields
+    work_key_desc = work_key_fields[0].description or ""
+    assert "admitted generate job" in work_key_desc
+    assert "including none" not in work_key_desc
 
 
 def test_team_dispatch_inline_prompt_params_present() -> None:
@@ -149,11 +178,11 @@ def test_team_dispatch_messages_removed_from_signature() -> None:
 
 
 def test_team_dispatch_contract_enum_excludes_consult() -> None:
-    """Public contract enum is the six team_dispatch values, not agent_bus consult."""
-    assert "consult" not in TEAM_DISPATCH_CONTRACTS
-    assert TEAM_DISPATCH_CONTRACTS >= {
-        "none",
-        "pure-mechanical",
+    """Public generate admit set is job_vocab, not agent_bus consult."""
+    assert "consult" not in GENERATE_ADMITTED_JOBS
+    assert GENERATE_ADMITTED_JOBS >= {
+        "freeform",
+        "mechanical",
         "implement",
         "sketch",
         "conductor",
@@ -639,7 +668,44 @@ def test_team_dispatch_generate_requires_contract() -> None:
     assert len(relay_calls) == 0
     assert result["error"]["code"] == "validation_error"
     assert result["field"] == "contract"
-    assert "contract is required" in result["error"]["message"]
+    message = result["error"]["message"]
+    assert "contract is required" in message
+    assert "op='generate'" in message
+    for job in GENERATE_ADMITTED_JOBS:
+        assert job in message
+    # Generate-only jobs must remain in the generate refusal.
+    assert "code-review" in message
+    assert "wrap" in message
+
+
+def test_team_dispatch_to_thread_requires_contract_lists_to_thread_jobs() -> None:
+    """Missing contract on to_thread lists TO_THREAD_ADMITTED_JOBS only."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    with (
+        patch("tools.frontier._relay", side_effect=AssertionError("no relay")),
+        patch("tools.frontier.record"),
+    ):
+        result = asyncio.run(
+            team_dispatch_fn(
+                op="to_thread",
+                role="reviewer",
+                dispatch_thread_id="arc-to-thread-contract",
+                thread="t-1",
+                contract=None,
+            )
+        )
+
+    assert result["error"]["code"] == "validation_error"
+    assert result["field"] == "contract"
+    message = result["error"]["message"]
+    assert "op='to_thread'" in message
+    for job in TO_THREAD_ADMITTED_JOBS:
+        assert job in message
+    for job in GENERATE_ADMITTED_JOBS - TO_THREAD_ADMITTED_JOBS:
+        assert job not in message, job
 
 
 def test_team_dispatch_generate_accepts_subject_with_warning() -> None:

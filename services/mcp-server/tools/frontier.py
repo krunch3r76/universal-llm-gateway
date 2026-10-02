@@ -37,6 +37,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 import httpx
+from job_vocab import GENERATE_ADMITTED_JOBS, TO_THREAD_ADMITTED_JOBS
 from mcp_events import record
 from pydantic import Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
@@ -61,6 +62,21 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = get_logger(__name__)
+
+# Docstring placeholders — filled from job_vocab so the orientation surface
+# cannot teach a set that admit refuses (friction a:37159).
+_GENERATE_JOBS_PLACEHOLDER = "GENERATE_JOBS"
+_TO_THREAD_JOBS_PLACEHOLDER = "TO_THREAD_JOBS"
+
+
+def _format_team_dispatch_description(template: str) -> str:
+    """Interpolate admitted job sets into the team_dispatch tool description."""
+    generate = ", ".join(f"`{name}`" for name in sorted(GENERATE_ADMITTED_JOBS))
+    to_thread = ", ".join(f"`{name}`" for name in sorted(TO_THREAD_ADMITTED_JOBS))
+    return template.replace(_GENERATE_JOBS_PLACEHOLDER, generate).replace(
+        _TO_THREAD_JOBS_PLACEHOLDER, to_thread
+    )
+
 
 # Gen-gated roster constants — regenerate via scripts/gen-mcp-dispatch-role-docs;
 # do not hand-edit the two lines below.
@@ -261,7 +277,6 @@ async def _relay(
 def register_frontier_tools(mcp: FastMCP) -> None:
     """Register the team_dispatch MCP tool."""
 
-    @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
         op: Literal["generate", "to_thread", "handoff", "steer"],
         role: str | None = None,
@@ -391,8 +406,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "todo:, plan:, agent-bus:, packet:, friction:, decision:). "
                     "Required for write-class / Lane B. write-class is the "
                     "lane/read_only admit, including job=freeform; it does "
-                    "not select contract=implement. Allowed on every contract "
-                    "including none."
+                    "not select contract=implement. Allowed on every admitted "
+                    "generate job."
                 ),
             ),
         ] = None,
@@ -471,9 +486,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-        **generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`,`sketch`,`conductor`}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `job=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `job=freeform` and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `job=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** `contract`∈{GENERATE_JOBS}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `job=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `job=freeform` and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `job=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
-        **to_thread:** `contract`∈{`none`,`pure-mechanical`}. `thread` required.
+        **to_thread:** `contract`∈{TO_THREAD_JOBS}. `thread` required.
 
         **cursor-sdk 422:** `nest_under_sdk_only`; `CURSOR_NEST_DEPTH_EXCEEDED` (depth 10, 11th refused, `retryable=false`); `resume_of_sdk_only` (XOR `nest_under`, requires `reuse_thread`); `lane_sdk_only`; `lane_required`; `CURSOR_LANE_A_REFUSED`; `CURSOR_LANE_B_WORKTREE_MISSING`; `workspace_sdk_only`; `reasoning_effort_not_supported`. `work_key` D4: `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:` (required on write-class / lane B; write-class is the lane admit, not `contract=implement`). Skills: **422** `skills_cursor_unresolvable` | `skills_mcp_predicated` | `cdp_skills_path_sim_rejected`. `force=true` skips Gates 2–4 only, requires `force_reason`, never Gate 1 or the write-lease FIFO.
 
@@ -784,12 +799,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         if seat is not None:
             body["seat"] = seat
         if contract is None:
+            admitted = (
+                TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
+            )
             return {
                 "error": {
                     "code": "validation_error",
                     "message": (
-                        "contract is required for op='generate'/'to_thread'; "
-                        "use sketch, implement, wrap, conductor, pure-mechanical, or none"
+                        f"contract is required for op={op!r}; "
+                        "use " + ", ".join(sorted(admitted))
                     ),
                 },
                 "field": "contract",
@@ -968,3 +986,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             )
             result["warnings"] = warnings
         return result
+
+    description = _format_team_dispatch_description(team_dispatch.__doc__ or "")
+    team_dispatch.__doc__ = description
+    mcp.tool(title="Team Dispatch", description=description)(team_dispatch)
