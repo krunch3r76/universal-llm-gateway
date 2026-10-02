@@ -261,6 +261,31 @@ def test_proc_cmdlines_unreadable_returns_none(tmp_path: Path) -> None:
     assert _maxclients_in_cmdlines(None, ":2") is None
 
 
+@pytest.mark.parametrize(
+    ("cmdlines", "expected"),
+    [
+        (
+            [["Xvfb", ":2", "-maxclients", "256"], ["Xvfb", ":2", "-maxclients", "64"]],
+            64,
+        ),
+        (
+            [["Xvfb", ":2", "-maxclients", "64"], ["Xvfb", ":2", "-maxclients", "256"]],
+            64,
+        ),
+        (
+            [["Xvfb", ":2"], ["Xvfb", ":2", "-maxclients", "128"]],
+            128,
+        ),
+    ],
+)
+def test_maxclients_min_across_duplicate_xvfb_on_display(
+    cmdlines: list[list[str]], expected: int
+) -> None:
+    from claude_bundles.x_display_capacity import _maxclients_in_cmdlines
+
+    assert _maxclients_in_cmdlines(cmdlines, ":2") == expected
+
+
 def test_wire_fields_x_max_scope_no_display_pin() -> None:
     fields = x_display_wire_fields(probe_x_display(display=":1", count=0))
     assert fields["x_max_clients_scope"] == _X_MAX_SCOPE
