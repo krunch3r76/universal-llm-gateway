@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from bus_watch.spawn_wake.packet import _wire_submit_body, build_dispatch_body
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from job_vocab import GENERATE_ADMITTED_JOBS, INLINE_ONLY_JOBS
 from pydantic import ValidationError
-
-from bus_watch.spawn_wake.packet import _wire_submit_body, build_dispatch_body
 
 from .admission import verify_thread_writable
 from .route import (
