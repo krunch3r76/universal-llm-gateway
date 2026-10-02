@@ -29,16 +29,14 @@ per-G-row one. Default posture once running:
   Bounds each dispatch's token footprint to roughly one movement and caps a
   crash's loss to the in-flight row (`a:31786`). A mission that ends inside
   one dispatch simply stops `DONE`.
-- **In-row density hop (leg boundary).** Context pressure at a leg boundary or
-  wake (≥2 of: many closeouts harvested, skill reloads, spilled tool output,
-  summarize-not-quote replies) uses the same planned successor as gated row-close:
-  `hop_reason=planned`, no `resume_of`, same open G-row as `Next-pickup`, hop
-  between legs never mid-harvest. Scoreboard: `forward_mutate_tip` (stop noted,
-  status unchanged) ≺ hop CHECKPOINT ≺ closeout `stop: ROW_HOP`.
+- **Density hop (GIW steer):** when a same-row steer asks you to write the
+  ten-field hop CHECKPOINT with Next-pickup = the open G-row and end with
+  `stop: ROW_HOP`, do that and stop the dispatch. GIW measures context for you.
 - Owed stops win at a boundary:
   `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
   `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify on ACTIVE
-  (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) then continues — a live summoning chat is not a
+  (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave)
+  via `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, purpose=ask, dispatch_thread_id=<this worker thread id>)` then continues — a live summoning chat is not a
   human stop; named
   hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
   then hop. If you end with the mission open and **no** token, the substrate

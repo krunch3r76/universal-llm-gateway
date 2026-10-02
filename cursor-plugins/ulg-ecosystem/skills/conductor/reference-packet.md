@@ -203,7 +203,8 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 
   Score journal appends require real UTC timestamps (`datetime.now(UTC)` on
   write — authority: `implement_admission.conductor_score_io`).
-- G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
+- G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal) via
+  `team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, purpose=ask, dispatch_thread_id=<this worker thread id>)`.
   Explicit see-score → `ROW_PINNED` + ping.
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)

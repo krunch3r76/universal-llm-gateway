@@ -367,14 +367,10 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "forbids the hop — harvest first."
         ),
         (
-            "- Context pressure: at every leg boundary and on every wake, hop when "
-            "≥2 of these hold — ≥6 closeouts harvested, skill set reloaded more than "
-            "once, a tool result spilled to a file, replies summarize instead of "
-            "quoting. Bump the standing handoff (in flight + first act), then hop "
-            "between legs, never mid-harvest; Next-pickup is the same open G-row. "
-            "Before each density hop, write one scoreboard line via "
-            "`forward_mutate_tip` (stop noted, no row status change) ≺ ten-field hop "
-            "CHECKPOINT ≺ closeout, then end with `stop: ROW_HOP` as the last line."
+            "- Density hop (GIW steer): when a same-row steer asks you to write the "
+            "ten-field hop CHECKPOINT with Next-pickup = the open G-row and end with "
+            "`stop: ROW_HOP`, do that and stop the dispatch. GIW measures context "
+            "for you."
         ),
         (
             "- A block this row cannot pass by repeating the same refusal is a gate, "
@@ -410,7 +406,9 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
         g3_g5_lines = [
             "G3→G5 default: in-process CDP score-ratify "
             f"({g3_g5_score_ratify_clause()}) "
-            "(do-not-fight / likely-optimal).",
+            "(do-not-fight / likely-optimal) via "
+            "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
+            "purpose=ask, dispatch_thread_id=<this worker thread id>).",
             "Explicit see-score: ROW_PINNED at G3 + ping.",
         ]
     ac = [
