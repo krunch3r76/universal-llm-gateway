@@ -6,6 +6,9 @@ about `note` — two round trips for one call's requirements. It also rejected
 `claim`, the slot name used by the sibling assert/observe/supersede ops, so a
 seat that supplied the note under the sibling name was told the note was
 missing.
+
+a:37219: `category` is required the same way — omitted/empty must 422 with
+`accepted=`, never file as ``[unclassified]``.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ def _errors(result: dict) -> list[dict]:
 def test_both_missing_fields_land_in_one_response() -> None:
     result = _op_friction()
     fields = {entry["field"] for entry in _errors(result)}
-    assert fields == {"owner", "note"}
+    assert fields == {"owner", "note", "category"}
 
 
 def test_invalid_category_batches_with_missing_fields() -> None:
@@ -39,11 +42,25 @@ def test_invalid_category_batches_with_missing_fields() -> None:
     assert fields == {"owner", "note", "category"}
     category = next(e for e in entries if e["field"] == "category")
     assert category["accepted"], "the caller must be told the accepted values"
+    assert category.get("error") == "invalid_category"
+
+
+def test_empty_category_batches_with_accepted_list() -> None:
+    """Blank category is missing, not a silent [unclassified] write (a:37219)."""
+    result = _op_friction(
+        owner="service:probe",
+        note="empty category must not write",
+        category="  ",
+    )
+    err = result["error"]
+    assert err["field"] == "category"
+    assert err["accepted"], "accepted= must surface without a second call"
+    assert "errors" not in err
 
 
 def test_single_omission_keeps_the_flat_shape() -> None:
     """One error still reports as a flat field error, not a list of one."""
-    result = _op_friction(owner="service:probe")
+    result = _op_friction(owner="service:probe", category="tool_error")
     err = result["error"]
     assert err["field"] == "note"
     assert "errors" not in err
@@ -57,7 +74,11 @@ def test_claim_is_accepted_as_an_alias_for_note() -> None:
     accepted; demanding ``note`` after ``claim`` was supplied is the failure.
     """
     assert "claim" in inspect.signature(_op_friction).parameters
-    result = _op_friction(owner="service:probe", claim="something went wrong")
+    result = _op_friction(
+        owner="service:probe",
+        claim="something went wrong",
+        category="tool_error",
+    )
     err = result.get("error")
     assert err is not None, "expected an error for nonexistent probe owner"
 
@@ -89,3 +110,5 @@ def test_owner_alias_named_in_the_message() -> None:
     assert "service" in owner["message"]
     note = next(e for e in _errors(result) if e["field"] == "note")
     assert "claim" in note["message"]
+    category = next(e for e in _errors(result) if e["field"] == "category")
+    assert category["accepted"]
