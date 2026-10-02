@@ -962,6 +962,54 @@ def test_team_dispatch_parent_thread_param_present() -> None:
     assert "parent_thread" in sig.parameters
 
 
+def test_team_dispatch_mission_kind_params_present() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "mission_kind" in sig.parameters
+    assert "predecessor_registration_id" in sig.parameters
+
+
+def test_team_dispatch_generate_forwards_hop_mission_fields() -> None:
+    """identity_unresolvable hop fallback can arm Stargate hop_own_generate (a:37182)."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-hop-fb", "thread_id": "12286"}
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=lambda *_a, **_k: None),
+    ):
+        result = asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                contract="freeform",
+                dispatch_thread_id="12286",
+                model="cdp/opus-5.5-extra",
+                prompt="TYPE: CONTINUITY_HANDOFF\n",
+                purpose="operator-proxy",
+                parent_thread="12286",
+                mission_kind="hop",
+                predecessor_registration_id="c1caf180",
+            )
+        )
+
+    assert "error" not in result, result
+    assert len(relay_calls) == 1
+    body = relay_calls[0]["body"]
+    assert body["mission_kind"] == "hop"
+    assert body["predecessor_registration_id"] == "c1caf180"
+    assert body["purpose"] == "operator-proxy"
+    assert body["parent_thread"] == "12286"
+
+
 def test_team_dispatch_generate_forwards_parent_thread() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)

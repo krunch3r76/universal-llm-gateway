@@ -398,6 +398,28 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        mission_kind: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Chrome-host lineage on model=cdp/… generate "
+                    "(root|hop|side|parallel). Set hop for continuity "
+                    "self-handoff so Stargate excludes the caller's own live "
+                    "generate (a:37182). Ignored on non-CDP models."
+                ),
+            ),
+        ] = None,
+        predecessor_registration_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Hop only (mission_kind=hop): CSE registration of the seat "
+                    "being replaced. Stargate excludes that seat's live "
+                    "generate and still refuses any other live gate on the "
+                    "lane. Ignored unless mission_kind=hop."
+                ),
+            ),
+        ] = None,
         work_key: Annotated[
             str | None,
             Field(
@@ -893,6 +915,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["purpose"] = purpose
             if parent_thread is not None:
                 body["parent_thread"] = parent_thread
+            if mission_kind is not None:
+                body["mission_kind"] = mission_kind
+            if predecessor_registration_id is not None:
+                body["predecessor_registration_id"] = predecessor_registration_id
             if work_key is not None:
                 body["work_key"] = work_key
             if force:

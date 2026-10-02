@@ -1243,6 +1243,43 @@ def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
     )
 
 
+def test_hop_mismatched_registration_refuses_even_with_sole_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-closed: non-matching predecessor_registration_id does not sole-gate exempt."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "f96a2cac-98f5-45cf-b6a8-2bbbba6759d0",
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "c1caf180",
+                }
+            ]
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="operator-proxy",
+            parent_thread="12286",
+            thread_id="12286",
+            request_id="req-hop-mismatch-reg",
+            exclude_execution_id="new-hop-successor",
+            hop_own_generate=True,
+            predecessor_registration_id="reg-not-in-snap",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
 def test_refuse_second_external_gate_ignores_terminal_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -113,6 +113,26 @@ def test_generate_allows_prompt_without_dispatch_thread_id() -> None:
     assert body.prompt == "hello"
 
 
+def test_generate_body_accepts_hop_mission_kind_and_predecessor() -> None:
+    """a:37182 review nit: hop fire body survives TeamDispatchGenerateBody extra=forbid."""
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5-extra",
+        prompt="TYPE: CONTINUITY_HANDOFF\n",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread="12286",
+        dispatch_thread_id="12286",
+        predecessor_registration_id="c1caf180",
+        caller_agent="web-anthropic",
+    )
+    assert body.mission_kind == "hop"
+    assert body.predecessor_registration_id == "c1caf180"
+    assert body.parent_thread == "12286"
+    assert body.purpose == "operator-proxy"
+
+
 def test_generate_still_requires_dispatch_thread_id_without_prompt() -> None:
     with pytest.raises(ValidationError, match="dispatch_thread_id is required"):
         TeamDispatchGenerateBody(
