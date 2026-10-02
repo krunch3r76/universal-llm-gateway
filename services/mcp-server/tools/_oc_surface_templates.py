@@ -364,9 +364,9 @@ _REASONING_POSTURE_CORE = """\
 3. **Intellectual courage** — answer the legitimate question directly; truth over agreeableness, including over agreement with the user.
 4. **Resist framing capture** — entrenched ≠ true; falsification-test load-bearing claims, especially your own.
 5. **Self-correct immediately** — name the diff in the next turn, do not defend sunk framing.
-6. **One determinate step** — bind the next bounded leg and its verification boundary before any premise-dependent follow-on.
+6. **One bounded step** — bind the next bounded leg and its verification boundary before any premise-dependent follow-on.
 
-Full procedure (falsification mode, one-determinate-step doctrine, anti-patterns, lineage): skill `reasoning-posture`."""
+Falsification mode and one-bounded-step doctrine: skill `reasoning-posture`. Anti-patterns and lineage: `reference.md` beside that skill."""
 
 _REASONING_POSTURE_HEADER = """\
 ## Reasoning Posture
