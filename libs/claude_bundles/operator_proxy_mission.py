@@ -222,8 +222,7 @@ def ensure_operator_proxy_mission_prompt(
 
 
 # Header declaration only. A prose quote (review packets, seat-map
-# team_dispatch session key) is not a mission. ``_PURPOSE_DOC`` stays for
-# tests that measure whether a staged body still contains the old header.
+# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
 _PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
     r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",
@@ -232,14 +231,16 @@ _PURPOSE_DOC = re.compile(
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
-    """True only when the purpose argument is an operator-proxy mission tag.
+    """True when purpose or a column-0 header line declares a mission."""
+    if is_operator_proxy_mission_purpose(purpose):
+        return True
+    if not prompt:
+        return False
+    from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
 
-    A prompt line that names the operator-proxy tag is not a session and does
-    not open the hop briefing. ``prompt`` is retained so callers that pass the
-    staged body stay valid.
-    """
-    del prompt
-    return is_operator_proxy_mission_purpose(purpose)
+    _attach, _inline, body = peel_sealed_cdp_skill_prefix(prompt)
+    head = "\n".join(body.splitlines()[:_PURPOSE_HEADER_LINES])
+    return _PURPOSE_DOC.search(head) is not None
 
 
 __all__ = [

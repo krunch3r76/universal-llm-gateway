@@ -169,11 +169,12 @@ only handoff on `team_dispatch` (not `generate`).
 | **Bound implement** (→ Cursor) | `cursor-implement` | `cursor` | open IDE thread |
 | **Bound implement** (→ Web) | `web-implement` | `web-anthropic` | push bus message |
 
-**Bound implement has two seats** (contract derived from the role slug; `handoff_contract=implement`
-in the response): `seat=cursor, job=implement` → `cursor` (open IDE thread), and
-`seat=web-anthropic, job=implement` → `web-anthropic` (operator push). Both require acceptance criteria in
-`<task_guidance>`; the implement guardrails (acceptance-criteria lint, implement pointer line,
-`contract:implement` tag) key on the derived contract + seat, not on a role name. Distinct from
+**Bound implement has two seats** (response `handoff_contract=implement` when the request sets
+`job=implement`; the role slug does not derive contract): `role=cursor-implement, job=implement` → seat
+`cursor` (open IDE thread), and `role=web-implement, job=implement` → seat `web-anthropic` (operator push).
+Both require acceptance criteria in `<task_guidance>`; the implement guardrails (acceptance-criteria lint,
+implement pointer line, `contract:implement` tag) key on `handoff_contract` from the typed `job` + seat,
+not on role name alone. Distinct from
 the `*-consult` reasoning roles (which derive `consult` — they cannot raise the implement
 guardrails). `model` and `handoff_contract` are not accepted on the handoff request — pick the
 slug whose `{platform}-{contract}` encodes your intent. Web-native bound work without a
