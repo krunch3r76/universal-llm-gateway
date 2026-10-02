@@ -109,16 +109,6 @@ def reject_unsupported_packet_inputs(
                 "registry_ref": "job_vocab:check-review",
             },
         )
-    record = parsed.record
-    assert record is not None
-    _reject_handles_outside_record(
-        request_id=request_id,
-        record=record,
-        prompt=prompt,
-        packet_path=packet_path,
-        sidecar_ref=sidecar_ref,
-        source_ref=source_ref,
-    )
     if wire not in admitted:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -130,6 +120,16 @@ def reject_unsupported_packet_inputs(
             status_code=422,
             code="job_not_admitted",
         )
+    record = parsed.record
+    assert record is not None
+    _reject_handles_outside_record(
+        request_id=request_id,
+        record=record,
+        prompt=prompt,
+        packet_path=packet_path,
+        sidecar_ref=sidecar_ref,
+        source_ref=source_ref,
+    )
     if wire in {"none", "pure-mechanical"} and source_ref is not None:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -177,9 +177,7 @@ def _reject_handles_outside_record(
         raise FrontierEndpointError(
             request_id=request_id,
             field=field,
-            reason=(
-                f"{field} is outside the handle set for job={record.name!r}"
-            ),
+            reason=(f"{field} is outside the handle set for job={record.name!r}"),
             status_code=422,
             code="handle_forbidden",
             details={
