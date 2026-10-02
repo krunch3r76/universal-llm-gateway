@@ -924,6 +924,8 @@ def test_torn_row_same_mission_scope_not_counted() -> None:
     assert rows[0].dispatch_id == "mission-good"
     assert rows[0].work_key == work_key
     assert rows[0].thread_id == thread_id
+    assert rows[0].stacked_parks == 0
+    assert "open-park read failed" not in (rows[0].reason or "")
 
 
 def test_partial_last_row_is_not_a_census_row() -> None:
