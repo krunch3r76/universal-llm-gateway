@@ -36,6 +36,8 @@ def reject_unsupported_packet_inputs(
     stop_after: str | None = None,
     session: str | None = None,
     model: str | None = None,
+    prompt: str | None = None,
+    sidecar_ref: str | None = None,
 ) -> None:
     """Mirror MCP predicates 3/4/5 for Stargate HTTP admit."""
     reject_retired_packet_kind(packet_kind, request_id=request_id)
@@ -107,6 +109,16 @@ def reject_unsupported_packet_inputs(
                 "registry_ref": "job_vocab:check-review",
             },
         )
+    record = parsed.record
+    assert record is not None
+    _reject_handles_outside_record(
+        request_id=request_id,
+        record=record,
+        prompt=prompt,
+        packet_path=packet_path,
+        sidecar_ref=sidecar_ref,
+        source_ref=source_ref,
+    )
     if wire not in admitted:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -136,6 +148,58 @@ def reject_unsupported_packet_inputs(
             reason="stop_after is forbidden with job='freeform'",
             status_code=422,
             code="none_with_stop_after",
+        )
+
+
+def _reject_handles_outside_record(
+    *,
+    request_id: str,
+    record: Any,
+    prompt: str | None,
+    packet_path: str | None,
+    sidecar_ref: str | None,
+    source_ref: str | None,
+) -> None:
+    """Refuse a present handle outside the job row, or a missing required source_ref.
+
+    Breaks when a caller sends source_ref on an inline job, or an inline prompt
+    on a source_ref job, and intake still admits the body.
+    """
+    presented = (
+        ("prompt", prompt),
+        ("packet_path", packet_path),
+        ("sidecar_ref", sidecar_ref),
+        ("source_ref", source_ref),
+    )
+    for field, value in presented:
+        if value is None or field in record.handle_set:
+            continue
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field=field,
+            reason=(
+                f"{field} is outside the handle set for job={record.name!r}"
+            ),
+            status_code=422,
+            code="handle_forbidden",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "handle_forbidden",
+                "registry_ref": record.registry_ref,
+            },
+        )
+    if record.source_ref_required and source_ref is None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="source_ref",
+            reason=f"job={record.name!r} requires source_ref",
+            status_code=422,
+            code="handle_forbidden",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "handle_forbidden",
+                "registry_ref": record.registry_ref,
+            },
         )
 
 
