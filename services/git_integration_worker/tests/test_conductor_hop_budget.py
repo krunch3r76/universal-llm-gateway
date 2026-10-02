@@ -1053,3 +1053,31 @@ def test_mission_cap_counts_cancel_discard_rows() -> None:
     )
     assert verdict.park is True
     assert verdict.reason == _PARK_REASON_MISSION_CAP
+
+
+def test_cancel_discard_row_refuses_budget_without_park() -> None:
+    """a:37149 — the discarded row itself must not mission-cap park (watchdog).
+
+    Prior discards still count toward the cap for a later hop-owed row
+    (``test_mission_cap_counts_cancel_discard_rows``). The kill row must not
+    page/lock the mission the operator just discarded.
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _chain_at_cap(ledger, last_tokens=[])
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='cancel_discard' "
+            "WHERE dispatch_id='cap-4'"
+        )
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='cap-4'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(mission_cap=3),
+    )
+    assert verdict.park is False
+    assert verdict.ok is False
+    assert verdict.reason == "cancel_discard"

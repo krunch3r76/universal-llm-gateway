@@ -48,7 +48,10 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     signature_can_prove_loop,
     signatures_share_crash_row,
 )
-from services.git_integration_worker.cursor_sdk_park_ledger import PARK_KIND_RESTART
+from services.git_integration_worker.cursor_sdk_park_ledger import (
+    PARK_KIND_DISCARD,
+    PARK_KIND_RESTART,
+)
 
 logger = get_logger(__name__)
 
@@ -258,6 +261,11 @@ def evaluate_hop_budget(
     no-progress verdict (planned ``ROW_HOP``) and the crash cap apply.
     The watchdog calls this before ``hop_owed``, so a budget park on a
     no-successor stop would page and lock a mission that is merely waiting.
+
+    ``park_kind=cancel_discard`` is a mission kill (a:37149): refuse without
+    parking. The watchdog evaluates budget before ``hop_owed``, so without this
+    gate a discard at the mission/crash cap would still page and ``hop_parked``
+    lock the todo the operator just killed.
     """
     cfg = config or load_hop_budget_config()
     work_key = str(row.get("work_key") or "")
@@ -270,6 +278,13 @@ def evaluate_hop_budget(
             ok=False,
             park=False,
             reason=str(record.get(HOP_PARK_REASON_KEY) or "already_parked"),
+        )
+
+    if str(row.get("park_kind") or "") == PARK_KIND_DISCARD:
+        return HopBudgetVerdict(
+            ok=False,
+            park=False,
+            reason="cancel_discard",
         )
 
     planned = _planned_closeout(row, closeout_tokens=closeout_tokens)
