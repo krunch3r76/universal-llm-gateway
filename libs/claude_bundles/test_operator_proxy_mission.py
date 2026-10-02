@@ -14,6 +14,8 @@ from claude_bundles.operator_proxy_hop_status import HOP_STATUS_MARKER
 from claude_bundles.operator_proxy_mission import (
     _BRIEFING_BLOCK,
     _FORBIDDEN_HEADING,
+    _PURPOSE_DOC,
+    _PURPOSE_HEADER_LINES,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
     MISSION_SKILL_SLUGS,
@@ -383,6 +385,12 @@ def test_header_on_body_line_40_survives_authority_line_shift(
     )
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert (
+        _PURPOSE_DOC.search(
+            "\n".join(merged.splitlines()[:_PURPOSE_HEADER_LINES])
+        )
+        is None
+    )
     assert staged.mission is True
     assert purpose_implies_mission("freeform", merged) is True
 
@@ -402,6 +410,12 @@ def test_inline_class_slug_shift_keeps_body_line_5_header(
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert '<skill slug="investigation-economy"' in merged
+    assert (
+        _PURPOSE_DOC.search(
+            "\n".join(merged.splitlines()[:_PURPOSE_HEADER_LINES])
+        )
+        is None
+    )
     assert staged.mission is True
     assert purpose_implies_mission("freeform", merged) is True
 

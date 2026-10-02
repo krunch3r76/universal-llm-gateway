@@ -29,6 +29,8 @@ from claude_bundles.cdp_model_endpoint_staging import (
     sweep_ephemeral,
 )
 
+_recorded_staging_kwargs: list[dict[str, Any]] = []
+
 
 def test_picker_from_model_id_passthrough() -> None:
     assert picker_from_model_id("cdp/opus-4.8") == "opus-4.8"
@@ -417,9 +419,10 @@ def _mock_run_cdp_staging(
     """Avoid skill-catalog SOT validation in sparse git worktrees."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    _recorded_staging_kwargs.clear()
 
     def _fake_stage(**kwargs: Any) -> StagedPrompt:
-        del kwargs
+        _recorded_staging_kwargs.append(dict(kwargs))
         return StagedPrompt(
             prompt_uri=(
                 f"cortex://notes/system/ephemeral/cdp-endpoint/{execution_id}/prompt.md"
@@ -754,6 +757,7 @@ def test_run_cdp_generate_mission_wall_does_not_abort(
     assert result.ok is True
     assert result.archive_uri == archive
     assert aborts == []
+    assert _recorded_staging_kwargs[-1]["purpose"] == "operator-proxy"
 
 
 def test_run_cdp_generate_wall_clock_preserves_archive_uri(
