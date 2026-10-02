@@ -16,37 +16,41 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 
 ## Steps
 
-1. **Retrieve per scope.** Run one `rag(op="search", ...)` per scope in the job set; do not skip a scope to save a turn.
-   Falsifier: on that step: authoring before any `rag` call or a scope in the set was skipped.
+1. **Retrieve per scope.** Run one `rag(op="search", ...)` per scope in the job set for this packet; do not skip a required scope to save a turn.
+   Falsifier: on that step: authoring before any `rag` call or a required scope in the set was skipped.
 
-2. **LLM packet — four scopes only:**
+2. **LLM packet — job set (required + conditional + optional):**
 
-| Scope | What it holds |
-|---|---|
-| `llm_prompting` | persona/framing, ICL, long-context, prompt optimization |
-| `suggestion_orientation` | hypnosis/autosuggestion literature + LLM↔suggestion parallels; yields free-strategy, Law of Reversed Effort, demand characteristics **by analogy** — query in corpus vocabulary (suggestion, expectancy, reiteration, contextual dependency), not LLM-pedagogy terms |
-| `prompt_injection` | spotlighting, instruction hierarchy, post-prompting |
-| `agent_skills_research` | procedural memory, progressive disclosure |
+| Scope | Role | What it holds |
+|---|---|---|
+| `llm_prompting` | required | persona/framing, ICL, long-context, prompt optimization |
+| `claude_api` | required | Anthropic docs — prompt placement, context windows, best practices (often stronger than `llm_prompting` on placement) |
+| `prompt_injection` | required | spotlighting, instruction hierarchy, post-prompting |
+| `agent_skills_research` | required | procedural memory, progressive disclosure |
+| `skill_compilation` | when the job is about skills | skill compilation / progressive-disclosure craft |
+| `suggestion_orientation` | optional | hypnosis/autosuggestion literature + LLM↔suggestion parallels; yields free-strategy, Law of Reversed Effort, demand characteristics **by analogy** — query in corpus vocabulary (suggestion, expectancy, reiteration, contextual dependency), not LLM-pedagogy terms |
 
-`suggestion_orientation` is outside composite `research` / `all_research` — query it by name. Already mined, do not rediscover: speaker-side persona framing null-to-negative, audience-side helps (Pei et al.) · free-strategy: invite the model to choose the route and report it · Law of Reversed Effort: open a possibility, never demand a ceiling · constraints last (post-prompting) · a stance block declares itself subordinate to the facts.
+Query `suggestion_orientation` only when free-strategy, reversed-effort, expectancy, or demand-characteristics framing is in play for this packet; skip it otherwise (do not treat skip as a null yield). It is outside composite `research` / `all_research` — query it by name when used. Already mined, do not rediscover: speaker-side persona framing null-to-negative, audience-side helps (Pei et al.) · free-strategy: invite the model to choose the route and report it · Law of Reversed Effort: open a possibility, never demand a ceiling · constraints last (post-prompting) · a stance block declares itself subordinate to the facts.
 
 `writing` is human craft, not LLM prompting — do not cite when the reader is a model. Default route for a design packet is grok-authors then operator-expands; the operator's own retrieval still runs when the operator authors.
-   Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance.
+   Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance; treated `suggestion_orientation` as required; omitted `claude_api` from a required LLM-packet retrieve; skipped `skill_compilation` on a skills job.
 
-3. **Call shape.** Use `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')`.
-   Falsifier: on that step: wrong op, scope omitted, or `top_k` other than 10.
+3. **Call shape.** One concept per query (short; do not stack placement + hierarchy + progressive disclosure in one string). Use `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')`.
+   Falsifier: on that step: wrong op, scope omitted, `top_k` other than 10, or a multi-concept query that could have been split.
 
 4. **Read the signals.** Read `weak_match` with `rerank_status` and `weak_match_basis`. A null `weak_match` whose basis is `none` is not a weak corpus. Any `status` other than `ok`, or reason `scope_catalog_unavailable` or `retrieval_unavailable`, is a transport failure: retry once with fresh query text and report the failure, never as a null yield.
 
 | envelope | read it as |
 |---|---|
 | `weak_match: false`, basis `cross_encoder`, `rerank_status: ok` | scored; top score cleared the threshold |
+| `weak_match: true`, basis `cross_encoder`, `rerank_status: ok` | scored weak — reformulate once (shorter, single-concept) on the same scope before treating the yield as null/off-topic; report both attempts |
 | `weak_match: null`, basis `none`, `rerank_status: skipped_small_set` | not scored; the null is not evidence |
 
-   Falsifier: on that step: treated basis `none` or a non-ok status as an empty scope.
+Bibliography-only hits (citation line / related-work mention of a paper with no primary content) → label `cite-only` in the yield; do not treat them as content evidence for the design choice.
+   Falsifier: on that step: treated basis `none` or a non-ok status as an empty scope; reported null on first `weak_match: true` without one reformulation; used cite-only bibliography hits as content evidence.
 
-5. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job; report nulls with hits; do not file an off-topic yield as a mis-map.
-   Falsifier: on that step: re-queried a null scope same job, omitted nulls from the report, or filed off-topic chunks as a scope defect.
+5. **Null yield.** A yield whose chunks do not bear on the question is `null (off-topic)`; either null is a finding: do not look that scope up again for the same job after the weak-match reformulation (if any); report nulls with hits; do not file an off-topic yield as a mis-map.
+   Falsifier: on that step: re-queried a null scope same job beyond the one weak-match reformulation, omitted nulls from the report, or filed off-topic chunks as a scope defect.
 
 6. **Author.** Name the form (genre), not just the reader; keep stance/target from drowning in constraint bulk. A prompt that commissions a change ends with this block, in full; conductor commissions (packets that say "Use the conductor skill") are the exception:
 
@@ -63,4 +67,6 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 
 ## Falsifier
 
-This body failed if retrieval was skipped, a transport failure was reported as a null yield, null scopes were hidden, or an LLM packet cited human-writing scopes as model-execution guidance.
+This body failed if retrieval was skipped, a required scope was omitted, a transport failure was reported as a null yield, null scopes were hidden, `suggestion_orientation` was treated as required, or an LLM packet cited human-writing scopes as model-execution guidance.
+
+Evidence for the scope change: a:37295 · `cortex://notes/system/threads/12286-reasoning-posture-hop-prompt-retrieval-report.md` (`claude_api` 0.995 vs `llm_prompting` 0.28 on placement).
