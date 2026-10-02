@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Wayland keystroke helper for the Cursor keystroke bridge (jupiter / Wayland).
+"""Wayland keystroke helper for the Cursor keystroke bridge (GUI host / Wayland).
 
-evdev uinput + wl-copy, same substrate as ``orchestrator_tab_keystroke.py`` and
-``grokbot_tab_keystroke.py``. Two ops the io-side watcher drives over SSH:
+evdev uinput + wl-copy. Glass ``open`` delegates to ``orchestrator_tab_keystroke``
+(``launch_glass_chat_with_message`` — ctrl+n requires ``KEY_N`` on the uinput
+device). Two ops the io-side watcher drives over SSH:
 
-  open   raise Cursor → Ctrl+T new IDE tab → optional Ctrl+/ model → paste → Enter
+  open   Glass (default): focus the Glass toplevel (title contains Glass, else
+         the unique Cursor Agents window) → ctrl+n → paste → Ctrl+Enter.
+         No model pick unless ``CURSOR_BRIDGE_MODEL_QUERY`` is set. IDE
+         (``--window ide``): raise Cursor → Ctrl+T → optional Ctrl+/ model →
+         paste → Enter.
   paste  raise Cursor → [focus tab by title] → focus chat input → paste → Enter
 
 ``paste`` is the per-turn wake: the in-tab agent has ended its turn, so a fresh
@@ -21,6 +26,7 @@ enabled.  Set ``CURSOR_BRIDGE_UINPUT_ENABLED=1`` (or ``true``/``yes``) to re-arm
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -34,8 +40,9 @@ from evdev import ecodes as e
 _DEFAULT_REPO = os.environ.get(
     "CURSOR_BRIDGE_REPO", "/mnt/torus/projects/universal-llm-gateway"
 )
-_MODEL_QUERY = os.environ.get("CURSOR_BRIDGE_MODEL_QUERY", "grok-4.7")
+_MODEL_QUERY = os.environ.get("CURSOR_BRIDGE_MODEL_QUERY", "")
 _NEW_CHAT = os.environ.get("CURSOR_BRIDGE_NEW_CHAT", "ctrl_t")
+_WINDOW = os.environ.get("CURSOR_BRIDGE_WINDOW", "glass").strip().lower() or "glass"
 _NEW_CHAT_CHORDS = ("ctrl_n", "ctrl_t", "palette")
 _FOCUS_OPENERS = ("none", "ctrl_k", "ctrl_slash", "ctrl_shift_p")
 _INPUT_FOCUS = ("ctrl_l", "none")
@@ -256,15 +263,54 @@ def _new_chat(ui: UInput, chord: str) -> None:
         raise ValueError(f"unknown new-chat chord: {chord}")
 
 
-def open_tab(
-    message: str, *, repo: str, model_query: str, new_chat: str, dry_run: bool
-) -> dict[str, object]:
-    """IDE new tab is Ctrl+T, then Ctrl+/ to select the model, then the paste.
+def _glass_launcher():
+    """Load the Glass window picker. Glass is not the IDE ``cursor -r`` target."""
+    path = Path(__file__).with_name("orchestrator_tab_keystroke.py")
+    spec = importlib.util.spec_from_file_location("orchestrator_tab_keystroke", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"missing {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-    The default model filter is grok-4.7. ``new_chat`` may still be ``ctrl_n``
-    or ``palette`` when the caller names that chord. An empty model query skips
-    the model step.
+
+def open_tab(
+    message: str,
+    *,
+    repo: str,
+    model_query: str,
+    new_chat: str,
+    dry_run: bool,
+    window: str = "",
+) -> dict[str, object]:
+    """Open a chat on Glass (default) or in the IDE.
+
+    Glass: focus that toplevel, Ctrl+N, paste, Ctrl+Enter (no model pick).
+    IDE: Ctrl+T, optional Ctrl+/ model, paste, Enter. ``new_chat`` applies only to IDE.
+    An empty model query skips the model step.
     """
+    surface = (window or _WINDOW).strip().lower()
+    if surface == "glass":
+        plan = ["focus_glass", "ctrl+n"]
+        if model_query:
+            plan.append(f"ctrl+/:{model_query}")
+        plan += ["paste", "ctrl_enter"]
+        if dry_run:
+            return {
+                "dry_run": True,
+                "op": "open",
+                "window": "glass",
+                "steps": plan,
+                "message_len": len(message),
+            }
+        if not _uinput_enabled():
+            return _uinput_refused("open", steps=plan)
+        out = _glass_launcher().launch_glass_chat_with_message(
+            message, repo=repo, dry_run=False, model_query=model_query
+        )
+        out["op"] = "open"
+        out["window"] = "glass"
+        return out
     _require_display()
     plan = ["raise", f"new_chat:{new_chat}"]
     if model_query:
@@ -292,7 +338,13 @@ def open_tab(
         _paste_text_enter(ui, message)
     finally:
         ui.close()
-    return {"ok": True, "op": "open", "steps": plan, "message_len": len(message)}
+    return {
+        "ok": True,
+        "op": "open",
+        "window": "ide",
+        "steps": plan,
+        "message_len": len(message),
+    }
 
 
 def paste_message(
@@ -374,7 +426,7 @@ def _read_message(args: argparse.Namespace) -> str:
 
 
 def main() -> int:
-    """CLI for ``open`` (Ctrl+T new IDE tab) and ``paste`` (the existing chat).
+    """CLI for ``open`` (Glass Ctrl+N by default; IDE Ctrl+T via --window ide) and ``paste``.
 
     Uinput stays off unless ``CURSOR_BRIDGE_UINPUT_ENABLED`` is set. Prints
     JSON for the op that ran.
@@ -384,16 +436,22 @@ def main() -> int:
 
     op = sub.add_parser(
         "open",
-        help="Raise Cursor, Ctrl+T new IDE tab, Ctrl+/ model, paste opening message",
+        help="Glass: focus Glass, Ctrl+N, paste, Ctrl+Enter. IDE: Ctrl+T then Enter.",
     )
     op.add_argument("--message")
     op.add_argument("--message-file")
     op.add_argument("--repo", default=_DEFAULT_REPO)
+    op.add_argument(
+        "--window",
+        choices=("glass", "ide"),
+        default=_WINDOW,
+        help="glass focuses the Glass toplevel and uses Ctrl+N. ide uses Ctrl+T.",
+    )
     op.add_argument("--new-chat", choices=_NEW_CHAT_CHORDS, default=_NEW_CHAT)
     op.add_argument(
         "--model-query",
         default=_MODEL_QUERY,
-        help="Ctrl+/ model filter on the new IDE tab. Default grok-4.7. Empty skips.",
+        help="Ctrl+/ model filter (IDE open only). Empty skips; Glass uses last-used model.",
     )
     op.add_argument("--dry-run", action="store_true")
 
@@ -433,6 +491,7 @@ def main() -> int:
             model_query=args.model_query,
             new_chat=args.new_chat,
             dry_run=args.dry_run,
+            window=args.window,
         )
     else:
         out = paste_message(

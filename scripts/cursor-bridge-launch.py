@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""io → SSH → jupiter keystroke relay for the Cursor keystroke bridge.
+"""io → SSH → GUI-host keystroke relay for the Cursor keystroke bridge.
 
-Same hopper shape as ``grokbot-routine-launch.py`` minus scp: the repo is one
-NFS mount, so the message file written here is already visible on the
-graphical host. Ops mirror ``cursor_tab_keystroke.py``:
+Host: ``CURSOR_BRIDGE_SSH_HOST`` (default ``jupiter``; orion-node for attended
+Glass). Same hopper shape as ``grokbot-routine-launch.py`` minus scp — the repo
+is one NFS mount, so message files written here are visible on the graphical host.
+
+Ops delegate to ``cursor_tab_keystroke.py`` (Glass default):
 
   open-tab  --thread T --slug S [--cowork-url U] [--message-file F]
+            Focus Glass (``Cursor Agents`` toplevel) → ctrl+n → paste → Ctrl+Enter.
+            No model pick unless ``CURSOR_BRIDGE_MODEL_QUERY`` is set.
+            ``CURSOR_BRIDGE_WINDOW=ide`` keeps the IDE Ctrl+T path.
   paste     --thread T --message M | --message-file F [--focus-title "T S"]
   status
+
+Remote env (``CURSOR_BRIDGE_REMOTE_ENV``) must include ``CURSOR_BRIDGE_UINPUT_ENABLED=1``
+on the GUI host or open/paste refuse with ``uinput_disabled``.
 
 Per-thread cooldown on ``open-tab`` prevents duplicate tabs on crash-restart
 (2026-09-09 Grok hopper lesson). State: tmp/watchers/cursor-bridge-launch.state.json.
@@ -30,10 +38,11 @@ from durable_io.atomic import durable_write_text
 
 _REPO = Path(__file__).resolve().parents[1]
 _SSH_HOST = os.environ.get("CURSOR_BRIDGE_SSH_HOST", "jupiter")
-_REMOTE_ENV = os.environ.get(
-    "CURSOR_BRIDGE_REMOTE_ENV",
-    "WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000",
+_DEFAULT_REMOTE_ENV = (
+    "WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 "
+    "CURSOR_BRIDGE_UINPUT_ENABLED=1 CURSOR_BRIDGE_WINDOW=glass"
 )
+_REMOTE_ENV = os.environ.get("CURSOR_BRIDGE_REMOTE_ENV", _DEFAULT_REMOTE_ENV)
 _KEYSTROKE = _REPO / "scripts/cursor_tab_keystroke.py"
 _MSG_DIR = _REPO / "tmp/watchers/cursor-bridge-messages"
 _STATE = _REPO / "tmp/watchers/cursor-bridge-launch.state.json"
@@ -177,7 +186,8 @@ def open_tab(
     )
     holder = f"bridge-open-{thread}-{uuid.uuid4().hex[:8]}"
     path = _stage_message(text, holder)
-    argv = ["open", "--message-file", str(path)]
+    window = os.environ.get("CURSOR_BRIDGE_WINDOW", "glass")
+    argv = ["open", "--window", window, "--message-file", str(path)]
     if dry_run:
         argv.append("--dry-run")
     out = _ssh_keystroke(argv, holder=holder, dry_run=dry_run)

@@ -3,7 +3,7 @@
 
 Polls one agent-bus thread and turns lane vocabulary into side effects:
 
-  BRIDGE_OPEN  (web-anthropic → cursor)  open a Cursor tab on jupiter via SSH keystroke
+  BRIDGE_OPEN  (web-anthropic → cursor)  open Glass on the GUI host via SSH keystroke
   MSG          (web-anthropic → cursor)  wake the tab: paste ``BRIDGE_WAKE thread=T turn=N``
   TAB_READY    (cursor → web-anthropic)  record lane liveness; nudge claude.ai
   TAB_ALIVE    (cursor → web-anthropic)  heartbeat — refreshes TAB_READY TTL
@@ -14,7 +14,10 @@ Polls one agent-bus thread and turns lane vocabulary into side effects:
 The MCP handler never touches evdev or SSH; this process is the sole executor
 (spec: cortex://notes/system/specs/cursor-keystroke-bridge-v1.md).
 
-Arm:
+Arm (set ``CURSOR_BRIDGE_SSH_HOST`` to the GUI node, e.g. orion-node):
+
+  export CURSOR_BRIDGE_SSH_HOST=orion-node
+  export CURSOR_BRIDGE_REMOTE_ENV='WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 CURSOR_BRIDGE_UINPUT_ENABLED=1 CURSOR_BRIDGE_WINDOW=glass'
   scripts/watch-supervise.sh start --label cursor-bridge-<T> -- \\
     scripts/watch-cursor-bridge-inbox.py --thread <T> --label cursor-bridge-<T>
 """

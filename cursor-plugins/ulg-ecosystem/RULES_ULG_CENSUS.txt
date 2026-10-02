@@ -21,6 +21,7 @@ in-flight-work-guard_ulg
 jupiter-converse-batching_ulg
 liaison-hop-retire_ulg
 life-session-engagement_ulg
+local-maintainer-no-remote_ulg
 mcp-debugging-ux_ulg
 mcp-selector-naming_ulg
 mcp-tool-awareness_ulg

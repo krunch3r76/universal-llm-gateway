@@ -1,0 +1,29 @@
+---
+description: "Before git push, gh pr create, opening a GitHub compare URL as submit, or asking whether to open a PR — sole-maintainer local: no remote unless the operator names push/PR/publish."
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - push
+  - pull request
+  - gh pr
+  - submit for review
+  - open a PR
+  - no pr
+  - local maintainer
+---
+# Local maintainer — no remote (detail)
+
+Kernel lives in always-on `shared-checkout-worktree_ulg` (`¬push ∧ ¬pr`).
+
+**Invariant:** `sole_maintainer_local ⇒ ¬push ∧ ¬gh_pr ∧ ¬ask(pr)` unless the operator
+names that act ("push", "open a PR", `gh pr create`, "publish the branch").
+
+| Forbidden | Permitted |
+|---|---|
+| `git push` / set upstream to publish | Local commits on a feature/worktree branch when commit is in scope |
+| `gh pr create` / compare-URL as the review close | Local branch `@sha` + `git diff --stat <base>..HEAD` |
+| "Should I open a PR?" | Stop after the local review package |
+
+Commission briefs that say "feature branch + PR" do not override this — PR is optional
+only when the operator asks for it in this conversation.

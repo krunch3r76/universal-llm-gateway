@@ -380,28 +380,19 @@ def remote_launch_command(
     focus_title: str | None = None,
     no_raise: bool = False,
 ) -> str:
-    """Build the GUI-host command.
+    """Build the GUI-host Glass hop command.
 
-    Keys on the host are Ctrl+T (IDE new tab) → Ctrl+/ grok-4.7 → paste →
-    Ctrl+Enter. Raise is compositor ``activate`` on ``focus_title`` (default
-    ``Cursor Agents``). ``no_raise`` types into the already-focused window when
-    the operator said so. ``--raise-uri`` / ``vscode-remote://`` is not a hop
-    raise — Firefox owns that scheme (10588 Fire 2).
+    Glass (operator 2026-10-02): Ctrl+n (lowercase n, Shift released) → paste →
+    Ctrl+Enter via ``glass-launch``. IDE ``launch`` (Ctrl+T) hits the wrong
+    toplevel and does not open a Glass agent. ``focus_title`` / ``no_raise`` are
+    accepted for call-site compatibility; Glass picks the Agents window itself.
     """
-    if no_raise:
-        focus = "--no-raise"
-    else:
-        title = focus_title or focus_title_for()
-        focus = (
-            f"--no-raise --focus-title {shlex.quote(title)} "
-            f"--focus-app-id {shlex.quote(AGENTS_WINDOW_APP_ID)}"
-        )
+    del focus_title, no_raise  # Glass path focuses Agents; IDE flags unused
     return (
         "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
-        f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} launch "
+        f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} glass-launch "
         f"--message-file {shlex.quote(remote_msg_path)} "
-        f"--repo {shlex.quote(remote_repo)} "
-        f"{focus}"
+        f"--repo {shlex.quote(remote_repo)}"
     )
 
 
@@ -619,7 +610,7 @@ def fire_ide_hop(
             "toplevels": toplevels,
             "cursor_windows": cursor_windows,
             "fix": (
-                "no new Cursor chat carries the hop header — Ctrl+T / paste / "
+                "no new Cursor chat carries the hop header — Ctrl+n (lowercase) / paste / "
                 f"Ctrl+Enter did not submit, or keys hit another window; "
                 f"focus was {focus_title!r} on {gui_host}. Check cursor_windows: "
                 "a lone 'Cursor Agents' toplevel with no editor window, or a "

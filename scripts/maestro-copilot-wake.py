@@ -8,7 +8,7 @@ dense chat. Continuity lives in the cortex ledger and journal, not in the tab.
 The cursor_bridge inbox watcher also SSHes to jupiter (``cursor-bridge-launch.py``).
 This loop SSHes to jupiter and uses ``orchestrator_tab_keystroke.py glass-launch``:
 focus the Glass toplevel (title contains Glass, or the unique ``Cursor Agents``
-window), Ctrl+/ New Agent, Ctrl+/ grok-4.7, paste, Ctrl+Enter. Glass does not
+window), Ctrl+N, paste, Ctrl+Enter (last-used model). Glass does not
 use the IDE Ctrl+T chord. This loop does not call ``cursor_bridge open_tab``.
 
 Arm (auxiliary user unit, not a fleet service)::
@@ -63,7 +63,7 @@ This seat runs in the Glass window on jupiter. Each wake opens
 its new tab by keypresses sent to that window:
 scripts/orchestrator_tab_keystroke.py glass-launch. Focus the
 toplevel whose title contains Glass, or the unique Cursor Agents
-window when that is the compositor title. Then Ctrl+/ New Agent.
+window when that is the compositor title. Then Ctrl+N.
 The IDE new-tab chord is Ctrl+T in _new_chat; Glass does not use
 that chord. Do not call cursor_bridge open_tab. The runbook's
 check-in steps, and the rest of its Refuse list, still bind.

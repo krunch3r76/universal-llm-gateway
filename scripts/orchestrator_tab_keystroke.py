@@ -187,9 +187,12 @@ def _ui() -> UInput:
     attach the device as the seat keyboard — hops report write-ok and
     COSMIC activate-ok while Cursor Agents never sees a key (jupiter
     2026-09-13 probe: /dev/input/event23, KEY_A, 3s grace, empty composer).
+    Glass ctrl+n needs ``KEY_N`` explicitly — it is outside the ESC..S range
+    (orion-node bridge 2026-10-02: manual ctrl+n worked, automation did not).
     """
     keys = list(range(e.KEY_ESC, e.KEY_S + 1))
     for extra in (
+        e.KEY_N,  # Glass new agent: ctrl+n (outside ESC..S capability range)
         e.KEY_D,
         e.KEY_V,
         e.KEY_P,
@@ -296,10 +299,29 @@ def _release_modifiers(ui: UInput) -> None:
 
 
 def _new_chat(ui: UInput) -> None:
-    """IDE new tab: Ctrl+T with Shift released. Glass uses ctrl-/ and does not call this."""
+    """IDE new tab: Ctrl+T with Shift released. Glass new agent is Ctrl+N."""
     _release_modifiers(ui)
     time.sleep(0.05)
     _chord(ui, e.KEY_LEFTCTRL, e.KEY_T)
+    time.sleep(0.45)
+
+
+def _ctrl_lowercase_n(ui: UInput) -> None:
+    """Glass new agent: ctrl+n (lowercase n, no Shift). Same timing as paste."""
+    _release_modifiers(ui)
+    time.sleep(0.05)
+    _key_down(ui, e.KEY_LEFTCTRL)
+    time.sleep(0.18)
+    _key_down(ui, e.KEY_N)
+    time.sleep(0.12)
+    _key_up(ui, e.KEY_N)
+    time.sleep(0.08)
+    _key_up(ui, e.KEY_LEFTCTRL)
+
+
+def _new_glass_agent(ui: UInput) -> None:
+    """Glass new agent: ctrl+n. Ctrl+T is the IDE chord and hits the other toplevel."""
+    _ctrl_lowercase_n(ui)
     time.sleep(0.45)
 
 
@@ -455,11 +477,17 @@ def launch_glass_chat_with_message(
     *,
     repo: str,
     dry_run: bool = False,
-    model_query: str = _IDE_MODEL,
+    model_query: str = "",
 ) -> dict[str, object]:
-    """Focus Glass, Ctrl+/ New Agent, Ctrl+/ model, paste, Ctrl+Enter. No Ctrl+T."""
+    """Focus Glass, Ctrl+N new agent, paste, Ctrl+Enter.
+
+    Glass and the IDE are different toplevels. Ctrl+T opens an IDE tab and
+    does not create a Glass agent. Enter is a newline in the Glass composer;
+    Ctrl+Enter sends. Do not pick a model unless ``model_query`` is non-empty;
+    Cursor keeps the last-used model.
+    """
     _require_display()
-    steps = ["focus_glass", "ctrl+/:New Agent"]
+    steps = ["focus_glass", "ctrl+n"]
     if model_query:
         steps.append(f"ctrl+/:{model_query}")
     steps += ["paste", "ctrl_enter"]
@@ -477,7 +505,7 @@ def launch_glass_chat_with_message(
     clip: subprocess.Popen[bytes] | None = None
     ui = _ui()
     try:
-        _quick_command(ui, "New Agent", opener="ctrl_slash")
+        _new_glass_agent(ui)
         time.sleep(1.5)
         if model_query:
             _quick_command(ui, model_query, opener="ctrl_slash")
@@ -625,7 +653,7 @@ def main() -> int:
     )
     gl = sub.add_parser(
         "glass-launch",
-        help="Focus Glass (or the unique Cursor Agents window), Ctrl+/ New Agent, paste, Ctrl+Enter",
+        help="Focus Glass (or the unique Cursor Agents window), Ctrl+N, paste, Ctrl+Enter",
     )
     gl.add_argument("--message", help="First user message")
     gl.add_argument("--message-file", help="Read message from file (preferred for multiline)")
@@ -635,8 +663,8 @@ def main() -> int:
     gl.add_argument("--dry-run", action="store_true")
     gl.add_argument(
         "--model-query",
-        default=_IDE_MODEL,
-        help="Ctrl+/ filter after New Agent. Empty skips. Default grok-4.7.",
+        default=os.environ.get("CURSOR_BRIDGE_MODEL_QUERY", ""),
+        help="Optional Ctrl+/ filter after Ctrl+N. Empty keeps last-used model.",
     )
     gq = sub.add_parser(
         "glass-cmd",
