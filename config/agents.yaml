@@ -358,7 +358,6 @@ roles:
     default_family: claude
     default_platform: web
     default_model: null
-    default_job: confer
 
   web-implement:
     description: "Web bound-implement handoff — packet-bound implementation on web-anthropic with acceptance criteria and quality gates; operator pushes agent-bus. Symmetric with cursor-implement; distinct from web-consult."
@@ -371,7 +370,6 @@ roles:
     default_family: claude
     default_platform: cursor
     default_model: null
-    default_job: confer
 
   cursor-implement:
     description: "Cursor bound-implement handoff — packet-bound code execution with acceptance criteria and quality gates; distinct from cursor-consult"
