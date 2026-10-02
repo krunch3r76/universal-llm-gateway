@@ -404,6 +404,137 @@ def test_shell_cwd_preload_keeps_dispatch_id_in_bash_child(tmp_path: Path) -> No
     assert fallback_cwd == ""
 
 
+def test_shell_cwd_preload_chdirs_node_process(tmp_path: Path) -> None:
+    """Armed preload chdirs the node process to the fallback directory."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {preload}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(lane)
+    proc = subprocess.run(
+        [str(node), "-e", "console.log(process.cwd())"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+
+
+def test_shell_cwd_preload_bare_bash_pwd_is_fallback(tmp_path: Path) -> None:
+    """Bash spawn with no cwd option uses the fallback directory."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "bare_pwd.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "const child = spawn('/bin/bash', ['-c', 'pwd']);",
+                "child.stdout.on('data', (b) => process.stdout.write(b));",
+                "child.on('close', (code) => process.exit(code == null ? 1 : code));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {preload}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(lane)
+    proc = subprocess.run(
+        [str(node), str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+
+
+def test_command_argv_includes_preload_when_lane_path_set(tmp_path, monkeypatch) -> None:
+    """Lane launch arms the preload env and leaves Popen cwd unset.
+
+    SDK-appended filesystem paths and callback URLs must be absolute. The
+    cwd fix is the preload chdir, not subprocess.Popen(cwd=).
+    """
+    from cursor_sdk import _bridge as _sdk_bridge
+
+    captured: dict[str, object] = {}
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["cwd"] = kwargs.get("cwd")
+        raise RuntimeError("stop-at-popen")
+
+    monkeypatch.setattr(_sdk_bridge.subprocess, "Popen", _popen)
+
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    home = tmp_path / "dispatch-home"
+    home.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    command = build_bridge_command(
+        bridge_bin=resolve_bridge_bin(),
+        dispatch_home=home,
+        repo_venv=_fake_repo_venv(tmp_path),
+        real_home=tmp_path / "operator-home",
+        dispatch_id="disp-lane-cwd",
+        lane_path=lane,
+    )
+    try:
+        bridge_launch.Client.launch_bridge(
+            command=command,
+            workspace=str(lane),
+            state_root=str(state),
+            timeout=5.0,
+            local=None,
+        )
+    except BaseException:  # noqa: BLE001
+        pass
+
+    assert "argv" in captured
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    assert f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane}" in argv
+    assert any(
+        a.startswith("NODE_OPTIONS=") and f"--require {preload}" in a for a in argv
+    )
+    bin_idx = _first_non_assignment(argv)
+    tail = argv[bin_idx + 1 :]
+    for flag in ("--workspace", "--state-root", "--tool-callback-url"):
+        assert flag in tail, flag
+        value = tail[tail.index(flag) + 1]
+        assert os.path.isabs(value) or value.startswith("http://") or value.startswith(
+            "https://"
+        ), value
+    assert captured["cwd"] is None
+
+
 def test_resolve_bridge_bin_is_absolute_file() -> None:
     """The pinned wheel must resolve to an absolute, existing launcher."""
     resolved = resolve_bridge_bin()

@@ -124,6 +124,8 @@ def build_bridge_command(
     When ``lane_path`` is set, ``NODE_OPTIONS`` (``--require`` of the shell-cwd
     preload, in front of any ``NODE_OPTIONS`` already in ``os.environ``) and
     ``CURSOR_SDK_SHELL_FALLBACK_CWD`` are assigned just before the binary.
+    The preload chdirs the bridge process to that directory when it exists;
+    pinned ``Popen`` still has no ``cwd=``.
     Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]``; writes
     nothing.
     """
