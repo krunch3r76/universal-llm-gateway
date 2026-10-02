@@ -13,7 +13,7 @@ apply_tier: required_gate
 
 Before `Task(subagent_type="generalPurpose"|"shell"|…)` when the deliverable touches **orders, vendor APIs, reviews, agent_bus, cortex, or operator-facing outbound text**, paste this kernel into the prompt:
 
-1. **`Use the reasoning-posture skill`** — pin Question, one determinate step, verify before acting
+1. **`Use the reasoning-posture skill`** — pin Question, one bounded step, verify before acting
 2. **Provenance read-before-mutate** — read current ledger/state before writes; quote observed tool-response payloads before completion claims
 3. **Order/vendor mutations** — explicit **order-ledger read** step before DoorDash/vendor submit or review API calls
 4. **Operator-facing text** → **`Use the outbound-voice-spec skill`**
