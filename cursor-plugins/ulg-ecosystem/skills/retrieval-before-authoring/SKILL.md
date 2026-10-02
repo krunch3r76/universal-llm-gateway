@@ -16,7 +16,7 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 
 ## Steps
 
-1. **Retrieve per scope.** Run one `rag(op="search", ...)` per scope in the job set for this packet; do not skip a required scope to save a turn.
+1. **Retrieve per scope.** Run at least one `rag(op="search", ...)` per scope in the job set for this packet; split multi-concept designs into several queries on the scope that holds them. Do not skip a required scope to save a turn.
    Falsifier: on that step: authoring before any `rag` call or a required scope in the set was skipped.
 
 2. **LLM packet — job set (required + conditional + optional):**
@@ -24,16 +24,18 @@ Author from priors without retrieve. Filing an off-topic yield as a scope mis-ma
 | Scope | Role | What it holds |
 |---|---|---|
 | `llm_prompting` | required | persona/framing, ICL, long-context, prompt optimization |
-| `claude_api` | required | Anthropic docs — prompt placement, context windows, best practices (often stronger than `llm_prompting` on placement) |
+| `claude_api` | required | Anthropic docs — prompt placement, context windows, best practices (often stronger than `llm_prompting` on placement). API mechanics such as prefill, thinking budgets, and `cache_control` apply only when the reader is Claude; placement and structure advice carries over |
 | `prompt_injection` | required | spotlighting, instruction hierarchy, post-prompting |
 | `agent_skills_research` | required | procedural memory, progressive disclosure |
-| `skill_compilation` | when the job is about skills | skill compilation / progressive-disclosure craft |
+| `skill_compilation` | when the packet authors, edits, or reviews a skill or rule body | skill compilation / progressive-disclosure craft |
 | `suggestion_orientation` | optional | hypnosis/autosuggestion literature + LLM↔suggestion parallels; yields free-strategy, Law of Reversed Effort, demand characteristics **by analogy** — query in corpus vocabulary (suggestion, expectancy, reiteration, contextual dependency), not LLM-pedagogy terms |
 
 Query `suggestion_orientation` only when free-strategy, reversed-effort, expectancy, or demand-characteristics framing is in play for this packet; skip it otherwise (do not treat skip as a null yield). It is outside composite `research` / `all_research` — query it by name when used. Already mined, do not rediscover: speaker-side persona framing null-to-negative, audience-side helps (Pei et al.) · free-strategy: invite the model to choose the route and report it · Law of Reversed Effort: open a possibility, never demand a ceiling · constraints last (post-prompting) · a stance block declares itself subordinate to the facts.
 
+Specimen: a:37295 · `cortex://notes/system/threads/12286-reasoning-posture-hop-prompt-retrieval-report.md` — `llm_prompting` held Liu et al. only as bibliography (cite-only); `claude_api` held primary placement content.
+
 `writing` is human craft, not LLM prompting — do not cite when the reader is a model. Default route for a design packet is grok-authors then operator-expands; the operator's own retrieval still runs when the operator authors.
-   Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance; treated `suggestion_orientation` as required; omitted `claude_api` from a required LLM-packet retrieve; skipped `skill_compilation` on a skills job.
+   Falsifier: on that step: cited `writing` or off-table scopes as LLM-packet guidance; treated `suggestion_orientation` as required; omitted `claude_api` from a required LLM-packet retrieve; skipped `skill_compilation` on a skills job; skipped an optional scope with no skip line and reason in the Yields section.
 
 3. **Call shape.** One concept per query (short; do not stack placement + hierarchy + progressive disclosure in one string). Use `rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')`.
    Falsifier: on that step: wrong op, scope omitted, `top_k` other than 10, or a multi-concept query that could have been split.
@@ -43,7 +45,7 @@ Query `suggestion_orientation` only when free-strategy, reversed-effort, expecta
 | envelope | read it as |
 |---|---|
 | `weak_match: false`, basis `cross_encoder`, `rerank_status: ok` | scored; top score cleared the threshold |
-| `weak_match: true`, basis `cross_encoder`, `rerank_status: ok` | scored weak — reformulate once (shorter, single-concept) on the same scope before treating the yield as null/off-topic; report both attempts |
+| `weak_match: true`, basis `cross_encoder`, `rerank_status: ok` | scored weak — reformulate once (shorter, single-concept) on the same scope before treating the yield as null/off-topic; report both attempts. If the rewrite returns empty or unscored (`chunks_found` 0 / `index_miss` / basis `none`), keep the first query's on-topic chunks and report both results; that is not a transport failure unless `status` ≠ `ok` |
 | `weak_match: null`, basis `none`, `rerank_status: skipped_small_set` | not scored; the null is not evidence |
 
 Bibliography-only hits (citation line / related-work mention of a paper with no primary content) → label `cite-only` in the yield; do not treat them as content evidence for the design choice.
@@ -68,5 +70,3 @@ Bibliography-only hits (citation line / related-work mention of a paper with no 
 ## Falsifier
 
 This body failed if retrieval was skipped, a required scope was omitted, a transport failure was reported as a null yield, null scopes were hidden, `suggestion_orientation` was treated as required, or an LLM packet cited human-writing scopes as model-execution guidance.
-
-Evidence for the scope change: a:37295 · `cortex://notes/system/threads/12286-reasoning-posture-hop-prompt-retrieval-report.md` (`claude_api` 0.995 vs `llm_prompting` 0.28 on placement).
