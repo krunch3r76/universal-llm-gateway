@@ -342,11 +342,6 @@ def stage_cdp_prompt_with_skills(
     mission = purpose_implies_mission(purpose, body)
     omit_slash = mission or bool(slash_slugs)
     if mission:
-        from claude_bundles.operator_proxy_mission import (
-            ensure_operator_proxy_mission_prompt,
-        )
-
-        body = ensure_operator_proxy_mission_prompt(body)
         have = {s.lstrip("/").lower() for s in effective}
         for slug in reversed(MISSION_SKILL_SLUGS):
             if slug.lower() not in have:
