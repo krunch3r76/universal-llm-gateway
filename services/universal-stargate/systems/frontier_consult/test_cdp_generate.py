@@ -1081,7 +1081,8 @@ def test_hop_from_live_own_generate_exempts_sole_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "reg-caller",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     refuse_second_external_gate_at_fire(
@@ -1125,7 +1126,8 @@ def test_hop_exempt_does_not_clear_a_second_live_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "reg-successor",
                 },
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1160,7 +1162,8 @@ def test_hop_sole_live_gate_exempt_without_registration(
                     "stream_state": "running",
                     "purpose": "operator-proxy",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     refuse_second_external_gate_at_fire(
@@ -1194,7 +1197,8 @@ def test_non_hop_does_not_exempt_own_generate(
                     "purpose": "operator-proxy",
                     "registration_id": "reg-caller",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1229,7 +1233,8 @@ def test_refuse_generate_wire_miss_mission_kind_none_refuses_own_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "c1caf180",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1265,7 +1270,8 @@ def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "c1caf180",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     _refuse_external_gate_for_generate(
@@ -1300,7 +1306,8 @@ def test_hop_mismatched_registration_refuses_even_with_sole_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "c1caf180",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
