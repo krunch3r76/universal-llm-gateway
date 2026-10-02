@@ -42,9 +42,7 @@ def test_prompt_and_sidecar_ref_mutually_exclusive() -> None:
 
 def test_prompt_alone_is_clean() -> None:
     assert (
-        validate_inline_prompt_inputs(
-            "generate", "none", None, None, "brief", None
-        )
+        validate_inline_prompt_inputs("generate", "none", None, None, "brief", None)
         is None
     )
 
@@ -134,9 +132,7 @@ def test_strip_mcp_no_false_positive_on_other_suffixes() -> None:
     assert (
         normalize_dispatch_model("openai/gpt-5-search-api") == "openai/gpt-5-search-api"
     )
-    assert normalize_dispatch_model("xai/grok-4.7") == (
-        "xai/grok-4.7"
-    )
+    assert normalize_dispatch_model("xai/grok-4.7") == ("xai/grok-4.7")
     assert normalize_dispatch_model("hermes-3-...-16384-hybrid") == (
         "hermes-3-...-16384-hybrid"
     )
@@ -189,34 +185,26 @@ def test_dispatch_thread_id_exempt_for_wrap_generate() -> None:
 
 def test_packet_path_ok_on_freeform_generate() -> None:
     assert (
-        reject_unsupported_packet_inputs(
-            "generate", "freeform", "tmp/p.md", None
-        )
+        reject_unsupported_packet_inputs("generate", "freeform", "tmp/p.md", None)
         is None
     )
 
 
 def test_packet_path_ok_on_mechanical_generate() -> None:
     assert (
-        reject_unsupported_packet_inputs(
-            "generate", "mechanical", "tmp/p.md", None
-        )
+        reject_unsupported_packet_inputs("generate", "mechanical", "tmp/p.md", None)
         is None
     )
 
 
 def test_source_ref_rejected_on_mechanical_generate() -> None:
-    err = reject_unsupported_packet_inputs(
-        "generate", "mechanical", None, "todo:x"
-    )
+    err = reject_unsupported_packet_inputs("generate", "mechanical", None, "todo:x")
     assert err is not None
     assert err["field"] == "source_ref"
 
 
 def test_source_ref_rejected_on_freeform_generate() -> None:
-    err = reject_unsupported_packet_inputs(
-        "generate", "freeform", None, "todo:x"
-    )
+    err = reject_unsupported_packet_inputs("generate", "freeform", None, "todo:x")
     assert err is not None
     assert err["field"] == "source_ref"
 
@@ -269,37 +257,25 @@ def test_packet_kind_retired() -> None:
 
 
 def test_implement_requires_source_ref_not_packet_path_alone() -> None:
-    err = reject_unsupported_packet_inputs(
-        "generate", "implement", "tmp/p.md", None
-    )
+    err = reject_unsupported_packet_inputs("generate", "implement", "tmp/p.md", None)
     assert err is not None
     assert err["field"] == "source_ref"
 
 
 def test_source_ref_ok_on_wrap_generate() -> None:
     assert (
-        reject_unsupported_packet_inputs(
-            "generate", "wrap", None, "todo:slug"
-        )
-        is None
+        reject_unsupported_packet_inputs("generate", "wrap", None, "todo:slug") is None
     )
 
 
 def test_packet_inputs_rejected_on_to_thread() -> None:
-    err = reject_unsupported_packet_inputs(
-        "to_thread", "freeform", "tmp/p.md", None
-    )
+    err = reject_unsupported_packet_inputs("to_thread", "freeform", "tmp/p.md", None)
     assert err is not None
     assert err["field"] == "packet_path"
 
 
 def test_no_packet_inputs_passthrough() -> None:
-    assert (
-        reject_unsupported_packet_inputs(
-            "generate", "freeform", None, None
-        )
-        is None
-    )
+    assert reject_unsupported_packet_inputs("generate", "freeform", None, None) is None
 
 
 def test_omitted_job_and_consult_are_refused() -> None:
@@ -315,8 +291,20 @@ def test_omitted_job_and_consult_are_refused() -> None:
     consult = reject_unsupported_packet_inputs("generate", "consult", None, None)
     assert consult is not None
     assert consult["field"] == "job"
-    assert consult["error"]["code"] == "job_not_admitted"
-    assert "consult" in consult["error"]["message"]
+    assert consult["error"]["code"] == "job_unknown"
+    assert consult["error"]["event"] == "dispatch.job.refused"
+    assert consult["error"]["reason"] == "job_unknown"
+    assert consult["error"]["registry_ref"] == "job_vocab:unresolved"
+    assert "job_retired" not in consult["error"]["message"]
+
+    for retired in ("none", "pure-mechanical"):
+        refused = reject_unsupported_packet_inputs("generate", retired, None, None)
+        assert refused is not None
+        assert refused["error"]["code"] == "job_unknown"
+        assert refused["error"]["event"] == "dispatch.job.refused"
+        assert refused["error"]["reason"] == "job_unknown"
+        assert refused["error"]["registry_ref"] == "job_vocab:unresolved"
+        assert refused["error"].get("reason") != "job_retired"
 
     blank = reject_unsupported_packet_inputs("generate", "  ", None, None)
     assert blank is not None
@@ -332,48 +320,35 @@ def test_to_thread_refuses_job_outside_its_admitted_set() -> None:
 
 
 def test_handoff_op_not_guarded() -> None:
-    assert (
-        reject_unsupported_packet_inputs(
-            "handoff", None, "tmp/p.md", None
-        )
-        is None
-    )
+    assert reject_unsupported_packet_inputs("handoff", None, "tmp/p.md", None) is None
 
 
 # ── contract=wrap intake guards ──────────────────────────────────────────────
 
 
 def test_wrap_requires_source_ref_at_mcp() -> None:
-    err = validate_wrap_inputs(
-        "generate", "wrap", True, None, None
-    )
+    err = validate_wrap_inputs("generate", "wrap", True, None, None)
     assert err is not None
     assert err["field"] == "source_ref"
     assert err["error"]["code"] == "wrap_requires_source_ref"
 
 
 def test_wrap_with_packet_path_at_mcp() -> None:
-    err = validate_wrap_inputs(
-        "generate", "wrap", True, "tmp/p.md", "todo:slug"
-    )
+    err = validate_wrap_inputs("generate", "wrap", True, "tmp/p.md", "todo:slug")
     assert err is not None
     assert err["field"] == "packet_path"
     assert err["error"]["code"] == "wrap_with_packet_path"
 
 
 def test_wrap_role_not_admitted_at_mcp() -> None:
-    err = validate_wrap_inputs(
-        "generate", "wrap", False, None, "todo:slug"
-    )
+    err = validate_wrap_inputs("generate", "wrap", False, None, "todo:slug")
     assert err is not None
     assert err["field"] == "role"
     assert err["error"]["code"] == "wrap_role_not_admitted"
 
 
 def test_wrap_rejected_on_to_thread_at_mcp() -> None:
-    err = validate_wrap_inputs(
-        "to_thread", "wrap", True, None, "todo:slug"
-    )
+    err = validate_wrap_inputs("to_thread", "wrap", True, None, "todo:slug")
     assert err is not None
     assert err["field"] == "contract"
 
@@ -401,17 +376,13 @@ def test_wrap_gating_misleading_knobs_rejected() -> None:
 
 
 def test_wrap_rejected_on_handoff_at_mcp() -> None:
-    err = validate_wrap_inputs(
-        "handoff", "wrap", True, None, "todo:slug"
-    )
+    err = validate_wrap_inputs("handoff", "wrap", True, None, "todo:slug")
     assert err is not None
     assert err["field"] == "contract"
 
 
 def test_wrap_valid_inputs_passthrough() -> None:
-    assert (
-        validate_wrap_inputs("generate", "wrap", True, None, "todo:slug") is None
-    )
+    assert validate_wrap_inputs("generate", "wrap", True, None, "todo:slug") is None
 
 
 def test_cursor_sdk_checkout_lane_required_on_top_level_omit() -> None:

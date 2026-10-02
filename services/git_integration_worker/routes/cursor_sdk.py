@@ -3258,6 +3258,24 @@ async def admit_cursor_dispatch(
     binding (S1 re-pin), write lease, work-key identity, resume eligibility —
     rather than a shortcut that would skip them.
     """
+    if req.admitted_via == "cursor-auto" and req.handoff_contract:
+        from job_grammar import resolve_job_token
+
+        parsed = resolve_job_token(str(req.handoff_contract).strip())
+        if parsed.reason == "job_unknown":
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "field": "job",
+                    "error": {
+                        "code": "job_unknown",
+                        "message": f"job {parsed.job!r} is not a registry job",
+                        "event": "dispatch.job.refused",
+                        "reason": "job_unknown",
+                        "registry_ref": parsed.registry_ref,
+                    },
+                },
+            )
     try:
         config = resolve_cursor(req.model)
     except ValueError as exc:

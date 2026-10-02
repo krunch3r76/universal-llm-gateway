@@ -40,9 +40,7 @@ def reject_unsupported_packet_inputs(
     if op not in ("generate", "to_thread"):
         return
     wire = (contract or "").strip().lower()
-    admitted = (
-        TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
-    )
+    admitted = TO_THREAD_ADMITTED_JOBS if op == "to_thread" else GENERATE_ADMITTED_JOBS
     if not wire:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -57,6 +55,22 @@ def reject_unsupported_packet_inputs(
                 "event": "dispatch.job.refused",
                 "reason": "job_missing",
                 "registry_ref": "job_vocab:unresolved",
+            },
+        )
+    from job_grammar import resolve_job_token
+
+    parsed = resolve_job_token((contract or "").strip())
+    if parsed.reason == "job_unknown":
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="job",
+            reason=f"job {parsed.job!r} is not a registry job",
+            status_code=422,
+            code="job_unknown",
+            details={
+                "event": "dispatch.job.refused",
+                "reason": "job_unknown",
+                "registry_ref": parsed.registry_ref,
             },
         )
     if wire not in admitted:

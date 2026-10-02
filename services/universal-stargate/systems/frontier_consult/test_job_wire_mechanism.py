@@ -228,8 +228,30 @@ def test_stargate_intake_refuses_omitted_job_and_consult() -> None:
             source_ref=None,
         )
     assert consult.value.field == "job"
-    assert consult.value.code == "job_not_admitted"
-    assert "consult" in consult.value.reason
+    assert consult.value.status_code == 422
+    assert consult.value.code == "job_unknown"
+    assert consult.value.details is not None
+    assert consult.value.details["event"] == "dispatch.job.refused"
+    assert consult.value.details["reason"] == "job_unknown"
+    assert consult.value.details["registry_ref"] == "job_vocab:unresolved"
+    assert "job_retired" not in consult.value.reason
+
+    for retired in ("none", "pure-mechanical"):
+        with pytest.raises(FrontierEndpointError) as unknown:
+            reject_unsupported_packet_inputs(
+                request_id=f"r-{retired}",
+                op="generate",
+                contract=retired,
+                packet_path=None,
+                source_ref=None,
+            )
+        assert unknown.value.status_code == 422
+        assert unknown.value.code == "job_unknown"
+        assert unknown.value.details is not None
+        assert unknown.value.details["event"] == "dispatch.job.refused"
+        assert unknown.value.details["reason"] == "job_unknown"
+        assert unknown.value.details["registry_ref"] == "job_vocab:unresolved"
+        assert unknown.value.details["reason"] != "job_retired"
 
     with pytest.raises(FrontierEndpointError) as to_thread:
         reject_unsupported_packet_inputs(
@@ -304,7 +326,10 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     consult_body = json.loads(consult.body)
     assert consult.status_code == 422
     assert consult_body["field"] == "job"
-    assert consult_body["error"]["code"] == "job_not_admitted"
+    assert consult_body["error"]["code"] == "job_unknown"
+    assert consult_body["details"]["event"] == "dispatch.job.refused"
+    assert consult_body["details"]["reason"] == "job_unknown"
+    assert consult_body["details"]["registry_ref"] == "job_vocab:unresolved"
     assert seen == ["consult"]
 
     omitted = await team_dispatch(
@@ -336,5 +361,7 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     )
     to_thread_body = json.loads(to_thread.body)
     assert to_thread.status_code == 422
-    assert to_thread_body["error"]["code"] == "job_not_admitted"
+    assert to_thread_body["error"]["code"] == "job_unknown"
+    assert to_thread_body["details"]["reason"] == "job_unknown"
+    assert to_thread_body["details"]["registry_ref"] == "job_vocab:unresolved"
     assert seen == ["consult", None, "consult"]

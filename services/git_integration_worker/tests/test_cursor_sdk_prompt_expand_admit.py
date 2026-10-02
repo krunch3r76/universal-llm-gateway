@@ -147,7 +147,7 @@ def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
         "dispatch_id": "auto-expand-admit",
         "execution_id": "exec-expand-admit",
         "message": "# Next-Seat Dispatch Packet\n\nWire prompt-expand into GIW.",
-        "handoff_contract": "pure-mechanical",
+        "handoff_contract": "mechanical",
         "operator_contract": "sketch",
         "continuity_root_thread_id": "10479",
         "parent_dispatch_thread_id": "10479",
@@ -156,3 +156,24 @@ def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
     resp = client.post("/api/v1/cursor/dispatch", json=body)
     assert resp.status_code == 200, resp.text
     assert resp.json().get("prompt_expand") == "pending"
+
+
+@pytest.mark.parametrize("job", ["none", "pure-mechanical", "consult"])
+def test_cursor_auto_admit_refuses_unknown_job(client: TestClient, job: str) -> None:
+    body = {
+        "thread_id": "11767",
+        "model": "cursor/composer-2.5",
+        "dispatch_id": f"auto-unknown-{job}",
+        "execution_id": f"exec-unknown-{job}",
+        "message": "x",
+        "handoff_contract": job,
+        "admitted_via": "cursor-auto",
+    }
+    resp = client.post("/api/v1/cursor/dispatch", json=body)
+    payload = resp.json()
+    assert resp.status_code == 422
+    assert payload["error"]["event"] == "dispatch.job.refused"
+    assert payload["error"]["reason"] == "job_unknown"
+    assert payload["error"]["registry_ref"] == "job_vocab:unresolved"
+    assert payload["error"]["code"] == "job_unknown"
+    assert payload["error"]["reason"] != "job_retired"
