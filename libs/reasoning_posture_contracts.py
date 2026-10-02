@@ -33,8 +33,8 @@ REASONING_POSTURE_SLASH = "/reasoning-posture"
 # so _USE_LINE_RE de-dup still matches author-supplied copies.
 REASONING_POSTURE_PREAMBLE = (
     "Use the `reasoning-posture` skill: state the question and what is out of "
-    "scope, steelman before critique, label confidence, answer directly, one "
-    "bounded step at a time."
+    "scope, steelman before critique, label confidence, answer directly, "
+    "check the source before conceding, one bounded step at a time."
 )
 
 _SLASH_LINE_RE = re.compile(r"(?m)^/reasoning-posture\s*$")
