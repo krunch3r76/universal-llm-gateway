@@ -198,3 +198,18 @@ def test_code_descriptor_names_admin_overflow() -> None:
     desc = render_cortex_tool_description("code", canonical_yaml_path=_CANONICAL)
     assert "entity_merge" in desc
     assert "overflow" in desc.lower()
+
+
+def test_descriptor_lists_friction_categories_from_runtime_sot() -> None:
+    """tools/list must surface every accepted friction category (a:37199)."""
+    from cortex_store.dispatch_ops._shared import _FRICTION_CATEGORIES
+
+    for surface in ("code", "life"):
+        desc = render_cortex_tool_description(
+            surface, canonical_yaml_path=_CANONICAL
+        )
+        assert "friction.category ∈ {" in desc
+        for cat in _FRICTION_CATEGORIES:
+            assert cat in desc, f"{surface} descriptor missing {cat!r}"
+        assert "charter{charter_root, window_index}" in desc
+        assert "continuity{root_thread, cp_ordinal}" in desc

@@ -413,6 +413,8 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     assert "summon_mode: attended" in mp.text
     assert "SCORE_RESURFACE on summoning_thread_id=" in mp.text
     assert "never this worker thread" in mp.text
+    assert "sole attended G5 fold witness (a:37198)" in mp.text
+    assert "CDP harvest alone does not close G5" in mp.text
     assert ACTIVE.model in mp.text
     assert "score-ratify (" + ACTIVE.model in mp.text
     assert "A live summoning chat is not a gate." in mp.text

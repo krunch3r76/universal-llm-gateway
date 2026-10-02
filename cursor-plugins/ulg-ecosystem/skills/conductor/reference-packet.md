@@ -100,8 +100,8 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 | G-row | Mode | Nested contract | Closeout witness |
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
-| G5 implement | `agent` | `implement` \| `pure-mechanical` | path-explicit commit / `land_disposition` |
-| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI |
+| G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended (CDP-ratified):** `SCORE_RESURFACE` on `summoning_thread_id` citing CDP exec + review sha (`a:37198`). **Away:** `ledger:nested_implement` ∨ `git:lane_head`. ¬ tip `DONE` · ¬ steer-inject · ¬ harvest URI alone. Path-explicit commit / `land_disposition` are G7 land claims, not the G5 fold witness |
+| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = pre-land review harvest; distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
 **Scoreboard tip template (worked example — sparse birth):**
@@ -151,12 +151,28 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   rewind of a closed row).
 - **Conductor duty:** attach witnesses (G1 `derived_from` edge, G5 `SCORE_RESURFACE`
   when attended, etc.); do not re-derive work already in sidecar artifacts.
-- **G5 ≠ attended-door only.** `SCORE_RESURFACE` witnesses the attended resurface,
-  ¬ implement completeness. `G4.withhold ∨ G4.AC_red ∨ G4.says(remainder is mechanical)
-  ⇒ ¬ close G5` on Composer land ∧ empty-template green. Hang G5 until a *read*
-  independent check (overlay quoted at harvest) ∨ a seeded-ladder fixture witnesses
-  the named remainder. Fold: a G4 URI whose body withholds/FAIL G5 is **not** a
-  G4 witness (v1 URI-resolve alone was the 9655 collapse).
+- **CDP-ratified G5 witness — one form (`a:37198`).** G3→G5 in-process CDP
+  score-ratify (LIKELY_OPTIMAL / do-not-fight) is a **transition**: fire, record the
+  harvest URI, continue. It does **not** hang the G5 fold witness by itself.
+  **Sole attended closer:** post one bus turn on `summoning_thread_id` whose
+  subject starts with `SCORE_RESURFACE` and whose body cites (1) CDP exec id and
+  (2) review sha (`read_sha256` or review URI digest). Fold source:
+  `bus:SCORE_RESURFACE`. **Forbidden closers (do not claim G5 DONE on these):**
+  tip Status prose, operator steer-inject, CDP harvest URI alone, Composer land /
+  empty-template green. **Successor refuse-redo:** when the fold already shows
+  G5 `DONE` with `bus:SCORE_RESURFACE` (or away `ledger:nested_implement` /
+  `git:lane_head`), do **not** re-fire score-ratify and do **not** re-post
+  `SCORE_RESURFACE` — drive from the next entry gate. Specimen falsifier: 14010
+  row1 `376ec0a9cb90-9c691bb0` (steer/harvest claimed hung; fold still open) →
+  row2 `59032116` burned a full hop posting `#73` (`tmp/reviews/closeouts/…`,
+  `agent-bus:12286#1912`).
+- **G5 ≠ attended-door only.** `SCORE_RESURFACE` witnesses the attended resurface
+  after score-ratify, ¬ implement completeness. `G4.withhold ∨ G4.AC_red ∨
+  G4.says(remainder is mechanical) ⇒ ¬ close G5` on Composer land ∧ empty-template
+  green. Hang G5 until a *read* independent check (overlay quoted at harvest) ∨ a
+  seeded-ladder fixture witnesses the named remainder. Fold: a G4 URI whose body
+  withholds/FAIL G5 is **not** a G4 witness (v1 URI-resolve alone was the 9655
+  collapse).
 - **`SCORE_RESURFACE` thread:** post on `summoning_thread_id` (parent/root —
   9582/9638-class), **never** the leftover worker thread. Packet scope names
   `summoning_thread_id:`; GIW attended preamble repeats it.
@@ -229,8 +245,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
 - Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
   on ACTIVE (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
-  summoning thread as a report. The report is not a stop. A human gate is
-  only an explicit see-score or `OPERATOR_GATE`.
+  summoning thread as a report whose body cites CDP exec id + review sha
+  (`a:37198` — that post is the attended G5 fold witness). The report is not a
+  stop. A human gate is only an explicit see-score or `OPERATOR_GATE`.
 - No live summoning chat = confer-and-finish via `team_dispatch` (Q2 unchanged).
 - `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
   explicit, **or** when the summoning IDE is liaison (human not in that chat).
