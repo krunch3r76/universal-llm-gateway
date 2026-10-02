@@ -16,6 +16,7 @@ from threading import Thread
 from typing import Any
 
 import httpx
+from claude_bundles.conductor_stop import is_exit_persist_stop
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
@@ -29,9 +30,6 @@ from services.git_integration_worker.admission import (
     WorkAdmissionController,
 )
 from services.git_integration_worker.config import WorkerConfig, load_config
-from services.git_integration_worker.relay.terminal_post_outcome import (
-    terminal_post_retryable,
-)
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -194,6 +192,9 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+)
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
@@ -327,6 +328,9 @@ from services.git_integration_worker.models.cursor_api import (
     LaneWorktreeReleaseRequest,
     ParkDispatchRequest,
     ParkForRestartRequest,
+)
+from services.git_integration_worker.relay.terminal_post_outcome import (
+    terminal_post_retryable,
 )
 from services.git_integration_worker.routes.cursor_sdk_startup_reconcile import (
     startup_ledger_reconcile,  # noqa: F401 — re-exported public surface
@@ -1875,6 +1879,45 @@ async def bridge_sweeper(app: FastAPI) -> None:
             )
 
 
+def _row_hop_defers_link_terminate(
+    *,
+    hop_terminal: str,
+    closeout_body: str,
+    record_json: str | None,
+) -> bool:
+    """True when ROW_HOP closeout must keep the bus link open for successor admit."""
+    if hop_terminal != "completed":
+        return False
+    if not record_json:
+        return False
+    try:
+        data = json.loads(record_json)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    tokens = data.get("closeout_stop_tokens") or []
+    if "ROW_HOP" not in tokens:
+        return False
+    if hop_fields_from_record_json(record_json).get("hop_successor"):
+        return False
+    if is_exit_persist_stop(closeout_body):
+        return False
+    return True
+
+
+def _load_dispatch_record_json_sync(*, dispatch_id: str) -> str | None:
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return row["record_json"]
+
+
 async def _terminate_link(
     bus: CursorBusClient,
     *,
@@ -2130,12 +2173,6 @@ async def _deliver_sdk_closeout(
             ),
         )
         hop_terminal = "failed" if refusal is not None else "completed"
-        await _terminate_link(
-            bus,
-            thread_id=req.thread_id,
-            terminal_status=hop_terminal,
-            execution_id=req.execution_id,
-        )
         await asyncio.to_thread(
             merge_conductor_closeout_hop_authority,
             dispatch_id=req.dispatch_id,
@@ -2153,6 +2190,20 @@ async def _deliver_sdk_closeout(
                 else "CURSOR_CLOSEOUT_COMPLETED"
             ),
         )
+        record_json = await asyncio.to_thread(
+            _load_dispatch_record_json_sync, dispatch_id=req.dispatch_id
+        )
+        if not _row_hop_defers_link_terminate(
+            hop_terminal=hop_terminal,
+            closeout_body=outcome.body,
+            record_json=record_json,
+        ):
+            await _terminate_link(
+                bus,
+                thread_id=req.thread_id,
+                terminal_status=hop_terminal,
+                execution_id=req.execution_id,
+            )
         if closeout_qualifies_for_resume_retain(
             closeout_body=delivery.body,
         ):
