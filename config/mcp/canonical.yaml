@@ -4335,10 +4335,26 @@ tools:
     substrate_qualified: user-vortex__fleet_liveness
   fol_descriptor: "Fresh manage-authoritative evidence joins dirty master paths to service-specific
     load surfaces. Container-copy paths are content-hashed at the running load location; host-process
-    time order and bind-mounted bytes remain explicitly indeterminate. See agent_skill:manage."
+    time order and bind-mounted bytes remain explicitly indeterminate. Optional service= or
+    services=[] returns only those SERVICE_SLUGS rows plus full checkout porcelain; omitted services
+    are absent (omit ≠ healthy). Unknown slug or empty services=[] raises; omit both preserves the
+    full-fleet snapshot. service_filter echoes the selection (null when unfiltered). See
+    agent_skill:manage · agent_skill:landed-not-live."
   json_schema:
     type: object
-    properties: {}
+    properties:
+      code_ref:
+        type: string
+      activation_validation_id:
+        type: string
+      service:
+        type: string
+        description: Single SERVICE_SLUGS name; unions with services when both set.
+      services:
+        type: array
+        items:
+          type: string
+        description: Non-empty SERVICE_SLUGS subset; empty list raises.
   skill_uri: agent_skill:manage
   seat_visibility:
   - mcp

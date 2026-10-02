@@ -10,6 +10,7 @@ from typing import Any
 from charter_runner_store.propagation_validation import current_validation
 
 from ..model.service_state import ServiceInfo, ServiceState
+from .fleet_liveness_filter import normalize_service_filter
 from .fleet_liveness_probe import (
     BIND_MOUNT_SERVICES,
     CONTAINER_MARKERS,
@@ -184,6 +185,8 @@ def build_snapshot(
     *,
     code_ref: str | None = None,
     activation_validation_id: str | None = None,
+    service: str | None = None,
+    services: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a fresh evidence snapshot without mutating checkout or services.
 
@@ -196,13 +199,19 @@ def build_snapshot(
     misses into stopped. A host-process service whose health URL is another
     machine does not have that pid read from this host's ``/proc``; the load
     marker keeps ``value_utc`` null and states that in ``error``.
+
+    ``service`` / ``services`` select a subset of rows. Omitted services are
+    absent from the payload — never implied healthy. Checkout porcelain stays
+    full-fleet. ``service_filter`` echoes the selected slugs (``null`` when
+    unfiltered).
     """
+    selected = normalize_service_filter(service=service, services=services)
     started = time.time()
     before = _tree_probe(root)
-    services: list[dict[str, Any]] = []
-    for service in SERVICE_SLUGS:
+    services_out: list[dict[str, Any]] = []
+    for service_slug in selected if selected is not None else SERVICE_SLUGS:
         try:
-            info = _service_info(service_state, service)
+            info = _service_info(service_state, service_slug)
             status = info.status.value
             errors: list[str] = []
         except Exception as exc:
@@ -210,12 +219,12 @@ def build_snapshot(
             status = "unknown"
             errors = [f"service_probe:{type(exc).__name__}"]
 
-        if service in CONTAINER_SERVICES:
-            marker = _container_start(CONTAINER_SERVICES[service][0])
-            reported = _mcp_reported_version(CONTAINER_SERVICES[service][0])
+        if service_slug in CONTAINER_SERVICES:
+            marker = _container_start(CONTAINER_SERVICES[service_slug][0])
+            reported = _mcp_reported_version(CONTAINER_SERVICES[service_slug][0])
             surface = "container_copy"
-        elif service in BIND_MOUNT_SERVICES:
-            marker = _container_start(CONTAINER_MARKERS[service])
+        elif service_slug in BIND_MOUNT_SERVICES:
+            marker = _container_start(CONTAINER_MARKERS[service_slug])
             reported = {
                 "field": None,
                 "value": None,
@@ -238,9 +247,9 @@ def build_snapshot(
             }
             surface = "host_process"
 
-        services.append(
+        services_out.append(
             {
-                "service": service,
+                "service": service_slug,
                 "status": status,
                 "detail": info.detail if info is not None else "",
                 "pid": info.pid if info is not None else None,
@@ -256,15 +265,15 @@ def build_snapshot(
 
     after = _tree_probe(root)
     tree_moved = before["raw"] != after["raw"] or before["paths"] != after["paths"]
-    by_service = {row["service"]: row for row in services}
+    by_service = {row["service"]: row for row in services_out}
     for path_row in before["paths"].values():
-        for service in path_row.get("serving_services", []):
-            row = by_service.get(service)
+        for serving in path_row.get("serving_services", []):
+            row = by_service.get(serving)
             if row is not None:
                 row["paths"].append(
                     _path_comparison(
                         root,
-                        service=service,
+                        service=serving,
                         path_row=path_row,
                         head_sha=before.get("head_sha"),
                         marker=row["load_marker"],
@@ -273,7 +282,7 @@ def build_snapshot(
                     )
                 )
 
-    for row in services:
+    for row in services_out:
         results = row["paths"]
         if not results:
             row["live_sha_claim"] = {
@@ -355,9 +364,12 @@ def build_snapshot(
             "verdict": checkout_verdict,
             "index_behind_head_paths": behind,
         },
-        "services": services,
+        "service_filter": (
+            None if selected is None else {"services": list(selected)}
+        ),
+        "services": services_out,
         "probe_errors": before.get("errors", []) + after.get("errors", []),
     }
 
 
-__all__ = ["SERVICE_SLUGS", "build_snapshot"]
+__all__ = ["SERVICE_SLUGS", "build_snapshot", "normalize_service_filter"]
