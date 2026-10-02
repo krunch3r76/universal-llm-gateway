@@ -221,8 +221,18 @@ def test_descriptor_lists_friction_categories_from_runtime_sot() -> None:
             surface, canonical_yaml_path=_CANONICAL
         )
         assert _parse_friction_category_set(desc) == set(_FRICTION_CATEGORIES)
+        assert "protocol requires exactly one anchor unless actionable=false" in desc
         assert "charter{charter_root, window_index}" in desc
         assert "continuity{root_thread, cp_ordinal}" in desc
+        assert "assert.confidence ∈ {" in desc
+        from cortex_store.dispatch_ops._shared import (
+            _CONFIDENCE_AXIS_STATUS,
+            _LIFECYCLE_AXIS_STATUS,
+            _VALID_CONFIDENCE,
+        )
+
+        for token in _VALID_CONFIDENCE | _CONFIDENCE_AXIS_STATUS | _LIFECYCLE_AXIS_STATUS:
+            assert token in desc, f"{surface} descriptor missing {token!r}"
 
 
 def test_friction_category_contract_tracks_runtime_sot(
@@ -238,3 +248,15 @@ def test_friction_category_contract_tracks_runtime_sot(
             surface, canonical_yaml_path=_CANONICAL
         )
         assert _parse_friction_category_set(desc) == set(sentinel)
+
+
+def test_tool_search_friction_hint_matches_runtime_sot() -> None:
+    from cortex_store.dispatch_ops._shared import _FRICTION_CATEGORIES
+    from tool_search_primary_ops import _CORTEX_FRICTION
+
+    hint = _CORTEX_FRICTION.optional_args_hint
+    match = _FRICTION_CATEGORY_SET_RE.search(f"friction.{hint}")
+    assert match is not None
+    parsed = {part.strip() for part in match.group(1).split(",") if part.strip()}
+    assert parsed == set(_FRICTION_CATEGORIES)
+    assert "unless actionable=false" in hint

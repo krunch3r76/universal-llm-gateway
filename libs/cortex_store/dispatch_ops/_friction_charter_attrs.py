@@ -27,9 +27,13 @@ _ANCHOR_COMPLETENESS_ERROR = (
     "continuity requires root_thread and cp_ordinal when any anchor field is set"
 )
 
+PROTOCOL_ANCHOR_VARIANTS = (
+    "charter{charter_root, window_index} or "
+    "continuity{root_thread, cp_ordinal}"
+)
 _PROTOCOL_ANCHOR_REQUIRED_ERROR = (
     "protocol friction requires exactly one anchor variant: "
-    "charter{charter_root, window_index} or continuity{root_thread, cp_ordinal} "
+    f"{PROTOCOL_ANCHOR_VARIANTS} "
     "(see file_charter_protocol_friction)"
 )
 
@@ -363,6 +367,7 @@ def _build_friction_provenance_attrs(
 
 
 __all__ = [
+    "PROTOCOL_ANCHOR_VARIANTS",
     "_ANCHOR_COMPLETENESS_ERROR",
     "_PROTOCOL_ANCHOR_REQUIRED_ERROR",
     "_build_friction_provenance_attrs",

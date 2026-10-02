@@ -1388,8 +1388,9 @@ tools:
     is the back-compat alias; exactly one of owner/service required. Required: category (enum),
     note (not message), agent.
 
-    Protocol category (actionable): exactly one anchor variant — charter{charter_root, window_index}
-    or continuity{root_thread, cp_ordinal} (see file_charter_protocol_friction). Down-casting
+    Protocol category requires exactly one anchor unless actionable=false —
+    charter{charter_root, window_index} or continuity{root_thread, cp_ordinal}
+    (see file_charter_protocol_friction). Down-casting
     to schema_gap is a filing error once continuity is available.
 
     Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
