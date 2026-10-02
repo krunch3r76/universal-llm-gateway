@@ -65,9 +65,12 @@ def test_frontier_team_dispatch_descriptor_uses_contract_and_purpose() -> None:
         "as MCP call syntax: " + "; ".join(hits)
     )
     # a:37288 — say once how MCP names map onto the Stargate body.
-    assert (
-        "forwards them to Stargate as body `job`/`purpose`" in text
-    ), "team_dispatch docstring missing contract/purpose → job/purpose wire note"
+    assert "MCP `contract` forwards as Stargate body `job`" in text, (
+        "team_dispatch docstring missing contract→job wire note"
+    )
+    assert "`purpose` forwards as body `purpose` on generate only." in text, (
+        "team_dispatch docstring missing generate-only purpose wire note"
+    )
 
 
 def test_claude_ai_cdp_navigation_cse_session_example_matches_schema() -> None:
