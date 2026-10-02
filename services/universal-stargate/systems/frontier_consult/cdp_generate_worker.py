@@ -566,6 +566,7 @@ async def run_cdp_worker(
             prompt_uri=prompt_uri,
             model_id=fallback_model,
             max_wall_s=fallback_wall,
+            purpose=purpose,
         )
         try:
             fallback = await asyncio.to_thread(

@@ -194,6 +194,7 @@ async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
             satellite_execution_id=leg.satellite_execution_id,
             prompt_uri=leg.prompt_uri,
             picker_model=picker_from_model_id(leg.model_id),
+            purpose=leg.purpose,
         )
         if result is not None:
             await finalize_cdp_generate(
@@ -459,6 +460,7 @@ async def _reconcile_leg(leg: InflightLeg) -> None:
         satellite_execution_id=leg.satellite_execution_id,
         prompt_uri=leg.prompt_uri,
         picker_model=picker_from_model_id(leg.model_id),
+        purpose=leg.purpose,
     )
     if result is None:
         return

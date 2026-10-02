@@ -93,6 +93,94 @@ def test_result_from_snapshot_completed_without_proof_stalls() -> None:
     assert "without archive_uri" not in (result.error or "")
 
 
+def test_result_from_snapshot_review_induction_keeps_waiting() -> None:
+    """purpose=review with attested induction body must not finalize (a:37156 F1)."""
+    induction = (
+        "I'll use the reasoning-posture skill and review the packet next.\n"
+        "Loading skills…"
+    )
+    snapshot = {
+        "status": "completed",
+        "completion_phase": "terminal",
+        "attested_model": "claude-opus-4-5",
+        "body": induction,
+        "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-induction.md",
+    }
+    assert has_proof(snapshot) is True
+    assert (
+        result_from_snapshot(
+            snapshot=snapshot,
+            execution_id="exec-review-f1",
+            satellite_execution_id="sat-review-f1",
+            prompt_uri="cortex://p.md",
+            picker_model="opus-5",
+            purpose="review",
+        )
+        is None
+    )
+    # Non-review purposes still finalize attested non-chrome bodies.
+    ok_result = result_from_snapshot(
+        snapshot=snapshot,
+        execution_id="exec-ask",
+        satellite_execution_id="sat-ask",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        purpose="ask",
+    )
+    assert ok_result is not None
+    assert ok_result.ok is True
+
+
+def test_result_from_snapshot_review_with_verdict_finalizes() -> None:
+    body = (
+        "## Merits\n"
+        "Gate holds.\n"
+        "VERDICT: PASS\n"
+    )
+    snapshot = {
+        "status": "completed",
+        "completion_phase": "terminal",
+        "attested_model": "claude-opus-4-5",
+        "body": body,
+        "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-verdict.md",
+    }
+    result = result_from_snapshot(
+        snapshot=snapshot,
+        execution_id="exec-review-pass",
+        satellite_execution_id="sat-review-pass",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        purpose="review",
+    )
+    assert result is not None
+    assert result.ok is True
+
+
+def test_inflight_leg_persists_purpose(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    upsert_inflight_leg(
+        execution_id="exec-purpose",
+        request_id="req-1",
+        thread_id="99",
+        pointer_turn=1,
+        caller_agent="cursor",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=120.0,
+        purpose="review",
+    )
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT purpose FROM cdp_inflight_leg WHERE execution_id=?",
+            ("exec-purpose",),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row["purpose"] == "review"
+
+
 def test_result_from_snapshot_completed_without_proof_carries_deliverable() -> None:
     result = result_from_snapshot(
         snapshot={

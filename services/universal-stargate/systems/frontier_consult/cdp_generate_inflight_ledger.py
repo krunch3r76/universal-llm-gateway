@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS cdp_inflight_leg (
     delivered                 INTEGER NOT NULL DEFAULT 0,
     finalize_claim_until      TEXT,
     finalize_claim_holder     TEXT,
-    abandoned                 INTEGER NOT NULL DEFAULT 0
+    abandoned                 INTEGER NOT NULL DEFAULT 0,
+    purpose                   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cdp_inflight_open
     ON cdp_inflight_leg(proof_emitted) WHERE proof_emitted=0 AND abandoned=0;
@@ -37,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_cdp_inflight_open
 _LEG_SELECT = (
     "SELECT execution_id, request_id, satellite_execution_id, thread_id, "
     "pointer_turn, caller_agent, prompt_uri, model_id, max_wall_s, admitted_at, "
-    "proof_emitted, delivered, abandoned FROM cdp_inflight_leg"
+    "proof_emitted, delivered, abandoned, purpose FROM cdp_inflight_leg"
 )
 
 
@@ -51,11 +52,19 @@ def _db_path() -> Path:
     return data_dir / "stargate-cdp-generate-inflight.db"
 
 
+def _ensure_purpose_column(conn: sqlite3.Connection) -> None:
+    """Add ``purpose`` on existing DBs created before a:37156 F1."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(cdp_inflight_leg)")}
+    if "purpose" not in cols:
+        conn.execute("ALTER TABLE cdp_inflight_leg ADD COLUMN purpose TEXT")
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(), timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_DDL)
+    _ensure_purpose_column(conn)
     return conn
 
 
@@ -74,9 +83,12 @@ class InflightLeg:
     proof_emitted: bool
     delivered: bool
     abandoned: bool
+    purpose: str | None = None
 
 
 def _row_to_leg(row: sqlite3.Row) -> InflightLeg:
+    keys = set(row.keys())
+    purpose = row["purpose"] if "purpose" in keys else None
     return InflightLeg(
         execution_id=row["execution_id"],
         request_id=row["request_id"],
@@ -91,6 +103,7 @@ def _row_to_leg(row: sqlite3.Row) -> InflightLeg:
         proof_emitted=bool(row["proof_emitted"]),
         delivered=bool(row["delivered"]),
         abandoned=bool(row["abandoned"]),
+        purpose=str(purpose).strip() if purpose else None,
     )
 
 
@@ -104,15 +117,17 @@ def upsert_inflight_leg(
     prompt_uri: str,
     model_id: str,
     max_wall_s: float,
+    purpose: str | None = None,
 ) -> None:
     """Persist admitted leg before worker task spawn (AC12)."""
+    purpose_norm = str(purpose).strip() if purpose else None
     conn = _connect()
     try:
         conn.execute(
             "INSERT OR REPLACE INTO cdp_inflight_leg "
             "(execution_id, request_id, thread_id, pointer_turn, caller_agent, "
             "prompt_uri, model_id, max_wall_s, admitted_at, proof_emitted, delivered, "
-            "abandoned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)",
+            "abandoned, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)",
             (
                 execution_id,
                 request_id,
@@ -123,6 +138,7 @@ def upsert_inflight_leg(
                 model_id,
                 float(max_wall_s),
                 _now(),
+                purpose_norm,
             ),
         )
         conn.commit()

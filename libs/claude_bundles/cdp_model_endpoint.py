@@ -481,11 +481,15 @@ def result_from_snapshot(
     satellite_execution_id: str,
     prompt_uri: str,
     picker_model: str,
+    purpose: str | None = None,
 ) -> CdpGenerateResult | None:
     """Project one poll snapshot to a terminal result, or None if still running.
 
     Reconcile uses this — must not call ``run_cdp_generate``. Fail-closed: running
     legs and transient poll errors (no ``status`` field) return None.
+
+    ``purpose=review`` without a parseable verdict returns None so reconcile
+    cannot race the worker keep-poll (a:37156 F1 / dogfood WITHHOLD).
     """
     if snapshot.get("error") and "status" not in snapshot:
         return None
@@ -496,6 +500,8 @@ def result_from_snapshot(
 
     if has_proof(snapshot):
         body = str(snapshot.get("body") or "")
+        if _review_lacks_verdict(purpose or "", body):
+            return None
         if _proof_rejects_overload(snapshot):
             return CdpGenerateResult(
                 ok=False,
@@ -533,9 +539,12 @@ def result_from_snapshot(
         )
 
     if completed_without_proof(snapshot):
+        body = str(snapshot.get("body") or "")
+        if _is_chrome_only_body(body) or _review_lacks_verdict(purpose or "", body):
+            return None
         return CdpGenerateResult(
             ok=False,
-            body=str(snapshot.get("body") or ""),
+            body=body,
             execution_id=execution_id,
             satellite_execution_id=satellite_execution_id,
             prompt_uri=prompt_uri,

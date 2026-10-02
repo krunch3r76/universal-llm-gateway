@@ -638,6 +638,7 @@ async def dispatch_cdp_generate(
         prompt_uri=staged.prompt_uri,
         model_id=str(model),
         max_wall_s=max_wall,
+        purpose=purpose,
     )
 
     if is_operator_proxy_mission_purpose(purpose):
