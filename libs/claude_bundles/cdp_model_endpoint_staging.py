@@ -325,7 +325,17 @@ def stage_cdp_prompt_with_skills(
             raise CdpStagingError(str(exc), code="pool_blocked") from exc
     try:
         merged, _, _ = prepend_cdp_dispatch_skills(body, effective)
+        # a:37183 — skip delivery chrome on skeptic bodies; refuse leftover chrome.
         merged = ensure_review_reading_charter(merged, purpose)
+        from claude_bundles.nested_cdp_prompt_gate import (
+            NestedCdpPromptGateError,
+            enforce_nested_cdp_prompt_gates,
+        )
+
+        try:
+            enforce_nested_cdp_prompt_gates(body=merged, purpose=purpose)
+        except NestedCdpPromptGateError as exc:
+            raise CdpStagingError(exc.reason, code=exc.code) from exc
         if substrate_notice_warrants(purpose=purpose):
             merged = ensure_substrate_notice(merged)
     except KeyError as exc:

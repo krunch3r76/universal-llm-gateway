@@ -114,10 +114,18 @@ def peel_sealed_cdp_skill_prefix(
 def ensure_review_reading_charter(text: str, purpose: str | None) -> str:
     """Place the reading-review line after the skill hash. Idempotent under peel.
 
-    ``job=code-review`` only. The packet carries the code. CDP reads the live
-    tree. Checkout, pytest, and quality_gate are not this seat's reject grounds.
+    ``purpose=review`` delivery/code-review only. The packet carries the code.
+    CDP reads the live tree. Checkout, pytest, and quality_gate are not this
+    seat's reject grounds.
+
+    a:37183 — never inject this chrome onto G4 / SKEPTIC / adversarial-spec
+    bodies; those are spec-skeptic seats, not delivery review.
     """
     if (purpose or "").strip().lower() != "review":
+        return text
+    from claude_bundles.nested_cdp_prompt_gate import is_skeptic_shaped
+
+    if is_skeptic_shaped(text):
         return text
     if "the packet carries the code under review" in text:
         return text

@@ -445,6 +445,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
             "Use the `retrieval-before-authoring` skill (before authoring a nested prompt)",
+            "Nested CDP width prompts: cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
             f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
             f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]
@@ -504,6 +505,7 @@ def _render_packet(ctx: ConductorMaterializeContext) -> str:
 CLOSEOUT JSON with status, G-row progress, scoreboard tip sha, journal record id.
 Include recon_method when breadth recon was owed.
 Declare land_disposition on Lane-B branch retirement.
+On every hop that authored a nested CDP prompt: list each prompt URI + its `retrieval_report:` bundle URI (or fail closeout — a:37183).
 Designed stop tokens (last lines of final message when owed): stop: ROW_HOP | ROW_PINNED | HOLD_MERGE | OPERATOR_GATE | PARKED_TRANSPORT | DONE
 On ROW_HOP closeout include hop_seq: <n> as the last line after stop: ROW_HOP.
 </output_format>
