@@ -364,7 +364,14 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "continues under this admit. Owed stops win: stop_after ⇒ ROW_PINNED; "
             "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; "
             f"{hop_invariant_g3_g5_fragment()}; a live nested child "
-            "forbids the hop — harvest first."
+            "is a cursor-sdk dispatch admitted with nest_under equal to this "
+            "conductor dispatch_id (status queued, admitted, running, or "
+            "parked_waiting), including its nested descendants — harvest that "
+            "child before the hop. A team_dispatch(model=cdp/…) review is not "
+            "that child: nest_under is refused unless seat=cursor-sdk, so a "
+            "still-running CDP review does not forbid stop: ROW_HOP; the "
+            "substrate defers the successor while that review streams on the "
+            "mission lane (P1.2, live_external_gate); that is not a stall."
         ),
         (
             "- Density hop (GIW steer): when a same-row steer asks you to write the "
@@ -420,6 +427,34 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
         f"Resume at persisted row (entry gate {ctx.entry_gate}).",
         "Mode B admit-proof on CHECKPOINT: execution_id+poll_hint or honest halt.",
         *g3_g5_lines,
+        (
+            "Review leg — one dispatch, one wait. "
+            "1. Evidence before the dispatch. Before the single G6 team_dispatch, "
+            "write an evidence block into the review body: git diff --stat "
+            "<base>..HEAD; the pre-land suite summary lines the spec names "
+            "(same command on base and on tip); and gen-event-catalog check "
+            "output when the diff touches a docstring that feeds a generated "
+            "catalog region. A line that was not run is `evidence: absent — <name>` "
+            "only when it cannot run in this row — name why. "
+            "Run that missing command before the review dispatch. Do not discover "
+            "the gap by receiving a WITHHOLD and then starting another row. "
+            "2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, "
+            "contract=freeform, purpose=review, dispatch_thread_id=<this worker "
+            "thread id>, parent_thread=<summoning_thread_id, else this worker "
+            "thread id>, prompt=<body>); the body carries job=delivery-review and "
+            "retrieval_report: cortex://… each on its own line, plus the evidence "
+            "block. Cite libs/claude_bundles/nested_cdp_prompt_gate.py. The row "
+            "does not search the repo for that contract. G5 ratify stays the "
+            "purpose=ask sentence above. "
+            "3. One wait, then stop. Wait once with agent_bus tool=wait bound to "
+            "that dispatch's poll_hint and execution_id. If the store is still "
+            "running after that wait, write poll_hint and execution_id into the "
+            "hop CHECKPOINT, add NEXT_ADMIT: harvest <execution_id>, and end with "
+            "stop: ROW_HOP. Do not chain agent_bus_read. A successor whose "
+            "CHECKPOINT carries a G6 execution_id harvests that id and does not "
+            "dispatch G6. A second verdict on the same gate is commentary unless "
+            "the scoreboard Stops stamp changes."
+        ),
         f"stop_after={ctx.stop_after!r}: run bound leg before ROW_PINNED when set.",
     ]
     numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(ac, start=1))
@@ -449,7 +484,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
             "Use the `retrieval-before-authoring` skill (before authoring a nested prompt)",
-            "Nested CDP width prompts: cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
+            "Nested CDP width prompts: cite `retrieval_report: cortex://…` (Queries/Yields/Choice-to-evidence); contract path libs/claude_bundles/nested_cdp_prompt_gate.py (the row does not search the repo for it); ¬ delivery chrome on G4/SKEPTIC (a:37183)",
             f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
             f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]
