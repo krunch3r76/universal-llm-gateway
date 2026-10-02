@@ -66,17 +66,13 @@ def test_shared_author_pattern_asserts_successor_birth_id() -> None:
     match = _BIRTH_LINE_RE.fullmatch(birth_lines[0])
     assert match is not None
     assert is_successor_birth_id(match.group(1))
-    # Birth id lives in the structural header, before the prose / L2-adjacent blank.
-    header_end = lines.index("")
-    assert birth_lines[0] in lines[:header_end]
-    assert "Identity key is" in body
-    assert "successor_birth_id (this structural header)" in body
-    assert "Identity is chat_url" not in body
-    assert "wake-guide" in body
-    assert "unobservable" in body
-    assert "STAND_DOWN" in body
-    assert "Absence is not permission" in body
-    assert f"URI: {_URI}" in body
+    assert "thread_id: " + _THREAD in body
+    assert "parent_thread: " + _THREAD in body
+    assert f"standing_handoff: {_URI}" in body
+    assert "Identity key is" not in body
+    assert "KEEP-ALIVE" not in body
+    assert "wake-guide" not in body
+    assert "Resume as operator-proxy" not in body
 
 
 def test_mission_line_omitted_when_absent() -> None:
@@ -89,9 +85,6 @@ def test_mission_line_present_when_provided() -> None:
     body = _cadence_body(mission="Recover the operator-proxy continuity arc.")
     lines = body.splitlines()
     assert "mission: Recover the operator-proxy continuity arc." in lines
-    # Mission sits in the structural header, before the prose / blank line.
-    header_end = lines.index("")
-    assert "mission: Recover the operator-proxy continuity arc." in lines[:header_end]
 
 
 def test_pinned_birth_id_is_byte_stable_for_adapter_parity() -> None:
@@ -114,27 +107,14 @@ def test_missing_vs_current_handoff_branch(status: str) -> None:
         successor_birth_id="b" * 32,
     )
     assert f"standing_handoff_freshness: {status}" in body
-    if status == "missing":
-        assert "The S7 standing-handoff state file is absent." in body
-        assert (
-            "Read the standing handoff URI above before trusting any wake prose."
-            not in body
-        )
-        assert "missing (file absent under a visible root): default STAND_DOWN" in body
-    elif status == "unreachable":
-        assert "The S7 standing-handoff state file is absent." not in body
-        assert (
-            "Read the standing handoff URI above before trusting any wake prose."
-            in body
-        )
-        assert "do not STAND_DOWN on this token alone" in body
+    assert "KEEP-ALIVE" not in body
+    assert "Identity key is" not in body
+    assert "The S7 standing-handoff state file is absent." not in body
+    assert "wake-guide" not in body
+    if status in ("missing", "unreachable"):
+        assert "standing_handoff_age_s:" not in body
     else:
-        assert (
-            "Read the standing handoff URI above before trusting any wake prose."
-            in body
-        )
-        assert "The S7 standing-handoff state file is absent." not in body
-        assert "STAND_DOWN" in body
+        assert "standing_handoff_age_s:" in body
 
 
 def test_verb_source_body_starts_with_type_token() -> None:

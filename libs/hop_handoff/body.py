@@ -1,11 +1,11 @@
 """Single author of the structural ``TYPE: CONTINUITY_HANDOFF`` hop body.
 
 Cadence and the request-surface ``hop`` verb both call
-:func:`build_continuity_handoff_body` so identity binds, the standing-handoff
-``missing`` branch, and the keep-alive/wake doctrine stay one source. Fresh-run
-invariant: re-author at each fire with current freshness — do not reuse a
-previous hop's body. I6 uniqueness is procedural and depends on that fresh-run
-rule together with claim-once (one commission per hop job).
+:func:`build_continuity_handoff_body`. The body is the structural header only.
+Identity, keep-alive, and wake prose live once in the hop-successor template.
+Fresh-run invariant: re-author at each fire with current freshness — do not
+reuse a previous hop's body. I6 uniqueness is procedural and depends on that
+fresh-run rule together with claim-once (one commission per hop job).
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import re
 import uuid
 from datetime import UTC, datetime
 
-from hop_handoff.consume_protocol import consume_time_wake_protocol
 from hop_handoff.standing_handoff import StandingHandoffFreshness
 
 _BIRTH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -78,8 +77,8 @@ def build_continuity_handoff_body(
 
     ``source`` distinguishes cadence (``cursor-auto-hop-cadence``) from the
     request-surface verb (``agent-bus-hop-verb``). ``trigger`` is the reason
-    line. When ``handoff.status`` is ``missing`` the successor is told to
-    author the S7 state file; otherwise it is told to read the URI first.
+    line. ``standing_handoff_freshness`` carries missing versus current;
+    the successor template tells the seat to read that URI.
 
     ``successor_birth_id`` is the I6 selection key: originated here at build,
     always emitted on this structural body (never the L2 orientation block),
@@ -130,47 +129,6 @@ def build_continuity_handoff_body(
     if superseded_registration_id:
         lines.append(f"superseded_registration_id: {superseded_registration_id}")
     lines.append(f"{_BIRTH_ID_PREFIX} {birth_id}")
-    if handoff.status == "missing":
-        resume_read: tuple[str, ...] = (
-            "The S7 standing-handoff state file is absent.",
-            "Lane-tip reconstruction is degraded, not equivalent.",
-            "Author the standing handoff before you leave.",
-        )
-    else:
-        resume_read = (
-            "Read the standing handoff URI above before trusting any wake prose.",
-        )
-    lines.extend(
-        [
-            "",
-            "Resume as operator-proxy on this private lane.",
-            *resume_read,
-            "This is a CONTINUITY HOP (seat refresh) — do NOT emit MISSION_CLOSEOUT.",
-            "Resume operator-proxy on parent_thread above. Identity key is",
-            "successor_birth_id (this structural header). Match TYPE:",
-            "SEAT_REGISTRATION by equality on that field — that stamp is seating",
-            "confirmation; do not treat occupy_target as your seated identity.",
-            "chat_url on the stamp is descriptive. Extras on this lane are",
-            "predecessors, not peers.",
-            "Never touch operator CSEs on other lanes.",
-            "Arc continues; predecessor wakes must be torn down only after this",
-            "successor launch is confirmed.",
-            "",
-            "KEEP-ALIVE / wake cycle (BINDING — 6661 sole-wake · suspended pattern):",
-            "Do NOT arm Monitor loops. Do NOT re-arm send_later for durable wake.",
-            "Wake authority is the mission PRIMARY orchestrator only (monitor 6661 ↔",
-            "mission root) — hop successors are subordinates, not peer wake servers.",
-            "If you inherit a predecessor Monitor, TaskStop it after successor admit;",
-            "delete only trigger_ids this seat recorded (never class-delete).",
-            "CDP one-off work from the mission runner remains fine; keep-alive is not",
-            "ready for fleet hops under the current pattern.",
-            "Predecessor Cowork send_later is unobservable to cursor-auto",
-            "(predecessor_wake_status=unobservable). wake-guide §7: a one-shot",
-            "armed before this hop may still fire into the retired seat; that",
-            "seat must read the lane and stand down — do not act on remembered rank.",
-            *consume_time_wake_protocol(thread_id=thread_id).splitlines(),
-        ]
-    )
     return "\n".join(lines) + "\n"
 
 

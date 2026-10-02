@@ -17,9 +17,7 @@ from implement_admission.consumer_import_verify import (
 )
 
 _OPERATOR_PROXY_BRIEFINGS = (
-    "libs/claude_bundles/operator_proxy_tier_m.py",
     "libs/claude_bundles/operator_proxy_mission.py",
-    "libs/claude_bundles/operator_proxy_wake_brief.py",
 )
 
 

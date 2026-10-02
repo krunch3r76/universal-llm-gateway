@@ -227,10 +227,10 @@ def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
     assert "sync_restart: git_integration_worker" in block
 
 
-def test_structured_rows_tier_m_consumers_mint_giw_not_mcp():
-    """tier_m CONSUMERS is GIW; INJECTORS adds cdp_ask; mcp still omitted."""
+def test_structured_rows_mission_consumers_mint_giw_not_mcp():
+    """Mission CONSUMERS is GIW; INJECTORS adds cdp_ask; mcp still omitted."""
     payload = _closeout_payload(
-        files_modified=["libs/claude_bundles/operator_proxy_tier_m.py"],
+        files_modified=["libs/claude_bundles/operator_proxy_mission.py"],
         evidence_uris={"git_refs": ["consumer-land-sha"]},
     )
     rows = structured_propagation_rows(payload)

@@ -604,7 +604,7 @@ On a persistent private lane while the stream is live, maintain one standing han
 |---|---|
 | **When to write/update** | At every **Leg** boundary (DISPOSITION, roadmap row land, ACT-RECEIPT) — while context is fresh — **¬** only at stream-end when the seat is depleted |
 | **Minimum fields** | settled vs live · first next act · open residuals (wake tokens) · last leg id/turn · lane id |
-| **First visible inject** | Mission submit opens with `## This hop (read first)` **above** the seat map — it names `runbook:maestro-loop` and `Use the `retrieval-before-authoring` skill` on the required-skills line; fill mission/settled/live/next/lane from this sidecar; `(unspecified)` ≠ idle |
+| **First visible inject** | Mission submit opens with `# Hop on agent-bus:` then `## What is running now` (CURRENT standing-handoff sections copied whole) |
 | **When a hop is required** | Stage `handoff_prompt` from this sidecar (already warm); ¬ author the handoff from a depleted close-moment alone |
 | **Episodic shape** | May still author a close-boundary handoff; standing sidecar is the persistent-lane default |
 

@@ -29,7 +29,6 @@ _DISCLOSURE_HAND_LIST = (
     "services/mcp-server/tools/agent_bus/__init__.py",
     "services/mcp-server/tools/agent_bus/request.py",
     "services/mcp-server/tools/_oc_knowledge_templates.py",
-    "libs/claude_bundles/operator_proxy_tier_m.py",
 )
 _IDLE_SNAPSHOT = Path(
     "/mnt/torus/mcp-data/files/notes/system/operational/fleet-idle-gate-observation.json"

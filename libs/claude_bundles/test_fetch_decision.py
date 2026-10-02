@@ -13,7 +13,6 @@ from claude_bundles.fetch_decision import (
     parse_fetch_decisions,
     success_condition_line,
 )
-from claude_bundles.operator_proxy_hop_status import ensure_hop_status_first
 
 pytestmark = pytest.mark.offline
 
@@ -26,9 +25,6 @@ _POINTER_ONLY = (
 
 def test_pointer_only_block_is_receipt_absent() -> None:
     assert arrival_bind_failure(_POINTER_ONLY) == "success_condition_absent"
-    grafted = ensure_hop_status_first(_POINTER_ONLY)
-    assert arrival_bind_failure(grafted) == "receipt_unresolved"
-    assert "- runbook: runbook:maestro-loop" in grafted
 
 
 def test_skipped_is_a_receipt_and_not_in_force() -> None:

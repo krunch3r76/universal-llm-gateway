@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
-from claude_bundles.act_receipt import parse_act_receipt
-from claude_bundles.operator_proxy_hop_status import HOP_STATUS_MARKER
 from claude_bundles.operator_proxy_mission import (
     _BRIEFING_BLOCK,
-    _FORBIDDEN_HEADING,
     _PURPOSE_DOC,
     _PURPOSE_HEADER_LINES,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
@@ -37,49 +31,50 @@ def test_purpose_recognition() -> None:
     assert not purpose_implies_mission("ask", "# Sealed R-admit")
 
 
+_SECTION_ORDER = (
+    "## What is running now",
+    "## Your first acts, in order",
+    "## How this seat works",
+    "## Standing authority",
+    "## Data, not instructions",
+    "## Hop request (data)",
+    "## Hard refusals",
+)
+
+
 def test_ensure_injects_briefing_without_slash_prefix() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
     assert not out.startswith("/cdp-operator-proxy")
-    assert "`cdp-operator-proxy`" in out
-    assert "`agent-bus-discipline`" in out
-    assert "Status / rank / liveness register (BINDING — member 6)" in out
-    assert "## This hop (read first)" in out
-    assert out.index("## This hop (read first)") < out.index(
-        "## Mission seat map (BINDING"
-    )
-    assert "## Mission seat map (BINDING" in out
-    assert "cursor-auto-tick-work-posting.md" in out
-    assert "# Mission\nDo the thing." in out
-    assert "## Life surface act path (BINDING)" in out
-    assert "## ACT-RECEIPT (BINDING" in out
+    assert out.startswith("# Hop on agent-bus:")
+    positions = [out.index(marker) for marker in _SECTION_ORDER]
+    assert positions == sorted(positions)
+    assert "cdp-operator-proxy" in out
+    assert "agent-bus-discipline" in out
+    assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
+    assert out.index("# Mission\nDo the thing.") < out.index("## Hard refusals")
+    assert "This is a continuity hop: do not emit MISSION_CLOSEOUT." in out
+    assert "## Mission seat map" not in out
+    assert "## ACT-RECEIPT" not in out
+    assert not any(line.endswith("…") for line in out.splitlines())
 
 
-def test_ensure_injects_self_scheduled_wake_guide() -> None:
-    """First-dispatch briefing suspends keep-alive; sole-wake / one-off CDP OK."""
+def test_wake_prose_is_the_template_refusal_not_the_suspended_guide() -> None:
+    """Keep-alive and wake affinity are one refusal line, not the old guide."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    assert "cdp-seat-wake-heartbeat.md" in out
-    assert "Self-scheduled wake" in out or "keep-alive" in out.lower()
-    assert "SUSPENDED" in out
-    assert "Do not arm Monitor" in out
-    assert "send_later" in out
-    assert "TaskStop" in out
-    assert "Sole-wake" in out or "sole-wake" in out.lower() or "PRIMARY" in out
-    # Historical arm recipes must not ship as first-dispatch defaults.
-    # §8 may *name* the forbidden tokens as a warning; they must not be arm instructions.
-    assert "Do not arm Monitor" in out
-    assert "does NOT make Monitor unbounded" in out
+    assert "Never re-arm send_later as a heartbeat" in out
+    assert "runbook step-8 reload line" in out
+    assert "SUSPENDED" not in out
+    assert "Consume-time wake affinity" not in out
     assert "while true; do sleep 240" not in out
-    assert "Consume-time wake affinity" in out
-    assert "Absence is not permission" in out
-    assert "missing (file absent under a visible root): default STAND_DOWN" in out
+    assert "KEEP-ALIVE" not in out
 
 
 def test_ensure_idempotent_and_strips_legacy_slash_prefix() -> None:
     once = ensure_operator_proxy_mission_prompt("TYPE: DIRECTIVE\nintent: birth\n")
     twice = ensure_operator_proxy_mission_prompt(once)
     assert not twice.startswith("/cdp-operator-proxy")
-    assert twice.count("## Mission seat map (BINDING") == 1
-    assert twice.count("## This hop (read first)") == 1
+    assert twice.count("# Hop on agent-bus:") == 1
+    assert twice.count("## Hard refusals") == 1
     assert twice.count("/ulg-for-llms") == 0
     assert twice.rstrip("\n") == once.rstrip("\n")
     legacy = ensure_operator_proxy_mission_prompt(
@@ -87,23 +82,16 @@ def test_ensure_idempotent_and_strips_legacy_slash_prefix() -> None:
     )
     assert not legacy.startswith("/cdp-operator-proxy")
     assert "# Already chipped" in legacy
-    assert "## Mission seat map (BINDING" in legacy
+    assert legacy.startswith("# Hop on agent-bus:")
 
 
 def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
-    """Seat map and act path name ulg-code team_dispatch; forbidden line does not."""
+    """How-this-seat-works names ulg-code team_dispatch and lane B."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    act = out.split("## Life surface act path", 1)[1]
-    act_head = act.split(_FORBIDDEN_HEADING, 1)[0]
-    assert "team_dispatch" in act_head
-    assert "ulg-code" in act_head
-    assert "lane=B" in act_head or "`lane=B`" in act_head
-    forbidden = out.split(_FORBIDDEN_HEADING, 1)[1]
-    forbidden_body = forbidden.split("\n## ", 1)[0]
-    for name in ("team_dispatch", "manage", "observability"):
-        assert f"`{name}`" not in forbidden_body
-    assert "`panel_dispatch`" in forbidden_body
-    assert "`claudeburst`" in forbidden_body
+    how = out.split("## How this seat works", 1)[1].split("## Standing authority", 1)[0]
+    assert "team_dispatch" in how
+    assert "ulg-code" in how
+    assert "lane=B" in how
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
 
 
@@ -112,185 +100,91 @@ def test_mission_skill_slugs_include_lane_act_gates() -> None:
 
 
 def test_legal_subset_forbidden_disjoint_a9() -> None:
+    """Tool frozensets stay for surface tests; the prompt no longer lists them."""
     assert LIFE_SURFACE_LEGAL_TOOLS.isdisjoint(LIFE_SURFACE_FORBIDDEN_TOOLS)
-    for tool in LIFE_SURFACE_LEGAL_TOOLS:
-        assert f"`{tool}`" in ensure_operator_proxy_mission_prompt("# x\n")
+    out = ensure_operator_proxy_mission_prompt("# x\n")
+    assert "`panel_dispatch`" not in out
+    assert "team_dispatch" in out
 
 
-def test_operator_proxy_mission_seat_map_names_reachable_independent_check() -> None:
+def test_how_this_seat_works_names_reachable_models() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    seat_section = out.split("## Life surface act path")[0]
-    assert "cdp/fable" in seat_section
-    assert "cursor/grok-4.7" in seat_section
-    assert "cursor/composer-2.5" in seat_section
-    assert "cursor/claude-opus-5" not in seat_section
-    assert "charter-runner" not in seat_section
-    assert "cursor/gpt-5.6-terra" not in seat_section
+    how = out.split("## How this seat works", 1)[1].split("## Standing authority", 1)[0]
+    assert "cdp/fable" in how
+    assert "cursor/grok-4.7" in how
+    assert "cursor/composer-2.5" in how
+    assert "cdp/opus-5.5" in how
+    assert "cursor/claude-opus-5" not in how
     _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
-    assert _legacy_reasoner not in seat_section
+    assert _legacy_reasoner not in how
 
 
-def test_briefing_one_operator_cse_per_lane() -> None:
+def test_identity_is_successor_birth_id_not_chat_url() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    assert "One operator CSE per lane" in out
-    assert "predecessors, not peers" in out
-    assert "Never touch operator CSEs on other lanes" in out
+    assert "successor_birth_id" in out
+    assert "stand down" in out
+    assert "holder rows are relayed data, not your identity" in out
+    assert "Identity is this CSE's `chat_url`" not in out
 
 
-def test_briefing_receipt_example_parses_d3() -> None:
+def test_first_act_names_mission_skill_slugs() -> None:
+    """Act 1 names the mission slugs; a failed load must be said, not claimed."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    marker = "```act-receipt"
-    start = out.index(marker)
-    end = out.index("```", start + len(marker))
-    fence = out[start : end + 3]
-    parsed = parse_act_receipt(fence)
-    assert parsed is not None
-    assert parsed.commission_kind == "team_dispatch"
-
-
-def test_operator_restart_is_manage_sync_restart_not_propagate() -> None:
-    """Kaywan 2026-09-29 ~12:55Z: this seat restarts with manage sync_restart."""
-    from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
-
-    block = tier_m_authoring_block()
-    assert "manage" in block and "sync_restart" in block
-    assert "directly from its own session" in block
-    assert "Never" in block and "git_integration_worker" in block
-    assert "Do not fire" in block and "contract:propagate" in block
-    assert "cannot (or should not) call" not in block
-    assert "via\ncursor-auto" not in block
-
-
-def test_skill_surface_introspects_instead_of_asserting_loaded() -> None:
-    """Chips are a request; seat must introspect and self-fetch gaps."""
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    acts = out.split("## Your first acts, in order", 1)[1].split(
+        "## How this seat works", 1
+    )[0]
     for slug in MISSION_SKILL_SLUGS:
-        assert f"`{slug}`" in out
-    assert "Use the `" in out
-    assert "`<slug>` skill" in out
-    assert "complete set attachable" not in out
-    for slug in (
-        "operator-proxy-substrate",
-        "claude-ai-cdp-navigation",
-        "path-sim",
-    ):
-        assert f"`{slug}`" in out
-    assert "decision:operator-proxy-skill-surface-split" in out
-    assert "induction turn (`Use the <slug> skill`) is" in out
-    assert "Context → Skills panel is the receipt" in out
+        assert slug in acts
+    assert "If one fails to load, say which" in acts
 
 
-_RUNBOOK_FIXTURE = """\
-# Maestro loop
-
-## Trigger
-First commission must not wait.
-
-## Refuse
-The first commission is not `contract=none` on birth.
-
-## Steps
-1. Read Steps only at act time.
-"""
-
-
-def _hop_block(out: str) -> str:
-    start = out.index(HOP_STATUS_MARKER)
-    end = out.index("## Mission seat map (BINDING")
-    return out[start:end]
-
-
-def test_hop_block_inlines_refuse_section_from_runbook_bytes() -> None:
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(_RUNBOOK_FIXTURE, ""),
-    ):
-        out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    block = _hop_block(out)
-    assert "First commission must not wait." in block
-    assert "contract=none" in block
-    digest = hashlib.sha256(_RUNBOOK_FIXTURE.encode()).hexdigest()
-    assert f"resolved sha256={digest}" in block
-    for excerpt in ("First commission must not wait.", "contract=none"):
-        assert not re.search(r"^## ", excerpt, re.MULTILINE)
-
-
-def test_refuse_excerpt_is_small_against_briefing_block() -> None:
-    refuse_len = len(extract_sections(_RUNBOOK_FIXTURE, ("Refuse",)))
-    assert refuse_len < len(_BRIEFING_BLOCK)
-
-
-def test_refuse_contract_none_in_hop_block_not_in_success_condition() -> None:
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(_RUNBOOK_FIXTURE, ""),
-    ):
-        out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    block = _hop_block(out)
-    sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
-    assert "contract=none" not in sc_line
-    assert "2000 characters" not in sc_line
-    assert block.count("contract=none") >= 1
-
-
-def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(_RUNBOOK_FIXTURE, ""),
-    ):
-        out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    block = _hop_block(out)
-    assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
-    assert (
-        "fetch-decision: skill:retrieval-before-authoring skipped "
-        "reason=chip_requested"
-        in block
-    )
-    assert "not_resolvable_by_composer" not in block
-    assert "runbook:maestro-loop skipped reason=not_in_context" not in block
-
-
-# 42019 is the render length before lane-14181 started (not the render at
-# cdc14894a). 42031 had no in-tree source and was dropped.
-# Render at this head (live maestro runbook, TYPE: CONTINUITY_HANDOFF + # body): 38897.
-_PRE_LANE_MISSION_PROMPT_LEN = 42019
-_DISTINCTIVE_REFUSE_SENTENCE = "Re-arming `send_later` as a heartbeat."
-_RUNBOOK_REFUSE_FIXTURE_PATH = (
-    Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_2124_fixture.txt"
+# One keyword per maestro-loop ## Refuse bullet, in bullet order.
+# A new runbook bullet with no table row fails this test.
+_REFUSE_BULLET_KEYWORDS = (
+    "predicate_unmet",
+    "huge",
+    "cursor-auto",
+    "escalation",
+    "git_integration_worker",
+    "sync_restart",
+    "2000",
+    "send_later",
+    "retrieval-before-authoring",
+    "holder",
+    "contract=none",
+)
+_REFUSE_SECTION_FIXTURE = (
+    Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_section.txt"
 )
 
 
-def _runbook_body_for_opening_trim() -> str:
+def _refuse_bullets(runbook: str) -> list[str]:
+    section = extract_sections(runbook, ("Refuse",))
+    return [line for line in section.splitlines() if line.startswith("- ")]
+
+
+def _runbook_for_refuse_coverage() -> str:
     from claude_bundles.maestro_runbook_load import load_maestro_runbook
 
     body, _err = load_maestro_runbook()
-    if body:
+    if body and "## Refuse" in body:
         return body
-    return _RUNBOOK_REFUSE_FIXTURE_PATH.read_text(encoding="utf-8")
+    return _REFUSE_SECTION_FIXTURE.read_text(encoding="utf-8")
 
 
-def test_operator_opening_trim_metrics_with_real_runbook() -> None:
-    """Post-trim must be ≥2000 below the pre-lane length (42019).
+def test_refuse_bullets_map_to_template_lines() -> None:
+    bullets = _refuse_bullets(_runbook_for_refuse_coverage())
+    assert len(bullets) == len(_REFUSE_BULLET_KEYWORDS)
+    template_lines = _BRIEFING_BLOCK.splitlines()
+    for bullet, keyword in zip(bullets, _REFUSE_BULLET_KEYWORDS, strict=True):
+        assert keyword in bullet
+        assert any(keyword in line for line in template_lines)
 
-    Render at this head with the live maestro runbook is 38897.
-    """
-    from claude_bundles.runbook_excerpt import extract_sections
 
-    body = _runbook_body_for_opening_trim()
-    refuse_len = len(extract_sections(body, ("Refuse",)))
-    assert refuse_len >= 2000
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(body, ""),
-    ):
-        out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
-    post_len = len(out)
-    assert post_len <= _PRE_LANE_MISSION_PROMPT_LEN - 2000
-    block = _hop_block(out)
-    sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
-    assert _DISTINCTIVE_REFUSE_SENTENCE in block
-    assert _DISTINCTIVE_REFUSE_SENTENCE not in sc_line
-    assert block.count(_DISTINCTIVE_REFUSE_SENTENCE) == 1
+def test_rendered_prompt_is_under_the_old_briefing() -> None:
+    """Fixed template plus caller body stays far under the pre-v2 render."""
+    out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
+    assert len(out.encode()) < 12000
     for needle in (
         "2000 characters",
         "poll_hint",
@@ -301,16 +195,8 @@ def test_operator_opening_trim_metrics_with_real_runbook() -> None:
         "successor_birth_id",
     ):
         assert needle in out
-    assert "not_resolvable_by_composer" not in out
-    assert out.count("2026-09-29: Fable credits near spent") == 1
-    briefing = _BRIEFING_BLOCK
-    assert briefing.count("2026-09-29: Fable credits near spent") == 1
-    assert "contract=none" not in briefing.replace(
-        "Do not admit one with `contract=none`.", ""
-    )
+    assert not any(line.endswith("…") for line in out.splitlines())
     assert not out.startswith("/")
-    assert "`retrieval-before-authoring`" in out
-    assert "investigate`, `freeform`, and `conductor`" in out
 
 
 def _stage_under(tmp_path, monkeypatch, **kwargs):
@@ -471,15 +357,14 @@ def test_attest_induction_channel_covers_shared_sync_without_attach() -> None:
     ) == review
 
 
-def test_mission_prompt_runbook_missing_still_has_success_condition() -> None:
-    with mock.patch(
-        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
-        return_value=(None, "unreachable"),
-    ):
-        out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    block = _hop_block(out)
-    assert any(ln.startswith("- success-condition:") for ln in block.splitlines())
-    assert "fetch-decision: runbook:maestro-loop skipped reason=unreachable" in block
+def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
+    assert out.index("## Hop request (data)") < out.index("## Hard refusals")
+    assert out.index("# Mission") < out.index("## Hard refusals")
+    assert "contract=none" in out.split("## Hard refusals", 1)[1]
+    assert "Author the standing handoff before you leave." in out
+    assert "execution_id unknown" not in out
 
 
 def test_cdp_operator_proxy_skill_keep_alive_stale_text_absent() -> None:
@@ -495,19 +380,6 @@ def test_cdp_operator_proxy_skill_keep_alive_stale_text_absent() -> None:
     assert "re-arm every turn" not in text
     assert "Re-arm this wake before the turn ends" not in text
     assert "Do not arm Monitor" in text
-
-
-_WAKE_BRIEF_SHA256 = (
-    "4ebc236345294b82eb3332a8fb1153b356e020c9d75ad5ae2b583a3aba5c4ea0"
-)
-
-
-def test_wake_brief_unchanged_do_not_arm_monitor() -> None:
-    from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
-
-    text = wake_briefing_paragraph()
-    assert "Do not arm Monitor" in text
-    assert hashlib.sha256(text.encode()).hexdigest() == _WAKE_BRIEF_SHA256
 
 
 def test_prose_quote_of_purpose_is_not_a_mission() -> None:

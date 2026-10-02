@@ -20,9 +20,7 @@ from implement_admission.injector_map import (
 )
 
 _OPERATOR_PROXY_BRIEFINGS = (
-    "libs/claude_bundles/operator_proxy_tier_m.py",
     "libs/claude_bundles/operator_proxy_mission.py",
-    "libs/claude_bundles/operator_proxy_wake_brief.py",
 )
 
 
@@ -57,16 +55,6 @@ def test_operator_proxy_briefings_declare_cdp_ask_injectors():
     for path in _OPERATOR_PROXY_BRIEFINGS:
         assert decls[path] == ("cdp_ask",), path
         assert verify_consumer_import("cdp_ask", path) == "verified"
-
-
-@pytest.mark.offline
-def test_tier_m_nominations_are_injector_then_consumer():
-    clear_verify_caches()
-    path = "libs/claude_bundles/operator_proxy_tier_m.py"
-    assert nominations_for_lib_path(path) == (
-        ("cdp_ask", "injectors"),
-        ("git_integration_worker", "consumers"),
-    )
 
 
 @pytest.mark.offline
