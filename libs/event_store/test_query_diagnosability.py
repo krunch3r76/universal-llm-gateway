@@ -13,7 +13,10 @@ from fastapi.testclient import TestClient
 
 from event_store.errors import EventStoreBusyError
 from event_store.query import create_query_router
-from event_store.query_client_errors import ERROR_CLASS_CLIENT_DEADLINE, ERROR_CLASS_LOCK_WAIT
+from event_store.query_client_errors import (
+    ERROR_CLASS_CLIENT_DEADLINE,
+    ERROR_CLASS_LOCK_WAIT,
+)
 from event_store.query_path_health import (
     run_event_loop_lag_probe,
     set_event_loop_lag_ms,
