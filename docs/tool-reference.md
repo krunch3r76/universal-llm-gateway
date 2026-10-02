@@ -628,6 +628,16 @@ On success:
   `scope_source=user_override` (or the index entry's value).
 - **`scope_note`**: present on unscoped success/empty paths when
   `scope_source` is `default_scope` or `classifier` (static advisory).
+- **`empty_reason`** (accepted-scope zero yield): when `chunks_found=0` and the
+  scope was not rejected, the envelope carries `empty_reason` so authors do not
+  treat `status: ok` + the no-results sentinel as a missing corpus or a
+  transport outage. Values: `index_miss` (every query succeeded, RAG `/search`
+  returned no hits), `index_miss_partial` (some queries failed and survivors
+  returned nothing), `junk_filtered` (noise filter removed every hit),
+  `filtered` (other post-RRF caps wiped the set), `retrieval_skipped`
+  (`needs_retrieval=false`), `out_of_scope` (classifier skip), `unreported`
+  (older pipeline omitted a reason — not a confirmed miss). Absent when chunks
+  were returned or when a rejection/transport reason already explains the empty.
 - **Scope rejections.** `invalid_scope_override`, `invalid_predicted_scope`,
   and `scope_confidence_below_threshold` stay `status: ok` with the no-results
   sentinel in `context` and `scope_rejected: true`. `scope_catalog_unavailable`

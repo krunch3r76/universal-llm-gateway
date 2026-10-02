@@ -157,6 +157,7 @@ from services.rag.chunk_filters import chunk_is_noise, chunk_metadata_is_noise
 from services.rag.metadata_boost import apply_metadata_boost
 
 from .context_formatting import ChunkData, format_context, merge_adjacent_chunks
+from .empty_reason import classify_accepted_scope_empty_reason
 from .query_coverage_bias import apply_query_coverage_bias
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import build_facet_pool as _build_facet_pool
@@ -487,6 +488,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     ),
                     "scope_rejected": False,
                     "scope_source": _SCOPE_SOURCE_CLASSIFIER,
+                    "empty_reason": "retrieval_skipped",
                 },
             )
 
@@ -525,6 +527,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     ),
                     "scope_rejected": False,
                     "scope_source": _SCOPE_SOURCE_CLASSIFIER,
+                    "empty_reason": "out_of_scope",
                 },
             )
 
@@ -1240,6 +1243,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 else:
                     clean.append(chunk)
         chunks_dropped = pre_junk - len(clean)
+        junk_wiped_all = pre_junk > 0 and len(clean) == 0
         if chunks_dropped > 0:
             logger.info(
                 "Step '%s': junk filter removed %d/%d chunks",
@@ -1571,6 +1575,15 @@ class RagMultiRetrieveHandler(BaseHandler):
             total_raw,
             len(merged),
         )
+        # Distinguish accepted-scope zero yields so MCP/authors cannot read the
+        # no-results sentinel as "corpus missing" or a transport outage.
+        empty_reason = classify_accepted_scope_empty_reason(
+            chunks_after_merge=len(merged),
+            junk_wiped_all=junk_wiped_all,
+            total_raw=total_raw,
+            queries_succeeded=len(successful),
+            queries_attempted=len(results_per_query),
+        )
         _retrieval_seconds = _time.monotonic() - _retrieval_start
         chunks_per_query = [len(r) for r in successful]
         rrf_scores_list = list(merged_scores.values())
@@ -1613,55 +1626,55 @@ class RagMultiRetrieveHandler(BaseHandler):
             ),
         )
 
-        return StepOutput(
-            raw=context_text,
-            json={
-                "chunks_found": len(merged),
-                "queries_executed": len(queries) + len(facet_pool),
-                "queries_succeeded": len(successful),
-                "raw_chunks_total": total_raw,
-                "scope": scope,
-                "scope_confidence": float(rewrite_data.get("scope_confidence", 1.0)),
-                "scope_source": scope_source,
-                "rewritten_queries": queries,
-                "facet_pool_queries": [q for _, q in facet_pool] or None,
-                "facets": computed_facets or None,
-                "chunks": chunk_dicts,
-                "effective_params": {
-                    "top_k_per_query": top_k,
-                    "max_chunks": max_chunks,
-                    "rrf_k": rrf_k,
-                    "recency_weight": recency_weight,
-                    "rag_include_section_headings": include_section_headings,
-                    "rag_include_source_titles": include_source_titles,
-                    "retrieval_path": retrieval_path,
-                    "pool_b_enabled": pool_b_enabled,
-                    "scope_key": scope_key,
-                    "scope_defaults_applied": params.scope_profile or None,
-                    "scope_confidence_threshold": confidence_threshold,
-                    "rag_scope_chunk_caps": scope_chunk_caps,
-                    "source_diversity_max": source_diversity_max or None,
-                    "source_diversity_dropped": source_diversity_dropped,
-                    "synthetic_scope": synthetic_scope_name or None,
-                    "synthetic_demotion": synthetic_demotion
-                    if synthetic_scope_name
-                    else None,
-                    "synthetic_demoted_count": synthetic_demoted_count,
-                    "consumer_model": consumer_model or None,
-                    "consumer_tier": consumer_tier,
-                    "profile_applied": bool(
-                        consumer_model and params.exact_model_profile
-                    ),
-                    "tier_applied": bool(consumer_tier and params.tier_profile),
-                    "facet_pool_swap_distance_threshold": float(
-                        effective.get("facet_pool_swap_distance_threshold", 0.0)
-                    ),
-                    "facet_pool_swap_max_retain": int(
-                        effective.get("facet_pool_swap_max_retain", 2)
-                    ),
-                },
+        step_json: dict[str, Any] = {
+            "chunks_found": len(merged),
+            "queries_executed": len(queries) + len(facet_pool),
+            "queries_succeeded": len(successful),
+            "raw_chunks_total": total_raw,
+            "scope": scope,
+            "scope_confidence": float(rewrite_data.get("scope_confidence", 1.0)),
+            "scope_source": scope_source,
+            "rewritten_queries": queries,
+            "facet_pool_queries": [q for _, q in facet_pool] or None,
+            "facets": computed_facets or None,
+            "chunks": chunk_dicts,
+            "effective_params": {
+                "top_k_per_query": top_k,
+                "max_chunks": max_chunks,
+                "rrf_k": rrf_k,
+                "recency_weight": recency_weight,
+                "rag_include_section_headings": include_section_headings,
+                "rag_include_source_titles": include_source_titles,
+                "retrieval_path": retrieval_path,
+                "pool_b_enabled": pool_b_enabled,
+                "scope_key": scope_key,
+                "scope_defaults_applied": params.scope_profile or None,
+                "scope_confidence_threshold": confidence_threshold,
+                "rag_scope_chunk_caps": scope_chunk_caps,
+                "source_diversity_max": source_diversity_max or None,
+                "source_diversity_dropped": source_diversity_dropped,
+                "synthetic_scope": synthetic_scope_name or None,
+                "synthetic_demotion": synthetic_demotion
+                if synthetic_scope_name
+                else None,
+                "synthetic_demoted_count": synthetic_demoted_count,
+                "consumer_model": consumer_model or None,
+                "consumer_tier": consumer_tier,
+                "profile_applied": bool(
+                    consumer_model and params.exact_model_profile
+                ),
+                "tier_applied": bool(consumer_tier and params.tier_profile),
+                "facet_pool_swap_distance_threshold": float(
+                    effective.get("facet_pool_swap_distance_threshold", 0.0)
+                ),
+                "facet_pool_swap_max_retain": int(
+                    effective.get("facet_pool_swap_max_retain", 2)
+                ),
             },
-        )
+        }
+        if empty_reason is not None:
+            step_json["empty_reason"] = empty_reason
+        return StepOutput(raw=context_text, json=step_json)
 
     def _scope_rejection_output(
         self,

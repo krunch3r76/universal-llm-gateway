@@ -65,6 +65,9 @@ def envelope_retrieval_fields(
     retrieval_rejection = retrieval.get("retrieval_rejection_reason")
     if isinstance(retrieval_rejection, str) and retrieval_rejection:
         envelope["retrieval"]["retrieval_rejection_reason"] = retrieval_rejection
+    empty_reason = retrieval.get("empty_reason")
+    if isinstance(empty_reason, str) and empty_reason:
+        envelope["retrieval"]["empty_reason"] = empty_reason
     for key in _RELEVANCE_KEYS:
         if key in retrieval:
             envelope["retrieval"][key] = retrieval[key]
