@@ -36,6 +36,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_dispatch_ledger import (
     dispatch_ledger_env_vars,
 )
+from services.git_integration_worker.cursor_dispatch_playwright import (
+    operator_playwright_browsers_dir,
+)
 from services.git_integration_worker.cursor_home import (
     build_dispatch_path_prepend,
     dispatch_git_env_vars,
@@ -123,15 +126,17 @@ def build_bridge_command(
     None; ``CURSOR_SDK_DISPATCH_ID``/``GIT_*`` when ``dispatch_id`` is None —
     the bridge then inherits GIW's values for those keys, unchanged. PATH is
     always complete: the dispatch prepend, then GIW's PATH when non-empty.
-    When ``lane_path`` is set, ``NODE_OPTIONS`` (``--require`` of the shell-cwd
-    preload, in front of any ``NODE_OPTIONS`` already in ``os.environ``) and
-    ``CURSOR_SDK_SHELL_FALLBACK_CWD`` are assigned just before the binary.
-    ``CURSOR_SDK_SHELL_ALIGN_CWD=1`` is appended only when ``align_shell_cwd``
-    is true (lane B). The preload chdirs and fills an empty bash cwd only
-    then; the missing-directory rewrite stays armed for every lane.
-    Pinned ``Popen`` still has no ``cwd=``.
-    Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]``; writes
-    nothing.
+    ``PLAYWRIGHT_BROWSERS_PATH`` is set when the operator browser cache exists
+    under ``real_home`` so resume of pre-seed homes (symlink skipped) still
+    finds chromium (a:37291). When ``lane_path`` is set, ``NODE_OPTIONS``
+    (``--require`` of the shell-cwd preload, in front of any ``NODE_OPTIONS``
+    already in ``os.environ``) and ``CURSOR_SDK_SHELL_FALLBACK_CWD`` are
+    assigned just before the binary. ``CURSOR_SDK_SHELL_ALIGN_CWD=1`` is
+    appended only when ``align_shell_cwd`` is true (lane B). The preload
+    chdirs and fills an empty bash cwd only then; the missing-directory
+    rewrite stays armed for every lane. Pinned ``Popen`` still has no ``cwd=``.
+    Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]`` and stats
+    ``<real_home>/.cache/ms-playwright``; writes nothing.
     """
     if not os.path.isabs(bridge_bin) or "=" in bridge_bin or bridge_bin.startswith("-"):
         raise ValueError(
@@ -139,6 +144,9 @@ def build_bridge_command(
             f"{bridge_bin!r}"
         )
     command = [_ENV_BIN, f"HOME={dispatch_home}"]
+    browsers = operator_playwright_browsers_dir(real_home)
+    if browsers is not None:
+        command.append(f"PLAYWRIGHT_BROWSERS_PATH={browsers}")
     if repo_venv is not None:
         prepend = build_dispatch_path_prepend(repo_venv, real_home=real_home)
         base = os.environ.get("PATH", "")
