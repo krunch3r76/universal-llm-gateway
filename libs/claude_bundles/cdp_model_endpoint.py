@@ -33,7 +33,6 @@ from claude_bundles.cdp_model_endpoint_staging import (
 from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
-from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 
 DEFAULT_MAX_WALL_S = 1800
@@ -626,8 +625,11 @@ def run_cdp_generate(
 
     ``purpose`` (default ``ask``): CDP registry/mission tag. ``operator-proxy`` /
     ``mission`` trigger skill-chip + seat-map inject on the satellite
-    (``operator_proxy_mission.purpose_implies_mission``). Also matched when the
-    prompt body declares ``session: operator-proxy, job: "freeform"``.
+    (``operator_proxy_mission.purpose_implies_mission``). A column-0
+    ``purpose:`` or ``purpose=`` header in the first 40 lines whose value is
+    ``operator-proxy``, ``mission`` (word boundary), or ``operator_proxy``
+    also matches. Retain uses ``StagedPrompt.mission`` captured at staging.
+    A body line ``session: operator-proxy`` does not.
 
     ``mission_kind`` / ``parent_thread``: Chrome-host lineage claims on the
     registry row (``root|hop|side|parallel`` plus bus parent lane id). These
@@ -661,7 +663,6 @@ def run_cdp_generate(
     clock = now or time.monotonic
     picker = picker_from_model_id(model_id)
     relay = ask_client or CdpAskClient()
-    mission_retain = is_operator_proxy_mission_purpose(purpose)
     try:
         staged = stage_cdp_prompt_with_skills(
             execution_id=execution_id,
@@ -684,6 +685,7 @@ def run_cdp_generate(
             stall_stage=None,
             extras={"code": exc.code},
         )
+    mission_retain = staged.mission
 
     submit_req = SubmitProjectAskRequest(
         prompt_uri=staged.prompt_uri,

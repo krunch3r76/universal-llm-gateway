@@ -42,11 +42,13 @@ class FetchDecision:
 
 
 def success_condition_line(refuse_body: str) -> str:
-    """One success-condition bullet derived from the Refuse excerpt body."""
-    collapsed = " ".join((refuse_body or "").split())
-    if not collapsed:
+    """Short success-condition bullet; full Refuse text is inlined separately."""
+    if not (refuse_body or "").strip():
         return "- success-condition:"
-    return f"- success-condition: {collapsed}"
+    return (
+        "- success-condition: the Refuse bullets in this hop are the arrival "
+        "rules, including conductor admit with contract=conductor."
+    )
 
 
 def format_fetch_decision(

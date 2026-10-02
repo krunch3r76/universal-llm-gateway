@@ -553,3 +553,74 @@ def test_peel_sealed_cdp_skill_prefix_collapses_doubled_manifest() -> None:
     assert inline == []
     assert body.lstrip("\n").startswith("TYPE: CONTINUITY_HANDOFF")
     assert "/reasoning-posture" not in body
+
+
+def test_induction_other_slug_does_not_satisfy_operator_proxy() -> None:
+    with pytest.raises(SkillDeliveryError, match=r"induction=\['other-slug'\]"):
+        attest_delivery_channels(
+            ["cdp-operator-proxy"],
+            attached=[],
+            inlined=[],
+            induction=["other-slug"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_attests_panel_observed_slugs() -> None:
+    """send_prompt passes wait_for_induction_panel skills into attest."""
+    from unittest.mock import AsyncMock, patch
+
+    from claude_bundles.chat_context_skills import LoadedSkillsReport
+    from claude_bundles.project_ask import send_prompt
+
+    page = AsyncMock()
+    composer = AsyncMock()
+    report = LoadedSkillsReport(
+        url="https://claude.ai/chat/x",
+        skills=("reasoning-posture",),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="cdp-operator-proxy",
+    )
+    seen: dict[str, object] = {}
+
+    def _attest(required, **kwargs):
+        seen["required"] = list(required)
+        seen["induction"] = list(kwargs.get("induction") or [])
+        return list(required)
+
+    text = "<!--cdp-required-skills:cdp-operator-proxy-->\nwork body\n"
+    with (
+        patch(
+            "claude_bundles.composer_session_skills.require_compose_surface",
+        ),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(return_value=report),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            side_effect=_attest,
+        ),
+    ):
+        await send_prompt(page, text)
+    assert seen["induction"] == ["reasoning-posture"]
+    assert "cdp-operator-proxy" in seen["required"]

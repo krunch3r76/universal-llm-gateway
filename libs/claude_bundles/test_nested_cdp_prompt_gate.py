@@ -63,8 +63,8 @@ def _write_report(
 def _passthrough_skills(monkeypatch: pytest.MonkeyPatch) -> None:
     """Worktree checkouts lack full .claude skill SOT; skip catalog load."""
 
-    def _prepend(body: str, slugs: list[str]):
-        del slugs
+    def _prepend(body: str, slugs: list[str], **kwargs: object):
+        del slugs, kwargs
         return body, [], []
 
     monkeypatch.setattr(

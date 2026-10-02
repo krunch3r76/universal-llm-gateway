@@ -265,6 +265,7 @@ def prepend_cdp_dispatch_skills(
     *,
     repo_root: Path | None = None,
     hybrid_escape: bool = False,
+    omit_slash_prefix: bool = False,
 ) -> tuple[str, list[str], list[InjectedSkillBody]]:
     """Prepend CDP skills= delivery to a sealed prompt.
 
@@ -284,11 +285,15 @@ def prepend_cdp_dispatch_skills(
     root = repo_root or _REPO_ROOT
     _peeled_attach, _peeled_inline, body = peel_sealed_cdp_skill_prefix(prompt)
     slash_slugs, inline_slugs = partition_cdp_skills(list(slugs))
-    slash_block = (
-        format_cdp_hybrid_prefix(slash_slugs)
-        if hybrid_escape
-        else format_cdp_slash_prefix(slash_slugs)
-    )
+    if omit_slash_prefix:
+        slash_block = ""
+        slash_slugs = []
+    else:
+        slash_block = (
+            format_cdp_hybrid_prefix(slash_slugs)
+            if hybrid_escape
+            else format_cdp_slash_prefix(slash_slugs)
+        )
     bodies: list[InjectedSkillBody] = []
     inline_block = ""
     if inline_slugs:
@@ -447,14 +452,17 @@ def attest_delivery_channels(
     *,
     attached: list[str],
     inlined: list[str],
+    induction: list[str] | None = None,
     execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> list[str]:
     """Fail closed when a required slug lacks the correct delivery channel.
 
     Channel by ``surface_class`` (friction a:27142 / 26986 / 24594):
-    - ``shared_sync`` → **must** be in ``attached`` (``+`` → Skills). Inline
-      alone / slash-manifest-only does not count.
+    - ``shared_sync`` → **must** be in ``attached`` (``+`` → Skills) or in
+      ``induction`` (Context → Skills panel slugs already observed;
+      ``delivered_via=induction``). Inline alone / slash-manifest-only does
+      not count.
     - All other surfaces, ``life_local`` included → **must** be in ``inlined``
       (``<skills_inline>``), which is the channel ``partition_cdp_skills``
       actually uses for them.
@@ -478,13 +486,14 @@ def attest_delivery_channels(
     catalog = get_skill_catalog()
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
     missing: list[str] = []
     wrong_channel: list[str] = []
     for raw in required:
         entry = catalog.get(raw)
         slug = entry.slug
         if _attach_only_surface(entry.surface_class):
-            if slug in attached_set:
+            if slug in attached_set or slug in induction_set:
                 continue
             if slug in inlined_set:
                 wrong_channel.append(slug)
@@ -499,8 +508,12 @@ def attest_delivery_channels(
                 missing.append(slug)
     attached_sorted = sorted(attached_set)
     inlined_sorted = sorted(inlined_set)
+    induction_sorted = sorted(induction_set)
     rows = ledger_skills_channels(
-        required, attached=attached_sorted, inlined=inlined_sorted
+        required,
+        attached=attached_sorted,
+        inlined=inlined_sorted,
+        induction=induction_sorted,
     )
     stargate_id = str(execution_id or "")
     sat_id = str(satellite_execution_id or "")
@@ -509,6 +522,7 @@ def attest_delivery_channels(
             ok=False,
             attached=attached_sorted,
             inlined=inlined_sorted,
+            induction=induction_sorted,
             undelivered=list(missing),
             wrong_channel=list(wrong_channel),
             rows=rows,
@@ -521,14 +535,16 @@ def attest_delivery_channels(
         if wrong_channel:
             parts.append(f"wrong_channel={wrong_channel}")
         raise SkillDeliveryError(
-            "required skills fail channel attest after attach + inline seal: "
+            "required skills fail channel attest after attach + inline + induction seal: "
             f"{'; '.join(parts)} (attached={attached_sorted}, "
-            f"inlined={inlined_sorted}) — fail closed (friction a:27142)"
+            f"inlined={inlined_sorted}, induction={induction_sorted}) "
+            "— fail closed (friction a:27142)"
         )
     emit_skill_delivery_attested(
         ok=True,
         attached=attached_sorted,
         inlined=inlined_sorted,
+        induction=induction_sorted,
         undelivered=[],
         wrong_channel=[],
         rows=rows,
@@ -543,22 +559,30 @@ def ledger_skills_channels(
     *,
     attached: list[str],
     inlined: list[str],
+    induction: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build one ledger row per requested slug with ``delivered_via`` channel.
 
-    ``attach`` / ``inline`` only when the channel matches ``surface_class``;
-    otherwise ``undelivered`` (incl. wrong-channel). Callers assert
+    ``attach`` / ``inline`` / ``induction`` only when the channel matches
+    ``surface_class`` (induction counts for ``shared_sync``); otherwise
+    ``undelivered`` (incl. wrong-channel). Callers assert
     ``len(rows) == len(required)`` before treating a dispatch as skill-backed.
     """
     catalog = get_skill_catalog()
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
     rows: list[dict[str, str]] = []
     for raw in required:
         entry = catalog.get(raw)
         slug = entry.slug
         if _attach_only_surface(entry.surface_class):
-            via = "attach" if slug in attached_set else "undelivered"
+            if slug in induction_set:
+                via = "induction"
+            elif slug in attached_set:
+                via = "attach"
+            else:
+                via = "undelivered"
         else:
             via = "inline" if slug in inlined_set else "undelivered"
         rows.append({"slug": slug, "delivered_via": via})

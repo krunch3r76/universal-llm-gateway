@@ -192,7 +192,7 @@ def test_authored_hop_block_carries_success_condition_and_fetch_receipt() -> Non
     assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
     assert (
         "fetch-decision: skill:retrieval-before-authoring skipped "
-        "reason=not_resolvable_by_composer"
+        "reason=chip_requested"
         in block
     )
     assert block.index("- lane:") < block.index("- success-condition:")
@@ -221,9 +221,7 @@ def test_first_acts_line_names_runbook_steps_read() -> None:
 
 def test_mission_ensure_opens_with_this_hop_then_seat_map() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
-    chips_end = out.index(HOP_STATUS_MARKER)
-    assert out.startswith("/cdp-operator-proxy\n")
-    assert chips_end > 0
+    assert out.startswith(HOP_STATUS_MARKER)
     assert out.index(HOP_STATUS_MARKER) < out.index("## Mission seat map (BINDING")
     assert "- next: Do the thing." in out
 

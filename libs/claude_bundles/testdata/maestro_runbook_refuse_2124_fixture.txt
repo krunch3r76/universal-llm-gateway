@@ -1,0 +1,22 @@
+# Maestro loop
+
+## Trigger
+First commission must not wait.
+
+## Refuse
+
+- For a ulg-code `team_dispatch`, poll with that response's `poll_hint` (`tool=wait`, `arguments_json` unchanged). `job_state` is the deprecated `agent_bus.request` hint. Do not refuse `wait` when the hint's tool is `wait`. A `predicate_unmet` envelope means the completion is not satisfied yet; re-call the same hint. Do not re-dispatch on it. Specimen: a:36655.
+- `thread_get` on `<lane>` — the operator lane is huge.
+- `send(to=cursor-auto)` — cursor-auto is a role, not a bus address. `to=cursor` is not how this seat commissions.
+- `agent_bus(hop, escalation=...)` — unsupported argument. Pass `desired_model`.
+- `force` on `git_integration_worker`, and any propagate fired from inside a nested dispatch.
+- `manage` `sync_restart` while `checkout.porcelain_raw_open` shows first-column `M` or `D` on a path you would call landed.
+- DISPOSITION body over 2000 characters (code points, `wc -m` before send; not a `<2KB` byte cap). Quotes go in `sidecar_content`. Inline body with no `sidecar_content` is refused 422 `over_briefing_target` (commit 0895acb). Exempt: `TYPE: DIRECTIVE`, `CLOSEOUT`, `CONFER`, `WAKE`. Not exempt: DISPOSITION, `SEAT_REGISTRATION`. Specimen: a:36836.
+- Re-arming `send_later` as a heartbeat. A one-shot armed during a live tool loop is queued and delivered at the next turn boundary: do not mark it delivered before that boundary, and do not mark it lost. Specimen: `trig_01P6GysJ45GjqXuQYbkadnAN`.
+- Authoring a prompt or packet before `Use the retrieval-before-authoring skill`.
+- Treating `thread_get(...).cse_*` or a holder row as this seat's identity.
+- Admitting or re-admitting a conductor with `contract=none`. The GIW hop reactor returns early for any row that is not a conductor row (`conductor_hop.py:673-677`: `if not _is_conductor_row(row): _emit_hop_skipped(row, gate="not_conductor_row"); return`), before any hop budget or gate. A `contract=none` conductor never gets a successor, so the operator becomes the reactor. Kaywan, 2026-09-30 14:38Z: "conductors are supposed to run to completion without you having to step in." Use step 5a. Specimen: 13589#3; 12286#1356.
+
+## Steps
+1. Read Steps only at act time.
+

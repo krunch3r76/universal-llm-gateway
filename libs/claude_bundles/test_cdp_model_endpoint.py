@@ -29,6 +29,8 @@ from claude_bundles.cdp_model_endpoint_staging import (
     sweep_ephemeral,
 )
 
+_recorded_staging_kwargs: list[dict[str, Any]] = []
+
 
 def test_picker_from_model_id_passthrough() -> None:
     assert picker_from_model_id("cdp/opus-4.8") == "opus-4.8"
@@ -257,6 +259,39 @@ def test_stage_cortex_passthrough(
     assert staged.ephemeral_root is None
 
 
+def test_stage_cortex_passthrough_honors_mission_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    src = tmp_path / "notes/system/threads/already.md"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("existing\n", encoding="utf-8")
+    staged = stage_prompt_uri(
+        execution_id="exec-2m",
+        prompt_uri="cortex://notes/system/threads/already.md",
+        mission=True,
+    )
+    assert staged.staged is False
+    assert staged.mission is True
+
+
+def test_stage_uri_body_purpose_sets_mission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wire purpose=ask does not declare a mission; the URI body on line 2 does."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    src = tmp_path / "notes/system/specs/mission-uri.md"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("title line\npurpose: operator-proxy\n", encoding="utf-8")
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-uri-mission",
+        prompt_text=None,
+        prompt_uri="cortex://notes/system/specs/mission-uri.md",
+        purpose="ask",
+    )
+    assert staged.mission is True
+
+
 def test_stage_cdp_presealed_cortex_uri_passes_through(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -375,19 +410,26 @@ class _FakeResp:
 
 
 def _mock_run_cdp_staging(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, execution_id: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    execution_id: str,
+    *,
+    mission: bool = False,
 ) -> None:
     """Avoid skill-catalog SOT validation in sparse git worktrees."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    _recorded_staging_kwargs.clear()
 
-    def _fake_stage(**_kwargs: Any) -> StagedPrompt:
+    def _fake_stage(**kwargs: Any) -> StagedPrompt:
+        _recorded_staging_kwargs.append(dict(kwargs))
         return StagedPrompt(
             prompt_uri=(
                 f"cortex://notes/system/ephemeral/cdp-endpoint/{execution_id}/prompt.md"
             ),
             ephemeral_root=None,
             staged=True,
+            mission=mission,
         )
 
     monkeypatch.setattr(
@@ -657,7 +699,7 @@ def test_run_cdp_generate_mission_wall_does_not_abort(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """purpose=operator-proxy must not Stop-click on max_wall — keep polling to proof."""
-    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-mission-wc")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-mission-wc", mission=True)
     archive = "cortex://notes/system/threads/mission-wc.md"
     client = _FakeClient(
         [
@@ -715,6 +757,7 @@ def test_run_cdp_generate_mission_wall_does_not_abort(
     assert result.ok is True
     assert result.archive_uri == archive
     assert aborts == []
+    assert _recorded_staging_kwargs[-1]["purpose"] == "operator-proxy"
 
 
 def test_run_cdp_generate_wall_clock_preserves_archive_uri(
@@ -1304,7 +1347,7 @@ def test_run_cdp_generate_mission_completed_without_proof_retain_cse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Mission purpose must pass retain_cse=True at completed_without_proof abort."""
-    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-cwp-mission")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-cwp-mission", mission=True)
     client = _FakeClient(
         [
             {"execution_id": "sat-cwp", "status": "running"},
@@ -1488,7 +1531,7 @@ def test_run_cdp_generate_mission_overload_retain_cse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Overload proof-reject path passes retain_cse=mission_retain."""
-    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-ol-mission")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-ol-mission", mission=True)
     client = _FakeClient(
         [
             {"execution_id": "sat-ol-m", "status": "running"},
@@ -1753,7 +1796,7 @@ def test_run_cdp_generate_mission_transport_miss_continues(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """AC3 — purpose=mission transport miss keeps polling (no early abort return)."""
-    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-mission-tm")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-mission-tm", mission=True)
     archive = "cortex://notes/system/threads/mission-tm.md"
     running = {
         "execution_id": "sat-mm",

@@ -14,10 +14,7 @@ from __future__ import annotations
 import re
 
 from claude_bundles.act_receipt import format_act_receipt
-from claude_bundles.cowork_skill_delivery import (
-    format_cdp_slash_prefix,
-    split_leading_slash_skills,
-)
+from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.maestro_runbook_load import load_maestro_runbook
 from claude_bundles.operator_proxy_hop_status import ensure_hop_status_first
 from claude_bundles.operator_proxy_skill_introspect import skill_introspection_block
@@ -45,6 +42,7 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     # Fable 9518 (cortex://notes/system/threads/agent-bus-type-genus-chip-gap-consult.md).
     "agent-bus-discipline",
     "lane-act-gates",
+    "retrieval-before-authoring",
 )
 
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
@@ -137,8 +135,8 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — commissions with ulg-code `team_dispatch` to `cursor-sdk` on lane B. DISPOSITION and CLOSEOUT go by `send` on the private lane. Cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Architecture-bind hop 5 independent check and review fallback stay, under that condition |
-| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Omitted knobs follow the grok-4.7 card. **`contract`** splits the leg: `investigate`, `none`, and `conductor` stay on this model; mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
-| **`cdp/opus-5.5`** | **Architecture bind / independent check** — the in-use bind rung. Live-checkout file:line depth this seat cannot perform is `cursor/grok-4.7` `contract=none` on cursor-sdk, fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`). That trigger picks the **seat**. Independent check uses a different seat than the author. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. An architecture is not self-ratifiable. |
+| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Omitted knobs follow the grok-4.7 card. **`contract`** splits the leg: `investigate`, `freeform`, and `conductor` stay on this model. Admit a conductor with `contract=conductor` (maestro-loop step 5a). Do not admit one with `contract=none`. Mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
+| **`cdp/opus-5.5`** | **Architecture bind / independent check** — the in-use bind rung. Live-checkout file:line depth this seat cannot perform is `cursor/grok-4.7` `contract=freeform` on cursor-sdk, fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`). That trigger picks the **seat**. Independent check uses a different seat than the author. An architecture is not self-ratifiable. |
 | **cursor-sdk lane B** | **Executor** — ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). This seat directs. The cursor-sdk seat executes repo writes |
 
 **One operator CSE per lane (BINDING):** this Cowork session is the operator seat. Identity is this CSE's `chat_url`. Extras on this lane are predecessors, not peers. Never touch operator CSEs on other lanes.
@@ -174,7 +172,7 @@ Example (must parse via `parse_act_receipt`):
 {receipt_example}
 
 **Mission default (BINDING — 2026-07-28):** `idea → bind → implement at will → live autonomy`.
-After the architecture bind (and Fable only when Kaywan asked — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks), this seat commissions `cursor-sdk` implement-class work via ulg-code `team_dispatch` (`lane=B`) without waiting for operator ratification or a separate IDE helm turn — unless the mission packet **explicitly** scopes implement out. Opus directs. The cursor-sdk seat executes repo writes.
+After the architecture bind (and Fable only when Kaywan asked), this seat commissions `cursor-sdk` implement-class work via ulg-code `team_dispatch` (`lane=B`) without waiting for operator ratification or a separate IDE helm turn — unless the mission packet **explicitly** scopes implement out. Opus directs. The cursor-sdk seat executes repo writes.
 **Verify independently by commissioning a cursor-sdk seat** (tests, probes, health) — do not wake the operator to confirm what that seat can confirm. **A cursor-sdk commission may modify the harness** when that extends capability or effectiveness. Anti-pattern: closing at bind CLOSEOUT when ACs are already executable, or `COME TO IDE` for ordinary progress.
 
 **Escalation is bidirectional (BINDING — 2026-07-31):** unknowns route **down**, ¬ up —
@@ -261,7 +259,7 @@ judgment of when to bind directly with this seat.
 
 **Knob relay (this seat fires the dispatch):** this seat fires `team_dispatch` on ulg-code. `model`, `contract`, `lane`, `work_key`, and `model_knobs` go on that wire. `reasoning_effort` on `seat=cursor-sdk` is 422 `reasoning_effort_not_supported`. Body-level `effort:`, `reasoning_effort:`, or line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT: `libs/cursor_capabilities/cursor_capabilities.py`). Name `fast=true` on the cursor-sdk dispatch wire when an arc pin says so. Hop successor model: `desired_model=cdp/opus-5.5-extra`.
 
-**CDP Fable / Opus pin (BINDING):** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. If hop returns `seat.identity_unresolvable`, fall back with ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, mission_kind=hop, parent_thread=<this private lane>, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)` — `mission_kind=hop` is required mid-stream (a:37182). A fresh root window (not a hop) is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
+**CDP Fable / Opus pin (BINDING):** Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. If hop returns `seat.identity_unresolvable`, fall back with ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, mission_kind=hop, parent_thread=<this private lane>, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)` — `mission_kind=hop` is required mid-stream (a:37182). A fresh root window (not a hop) is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, job=freeform, dispatch_thread_id=<this private lane>, prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`
 (+ `vision:` on `TYPE: DIRECTIVE` when applicable). Empty scope or a missing contract
@@ -361,26 +359,16 @@ def ensure_operator_proxy_mission_prompt(
     *,
     standing_handoff_text: str | None = None,
 ) -> str:
-    """Ensure chips + this-hop status + seat-map briefing on *text*.
+    """Ensure this-hop status + seat-map briefing on *text*.
 
-    Idempotent. *standing_handoff_text* fills unspecified hop-status
-    fields when the caller already loaded the sidecar — this function
-    does not read the filesystem. Non-mission callers should not invoke it.
+    Skill chips are delivered via staging Use-lines (``prepend_cdp_dispatch_skills``
+    authority marker + composer induction), not a leading ``/<slug>`` prefix here.
+    Legacy leading slash lines are stripped idempotently. *standing_handoff_text*
+    fills unspecified hop-status fields when the caller already loaded the sidecar —
+    this function does not read the filesystem. Non-mission callers should not invoke it.
     """
     body = (text or "").strip()
-    tokens, rest = split_leading_slash_skills(body)
-    have = {t.lstrip("/").strip().lower() for t in tokens if t.strip()}
-    need = [s for s in MISSION_SKILL_SLUGS if s not in have]
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for slug in [t.lstrip("/").strip() for t in tokens if t.strip()] + need:
-        key = slug.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(slug)
-
-    prefix = format_cdp_slash_prefix(ordered)
+    _tokens, rest = split_leading_slash_skills(body)
     rest_body = rest.lstrip("\n")
     field_source = _field_source_without_briefing(rest_body)
     if _BRIEFING_MARKER not in rest_body:
@@ -391,7 +379,7 @@ def ensure_operator_proxy_mission_prompt(
     trigger_excerpt = ""
     refuse_body = ""
     skip_reasons: dict[str, str] = {
-        "skill:retrieval-before-authoring": "not_resolvable_by_composer",
+        "skill:retrieval-before-authoring": "chip_requested",
     }
     if body:
         resolved_bodies = {"runbook:maestro-loop": body}
@@ -419,7 +407,7 @@ def ensure_operator_proxy_mission_prompt(
         refuse_body=refuse_body,
         trigger_excerpt=trigger_excerpt,
     )
-    return f"{prefix}\n{rest_body}"
+    return rest_body
 
 
 def _field_source_without_briefing(rest_body: str) -> str:
@@ -430,19 +418,26 @@ def _field_source_without_briefing(rest_body: str) -> str:
     return rest_body
 
 
+# Header declaration only. A prose quote (review packets, seat-map
+# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
+_PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
-    r"purpose\s*[:=]\s*(operator-proxy|mission|operator_proxy)",
-    re.IGNORECASE,
+    r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
-    """True when purpose or prompt body declares an operator-proxy mission."""
+    """True when purpose or a column-0 header line declares a mission."""
     if is_operator_proxy_mission_purpose(purpose):
         return True
-    if prompt and _PURPOSE_DOC.search(prompt):
-        return True
-    return False
+    if not prompt:
+        return False
+    from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
+
+    _attach, _inline, body = peel_sealed_cdp_skill_prefix(prompt)
+    head = "\n".join(body.splitlines()[:_PURPOSE_HEADER_LINES])
+    return _PURPOSE_DOC.search(head) is not None
 
 
 __all__ = [
