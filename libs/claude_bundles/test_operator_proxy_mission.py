@@ -176,7 +176,7 @@ def test_refuse_bullets_map_to_template_lines() -> None:
     bullets = _refuse_bullets(_runbook_for_refuse_coverage())
     assert len(bullets) == len(_REFUSE_BULLET_KEYWORDS)
     template_lines = _BRIEFING_BLOCK.splitlines()
-    template_aliases = {"contract=none": "job=freeform"}
+    template_aliases = {"contract=none": "contract=conductor"}
     for bullet, keyword in zip(bullets, _REFUSE_BULLET_KEYWORDS, strict=True):
         assert keyword in bullet
         template_key = template_aliases.get(keyword, keyword)
@@ -190,7 +190,7 @@ def test_rendered_prompt_is_under_the_old_briefing() -> None:
     for needle in (
         "2000 characters",
         "poll_hint",
-        "job=conductor",
+        "contract=conductor",
         "git_integration_worker",
         "porcelain_raw_open",
         "send_later",
@@ -367,7 +367,7 @@ def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
     assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
     assert out.index("## Hop request (data)") < out.index("## Hard refusals")
     assert out.index("# Mission") < out.index("## Hard refusals")
-    assert "job=freeform" in out.split("## Hard refusals", 1)[1]
+    assert "contract=conductor" in out.split("## Hard refusals", 1)[1]
     assert "Author the standing handoff before you leave." in out
     assert "execution_id unknown" not in out
 

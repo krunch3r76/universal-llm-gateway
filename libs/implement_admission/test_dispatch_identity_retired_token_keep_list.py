@@ -34,6 +34,10 @@ _KEEP_LIST = frozenset(
         "scripts/model_manager/ui/controller/charter_runner/window_terminal_contract.py",
         "libs/claude_bundles/induction_reply_baseline.py",
         "cursor-plugins/ulg-ecosystem/skills/reasoning-posture/reference.md",
+        # MCP ulg-code team_dispatch parameter names; frontier.py maps
+        # contract->job and purpose->session on the Stargate wire.
+        "libs/claude_bundles/operator_proxy_mission.py",
+        "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md",
     }
 )
 
