@@ -110,6 +110,22 @@ def reject_unsupported_packet_inputs(
             },
         )
     if wire not in admitted:
+        # Generate surface: a registry job whose admitted_ops omit generate
+        # is unknown on this op (cursor-auto-only ids such as answer).
+        # Breaks when generate intake returns job_not_admitted or omits the event.
+        if op == "generate":
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="job",
+                reason=f"job {parsed.job!r} is not admitted for op='generate'",
+                status_code=422,
+                code="job_unknown",
+                details={
+                    "event": "dispatch.job.refused",
+                    "reason": "job_unknown",
+                    "registry_ref": parsed.registry_ref,
+                },
+            )
         raise FrontierEndpointError(
             request_id=request_id,
             field="job",
