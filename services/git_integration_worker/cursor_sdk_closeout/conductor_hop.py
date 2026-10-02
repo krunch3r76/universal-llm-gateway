@@ -69,6 +69,9 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
     merge_hop_patch,
 )
+from services.git_integration_worker.cursor_sdk_park_ledger import (
+    PARK_KIND_DISCARD,
+)
 
 logger = get_logger(__name__)
 
@@ -283,6 +286,8 @@ def _hop_skip_gate(
     closeout_tokens: frozenset[str],
 ) -> str | None:
     """Return skip gate name when hop reactor must not POST successor."""
+    if _cancel_discard_blocks_hop(row):
+        return "cancel_discard"
     _, ext_gate = external_gate_hop_verdict(row)
     if ext_gate == SKIP_GATE_LIVE_EXTERNAL:
         return SKIP_GATE_LIVE_EXTERNAL
@@ -453,6 +458,11 @@ def mission_open_for_row(
         return "DONE" not in closeout_tokens
 
 
+def _cancel_discard_blocks_hop(row: dict[str, Any]) -> bool:
+    """``cancel_discard`` kills the mission — no successor admit (a:37149)."""
+    return str(row.get("park_kind") or "") == PARK_KIND_DISCARD
+
+
 def hop_owed(
     row: dict[str, Any],
     *,
@@ -464,9 +474,15 @@ def hop_owed(
     ``ignore_probe_indeterminate`` is the watchdog's double-grace path. The
     reactor leaves it false, so an empty CDP probe still withholds immediately.
     A live external gate is never ignored.
+
+    ``park_kind=cancel_discard`` is a mission kill (agent-bus-discipline): the
+    hop reactor must not admit a successor the way ``park_for_restart`` continues
+    via resume. Restart blocks hop via ``PARKED_TRANSPORT``; discard blocks here.
     """
     status = str(row.get("status") or "")
     if status not in ("completed", "failed", "cancelled"):
+        return False
+    if _cancel_discard_blocks_hop(row):
         return False
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
     if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):

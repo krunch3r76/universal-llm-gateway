@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -214,6 +215,70 @@ def test_hop_owed_false_when_successor_already_stamped() -> None:
         ).fetchone()
     row = {k: refreshed[k] for k in refreshed.keys()}
     assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+
+
+def test_hop_owed_false_when_cancel_discard() -> None:
+    """a:37149 — cancel_discard kills the mission; hop must not be owed.
+
+    Specimen class: mid-run kill (cancelled, empty tokens) with
+    park_kind=cancel_discard. Without the gate, hop_owed is True (silent hop).
+    """
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger,
+        closeout_tokens=[],
+        terminal_status="cancelled",
+    )
+    assert hop_owed(row, closeout_tokens=frozenset()) is True
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='cancel_discard' "
+            "WHERE dispatch_id='pred-hop-1'"
+        )
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    assert row["park_kind"] == "cancel_discard"
+    assert hop_owed(row, closeout_tokens=frozenset()) is False
+    assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+
+
+@pytest.mark.asyncio
+async def test_reactor_skips_successor_after_cancel_discard() -> None:
+    """a:37149 — reactor must not POST a hop after cancel_discard."""
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        closeout_tokens=[],
+        terminal_status="cancelled",
+        summoning_thread_id="9638",
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_kind='cancel_discard' "
+            "WHERE dispatch_id='pred-hop-1'"
+        )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "should-not-admit"}))
+    skipped_gates: list[str] = []
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+            "emit_frontier_sdk_conductor_hop_skipped",
+            side_effect=lambda **kw: skipped_gates.append(kw["gate"]),
+        ):
+            await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+    post_mock.assert_not_called()
+    assert "cancel_discard" in skipped_gates
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    assert hop_fields_from_record_json(row["record_json"]).get("hop_successor") is None
 
 
 def test_merge_closeout_stamps_hop_declared_and_tokens() -> None:
@@ -1080,13 +1145,26 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
 ) -> None:
     """Real gated-deliverables rows keep the fold entry gate (land admit ≠ that gate)."""
     from implement_admission.conductor_witness import (
+        FoldDeps,
         fold_scoreboard,
         resolve_entry_gate_from_fold,
     )
 
-    from services.git_integration_worker.cursor_sdk_nested_witness import (
-        fold_deps_with_ledger,
-    )
+    class _EmptyWitnessCortex:
+        """Hermetic G1 reader — never opens HOME-relative cortex.db (a:37150)."""
+
+        def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
+            _ = kwargs
+            return {"id": entity_id, "attributes": {}}
+
+        def list_relationships(
+            self,
+            entity_id: str,
+            *,
+            type_id: str | None = None,
+        ) -> list[dict[str, Any]]:
+            _ = entity_id, type_id
+            return []
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     scoreboards = tmp_path / "notes/system/scoreboards"
@@ -1109,8 +1187,9 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
     )
     fold = fold_scoreboard(
         "conductor-hop-fixture",
-        deps=fold_deps_with_ledger(
-            _WORK_KEY,
+        deps=FoldDeps(
+            cortex=_EmptyWitnessCortex(),
+            source_ref=_WORK_KEY,
             repo=tmp_path / "repo",
         ),
         write_journal=False,

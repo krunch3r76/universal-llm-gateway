@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -198,18 +198,24 @@ def test_is_conductor_row_reads_sql_contract_only(tmp_path: Path) -> None:
 
 
 def _set_mark(
-    dispatch_id: str, thread_id: str, *, method: str = "run_cancel"
+    dispatch_id: str,
+    thread_id: str,
+    *,
+    method: str = "run_cancel",
+    mode: Literal["cancel", "discard"] = "cancel",
+    intent_id: str | None = _INTENT,
 ) -> ParkMark:
     mark = ParkMark(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
-        intent_id=_INTENT,
-        drain_epoch=2,
-        actor="manage",
-        reason="deploy",
+        intent_id=intent_id,
+        drain_epoch=2 if mode == "cancel" else None,
+        actor="manage" if mode == "cancel" else "stargate-steer",
+        reason="deploy" if mode == "cancel" else "operator kill",
         requested_at="2026-09-08T05:00:00+00:00",
         method=method,
         marked_at=time.monotonic(),
+        mode=mode,
     )
     _marks[dispatch_id] = mark
     return mark
@@ -413,6 +419,60 @@ async def test_conductor_park_is_designed_stop_not_crash(
     assert "fin-cond" not in conductor_hop_watchdog_candidates(
         CursorDispatchLedger.instance(), grace_s=0.0, now=time.time() + 10_000
     )
+
+
+@pytest.mark.asyncio
+async def test_conductor_cancel_discard_suppresses_hop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[Any]
+) -> None:
+    """a:37149 — discard on a hop-owed conductor must not admit a successor."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_lane_b_disposition."
+        "mark_lane_b_disposition_for_dispatch",
+        lambda **_kw: None,
+    )
+    req = CursorDispatchRequest(
+        thread_id="9004",
+        model="cursor/composer-2.5",
+        dispatch_id="fin-disc-cond",
+        execution_id="exec-fin-disc-cond",
+        message="---\ncontract: conductor\n---\nUse the conductor skill",
+        handoff_contract="conductor",
+    )
+    _admit(req, tmp_path=tmp_path, contract="conductor")
+    _set_mark("fin-disc-cond", "9004", mode="discard", intent_id=None)
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", lambda **_kw: _cancelled_outcome(41))
+    hop_posts: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "post_conductor_hop_team_dispatch",
+        AsyncMock(side_effect=lambda body, **_k: hop_posts.append(body) or (True, {})),
+    )
+    bus = _mock_bus()
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            tmp_path / "repo",
+            dispatch_id="fin-disc-cond",
+            thread_id="9004",
+            contract="conductor",
+        ),
+        bus=bus,
+        controller=_controller(),
+    )
+    row = _row("fin-disc-cond")
+    assert row["status"] == "cancelled"
+    assert row["park_kind"] == "cancel_discard"
+    assert hop_owed(row) is False
+    assert hop_posts == []
+    bus.terminate_dispatch.assert_awaited_once()
+    assert "fin-disc-cond" not in conductor_hop_watchdog_candidates(
+        CursorDispatchLedger.instance(), grace_s=0.0, now=time.time() + 10_000
+    )
+    reply = bus.reply.await_args.kwargs
+    assert "DISCARDED" in reply["subject"]
 
 
 def test_build_parked_body_shapes() -> None:

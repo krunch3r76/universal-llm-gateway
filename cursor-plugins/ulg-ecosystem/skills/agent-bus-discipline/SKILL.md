@@ -70,7 +70,7 @@ Human-authored closeouts may coincidentally include `closeout` in the subject; t
 
 | GIW row state | `team_dispatch(op="steer", steer="cancel_discard", …)` |
 |---|---|
-| Any row state (idle, live bridge, open park row) | 200/202 → terminal `cancelled` + `park_kind=cancel_discard`; partial harvest preserved; link terminated; no resume child |
+| Any row state (idle, live bridge, open park row) | 200/202 → terminal `cancelled` + `park_kind=cancel_discard`; partial harvest preserved; link terminated; no resume child; conductor hop reactor skips successor (`hop_owed` false — a:37149) |
 | Legacy idle-only | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` → 200 `outcome=cancelled` — prefer `cancel_discard` for one verb |
 | Running via DELETE | 409 `not_cancellable_running` — DELETE not widened; use `cancel_discard` |
 
