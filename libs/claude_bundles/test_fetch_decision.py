@@ -69,17 +69,21 @@ def test_skipped_rejects_a_free_reason() -> None:
         )
 
 
-def test_success_condition_line_is_derived_not_constant() -> None:
+def test_success_condition_line_is_short_when_refuse_present() -> None:
     a = success_condition_line("first  refuse  body")
     b = success_condition_line("second refuse body")
-    assert a != b
+    assert a == b
     assert a.startswith("- success-condition:")
+    assert "contract=conductor" in a
+    assert "first" not in a
+    assert "second" not in a
 
 
-def test_success_condition_names_contract_none_refusal() -> None:
+def test_success_condition_does_not_embed_refuse_body() -> None:
     refuse = "Never send contract=none on hop birth."
     line = success_condition_line(refuse)
-    assert "contract=none" in line
+    assert "contract=none" not in line
+    assert "Refuse bullets" in line
 
 
 def test_arrival_bind_failure_rejects_skipped_required_ref() -> None:

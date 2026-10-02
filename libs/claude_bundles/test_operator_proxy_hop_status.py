@@ -190,11 +190,7 @@ def test_authored_hop_block_carries_success_condition_and_fetch_receipt() -> Non
     assert arrival_bind_failure(block) is None
     assert "- success-condition:" in block
     assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
-    assert (
-        "fetch-decision: skill:retrieval-before-authoring skipped "
-        "reason=not_resolvable_by_composer"
-        in block
-    )
+    assert "fetch-decision: skill:retrieval-before-authoring in_context" in block
     assert block.index("- lane:") < block.index("- success-condition:")
     assert "- runbook: runbook:maestro-loop" not in block
 

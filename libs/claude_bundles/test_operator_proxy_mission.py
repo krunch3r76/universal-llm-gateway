@@ -233,8 +233,9 @@ def test_success_condition_names_contract_none_refusal_in_composed_block() -> No
         out = ensure_operator_proxy_mission_prompt("# Mission\n")
     block = _hop_block(out)
     sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
-    assert "contract=none" in sc_line
+    assert "contract=none" not in sc_line
     assert "2000 characters" not in sc_line
+    assert block.count("contract=none") >= 1
 
 
 def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
@@ -246,8 +247,79 @@ def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
     block = _hop_block(out)
     assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
     assert (
-        "fetch-decision: skill:retrieval-before-authoring skipped "
-        "reason=not_resolvable_by_composer"
-        in block
+        "fetch-decision: skill:retrieval-before-authoring in_context" in block
     )
+    assert "not_resolvable_by_composer" not in block
     assert "runbook:maestro-loop skipped reason=not_in_context" not in block
+
+
+# Pre-change render length (2026-10-02, same input as below): total 42019 chars.
+_PRE_CHANGE_MISSION_PROMPT_LEN = 42019
+_DISTINCTIVE_REFUSE_SENTENCE = "Re-arming `send_later` as a heartbeat."
+
+
+def test_operator_opening_trim_metrics_with_real_runbook() -> None:
+    """Post-change render must shrink ≥2000 chars vs pre-change 42019 (see _PRE_CHANGE_*)."""
+    from claude_bundles.maestro_runbook_load import load_maestro_runbook
+
+    body, err = load_maestro_runbook()
+    if not body:
+        pytest.skip(f"maestro runbook unavailable: {err}")
+    out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
+    post_len = len(out)
+    assert post_len <= _PRE_CHANGE_MISSION_PROMPT_LEN - 2000
+    block = _hop_block(out)
+    sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
+    assert _DISTINCTIVE_REFUSE_SENTENCE in block
+    assert _DISTINCTIVE_REFUSE_SENTENCE not in sc_line
+    assert block.count(_DISTINCTIVE_REFUSE_SENTENCE) == 1
+    for needle in (
+        "2000 characters",
+        "poll_hint",
+        "contract=conductor",
+        "git_integration_worker",
+        "porcelain_raw_open",
+        "send_later",
+        "successor_birth_id",
+    ):
+        assert needle in out
+    assert "not_resolvable_by_composer" not in out
+    assert out.count("2026-09-29: Fable credits near spent") == 1
+    briefing = _BRIEFING_BLOCK
+    assert briefing.count("2026-09-29: Fable credits near spent") == 1
+    assert "contract=none" not in briefing.replace(
+        "Do not admit one with `contract=none`.", ""
+    )
+    assert "/retrieval-before-authoring" in out.split("\n\n", 1)[0]
+
+
+def test_mission_prompt_runbook_missing_still_has_success_condition() -> None:
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(None, "unreachable"),
+    ):
+        out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    block = _hop_block(out)
+    assert any(ln.startswith("- success-condition:") for ln in block.splitlines())
+    assert "fetch-decision: runbook:maestro-loop skipped reason=unreachable" in block
+
+
+def test_cdp_operator_proxy_skill_keep_alive_stale_text_absent() -> None:
+    from pathlib import Path
+
+    skill_path = (
+        Path(__file__).resolve().parents[2]
+        / "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md"
+    )
+    text = skill_path.read_text(encoding="utf-8")
+    assert "Arm-and-re-arm" not in text
+    assert "re-arm every turn" not in text
+    assert "Re-arm this wake before the turn ends" not in text
+    assert "Do not arm Monitor" in text
+
+
+def test_wake_brief_unchanged_do_not_arm_monitor() -> None:
+    from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
+
+    text = wake_briefing_paragraph()
+    assert "Do not arm Monitor" in text

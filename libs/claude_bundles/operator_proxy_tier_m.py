@@ -47,19 +47,7 @@ longer has to borrow `files_expected: none` to clear the scope gate. `vision:`
 is still required for `implement` / `investigate`. A body-pure gate refusal
 shows up synchronously as `job_admission.outcome: refused`, carrying
 `missed_tokens` plus a `fix_hint` naming the exact lines to add on that same
-container: fix the named lines and re-issue on the same thread. **One live request per private thread** —
-a second `agent_bus.request` supersedes the *first eligible predecessor*, queued
-or claimed — it does not append (`run_cancel` / `pre_register_live_run` for
-claimed; `queue_withdraw` for queued). Both do not run. Continuity hops skip;
-`nested_sdk_finished` claimed jobs are not candidates. **The hazard inverted:**
-the old text said a queued predecessor was safe and both would run; re-issuing
-against a still-queued predecessor *destroys* it before it starts. Under backlog:
-**wait** — not to avoid a dual run, but to avoid killing a job about to start.
-`superseded: null` means no eligible predecessor was found; it no longer implies
-the predecessor is queued and survives. A populated block names `method` ∈
-`run_cancel` | `pre_register_live_run` | `queue_withdraw`. Parallel asks need
-separate lanes or one bundled DIRECTIVE. See `cdp-operator-proxy` § Interrupt /
-supersede.
+container: fix the named lines and re-issue on the same thread.
 
 Optional on any DIRECTIVE: `deadline: +15m` (or an ISO-8601 stamp) — a job still
 queued past it terminates `status:failed reason=expired` instead of running stale
