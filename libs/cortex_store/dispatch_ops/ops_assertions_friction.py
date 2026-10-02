@@ -39,6 +39,7 @@ from ._shared import (
 from ._write_validation import (
     collect_missing_required,
     field_error,
+    is_missing,
     resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
@@ -174,20 +175,25 @@ def _op_friction(
         errors.append(alias_err)
     errors.extend(
         collect_missing_required(
-        {"owner": owner_arg, "note": note},
-        message_for={
-            "owner": (
-                "owner is required (service:/agent_skill:/ai_agent: entity ID, "
-                "or bare slug -> service:); `service` is accepted as an alias"
-            ),
-            "note": (
-                "note is required — describe what went wrong; "
-                "`claim` is accepted as an alias"
-            ),
-        },
+            {"owner": owner_arg, "note": note, "category": category},
+            message_for={
+                "owner": (
+                    "owner is required (service:/agent_skill:/ai_agent: entity ID, "
+                    "or bare slug -> service:); `service` is accepted as an alias"
+                ),
+                "note": (
+                    "note is required — describe what went wrong; "
+                    "`claim` is accepted as an alias"
+                ),
+                "category": (
+                    "category is required — pick one accepted friction category; "
+                    "`unclassified` is not a write token"
+                ),
+            },
+            enum_accepted={"category": sorted(_FRICTION_CATEGORIES)},
         )
     )
-    if category and category not in _FRICTION_CATEGORIES:
+    if not is_missing(category) and category not in _FRICTION_CATEGORIES:
         errors.append(
             field_error(
                 "category",
@@ -256,7 +262,8 @@ def _op_friction(
     if prov_err:
         return {"error": prov_err}
 
-    claim = f"[{category or 'unclassified'}] {note}"
+    # category is non-blank and ∈ _FRICTION_CATEGORIES after the gate above
+    claim = f"[{category}] {note}"
     if suggestion:
         claim += f" — Suggestion: {suggestion}"
     evidence = f"Friction observed by {agent or 'unknown'} during session"
@@ -292,7 +299,7 @@ def _op_friction(
             "mcp.cortex.friction.logged",
             owner=entity_id,
             owner_type=owner_type_of(entity_id),
-            category=category or "unclassified",
+            category=category,
             agent=agent,
             anchor_kind=anchor_kind,
         )
