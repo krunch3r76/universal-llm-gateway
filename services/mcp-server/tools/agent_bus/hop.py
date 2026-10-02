@@ -123,16 +123,24 @@ async def _hop_dispatch(
         occupy_target=(cse_chat_url or "").strip() or None,
         superseded_registration_id=cse_registration_id,
     )
+    # mission_kind=hop arms Stargate hop_own_generate so the caller's own
+    # live generate is excluded (a:37182). predecessor_registration_id names
+    # that generate when the seated CSE supplies cse_registration_id; without
+    # it, Stargate still exempts the sole live gate on the lane.
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
         "prompt": full_body,
         "job": "freeform",
         "purpose": "operator-proxy",
+        "mission_kind": "hop",
         "parent_thread": thread_id,
         "dispatch_thread_id": thread_id,
         "caller_agent": from_agent,
     }
+    reg = (cse_registration_id or "").strip()
+    if reg:
+        body["predecessor_registration_id"] = reg
     effort = (desired_effort or "").strip()
     if effort and effort != "auto":
         body["reasoning_effort"] = effort

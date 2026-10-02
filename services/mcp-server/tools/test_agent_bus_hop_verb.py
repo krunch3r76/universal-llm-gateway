@@ -112,6 +112,78 @@ def test_hop_dispatch_sends_caller_model() -> None:
     assert result["continuity_hop"] is True
 
 
+def test_hop_relay_body_wires_mission_kind_and_predecessor_registration() -> None:
+    """Live a:37182 shape: mid-stream hop must arm hop_own_generate at Stargate.
+
+    Without mission_kind=hop the fire gate treats the successor as a second
+    operator-proxy generate and refuses with cdp_external_gate_live against the
+    caller's own unsealed stream. Registration names the predecessor when the
+    seated CSE supplies cse_registration_id.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-wire"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="12286",
+                reason="context-pressure-self-handoff",
+                from_agent="web-anthropic",
+                desired_model="cdp/opus-5.5-extra",
+                cse_registration_id="c1caf180",
+            )
+
+    result = asyncio.run(run())
+    body = captured["body"]
+    assert body["mission_kind"] == "hop"
+    assert body["predecessor_registration_id"] == "c1caf180"
+    assert body["purpose"] == "operator-proxy"
+    assert body["parent_thread"] == "12286"
+    assert body["dispatch_thread_id"] == "12286"
+    assert result["continuity_hop"] is True
+
+
+def test_hop_relay_body_omits_predecessor_when_registration_absent() -> None:
+    """No CSE registration: still mission_kind=hop; sole-gate exempt at Stargate."""
+    captured: dict[str, Any] = {}
+
+    async def fake_relay(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"execution_id": "ex-hop-sole"}
+
+    async def run() -> dict[str, Any]:
+        with (
+            patch("tools.agent_bus.hop.assess_standing_handoff", return_value=_HANDOFF),
+            patch(
+                "tools.agent_bus.hop._resolve_hop_seat_request_refusal",
+                return_value=None,
+            ),
+            patch("tools.agent_bus.hop.record"),
+            patch("tools.frontier._relay", side_effect=fake_relay),
+        ):
+            return await _hop_dispatch(
+                thread="12286",
+                reason="context-pressure",
+                from_agent="web-anthropic",
+            )
+
+    asyncio.run(run())
+    body = captured["body"]
+    assert body["mission_kind"] == "hop"
+    assert "predecessor_registration_id" not in body
+
+
 def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     captured: dict[str, object] = {}
 

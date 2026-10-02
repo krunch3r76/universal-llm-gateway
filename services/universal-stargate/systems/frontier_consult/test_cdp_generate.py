@@ -1172,6 +1172,77 @@ def test_non_hop_does_not_exempt_own_generate(
     assert exc.value.code == "cdp_external_gate_live"
 
 
+def test_refuse_generate_wire_miss_mission_kind_none_refuses_own_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:37182 live miss: hop fire without mission_kind=hop refuses own generate."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        _refuse_external_gate_for_generate,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "f96a2cac-98f5-45cf-b6a8-2bbbba6759d0",
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "c1caf180",
+                }
+            ]
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        _refuse_external_gate_for_generate(
+            purpose="operator-proxy",
+            parent_thread="12286",
+            thread_id="12286",
+            request_id="7442e2891b03",
+            execution_id="new-hop-successor",
+            mission_kind=None,
+            predecessor_registration_id="c1caf180",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
+def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wired hop: mission_kind=hop + predecessor registration excludes own generate."""
+    from systems.frontier_consult.cdp_generate import (
+        _refuse_external_gate_for_generate,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "f96a2cac-98f5-45cf-b6a8-2bbbba6759d0",
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "c1caf180",
+                }
+            ]
+        },
+    )
+    _refuse_external_gate_for_generate(
+        purpose="operator-proxy",
+        parent_thread="12286",
+        thread_id="12286",
+        request_id="req-hop-wired",
+        execution_id="new-hop-successor",
+        mission_kind="hop",
+        predecessor_registration_id="c1caf180",
+    )
+
+
 def test_refuse_second_external_gate_ignores_terminal_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
