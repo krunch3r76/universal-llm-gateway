@@ -161,3 +161,62 @@ def test_fallback_read_legacy_document_omits_seat_rows() -> None:
         out = attach_registry_seated_rows(snap)
     assert "seat_rows" not in out
     assert out.get("seat_rows") is None
+
+
+@pytest.mark.offline
+def test_attach_stamps_retired_when_seat_lists_already_injected() -> None:
+    """a:37225: Jupiter pre-injects seated_rows/seat_rows; hub must still stamp retired."""
+    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+    snap = {
+        "rows": [
+            {
+                "execution_id": "pred",
+                "registration_id": "reg-closed",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            }
+        ],
+        "seated_rows": [
+            {
+                "registration_id": "reg-open",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "seat_state": "active",
+                "stream_state": "running",
+            }
+        ],
+        "seat_rows": [],
+        "running_count": 1,
+    }
+    payload = {
+        "availability": "ok",
+        "seat_field_schema": 1,
+        "seat_count": 2,
+        "seats": [
+            {
+                "registration_id": "reg-closed",
+                "status": "dormant",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "seat_closed_at": "2026-10-02T05:59:24.364711+00:00",
+            },
+            {
+                "registration_id": "reg-open",
+                "status": "active",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "seat_closed_at": None,
+            },
+        ],
+    }
+    with patch(
+        "claude_bundles.cdp_registry_remote_read.read_fleet_registry",
+        return_value=payload,
+    ):
+        out = attach_registry_seated_rows(snap)
+    assert out["retired_registration_ids"] == ["reg-closed"]
+    # Pre-injected lists are preserved (no re-project).
+    assert out["seated_rows"][0]["registration_id"] == "reg-open"

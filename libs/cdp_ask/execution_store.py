@@ -308,10 +308,19 @@ class ExecutionStore:
                 raw, stream_index=stream_index, observed_at=observed_at
             )
         except Exception:  # noqa: BLE001 — identity attach must not break admission
+            raw = {}
             seated = []
             seat = []
         payload = attach_seated_rows(payload, seated)
         payload = attach_seat_rows(payload, seat)
+        # Closed predecessors stay out of seated_rows but may still stream in
+        # ``rows`` (human keeps chatting). Stamp retired so hub census drops
+        # them even when attach early-outs on pre-injected seat lists (a:37225).
+        from claude_bundles.hop_cadence_seat_snap import (
+            attach_retired_registration_ids,
+        )
+
+        payload = attach_retired_registration_ids(payload, raw)
         # Registry seat-axis rows carry seat_bound_at and other numeric metadata;
         # transcript zones keep them out of the seal walk (UnqualifiedScalarError).
         decl.transcript("rows", reason="pending/running execution store rows verbatim")
@@ -327,6 +336,10 @@ class ExecutionStore:
         )
         decl.transcript(
             "seat_rows", reason="registry seat-open axis verbatim"
+        )
+        decl.transcript(
+            "retired_registration_ids",
+            reason="seat_closed_at registration ids for census filter (a:37225)",
         )
         attach_x_display_capacity(payload, decl)
         return seal(payload, decl)

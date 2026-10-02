@@ -313,11 +313,55 @@ def attach_seat_rows(
     return out
 
 
+def retired_registration_ids_from_records(
+    records: Mapping[str, Mapping[str, Any]] | Mapping[str, Any],
+) -> list[str]:
+    """Registration ids with ``seat_closed_at`` set — census must drop these.
+
+    Jupiter ``active-work`` projects listable seats into ``seated_rows`` and
+    omits closed ones, but a human-kept-alive predecessor can still appear as
+    a live execution-store row. Without this list, hub attach early-outs on
+    pre-injected seat lists and census N stays ≥2 (a:37225).
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for rid, row in records.items():
+        if not isinstance(row, dict):
+            continue
+        if row.get("seat_closed_at") is None:
+            continue
+        token = str(row.get("registration_id") or rid or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
+
+
+def attach_retired_registration_ids(
+    snap: dict[str, Any],
+    records: Mapping[str, Mapping[str, Any]] | Mapping[str, Any],
+) -> dict[str, Any]:
+    """Stamp ``retired_registration_ids`` from *records* onto a copy of *snap*."""
+    retired = retired_registration_ids_from_records(records)
+    if not retired:
+        return snap
+    out = dict(snap)
+    out["retired_registration_ids"] = retired
+    return out
+
+
 def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
-    """Attach live registry seats when the caller has not already injected them."""
+    """Attach live registry seats and always stamp retired ids when missing.
+
+    Jupiter ``active-work`` already injects ``seated_rows`` / ``seat_rows`` as
+    lists so hub must not early-out before stamping ``retired_registration_ids``
+    — otherwise closed-but-streaming predecessors stay in census (a:37225).
+    """
     need_seated = not isinstance(snap.get(SEATED_ROWS_KEY), list)
     need_seat = not isinstance(snap.get(SEAT_ROWS_KEY), list)
-    if not need_seated and not need_seat:
+    need_retired = not isinstance(snap.get("retired_registration_ids"), list)
+    if not need_seated and not need_seat and not need_retired:
         return snap
     stream_index = build_stream_index_from_snap(snap)
     observed_at = str(snap.get("observed_at") or "").strip() or None
@@ -343,16 +387,8 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
                     raw, stream_index=stream_index, observed_at=observed_at
                 ),
             )
-    retired = [
-        str(rid).strip()
-        for rid, row in raw.items()
-        if isinstance(row, dict)
-        and row.get("seat_closed_at") is not None
-        and str(rid).strip()
-    ]
-    if retired:
-        out = dict(out)
-        out["retired_registration_ids"] = retired
+    if need_retired:
+        out = attach_retired_registration_ids(out, raw)
     return out
 
 

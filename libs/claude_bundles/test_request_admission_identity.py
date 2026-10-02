@@ -1086,6 +1086,152 @@ def test_caller_supplied_admits_when_census_n_ge_2():
     assert refusal is None
 
 
+def test_retired_closed_predecessor_still_streaming_collapses_census_to_n1():
+    """a:37225: human keeps chatting in a seat_closed_at predecessor.
+
+    Execution-store still shows the closed registration as stream_state=running.
+    With retired_registration_ids stamped, census drops it and hop admits the
+    sole open successor (single-CSE regression guard for the happy path shape).
+    """
+    snap = {
+        "rows": [
+            {
+                "execution_id": "pred-exec",
+                "registration_id": "2585f609433746ba8d152c9dba5e05ab",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+            {
+                "execution_id": "succ-exec",
+                "registration_id": "787fbe4d985643a3a9754533cf9d0081",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+        ],
+        "seated_rows": [
+            {
+                "registration_id": "787fbe4d985643a3a9754533cf9d0081",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "seat_state": "active",
+                "stream_state": "running",
+            },
+        ],
+        "seat_rows": [],
+        # Without this stamp, census stays N=2 (today's a:37225 failure).
+        "retired_registration_ids": ["2585f609433746ba8d152c9dba5e05ab"],
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"12286": {"thread_id": "12286"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="12286",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+        refusal = gate_request_admission(
+            thread_id="12286",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.census_n == 1
+    assert identity.match_registration_ids == (
+        "787fbe4d985643a3a9754533cf9d0081",
+    )
+    assert identity.source == "single_seat_active_work"
+    assert refusal is None
+
+
+def test_dual_streaming_without_retired_stamp_still_ambiguous():
+    """Guard: two open streams and no retired list still refuse (not pick-one)."""
+    snap = {
+        "rows": [
+            {
+                "execution_id": "pred-exec",
+                "registration_id": "2585f609433746ba8d152c9dba5e05ab",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+            {
+                "execution_id": "succ-exec",
+                "registration_id": "787fbe4d985643a3a9754533cf9d0081",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+        ],
+        "seated_rows": [],
+        "seat_rows": [],
+    }
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"12286": {"thread_id": "12286"}},
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="12286",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.unresolvable_reason == "ambiguous_matches"
+    assert identity.census_n == 2
+
+
+def test_single_open_operator_seat_admits_without_caller():
+    """Single-CSE hop happy path — N=1 still binds without wire id."""
+    snap = {
+        "rows": [
+            {
+                "execution_id": "only",
+                "registration_id": "787fbe4d985643a3a9754533cf9d0081",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+        ],
+        "seated_rows": [],
+        "seat_rows": [],
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"12286": {"thread_id": "12286"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="12286",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert refusal is None
+
+
 def test_gate_snap_load_failed_emits_reason_not_empty_snap():
     with (
         patch(
