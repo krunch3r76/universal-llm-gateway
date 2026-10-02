@@ -276,6 +276,7 @@ def stage_cdp_prompt_with_skills(
     )
     from claude_bundles.operator_proxy_mission import (
         MISSION_SKILL_SLUGS,
+        ensure_operator_proxy_mission_prompt,
         is_operator_proxy_mission_purpose,
         purpose_implies_mission,
     )
@@ -313,13 +314,11 @@ def stage_cdp_prompt_with_skills(
         packet_path=packet_path,
         sidecar_ref=sidecar_ref,
     )
-    from claude_bundles.operator_proxy_mission import (
-        ensure_operator_proxy_mission_prompt,
-        is_operator_proxy_mission_purpose,
-    )
 
     if is_operator_proxy_mission_purpose(purpose):
-        from claude_bundles.operator_proxy_hop_status import standing_handoff_text_for_prompt
+        from claude_bundles.operator_proxy_hop_status import (
+            standing_handoff_text_for_prompt,
+        )
 
         body = ensure_operator_proxy_mission_prompt(
             body,
@@ -352,9 +351,9 @@ def stage_cdp_prompt_with_skills(
 
     slash_slugs, _inline_slugs = partition_cdp_skills(effective)
     # Induction turn covers every shared_sync slug; slash lines would double-load.
-    # StagedPrompt.mission stays the purpose/header predicate for the worker.
-    # Mission skill floor and hop briefing bind only from session/purpose wire,
-    # not from a quoted purpose= line in the author body (typed-job fork 8).
+    # Mission flag, skill floor, and hop briefing bind only from session/purpose
+    # wire (typed-job fork 12 / AC3). A quoted purpose= line in the author body
+    # is not a mission selector.
     mission = purpose_implies_mission(purpose, body)
     mission_window = is_operator_proxy_mission_purpose(purpose)
     omit_slash = mission_window or bool(slash_slugs)
