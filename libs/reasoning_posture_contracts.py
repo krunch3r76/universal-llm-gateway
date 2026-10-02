@@ -29,9 +29,12 @@ FREEFORM_CONTRACTS: frozenset[str] = HARNESS_STACK_SKIP_JOBS
 REASONING_POSTURE_SLASH = "/reasoning-posture"
 
 # Shared Use-line for GIW preamble, Stargate handoff enrich, and cursor-auto admit.
+# Plain-language cue matching core SKILL.md (a:37289); keep the Use-line stem
+# so _USE_LINE_RE de-dup still matches author-supplied copies.
 REASONING_POSTURE_PREAMBLE = (
-    "Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; "
-    "steelman / calibrate / courage; thinking_off does not waive."
+    "Use the `reasoning-posture` skill: state the question and what is out of "
+    "scope, steelman before critique, label confidence, answer directly, "
+    "check the source before conceding, one bounded step at a time."
 )
 
 _SLASH_LINE_RE = re.compile(r"(?m)^/reasoning-posture\s*$")

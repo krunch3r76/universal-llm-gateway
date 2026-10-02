@@ -502,7 +502,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **Ops:** `generate` | `to_thread` | `handoff` | `steer`.
 
-        **Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role).
+        **Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role). MCP `contract` forwards as Stargate body `job` (generate/to_thread/handoff); `purpose` forwards as body `purpose` on generate only.
 
         **steer:** `dispatch_id` + `steer`∈{`park_for_restart`,`cancel_discard`,`inject`} + `reason`. `directive` required iff `inject`. `ttl_s` default 300. GIW 404/409/422/503 fail-closed. `inject`→202. `park_for_restart` keeps the inherited `execution_id` until the resume CLOSEOUT. `cancel_discard` ends the link.
 

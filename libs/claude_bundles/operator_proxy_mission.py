@@ -222,7 +222,7 @@ def ensure_operator_proxy_mission_prompt(
 
 
 # Header declaration only. A prose quote (review packets, seat-map
-# ``team_dispatch(... session=operator-proxy ...)``) is not a mission.
+# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
 _PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
     r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",
