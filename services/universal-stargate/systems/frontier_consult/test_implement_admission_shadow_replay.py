@@ -12,7 +12,10 @@ from .shadow_replay import ReplayCase, classify, run_replay
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "implement_admission"
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_WORKSPACES_ROOT = _REPO_ROOT.parent
+# Checkout root, not its parent. A lane worktree lives under a directory
+# already named universal-llm-gateway, so repo.parent is not the mount that
+# holds universal-llm-gateway/<rel>. read_packet strips that prefix and
+# resolves <rel> under the tree under test.
 
 
 def _packet_workspaces_rel(name: str) -> str:
@@ -100,7 +103,7 @@ def test_admission_read_canonical_api() -> None:
     assert good.is_file()
     packet = read_packet(
         _packet_workspaces_rel(good.name),
-        workspaces_root=_WORKSPACES_ROOT,
+        workspaces_root=_REPO_ROOT,
     )
     assert "acceptance" in packet.text.lower()
     assert packet.packet_sha256.startswith("sha256:")

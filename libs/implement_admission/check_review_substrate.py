@@ -251,7 +251,9 @@ def cursor_role_turn_sender(job: str, model: str) -> str | None:
         return None
     if not is_cursor_check_review_model(model):
         return None
-    return cursor_delivery_from_role(model)
+    # Acceptance item 7: delivery is reviewer for every allowlisted model,
+    # including cursor/grok-4.7. cursor_delivery_from_role is absent.
+    return "reviewer"
 
 
 def resolve_check_review_model(

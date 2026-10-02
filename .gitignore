@@ -168,6 +168,8 @@ README_REVISED.md
 !services/agent-bus/README.md
 !services/universal-stargate/systems/pipeline/README.md
 !services/universal-stargate/systems/federation/README.md
+# Golden packets for test_implement_admission_shadow_replay (worktree must contain them).
+!/services/universal-stargate/systems/frontier_consult/fixtures/implement_admission/packets/*.md
 !agent-surface/
 !agent-surface/**/*.md
 

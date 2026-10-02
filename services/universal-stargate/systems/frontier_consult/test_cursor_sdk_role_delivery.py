@@ -27,6 +27,7 @@ _TABLE_MODELS = (
     "cursor/gemini-3.6-flash",
 )
 
+
 def test_closeout_grammar_follows_job_not_model() -> None:
     findings = "Findings ok."
     shaped = closeout_for_job("check-review", findings)
@@ -37,21 +38,28 @@ def test_closeout_grammar_follows_job_not_model() -> None:
 
 
 def test_role_turn_sender_table() -> None:
-    """Exactly one contract×model cell returns skeptic; the other twenty return None."""
+    """check-review on an allowlisted model returns reviewer; every other cell is None.
+
+    Spec acceptance item 7: delivery_role=reviewer including cursor/grok-4.7.
+    cursor_delivery_from_role is absent, so grok is not a skeptic cell.
+    """
     hits = []
     for contract in _TABLE_CONTRACTS:
         for model in _TABLE_MODELS:
             sender = cursor_role_turn_sender(contract, model)
             if sender is not None:
                 hits.append((contract, model, sender))
-    assert hits == [("check-review", "cursor/grok-4.7", "skeptic")]
+    assert hits == [
+        ("check-review", "cursor/grok-4.7", "reviewer"),
+        ("check-review", "cursor/gpt-5.6-luna", "reviewer"),
+    ]
     assert len(_TABLE_CONTRACTS) * len(_TABLE_MODELS) == 21
 
 
 def test_poll_hint_stays_cursor_sdk_when_role_bridge_eligible() -> None:
     """Friction 24229: bridge may fail closed; wait identity = SDK closeout author."""
     model = "cursor/grok-4.7"
-    assert cursor_role_turn_sender("check-review", model) == "skeptic"
+    assert cursor_role_turn_sender("check-review", model) == "reviewer"
     fields = build_handoff_result(
         thread_id="5094",
         to_agent="cursor-sdk:dispatch:95b09ed1",
@@ -60,6 +68,7 @@ def test_poll_hint_stays_cursor_sdk_when_role_bridge_eligible() -> None:
     assert fields["reply_from_agent"] == CURSOR_SDK_REPLY_SEAT
     assert fields["poll_hint"]["arguments"]["from_agent"] == CURSOR_SDK_REPLY_SEAT
     assert fields["poll_hint"]["arguments"]["from_agent"] != "skeptic"
+    assert fields["poll_hint"]["arguments"]["from_agent"] != "reviewer"
 
 
 def test_conforming_closeout_requires_file_evidence_paths() -> None:
