@@ -101,17 +101,21 @@ def test_hop_successor_binds_driving_seat() -> None:
     assert projected["registration_id"] == "reg-hop"
 
 
-def test_select_registration_id_picks_max_seat_bound_at_with_reason() -> None:
-    reg_id, reason = _select_registration_id(
+def test_lane_seat_holder_conflict_matches_resolve_winner() -> None:
+    from cdp_ask.lane_admission import lane_seat_holder
+
+    seat_rows = seat_rows_from_registry_records(
         [
-            ("reg-old", 10.0),
-            ("reg-new", 500.0),
+            _registry_record(registration_id="reg-old", seat_bound_at=10.0),
+            _registry_record(registration_id="reg-new", seat_bound_at=500.0),
         ]
     )
-    assert reg_id == "reg-new"
-    assert reason is not None
-    assert "seat_bound_at" in reason
-    assert "reg-new" in reason
+    snap = {"seat_rows": seat_rows, "observed_at": "2026-09-15T03:00:00+00:00"}
+    holder = lane_seat_holder(snap, "10479")
+    assert holder["state"] == "conflict"
+    assert holder["registration_id"] == "reg-new"
+    out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
+    assert out["registration_id"] == "reg-new"
 
 
 def test_resolve_dormant_seat_row_via_http() -> None:
@@ -144,7 +148,11 @@ def test_http_failure_returns_unavailable_not_local() -> None:
 
 def test_http_malformed_json_returns_null_with_observed_at() -> None:
     out = resolve_operator_seat(
-        "10479", get_lane_snapshot=lambda: {"observed_at": "2026-09-15T02:00:00+00:00"}
+        "10479",
+        get_lane_snapshot=lambda: {
+            "observed_at": "2026-09-15T02:00:00+00:00",
+            "seat_rows": [],
+        },
     )
     assert out["source"] is None
     assert out["observed_at"] == "2026-09-15T02:00:00+00:00"
@@ -183,6 +191,15 @@ def test_two_seat_open_rows_selects_newest_bound_at() -> None:
     assert reg_id == "reg-new"
     assert reason is not None
     assert "500.0" in reason
+
+
+def test_missing_seat_rows_key_is_unavailable() -> None:
+    out = resolve_operator_seat(
+        "10479",
+        get_lane_snapshot=lambda: {"observed_at": "t"},
+    )
+    assert out["authority_reachable"] is False
+    assert out["source"] == "unavailable"
 
 
 def test_empty_http_seat_rows_returns_null_not_local_fallback() -> None:

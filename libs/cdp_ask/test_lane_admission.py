@@ -17,7 +17,9 @@ from cdp_ask.lane_admission import (
     escalation_lane_refusal,
     evaluate_new_admission,
     is_seat_purpose,
+    lane_seat_holder,
     purpose_lane_refusal,
+    seat_holder_refusal,
 )
 
 
@@ -25,12 +27,16 @@ def _row(purpose: str, status: str = "running") -> dict[str, Any]:
     return {"purpose": purpose, "status": status}
 
 
-def _snap(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _snap(
+    rows: list[dict[str, Any]],
+    *,
+    seat_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     seat_count, other_count = count_by_purpose_class(rows)
     regime = admission_regime(seat_count)
     abs_hard = effective_abs_hard(seat_count)
     total = seat_count + other_count
-    return {
+    out: dict[str, Any] = {
         "rows": rows,
         "seat_count": seat_count,
         "other_count": other_count,
@@ -40,7 +46,10 @@ def _snap(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "free_slots": max(0, abs_hard - total),
         "at_soft_limit": total >= LANE_SOFT_LIMIT,
         "at_hard_limit": total >= abs_hard,
+        "observed_at": "2026-10-02T20:00:00+00:00",
     }
+    out["seat_rows"] = list(seat_rows) if seat_rows is not None else []
+    return out
 
 
 def test_unknown_purpose_fail_closes_as_seat() -> None:
@@ -204,7 +213,7 @@ def test_escalation_lane_refusal_carved_hard_full() -> None:
 def test_purpose_lane_refusal_global_seats_advisory() -> None:
     rows = [_row("operator-proxy") for _ in range(2)]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(
+    refuse, label, _envelope = purpose_lane_refusal(
         snap, purpose="operator-proxy", unattended=True
     )
     assert refuse is False
@@ -214,7 +223,7 @@ def test_purpose_lane_refusal_global_seats_advisory() -> None:
 def test_purpose_lane_refusal_wires_hop_succession() -> None:
     rows = [_row("operator-proxy") for _ in range(2)]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(
+    refuse, label, _envelope = purpose_lane_refusal(
         snap, purpose="operator-proxy", unattended=True, hop_succession=True
     )
     assert refuse is False
@@ -226,7 +235,7 @@ def test_same_lane_seat_cap_refuses_second_holder() -> None:
         {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "a"},
     ]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(
+    refuse, label, _envelope = purpose_lane_refusal(
         snap, purpose="operator-proxy", parent_thread="6655"
     )
     assert refuse is True
@@ -238,7 +247,7 @@ def test_same_lane_hop_overlap_admits_one_successor() -> None:
         {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "a"},
     ]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(
+    refuse, label, _envelope = purpose_lane_refusal(
         snap,
         purpose="operator-proxy",
         parent_thread="6655",
@@ -254,7 +263,7 @@ def test_same_lane_hop_refuses_third() -> None:
         {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "b"},
     ]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(
+    refuse, label, _envelope = purpose_lane_refusal(
         snap,
         purpose="operator-proxy",
         parent_thread="6655",
@@ -267,7 +276,7 @@ def test_same_lane_hop_refuses_third() -> None:
 def test_unbound_legacy_row_skips_same_lane_cap() -> None:
     rows = [_row("operator-proxy")]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(
+    refuse, label, _envelope = purpose_lane_refusal(
         snap, purpose="operator-proxy", parent_thread="6655"
     )
     assert refuse is False
@@ -320,7 +329,7 @@ def test_attended_seat_plus_advisor_admits_second_advisor() -> None:
 def test_purpose_lane_refusal_advisor_cap_advisory() -> None:
     rows = [_row("ask") for _ in range(2)]
     snap = _snap(rows)
-    refuse, label = purpose_lane_refusal(snap, purpose="ask", unattended=True)
+    refuse, label, _envelope = purpose_lane_refusal(snap, purpose="ask", unattended=True)
     assert refuse is False
     assert label is None
 
@@ -328,3 +337,245 @@ def test_purpose_lane_refusal_advisor_cap_advisory() -> None:
 def test_seat_floor_constant() -> None:
     assert ADVISOR_RESERVE == 1
     assert SEAT_FLOOR == 1
+
+
+def test_non_hop_refused_when_idle_holder_open() -> None:
+    seat_rows = [
+        {
+            "registration_id": "a0e50b34",
+            "parent_thread": "12286",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 100.0,
+            "source": "cdp-registry",
+        }
+    ]
+    snap = _snap([], seat_rows=seat_rows)
+    refusal = seat_holder_refusal(
+        snap,
+        lane="12286",
+        purpose="operator-proxy",
+        mission_kind="root",
+    )
+    assert refusal is not None
+    assert refusal["code"] == "operator_seat_held"
+    assert refusal["data"]["holder_registration_id"] == "a0e50b34"
+
+
+def test_dormant_holder_refuses_non_hop() -> None:
+    seat_rows = [
+        {
+            "registration_id": "reg-dormant",
+            "parent_thread": "6655",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 200.0,
+            "seat_state": "dormant",
+        }
+    ]
+    snap = _snap([], seat_rows=seat_rows)
+    refusal = seat_holder_refusal(
+        snap, lane="6655", purpose="operator-proxy", mission_kind=None
+    )
+    assert refusal is not None
+    assert refusal["code"] == "operator_seat_held"
+
+
+def test_hop_admits_with_matching_or_absent_predecessor() -> None:
+    seat_rows = [
+        {
+            "registration_id": "pred-reg",
+            "parent_thread": "6655",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 100.0,
+        }
+    ]
+    snap = _snap([], seat_rows=seat_rows)
+    assert (
+        seat_holder_refusal(
+            snap,
+            lane="6655",
+            purpose="operator-proxy",
+            mission_kind="hop",
+            predecessor_registration_id="pred-reg",
+            hop_succession=True,
+        )
+        is None
+    )
+    assert (
+        seat_holder_refusal(
+            snap,
+            lane="6655",
+            purpose="operator-proxy",
+            mission_kind="hop",
+            hop_succession=True,
+        )
+        is None
+    )
+
+
+def test_hop_refused_on_predecessor_mismatch() -> None:
+    seat_rows = [
+        {
+            "registration_id": "holder-reg",
+            "parent_thread": "6655",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 100.0,
+        }
+    ]
+    snap = _snap([], seat_rows=seat_rows)
+    refusal = seat_holder_refusal(
+        snap,
+        lane="6655",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        predecessor_registration_id="other-reg",
+        hop_succession=True,
+    )
+    assert refusal is not None
+    assert refusal["code"] == "seat_holder_mismatch"
+
+
+def test_vacant_lane_admits() -> None:
+    snap = _snap([], seat_rows=[])
+    assert (
+        seat_holder_refusal(
+            snap, lane="6655", purpose="operator-proxy", mission_kind="root"
+        )
+        is None
+    )
+
+
+def test_absent_seat_rows_refuses_non_hop() -> None:
+    snap = _snap([])
+    del snap["seat_rows"]
+    refusal = seat_holder_refusal(
+        snap,
+        lane="6655",
+        purpose="operator-proxy",
+        mission_kind="root",
+    )
+    assert refusal is not None
+    assert refusal["code"] == "seat_unavailable"
+
+
+def test_absent_seat_rows_hop_still_admits() -> None:
+    snap = _snap([])
+    del snap["seat_rows"]
+    assert (
+        seat_holder_refusal(
+            snap,
+            lane="6655",
+            purpose="operator-proxy",
+            mission_kind="hop",
+            hop_succession=True,
+        )
+        is None
+    )
+
+
+def test_lane_seat_holder_prefers_seat_lane_over_parent_thread() -> None:
+    seat_rows = [
+        {
+            "registration_id": "reg-axis",
+            "seat_lane": "6655",
+            "parent_thread": "9999",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 10.0,
+        }
+    ]
+    held = lane_seat_holder(_snap([], seat_rows=seat_rows), "6655")
+    assert held["state"] == "held"
+    assert held["registration_id"] == "reg-axis"
+    vacant = lane_seat_holder(_snap([], seat_rows=seat_rows), "9999")
+    assert vacant["state"] == "vacant"
+
+
+def test_lane_seat_holder_falls_back_to_parent_thread() -> None:
+    seat_rows = [
+        {
+            "registration_id": "reg-parent",
+            "parent_thread": "6655",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 10.0,
+        }
+    ]
+    holder = lane_seat_holder(_snap([], seat_rows=seat_rows), "6655")
+    assert holder["state"] == "held"
+    assert holder["registration_id"] == "reg-parent"
+
+
+def test_registry_unavailable_refuses_non_hop() -> None:
+    snap = _snap([], seat_rows=[])
+    snap["registry_availability"] = "unavailable"
+    refusal = seat_holder_refusal(
+        snap,
+        lane="6655",
+        purpose="operator-proxy",
+        mission_kind=None,
+    )
+    assert refusal is not None
+    assert refusal["code"] == "seat_unavailable"
+
+
+def test_lane_seat_holder_conflict_picks_max_bound_at() -> None:
+    seat_rows = [
+        {
+            "registration_id": "reg-old",
+            "parent_thread": "10479",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 10.0,
+        },
+        {
+            "registration_id": "reg-new",
+            "parent_thread": "10479",
+            "purpose": "operator-proxy",
+            "seat_bound_at": 500.0,
+        },
+    ]
+    holder = lane_seat_holder(_snap([], seat_rows=seat_rows), "10479")
+    assert holder["state"] == "conflict"
+    assert holder["registration_id"] == "reg-new"
+    assert holder["candidates"] == ["reg-old", "reg-new"]
+
+
+def test_submit_503_when_load_active_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Registry read failure on the producer must fail-closed a non-hop submit."""
+    from fastapi.testclient import TestClient
+
+    from cdp_ask.app import create_app
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("CDP_ASK_TREE_STATE_REFRESH", "0")
+    monkeypatch.setattr("cdp_ask.app.verify_harvest_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+
+    fail_registry = {"armed": False}
+
+    def _load_active() -> dict:
+        if fail_registry["armed"]:
+            raise OSError("registry unreadable")
+        return {}
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        _load_active,
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        fail_registry["armed"] = True
+        resp = client.post(
+            "/v1/project-ask/executions",
+            json={
+                "purpose": "operator-proxy",
+                "parent_thread": "6655",
+                "mission_kind": "root",
+                "prompt_text": "probe",
+            },
+        )
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["code"] == "seat_unavailable"

@@ -305,6 +305,50 @@ def test_seat_fold_invariant_at_most_one_open_per_lane(
     reg._store.verify_seat_fold_invariant()
 
 
+def test_stamp_only_hop_does_not_retire_predecessor(
+    isolated_registry: Path,
+) -> None:
+    """Bus SEAT_REGISTRATION without successor seat_lane_bound leaves predecessor open."""
+    from cdp_ask.lane_admission import seat_holder_refusal
+    from hop_handoff.body import build_seat_registration_stamp
+
+    from claude_bundles import cdp_registry_store as store_mod
+    from claude_bundles.hop_cadence_seat_snap import seat_rows_from_registry_records
+
+    pred = _mint_driving(holder="pred")
+    assert reg.bind_session_address(pred.registration_id, chat_url=_CSE)
+    succ = reg.register_lane(
+        holder="succ",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread=_LANE,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    stamp = build_seat_registration_stamp(
+        successor_birth_id="birth-succ",
+        registration_id=succ.registration_id,
+        execution_id="exec-succ",
+        parent_thread=_LANE,
+    )
+    assert "SEAT_REGISTRATION" in stamp
+    active = reg._load_active()
+    open_by_lane = store_mod.open_seats_per_lane(active)
+    assert open_by_lane[_LANE] == [pred.registration_id]
+    seat_rows = seat_rows_from_registry_records(list(active.values()))
+    snap = {"seat_rows": seat_rows, "observed_at": "2026-10-02T00:00:00+00:00"}
+    assert (
+        seat_holder_refusal(
+            snap,
+            lane=_LANE,
+            purpose="operator-proxy",
+            mission_kind="hop",
+            hop_succession=True,
+        )
+        is None
+    )
+
+
 def test_cross_home_registry_dir_byte_identical(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

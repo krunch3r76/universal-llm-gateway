@@ -487,14 +487,39 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         snap = await execution_store.active_work_snapshot()
         from cdp_ask.lane_admission import purpose_lane_refusal
 
-        refuse, label = purpose_lane_refusal(
+        refuse, label, envelope = purpose_lane_refusal(
             snap,
             purpose=req.purpose,
             unattended=True,
             hop_succession=(str(req.mission_kind or "").strip().lower() == "hop"),
             parent_thread=req.parent_thread,
+            mission_kind=req.mission_kind,
         )
         if refuse:
+            if envelope and label in {
+                "operator_seat_held",
+                "seat_holder_mismatch",
+                "seat_unavailable",
+            }:
+                from cdp_ask import followup_events as _fe
+
+                with contextlib.suppress(Exception):
+                    _fe.emit(
+                        _fe.cdp_ask_admission_refused_seat_held(
+                            lane=str(req.parent_thread or ""),
+                            holder_registration_id=str(
+                                (envelope.get("data") or {}).get(
+                                    "holder_registration_id"
+                                )
+                                or ""
+                            ),
+                            purpose=req.purpose,
+                            mission_kind=req.mission_kind,
+                            execution_id=None,
+                        )
+                    )
+                status = 503 if label == "seat_unavailable" else 409
+                return JSONResponse(status_code=status, content=envelope)
             detail = f"cdp lane admission refused ({label or 'hard'})"
             raise HTTPException(status_code=429, detail=detail)
         record = await execution_store.create(

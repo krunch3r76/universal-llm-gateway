@@ -313,6 +313,9 @@ class ExecutionStore:
             raw = {}
             seated = []
             seat = []
+            # Fail closed for seat admission. Empty seat_rows alone reads as
+            # vacant; consumers treat this string as registry unread.
+            payload["registry_availability"] = "unavailable"
         payload = attach_seated_rows(payload, seated)
         payload = attach_seat_rows(payload, seat)
         # Closed predecessors stay out of seated_rows but may still stream in

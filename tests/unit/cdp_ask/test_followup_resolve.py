@@ -344,6 +344,74 @@ async def test_execution_id_registration_conflict_still_fail_closed(
 
 
 @pytest.mark.asyncio
+async def test_followup_parent_thread_binds_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
+        lambda: {
+            "seat_rows": [
+                {
+                    "registration_id": "reg-held",
+                    "parent_thread": "6655",
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 100.0,
+                }
+            ],
+            "observed_at": "t",
+        },
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-held")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(
+        parent_thread="6655",
+        prompt_text="x",
+    )
+    target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is None
+    assert target is not None
+    assert target.registration_id == "reg-held"
+    assert path in {"parent_thread", "registration_id"}
+
+
+@pytest.mark.asyncio
+async def test_followup_parent_thread_mismatch_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
+        lambda: {
+            "seat_rows": [
+                {
+                    "registration_id": "reg-held",
+                    "parent_thread": "6655",
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 100.0,
+                }
+            ],
+            "observed_at": "t",
+        },
+    )
+    req = FollowupProjectAskRequest(
+        parent_thread="6655",
+        registration_id="reg-other",
+        prompt_text="x",
+    )
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert path in {"parent_thread", "registration_id"}
+
+
+@pytest.mark.asyncio
 async def test_lane_not_attached_detail_mentions_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

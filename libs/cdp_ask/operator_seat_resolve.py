@@ -16,6 +16,7 @@ from claude_bundles.cdp_registry import chat_url_for_registration
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
+from cdp_ask.lane_admission import lane_seat_holder
 from cdp_ask.lane_snapshot import read_cdp_lane_snapshot
 
 _DEFAULT_TIMEOUT_S = 10.0
@@ -164,13 +165,19 @@ def _resolve_from_http(
     if not isinstance(snap, dict):
         return _null_identity()
     observed_at = str(snap.get("observed_at") or "").strip() or _now_iso()
-    seat_rows = snap.get("seat_rows")
-    if not isinstance(seat_rows, list):
-        return _null_identity(observed_at=observed_at)
-    candidates = _candidates_from_seat_rows(seat_rows, parent_thread, purposes)
-    reg_id, _reason = _select_registration_id(candidates)
+    if snap.get("registry_availability") == "unavailable" or "seat_rows" not in snap:
+        return _unavailable_identity()
+    seat_rows_raw = snap.get("seat_rows")
+    if not isinstance(seat_rows_raw, list):
+        return _unavailable_identity()
+    holder = lane_seat_holder(snap, parent_thread, purposes=purposes)
+    state = holder.get("state")
+    if state == "unavailable":
+        return _unavailable_identity()
+    reg_id = str(holder.get("registration_id") or "").strip() or None
     if not reg_id:
         return _null_identity(observed_at=observed_at)
+    seat_rows = seat_rows_raw
     chat_url = (
         _chat_url_from_provenance(reg_id, timeout_s=timeout_s, client=client)
         or _chat_url_for_registration(reg_id)

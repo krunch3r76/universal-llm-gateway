@@ -120,39 +120,76 @@ def _is_better_holder(new: Any, old: Any) -> bool:
     )
 
 
-def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
-    """Build purpose-filtered registry candidates collapsed to one holder per lane."""
-    lanes = list(cdp_registry.list_active())
-    purpose_filtered = [
-        lane
-        for lane in lanes
-        if (lane.purpose or "").strip() in OPERATOR_PROXY_MISSION_PURPOSES
-    ]
-    holders: dict[str, Any] = {}
-    for lane in purpose_filtered:
-        chat_url = cdp_registry.chat_url_for_registration(lane.registration_id)
+def _mission_candidates_from_seat_rows(
+    snap: dict[str, Any],
+) -> list[AttendedCandidate] | None:
+    """Build attended candidates from the seat-axis projection; None if unavailable."""
+    from cdp_ask.lane_admission import (
+        _seat_axis_projection_unavailable,
+        lane_seat_holder,
+    )
+
+    if _seat_axis_projection_unavailable(snap):
+        return None
+    seat_rows = snap.get("seat_rows")
+    if not isinstance(seat_rows, list):
+        return None
+    lane_keys: set[str] = set()
+    for row in seat_rows:
+        if not isinstance(row, dict):
+            continue
+        lane = str(row.get("parent_thread") or "").strip()
+        if lane:
+            lane_keys.add(lane)
+    active = {reg.registration_id: reg for reg in cdp_registry.list_active()}
+    candidates: list[AttendedCandidate] = []
+    for lane in sorted(lane_keys):
+        holder = lane_seat_holder(snap, lane)
+        if holder.get("state") not in {"held", "conflict"}:
+            continue
+        reg_id = str(holder.get("registration_id") or "").strip()
+        if not reg_id:
+            continue
+        lane_row = active.get(reg_id)
+        if lane_row is None:
+            continue
+        purpose = (lane_row.purpose or "").strip()
+        if purpose not in OPERATOR_PROXY_MISSION_PURPOSES:
+            continue
+        chat_url = (
+            cdp_registry.chat_url_for_registration(reg_id)
+            or str(holder.get("chat_url") or "").strip()
+            or None
+        )
         if not chat_url:
             continue
-        key = _holder_key(lane)
-        prev = holders.get(key)
-        if prev is None or _is_better_holder(lane, prev[0]):
-            holders[key] = (lane, chat_url)
-    candidates: list[AttendedCandidate] = []
-    for lane, chat_url in holders.values():
-        purpose = (lane.purpose or "").strip()
         candidates.append(
             AttendedCandidate(
-                registration_id=lane.registration_id,
-                cdp_url=lane.cdp_url,
+                registration_id=reg_id,
+                cdp_url=lane_row.cdp_url,
                 chat_url=chat_url,
                 purpose=purpose,
                 provenance=resolve_provenance(
-                    registration_id=lane.registration_id,
+                    registration_id=reg_id,
                     host_listable=is_row_present,
                 ),
             )
         )
-    return candidates, len(purpose_filtered)
+    return candidates
+
+
+def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
+    """Build operator candidates from active-work ``seat_rows`` (one holder per lane)."""
+    from cdp_ask.lane_snapshot import read_cdp_lane_snapshot
+
+    try:
+        snap = read_cdp_lane_snapshot()
+    except Exception:
+        snap = {}
+    from_seat = _mission_candidates_from_seat_rows(snap)
+    if from_seat is not None:
+        return from_seat, len(from_seat)
+    return [], 0
 
 
 def _probe_liveness(cdp_url: str, chat_url: str) -> LivenessProbe:

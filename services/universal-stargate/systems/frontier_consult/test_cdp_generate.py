@@ -995,7 +995,7 @@ def test_refuse_second_external_gate_at_fire_when_lane_live(
 def test_refuse_second_external_gate_seated_rows_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Seated identity without a live stream must not block the external gate (R2′)."""
+    """Seated identity without a live stream must not block review external gate."""
     from systems.frontier_consult.cdp_generate import (
         refuse_second_external_gate_at_fire,
     )
@@ -1014,6 +1014,7 @@ def test_refuse_second_external_gate_seated_rows_only(
                     "registration_id": "reg-seated",
                 }
             ],
+            "seat_rows": [],
         },
     )
     refuse_second_external_gate_at_fire(
@@ -1022,6 +1023,41 @@ def test_refuse_second_external_gate_seated_rows_only(
         thread_id="10128",
         request_id="req-b1",
     )
+
+
+def test_refuse_external_gate_idle_operator_seat_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [],
+            "seat_rows": [
+                {
+                    "registration_id": "a0e50b34",
+                    "parent_thread": "12286",
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 100.0,
+                }
+            ],
+            "observed_at": "2026-10-02T20:18:00+00:00",
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="operator-proxy",
+            parent_thread="12286",
+            thread_id="12286",
+            request_id="req-r-replay",
+            mission_kind="root",
+        )
+    assert exc.value.code == "operator_seat_held"
+    assert exc.value.status_code == 409
 
 
 def test_hop_from_live_own_generate_exempts_sole_gate(
@@ -1045,7 +1081,8 @@ def test_hop_from_live_own_generate_exempts_sole_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "reg-caller",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     refuse_second_external_gate_at_fire(
@@ -1089,7 +1126,8 @@ def test_hop_exempt_does_not_clear_a_second_live_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "reg-successor",
                 },
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1124,7 +1162,8 @@ def test_hop_sole_live_gate_exempt_without_registration(
                     "stream_state": "running",
                     "purpose": "operator-proxy",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     refuse_second_external_gate_at_fire(
@@ -1158,7 +1197,8 @@ def test_non_hop_does_not_exempt_own_generate(
                     "purpose": "operator-proxy",
                     "registration_id": "reg-caller",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1193,7 +1233,8 @@ def test_refuse_generate_wire_miss_mission_kind_none_refuses_own_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "c1caf180",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1229,7 +1270,8 @@ def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "c1caf180",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     _refuse_external_gate_for_generate(
@@ -1246,7 +1288,7 @@ def test_refuse_generate_mission_kind_hop_admits_own_live_gate(
 def test_hop_mismatched_registration_refuses_even_with_sole_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fail-closed: non-matching predecessor_registration_id does not sole-gate exempt."""
+    """Fail-closed: mismatched predecessor_registration_id skips sole-gate exempt."""
     from systems.frontier_consult.admission import FrontierEndpointError
     from systems.frontier_consult.cdp_generate import (
         refuse_second_external_gate_at_fire,
@@ -1264,7 +1306,8 @@ def test_hop_mismatched_registration_refuses_even_with_sole_gate(
                     "purpose": "operator-proxy",
                     "registration_id": "c1caf180",
                 }
-            ]
+            ],
+            "seat_rows": [],
         },
     )
     with pytest.raises(FrontierEndpointError) as exc:
