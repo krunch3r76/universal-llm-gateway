@@ -94,7 +94,10 @@ def _missing_witness_message(row_id: str, *, stops: str | None = None) -> str:
             "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
         )
     if row_id == "G5":
-        return "post SCORE_RESURFACE on summoning thread after G3 journal"
+        return (
+            "post SCORE_RESURFACE on summoning thread after G3 journal "
+            "(cite CDP exec id + review sha; a:37198)"
+        )
     if row_id == "G6":
         return "hang R1 pre-land review URI (`cdp/opus-5` job=delivery-review on lane branch before merge)"
     if row_id == "G7":
