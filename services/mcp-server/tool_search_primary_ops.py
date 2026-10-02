@@ -24,6 +24,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from cortex_store.dispatch_ops._friction_charter_attrs import (
+    PROTOCOL_ANCHOR_VARIANTS,
+)
+from cortex_store.dispatch_ops._shared import _FRICTION_CATEGORIES
+
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 
 PRIMARY_OP_NOTE = (
@@ -47,6 +52,18 @@ class PrimaryOpEntry:
         return f"{self.primary_tool}.{self.op}"
 
 
+def _friction_category_enum() -> str:
+    return "{" + ", ".join(sorted(_FRICTION_CATEGORIES)) + "}"
+
+
+def _friction_optional_args_hint() -> str:
+    return (
+        f"category ∈ {_friction_category_enum()}; claim aliases note; "
+        "service aliases owner; protocol requires exactly one anchor "
+        f"unless actionable=false: {PROTOCOL_ANCHOR_VARIANTS}."
+    )
+
+
 _CORTEX_FRICTION = PrimaryOpEntry(
     primary_tool="cortex",
     op="friction",
@@ -56,18 +73,12 @@ _CORTEX_FRICTION = PrimaryOpEntry(
     ),
     call_shape=(
         'cortex(tool="friction", arguments=\'{"owner": "service:<slug>", '
-        '"category": "<feature|tool_error|schema_gap|doc_drift|protocol|…>", '
+        f'"category": "<{_friction_category_enum()}>", '
         '"note": "<observation>", "suggestion": "<optional ask>", '
         '"evidence_uris": ["agent-bus:<thread>"], "actionable": true}\')'
     ),
     required_args=("owner", "note"),
-    optional_args_hint=(
-        "category ∈ {tool_mismatch, tool_absent, tool_error, schema_gap, "
-        "boot_drift, lesson_gap, lesson_conflict, stale_context, doc_drift, "
-        "protocol, regression, feature}; claim aliases note; service aliases "
-        "owner; protocol category requires {charter_root, window_index} or "
-        "{root_thread, cp_ordinal}."
-    ),
+    optional_args_hint=_friction_optional_args_hint(),
     keywords=frozenset(
         {"friction", "file", "filing", "observation", "report", "gap", "owner"}
     ),

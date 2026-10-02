@@ -17,6 +17,7 @@ from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl, _list_assertions_impl
 from ._friction_charter_attrs import (
+    PROTOCOL_ANCHOR_VARIANTS,
     _PROTOCOL_ANCHOR_REQUIRED_ERROR,
     _build_friction_provenance_attrs,
     _charter_variant_complete,
@@ -110,13 +111,7 @@ def _op_friction(
     confidence_score: float | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    """Log a friction assertion; protocol category requires a complete anchor.
-
-    Anchor variants: charter ``{charter_root, window_index}`` or continuity
-    ``{root_thread, cp_ordinal}``. ``confidence`` is honoured when supplied;
-    omitted → hypothesized/0.5. Invalid values are rejected — never silently
-    downgraded.
-    """
+    """Log a friction assertion; protocol category requires a complete anchor."""
     if (
         owner is not None
         and service is not None
@@ -269,6 +264,16 @@ def _op_friction(
             anchor_kind=anchor_kind,
         )
     return result
+
+
+_op_friction.__doc__ = (
+    "Log a friction assertion; "
+    f"category ∈ {{{', '.join(sorted(_FRICTION_CATEGORIES))}}}; "
+    "protocol requires exactly one anchor unless actionable=false. "
+    f"Anchor variants: {PROTOCOL_ANCHOR_VARIANTS}. "
+    "``confidence`` is honoured when supplied; omitted → hypothesized/0.5. "
+    "Invalid values are rejected — never silently downgraded."
+)
 
 
 def _anchor_filters_active(

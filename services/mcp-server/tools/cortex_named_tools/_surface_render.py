@@ -17,7 +17,15 @@ from __future__ import annotations
 from typing import Literal
 
 from _derive import CortexSurfaceSpec, derive_cortex_surface
-from cortex_store.dispatch_ops._shared import _FRICTION_CATEGORIES
+from cortex_store.dispatch_ops._friction_charter_attrs import (
+    PROTOCOL_ANCHOR_VARIANTS,
+)
+from cortex_store.dispatch_ops._shared import (
+    _CONFIDENCE_AXIS_STATUS,
+    _FRICTION_CATEGORIES,
+    _LIFECYCLE_AXIS_STATUS,
+    _VALID_CONFIDENCE,
+)
 
 Surface = Literal["life", "code"]
 _CODE_BUDGET = 2048
@@ -60,14 +68,26 @@ def _assert_budget(text: str, surface: Surface) -> None:
         )
 
 
+def _enum_set(members: frozenset[str]) -> str:
+    return "{" + ", ".join(sorted(members)) + "}"
+
+
 def friction_category_call_contract() -> str:
     """Seat-facing friction category + protocol-anchor contract (runtime SOT)."""
-    cats = ", ".join(sorted(_FRICTION_CATEGORIES))
     return (
-        f"friction.category ∈ {{{cats}}}; "
-        "protocol (actionable) requires exactly one anchor: "
-        "charter{charter_root, window_index} or "
-        "continuity{root_thread, cp_ordinal}."
+        f"friction.category ∈ {_enum_set(_FRICTION_CATEGORIES)}; "
+        "protocol requires exactly one anchor unless actionable=false: "
+        f"{PROTOCOL_ANCHOR_VARIANTS}."
+    )
+
+
+def hidden_enum_call_contract() -> str:
+    """Opaque-wire enums seats 422 without a tools/list list (review P6)."""
+    return (
+        f"assert.confidence ∈ {_enum_set(_VALID_CONFIDENCE)}; "
+        "entity.status is dual-axis — omit for live default (no settable "
+        f"'active'); settable confidence {_enum_set(_CONFIDENCE_AXIS_STATUS)} "
+        f"or lifecycle {_enum_set(_LIFECYCLE_AXIS_STATUS)}."
     )
 
 
@@ -101,7 +121,11 @@ def render_cortex_tool_description(
     path = canonical_yaml_path or _DEFAULT_CANONICAL
     spec = derive_cortex_surface(surface, path)
 
-    parts = [_CONSTANT_CORE.rstrip(), friction_category_call_contract()]
+    parts = [
+        _CONSTANT_CORE.rstrip(),
+        friction_category_call_contract(),
+        hidden_enum_call_contract(),
+    ]
     if surface == "life":
         parts.append(_tier1_block(spec))
     else:
