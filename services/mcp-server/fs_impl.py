@@ -12,7 +12,12 @@ from fs_roots import (
     permission_refusal,
 )
 from project_ops import workspaces_impl_registry
-from tool_error_enricher import apply_life_sandbox_default, fs_missing_sandbox_hint
+from tool_error_enricher import fs_missing_sandbox_hint
+from tools.filesystem._batch_ingress import (
+    apply_lane_ingress,
+    attach_batch_key_remap,
+    prepare_fs_call_ingress,
+)
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._fs_dispatch import (
     SEARCH_MODES,
@@ -61,32 +66,6 @@ def _lane_provenance_fields(*, thread: str, branch: str, root: Path) -> dict[str
         "lane_branch": branch,
         "lane_worktree_root": str(root.resolve()),
     }
-
-
-def _apply_lane_ingress(
-    *,
-    path: str,
-    sandbox: str,
-    for_write: bool,
-    lane_root: Path,
-) -> tuple[str, dict[str, Any]]:
-    """Re-resolve ingress against a lane-bound worktree root."""
-    from implement_admission.closeout_helpers import cortex_files_root
-    from implement_admission.scheme_resolve import resolve_fs_ingress
-
-    ingress = resolve_fs_ingress(
-        path,
-        sandbox=sandbox,
-        workspaces_root_override=lane_root,
-        cortex_root=cortex_files_root(),
-        for_write=for_write,
-    )
-    meta: dict[str, Any] = {}
-    if ingress.path_input_normalized:
-        meta["path_input_normalized"] = True
-    if ingress.normalization_advisory:
-        meta["normalization_advisory"] = ingress.normalization_advisory
-    return ingress.rel_path, meta
 
 
 def _resolve_workspaces_binding(
@@ -156,33 +135,21 @@ def fs_impl(
             )
         }
 
-    ingress_meta: dict[str, Any] = {}
-    effective_sandbox = apply_life_sandbox_default(
+    call = prepare_fs_call_ingress(
         surface=surface,
         sandbox=sandbox,
         path=path,
+        paths=paths,
+        for_write=op in _PATH_WRITE_OPS,
     )
-    effective_path = path
+    if call.error is not None:
+        return {"error": call.error}
+    ingress_meta = call.meta
+    effective_sandbox = call.sandbox
+    effective_path = call.path
+    effective_paths = call.paths
+    batch_originals = call.batch_originals
     lane_thread = str(thread).strip() if thread else ""
-    if path.strip():
-        from implement_admission.closeout_helpers import cortex_files_root
-        from implement_admission.scheme_resolve import resolve_fs_ingress
-
-        try:
-            ingress = resolve_fs_ingress(
-                path,
-                sandbox=effective_sandbox or None,
-                cortex_root=cortex_files_root(),
-                for_write=op in _PATH_WRITE_OPS,
-            )
-        except ValueError as exc:
-            return {"error": str(exc)}
-        effective_sandbox = ingress.sandbox
-        effective_path = ingress.rel_path
-        if ingress.path_input_normalized:
-            ingress_meta["path_input_normalized"] = True
-        if ingress.normalization_advisory:
-            ingress_meta["normalization_advisory"] = ingress.normalization_advisory
 
     if effective_sandbox not in _VALID_ROOTS:
         return {"error": fs_missing_sandbox_hint(path, surface=surface)}
@@ -236,7 +203,7 @@ def fs_impl(
                 return bind_error
             with bind_ctx as root:
                 if lane_thread and path.strip():
-                    effective_path, lane_ingress_meta = _apply_lane_ingress(
+                    effective_path, lane_ingress_meta = apply_lane_ingress(
                         path=path,
                         sandbox=effective_sandbox,
                         for_write=op in _PATH_WRITE_OPS,
@@ -310,7 +277,7 @@ def fs_impl(
             return bind_error
         with bind_ctx as root:
             if lane_thread and path.strip():
-                effective_path, lane_ingress_meta = _apply_lane_ingress(
+                effective_path, lane_ingress_meta = apply_lane_ingress(
                     path=path,
                     sandbox=effective_sandbox,
                     for_write=op in _PATH_WRITE_OPS,
@@ -320,7 +287,7 @@ def fs_impl(
             result = dispatch_workspaces_op(
                 op,
                 effective_path,
-                paths,
+                effective_paths,
                 content,
                 target,
                 line,
@@ -336,6 +303,11 @@ def fs_impl(
                 since=since,
             )
         if isinstance(result, dict) and "error" not in result:
+            attach_batch_key_remap(
+                result,
+                batch_originals=batch_originals,
+                resolved_paths=effective_paths,
+            )
             result.update(ingress_meta)
             result.update(
                 life_workspaces_resolution_fields(
@@ -354,7 +326,7 @@ def fs_impl(
         result = fn(
             op=op,
             path=effective_path,
-            paths=paths or [],
+            paths=effective_paths or [],
             content=content,
             target=target,
             line=line,
@@ -367,6 +339,11 @@ def fs_impl(
             mode=mode,
         )
         if isinstance(result, dict) and "error" not in result:
+            attach_batch_key_remap(
+                result,
+                batch_originals=batch_originals,
+                resolved_paths=effective_paths,
+            )
             result.update(ingress_meta)
         return result
     except ValueError as exc:
