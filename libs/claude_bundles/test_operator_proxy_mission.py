@@ -253,7 +253,7 @@ def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
 _PRE_CDC14894A_MISSION_PROMPT_LEN = 42019
 _DISTINCTIVE_REFUSE_SENTENCE = "Re-arming `send_later` as a heartbeat."
 _RUNBOOK_REFUSE_FIXTURE_PATH = (
-    Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_2124_fixture.md"
+    Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_2124_fixture.txt"
 )
 
 
