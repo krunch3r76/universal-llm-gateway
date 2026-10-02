@@ -403,6 +403,7 @@ def test_cdp_operator_proxy_skill_keep_alive_stale_text_absent() -> None:
     )
     text = skill_path.read_text(encoding="utf-8")
     assert "Arm-and-re-arm" not in text
+    assert "continuity hop skips supersede" not in text
     assert "re-arm every turn" not in text
     assert "Re-arm this wake before the turn ends" not in text
     assert "Do not arm Monitor" in text
