@@ -1462,6 +1462,10 @@ def _admit_nested_dispatch(
 def test_g2_named_id_still_live_body_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
     ledger = CursorDispatchLedger.instance()
     row = _stamp_g2_row(ledger, harvest_id=_LIVE_ID)
     with ledger._connect() as conn:
@@ -1569,7 +1573,13 @@ def test_g2_prefix_matches_zero_or_many_body_none(
     assert build_hop_team_dispatch_body(row_bad) is None
 
 
-def test_g2_terminal_id_other_nest_live_no_post() -> None:
+def test_g2_terminal_id_other_nest_live_no_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
     ledger = CursorDispatchLedger.instance()
     _stamp_g2_row(ledger, harvest_id=_FULL_ID)
     _admit_nested_dispatch(
@@ -1781,6 +1791,7 @@ def test_g2_parked_transport_terminal_harvest_body_none() -> None:
         nest_under="pred-hop-1",
         status="completed",
     )
+    row = _refresh_row(ledger, "pred-hop-1")
     assert build_hop_team_dispatch_body(row) is None
     assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
 
