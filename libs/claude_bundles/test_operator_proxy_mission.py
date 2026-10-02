@@ -388,7 +388,7 @@ def test_prose_quote_of_purpose_is_not_a_mission() -> None:
     body = (
         "job=delivery-review\n"
         "The seat-map says team_dispatch(model=cdp/opus-5.5-extra, "
-        "purpose=operator-proxy, job=freeform).\n"
+        "purpose=operator-proxy, contract=freeform).\n"
         "A backticked `purpose: operator-proxy` in prose is a quotation.\n"
     )
     assert not purpose_implies_mission("ask", body)
