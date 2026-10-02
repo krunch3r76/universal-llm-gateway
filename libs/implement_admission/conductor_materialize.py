@@ -28,6 +28,8 @@ from implement_admission.conductor_score_journal import (
 from implement_admission.conductor_summon import resolve_summon_mode
 from implement_admission.conductor_width_seat import (
     ACTIVE,
+    SKEPTIC,
+    SKETCH,
     ConductorWidthSeat,
     g3_g5_score_ratify_clause,
 )
@@ -49,9 +51,12 @@ def score_play_seat_lines() -> tuple[str, ...]:
     return (
         "- Enumerate · implement · drive: `cursor/grok-4.7` — omitted knobs "
         "follow the card; same slug as the ticker successor.",
-        "- Intelligence (architecture, ranking, fork resolution): CDP "
-        f"`{ACTIVE.model}` at reasoning_effort={ACTIVE.reasoning_effort} "
-        "for G1, G2, G4, and G3→G5. Bind/review stays `cdp/opus-5.5`.",
+        "- Intelligence: G2 and G3→G5 read "
+        f"`{ACTIVE.model}` at reasoning_effort={ACTIVE.reasoning_effort}. "
+        f"G1 sketcher reads `{SKETCH.model}` at reasoning_effort={SKETCH.reasoning_effort}. "
+        f"G4 skeptic reads `{SKEPTIC.model}` at reasoning_effort={SKEPTIC.reasoning_effort} "
+        "(one rung above the high rows; cross-family review on the Opus channel). "
+        "Bind/review and code review stay `cdp/opus-5.5` at high.",
         "- The house driver enumerates and does not rank rival designs — write "
         "`OPEN FORK:` and stop.",
         "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "

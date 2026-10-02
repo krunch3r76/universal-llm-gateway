@@ -202,7 +202,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
 **request:** XOR `new_slug`|`thread`, `to` literal `cursor`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. `auto_handler_status` is the handler heartbeat; `job_admission.outcome` is this job. Unknown contract → **422 `request_contract_unknown`** (`consult` aliases `confer`). Canonical `contract` names: `answer`, `ask`, `confer`, `investigate`, `implement`, `verify`, `execute`, `propagate`, `seed`, `recon`. `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → `status:needs-attended`. Replay → **422 `duplicate_request_id`**. Narrow path: `cursor_request`.
 
-**hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-extra`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Returns `successor`, not `status:done`.
+**hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-high`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Returns `successor`, not `status:done`.
 
 **substrate_graph_write:** `entity_id` + `claim` or **422 `graph_write_entity_required`|`graph_write_claim_required`**.
 

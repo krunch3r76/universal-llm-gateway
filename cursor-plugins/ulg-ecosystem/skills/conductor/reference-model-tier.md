@@ -1,6 +1,6 @@
 ## Model / effort tier (cost-aware — binding)
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=high` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=extra`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=extra` (one rung above ACTIVE; cross-family review stays on this effort). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
 <!-- width-seat:v1:end -->
 
 
@@ -14,12 +14,12 @@ Rates: `config/model_rates.yaml`.
 |---|---|---|
 | **House driver (cursor_sdk)** | **`cursor/grok-4.7`**, effort **low** by policy default (`route_policy.yaml` `contract_effort.conductor`); omitted knobs follow the card | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
 | **Composer (nested implement)** | **`cursor/composer-2.5`**; omitted knobs follow the card | Mechanical G-rows and `implement` \| `pure-mechanical`. Omitting `model=` on `job=implement` resolves Composer. |
-| **CDP width** | ACTIVE | G1 architecture, G2 frame, G4 skeptic, and G3→G5 score-ratify read ACTIVE (model + reasoning_effort; effort_when_bind_gates_wave per ACTIVE only when a bind gates a wave). G2 follows up into the live G1 CSE when that CSE ran on ACTIVE.model, and a fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. RESTORE is cdp/fable-5.1 and is used only when Kaywan asks (set ACTIVE to RESTORE). |
+| **CDP width** | ACTIVE | G2 frame and G3→G5 score-ratify read ACTIVE. G1 sketcher reads SKETCH. G4 skeptic reads SKEPTIC (one rung above ACTIVE). G2 follows up into the live G1 CSE when that CSE ran on SKETCH.model, and a fresh `team_dispatch` of SKETCH only when no live G1 CSE exists. RESTORE is cdp/fable-5.1 and is used only when Kaywan asks (set ACTIVE to RESTORE). |
 | **CDP bind / review** | **`cdp/opus-5.5`** (`job=delivery-review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
 | **Live checkout** | **`cursor/grok-4.7`** `job=freeform` | File:line depth on the cursor-sdk checkout. |
 
 
-When ACTIVE's usage channel is Opus, G4 shares the Opus binder's channel; RESTORE (cdp/fable-5.1, only when Kaywan asks) returns the cross-family skeptic.
+G4 is SKEPTIC, one effort rung above ACTIVE, on the Opus channel. RESTORE (cdp/fable-5.1, only when Kaywan asks) returns the cross-family skeptic.
 
 **Nested legs (always split by cost class):**
 - Judgment nests (forks, G3/G6 reviews, open-cause diagnosis, architecture) go to the CDP seat named for that row. G-rows stay as they are. Forks, open-cause diagnosis, and architecture binds go to `cdp/opus-5.5`.

@@ -22,14 +22,14 @@ from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
 
 _VERB_SOURCE = "agent-bus-hop-verb"
-_DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-extra"
+_DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-high"
 _HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
 
 
 def resolve_hop_successor_model(desired_model: str) -> str:
     """Choose the CDP (or other prefixed) model a hop dispatches.
 
-    Empty and ``auto`` stay on ``cdp/opus-5.5-extra``. A slash-prefixed id is
+    Empty and ``auto`` stay on ``cdp/opus-5.5-high``. A slash-prefixed id is
     sent as given, so ``cdp/opus-5.5-max`` and ``cursor/grok-4.7`` pass through.
     A bare family such as ``fable-5.1-high`` is prefixed ``cdp/`` because the
     picker wire is ``cdp/<family>``.

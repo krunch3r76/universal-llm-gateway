@@ -5,7 +5,7 @@ description: "On dispatch-routing — team_dispatch op/role/contract, cursor-sdk
 
 # Consult Routing
 <!-- width-seat:v1:start -->
-> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=extra` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
+> **Width seat** (generated from `libs/implement_admission/conductor_width_seat.py`; do not hand-edit): ACTIVE = `cdp/opus-5.5` · `reasoning_effort=high` · `effort_when_bind_gates_wave=max` only when a bind gates a wave · CLI `--model opus-5.5` · usage channel **Opus**. SKETCH (G1) = `cdp/opus-5.5` · `reasoning_effort=extra`. SKEPTIC (G4) = `cdp/opus-5.5` · `reasoning_effort=extra` (one rung above ACTIVE; cross-family review stays on this effort). RESTORE = `cdp/fable-5.1` · `reasoning_effort=high` (only when Kaywan asks; set `ACTIVE = RESTORE`).
 <!-- width-seat:v1:end -->
 
 
@@ -62,11 +62,11 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 
 | Job | Picker | Effort | Transport | `purpose` |
 |---|---|---|---|---|
-| G1 / Mode B | ACTIVE | reasoning_effort per ACTIVE; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
+| G1 / Mode B | SKETCH | reasoning_effort per SKETCH; effort_when_bind_gates_wave per SKETCH when a bind gates a wave. | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
 | path-sim Q / hop-5 check | ACTIVE | reasoning_effort per ACTIVE | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
-| G2 frame | ACTIVE. Follow up into the live G1 CSE when that CSE ran on ACTIVE.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model. | reasoning_effort per ACTIVE; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | followup into the live G1 CSE when that CSE ran on ACTIVE.model; fresh ACTIVE only when no live G1 CSE exists. | inherit `ask` |
+| G2 frame | ACTIVE. Follow up into the live G1 CSE when that CSE ran on SKETCH.model. Fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists. `conductor_profile=fable-scarce` does not name a different width model. | reasoning_effort per ACTIVE; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | followup into the live G1 CSE when that CSE ran on SKETCH.model; fresh ACTIVE only when no live G1 CSE exists. | inherit `ask` |
 | BIND (score-play M1) | ACTIVE if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5.5`. | reasoning_effort per ACTIVE on the ACTIVE branch; effort_when_bind_gates_wave per ACTIVE when a bind gates a wave. | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
-| SKEPTIC@BIND (score-play M2) | ACTIVE. When ACTIVE's usage channel is Opus, this skeptic shares the Opus binder's channel; `ACTIVE = RESTORE` returns the cross-family skeptic. Under `conductor_profile=fable-scarce` the width model stays ACTIVE, and the ≤1 `cdp/fable-5.1` leg allowance is removed. | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch. | `ask` or `review` |
+| SKEPTIC@BIND (score-play M2) | SKEPTIC, one effort rung above ACTIVE. `ACTIVE = RESTORE` returns the cross-family skeptic. Under `conductor_profile=fable-scarce` the width model stays ACTIVE, and the ≤1 `cdp/fable-5.1` leg allowance is removed. | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch. | `ask` or `review` |
 
 | GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5.5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
 | R-admit / verifier / mission / M-Arch | `cdp/opus-5.5` | high | fresh (R); mission followup | `review` or `mission` |

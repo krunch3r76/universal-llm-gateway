@@ -49,10 +49,10 @@ _OPUS_5 = ConductorWidthSeat(
 
 @pytest.mark.offline
 def test_render_restore_and_active_width_seat() -> None:
-    """Production ACTIVE renders cdp/opus-5.5 at reasoning_effort=extra."""
+    """Production ACTIVE renders cdp/opus-5.5 at reasoning_effort=high."""
     assert ACTIVE is not RESTORE
     assert ACTIVE.model == "cdp/opus-5.5"
-    assert ACTIVE.reasoning_effort == "extra"
+    assert ACTIVE.reasoning_effort == "high"
     assert ACTIVE.effort_when_bind_gates_wave == "max"
 
     active_clause = g3_g5_score_ratify_clause()
@@ -64,7 +64,7 @@ def test_render_restore_and_active_width_seat() -> None:
 
     for rendered in (active_clause, active_hop, active_attended, *active_materialize):
         assert "cdp/opus-5.5," in rendered
-        assert "reasoning_effort=extra" in rendered
+        assert "reasoning_effort=high" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
         assert "cdp/fable-5.1" not in rendered
 
@@ -88,7 +88,7 @@ def test_render_restore_and_active_width_seat() -> None:
 
 @pytest.mark.offline
 def test_explicit_opus_5_seat_renders_without_editing_active() -> None:
-    """A passed-in cdp/opus-5 seat renders while ACTIVE stays cdp/opus-5.5 extra."""
+    """A passed-in cdp/opus-5 seat renders while ACTIVE stays cdp/opus-5.5 high."""
     clause = g3_g5_score_ratify_clause(_OPUS_5)
     hop, attended = _render_templates(clause)
     materialize = (
@@ -102,7 +102,7 @@ def test_explicit_opus_5_seat_renders_without_editing_active() -> None:
         assert "reasoning_effort=max" in rendered
         assert "effort_when_bind_gates_wave=max" in rendered
     assert ACTIVE.model == "cdp/opus-5.5"
-    assert ACTIVE.reasoning_effort == "extra"
+    assert ACTIVE.reasoning_effort == "high"
 
 
 def test_default_render_reads_active_constant(monkeypatch: pytest.MonkeyPatch) -> None:

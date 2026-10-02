@@ -64,15 +64,15 @@ def test_hop_rejects_missing_reason() -> None:
 @pytest.mark.parametrize(
     ("desired", "expected"),
     [
-        ("", "cdp/opus-5.5-extra"),
-        ("auto", "cdp/opus-5.5-extra"),
+        ("", "cdp/opus-5.5-high"),
+        ("auto", "cdp/opus-5.5-high"),
         ("cdp/opus-5.5-max", "cdp/opus-5.5-max"),
         ("fable-5.1-high", "cdp/fable-5.1-high"),
         ("cursor/grok-4.7", "cursor/grok-4.7"),
     ],
 )
 def test_resolve_hop_successor_model(desired: str, expected: str) -> None:
-    """Omitted pin is opus-5.5-extra; a bare family is a cdp wire id."""
+    """Omitted pin is opus-5.5-high; a bare family is a cdp wire id."""
     assert resolve_hop_successor_model(desired) == expected
 
 

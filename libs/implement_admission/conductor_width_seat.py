@@ -1,10 +1,12 @@
 """One assignment selects the conductor width seat.
 
-G1, G2, G4, G3→G5, path-sim Q, the hop-5 check, and the dispatch-kernel
-width cell read ``ACTIVE``. Shipped ``ACTIVE`` is ``cdp/opus-5.5`` at
-``reasoning_effort="extra"`` (CDP picker token; ``effort_when_bind_gates_wave="max"``).
-``ACTIVE = RESTORE`` returns width rows to ``cdp/fable-5.1``. There is no
-second switch, env var, or todo attr.
+G2, G3→G5, path-sim Q, the hop-5 check, and the dispatch-kernel width
+cell read ``ACTIVE``. Shipped ``ACTIVE`` is ``cdp/opus-5.5`` at
+``reasoning_effort="high"``. G1 (sketcher) reads ``SKETCH`` and G4 (skeptic)
+reads ``SKEPTIC``, both ``cdp/opus-5.5`` at ``reasoning_effort="extra"``:
+one effort rung above the high rows. The skeptic stays on that rung because
+a cross-family reviewer is not on the Opus channel. ``ACTIVE = RESTORE``
+returns the width rows to ``cdp/fable-5.1``. There is no env var or todo attr.
 """
 
 from __future__ import annotations
@@ -30,8 +32,21 @@ RESTORE = ConductorWidthSeat(
     reasoning_effort="high",
     effort_when_bind_gates_wave="max",
 )
-# Shipped seat. ACTIVE = RESTORE returns to cdp/fable-5.1.
+# Ordinary width rows. ACTIVE = RESTORE returns those rows to cdp/fable-5.1.
 ACTIVE = ConductorWidthSeat(
+    model="cdp/opus-5.5",
+    reasoning_effort="high",
+    effort_when_bind_gates_wave="max",
+)
+# G1 shape sketch. One effort rung above ACTIVE.
+SKETCH = ConductorWidthSeat(
+    model="cdp/opus-5.5",
+    reasoning_effort="extra",
+    effort_when_bind_gates_wave="max",
+)
+# G4 skeptic. One effort rung above ACTIVE: the cross-family check
+# while both seats remain on the Opus channel.
+SKEPTIC = ConductorWidthSeat(
     model="cdp/opus-5.5",
     reasoning_effort="extra",
     effort_when_bind_gates_wave="max",
@@ -66,6 +81,11 @@ def width_seat_block(seat: ConductorWidthSeat | None = None) -> str:
         f"`effort_when_bind_gates_wave={chosen.effort_when_bind_gates_wave}` "
         "only when a bind gates a wave · "
         f"CLI `--model {cli_id}` · usage channel **{channel}**. "
+        f"SKETCH (G1) = `{SKETCH.model}` · "
+        f"`reasoning_effort={SKETCH.reasoning_effort}`. "
+        f"SKEPTIC (G4) = `{SKEPTIC.model}` · "
+        f"`reasoning_effort={SKEPTIC.reasoning_effort}` "
+        "(one rung above ACTIVE; cross-family review stays on this effort). "
         f"RESTORE = `{RESTORE.model}` · "
         f"`reasoning_effort={RESTORE.reasoning_effort}` "
         "(only when Kaywan asks; set `ACTIVE = RESTORE`)."
