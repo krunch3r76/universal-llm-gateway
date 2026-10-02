@@ -10,7 +10,7 @@ import pytest
 
 from claude_bundles import cdp_registry as reg
 from claude_bundles import project_ask_abort as abort
-from claude_bundles.chat_reply_wait import HarvestIncomplete
+from claude_bundles.chat_reply_wait import HarvestIncompleteError
 from claude_bundles.chat_session_hygiene import _page_score
 from claude_bundles.project_ask import (
     archive_harvest,
@@ -295,7 +295,7 @@ async def test_project_ask_on_page_harvest_incomplete_preserves_body() -> None:
         patch(
             "claude_bundles.project_ask.wait_assistant_reply",
             new=AsyncMock(
-                side_effect=HarvestIncomplete(
+                side_effect=HarvestIncompleteError(
                     "timed out incomplete (base_len=0, last=6969, n=6) — ¬delete",
                     body=partial,
                 )

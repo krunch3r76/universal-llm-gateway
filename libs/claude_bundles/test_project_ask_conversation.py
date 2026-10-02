@@ -336,7 +336,7 @@ async def test_converse_path_threads_ids_via_project_ask_on_page() -> None:
 @pytest.mark.asyncio
 async def test_followup_harvest_incomplete_preserves_nonzero_body() -> None:
     """a:37226 — timeout with last>0 must not return FAILED body_len=0."""
-    from claude_bundles.chat_reply_wait import HarvestIncomplete
+    from claude_bundles.chat_reply_wait import HarvestIncompleteError
 
     page = AsyncMock()
     page.url = "https://claude.ai/cowork/cse_01DySavjf3QUK1oDU9NC9McG"
@@ -354,7 +354,7 @@ async def test_followup_harvest_incomplete_preserves_nonzero_body() -> None:
         patch(
             "claude_bundles.project_ask_conversation.wait_assistant_reply",
             new=AsyncMock(
-                side_effect=HarvestIncomplete(
+                side_effect=HarvestIncompleteError(
                     "timed out incomplete (base_len=0, last=6969, n=6) — ¬delete",
                     body=partial,
                 )
@@ -379,7 +379,7 @@ async def test_followup_harvest_incomplete_preserves_nonzero_body() -> None:
 @pytest.mark.asyncio
 async def test_compose_harvest_incomplete_preserves_nonzero_body() -> None:
     """a:37226 review A2 — compose-first path must keep last scrape."""
-    from claude_bundles.chat_reply_wait import HarvestIncomplete
+    from claude_bundles.chat_reply_wait import HarvestIncompleteError
 
     page = AsyncMock()
     page.url = "https://claude.ai/new"
@@ -409,7 +409,7 @@ async def test_compose_harvest_incomplete_preserves_nonzero_body() -> None:
         patch(
             "claude_bundles.project_ask_conversation.wait_assistant_reply",
             new=AsyncMock(
-                side_effect=HarvestIncomplete(
+                side_effect=HarvestIncompleteError(
                     "timed out incomplete (base_len=0, last=6969, n=6) — ¬delete",
                     body=partial,
                 )

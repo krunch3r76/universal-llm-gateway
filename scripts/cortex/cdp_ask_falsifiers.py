@@ -17,7 +17,7 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO / "libs"))
 
 from claude_bundles.chat_reply_wait import (  # noqa: E402
-    HarvestIncomplete,
+    HarvestIncompleteError,
     harvest_assistant,
     wait_assistant_reply,
 )
@@ -75,12 +75,12 @@ async def f1_timeout_incomplete_no_delete() -> dict:
         "stamp": _stamp(),
         "result": result.as_dict(),
         "criterion": "ok=False ∧ delete did not destroy a chat",
-        "note": "8s idle timeout before new turn forces HarvestIncomplete path",
+        "note": "8s idle timeout before new turn forces HarvestIncompleteError path",
     }
 
 
 async def f2_error_banner_no_delete() -> dict:
-    """Inject error banner into DOM; wait must raise HarvestIncomplete; ¬delete."""
+    """Inject error banner into DOM; wait must raise HarvestIncompleteError; ¬delete."""
     pw, _browser, ctx, _ = await connect_cdp(CDP)
     try:
         page = await pick_chat_page(ctx)
@@ -109,7 +109,7 @@ async def f2_error_banner_no_delete() -> dict:
                 min_body=20,
             )
             raised = None
-        except HarvestIncomplete as exc:
+        except HarvestIncompleteError as exc:
             raised = str(exc)
         except Exception as exc:  # noqa: BLE001
             raised = f"other:{exc}"
@@ -126,7 +126,7 @@ async def f2_error_banner_no_delete() -> dict:
             "raised": raised,
             "url_before": url_before,
             "url_after": page.url,
-            "criterion": "harvest.error_banner ∧ HarvestIncomplete(error_banner) ∧ no delete",
+            "criterion": "harvest.error_banner ∧ HarvestIncompleteError(error_banner) ∧ no delete",
             "note": "Banner prepended; scan head+tail of page text",
         }
     finally:
