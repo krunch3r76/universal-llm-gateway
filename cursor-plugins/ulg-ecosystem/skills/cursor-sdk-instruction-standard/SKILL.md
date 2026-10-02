@@ -98,7 +98,7 @@ charter-runner, or Auto nested. The slash is the Cursor skill-fire cue (load-bea
 on grok-4.7). Skip `implement` / `pure-mechanical` and quick (`answer` / `execute` /
 `propagate` / `ask`). Authors may omit the line; do not strip it. Consult handoff
 enrich inserts the Use-line into `<invariants>`. SOT: skill `reasoning-posture`
-§ Always-on injection.
+`reference.md` § Where the body is loaded.
 
 `skills=` mounts on cursor-sdk and composes with the above: Stargate resolves each
 slug to a body at admit (422 `skills_cursor_unresolvable` on unknown / body-less),

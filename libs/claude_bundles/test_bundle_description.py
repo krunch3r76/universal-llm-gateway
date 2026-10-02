@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from claude_bundles.bundle_description import (
     MAX_CLAUDE_AI_DESCRIPTION_LEN,
     MAX_SKILL_DESCRIPTION_LEN,
@@ -15,6 +19,19 @@ from claude_bundles.bundle_description import (
     resolve_bundle_description,
 )
 from claude_bundles.resolver import render_bundle
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.offline
+def test_render_bundle_reasoning_posture_uses_new_description() -> None:
+    path = _REPO / "cursor-plugins/ulg-ecosystem/skills/reasoning-posture/SKILL.md"
+    raw = path.read_text(encoding="utf-8")
+    rendered = render_bundle("reasoning-posture", raw)
+    assert "How to reason on a turn that judges" in rendered
+    assert "Posture for substantive reasoning turns" not in rendered
+    assert "## Six rules" not in rendered
+    assert "Before the merits" in rendered
 
 
 def test_max_skill_description_alias() -> None:
