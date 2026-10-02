@@ -33,7 +33,9 @@ def register_fleet_liveness_tools(mcp: FastMCP) -> None:
 
         ``service`` / ``services`` return only those rows plus full checkout
         porcelain. Omitted services are absent — omit ≠ healthy. Unknown slug
-        or empty ``services=[]`` raises. Unfiltered call preserves full fleet.
+        or empty ``services=[]`` raises (empty list raises even when
+        ``service=`` is set). Rows and ``service_filter`` are deduped in
+        ``SERVICE_SLUGS`` order. Unfiltered call preserves full fleet.
         """
         params: dict[str, Any] = {}
         if code_ref is not None:

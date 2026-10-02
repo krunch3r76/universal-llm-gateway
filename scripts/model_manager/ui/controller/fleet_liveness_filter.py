@@ -12,8 +12,10 @@ def normalize_service_filter(
     """Return an ordered ``SERVICE_SLUGS`` subset, or ``None`` for the full fleet.
 
     Absent ``service`` and ``services`` preserves today's unfiltered snapshot.
-    Provided empty ``services`` (with no ``service``) and unknown slugs raise —
-    omit is not the same as an empty or silent miss (omit ≠ healthy).
+    Provided empty ``services`` (even alongside ``service``) and unknown slugs
+    raise — omit is not the same as an empty or silent miss (omit ≠ healthy).
+    Slugs are whitespace-stripped; the returned tuple is deduped in
+    ``SERVICE_SLUGS`` order, not request order.
     """
     if service is None and services is None:
         return None
@@ -26,7 +28,7 @@ def normalize_service_filter(
     if services is not None:
         if not isinstance(services, list):
             raise ValueError("fleet_liveness services must be a list of strings")
-        if not services and service is None:
+        if not services:
             raise ValueError(
                 "fleet_liveness services must be non-empty when provided"
             )
@@ -36,8 +38,6 @@ def normalize_service_filter(
                     "fleet_liveness services entries must be non-empty strings"
                 )
             requested.append(item.strip())
-    if not requested:
-        raise ValueError("fleet_liveness services must be non-empty when provided")
 
     known = set(SERVICE_SLUGS)
     unknown = sorted({slug for slug in requested if slug not in known})

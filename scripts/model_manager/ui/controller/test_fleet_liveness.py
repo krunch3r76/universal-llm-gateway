@@ -812,6 +812,16 @@ def test_normalize_service_filter_empty_list_raises() -> None:
         live.normalize_service_filter(services=[])
 
 
+def test_normalize_service_filter_empty_list_with_service_raises() -> None:
+    """Empty services=[] raises even when service= is also set (A1)."""
+    with pytest.raises(ValueError, match="non-empty"):
+        live.normalize_service_filter(service="mcp", services=[])
+
+
+def test_normalize_service_filter_strips_whitespace() -> None:
+    assert live.normalize_service_filter(service="  mcp  ") == ("mcp",)
+
+
 def test_service_filter_singular_returns_one_row_plus_porcelain(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
