@@ -1194,6 +1194,34 @@ def test_dual_streaming_without_retired_stamp_still_ambiguous():
     assert identity.census_n == 2
 
 
+def test_two_open_seats_with_unrelated_retired_id_still_n2():
+    """Review non-blocking: unrelated retired tombstone must not collapse N=2."""
+    from claude_bundles.request_admission_census import census_match_ids
+
+    snap = {
+        "rows": [
+            {
+                "execution_id": "a",
+                "registration_id": "open-a",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+            {
+                "execution_id": "b",
+                "registration_id": "open-b",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            },
+        ],
+        "retired_registration_ids": ["unrelated-closed"],
+    }
+    assert sorted(census_match_ids("12286", snap)) == ["open-a", "open-b"]
+
+
 def test_single_open_operator_seat_admits_without_caller():
     """Single-CSE hop happy path — N=1 still binds without wire id."""
     snap = {

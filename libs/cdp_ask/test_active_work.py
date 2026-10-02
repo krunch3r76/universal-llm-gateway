@@ -95,6 +95,7 @@ def _capacity(
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
         "seat_rows": [],
+        "retired_registration_ids": [],
         "execution_streams": stream_map,
         **x_display_wire_fields(probe_x_display()),
     }

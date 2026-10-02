@@ -64,6 +64,7 @@ def _capacity(
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
         "seat_rows": [],
+        "retired_registration_ids": [],
         "execution_streams": {
             str(row["execution_id"]): str(row["status"])
             for row in rows_list
@@ -193,6 +194,55 @@ async def test_active_work_snapshot_seals_with_seat_bound_at_in_registry(
     snap = await store.active_work_snapshot()
     assert len(snap["seat_rows"]) == 1
     assert snap["seat_rows"][0]["seat_bound_at"] == 1_729_000_000.0
+
+
+@pytest.mark.asyncio
+async def test_active_work_snapshot_stamps_retired_including_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:37225 review A1: load_active success stamps retired list (incl. [])."""
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-closed": {
+                "registration_id": "reg-closed",
+                "status": "dormant",
+                "purpose": "operator-proxy",
+                "parent_thread": "12286",
+                "seat_closed_at": 1_729_000_100.0,
+            },
+            "reg-open": {
+                "registration_id": "reg-open",
+                "status": "active",
+                "purpose": "operator-proxy",
+                "parent_thread": "12286",
+                "seat_closed_at": None,
+            },
+        },
+    )
+    store = ExecutionStore()
+    snap = await store.active_work_snapshot()
+    assert snap["retired_registration_ids"] == ["reg-closed"]
+    assert "reg-open" not in snap["retired_registration_ids"]
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-open": {
+                "registration_id": "reg-open",
+                "status": "active",
+                "purpose": "operator-proxy",
+                "parent_thread": "12286",
+                "seat_closed_at": None,
+            },
+        },
+    )
+    snap_empty = await store.active_work_snapshot()
+    assert snap_empty["retired_registration_ids"] == []
 
 
 def test_live_cse_count_qualified_scalar_preserves_unknown() -> None:

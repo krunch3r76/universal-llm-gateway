@@ -326,7 +326,7 @@ def retired_registration_ids_from_records(
     out: list[str] = []
     seen: set[str] = set()
     for rid, row in records.items():
-        if not isinstance(row, dict):
+        if not isinstance(row, Mapping):
             continue
         if row.get("seat_closed_at") is None:
             continue
@@ -342,12 +342,16 @@ def attach_retired_registration_ids(
     snap: dict[str, Any],
     records: Mapping[str, Mapping[str, Any]] | Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Stamp ``retired_registration_ids`` from *records* onto a copy of *snap*."""
-    retired = retired_registration_ids_from_records(records)
-    if not retired:
-        return snap
+    """Stamp ``retired_registration_ids`` from *records* (including ``[]``).
+
+    Always set the key when the caller successfully loaded a registry map so
+    \"nothing closed\" is distinct from \"never computed\" (hub ``need_retired``
+    must not re-fetch against a fresher doc than Jupiter's seat lists —
+    review a:37225 ADMIT_WITH_AMENDMENTS). Omit the call on load failure so
+    hub attach can still fall back.
+    """
     out = dict(snap)
-    out["retired_registration_ids"] = retired
+    out["retired_registration_ids"] = retired_registration_ids_from_records(records)
     return out
 
 

@@ -220,3 +220,36 @@ def test_attach_stamps_retired_when_seat_lists_already_injected() -> None:
     assert out["retired_registration_ids"] == ["reg-closed"]
     # Pre-injected lists are preserved (no re-project).
     assert out["seated_rows"][0]["registration_id"] == "reg-open"
+
+
+@pytest.mark.offline
+def test_attach_stamps_empty_retired_when_doc_ok_and_nothing_closed() -> None:
+    """a:37225 review A1: successful registry read stamps [] so hub skips re-fetch."""
+    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+    snap = {
+        "rows": [],
+        "seated_rows": [],
+        "seat_rows": [],
+        "running_count": 0,
+    }
+    payload = {
+        "availability": "ok",
+        "seat_field_schema": 1,
+        "seat_count": 1,
+        "seats": [
+            {
+                "registration_id": "reg-open",
+                "status": "active",
+                "parent_thread": "12286",
+                "purpose": "operator-proxy",
+                "seat_closed_at": None,
+            },
+        ],
+    }
+    with patch(
+        "claude_bundles.cdp_registry_remote_read.read_fleet_registry",
+        return_value=payload,
+    ):
+        out = attach_registry_seated_rows(snap)
+    assert out["retired_registration_ids"] == []

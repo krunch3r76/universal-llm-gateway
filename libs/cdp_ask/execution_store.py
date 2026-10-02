@@ -299,6 +299,7 @@ class ExecutionStore:
         payload["execution_streams"] = dict(stream_index)
         observed_at = datetime.now(UTC).isoformat()
         payload["observed_at"] = observed_at
+        registry_ok = False
         try:
             raw = load_active()
             seated = seated_rows_from_registry_records(
@@ -307,6 +308,7 @@ class ExecutionStore:
             seat = seat_rows_from_registry_records(
                 raw, stream_index=stream_index, observed_at=observed_at
             )
+            registry_ok = True
         except Exception:  # noqa: BLE001 — identity attach must not break admission
             raw = {}
             seated = []
@@ -314,13 +316,15 @@ class ExecutionStore:
         payload = attach_seated_rows(payload, seated)
         payload = attach_seat_rows(payload, seat)
         # Closed predecessors stay out of seated_rows but may still stream in
-        # ``rows`` (human keeps chatting). Stamp retired so hub census drops
-        # them even when attach early-outs on pre-injected seat lists (a:37225).
-        from claude_bundles.hop_cadence_seat_snap import (
-            attach_retired_registration_ids,
-        )
+        # ``rows`` (human keeps chatting). Stamp retired (including []) when
+        # load_active succeeded so hub need_retired early-outs on the same
+        # snapshot clock; omit the key on load failure for hub fallback (a:37225).
+        if registry_ok:
+            from claude_bundles.hop_cadence_seat_snap import (
+                attach_retired_registration_ids,
+            )
 
-        payload = attach_retired_registration_ids(payload, raw)
+            payload = attach_retired_registration_ids(payload, raw)
         # Registry seat-axis rows carry seat_bound_at and other numeric metadata;
         # transcript zones keep them out of the seal walk (UnqualifiedScalarError).
         decl.transcript("rows", reason="pending/running execution store rows verbatim")
@@ -337,10 +341,11 @@ class ExecutionStore:
         decl.transcript(
             "seat_rows", reason="registry seat-open axis verbatim"
         )
-        decl.transcript(
-            "retired_registration_ids",
-            reason="seat_closed_at registration ids for census filter (a:37225)",
-        )
+        if registry_ok:
+            decl.transcript(
+                "retired_registration_ids",
+                reason="seat_closed_at registration ids for census filter (a:37225)",
+            )
         attach_x_display_capacity(payload, decl)
         return seal(payload, decl)
 
