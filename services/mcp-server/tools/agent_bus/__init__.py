@@ -283,9 +283,12 @@ Depth: `agent_skill:agent-bus-discipline`.
                 )
                 return _unknown_arg_error(tool=tool, unknown=unknown, accepted=accepted)
             record("mcp.agentbus.dispatch", tool=tool)
-            result = handler(**parsed)
-            if asyncio.iscoroutine(result):
-                result = await result
+            # Sync handlers relay over blocking httpx (wait long-polls up to
+            # 320s); inline they stall every other request on the loop.
+            if inspect.iscoroutinefunction(handler):
+                result = await handler(**parsed)
+            else:
+                result = await asyncio.to_thread(handler, **parsed)
             if (
                 isinstance(result, dict)
                 and "error" not in result
