@@ -325,8 +325,13 @@ def build_mcp_servers(
     if substrate_ctx is not None:
         env[CURSOR_SDK_DISPATCH_ID_ENV] = substrate_ctx.dispatch_id
         env[ULG_STEER_SPOOL_DIR_ENV] = str(steer_spool_dir())
-        if substrate_ctx.thread_id:
-            env["ULG_DISPATCH_THREAD_ID"] = substrate_ctx.thread_id
+        thread_id = substrate_ctx.thread_id
+        if isinstance(thread_id, str) and thread_id.strip():
+            env["ULG_DISPATCH_THREAD_ID"] = thread_id
+        elif contract in _JOB_MCP_FILTER:
+            # "" clears an inherited ULG_DISPATCH_THREAD_ID when config env
+            # is merged over the parent. Deleting the key does not.
+            env["ULG_DISPATCH_THREAD_ID"] = ""
     return {
         _VORTEX_MCP_SERVER: StdioMcpServerConfig(
             command=sys.executable,

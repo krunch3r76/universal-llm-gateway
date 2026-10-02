@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from claude_bundles.chat_reply_wait import (
-    HarvestIncomplete,
+    HarvestIncompleteError,
     harvest_assistant,
     wait_assistant_reply,
 )
@@ -327,7 +327,7 @@ async def project_followup_on_page(
             artifact_cards=tuple(cards),
             artifact_cards_unresolved=False,
         )
-    except HarvestIncomplete as exc:
+    except HarvestIncompleteError as exc:
         # a:37226 — preserve nonzero last scrape on follow-up timeout.
         partial = strip_thinking_prefix(exc.body or "")
         return ProjectAskResult(
@@ -450,7 +450,7 @@ async def run_project_conversation(
                     on_harvest=on_harvest,
                     require_review_verdict=require_review_verdict,
                 )
-            except HarvestIncomplete as exc:
+            except HarvestIncompleteError as exc:
                 # a:37226 — compose first-turn timeout must keep last scrape.
                 partial = strip_thinking_prefix(exc.body or "")
                 return [

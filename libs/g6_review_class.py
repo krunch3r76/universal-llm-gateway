@@ -64,8 +64,8 @@ def is_review_class_call(
 ) -> bool:
     """True when *arguments* are a G6 review generate and nothing else.
 
-    Unknown keys are refused. When *seat_thread* is set, ``dispatch_thread_id``
-    must be that thread and ``parent_thread`` may only repeat it.
+    Unknown keys are refused. A falsy *seat_thread* is refused. Otherwise
+    ``dispatch_thread_id`` must equal it and ``parent_thread`` may only repeat it.
     """
     args = arguments or {}
     for key, value in args.items():
@@ -83,12 +83,13 @@ def is_review_class_call(
         return False
     if not _present(args.get("prompt")):
         return False
-    if seat_thread:
-        if str(args.get("dispatch_thread_id") or "") != seat_thread:
-            return False
-        parent = args.get("parent_thread")
-        if _present(parent) and str(parent) != seat_thread:
-            return False
+    if not seat_thread:
+        return False
+    if str(args.get("dispatch_thread_id") or "") != seat_thread:
+        return False
+    parent = args.get("parent_thread")
+    if _present(parent) and str(parent) != seat_thread:
+        return False
     return True
 
 

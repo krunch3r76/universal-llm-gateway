@@ -210,6 +210,38 @@ def test_max_clients_default_64_for_desktop_colon_one(
     assert snap["x_max_clients"] == 64
 
 
+def test_live_maxclients_stale_ceiling_inside_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Second call within TTL returns the stored ceiling, not the new cmdline."""
+    import claude_bundles.x_display_capacity as xdc
+
+    monkeypatch.setattr(xdc, "_MAXCLIENTS_CACHE", {})
+
+    cmdline_snapshots: list[list[list[str]]] = [
+        [["Xvfb", ":2", "-maxclients", "64"]],
+        [["Xvfb", ":2", "-maxclients", "128"]],
+    ]
+    reader_calls = 0
+
+    def reader(proc_root=None) -> list[list[str]]:
+        nonlocal reader_calls
+        snapshot = cmdline_snapshots[min(reader_calls, len(cmdline_snapshots) - 1)]
+        reader_calls += 1
+        return snapshot
+
+    monkeypatch.setattr(xdc, "_proc_cmdlines", reader)
+
+    t0 = 10_000.0
+    monotonic_reads = iter([t0, t0 + 4.9])
+
+    monkeypatch.setattr(xdc.time, "monotonic", lambda: next(monotonic_reads))
+
+    assert xdc._live_maxclients(":2") == 64
+    assert xdc._live_maxclients(":2") == 64
+    assert reader_calls == 1
+
+
 def test_max_clients_belief_is_min_of_live_argv_and_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

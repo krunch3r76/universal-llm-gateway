@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from bus_watch.spawn_wake.packet import _wire_submit_body, build_dispatch_body
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from job_vocab import GENERATE_ADMITTED_JOBS, INLINE_ONLY_JOBS
 from pydantic import ValidationError
 
 from .admission import verify_thread_writable
@@ -393,6 +395,54 @@ async def test_d3_open_thread_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # Must not raise
     await verify_thread_writable("42", request_id="req-d3-ok", auth_token="")
+
+
+# ---------------------------------------------------------------------------
+# Successor wire job projection (spawn_wake packet boundary)
+# ---------------------------------------------------------------------------
+
+_SUCCESSOR_INLINE_JOBS = GENERATE_ADMITTED_JOBS & INLINE_ONLY_JOBS
+_SOURCE_REF_GENERATE_JOBS = GENERATE_ADMITTED_JOBS - INLINE_ONLY_JOBS
+
+_SUCCESSOR_WIRE_KWARGS: dict[str, object] = {
+    "op": "generate",
+    "seat": "cursor-sdk",
+    "lane": "B",
+    "prompt": "x",
+    "dispatch_thread_id": "10479",
+    "work_key": "agent-bus:10479:night-x",
+    "timeout_seconds": 5400,
+    "caller_agent": "liaison-ticker",
+    "model": "cursor/grok-4.7",
+}
+
+
+@pytest.mark.parametrize("job", sorted(_SUCCESSOR_INLINE_JOBS))
+def test_generate_accepts_inline_prompt_for_successor_wire_jobs(job: str) -> None:
+    TeamDispatchGenerateBody(**{**_SUCCESSOR_WIRE_KWARGS, "job": job})
+
+
+@pytest.mark.parametrize("job", sorted(_SOURCE_REF_GENERATE_JOBS))
+def test_generate_rejects_inline_prompt_for_source_ref_jobs(job: str) -> None:
+    with pytest.raises(ValidationError):
+        TeamDispatchGenerateBody(**{**_SUCCESSOR_WIRE_KWARGS, "job": job})
+
+
+def test_generate_rejects_job_none() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        TeamDispatchGenerateBody(**{**_SUCCESSOR_WIRE_KWARGS, "job": "none"})
+    assert any(e.get("loc") == ("job",) for e in exc_info.value.errors())
+
+
+def test_successor_default_body_round_trips() -> None:
+    wired = _wire_submit_body(
+        build_dispatch_body(
+            "10479",
+            {"successor_model": "cursor/grok-4.7", "max_hop_minutes": 60},
+        )
+    )
+    body = TeamDispatchGenerateBody(**wired)
+    assert body.job == "freeform"
 
 
 # ---------------------------------------------------------------------------

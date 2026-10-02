@@ -497,3 +497,68 @@ def test_validate_force_requires_reason_ac7() -> None:
 
 def test_validate_force_with_reason_clean() -> None:
     assert validate_force(True, "fanout:composer-ab") is None
+
+
+# ── G3 — stop_after vs job_record.stop_after_allowed ─────────────────────────
+
+
+@pytest.mark.parametrize("contract", ["none", "pure-mechanical"])
+def test_retired_job_with_stop_after_still_job_not_admitted(contract: str) -> None:
+    err = reject_unsupported_packet_inputs(
+        "generate", contract, None, None, stop_after="G1"
+    )
+    assert err is not None
+    assert err["field"] == "job"
+    assert err["error"]["code"] == "job_not_admitted"
+
+
+def test_to_thread_code_review_with_stop_after_job_not_admitted() -> None:
+    err = reject_unsupported_packet_inputs(
+        "to_thread", "code-review", None, None, stop_after="G1"
+    )
+    assert err is not None
+    assert err["field"] == "job"
+    assert err["error"]["code"] == "job_not_admitted"
+
+
+@pytest.mark.parametrize(
+    "contract",
+    ["freeform", "code-review", "delivery-review", "check-review"],
+)
+def test_stop_after_refused_when_job_disallows(contract: str) -> None:
+    err = reject_unsupported_packet_inputs(
+        "generate", contract, None, None, stop_after="G1"
+    )
+    assert err is not None
+    assert err["field"] == "stop_after"
+    assert err["error"]["code"] == "stop_after_not_allowed"
+    assert contract in err["error"]["message"]
+
+
+def test_stop_after_refused_on_to_thread_freeform() -> None:
+    err = reject_unsupported_packet_inputs(
+        "to_thread", "freeform", None, None, stop_after="G1"
+    )
+    assert err is not None
+    assert err["field"] == "stop_after"
+    assert err["error"]["code"] == "stop_after_not_allowed"
+
+
+@pytest.mark.parametrize("contract", ["mechanical", "confer", "investigate"])
+def test_stop_after_allowed_jobs_passthrough(contract: str) -> None:
+    assert (
+        reject_unsupported_packet_inputs(
+            "generate", contract, None, None, stop_after="G1"
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("stop_after", [None, ""])
+def test_stop_after_empty_passthrough_on_freeform(stop_after: str | None) -> None:
+    assert (
+        reject_unsupported_packet_inputs(
+            "generate", "freeform", None, None, stop_after=stop_after
+        )
+        is None
+    )

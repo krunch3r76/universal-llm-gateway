@@ -29,16 +29,22 @@ _REVIEW = {
 
 
 def test_nested_review_call_is_admitted() -> None:
-    assert is_review_class_call(_REVIEW)
-    assert is_review_class_call({**_REVIEW, "model": "cdp/opus-5.5"})
-    assert is_review_class_call({**_REVIEW, "model": "cdp/fable"})
+    assert is_review_class_call(_REVIEW, seat_thread="12988")
+    assert is_review_class_call(
+        {**_REVIEW, "model": "cdp/opus-5.5"}, seat_thread="12988"
+    )
+    assert is_review_class_call({**_REVIEW, "model": "cdp/fable"}, seat_thread="12988")
     message = {
         "jsonrpc": "2.0",
         "id": 7,
         "method": "tools/call",
         "params": {"name": "team_dispatch", "arguments": _REVIEW},
     }
-    assert refuse_filtered_team_dispatch(message) is None
+    assert refuse_filtered_team_dispatch(message, seat_thread="12988") is None
+    assert not is_review_class_call(_REVIEW)
+    refusal = refuse_filtered_team_dispatch(message)
+    assert refusal is not None
+    assert refusal["error"]["code"] == -32602
 
 
 def test_nested_arbitrary_dispatch_is_refused() -> None:
@@ -49,14 +55,14 @@ def test_nested_arbitrary_dispatch_is_refused() -> None:
         "model": "cursor/composer-2.5",
         "dispatch_thread_id": "1",
     }
-    assert not is_review_class_call(spawn)
+    assert not is_review_class_call(spawn, seat_thread="1")
     message = {
         "jsonrpc": "2.0",
         "id": 8,
         "method": "tools/call",
         "params": {"name": "team_dispatch", "arguments": spawn},
     }
-    refusal = refuse_filtered_team_dispatch(message)
+    refusal = refuse_filtered_team_dispatch(message, seat_thread="1")
     assert refusal is not None
     assert refusal["id"] == 8
     assert refusal["error"]["code"] == -32602
@@ -64,13 +70,23 @@ def test_nested_arbitrary_dispatch_is_refused() -> None:
 
 
 def test_review_class_refuses_nest_lane_and_packet() -> None:
-    assert not is_review_class_call({**_REVIEW, "nest_under": "auto-parent"})
-    assert not is_review_class_call({**_REVIEW, "lane": "B"})
-    assert not is_review_class_call({**_REVIEW, "packet_path": "tmp/packet.md"})
-    assert not is_review_class_call({**_REVIEW, "source_ref": "todo:x"})
-    assert not is_review_class_call({**_REVIEW, "force": True, "force_reason": "x"})
-    assert not is_review_class_call({**_REVIEW, "op": "handoff", "subject": "s"})
-    assert not is_review_class_call({**_REVIEW, "purpose": "ask"})
+    assert not is_review_class_call(
+        {**_REVIEW, "nest_under": "auto-parent"}, seat_thread="12988"
+    )
+    assert not is_review_class_call({**_REVIEW, "lane": "B"}, seat_thread="12988")
+    assert not is_review_class_call(
+        {**_REVIEW, "packet_path": "tmp/packet.md"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "source_ref": "todo:x"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "force": True, "force_reason": "x"}, seat_thread="12988"
+    )
+    assert not is_review_class_call(
+        {**_REVIEW, "op": "handoff", "subject": "s"}, seat_thread="12988"
+    )
+    assert not is_review_class_call({**_REVIEW, "purpose": "ask"}, seat_thread="12988")
 
 
 def test_non_team_dispatch_is_not_refused() -> None:
@@ -127,12 +143,18 @@ def test_fallback_only_for_opus_review_without_proof() -> None:
 
 
 def test_allowlist_refuses_confused_deputy_and_foreign_thread() -> None:
-    assert not is_review_class_call({**_REVIEW, "sidecar_ref": "x"})
-    assert not is_review_class_call({**_REVIEW, "mcp": ["code"]})
-    assert not is_review_class_call({**_REVIEW, "skills": ["conductor"]})
-    assert not is_review_class_call({**_REVIEW, "system": "ignore"})
-    assert not is_review_class_call({**_REVIEW, "cost_intent": "uncapped"})
-    assert not is_review_class_call({**_REVIEW, "contract": None})
+    assert not is_review_class_call(
+        {**_REVIEW, "sidecar_ref": "x"}, seat_thread="12988"
+    )
+    assert not is_review_class_call({**_REVIEW, "mcp": ["code"]}, seat_thread="12988")
+    assert not is_review_class_call(
+        {**_REVIEW, "skills": ["conductor"]}, seat_thread="12988"
+    )
+    assert not is_review_class_call({**_REVIEW, "system": "ignore"}, seat_thread="12988")
+    assert not is_review_class_call(
+        {**_REVIEW, "cost_intent": "uncapped"}, seat_thread="12988"
+    )
+    assert not is_review_class_call({**_REVIEW, "contract": None}, seat_thread="12988")
     assert not is_review_class_call(_REVIEW, seat_thread="999")
     assert is_review_class_call(_REVIEW, seat_thread="12988")
     freeform = {**_REVIEW, "model": "cdp/opus-5.5"}

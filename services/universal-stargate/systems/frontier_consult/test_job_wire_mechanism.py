@@ -329,3 +329,179 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     assert to_thread.status_code == 422
     assert to_thread_body["error"]["code"] == "job_not_admitted"
     assert seen == ["consult", None, "consult"]
+
+
+# ── G3 — stop_after vs job_record.stop_after_allowed ─────────────────────────
+
+
+@pytest.mark.parametrize("contract", ["none", "pure-mechanical"])
+def test_stargate_retired_job_with_stop_after_still_job_not_admitted(
+    contract: str,
+) -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-retired",
+            op="generate",
+            contract=contract,
+            packet_path=None,
+            source_ref=None,
+            stop_after="G1",
+        )
+    assert exc.value.field == "job"
+    assert exc.value.code == "job_not_admitted"
+
+
+def test_stargate_to_thread_code_review_with_stop_after_job_not_admitted() -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-thread-cr",
+            op="to_thread",
+            contract="code-review",
+            packet_path=None,
+            source_ref=None,
+            stop_after="G1",
+        )
+    assert exc.value.field == "job"
+    assert exc.value.code == "job_not_admitted"
+
+
+@pytest.mark.parametrize(
+    "contract",
+    ["freeform", "code-review", "delivery-review", "check-review"],
+)
+def test_stargate_stop_after_refused_when_job_disallows(contract: str) -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-stop",
+            op="generate",
+            contract=contract,
+            packet_path=None,
+            source_ref=None,
+            stop_after="G1",
+        )
+    assert exc.value.field == "stop_after"
+    assert exc.value.code == "stop_after_not_allowed"
+    assert contract in exc.value.reason
+
+
+def test_stargate_stop_after_refused_on_to_thread_freeform() -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-thread-ff",
+            op="to_thread",
+            contract="freeform",
+            packet_path=None,
+            source_ref=None,
+            stop_after="G1",
+        )
+    assert exc.value.field == "stop_after"
+    assert exc.value.code == "stop_after_not_allowed"
+
+
+@pytest.mark.parametrize("contract", ["mechanical", "confer", "investigate"])
+def test_stargate_stop_after_allowed_jobs_passthrough(contract: str) -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    reject_unsupported_packet_inputs(
+        request_id="r-ok",
+        op="generate",
+        contract=contract,
+        packet_path=None,
+        source_ref=None,
+        stop_after="G1",
+    )
+
+
+@pytest.mark.parametrize("stop_after", [None, ""])
+def test_stargate_stop_after_empty_passthrough_on_freeform(
+    stop_after: str | None,
+) -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    reject_unsupported_packet_inputs(
+        request_id="r-empty",
+        op="generate",
+        contract="freeform",
+        packet_path=None,
+        source_ref=None,
+        stop_after=stop_after,
+    )
+
+
+def test_stargate_freeform_with_source_ref_still_admitted() -> None:
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    reject_unsupported_packet_inputs(
+        request_id="r-sr",
+        op="generate",
+        contract="freeform",
+        packet_path=None,
+        source_ref="todo:x",
+    )
+
+
+@pytest.mark.parametrize(
+    "job",
+    ["freeform", "code-review", "delivery-review", "check-review"],
+)
+@pytest.mark.asyncio
+async def test_route_refuses_generation_options_stop_after(
+    job: str,
+) -> None:
+    response = await team_dispatch(
+        TeamDispatchGenerateBody.model_construct(
+            op="generate",
+            role="gatherer",
+            dispatch_thread_id="dt-1",
+            prompt="hello",
+            job=job,
+            generation_options={"stop_after": "G1"},
+        ),
+        Response(),
+    )
+    body = json.loads(response.body)
+    assert response.status_code == 422
+    assert body["field"] == "stop_after"
+    assert body["error"]["code"] == "stop_after_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_route_refuses_stop_after_on_to_thread_freeform() -> None:
+    response = await team_dispatch(
+        TeamDispatchToThreadBody.model_construct(
+            op="to_thread",
+            role="gatherer",
+            dispatch_thread_id="dt-1",
+            thread="867",
+            prompt="hello",
+            job="freeform",
+            generation_options={"stop_after": "G1"},
+        ),
+        Response(),
+    )
+    body = json.loads(response.body)
+    assert response.status_code == 422
+    assert body["field"] == "stop_after"
+    assert body["error"]["code"] == "stop_after_not_allowed"

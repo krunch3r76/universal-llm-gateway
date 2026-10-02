@@ -1,4 +1,10 @@
-"""Cursor-sdk → role-labeled bus turn bridge for check/review dispatches (F2)."""
+"""Bridge a cursor-sdk check/review closeout into a role-labeled agent-bus turn.
+
+GIW success closeout decides eligibility with
+``cursor_role_turn_sender`` and posts here when that returns a sender.
+The role post fails closed on a non-conforming closeout and does not
+replace the cursor-sdk reply.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +14,6 @@ import re
 from dataclasses import dataclass
 
 import httpx
-from implement_admission.check_review_substrate import (
-    cursor_delivery_from_role,
-    is_cursor_check_review_model,
-)
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
@@ -63,17 +65,15 @@ def _conforming_check_closeout(body: str) -> tuple[str, list[str]] | None:
 
 
 def build_role_labeled_turn_body(findings: str, file_paths: list[str]) -> str:
+    """Assemble the role-labeled turn body the check gate can parse.
+
+    ``findings`` is the closeout prose. ``file_paths`` are appended under a
+    ``FILE_EVIDENCE_PATHS:`` header, one path per line. Returns the combined
+    text. Does not post or validate conformance.
+    """
     lines = [findings.rstrip(), "", "FILE_EVIDENCE_PATHS:"]
     lines.extend(f"- {path}" for path in file_paths)
     return "\n".join(lines)
-
-
-def should_bridge_cursor_check_review(
-    *,
-    contract: str,
-    resolved_model: str,
-) -> bool:
-    return contract == "none" and is_cursor_check_review_model(resolved_model)
 
 
 async def post_role_labeled_check_turn(
@@ -123,7 +123,3 @@ async def post_role_labeled_check_turn(
             reason=f"post_{resp.status_code}",
         )
     return RoleDeliveryOutcome(posted=True, body_chars=len(body))
-
-
-def resolve_delivery_from_role(resolved_model: str) -> str | None:
-    return cursor_delivery_from_role(resolved_model)
