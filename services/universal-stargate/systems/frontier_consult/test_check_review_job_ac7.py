@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import implement_admission.check_review_substrate as substrate
 import pytest
+from implement_admission.check_review_substrate import CURSOR_CHECK_REVIEW_MODELS
 from starlette.responses import Response
 
-from implement_admission.check_review_substrate import CURSOR_CHECK_REVIEW_MODELS
+import systems.frontier_consult.cursor_sdk_role_delivery as delivery
 from systems.frontier_consult._frontier_intake import reject_unsupported_packet_inputs
 from systems.frontier_consult.admission import FrontierEndpointError
 from systems.frontier_consult.cursor_sdk_role_delivery import closeout_for_job
@@ -22,9 +24,6 @@ pytestmark = pytest.mark.offline
 
 
 def test_symbols_absent() -> None:
-    import implement_admission.check_review_substrate as substrate
-    import systems.frontier_consult.cursor_sdk_role_delivery as delivery
-
     assert not hasattr(substrate, "cursor_delivery_from_role")
     assert not hasattr(delivery, "should_bridge_cursor_check_review")
 
@@ -52,7 +51,11 @@ async def test_allowlist_model_returns_reviewer_fields(
     model: str,
 ) -> None:
     async def _prompt(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(text="findings", prompt_turn_number=None, prompt_bind_mode=None)
+        return SimpleNamespace(
+            text="findings",
+            prompt_turn_number=None,
+            prompt_bind_mode=None,
+        )
 
     async def _threads(**kwargs: object) -> tuple[None, None, bool]:
         return None, None, False
@@ -101,7 +104,11 @@ async def test_freeform_same_model_skips_review_grammar(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _prompt(**kwargs: object) -> SimpleNamespace:
-        return SimpleNamespace(text="findings", prompt_turn_number=None, prompt_bind_mode=None)
+        return SimpleNamespace(
+            text="findings",
+            prompt_turn_number=None,
+            prompt_bind_mode=None,
+        )
 
     async def _threads(**kwargs: object) -> tuple[None, None, bool]:
         return None, None, False

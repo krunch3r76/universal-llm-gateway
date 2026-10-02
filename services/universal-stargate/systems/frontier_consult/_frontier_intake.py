@@ -95,7 +95,10 @@ def reject_unsupported_packet_inputs(
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="job=check-review requires an explicit model on the check-review allowlist",
+            reason=(
+                "job=check-review requires an explicit model on the "
+                "check-review allowlist"
+            ),
             status_code=422,
             code="handle_forbidden",
             details={

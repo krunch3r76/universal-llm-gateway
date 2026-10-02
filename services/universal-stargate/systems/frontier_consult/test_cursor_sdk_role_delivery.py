@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from systems.frontier_consult.cursor_sdk_generate import CURSOR_SDK_REPLY_SEAT
 from systems.frontier_consult.cursor_sdk_role_delivery import (
     _conforming_check_closeout,
