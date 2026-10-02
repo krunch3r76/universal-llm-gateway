@@ -427,6 +427,130 @@ async def test_wait_for_boundary_deadline_defers_until_draining(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_wait_for_boundary_deadline_starts_at_activate(tmp_path) -> None:
+    """AC2: after activate with work still open, timeout fires ~deadline_s later.
+
+    Breaks if the new-deadline line is dropped: outer past deadline would
+    trip immediately once draining=True without resetting the clock.
+    """
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="ac2",
+        wait_for_boundary=True,
+        park_live=False,
+        caller_agent="cursor",
+    )
+    store.set_drain_epoch(
+        intent.intent_id,
+        drain_epoch=1,
+        worker_id="w",
+        worker_started_at="t0",
+    )
+    phase = {"n": 0}
+    base = {
+        "drain_epoch": 1,
+        "worker_id": "w",
+        "worker_started_at": "t0",
+        "active_count": 1,
+        "active_ops": [{"op_id": "other"}],
+    }
+
+    async def drain_state() -> dict[str, Any]:
+        phase["n"] += 1
+        return {**base, "draining": phase["n"] >= 3, "armed": phase["n"] < 3}
+
+    def subscribe(_seq: int):
+        raise RuntimeError("no subscription")
+
+    async def _noop(*_a, **_k) -> dict[str, Any]:
+        return {}
+
+    supervisor = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=_noop,
+        drain_state=drain_state,
+        subscribe_events=subscribe,
+        kill=_noop,
+        deadline_s=0.2,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+    )
+    t_before = time.monotonic()
+    outcome, eff = await supervisor._await_drain_completed(
+        store.get(intent.intent_id),
+        time.monotonic() - 10.0,
+        t_before,
+        defer_deadline_until_draining=True,
+    )
+    assert outcome == "timeout"
+    assert eff > t_before
+    assert time.monotonic() - eff >= 0.2
+
+
+@pytest.mark.asyncio
+async def test_wait_for_boundary_cancel_observed_while_armed(tmp_path) -> None:
+    """AC3: cancel during the armed window returns cancelled under deferral."""
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="ac3",
+        wait_for_boundary=True,
+        park_live=False,
+        caller_agent="cursor",
+    )
+    store.set_drain_epoch(
+        intent.intent_id,
+        drain_epoch=1,
+        worker_id="w",
+        worker_started_at="t0",
+    )
+    calls = {"n": 0}
+
+    async def drain_state() -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 3:
+            store.advance(intent.intent_id, status="cancelled")
+        return {
+            "draining": False,
+            "armed": True,
+            "drain_epoch": 1,
+            "worker_id": "w",
+            "worker_started_at": "t0",
+            "active_count": 1,
+            "active_ops": [{"op_id": "h"}],
+        }
+
+    def subscribe(_seq: int):
+        raise RuntimeError("no subscription")
+
+    async def _noop(*_a, **_k) -> dict[str, Any]:
+        return {}
+
+    supervisor = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=_noop,
+        drain_state=drain_state,
+        subscribe_events=subscribe,
+        kill=_noop,
+        deadline_s=0.01,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+    )
+    outcome, _ = await supervisor._await_drain_completed(
+        store.get(intent.intent_id),
+        time.monotonic() - 10.0,
+        time.monotonic(),
+        defer_deadline_until_draining=True,
+    )
+    assert outcome == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_partial_drain_release_failure_leaves_pending(tmp_path) -> None:
     """Partial failure: expiry release boom leaves pending_drain (existing contract)."""
     store = RestartIntentStore(tmp_path / "restart-intents.db")

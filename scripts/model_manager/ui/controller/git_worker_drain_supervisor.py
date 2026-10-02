@@ -215,8 +215,10 @@ class GitWorkerDrainSupervisor:
                     t0,
                     defer_deadline_until_draining=defer_deadline,
                 )
-                # After the first await, the deferral has either fired or the
-                # loop exited; subsequent timeout re-arms use a live deadline.
+                # Deferral is first-call only; IDLE re-entry with a stale
+                # deadline is unreachable for wait_for_boundary because
+                # recycle_giw never sets that flag. Subsequent timeout
+                # re-arms use a live deadline.
                 defer_deadline = False
                 if outcome == _AWAIT_CANCELLED:
                     if await self._abort_if_requested(intent):
@@ -549,6 +551,8 @@ class GitWorkerDrainSupervisor:
                         defer_deadline_until_draining
                         and not deadline_armed
                         and bool(snapshot.get("draining"))
+                        and snapshot.get("drain_epoch") == intent.drain_epoch
+                        and not self._generation_gone(snapshot, intent)
                     ):
                         start = time.monotonic()
                         deadline = start + self.deadline_s
