@@ -442,14 +442,44 @@ def test_generate_accepts_inline_prompt_for_successor_wire_jobs(job: str) -> Non
 
 @pytest.mark.parametrize("job", sorted(_SOURCE_REF_GENERATE_JOBS))
 def test_generate_rejects_inline_prompt_for_source_ref_jobs(job: str) -> None:
-    with pytest.raises(ValidationError):
-        TeamDispatchGenerateBody(**{**_SUCCESSOR_WIRE_KWARGS, "job": job})
+    """Spec step 3: source_ref jobs refuse an inline prompt (handle_forbidden).
+
+    job is str | None, so the refusal is intake, not a Literal miss.
+    """
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-inline",
+            op="generate",
+            contract=job,
+            packet_path=None,
+            source_ref=None,
+            prompt="x",
+        )
+    assert exc.value.code == "handle_forbidden"
 
 
 def test_generate_rejects_job_none() -> None:
-    with pytest.raises(ValidationError) as exc_info:
-        TeamDispatchGenerateBody(**{**_SUCCESSOR_WIRE_KWARGS, "job": "none"})
-    assert any(e.get("loc") == ("job",) for e in exc_info.value.errors())
+    """Spec step 3: job=none emits reason=job_unknown. Not a Literal miss."""
+    from systems.frontier_consult._frontier_intake import (
+        reject_unsupported_packet_inputs,
+    )
+
+    TeamDispatchGenerateBody(**{**_SUCCESSOR_WIRE_KWARGS, "job": "none"})
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-none",
+            op="generate",
+            contract="none",
+            packet_path=None,
+            source_ref=None,
+            prompt="x",
+        )
+    assert exc.value.code == "job_unknown"
+    assert exc.value.field == "job"
 
 
 def test_successor_default_body_round_trips() -> None:

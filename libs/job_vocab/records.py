@@ -44,6 +44,17 @@ class JobRecord:
         return f"job_vocab:{self.name}"
 
     @property
+    def delivery_role(self) -> str:
+        """check-review delivers as reviewer. Every other job leaves it empty.
+
+        Spec step 3: check-review sets delivery_role=reviewer. freeform,
+        code-review, and delivery-review copy the old none row with the
+        field empty. Breaks when a generate return reads a missing attribute
+        and drops resolved_job.
+        """
+        return "reviewer" if self.name == "check-review" else ""
+
+    @property
     def source_ref_refused(self) -> bool:
         return not self.source_ref_required
 

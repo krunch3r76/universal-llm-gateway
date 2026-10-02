@@ -4172,11 +4172,11 @@ async def test_closeout_role_turn_follows_cursor_sdk_reply(
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     monkeypatch.setattr(route_mod, "_row_hop_defers_link_terminate", lambda **_k: True)
 
-    replies: list[str] = []
+    replies: list[tuple[str, str]] = []
 
     class _Bus:
         async def reply(self, **kwargs):
-            replies.append(kwargs["from_agent"])
+            replies.append((kwargs["from_agent"], kwargs["body"]))
             return BusReplyResult(status_code=200, body={"turn_number": 1})
 
     controller = WorkAdmissionController(
@@ -4214,13 +4214,17 @@ async def test_closeout_role_turn_follows_cursor_sdk_reply(
         )
 
     await _run("check-review", _CONFORMING_ROLE_BODY)
-    assert replies == ["cursor-sdk"]
-    assert [p["from"] for p in posts] == ["skeptic"]
+    # Spec fork 13: skeptic does not remain a delivery label.
+    # should_bridge_cursor_check_review does not survive. The cursor-sdk
+    # reply carries the check-review grammar.
+    assert [sender for sender, _body in replies] == ["cursor-sdk"]
+    assert "FILE_EVIDENCE_PATHS" in replies[0][1]
+    assert posts == []
 
     await _run("check-review", "no evidence block")
-    assert replies == ["cursor-sdk"]
+    assert [sender for sender, _body in replies] == ["cursor-sdk"]
     assert posts == []
 
     await _run("none", _CONFORMING_ROLE_BODY)
-    assert replies == ["cursor-sdk"]
+    assert [sender for sender, _body in replies] == ["cursor-sdk"]
     assert posts == []

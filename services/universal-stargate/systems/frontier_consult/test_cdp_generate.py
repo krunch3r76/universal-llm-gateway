@@ -1274,7 +1274,8 @@ def _live_operator_proxy_snap() -> dict[str, Any]:
                 "purpose": "operator-proxy",
                 "registration_id": "c1caf180",
             }
-        ]
+        ],
+        "seat_rows": [],
     }
 
 

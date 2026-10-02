@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from systems.frontier_consult.implement_ready_gate import require_implement_read
 
 _TODO = "todo:densification-implement-admission-gate"
 _SPEC = "cortex://notes/system/specs/densification-implement-admission-gate.md"
+_SPEC_REL = "tasks/specs/densification-implement-admission-gate.md"
 
 _VALID_DENSE_SPEC = """\
 # Dense test spec
@@ -118,6 +121,7 @@ def _entity(
         attrs["acceptance_criteria"] = acceptance_criteria
     if recon_waived is not None:
         attrs["recon_waived"] = recon_waived
+    attrs["check_requested"] = True
     return {
         "attributes": attrs,
         "source_uri": source_uri,
@@ -131,7 +135,7 @@ def _assertion(spec_text: str = _VALID_DENSE_SPEC, **overrides: object) -> dict:
         "superseded_by": None,
         "valid_until": None,
         "evidence_uris": [
-            f"workspaces://universal-llm-gateway/{_SPEC}",
+            f"workspaces://universal-llm-gateway/{_SPEC_REL}",
             dense_spec_hash_uri(spec_text),
         ],
     }
@@ -154,7 +158,7 @@ def _ir_row(
         "observed_at": "2026-06-17T07:00:00Z",
         "predicate_form": f"status({_TODO}, implement_ready, current)",
         "evidence_uris": [
-            f"workspaces://universal-llm-gateway/{_SPEC}",
+            f"workspaces://universal-llm-gateway/{_SPEC_REL}",
             dense_spec_hash_uri(spec_text),
         ],
     }
@@ -229,6 +233,46 @@ def _judgment_ready_cortex(
         assertion=assertion,
         assertions=assertions,
         bus_turns=bus_turns,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _todo_consult_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Judgment-required admits need a todo-keyed provenance record.
+
+    Breaks when the record is absent: the gate returns
+    implement_consult_provenance_missing before the skeptic assertion.
+    """
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+
+    def _load(todo_id: str, root: Path | None = None) -> dict[str, object]:
+        files_root = Path(
+            root or os.environ.get("CORTEX_FILES_ROOT") or tmp_path
+        )
+        rel = Path("notes/system/threads/archives/ready.md")
+        path = files_root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = b"ready archive\n"
+        path.write_bytes(body)
+        return {
+            "todo": todo_id,
+            "consult_thread": "agent-bus:8801#12",
+            "verdict": "ADMIT",
+            "adjudication_assertion_id": 1,
+            "consultant_model": "claude-fable-5-1",
+            "consultant_effort": "high",
+            "consultant_substrate": "cdp",
+            "archive_uri": f"cortex://{rel.as_posix()}",
+            "archive_sha256": hashlib.sha256(body).hexdigest(),
+            "satellite_execution_id": "sat-1",
+            "stargate_execution_id": "sg-1",
+            "written_by": "test",
+            "written_at": "2026-06-17T07:00:00Z",
+        }
+
+    monkeypatch.setattr(
+        "implement_admission.implement_ready_gate.load_todo_consult_provenance",
+        _load,
     )
 
 
@@ -440,7 +484,7 @@ def test_hash_drift_raises(spec_file: Path) -> None:
                     acceptance_criteria=["Validator passes dense specs."],
                 ),
                 assertion=_assertion(
-                    evidence_uris=[f"workspaces://universal-llm-gateway/{_SPEC}"],
+                    evidence_uris=[f"workspaces://universal-llm-gateway/{_SPEC_REL}"],
                 ),
             ),
         )
@@ -683,7 +727,7 @@ def test_cortex_spec_rejects_sha256_only_token(
 
 @pytest.mark.offline
 def test_post_cutoff_grounded_skeptic_evidence_admits(spec_file: Path) -> None:
-    cited = f"workspaces://universal-llm-gateway/{_SPEC}"
+    cited = f"workspaces://universal-llm-gateway/{_SPEC_REL}"
     body = _skeptic_body(cited, "agent-bus:3571", "spec_sha256:ignored")
     require_implement_ready(
         request_id="req-1",

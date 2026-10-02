@@ -391,9 +391,10 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
 
 
 @pytest.mark.parametrize("contract", ["none", "pure-mechanical"])
-def test_stargate_retired_job_with_stop_after_still_job_not_admitted(
+def test_stargate_retired_job_with_stop_after_is_job_unknown(
     contract: str,
 ) -> None:
+    """Spec step 3: none and pure-mechanical emit reason=job_unknown."""
     from systems.frontier_consult._frontier_intake import (
         reject_unsupported_packet_inputs,
     )
@@ -408,10 +409,11 @@ def test_stargate_retired_job_with_stop_after_still_job_not_admitted(
             stop_after="G1",
         )
     assert exc.value.field == "job"
-    assert exc.value.code == "job_not_admitted"
+    assert exc.value.code == "job_unknown"
 
 
-def test_stargate_to_thread_code_review_with_stop_after_job_not_admitted() -> None:
+def test_stargate_to_thread_code_review_with_stop_after_is_job_unknown() -> None:
+    """Spec step 3: a known job outside admitted_ops is job_unknown."""
     from systems.frontier_consult._frontier_intake import (
         reject_unsupported_packet_inputs,
     )
@@ -426,7 +428,7 @@ def test_stargate_to_thread_code_review_with_stop_after_job_not_admitted() -> No
             stop_after="G1",
         )
     assert exc.value.field == "job"
-    assert exc.value.code == "job_not_admitted"
+    assert exc.value.code == "job_unknown"
 
 
 @pytest.mark.parametrize(
@@ -447,6 +449,11 @@ def test_stargate_stop_after_refused_when_job_disallows(contract: str) -> None:
             source_ref=None,
             stop_after="G1",
         )
+    if contract == "check-review":
+        # Spec step 3: omitted model on check-review is handle_forbidden.
+        assert exc.value.field == "model"
+        assert exc.value.code == "handle_forbidden"
+        return
     assert exc.value.field == "stop_after"
     assert exc.value.code == "stop_after_not_allowed"
     assert contract in exc.value.reason
@@ -504,18 +511,22 @@ def test_stargate_stop_after_empty_passthrough_on_freeform(
     )
 
 
-def test_stargate_freeform_with_source_ref_still_admitted() -> None:
+def test_stargate_freeform_with_source_ref_is_handle_forbidden() -> None:
+    """Spec step 3: freeform refuses source_ref with reason=handle_forbidden."""
     from systems.frontier_consult._frontier_intake import (
         reject_unsupported_packet_inputs,
     )
 
-    reject_unsupported_packet_inputs(
-        request_id="r-sr",
-        op="generate",
-        contract="freeform",
-        packet_path=None,
-        source_ref="todo:x",
-    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        reject_unsupported_packet_inputs(
+            request_id="r-sr",
+            op="generate",
+            contract="freeform",
+            packet_path=None,
+            source_ref="todo:x",
+        )
+    assert exc.value.code == "handle_forbidden"
+    assert exc.value.field == "source_ref"
 
 
 @pytest.mark.parametrize(
@@ -539,6 +550,11 @@ async def test_route_refuses_generation_options_stop_after(
     )
     body = json.loads(response.body)
     assert response.status_code == 422
+    if job == "check-review":
+        # Spec step 3: omitted model on check-review is handle_forbidden.
+        assert body["field"] == "model"
+        assert body["error"]["code"] == "handle_forbidden"
+        return
     assert body["field"] == "stop_after"
     assert body["error"]["code"] == "stop_after_not_allowed"
 
