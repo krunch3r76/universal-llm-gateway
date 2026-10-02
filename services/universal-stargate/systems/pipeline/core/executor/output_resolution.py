@@ -205,6 +205,9 @@ def extract_retrieval_metadata(
     retrieval_rejection = step_json.get("retrieval_rejection_reason")
     if isinstance(retrieval_rejection, str) and retrieval_rejection:
         metadata["retrieval_rejection_reason"] = retrieval_rejection
+    empty_reason = step_json.get("empty_reason")
+    if isinstance(empty_reason, str) and empty_reason:
+        metadata["empty_reason"] = empty_reason
     scope_source = step_json.get("scope_source")
     if isinstance(scope_source, str) and scope_source:
         metadata["scope_source"] = scope_source

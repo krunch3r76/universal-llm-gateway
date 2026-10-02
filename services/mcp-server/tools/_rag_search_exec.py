@@ -191,6 +191,35 @@ def _retrieval_unavailable(envelope: dict[str, Any]) -> bool:
     )
 
 
+def _annotate_accepted_scope_empty(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Ensure ok+0 on an accepted scope carries ``empty_reason``.
+
+    Transport rejections already have ``scope_rejection_reason`` /
+    ``retrieval_rejection_reason``. A true index miss (or post-filter wipe)
+    used to return only the no-results sentinel under ``status: ok``, which
+    authors read as a null corpus. Default missing reasons to ``index_miss``.
+    """
+    retrieval = envelope.get("retrieval")
+    if not isinstance(retrieval, dict):
+        return envelope
+    chunks_found = retrieval.get("chunks_found")
+    if chunks_found not in (0, None):
+        return envelope
+    if retrieval.get("empty_reason"):
+        return envelope
+    if retrieval.get("scope_rejection_reason") or retrieval.get(
+        "retrieval_rejection_reason"
+    ):
+        return envelope
+    if retrieval.get("scope_rejected"):
+        return envelope
+    annotated = dict(envelope)
+    annotated_retrieval = dict(retrieval)
+    annotated_retrieval["empty_reason"] = "index_miss"
+    annotated["retrieval"] = annotated_retrieval
+    return annotated
+
+
 def _retrieval_transport_failure(envelope: dict[str, Any]) -> dict[str, Any]:
     """Rewrite an all-queries-failed outage so it cannot be read as an empty corpus."""
     retrieval = envelope.get("retrieval")
@@ -361,12 +390,14 @@ def _rag_search_once(
         scope=scope,
         prefix=prefixes,
     )
-    return {
-        "status": "ok",
-        "pipeline": "rag-context",
-        "content_length": len(content),
-        "duration_s": round(duration, 3),
-        "context": content,
-        **({"scope_note": scope_note} if scope_note else {}),
-        **retrieval_fields,
-    }
+    return _annotate_accepted_scope_empty(
+        {
+            "status": "ok",
+            "pipeline": "rag-context",
+            "content_length": len(content),
+            "duration_s": round(duration, 3),
+            "context": content,
+            **({"scope_note": scope_note} if scope_note else {}),
+            **retrieval_fields,
+        }
+    )
