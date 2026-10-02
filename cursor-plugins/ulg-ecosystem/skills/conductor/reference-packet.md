@@ -100,7 +100,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 | G-row | Mode | Nested contract | Closeout witness |
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
-| G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended (CDP-ratified):** `SCORE_RESURFACE` on `summoning_thread_id` citing CDP exec + review sha (`a:37198`). **Away:** `ledger:nested_implement` ∨ `git:lane_head`. ¬ tip `DONE` · ¬ steer-inject · ¬ harvest URI alone. Path-explicit commit / `land_disposition` are G7 land claims, not the G5 fold witness |
+| G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended (CDP-ratified):** required witness = `SCORE_RESURFACE` on `summoning_thread_id` citing CDP exec + review sha (`a:37198`) — ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone; resurface ≠ implement completeness. **Away:** `ledger:nested_implement` ∨ `git:lane_head`. **Fold gap (named):** attended fold may DONE from resurface alone today; hang nest/L1 before treating G5 as mission-complete. Path-explicit commit / `land_disposition` are G7 land claims |
 | G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = pre-land review harvest; distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
@@ -154,17 +154,24 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - **CDP-ratified G5 witness — one form (`a:37198`).** G3→G5 in-process CDP
   score-ratify (LIKELY_OPTIMAL / do-not-fight) is a **transition**: fire, record the
   harvest URI, continue. It does **not** hang the G5 fold witness by itself.
-  **Sole attended closer:** post one bus turn on `summoning_thread_id` whose
+  **Required attended witness:** post one bus turn on `summoning_thread_id` whose
   subject starts with `SCORE_RESURFACE` and whose body cites (1) CDP exec id and
   (2) review sha (`read_sha256` or review URI digest). Fold source:
-  `bus:SCORE_RESURFACE`. **Forbidden closers (do not claim G5 DONE on these):**
-  tip Status prose, operator steer-inject, CDP harvest URI alone, Composer land /
-  empty-template green. **Successor refuse-redo:** when the fold already shows
-  G5 `DONE` with `bus:SCORE_RESURFACE` (or away `ledger:nested_implement` /
-  `git:lane_head`), do **not** re-fire score-ratify and do **not** re-post
-  `SCORE_RESURFACE` — drive from the next entry gate. Specimen falsifier: 14010
-  row1 `376ec0a9cb90-9c691bb0` (steer/harvest claimed hung; fold still open) →
-  row2 `59032116` burned a full hop posting `#73` (`tmp/reviews/closeouts/…`,
+  `bus:SCORE_RESURFACE`. That post is the ratify→resurface witness, **not**
+  implement completeness — still hang Composer nest / lane-head evidence before
+  treating G5 as mission-complete (fold may DONE from resurface alone today;
+  requiring both witnesses is a follow-up). **Forbidden as the ratify closer:**
+  tip Status prose, operator steer-inject, CDP harvest URI alone. **Attended
+  fallback (named):** if `summoning_thread_id` or bus is unresolved, fold may
+  still accept `ledger:nested_implement` (unlike `git:lane_head`, which is
+  attended-guarded) — document, not silent. **Successor refuse-redo:** when the
+  fold already shows G5 `DONE` with `bus:SCORE_RESURFACE` (or away
+  `ledger:nested_implement` / `git:lane_head`), do **not** re-fire score-ratify
+  and do **not** re-post `SCORE_RESURFACE` — drive from the next entry gate. If
+  Status is `CLAIMED` and a matching resurface already exists on the summoning
+  thread, file friction (fold miss) — ¬ re-post. Specimen falsifier: 14010 row1
+  `376ec0a9cb90-9c691bb0` (steer/harvest claimed hung; fold still open) → row2
+  `59032116` burned a full hop posting `#73` (`tmp/reviews/closeouts/…`,
   `agent-bus:12286#1912`).
 - **G5 ≠ attended-door only.** `SCORE_RESURFACE` witnesses the attended resurface
   after score-ratify, ¬ implement completeness. `G4.withhold ∨ G4.AC_red ∨
@@ -246,8 +253,9 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
   on ACTIVE (reasoning_effort and effort_when_bind_gates_wave per ACTIVE when a bind gates a wave) as an away summon, and post `SCORE_RESURFACE` on the
   summoning thread as a report whose body cites CDP exec id + review sha
-  (`a:37198` — that post is the attended G5 fold witness). The report is not a
-  stop. A human gate is only an explicit see-score or `OPERATOR_GATE`.
+  (`a:37198` — required attended G5 fold witness; ¬ implement completeness).
+  The report is not a stop. A human gate is only an explicit see-score or
+  `OPERATOR_GATE`.
 - No live summoning chat = confer-and-finish via `team_dispatch` (Q2 unchanged).
 - `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
   explicit, **or** when the summoning IDE is liaison (human not in that chat).

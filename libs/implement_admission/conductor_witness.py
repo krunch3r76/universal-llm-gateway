@@ -80,7 +80,12 @@ __all__ = [
 ]
 
 
-def _missing_witness_message(row_id: str, *, stops: str | None = None) -> str:
+def _missing_witness_message(
+    row_id: str,
+    *,
+    stops: str | None = None,
+    summon_mode: str | None = None,
+) -> str:
     if stops:
         return f"stops: {stops}"
     if row_id == "G1":
@@ -94,10 +99,15 @@ def _missing_witness_message(row_id: str, *, stops: str | None = None) -> str:
             "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
         )
     if row_id == "G5":
-        return (
-            "post SCORE_RESURFACE on summoning thread after G3 journal "
-            "(cite CDP exec id + review sha; a:37198)"
-        )
+        summon = (summon_mode or "").strip().lower().replace("-", "_")
+        if summon == "attended":
+            return (
+                "check summoning_thread_id for an existing SCORE_RESURFACE after "
+                "the G3 journal before posting (cite CDP exec id + review sha; "
+                "a:37198); if one is there, fold read missed it — file friction, "
+                "do not re-post"
+            )
+        return "nest implement commits or hang L1==HEAD (away G5; a:37198)"
     if row_id == "G6":
         return "hang R1 pre-land review URI (`cdp/opus-5` job=delivery-review on lane branch before merge)"
     if row_id == "G7":
@@ -241,7 +251,11 @@ def fold_scoreboard(
         elif raw_status in {"DONE", "CLAIMED"}:
             row_status[row_id] = "CLAIMED"
             rows_claimed.add(row_id)
-            missing[row_id] = _missing_witness_message(row_id, stops=stops)
+            missing[row_id] = _missing_witness_message(
+                row_id,
+                stops=stops,
+                summon_mode=deps.summon_mode,
+            )
         elif stops:
             blocked[row_id] = stops
             row_status[row_id] = raw_status if raw_status != "DONE" else "OPEN"

@@ -396,9 +396,10 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
                 "CDP harvest alone does not close G5. Post SCORE_RESURFACE on "
                 f"summoning_thread_id={ctx.summoning_thread_id or '<parent/root>'} "
                 "(never this worker thread) citing CDP exec id + review sha — "
-                "that turn is the sole attended G5 fold witness (a:37198). "
-                "Tip DONE / steer-inject are not closers. Fold already shows "
-                "bus:SCORE_RESURFACE ⇒ do not re-post. The report is not a stop."
+                "required attended G5 fold witness (a:37198), not implement "
+                "completeness. Tip DONE / steer-inject are not closers. Fold "
+                "already shows bus:SCORE_RESURFACE ⇒ do not re-post. The report "
+                "is not a stop."
             ),
             (
                 "Human gate only on explicit see-score or OPERATOR_GATE: "

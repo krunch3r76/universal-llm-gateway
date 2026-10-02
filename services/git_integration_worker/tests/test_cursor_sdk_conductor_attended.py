@@ -72,7 +72,8 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     assert f"reasoning_effort={ACTIVE.reasoning_effort}" in preamble
     assert "summoning bus thread 9638" in preamble
     assert "never this leftover worker thread" in preamble
-    assert "sole attended G5 fold witness (a:37198)" in preamble
+    assert "required attended G5 fold witness (a:37198)" in preamble
+    assert "not implement completeness" in preamble
     assert "harvest alone does not close G5" in preamble
     assert "not a stop" in preamble
     assert "OPERATOR_GATE" in preamble

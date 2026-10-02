@@ -213,13 +213,14 @@ _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
     "then continue (ROW_HOP). The harvest alone does not close G5. Post one "
     "SCORE_RESURFACE to {caller_agent} on summoning bus thread "
     "{summoning_thread_id} (the parent/root — never this leftover worker "
-    "thread) whose body cites the CDP exec id and review sha — that turn is "
-    "the sole attended G5 fold witness (a:37198). Tip DONE, operator "
-    "steer-inject, and harvest URI alone are not closers. If fold already "
-    "shows bus:SCORE_RESURFACE, do not re-post. That report is not a stop, "
-    "not a page, and not a human gate. Human ROW_PINNED only when the packet "
-    "or the operator explicitly names see-score or OPERATOR_GATE. Liaison "
-    "IDE ≠ an operator gate."
+    "thread) whose body cites the CDP exec id and review sha — required "
+    "attended G5 fold witness (a:37198), not implement completeness. Tip "
+    "DONE, operator steer-inject, and harvest URI alone are not closers. If "
+    "fold already shows bus:SCORE_RESURFACE, do not re-post (CLAIMED with an "
+    "existing resurface ⇒ file friction, do not re-post). That report is not "
+    "a stop, not a page, and not a human gate. Human ROW_PINNED only when "
+    "the packet or the operator explicitly names see-score or OPERATOR_GATE. "
+    "Liaison IDE ≠ an operator gate."
 )
 
 _CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE = (
