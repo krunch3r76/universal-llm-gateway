@@ -370,6 +370,51 @@ def test_mcp_servers_stamp_steer_env_from_substrate_ctx(
     assert env.get("ULG_DISPATCH_THREAD_ID") == "10479"
 
 
+def test_whitespace_thread_id_sets_empty_dispatch_thread_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ULG_DISPATCH_THREAD_ID", "inherited")
+    repo = _stub_repo(tmp_path)
+    ctx = SubstrateDispatchContext(dispatch_id="disp-ws", thread_id="  ")
+    env = (
+        build_mcp_servers(repo, handoff_contract="implement", substrate_ctx=ctx)[
+            "vortex-code"
+        ].env
+        or {}
+    )
+    assert env.get("ULG_DISPATCH_THREAD_ID") == ""
+
+
+def test_blank_thread_on_implement_overrides_inherited_dispatch_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ULG_DISPATCH_THREAD_ID", "X")
+    repo = _stub_repo(tmp_path)
+    ctx = SubstrateDispatchContext(dispatch_id="disp-blank", thread_id="")
+    env = (
+        build_mcp_servers(repo, handoff_contract="implement", substrate_ctx=ctx)[
+            "vortex-code"
+        ].env
+        or {}
+    )
+    assert env.get("ULG_DISPATCH_THREAD_ID") == ""
+
+
+def test_gate_off_launch_leaves_inherited_dispatch_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ULG_DISPATCH_THREAD_ID", "X")
+    repo = _stub_repo(tmp_path)
+    ctx = SubstrateDispatchContext(dispatch_id="disp-off", thread_id="")
+    env = (
+        build_mcp_servers(repo, handoff_contract="none", substrate_ctx=ctx)[
+            "vortex-code"
+        ].env
+        or {}
+    )
+    assert env.get("ULG_DISPATCH_THREAD_ID") == "X"
+
+
 def test_build_agent_options_passes_substrate_to_mcp_servers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
