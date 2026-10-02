@@ -674,6 +674,10 @@ def test_run_cdp_generate_sonnet_omitted_purpose_submits_ask(
     """
     from cdp_ask.models import SubmitProjectAskRequest
 
+    from claude_bundles import project_ask_abort as paa
+    from claude_bundles.cdp_skill_profiles import infer_cdp_purpose
+
+    assert infer_cdp_purpose(None, "cdp/sonnet-5") == "produce"
     _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-sonnet-purpose-none")
     captured: list[SubmitProjectAskRequest] = []
 
@@ -710,6 +714,7 @@ def test_run_cdp_generate_sonnet_omitted_purpose_submits_ask(
     )
     assert captured
     assert captured[0].purpose == "ask"
+    assert paa.purpose_kill_default(captured[0].purpose) is True
 
 
 def test_run_cdp_generate_stall_wall_clock(

@@ -65,6 +65,10 @@ def _patch_worker_io(monkeypatch: pytest.MonkeyPatch, ask: _FakeAsk) -> None:
         "claude_bundles.cdp_model_endpoint.CdpAskClient",
         lambda: ask,
     )
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kw: kw["prompt_uri"],
+    )
     monkeypatch.setattr(worker_mod, "publish_cdp_kwargs", lambda *a, **k: None)
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
@@ -108,8 +112,9 @@ async def test_worker_restage_omitted_purpose_omits_libs_notice(
         request_id="req-f1-notice",
         purpose=None,
     )
-    assert _NOTICE not in ask.prompt_at_submit
     assert ask.submitted
+    assert "omitted purpose body" in ask.prompt_at_submit
+    assert _NOTICE not in ask.prompt_at_submit
 
 
 @pytest.mark.asyncio
@@ -137,7 +142,6 @@ async def test_worker_presealed_sidecar_keeps_judgment_skill_floor(
     sealed.write_text(seed_path.read_text(encoding="utf-8"), encoding="utf-8")
     sidecar = "cortex://notes/system/threads/presealed-f1b.md"
     assert _skill_slugs(sealed.read_text(encoding="utf-8")) == ["reasoning-posture"]
-    assert seeded.prompt_uri
     ask = _FakeAsk()
     _patch_worker_io(monkeypatch, ask)
     await run_cdp_worker(
@@ -150,12 +154,10 @@ async def test_worker_presealed_sidecar_keeps_judgment_skill_floor(
         purpose=None,
     )
     assert ask.submitted
-    submitted_uri = ask.submitted[0].prompt_uri
-    assert submitted_uri == sidecar
-    text = sealed.read_text(encoding="utf-8")
-    assert _skill_slugs(text) == ["reasoning-posture"]
+    assert ask.submitted[0].prompt_uri == sidecar
+    assert _skill_slugs(ask.prompt_at_submit) == ["reasoning-posture"]
     for slug in _ARCH:
-        assert slug not in text
+        assert slug not in ask.prompt_at_submit
 
 
 @pytest.mark.asyncio
@@ -191,10 +193,28 @@ async def test_admit_omitted_purpose_ledger_stores_none(
     monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
     monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
 
-    async def _noop_worker(**kwargs: Any) -> None:
-        del kwargs
+    captured_worker: list[dict[str, object]] = []
+    pending: list[object] = []
 
-    monkeypatch.setattr(mod, "run_cdp_worker", _noop_worker)
+    async def _capture_worker(**kwargs: Any) -> None:
+        captured_worker.append(dict(kwargs))
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    def _capture_task(coro: object, **kwargs: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _capture_worker)
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
 
     body = MagicMock()
     body.op = "generate"
@@ -226,6 +246,10 @@ async def test_admit_omitted_purpose_ledger_stores_none(
         body=body,
         response=response,
     )
+    assert pending
+    await pending[0]
+    assert captured_worker
+    assert captured_worker[0]["purpose"] is None
     leg = read_inflight_leg(result["execution_id"])
     assert leg is not None
     assert leg.purpose is None
