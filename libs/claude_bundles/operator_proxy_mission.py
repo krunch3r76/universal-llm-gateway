@@ -10,8 +10,6 @@ delivered via staging Use-lines, not a leading ``/<slug>`` prefix here.
 
 from __future__ import annotations
 
-import re
-
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import hop_successor_fields
 
@@ -221,26 +219,16 @@ def ensure_operator_proxy_mission_prompt(
     return rest_body
 
 
-# Header declaration only. A prose quote (review packets, seat-map
-# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
-_PURPOSE_HEADER_LINES = 40
-_PURPOSE_DOC = re.compile(
-    r"^purpose\s*[:=]\s*(operator-proxy|mission\b|operator_proxy)",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
-    """True when purpose or a column-0 header line declares a mission."""
-    if is_operator_proxy_mission_purpose(purpose):
-        return True
-    if not prompt:
-        return False
-    from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
+    """True when the wire ``purpose`` tags an operator-proxy / mission launch.
 
-    _attach, _inline, body = peel_sealed_cdp_skill_prefix(prompt)
-    head = "\n".join(body.splitlines()[:_PURPOSE_HEADER_LINES])
-    return _PURPOSE_DOC.search(head) is not None
+    Prompt text is ignored (typed-job fork 12 / AC3). A column-0 ``purpose:``
+    or ``purpose=`` line in the author body does not induce mission skills or
+    the hop briefing. Callers that need those must set ``purpose`` /
+    ``session`` on the wire. ``prompt`` remains for call-site compatibility.
+    """
+    del prompt  # body text is not a mission selector
+    return is_operator_proxy_mission_purpose(purpose)
 
 
 __all__ = [
