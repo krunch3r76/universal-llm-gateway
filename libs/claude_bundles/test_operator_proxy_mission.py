@@ -455,6 +455,22 @@ def test_attest_induction_channel_covers_shared_sync_without_attach() -> None:
         inlined=[],
         induction=["cdp-operator-proxy"],
     ) == ["cdp-operator-proxy"]
+    review = ["reasoning-posture", "consult-posture", "hypothesize-simulate"]
+    review_rows = ledger_skills_channels(
+        review,
+        attached=[],
+        inlined=[],
+        induction=review,
+    )
+    assert review_rows == [
+        {"slug": slug, "delivered_via": "induction"} for slug in review
+    ]
+    assert attest_delivery_channels(
+        review,
+        attached=[],
+        inlined=[],
+        induction=review,
+    ) == review
 
 
 def test_mission_prompt_runbook_missing_still_has_success_condition() -> None:

@@ -334,8 +334,14 @@ def stage_cdp_prompt_with_skills(
                 ) from exc
             raise CdpStagingError(str(exc), code="pool_blocked") from exc
 
-    omit_slash = purpose_implies_mission(purpose, body)
-    if omit_slash:
+    from claude_bundles.cowork_skill_delivery import partition_cdp_skills
+
+    slash_slugs, _inline_slugs = partition_cdp_skills(effective)
+    # Induction turn covers every shared_sync slug; slash lines would double-load.
+    # StagedPrompt.mission stays the purpose/header predicate — omit_slash is wider.
+    mission = purpose_implies_mission(purpose, body)
+    omit_slash = mission or bool(slash_slugs)
+    if mission:
         have = {s.lstrip("/").lower() for s in effective}
         for slug in reversed(MISSION_SKILL_SLUGS):
             if slug.lower() not in have:
@@ -385,12 +391,12 @@ def stage_cdp_prompt_with_skills(
             prompt_uri=str(prompt_uri).strip(),
             ephemeral_root=None,
             staged=False,
-            mission=omit_slash,
+            mission=mission,
         )
     return stage_prompt_uri(
         execution_id=execution_id,
         prompt_text=merged,
-        mission=omit_slash,
+        mission=mission,
     )
 
 

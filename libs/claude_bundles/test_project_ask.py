@@ -316,3 +316,78 @@ async def test_project_ask_on_page_harvest_incomplete_preserves_body() -> None:
     assert result.body_len == len(partial)
     assert result.body_len > 0
     assert "timed out incomplete" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_induction_fires_for_review_floor() -> None:
+    """Review-purpose sealed prompt still gets the induction turn (not mission-gated)."""
+    from claude_bundles.chat_context_skills import LoadedSkillsReport
+    from claude_bundles.project_ask import send_prompt
+
+    page = AsyncMock()
+    composer = AsyncMock()
+    inserted: list[str] = []
+
+    async def _insert(text: str) -> None:
+        inserted.append(text)
+
+    page.keyboard.insert_text = _insert
+    report = LoadedSkillsReport(
+        url="https://claude.ai/chat/x",
+        skills=(
+            "reasoning-posture",
+            "consult-posture",
+            "hypothesize-simulate",
+        ),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    text = (
+        "<!--cdp-required-skills:"
+        "reasoning-posture,consult-posture,hypothesize-simulate-->\n"
+        "## Review packet\n"
+    )
+    with (
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._submit_composer_draft",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask._insert_prompt_text",
+            new=AsyncMock(return_value=([], [])),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(return_value=report),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            return_value=[
+                "reasoning-posture",
+                "consult-posture",
+                "hypothesize-simulate",
+            ],
+        ),
+    ):
+        await send_prompt(page, text)
+    assert inserted == [
+        "Use the reasoning-posture skill\n"
+        "Use the consult-posture skill\n"
+        "Use the hypothesize-simulate skill"
+    ]
