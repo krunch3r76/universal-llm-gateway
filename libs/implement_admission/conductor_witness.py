@@ -102,10 +102,11 @@ def _missing_witness_message(
         summon = (summon_mode or "").strip().lower().replace("-", "_")
         if summon == "attended":
             return (
-                "check summoning_thread_id for an existing SCORE_RESURFACE after "
-                "the G3 journal before posting (cite CDP exec id + review sha; "
-                "a:37198); if one is there, fold read missed it — file friction, "
-                "do not re-post"
+                "check summoning_thread_id for an existing SCORE_RESURFACE "
+                "(subject slug + body exec/review sha) after the G3 journal "
+                "before posting (a:37198); if one is there, fold read missed "
+                "it — file friction, do not re-post; hang nested implement or "
+                "L1==HEAD as the implement half"
             )
         return "nest implement commits or hang L1==HEAD (away G5; a:37198)"
     if row_id == "G6":

@@ -100,7 +100,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 | G-row | Mode | Nested contract | Closeout witness |
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
-| G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended (CDP-ratified):** required witness = `SCORE_RESURFACE` on `summoning_thread_id` citing CDP exec + review sha (`a:37198`) — ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone; resurface ≠ implement completeness. **Away:** `ledger:nested_implement` ∨ `git:lane_head`. **Fold gap (named):** attended fold may DONE from resurface alone today; hang nest/L1 before treating G5 as mission-complete. Path-explicit commit / `land_disposition` are G7 land claims |
+| G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |
 | G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = pre-land review harvest; distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
@@ -155,17 +155,15 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   score-ratify (LIKELY_OPTIMAL / do-not-fight) is a **transition**: fire, record the
   harvest URI, continue. It does **not** hang the G5 fold witness by itself.
   **Required attended witness:** post one bus turn on `summoning_thread_id` whose
-  subject starts with `SCORE_RESURFACE` and whose body cites (1) CDP exec id and
-  (2) review sha (`read_sha256` or review URI digest). Fold source:
-  `bus:SCORE_RESURFACE`. That post is the ratify→resurface witness, **not**
-  implement completeness — still hang Composer nest / lane-head evidence before
-  treating G5 as mission-complete (fold may DONE from resurface alone today;
-  requiring both witnesses is a follow-up). **Forbidden as the ratify closer:**
-  tip Status prose, operator steer-inject, CDP harvest URI alone. **Attended
-  fallback (named):** if `summoning_thread_id` or bus is unresolved, fold may
-  still accept `ledger:nested_implement` (unlike `git:lane_head`, which is
-  attended-guarded) — document, not silent. **Successor refuse-redo:** when the
-  fold already shows G5 `DONE` with `bus:SCORE_RESURFACE` (or away
+  subject starts with `SCORE_RESURFACE` and includes the mission **slug**, and
+  whose body cites (1) CDP exec id and (2) review sha when the tip recorded
+  them. Fold source: `bus:SCORE_RESURFACE` only when that turn **and**
+  implement completeness (`ledger:nested_implement` ∨ `git:lane_head`) both
+  hang. Bus read is `found` / `not_found` / `unknown` — `unknown` (HTTP/token
+  miss) is not a closer and is not a license to re-post. **Forbidden:** tip
+  Status prose, operator steer-inject, CDP harvest URI alone, nested implement
+  without resurface on attended. **Successor refuse-redo:** when the fold
+  already shows G5 `DONE` with `bus:SCORE_RESURFACE` (or away
   `ledger:nested_implement` / `git:lane_head`), do **not** re-fire score-ratify
   and do **not** re-post `SCORE_RESURFACE` — drive from the next entry gate. If
   Status is `CLAIMED` and a matching resurface already exists on the summoning

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from implement_admission.conductor_score_table import (
     cell,
@@ -14,6 +14,8 @@ from implement_admission.conductor_score_table import (
     status_token,
     stops_index,
 )
+
+ScoreResurfaceRead = Literal["found", "not_found", "unknown"]
 
 STOPS_BLOCK_TOKENS: frozenset[str] = frozenset(
     {"ROW_PINNED", "CONSULT_PENDING", "HOLD_MERGE", "OPERATOR_GATE"}
@@ -41,7 +43,10 @@ class WitnessBus(Protocol):
         *,
         thread_id: str,
         after_written_at: str | None,
-    ) -> bool: ...
+        slug: str | None = None,
+        exec_id: str | None = None,
+        review_sha: str | None = None,
+    ) -> ScoreResurfaceRead | bool: ...
 
 
 class WitnessNestedImplement(Protocol):

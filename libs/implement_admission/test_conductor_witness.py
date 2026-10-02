@@ -84,8 +84,9 @@ class _StubBus:
         *,
         thread_id: str,
         after_written_at: str | None,
+        **kwargs: object,
     ) -> bool:
-        _ = thread_id, after_written_at
+        _ = thread_id, after_written_at, kwargs
         return self._resurface
 
 
@@ -481,7 +482,7 @@ def test_g7_land_without_g6_review_has_no_witness(tmp_path: Path) -> None:
         deps=deps,
         files_root=files_root,
     )
-    assert witnesses.get("G5") is not None
+    assert witnesses.get("G5") is None
     assert witnesses.get("G6") is None
     assert witnesses.get("G7") is None
 
@@ -493,18 +494,67 @@ def test_score_resurface_in_turns_respects_cutoff() -> None:
             "created_at": "2026-08-26T06:30:00Z",
         }
     ]
-    assert score_resurface_in_turns(turns, after_written_at=None) is True
+    assert score_resurface_in_turns(turns, after_written_at=None, slug="slug") is True
     assert (
-        score_resurface_in_turns(turns, after_written_at="2026-08-26T06:00:00Z") is True
+        score_resurface_in_turns(
+            turns, after_written_at="2026-08-26T06:00:00Z", slug="slug"
+        )
+        is True
     )
     assert (
-        score_resurface_in_turns(turns, after_written_at="2026-08-26T07:00:00Z")
+        score_resurface_in_turns(
+            turns, after_written_at="2026-08-26T07:00:00Z", slug="slug"
+        )
         is False
     )
     assert (
         score_resurface_in_turns(
             [{"subject": "CHECKPOINT 87", "created_at": "2026-08-26T06:30:00Z"}],
             after_written_at=None,
+            slug="slug",
+        )
+        is False
+    )
+
+
+def test_score_resurface_in_turns_binds_slug_and_exec() -> None:
+    turns = [
+        {
+            "subject": "SCORE_RESURFACE — other-mission G5",
+            "body": "cdp exec 26a259ca-a447-407e-bc91-57eda2e5b0e5",
+            "created_at": "2026-08-26T06:30:00Z",
+        }
+    ]
+    assert (
+        score_resurface_in_turns(turns, after_written_at=None, slug="this-mission")
+        is False
+    )
+    bound = [
+        {
+            "subject": "SCORE_RESURFACE — this-mission G5",
+            "body": (
+                "cdp exec 26a259ca-a447-407e-bc91-57eda2e5b0e5 "
+                "read_sha256 abcdef0123456789abcdef0123456789"
+            ),
+            "created_at": "2026-08-26T06:30:00Z",
+        }
+    ]
+    assert (
+        score_resurface_in_turns(
+            bound,
+            after_written_at=None,
+            slug="this-mission",
+            exec_id="26a259ca-a447-407e-bc91-57eda2e5b0e5",
+            review_sha="abcdef0123456789abcdef0123456789",
+        )
+        is True
+    )
+    assert (
+        score_resurface_in_turns(
+            bound,
+            after_written_at=None,
+            slug="this-mission",
+            exec_id="00000000-0000-0000-0000-000000000000",
         )
         is False
     )
@@ -604,6 +654,21 @@ def test_default_witness_bus_has_no_services_import() -> None:
     source = Path(__file__).resolve().parents[0] / "conductor_witness_defaults.py"
     text = source.read_text(encoding="utf-8")
     assert "services.git_integration_worker" not in text
+
+
+@pytest.mark.offline
+def test_default_witness_bus_unknown_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from implement_admission.conductor_witness_defaults import DefaultWitnessBus
+
+    monkeypatch.delenv("AGENT_BUS_TOKEN", raising=False)
+    assert (
+        DefaultWitnessBus().has_score_resurface_after(
+            thread_id="14162", after_written_at=None, slug="x"
+        )
+        == "unknown"
+    )
 
 
 @pytest.mark.offline
@@ -981,6 +1046,7 @@ def _gated_tip(*, g4_stops: str, g6_stops: str, sidecars: str) -> str:
         "## Sidecars\n\n"
         "| ID | Artifact URI | What it is |\n|---|---|---|\n"
         + sidecars
+        + "\nconductor dispatch_id `12345678-abcd-1234-abcd-123456789abc`\n"
     )
 
 
@@ -988,6 +1054,7 @@ def _reroute_deps(tmp_path: Path) -> FoldDeps:
     return FoldDeps(
         cortex=_StubCortex(),
         bus=_StubBus(resurface=True),
+        nested_implement=_StubNestedImplement(has_commits=True),
         git=_StubGit(landed=False),
         source_ref="todo:reroute-verdict",
         summon_mode="attended",
@@ -1072,8 +1139,10 @@ def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> 
     current = read_tip(slug, files_root=files_root)
     assert current is not None
     partial = "| G6-REVIEW-opera\n"
-    posted = current[0] + partial + _sidecar(
-        "G6-REVIEW-operator", operator_uri, operator_sha
+    posted = (
+        current[0]
+        + partial
+        + _sidecar("G6-REVIEW-operator", operator_uri, operator_sha)
     )
     mutated = forward_mutate_tip(
         slug,
@@ -1086,9 +1155,7 @@ def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> 
         files_root=files_root,
     )
     assert mutated.rejected_reason is None
-    second = fold_scoreboard(
-        slug, deps=deps, files_root=files_root, write_journal=True
-    )
+    second = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=True)
     assert second is not None
     assert second.witnesses["G6"] is not None
     assert second.witnesses["G6"].detail == nested_uri
@@ -1114,8 +1181,7 @@ def test_g6_fold_keeps_route_while_second_artifact_is_posted(tmp_path: Path) -> 
     assert third.witnesses["G6"] is not None
     assert third.witnesses["G6"].detail == operator_uri
     assert (
-        third.witnesses["G6"].source
-        == "witness:BIND:G6-REVIEW-operator:route=operator"
+        third.witnesses["G6"].source == "witness:BIND:G6-REVIEW-operator:route=operator"
     )
 
 

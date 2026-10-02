@@ -509,47 +509,17 @@ def _row_witnesses_g_ladder(
         witnesses["G4"] = Witness(row="G4", source=g4_source, detail=g4_uri)
 
     g4_blocked = g4_stops is not None or (bool(g4_uri) and witnesses["G4"] is None)
-    summon = (deps.summon_mode or "").strip().lower().replace("-", "_")
-    if g4_blocked:
-        witnesses["G5"] = None
-    elif summon == "attended" and deps.bus is not None and deps.summoning_thread_id:
-        after = _g3_journal_written_at(slug, files_root=files_root)
-        if deps.bus.has_score_resurface_after(
-            thread_id=deps.summoning_thread_id,
-            after_written_at=after,
-        ):
-            witnesses["G5"] = Witness(
-                row="G5",
-                source="bus:SCORE_RESURFACE",
-                detail=deps.summoning_thread_id,
-            )
-    elif deps.nested_implement is not None:
-        dispatch_id = _conductor_dispatch_id(tip_body)
-        finder = getattr(deps.nested_implement, "parent_with_commits", None)
-        hit: str | None = None
-        if callable(finder):
-            found = finder(tip_body=tip_body, explicit_parent_id=dispatch_id)
-            hit = str(found) if found else None
-        elif dispatch_id and deps.nested_implement.nested_implement_has_commits(
-            nest_under_dispatch_id=dispatch_id,
-        ):
-            hit = dispatch_id
-        if hit:
-            witnesses["G5"] = Witness(
-                row="G5",
-                source="ledger:nested_implement",
-                detail=hit,
-            )
-    if witnesses.get("G5") is None and summon != "attended":
-        l1_sha = artifacts.get("L1")
-        if l1_sha and _SHA_RE.match(l1_sha) and repo is not None:
-            head_sha = _repo_head_full_sha(repo)
-            if head_sha is not None and head_sha == l1_sha.lower():
-                witnesses["G5"] = Witness(
-                    row="G5",
-                    source="git:lane_head",
-                    detail=l1_sha,
-                )
+    from implement_admission.conductor_witness_g5 import hang_g5_witness
+
+    witnesses["G5"] = hang_g5_witness(
+        slug,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+        artifacts=artifacts,
+        repo=repo,
+        g4_blocked=g4_blocked,
+    )
 
     if witnesses.get("G5") is not None:
         g6_route = _cdp_fail_route(tip_body, "G6")

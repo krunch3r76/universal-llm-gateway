@@ -13,6 +13,7 @@ from implement_admission.conductor_score_journal import read_tip
 from implement_admission.conductor_witness_table import row_witnesses
 from implement_admission.conductor_witness_types import (
     FoldDeps,
+    ScoreResurfaceRead,
     Witness,
     WitnessNestedImplement,
 )
@@ -35,12 +36,31 @@ def score_resurface_in_turns(
     turns: list[dict[str, Any]],
     *,
     after_written_at: str | None,
+    slug: str | None = None,
+    exec_id: str | None = None,
+    review_sha: str | None = None,
 ) -> bool:
-    """True when a SCORE_RESURFACE subject exists after the G3 journal time."""
+    """True when a mission-bound SCORE_RESURFACE exists after the G3 journal.
+
+    Slug must appear in the subject when given (shared summoning roots host
+    several missions). When the tip recorded a CDP exec or review sha, the
+    turn body must cite it. No G3 cutoff does not admit a foreign resurface.
+    """
     cutoff = _parse_iso(after_written_at)
+    slug_token = (slug or "").strip().lower()
+    exec_token = (exec_id or "").strip().lower()
+    sha_token = (review_sha or "").strip().lower()
     for turn in turns:
         subject = str(turn.get("subject") or "")
         if not subject.upper().startswith("SCORE_RESURFACE"):
+            continue
+        if slug_token and slug_token not in subject.lower():
+            continue
+        body = str(turn.get("body") or "")
+        blob = f"{subject}\n{body}".lower()
+        if exec_token and exec_token not in blob:
+            continue
+        if sha_token and sha_token not in blob:
             continue
         if cutoff is None:
             return True
@@ -102,13 +122,18 @@ class DefaultWitnessBus:
         *,
         thread_id: str,
         after_written_at: str | None,
-    ) -> bool:
+        slug: str | None = None,
+        exec_id: str | None = None,
+        review_sha: str | None = None,
+    ) -> ScoreResurfaceRead:
         from urllib.parse import urlencode
 
         from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
         token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if not token:
+            return "unknown"
+        headers = {"Authorization": f"Bearer {token}"}
         qs = urlencode({"thread": str(thread_id), "last": _TURNS_PAGE})
         try:
             with make_sync_client(
@@ -116,14 +141,21 @@ class DefaultWitnessBus:
             ) as client:
                 resp = client.get(f"/turns?{qs}", headers=headers)
                 if resp.status_code >= 400:
-                    return False
+                    return "unknown"
                 payload = resp.json()
         except (OSError, ValueError):
-            return False
+            return "unknown"
         turns = payload.get("turns") if isinstance(payload, dict) else None
         if not isinstance(turns, list):
-            return False
-        return score_resurface_in_turns(turns, after_written_at=after_written_at)
+            return "unknown"
+        hit = score_resurface_in_turns(
+            turns,
+            after_written_at=after_written_at,
+            slug=slug,
+            exec_id=exec_id,
+            review_sha=review_sha,
+        )
+        return "found" if hit else "not_found"
 
 
 def fold_deps_for_admit(

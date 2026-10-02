@@ -38,7 +38,7 @@ class StubCortex:
 
 
 class StubBus:
-    def has_score_resurface_after(self, *, thread_id: str, after_written_at: str | None) -> bool:  # noqa: ARG002
+    def has_score_resurface_after(self, **kwargs: object) -> bool:  # noqa: ARG002
         return False
 
 

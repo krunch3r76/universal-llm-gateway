@@ -62,20 +62,27 @@ class _StubCortex:
 
 
 class _StubBus:
+    def __init__(self, *, resurface: bool = True) -> None:
+        self._resurface = resurface
+
     def has_score_resurface_after(
         self,
         *,
         thread_id: str,
         after_written_at: str | None,
+        **kwargs: object,
     ) -> bool:
-        _ = thread_id, after_written_at
-        return True
+        _ = thread_id, after_written_at, kwargs
+        return self._resurface
 
 
 class _StubNestedImplement:
+    def __init__(self, *, has_commits: bool = False) -> None:
+        self._has_commits = has_commits
+
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
         _ = nest_under_dispatch_id
-        return False
+        return self._has_commits
 
 
 class _StubGit:
@@ -92,6 +99,7 @@ def _review_tip(*, cited_sha: str | None = None, body: str) -> str:
         "| ID | Artifact URI | What it is |\n"
         "|---|---|---|\n"
         f"| R1 | `{reviews}`{sha_cell} | G7 after-ship verdict |\n"
+        f"\nconductor dispatch_id `12345678-abcd-1234-abcd-123456789abc`\n"
         f"\n<!-- body written to {reviews} -->\n"
     )
 
@@ -107,6 +115,7 @@ def _deps(tmp_path: Path, *, triage: str = "judgment_required") -> FoldDeps:
     return FoldDeps(
         cortex=_StubCortex(triage=triage),
         bus=_StubBus(),
+        nested_implement=_StubNestedImplement(has_commits=True),
         git=_StubGit(),
         source_ref=_SOURCE_REF,
         summon_mode="attended",
@@ -736,13 +745,12 @@ def test_g5_git_lane_head_not_descendant_head(tmp_path: Path) -> None:
 
 
 @pytest.mark.offline
-def test_g5_attended_resurface_without_head_equality(tmp_path: Path) -> None:
-    """Attended SCORE_RESURFACE witnesses G5 without L1/HEAD equality."""
+def test_g5_attended_resurface_without_implement_stays_open(tmp_path: Path) -> None:
+    """Attended SCORE_RESURFACE without nest/L1 does not close G5 (a:37198 A1)."""
     repo, l1_sha = _git_repo_at_commit(tmp_path, advance=True)
-    wrong_l1 = l1_sha  # L1 pins parent; HEAD is descendant
     tip_body = (
         "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
-        + _sidecar_row("L1", wrong_l1)
+        + _sidecar_row("L1", l1_sha)
     )
     deps = FoldDeps(
         cortex=_StubCortex(),
@@ -760,6 +768,58 @@ def test_g5_attended_resurface_without_head_equality(tmp_path: Path) -> None:
         files_root=tmp_path / "cortex",
         rows=G_ROWS,
     )
-    g5 = witnesses.get("G5")
+    assert witnesses.get("G5") is None
+
+
+@pytest.mark.offline
+def test_g5_attended_resurface_and_nested_implement(tmp_path: Path) -> None:
+    """Attended G5 hangs only when resurface and nested implement both exist."""
+    dispatch_id = "12345678-abcd-1234-abcd-123456789abc"
+    repo, l1_sha = _git_repo_at_commit(tmp_path, advance=True)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + _sidecar_row("L1", l1_sha)
+        + f"\nconductor dispatch_id `{dispatch_id}`\n"
+    )
+    g5 = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=FoldDeps(
+            cortex=_StubCortex(),
+            bus=_StubBus(),
+            nested_implement=_StubNestedImplement(has_commits=True),
+            git=_StubGit(),
+            source_ref=_SOURCE_REF,
+            summon_mode="attended",
+            summoning_thread_id="10110",
+            repo=repo,
+        ),
+        files_root=tmp_path / "cortex",
+        rows=G_ROWS,
+    ).get("G5")
     assert g5 is not None
     assert g5.source == "bus:SCORE_RESURFACE"
+
+
+@pytest.mark.offline
+def test_g5_attended_nested_implement_without_resurface(tmp_path: Path) -> None:
+    """Attended nested_implement must not close G5 without SCORE_RESURFACE (A2)."""
+    dispatch_id = "12345678-abcd-1234-abcd-123456789abc"
+    tip_body = f"conductor dispatch_id `{dispatch_id}`\n"
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=FoldDeps(
+            cortex=_StubCortex(),
+            bus=_StubBus(resurface=False),
+            nested_implement=_StubNestedImplement(has_commits=True),
+            git=_StubGit(),
+            source_ref=_SOURCE_REF,
+            summon_mode="attended",
+            summoning_thread_id="10110",
+            repo=tmp_path / "repo",
+        ),
+        files_root=tmp_path / "cortex",
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G5") is None

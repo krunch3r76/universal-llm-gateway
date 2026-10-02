@@ -582,6 +582,7 @@ def test_ac_p1_3_rematerialize_entry_gate_from_fold(
 
     class _FoldBus:
         def has_score_resurface_after(self, **kwargs: object) -> bool:
+            _ = kwargs
             return False
 
         def nested_implement_has_commits(self, **kwargs: object) -> bool:
