@@ -428,16 +428,14 @@ _PURPOSE_DOC = re.compile(
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
-    """True when purpose or a column-0 header line declares a mission."""
-    if is_operator_proxy_mission_purpose(purpose):
-        return True
-    if not prompt:
-        return False
-    from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
+    """True only when the purpose argument is an operator-proxy mission tag.
 
-    _attach, _inline, body = peel_sealed_cdp_skill_prefix(prompt)
-    head = "\n".join(body.splitlines()[:_PURPOSE_HEADER_LINES])
-    return _PURPOSE_DOC.search(head) is not None
+    A prompt line ``purpose=operator-proxy`` (column 0 or quoted) is not a
+    session and does not open the hop briefing or the operator-proxy chip.
+    ``prompt`` is retained so callers that pass the staged body stay valid.
+    """
+    del prompt
+    return is_operator_proxy_mission_purpose(purpose)
 
 
 __all__ = [

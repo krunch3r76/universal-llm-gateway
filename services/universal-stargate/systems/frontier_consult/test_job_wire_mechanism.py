@@ -365,3 +365,74 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     assert to_thread_body["details"]["reason"] == "job_unknown"
     assert to_thread_body["details"]["registry_ref"] == "job_vocab:unresolved"
     assert seen == ["consult", None, "consult"]
+
+
+@pytest.mark.asyncio
+async def test_freeform_omitted_session_admits_without_quoted_purpose_briefing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """job=freeform, no session: 2xx, execution_id, registry_ref.
+
+    A prompt line ``purpose=operator-proxy`` does not open the hop briefing
+    or the cdp-operator-proxy chip. Breaks when staging still scans the prompt
+    or when omitted purpose is inferred as ask.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from claude_bundles import cdp_model_endpoint_staging as staging
+
+    from systems.frontier_consult import cdp_generate as mod
+
+    monkeypatch.setattr(staging, "ephemeral_dir", lambda _eid: tmp_path)
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(
+        mod,
+        "admit_handoff_dispatch",
+        AsyncMock(return_value=MagicMock(reason="ok")),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+    monkeypatch.setattr(mod, "record_cdp_admit", lambda **kw: None)
+
+    seen: dict[str, Any] = {}
+
+    async def _worker(**kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _worker)
+
+    prompt = "purpose=operator-proxy\nDo the work.\n"
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="14394",
+        prompt=prompt,
+    )
+    response = Response()
+    result = await mod.dispatch_cdp_generate(
+        request_id="req-ac3",
+        body=body,
+        response=response,
+    )
+    assert 200 <= response.status_code < 300
+    assert result["execution_id"]
+    assert result["resolved_job"] == "freeform"
+    assert result["registry_ref"] == "job_vocab:freeform"
+    assert seen.get("purpose") is None
+    staged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert "Mission seat map" not in staged
+    assert "cdp-operator-proxy" not in staged
+    assert prompt.splitlines()[0] in staged
+    assert "reasoning-posture" in staged

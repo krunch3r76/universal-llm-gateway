@@ -350,21 +350,21 @@ def test_stage_cortex_passthrough_honors_mission_flag(
     assert staged.mission is True
 
 
-def test_stage_uri_body_purpose_sets_mission(
+def test_stage_uri_body_quoting_purpose_does_not_set_mission(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Wire purpose=ask does not declare a mission; the URI body on line 2 does."""
+    """A URI body line ``purpose: operator-proxy`` is not a session."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     src = tmp_path / "notes/system/specs/mission-uri.md"
     src.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text("title line\npurpose: operator-proxy\n", encoding="utf-8")
+    src.write_text("title line\npurpose=operator-proxy\n", encoding="utf-8")
     staged = stage_cdp_prompt_with_skills(
         execution_id="exec-uri-mission",
         prompt_text=None,
         prompt_uri="cortex://notes/system/specs/mission-uri.md",
-        purpose="ask",
+        purpose=None,
     )
-    assert staged.mission is True
+    assert staged.mission is False
 
 
 def test_stage_cdp_presealed_cortex_uri_passes_through(

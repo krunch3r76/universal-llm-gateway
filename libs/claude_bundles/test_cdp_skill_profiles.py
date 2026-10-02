@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
-from claude_bundles.cdp_skill_profiles import infer_cdp_purpose, profile_slugs_for_purpose
+from claude_bundles.cdp_skill_profiles import (
+    infer_cdp_purpose,
+    profile_slugs_for_purpose,
+    profile_slugs_for_session,
+)
+
+
+def test_omitted_session_floor_ignores_quoted_purpose_line() -> None:
+    quoted = "purpose=operator-proxy\n"
+    assert "purpose=operator-proxy" in quoted
+    floor = profile_slugs_for_session(None)
+    assert floor == ("reasoning-posture",)
+    assert "cdp-operator-proxy" not in floor
 
 
 def test_omitted_purpose_stays_judgment_only() -> None:

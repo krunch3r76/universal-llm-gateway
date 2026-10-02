@@ -437,11 +437,7 @@ async def dispatch_cdp_generate(
         request_id=request_id,
     )
     raw_job = getattr(body, "job", None)
-    contract = (
-        raw_job.strip()
-        if isinstance(raw_job, str) and raw_job.strip()
-        else None
-    )
+    contract = raw_job.strip() if isinstance(raw_job, str) and raw_job.strip() else None
     if contract in {"implement", "wrap"}:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -481,12 +477,15 @@ async def dispatch_cdp_generate(
     execution_id = str(uuid.uuid4())
     skills = getattr(body, "skills", None)
     purpose_raw = getattr(body, "purpose", None)
-    purpose = infer_cdp_purpose(
-        str(purpose_raw).strip()
-        if isinstance(purpose_raw, str) and purpose_raw.strip()
-        else None,
-        model,
-    )
+    session_raw = getattr(body, "session", None)
+    # Omitted session is the judgment floor. Do not infer ``ask`` from the
+    # model, and do not read a ``purpose=`` line out of the prompt.
+    if isinstance(session_raw, str) and session_raw.strip():
+        purpose = session_raw.strip()
+    elif isinstance(purpose_raw, str) and purpose_raw.strip():
+        purpose = infer_cdp_purpose(purpose_raw.strip(), model)
+    else:
+        purpose = None
     try:
         staged = _stage_inputs(
             execution_id=execution_id,
@@ -734,6 +733,9 @@ async def dispatch_cdp_generate(
         "reply_from_agent": CDP_REPLY_FROM,
         "resolved_model": model,
         "resolved_job": contract,
+        "registry_ref": (
+            f"job_vocab:{contract}" if contract else "job_vocab:unresolved"
+        ),
         "substrate": CDP_SUBSTRATE,
         "cost_source": "unavailable",
         "prompt_uri": staged.prompt_uri,

@@ -56,3 +56,13 @@ def profile_slugs_for_purpose(purpose: str | None) -> tuple[str, ...]:
     if not key:
         return _DEFAULT_FLOOR
     return CDP_PURPOSE_PROFILES.get(key, _DEFAULT_FLOOR)
+
+
+def profile_slugs_for_session(session: str | None) -> tuple[str, ...]:
+    """Chip floor from the ``session`` field.
+
+    Omission is the judgment floor. A prompt that quotes
+    ``purpose=operator-proxy`` is not a session and does not select
+    ``cdp-operator-proxy``.
+    """
+    return profile_slugs_for_purpose(session)

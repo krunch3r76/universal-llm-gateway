@@ -33,7 +33,7 @@ def test_purpose_recognition() -> None:
     assert is_operator_proxy_mission_purpose("mission")
     assert is_operator_proxy_mission_purpose("OPERATOR_PROXY")
     assert not is_operator_proxy_mission_purpose("ask")
-    assert purpose_implies_mission("ask", "purpose: mission\n# Body")
+    assert not purpose_implies_mission("ask", "purpose: mission\n# Body")
     assert not purpose_implies_mission("ask", "# Sealed R-admit")
 
 
@@ -332,39 +332,37 @@ def _induction_slugs(merged: str) -> list[str]:
     return partition_cdp_skills(authority)[0]
 
 
-def test_stage_freeform_body_purpose_induces_mission_skills(tmp_path, monkeypatch) -> None:
-    """purpose=freeform plus a body `purpose: operator-proxy` is a mission."""
-    staged = _stage_under(
-        tmp_path,
-        monkeypatch,
-        prompt_text="handoff\npurpose: operator-proxy\n",
-        purpose="freeform",
-    )
-    assert staged.staged
-    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
-    assert not merged.lstrip().startswith("/")
-    induction = _induction_slugs(merged)
-    for slug in MISSION_SKILL_SLUGS:
-        assert slug in induction
-
-
-def test_staged_prompt_text_runner_would_load_still_implies_mission(
+def test_stage_freeform_body_quoting_purpose_does_not_induce_mission(
     tmp_path, monkeypatch
 ) -> None:
-    """Staging and the runner share one decision on the sealed prompt.md bytes.
-
-    purpose=freeform; line 2 of the author body is column-0 ``purpose: operator-proxy``.
-    The runner calls ``purpose_implies_mission(purpose, loaded_text)`` on that file.
-    """
+    """A body line ``purpose=operator-proxy`` is not a session."""
     staged = _stage_under(
         tmp_path,
         monkeypatch,
-        prompt_text="handoff\npurpose: operator-proxy\n",
-        purpose="freeform",
+        prompt_text="handoff\npurpose=operator-proxy\n",
+        purpose=None,
+    )
+    assert staged.staged
+    assert staged.mission is False
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert "Mission seat map" not in merged
+    induction = _induction_slugs(merged)
+    assert "cdp-operator-proxy" not in induction
+
+
+def test_staged_prompt_quoting_purpose_does_not_imply_mission(
+    tmp_path, monkeypatch
+) -> None:
+    """The runner reads the same bytes and still does not treat the quote as a session."""
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
+        prompt_text="handoff\npurpose=operator-proxy\n",
+        purpose=None,
     )
     assert staged.staged
     merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
-    assert purpose_implies_mission("freeform", merged)
+    assert purpose_implies_mission(None, merged) is False
 
 
 def test_header_on_body_line_40_survives_authority_line_shift(
@@ -391,8 +389,8 @@ def test_header_on_body_line_40_survives_authority_line_shift(
         )
         is None
     )
-    assert staged.mission is True
-    assert purpose_implies_mission("freeform", merged) is True
+    assert staged.mission is False
+    assert purpose_implies_mission(None, merged) is False
 
 
 def test_inline_class_slug_shift_keeps_body_line_5_header(
@@ -416,8 +414,8 @@ def test_inline_class_slug_shift_keeps_body_line_5_header(
         )
         is None
     )
-    assert staged.mission is True
-    assert purpose_implies_mission("freeform", merged) is True
+    assert staged.mission is False
+    assert purpose_implies_mission(None, merged) is False
 
 
 def test_stage_operator_proxy_omits_slash_keeps_use_line_authority(tmp_path, monkeypatch) -> None:
@@ -522,9 +520,10 @@ def test_prose_quote_of_purpose_is_not_a_mission() -> None:
     assert not purpose_implies_mission("ask", body)
 
 
-def test_column0_purpose_header_is_a_mission() -> None:
-    body = "TYPE: DIRECTIVE\npurpose: operator-proxy\n# body\n"
-    assert purpose_implies_mission("ask", body)
+def test_column0_purpose_header_is_not_a_session() -> None:
+    body = "TYPE: DIRECTIVE\npurpose=operator-proxy\n# body\n"
+    assert not purpose_implies_mission(None, body)
+    assert not purpose_implies_mission("ask", body)
 
 
 def test_purpose_missionary_prose_not_mission() -> None:
