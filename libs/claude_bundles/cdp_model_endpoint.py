@@ -638,9 +638,10 @@ def run_cdp_generate(
     known. Hop succession sets ``mission_kind=hop`` and
     ``parent_thread=<private lane>``.
 
-    ``skills`` (optional): catalog slugs prepended via
-    ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``
-    manifest lines; satellite attaches via **+ → Skills → pick** (never typed).
+    ``skills`` (optional): catalog slugs sealed via
+    ``stage_cdp_prompt_with_skills``. The marker plus ``send_prompt`` induction
+    delivers ``shared_sync`` slugs; the inline skills block carries everything
+    else. Slash lines appear only for legacy prompts without the marker.
     Staging always merges ``reasoning-posture`` even when ``skills`` is omitted
     (none included).
 

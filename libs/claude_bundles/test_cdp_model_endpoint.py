@@ -28,6 +28,11 @@ from claude_bundles.cdp_model_endpoint_staging import (
     stage_prompt_uri,
     sweep_ephemeral,
 )
+from claude_bundles.cowork_skill_delivery import (
+    extract_cdp_required_authority,
+    prepend_cdp_dispatch_skills,
+)
+from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
 
 _recorded_staging_kwargs: list[dict[str, Any]] = []
 
@@ -83,8 +88,13 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
     # Shared_sync floor is marker + induction, not a leading slash block.
-    assert not text.startswith("/")
-    assert "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
+    assert peel_sealed_cdp_skill_prefix(text)[0] == []
+    assert "/reasoning-posture\n" not in text
+    assert "/consult-posture\n" not in text
+    assert extract_cdp_required_authority(text) == [
+        "reasoning-posture",
+        "consult-posture",
+    ]
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills/prompt.md")
 
@@ -185,8 +195,15 @@ def test_stage_cdp_prompt_with_skills_prepends_house_block(
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-house/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
     assert "## House (read first)" in text
-    assert "reasoning-posture" in text
-    assert not text.lstrip().startswith("/")
+    assert peel_sealed_cdp_skill_prefix(text)[0] == []
+    assert "/reasoning-posture\n" not in text
+    assert "/consult-posture\n" not in text
+    assert "/ulg-for-llms\n" not in text
+    assert extract_cdp_required_authority(text) == [
+        "ulg-for-llms",
+        "reasoning-posture",
+        "consult-posture",
+    ]
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-house/prompt.md")
 
@@ -205,8 +222,9 @@ def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_skill(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-default/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert not text.startswith("/")
-    assert "<!--cdp-required-skills:reasoning-posture-->" in text
+    assert peel_sealed_cdp_skill_prefix(text)[0] == []
+    assert "/reasoning-posture\n" not in text
+    assert extract_cdp_required_authority(text) == ["reasoning-posture"]
     assert "## light ask" in text
     assert staged.staged is True
 
@@ -246,8 +264,13 @@ def test_stage_cdp_prompt_with_skills_rejects_path_sim(
         / "notes/system/ephemeral/cdp-endpoint/exec-skills-judgment-ok/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert not text.startswith("/")
-    assert "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
+    assert peel_sealed_cdp_skill_prefix(text)[0] == []
+    assert "/reasoning-posture\n" not in text
+    assert "/consult-posture\n" not in text
+    assert extract_cdp_required_authority(text) == [
+        "reasoning-posture",
+        "consult-posture",
+    ]
     assert "path-sim" not in text
     assert "## architect bind" in text
     assert staged.staged is True
@@ -270,131 +293,34 @@ def test_stage_cdp_prompt_with_skills_inlines_cursor_only(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert not text.startswith("/")
-    assert "<!--cdp-required-skills:" in text
-    assert "reasoning-posture" in text
+    assert peel_sealed_cdp_skill_prefix(text)[0] == []
+    assert "/reasoning-posture\n" not in text
+    assert "/investigation-economy\n" not in text
+    assert extract_cdp_required_authority(text) == [
+        "investigation-economy",
+        "reasoning-posture",
+    ]
     assert '<skill slug="investigation-economy"' in text
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills-mixed/prompt.md")
 
 
-def test_stage_inline_only_skills_byte_stable_without_slash_block(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Cursor-only effective set is byte-stable when slash omission widens.
+def test_inline_only_prepend_ignores_omit_slash_flag() -> None:
+    """Inline-only partition is byte-identical with or without slash omission.
 
-    Does not prove Item 1. The judgment floor always merges reasoning-posture
-    (shared_sync); this bypasses that floor so effective skills stay
-    cursor_only, matching the master bytes captured for that set.
+    Does not embed SKILL.md. The judgment floor would merge reasoning-posture
+    (shared_sync); callers that need a cursor_only-only set bypass that floor.
+    A golden reread of the mixed stage cannot be written without embedding
+    investigation-economy/SKILL.md bytes, so the mixed test asserts the sealed
+    authority list and the inline tag instead.
     """
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setattr(
-        "claude_bundles.cdp_model_endpoint_staging.ensure_cdp_judgment_skills",
-        lambda skills, purpose=None: list(skills or []),
+    body = "## Task\n"
+    inline_only = ["investigation-economy"]
+    assert prepend_cdp_dispatch_skills(
+        body, inline_only, omit_slash_prefix=True
+    ) == prepend_cdp_dispatch_skills(
+        body, inline_only, omit_slash_prefix=False
     )
-    stage_cdp_prompt_with_skills(
-        execution_id="exec-inline-only",
-        prompt_text="## Task\n",
-        skills=["investigation-economy"],
-    )
-    text = (
-        tmp_path
-        / "notes/system/ephemeral/cdp-endpoint/exec-inline-only/prompt.md"
-    ).read_text(encoding="utf-8")
-    assert text == INLINE_ONLY_MASTER_BYTES
-
-
-INLINE_ONLY_MASTER_BYTES = """<skills_inline>
-## cursor_only skills — not on this seat's Skill loader
-
-These slugs are not on this seat's Skill loader (life segregation).
-Do not /slash them or wait on + → Skills. Read the <skill> excerpt below.
-Do not emit `Use the {slug} skill` for these slugs — that verb is
-Customize self-fetch and will miss.
-
-- `investigation-economy` (`cursor_only`) — read the excerpt below. If truncated:
-  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/investigation-economy/SKILL.md")
-<!-- Local SOT bodies — NOT GitHub; ¬ slash these slugs -->
-<skill slug="investigation-economy" surface_class="cursor_only">
----
-description: In-the-moment VOI gate before read-class observations — every fs read, entity_get, or confirm call.
-trigger_match_terms: ["investigation-economy", "investigation_economy", "read-class", "observation", "voi", "gate", "review-reasoning", "cross-cutting", "behavioral", "discipline", "fires", "instant"]
----
-
-# Investigation Economy
-
-In-the-moment gate for every read-class observation.
-
-## Trigger
-
-Before ANY read-class observation — `fs(read/list)`, source dive, re-poll (`build_status`, pipeline result), `entity_get`, bus fetch, or “let me check/confirm” call — run this gate. The instant before the call is the trigger.
-
-## VOI gate
-
-`observation_allowed ⇔ ∃ possible_result : result changes next_action`.
-
-Plain English: **Would any outcome of this observation change my next action?** If no, do not observe.
-
-Over-investigation is usually comfort-seeking, not information-seeking: the action is already determined, but the agent reads to reduce discomfort.
-
-## VOI=0 variants
-
-- **Redundant:** outcome already implied by signals in hand. `two_cheap_signals_agree ⇒ act ∧ ¬source_read_to_confirm`.
-- **Over-broad:** observed scope exceeds decision need. Read the narrowest useful slice.
-- **Repeated:** signal has not changed since prior look, or changed value would not alter action. Stop polling; go to ground truth once if needed.
-
-## Exceptions: read when value is real
-
-Read when an outcome would change the action, especially:
-
-1. **Irreversible/costly action:** merge, send, money move, delete, live-config change. Low probability × high cost = high VOI.
-2. **Conflicting cheap signals:** status says X, diff says Y; read to resolve.
-3. **First use/no prior:** confirm a tool/path semantics once. After capability is established, re-confirming becomes redundant.
-
-## Width gate
-
-If a read clears VOI, read the narrowest useful slice first; widen only if it fails.
-
-- **agent_bus:** `fetch(compact=true)` / thread digest → `get(thread, turn_number)` for one body.
-- **cortex:** summary/list/search with small `limit ≤ 7`; `entity_get(intent="card")` before full; deepen one row with `assertion_get` when needed.
-- **fs:** for large docs/sidecars, `md_list`/`md_read(section)` or `read(offset, limit)`, not whole-file read.
-
-`oversized_pull ⇒ session_context_inflation`; compact-first surfaces exist to prevent this.
-
-## Session-close falsifier
-
-Ask at close: **Did I issue any read/list/poll/source-dive whose outcome could not have changed my next action? List each. Target: 0.**
-
-Transcript signature: a read whose result is not cited in the subsequent decision rationale is inert. Advisory/WARN only; never block reads globally.
-
-## Escalation falsifier
-
-If inert-read count does not trend toward 0 across sessions, written discipline failed. Escalate structurally: pre-read interstitial, higher read friction, or session-close audit WARN detector. Do not add another ignored paragraph.
-
-## AwaitShell / long Shell (Cursor harness)
-
-`long_shell_job ⇒ background (block_until_ms:0) ∨ short smoke; ¬ turn-holding AwaitShell poll`.
-
-| Pattern | Verdict |
-|---|---|
-| Local 70B / multi-minute `curl` to `:9999` while `AwaitShell` blocks the turn | **Forbidden** — background; continue other work or end turn |
-| `block_until_ms` ≥ 60s used as a substitute for backgrounding | **Forbidden** unless the very next step is blocked on that exit |
-| Smoke-check once after `block_until_ms:0` spawn | Allowed |
-| Close-monitoring loop on hung trainings/deploys | Allowed only per harness close-monitoring rules |
-
-Presence-discipline **P4** is the always-on stub. Structural hard-stop (harness cap / auto-background) is the escalation — do not keep adding prose alone.
-
-## Landing
-
-- Reflective-journal / boot-surfaced falsifier = primary push surface.
-- This skill = canonical text, pull-only reference.
-- Deferred structural work: `todo:investigation-economy-structural-enforcement` — inline one-line gate into operational context and add `over_investigation` close-audit WARN.
-</skill>
-</skills_inline>
-
-<!--cdp-required-skills:investigation-economy-->
-## Task
-"""
 
 
 def test_stage_cortex_passthrough(
@@ -491,8 +417,9 @@ def test_stage_cdp_bare_cortex_uri_is_rewritten_with_rails(
     text = (
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-bare/prompt.md"
     ).read_text(encoding="utf-8")
-    assert not text.startswith("/")
-    assert "<!--cdp-required-skills:reasoning-posture-->" in text
+    assert peel_sealed_cdp_skill_prefix(text)[0] == []
+    assert "/reasoning-posture\n" not in text
+    assert extract_cdp_required_authority(text) == ["reasoning-posture"]
     assert "## bare ask" in text
 
 

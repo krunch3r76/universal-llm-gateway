@@ -250,7 +250,7 @@ def stage_cdp_prompt_with_skills(
     purpose: str | None = None,
     dispatch_thread_id: str | None = None,
 ) -> StagedPrompt:
-    """Stage CDP input; ``skills`` prepends slash/inline manifest.
+    """Stage CDP input and seal the required-skill marker.
 
     Judgment skills are always ensured before prepend — callers may omit
     ``skills`` on none CDP generate and still get them attached.
@@ -260,9 +260,9 @@ def stage_cdp_prompt_with_skills(
     identical bytes). Anything the merge would alter is rewritten to ephemeral
     ``prompt.md``.
 
-    Leading ``/<slug>\\n`` lines are **manifest only** — the Jupiter satellite
-    attaches each ``shared_sync`` slug via composer **+ → Skills → pick**
-    (``composer_session_skills.attach_session_skills``), never slash-type.
+    The marker plus ``send_prompt`` induction delivers ``shared_sync`` slugs.
+    The inline skills block carries everything else. Slash lines appear only
+    for legacy prompts without the marker.
 
     Rejects ``path-sim`` in ``skills=`` (``cdp_skills_path_sim_rejected``).
 

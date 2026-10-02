@@ -121,9 +121,10 @@ def classify_skill_delivery(slug: str) -> SkillDeliveryPlan:
 def partition_cdp_skills(slugs: list[str]) -> tuple[list[str], list[str]]:
     """Sole CDP ``skills=`` disposition authority — ``surface_class`` → channel.
 
-    ``shared_sync`` slugs route to the Customize attach manifest (leading
-    ``/<slug>\\n`` lines). All other catalog surface classes (e.g.
-    ``cursor_only`` such as ``path-sim``) route to ``<skills_inline>`` XML.
+    The marker plus ``send_prompt`` induction delivers ``shared_sync`` slugs.
+    The inline skills block carries every other catalog surface class (e.g.
+    ``cursor_only`` such as ``path-sim``). Slash lines appear only for legacy
+    prompts without the marker.
     ``mcp_surface_required`` is **not** consulted here — code-MCP classification
     does not reject or reroute CDP delivery.
 
