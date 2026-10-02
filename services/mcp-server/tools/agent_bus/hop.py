@@ -15,15 +15,157 @@ from hop_handoff import (
     build_continuity_handoff_body,
     parse_successor_birth_id,
 )
+from job_grammar import resolve_job_token
+from job_vocab.records import job_record
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
 from .request import _resolve_hop_seat_request_refusal
 from .request_intake import resolve_request_id_intake
 
+# Admit-report sentinel when the commission omits ``job``. Not a job id.
+HOP_JOB_ABSENT = "absent"
+
 _VERB_SOURCE = "agent-bus-hop-verb"
 _DEFAULT_SUCCESSOR_MODEL = "cdp/opus-5.5-high"
 _HOP_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
+
+
+def continuity_contract_line(body: str) -> str | None:
+    """Return the body ``contract:`` value, or None when that line is missing."""
+    for line in (body or "").splitlines():
+        if line.startswith("contract:"):
+            value = line.split(":", 1)[1].strip()
+            return value or None
+    return None
+
+
+def resolve_continuity_hop_job(
+    *,
+    contract_line: str | None,
+    explicit_job: str | None = None,
+) -> dict[str, Any]:
+    """Fork 15 table for one hop commission.
+
+    ``explicit_job`` is a parameter, not a ``contract:`` line. A missing line
+    omits ``job``. A generate-admitted inline job is sent. Generate-refused
+    and unknown tokens do not post (``job_unknown``). A source_ref-only job
+    does not post (``handle_forbidden``).
+    """
+    if explicit_job is not None and str(explicit_job).strip():
+        token = str(explicit_job).strip()
+        parsed = resolve_job_token(token)
+        if not parsed.ok or parsed.record is None:
+            return {
+                "post": False,
+                "job": None,
+                "reason": "job_unknown",
+                "report_job": token,
+            }
+        if "generate" not in parsed.record.admitted_ops:
+            return {
+                "post": False,
+                "job": None,
+                "reason": "job_unknown",
+                "report_job": token,
+            }
+        if parsed.record.source_ref_required:
+            return {
+                "post": False,
+                "job": None,
+                "reason": "handle_forbidden",
+                "report_job": "handle_forbidden",
+            }
+        return {"post": True, "job": token, "reason": None, "report_job": token}
+
+    if contract_line is None:
+        return {
+            "post": True,
+            "job": None,
+            "reason": None,
+            "report_job": HOP_JOB_ABSENT,
+        }
+
+    token = contract_line.strip()
+    parsed = resolve_job_token(token)
+    record = parsed.record if parsed.ok else job_record(token)
+    if not parsed.ok or record is None or "generate" not in record.admitted_ops:
+        return {
+            "post": False,
+            "job": None,
+            "reason": "job_unknown",
+            "report_job": token or "unresolved",
+        }
+    if record.source_ref_required:
+        return {
+            "post": False,
+            "job": None,
+            "reason": "handle_forbidden",
+            "report_job": "handle_forbidden",
+        }
+    return {"post": True, "job": record.name, "reason": None, "report_job": record.name}
+
+
+def hop_generate_payload(
+    *,
+    model: str,
+    prompt: str,
+    thread_id: str,
+    from_agent: str,
+    decision: dict[str, Any],
+    predecessor_registration_id: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    """Commission JSON for a hop POST. Omits ``job`` when the decision omitted it."""
+    payload: dict[str, Any] = {
+        "op": "generate",
+        "model": model,
+        "prompt": prompt,
+        "session": "operator-proxy",
+        "mission_kind": "hop",
+        "parent_thread": thread_id,
+        "dispatch_thread_id": thread_id,
+        "caller_agent": from_agent,
+    }
+    if decision.get("job") is not None:
+        payload["job"] = decision["job"]
+    reg = (predecessor_registration_id or "").strip()
+    if reg:
+        payload["predecessor_registration_id"] = reg
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+    return payload
+
+
+async def commission_continuity_hop(
+    payload: dict[str, Any],
+    decision: dict[str, Any],
+    poster,
+) -> dict[str, Any]:
+    """POST the hop commission, or refuse before the poster runs.
+
+    Producer for a POST: this payload and the admit ``report``. Producer for
+    a refusal: the decision above, which returns before ``poster``.
+    """
+    if not decision["post"]:
+        return {
+            "posted": False,
+            "reason": decision["reason"],
+            "report": {"job": decision["report_job"]},
+        }
+    response = await poster(payload)
+    if not isinstance(response, dict):
+        response = {}
+    status = int(response.get("status_code") or 200)
+    execution_id = str(response.get("execution_id") or "")
+    return {
+        "posted": True,
+        "json": payload,
+        "status_code": status,
+        "execution_id": execution_id,
+        "report": {"job": decision["report_job"]},
+        "relay": response,
+    }
 
 
 def resolve_hop_successor_model(desired_model: str) -> str:
@@ -52,6 +194,7 @@ async def _hop_dispatch(
     cse_registration_id: str | None = None,
     desired_model: str = "",
     desired_effort: str = "",
+    job: str | None = None,
     request_id: str | None = None,
     after_turn: int = 0,
     subject: str | None = None,
@@ -127,34 +270,58 @@ async def _hop_dispatch(
     # live generate is excluded (a:37182). predecessor_registration_id names
     # that generate when the seated CSE supplies cse_registration_id; without
     # it, Stargate still exempts the sole live gate on the lane.
-    body: dict[str, Any] = {
-        "op": "generate",
-        "model": model,
-        "prompt": full_body,
-        "job": "freeform",
-        "session": "operator-proxy",
-        "mission_kind": "hop",
-        "parent_thread": thread_id,
-        "dispatch_thread_id": thread_id,
-        "caller_agent": from_agent,
-    }
-    reg = (cse_registration_id or "").strip()
-    if reg:
-        body["predecessor_registration_id"] = reg
-    effort = (desired_effort or "").strip()
-    if effort and effort != "auto":
-        body["reasoning_effort"] = effort
-
-    from tools.frontier import _relay
-
-    result = await _relay(
-        endpoint="/api/v1/team/dispatch",
-        body=body,
-        record_prefix="mcp.agentbus.hop.dispatch",
+    # ``job`` on the wire follows the contract: line (fork 15), not a default.
+    decision = resolve_continuity_hop_job(
+        contract_line=continuity_contract_line(full_body),
+        explicit_job=job,
     )
+    effort = (desired_effort or "").strip()
+    wire_effort = effort if effort and effort != "auto" else None
+    payload = hop_generate_payload(
+        model=model,
+        prompt=full_body,
+        thread_id=thread_id,
+        from_agent=from_agent,
+        decision=decision,
+        predecessor_registration_id=cse_registration_id,
+        reasoning_effort=wire_effort,
+    )
+
+    async def _poster(body: dict[str, Any]) -> dict[str, Any]:
+        from tools.frontier import _relay
+
+        relayed = await _relay(
+            endpoint="/api/v1/team/dispatch",
+            body=body,
+            record_prefix="mcp.agentbus.hop.dispatch",
+        )
+        if (
+            isinstance(relayed, dict)
+            and "status_code" not in relayed
+            and "error" not in relayed
+        ):
+            return {**relayed, "status_code": 200}
+        return relayed if isinstance(relayed, dict) else {}
+
+    commissioned = await commission_continuity_hop(payload, decision, _poster)
+    if not commissioned["posted"]:
+        record(
+            "mcp.agentbus.hop.rejected",
+            reason=commissioned["reason"],
+            thread=thread_id,
+        )
+        return {
+            "posted": False,
+            "reason": commissioned["reason"],
+            "job": commissioned["report"]["job"],
+            "continuity_hop": True,
+        }
+    result = commissioned["relay"]
     if isinstance(result, dict) and "error" in result:
         return result
-    execution_id = str(result.get("execution_id") or "") if isinstance(result, dict) else ""
+    execution_id = (
+        str(result.get("execution_id") or "") if isinstance(result, dict) else ""
+    )
     record(
         "mcp.agentbus.hop.posted",
         thread=thread_id,
@@ -165,6 +332,7 @@ async def _hop_dispatch(
     stamped["continuity_hop"] = True
     stamped["execution_id"] = execution_id
     stamped["model"] = model
+    stamped["job"] = commissioned["report"]["job"]
     birth_id = parse_successor_birth_id(full_body)
     stamped["successor"] = {
         "handle": "successor_birth_id",
