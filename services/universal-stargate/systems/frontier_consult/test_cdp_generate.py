@@ -1648,10 +1648,10 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
 async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Omitted session and purpose: worker wire is ask; explicit values pass through.
+    """Omitted session and purpose: worker wire stays None; explicit values pass through.
 
-    Breaks when purpose=None reaches run_cdp_worker (SubmitProjectAskRequest
-    validation) or when staging receives ask and adds the arch skill floor.
+    Breaks when staging receives ask on admit (arch skill floor) or when explicit
+    purpose/session fail to reach run_cdp_worker unchanged.
     """
     from unittest.mock import AsyncMock, MagicMock
 
@@ -1726,7 +1726,7 @@ async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
     assert pending
     await pending[0]
     assert captured
-    assert captured[0]["purpose"] == "ask"
+    assert captured[0]["purpose"] is None
     assert staged_calls
     assert staged_calls[0]["purpose"] is None
 

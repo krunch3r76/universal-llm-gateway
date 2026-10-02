@@ -655,7 +655,7 @@ async def test_freeform_omitted_session_admits_without_quoted_purpose_briefing(
     assert result["registry_ref"] == "job_vocab:freeform"
     assert pending, "dispatch did not schedule run_cdp_worker"
     await pending[0]
-    assert seen.get("purpose") == "ask"
+    assert seen.get("purpose") is None
     staged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
     assert "Mission seat map" not in staged
     assert "cdp-operator-proxy" not in staged
