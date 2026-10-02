@@ -7,7 +7,7 @@ visible-context meter and deposits at most one density steer per dispatch.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
 from universal_logging import get_logger
 

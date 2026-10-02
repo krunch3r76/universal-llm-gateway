@@ -10,20 +10,21 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from cursor_capabilities import context_window_tokens
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_sdk_park_for_restart import (
+    ParkSignalResult,
+    signal_park,
+)
 from services.git_integration_worker.cursor_sdk_steer_inject import (
     SteerDepositResult,
     deposit_steer_directive,
     poll_delivery_ack,
-)
-from services.git_integration_worker.cursor_sdk_park_for_restart import (
-    ParkSignalResult,
-    signal_park,
 )
 
 logger = get_logger(__name__)
