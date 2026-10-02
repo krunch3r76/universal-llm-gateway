@@ -130,6 +130,18 @@ assert HANDOFF_ADMITTED_JOBS == _HANDOFF_ADMITTED_LITERAL
 
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
+_REFUSED_PURPOSE = "review"
+_REFUSED_ROLE = "reviewer"
+
+
+def _refuse_review_identity(*, purpose: str | None, role: str | None) -> None:
+    """Retired review identity is not a job. Validation fails; the proxy handler
+    answers ``job_unknown`` (not ``job_retired``)."""
+    if isinstance(purpose, str) and purpose.strip() == _REFUSED_PURPOSE:
+        raise ValueError("purpose 'review' is not a registry job")
+    if isinstance(role, str) and role.strip() == _REFUSED_ROLE:
+        raise ValueError("role 'reviewer' is not a registry job")
+
 
 # ---- dispatch-surface-split Phase 1: op-discriminated body models ----
 
@@ -270,6 +282,11 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # supplies them (schema-level enforcement per Phase 0 contract).
 
     @model_validator(mode="after")
+    def _refuse_retired_review_identity(self) -> Self:
+        _refuse_review_identity(purpose=self.purpose, role=self.role)
+        return self
+
+    @model_validator(mode="after")
     def _validate_hop_triplet(self) -> Self:
         hop_triplet = (self.hop_seq, self.hop_from, self.hop_reason)
         if any(v is not None for v in hop_triplet) and not all(
@@ -371,6 +388,11 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     cost_intent_reason: str | None = None
     # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
+
+    @model_validator(mode="after")
+    def _refuse_retired_review_identity(self) -> Self:
+        _refuse_review_identity(purpose=None, role=self.role)
+        return self
 
     @model_validator(mode="after")
     def _validate_inline_prompt_sources(self) -> Self:
@@ -736,14 +758,9 @@ async def team_dispatch(
             try:
                 reject_role_cursor_sdk_on_generate(role, request_id=request_id)
             except FrontierEndpointError as exc:
-                return JSONResponse(
-                    status_code=exc.status_code, content=exc.to_dict()
-                )
-    if (
-        body.op == "generate"
-        and is_cursor_sdk_generate_admission(
-            role=role, seat=seat, model=model, request_id=request_id
-        )
+                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    if body.op == "generate" and is_cursor_sdk_generate_admission(
+        role=role, seat=seat, model=model, request_id=request_id
     ):
         try:
             reject_role_with_substrate_model(
@@ -956,9 +973,7 @@ async def team_handoff(
             try:
                 enforce_handoff_seat_not_auto(body.seat, request_id=request_id)
             except FrontierEndpointError as exc:
-                return JSONResponse(
-                    status_code=exc.status_code, content=exc.to_dict()
-                )
+                return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
             to_agent, family, platform, resolved_model = resolve_handoff_seat(
                 seat=body.seat,
                 request_id=request_id,
@@ -1097,9 +1112,7 @@ async def team_handoff(
 
         pointer_packet_path = packet_path
         if is_life_web_receiver(to_agent):
-            life_packet = _resolve_packet_file(
-                workspaces_root.resolve(), packet_path
-            )
+            life_packet = _resolve_packet_file(workspaces_root.resolve(), packet_path)
             if life_packet is not None:
                 pointer_packet_path = await loop.run_in_executor(
                     None,
