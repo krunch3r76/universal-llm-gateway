@@ -148,7 +148,7 @@ def _argv_maxclients(argv: list[str]) -> int | None:
 
 
 def _maxclients_in_cmdlines(cmdlines: list[list[str]] | None, display: str) -> int | None:
-    """Parse ``-maxclients`` from an ``Xvfb :<N>`` argv. None if absent or unreadable."""
+    """Minimum ``-maxclients`` over matching Xvfb argvs. None if absent or unreadable."""
     if cmdlines is None:
         return None
     from claude_bundles.cdp_lane import _display_key
@@ -157,6 +157,7 @@ def _maxclients_in_cmdlines(cmdlines: list[list[str]] | None, display: str) -> i
         want = _display_key(display)
     except (TypeError, ValueError):
         return None
+    found: list[int] = []
     for argv in cmdlines:
         if not any(Path(part).name == "Xvfb" for part in argv):
             continue
@@ -171,8 +172,13 @@ def _maxclients_in_cmdlines(cmdlines: list[list[str]] | None, display: str) -> i
                 continue
         except (TypeError, ValueError):
             continue
-        return _argv_maxclients(argv)
-    return None
+        parsed = _argv_maxclients(argv)
+        if parsed is None:
+            continue
+        found.append(parsed)
+    if not found:
+        return None
+    return min(found)
 
 
 def _live_maxclients(display: str) -> int | None:
