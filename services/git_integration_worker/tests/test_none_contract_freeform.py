@@ -43,9 +43,9 @@ def test_none_freeform_honors_explicit_caller_skills() -> None:
     assert "DURABLE DELIVERABLE ROUTING" not in preamble
 
 
-def test_sketch_still_gets_judgment_stack() -> None:
+def test_confer_still_gets_judgment_stack() -> None:
     preamble = resolve_prompt_preamble(
-        handoff_contract="sketch",
+        handoff_contract="confer",
         prompt_preamble=None,
         inferred_contract=None,
     )

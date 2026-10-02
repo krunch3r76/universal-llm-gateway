@@ -15,7 +15,7 @@ def test_extract_sdk_mode_from_packet_plan_line() -> None:
     assert extract_sdk_mode_from_packet(text) == "plan"
 
 
-def test_resolve_prompt_preamble_none_inferred_is_freeform() -> None:
+def test_resolve_prompt_preamble_inferred_freeform_is_freeform() -> None:
     text = resolve_prompt_preamble(
         handoff_contract=None,
         prompt_preamble=None,
@@ -24,6 +24,18 @@ def test_resolve_prompt_preamble_none_inferred_is_freeform() -> None:
     assert text.startswith("/reasoning-posture")
     assert "Use the `reasoning-posture` skill" in text
     assert "DURABLE DELIVERABLE ROUTING" not in text
+
+
+def test_resolve_prompt_preamble_missing_contract_defaults_none_full_stack() -> None:
+    """``sdk_contract_or_missing`` still falls back to ``none`` (not freeform)."""
+    text = resolve_prompt_preamble(
+        handoff_contract=None,
+        prompt_preamble=None,
+        inferred_contract=None,
+    )
+    assert "DURABLE DELIVERABLE ROUTING" in text
+    assert "Use the `reasoning-posture` skill" in text
+    assert "hypothesize-simulate" not in text
 
 
 def test_resolve_prompt_preamble_consult_includes_deliverable_routing() -> None:
@@ -79,7 +91,7 @@ def test_resolve_prompt_preamble_none_skips_judgment_stack() -> None:
 
 def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
     text = resolve_prompt_preamble(
-        handoff_contract="sketch",
+        handoff_contract="confer",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -90,12 +102,12 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
 
 
 def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> None:
-    consult = resolve_prompt_preamble(
-        handoff_contract="sketch",
+    judgment = resolve_prompt_preamble(
+        handoff_contract="confer",
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert "Use the `hypothesize-simulate` skill" in consult
+    assert "Use the `hypothesize-simulate` skill" in judgment
     residual = resolve_prompt_preamble(
         handoff_contract="freeform",
         prompt_preamble=None,
