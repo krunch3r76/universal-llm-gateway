@@ -26,6 +26,7 @@ import pytest
 import services.git_integration_worker.cursor_sdk_bridge_launch as bridge_launch
 from services.git_integration_worker.cursor_sdk_bridge_launch import (
     build_bridge_command,
+    launch_sdk_bridge,
     resolve_bridge_bin,
 )
 
@@ -795,6 +796,83 @@ def test_shell_cwd_preload_invalid_fallback_stderr(tmp_path: Path) -> None:
     assert proc.stdout.strip() == str(tmp_path)
     assert "shell_cwd_fallback_invalid" in proc.stderr
     assert "/nonexistent/for/shell_cwd_test" in proc.stderr
+
+
+def test_launch_sdk_bridge_align_flag_follows_context_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``launch_sdk_bridge`` maps lane B to CURSOR_SDK_SHELL_ALIGN_CWD and lane A omits it.
+
+    Flag-level ``build_bridge_command(align_shell_cwd=)`` tests do not cover
+    ``align_shell_cwd=ctx.lane == "B"``. A lane A dispatch must not carry the
+    assignment; a lane B dispatch must.
+    """
+    import httpx
+
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
+    from services.git_integration_worker.cursor_sdk_dispatch_context import (
+        SdkDispatchContext,
+    )
+
+    captured: list[list[str]] = []
+
+    def _launch_bridge(*, command, **_kwargs):
+        captured.append(list(command))
+        return object()
+
+    monkeypatch.setattr(bridge_launch.Client, "launch_bridge", _launch_bridge)
+
+    hub = tmp_path / "source_repo"
+    hub.mkdir()
+    wt_root = tmp_path / "worktree_root"
+    wt_root.mkdir()
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=hub,
+        worktree_root=wt_root,
+        dispatch_workspace=tmp_path / "dispatch_ws",
+        green_gate_cmd=["true"],
+    )
+    home = tmp_path / "dispatch-home"
+    home.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    venv = _fake_repo_venv(tmp_path)
+    timeout = httpx.Timeout(5.0)
+    common = dict(
+        bridge_state=state,
+        dispatch_home=home,
+        repo_venv=venv,
+        real_home=tmp_path / "operator-home",
+        local=None,
+        client_timeout=timeout,
+    )
+
+    ctx_a = SdkDispatchContext(
+        dispatch_id="disp-lane-a",
+        thread_id="thread-a",
+        handoff_contract="consult",
+        hub=hub,
+        dispatch_workspace=hub,
+        capture_binding=CaptureBinding.lane_a(cfg),
+    )
+    write_tree = tmp_path / "lane-b-wt"
+    write_tree.mkdir()
+    ctx_b = SdkDispatchContext(
+        dispatch_id="disp-lane-b",
+        thread_id="thread-b",
+        handoff_contract="implement",
+        hub=hub,
+        dispatch_workspace=write_tree,
+        capture_binding=CaptureBinding.lane_b(cfg, write_tree),
+    )
+
+    launch_sdk_bridge(ctx_a, **common)
+    launch_sdk_bridge(ctx_b, **common)
+
+    assert len(captured) == 2
+    assert "CURSOR_SDK_SHELL_ALIGN_CWD=1" not in captured[0]
+    assert "CURSOR_SDK_SHELL_ALIGN_CWD=1" in captured[1]
 
 
 def test_resolve_bridge_bin_is_absolute_file() -> None:

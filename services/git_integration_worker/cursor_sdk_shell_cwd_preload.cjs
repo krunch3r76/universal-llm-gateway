@@ -65,7 +65,7 @@ if (alignShellCwd) {
       process.chdir(fallbackCwd);
       process.env.PWD = process.cwd();
     } catch (err) {
-      process.stderr.write(`shell_cwd_chdir_failed ${fallbackCwd} ${err}\n`);
+      process.stderr.write(`shell_cwd_chdir_failed ${fallbackCwd} ${err && err.code}\n`);
     }
   } else if (fallbackCwd) {
     process.stderr.write(`shell_cwd_fallback_invalid ${fallbackCwd}\n`);
