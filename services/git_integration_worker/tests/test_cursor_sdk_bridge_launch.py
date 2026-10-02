@@ -26,6 +26,7 @@ import pytest
 import services.git_integration_worker.cursor_sdk_bridge_launch as bridge_launch
 from services.git_integration_worker.cursor_sdk_bridge_launch import (
     build_bridge_command,
+    launch_sdk_bridge,
     resolve_bridge_bin,
 )
 
@@ -402,6 +403,476 @@ def test_shell_cwd_preload_keeps_dispatch_id_in_bash_child(tmp_path: Path) -> No
     dispatch_id, fallback_cwd = proc.stdout.strip().split("|", 1)
     assert dispatch_id == "disp-preload-ac2"
     assert fallback_cwd == ""
+
+
+def test_shell_cwd_preload_chdirs_node_process(tmp_path: Path) -> None:
+    """Armed preload chdirs the node process to the fallback directory."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {preload}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(lane)
+    armed["CURSOR_SDK_SHELL_ALIGN_CWD"] = "1"
+    proc = subprocess.run(
+        [str(node), "-e", "console.log(process.cwd())"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+
+
+def test_shell_cwd_preload_bare_bash_pwd_is_fallback(tmp_path: Path) -> None:
+    """Bash spawn with no cwd option uses the fallback directory."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "bare_pwd.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "process.chdir(require('os').tmpdir());",
+                "const child = spawn('/bin/bash', ['-c', 'pwd']);",
+                "child.stdout.on('data', (b) => process.stdout.write(b));",
+                "child.on('close', (code) => process.exit(code == null ? 1 : code));",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {preload}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(lane)
+    armed["CURSOR_SDK_SHELL_ALIGN_CWD"] = "1"
+    proc = subprocess.run(
+        [str(node), str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+
+
+def test_command_argv_includes_preload_when_lane_path_set(tmp_path, monkeypatch) -> None:
+    """Lane launch arms the preload env and leaves Popen cwd unset.
+
+    SDK-appended filesystem paths and callback URLs must be absolute. The
+    cwd fix is the preload chdir, not subprocess.Popen(cwd=).
+    """
+    from cursor_sdk import _bridge as _sdk_bridge
+
+    captured: dict[str, object] = {}
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["cwd"] = kwargs.get("cwd")
+        raise RuntimeError("stop-at-popen")
+
+    monkeypatch.setattr(_sdk_bridge.subprocess, "Popen", _popen)
+
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    home = tmp_path / "dispatch-home"
+    home.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    command = build_bridge_command(
+        bridge_bin=resolve_bridge_bin(),
+        dispatch_home=home,
+        repo_venv=_fake_repo_venv(tmp_path),
+        real_home=tmp_path / "operator-home",
+        dispatch_id="disp-lane-cwd",
+        lane_path=lane,
+        align_shell_cwd=True,
+    )
+    try:
+        bridge_launch.Client.launch_bridge(
+            command=command,
+            workspace=str(lane),
+            state_root=str(state),
+            timeout=5.0,
+            local=None,
+        )
+    except BaseException:  # noqa: BLE001
+        pass
+
+    assert "argv" in captured
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    assert f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane}" in argv
+    assert "CURSOR_SDK_SHELL_ALIGN_CWD=1" in argv
+    assert any(
+        a.startswith("NODE_OPTIONS=") and f"--require {preload}" in a for a in argv
+    )
+    bin_idx = _first_non_assignment(argv)
+    tail = argv[bin_idx + 1 :]
+    for flag in ("--workspace", "--state-root", "--tool-callback-url"):
+        assert flag in tail, flag
+        value = tail[tail.index(flag) + 1]
+        assert os.path.isabs(value) or value.startswith("http://") or value.startswith(
+            "https://"
+        ), value
+    assert captured["cwd"] is None
+
+
+def _preload_path() -> Path:
+    return (
+        Path(bridge_launch.__file__).resolve().parent / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+
+
+def _armed_preload_env(lane: Path, *, align: bool) -> dict[str, str]:
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {_preload_path()}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(lane)
+    armed.pop("CURSOR_SDK_SHELL_ALIGN_CWD", None)
+    if align:
+        armed["CURSOR_SDK_SHELL_ALIGN_CWD"] = "1"
+    return armed
+
+
+def _run_node(node: Path, args: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(node), *args],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=env,
+        cwd=cwd,
+    )
+
+
+def test_build_bridge_command_lane_b_has_shell_align_flag(tmp_path: Path) -> None:
+    """Lane B argv carries the alignment assignment."""
+    lane = tmp_path / "lane"
+    command = build_bridge_command(
+        bridge_bin="/usr/bin/true",
+        dispatch_home=tmp_path / "home",
+        repo_venv=None,
+        real_home=None,
+        dispatch_id=None,
+        lane_path=lane,
+        align_shell_cwd=True,
+    )
+    assert "CURSOR_SDK_SHELL_ALIGN_CWD=1" in command
+
+
+def test_build_bridge_command_lane_a_argv_matches_master(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Alignment off matches master 7ce57ebb element for element.
+
+    Master arms NODE_OPTIONS and CURSOR_SDK_SHELL_FALLBACK_CWD whenever
+    lane_path is set, and does not append CURSOR_SDK_SHELL_ALIGN_CWD.
+    """
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        dispatch_ledger_env_vars,
+    )
+    from services.git_integration_worker.cursor_home import (
+        build_dispatch_path_prepend,
+        dispatch_git_env_vars,
+    )
+
+    monkeypatch.delenv("NODE_OPTIONS", raising=False)
+    lane = tmp_path / "lane"
+    home = tmp_path / "dispatch-home"
+    venv = _fake_repo_venv(tmp_path)
+    real_home = tmp_path / "operator-home"
+    bridge_bin = "/usr/bin/true"
+    dispatch_id = "disp-lane-a-master"
+    prepend = build_dispatch_path_prepend(venv, real_home=real_home)
+    base = os.environ.get("PATH", "")
+    path_value = f"{prepend}{os.pathsep}{base}" if base else prepend
+    preload = _preload_path()
+    expected = [
+        "/usr/bin/env",
+        f"HOME={home}",
+        f"VIRTUAL_ENV={venv}",
+        f"PATH={path_value}",
+        f"CURSOR_SDK_DISPATCH_ID={dispatch_id}",
+        *[f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items()],
+        *[f"{k}={v}" for k, v in dispatch_ledger_env_vars().items()],
+        f"NODE_OPTIONS=--require {preload}",
+        f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane}",
+        bridge_bin,
+    ]
+    actual = build_bridge_command(
+        bridge_bin=bridge_bin,
+        dispatch_home=home,
+        repo_venv=venv,
+        real_home=real_home,
+        dispatch_id=dispatch_id,
+        lane_path=lane,
+        align_shell_cwd=False,
+    )
+    assert actual == expected
+
+
+def test_shell_cwd_preload_without_align_flag_matches_master(tmp_path: Path) -> None:
+    """Preload armed, alignment absent: no chdir, no bare-bash fill, missing cwd still rewritten."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    runner = tmp_path / "runner"
+    runner.mkdir()
+    env = _armed_preload_env(lane, align=False)
+    cwd_proc = _run_node(node, ["-e", "console.log(process.cwd())"], env, runner)
+    assert cwd_proc.returncode == 0, cwd_proc.stderr
+    assert cwd_proc.stdout.strip() == str(runner)
+
+    probe = tmp_path / "bare.cjs"
+    probe.write_text(
+        "const { spawn } = require('child_process');\n"
+        "const child = spawn('/bin/bash', ['-c', 'pwd']);\n"
+        "child.stdout.on('data', (b) => process.stdout.write(b));\n"
+        "child.on('close', (code) => process.exit(code == null ? 1 : code));\n",
+        encoding="utf-8",
+    )
+    bare = _run_node(node, [str(probe)], env, runner)
+    assert bare.returncode == 0, bare.stderr
+    assert bare.stdout.strip() == str(runner)
+
+    missing = tmp_path / "missing-cwd"
+    rewrite = tmp_path / "rewrite.cjs"
+    rewrite.write_text(
+        "const { spawn } = require('child_process');\n"
+        "const missing = process.argv[2];\n"
+        "const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd: missing });\n"
+        "child.stdout.on('data', (b) => process.stdout.write(b));\n"
+        "child.stderr.on('data', (b) => process.stderr.write(b));\n"
+        "child.on('error', (err) => { process.stderr.write(String(err.code)); process.exit(1); });\n"
+        "child.on('close', (code) => process.exit(code == null ? 1 : code));\n",
+        encoding="utf-8",
+    )
+    rewritten = _run_node(node, [str(rewrite), str(missing)], env, runner)
+    assert rewritten.returncode == 0, rewritten.stderr
+    assert rewritten.stdout.strip() == str(lane)
+
+
+def test_shell_cwd_preload_respects_explicit_valid_cwd(tmp_path: Path) -> None:
+    """An explicit valid cwd is not replaced by the fallback."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    probe = tmp_path / "explicit.cjs"
+    probe.write_text(
+        "const { spawn } = require('child_process');\n"
+        "const other = process.argv[2];\n"
+        "const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd: other });\n"
+        "child.stdout.on('data', (b) => process.stdout.write(b));\n"
+        "child.on('close', (code) => process.exit(code == null ? 1 : code));\n",
+        encoding="utf-8",
+    )
+    proc = _run_node(node, [str(probe), str(other)], _armed_preload_env(lane, align=True), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(other)
+
+
+def test_shell_cwd_preload_missing_fallback_no_chdir_no_crash(tmp_path: Path) -> None:
+    """A missing fallback with alignment on leaves the runner cwd and exits 0."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    missing = tmp_path / "not-a-dir"
+    env = _armed_preload_env(missing, align=True)
+    proc = _run_node(node, ["-e", "console.log(process.cwd())"], env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(tmp_path)
+
+
+def test_shell_cwd_preload_bare_bash_spawn_options_only(tmp_path: Path) -> None:
+    """spawn(bash, options) with no argv array still fills an empty cwd."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "opts.cjs"
+    probe.write_text(
+        "const { spawn } = require('child_process');\n"
+        "process.chdir(require('os').tmpdir());\n"
+        "const child = spawn('/bin/bash', {});\n"
+        "child.stdin.write('pwd\\n');\n"
+        "child.stdin.end();\n"
+        "child.stdout.on('data', (b) => process.stdout.write(b));\n"
+        "child.on('close', (code) => process.exit(code == null ? 1 : code));\n",
+        encoding="utf-8",
+    )
+    proc = _run_node(node, [str(probe)], _armed_preload_env(lane, align=True), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+
+
+def test_shell_cwd_preload_child_sees_pwd_env(tmp_path: Path) -> None:
+    """After chdir, a bash child with no cwd option sees $PWD as the fallback."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "pwd_env.cjs"
+    probe.write_text(
+        "const { spawn } = require('child_process');\n"
+        "const child = spawn('/bin/bash', ['-c', 'printf %s \"$PWD\"']);\n"
+        "child.stdout.on('data', (b) => process.stdout.write(b));\n"
+        "child.on('close', (code) => process.exit(code == null ? 1 : code));\n",
+        encoding="utf-8",
+    )
+    proc = _run_node(node, [str(probe)], _armed_preload_env(lane, align=True), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(lane)
+
+
+def test_shell_cwd_preload_spawn_url_cwd_not_replaced(tmp_path: Path) -> None:
+    """A URL cwd is not treated as empty and is not replaced by the fallback."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    lane = tmp_path / "lane"
+    lane.mkdir()
+    probe = tmp_path / "url_cwd.cjs"
+    probe.write_text(
+        "const { spawn } = require('child_process');\n"
+        "const child = spawn('/bin/bash', ['-c', 'pwd'], { cwd: new URL('file:///tmp') });\n"
+        "let out = '';\n"
+        "child.stdout.on('data', (b) => { out += b; });\n"
+        "child.on('error', (err) => {\n"
+        "  process.stderr.write('spawn_error ' + err.code + '\\n');\n"
+        "  process.exit(2);\n"
+        "});\n"
+        "child.on('close', (code) => {\n"
+        "  process.stdout.write(out);\n"
+        "  process.exit(code == null ? 1 : code);\n"
+        "});\n",
+        encoding="utf-8",
+    )
+    proc = _run_node(node, [str(probe)], _armed_preload_env(lane, align=True), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "/tmp"
+    assert proc.stdout.strip() != str(lane)
+
+
+def test_shell_cwd_preload_invalid_fallback_stderr(tmp_path: Path) -> None:
+    """A non-directory fallback logs shell_cwd_fallback_invalid and exits 0."""
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    env = _armed_preload_env(Path("/nonexistent/for/shell_cwd_test"), align=True)
+    proc = _run_node(node, ["-e", "console.log(process.cwd())"], env, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(tmp_path)
+    assert "shell_cwd_fallback_invalid" in proc.stderr
+    assert "/nonexistent/for/shell_cwd_test" in proc.stderr
+
+
+def test_launch_sdk_bridge_align_flag_follows_context_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``launch_sdk_bridge`` maps lane B to CURSOR_SDK_SHELL_ALIGN_CWD and lane A omits it.
+
+    Flag-level ``build_bridge_command(align_shell_cwd=)`` tests do not cover
+    ``align_shell_cwd=ctx.lane == "B"``. A lane A dispatch must not carry the
+    assignment; a lane B dispatch must.
+    """
+    import httpx
+
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
+    from services.git_integration_worker.cursor_sdk_dispatch_context import (
+        SdkDispatchContext,
+    )
+
+    captured: list[list[str]] = []
+
+    def _launch_bridge(*, command, **_kwargs):
+        captured.append(list(command))
+        return object()
+
+    monkeypatch.setattr(bridge_launch.Client, "launch_bridge", _launch_bridge)
+
+    hub = tmp_path / "source_repo"
+    hub.mkdir()
+    wt_root = tmp_path / "worktree_root"
+    wt_root.mkdir()
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=hub,
+        worktree_root=wt_root,
+        dispatch_workspace=tmp_path / "dispatch_ws",
+        green_gate_cmd=["true"],
+    )
+    home = tmp_path / "dispatch-home"
+    home.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    venv = _fake_repo_venv(tmp_path)
+    timeout = httpx.Timeout(5.0)
+    common = dict(
+        bridge_state=state,
+        dispatch_home=home,
+        repo_venv=venv,
+        real_home=tmp_path / "operator-home",
+        local=None,
+        client_timeout=timeout,
+    )
+
+    ctx_a = SdkDispatchContext(
+        dispatch_id="disp-lane-a",
+        thread_id="thread-a",
+        handoff_contract="consult",
+        hub=hub,
+        dispatch_workspace=hub,
+        capture_binding=CaptureBinding.lane_a(cfg),
+    )
+    write_tree = tmp_path / "lane-b-wt"
+    write_tree.mkdir()
+    ctx_b = SdkDispatchContext(
+        dispatch_id="disp-lane-b",
+        thread_id="thread-b",
+        handoff_contract="implement",
+        hub=hub,
+        dispatch_workspace=write_tree,
+        capture_binding=CaptureBinding.lane_b(cfg, write_tree),
+    )
+
+    launch_sdk_bridge(ctx_a, **common)
+    launch_sdk_bridge(ctx_b, **common)
+
+    assert len(captured) == 2
+    assert "CURSOR_SDK_SHELL_ALIGN_CWD=1" not in captured[0]
+    assert "CURSOR_SDK_SHELL_ALIGN_CWD=1" in captured[1]
 
 
 def test_resolve_bridge_bin_is_absolute_file() -> None:

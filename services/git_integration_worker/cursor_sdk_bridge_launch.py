@@ -9,7 +9,8 @@ dispatch stamp, and the git identity reach the bridge through its **argv**:
 ``launch_sdk_bridge`` hands ``Client.launch_bridge`` a ``command`` list of the
 form ``[/usr/bin/env, HOME=…, VIRTUAL_ENV=…, PATH=…, CURSOR_SDK_DISPATCH_ID=…,
 GIT_*=…, NODE_OPTIONS=--require <preload>, CURSOR_SDK_SHELL_FALLBACK_CWD=<lane>,
-<bridge-bin>]``. The SDK forwards the list verbatim as ``argv[0..n]``
+CURSOR_SDK_SHELL_ALIGN_CWD=1 (lane B only), <bridge-bin>]``. The SDK forwards
+the list verbatim as ``argv[0..n]``
 and appends its own ``--workspace`` / ``--state-root`` / callback flags after
 it; ``env(1)`` applies the assignments and execs the bridge in place, so the
 ``Popen`` the SDK holds *is* the bridge — its pid, its stderr, its environ.
@@ -109,6 +110,7 @@ def build_bridge_command(
     real_home: Path | str | None,
     dispatch_id: str | None,
     lane_path: Path | str | None = None,
+    align_shell_cwd: bool = False,
 ) -> list[str]:
     """``Client.launch_bridge(command=)`` argv: ``env(1)`` assignments then the bridge.
 
@@ -124,6 +126,10 @@ def build_bridge_command(
     When ``lane_path`` is set, ``NODE_OPTIONS`` (``--require`` of the shell-cwd
     preload, in front of any ``NODE_OPTIONS`` already in ``os.environ``) and
     ``CURSOR_SDK_SHELL_FALLBACK_CWD`` are assigned just before the binary.
+    ``CURSOR_SDK_SHELL_ALIGN_CWD=1`` is appended only when ``align_shell_cwd``
+    is true (lane B). The preload chdirs and fills an empty bash cwd only
+    then; the missing-directory rewrite stays armed for every lane.
+    Pinned ``Popen`` still has no ``cwd=``.
     Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]``; writes
     nothing.
     """
@@ -152,6 +158,8 @@ def build_bridge_command(
         node_options = f"{require} {prior}".strip()
         command.append(f"NODE_OPTIONS={node_options}")
         command.append(f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane_path}")
+        if align_shell_cwd:
+            command.append("CURSOR_SDK_SHELL_ALIGN_CWD=1")
     command.append(bridge_bin)
     return command
 
@@ -178,8 +186,9 @@ def launch_sdk_bridge(
     pre-discovery transient (empty tool-callback token before discovery). A
     launch timeout fails on attempt 1 and does not consume the retry ladder.
 
-    Reads ``ctx.dispatch_id`` and ``ctx.dispatch_workspace`` only; other
-    context fields are the caller's responsibility.
+    Reads ``ctx.dispatch_id``, ``ctx.dispatch_workspace``, and ``ctx.lane``
+    (alignment only when lane is ``B``). Other context fields are the
+    caller's responsibility.
     """
     bridge_bin = resolve_bridge_bin()
     command = build_bridge_command(
@@ -189,6 +198,7 @@ def launch_sdk_bridge(
         real_home=real_home,
         dispatch_id=ctx.dispatch_id,
         lane_path=ctx.dispatch_workspace,
+        align_shell_cwd=ctx.lane == "B",
     )
     logger.info(
         "cursor sdk bridge launch: dispatch_id=%s bridge_bin=%s",
