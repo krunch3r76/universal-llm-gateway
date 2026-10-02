@@ -519,12 +519,13 @@ def test_review_leg_packet_one_dispatch_one_wait(tmp_path: Path) -> None:
     )
     assert (
         mp.text.count(
-            "team_dispatch(op=generate, model=cdp/opus-5.5, contract=freeform, "
-            "purpose=review, dispatch_thread_id=<this worker thread id>"
+            "team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, "
+            "dispatch_thread_id=<this worker thread id>"
         )
         == 1
     )
-    assert "purpose=review" in mp.text
+    assert "purpose=review" not in mp.text
+    assert "contract=delivery-review" in mp.text
     assert "dispatch_thread_id=" in mp.text
     assert "NEXT_ADMIT: harvest" in mp.text
     assert (

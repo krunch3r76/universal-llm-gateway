@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-REVIEW_PURPOSE = "review"
+REVIEW_CONTRACT = "delivery-review"
 FALLBACK_MODEL = "cdp/fable"
 PRIMARY_REVIEW_MODELS = frozenset({"cdp/opus-5", "cdp/opus-5.5"})
 # ``cdp/fable`` is an allowed entry model when the seat already knows Opus
@@ -37,9 +37,10 @@ ALLOWED_ARGUMENT_KEYS = frozenset(
 
 _REFUSAL_MESSAGE = (
     "team_dispatch on a filtered cursor-sdk seat is review-class only "
-    "(op=generate, job=delivery-review, contract in {freeform, delivery-review}, "
+    "(op=generate, contract=delivery-review, "
     "model in {cdp/opus-5, cdp/opus-5.5, cdp/fable}, prompt set, "
-    "dispatch_thread_id = this seat's thread, parent_thread omitted or equal). "
+    "dispatch_thread_id = this seat's thread, parent_thread omitted or equal; "
+    "omit purpose and role — put job=delivery-review on a prompt line). "
     "seat, role, nest_under, lane, packet_path, and source_ref are refused."
 )
 
@@ -75,11 +76,11 @@ def is_review_class_call(
             return False
     if args.get("op") != "generate":
         return False
-    if args.get("purpose") != REVIEW_PURPOSE:
+    if _present(args.get("purpose")):
         return False
     if args.get("model") not in REVIEW_MODELS:
         return False
-    if args.get("contract") not in {"freeform", "delivery-review"}:
+    if args.get("contract") != REVIEW_CONTRACT:
         return False
     if not _present(args.get("prompt")):
         return False
@@ -100,7 +101,7 @@ def adopt_review_fallback(*, ok: bool, body: str) -> bool:
 
 def review_fallback_model(
     *,
-    purpose: str | None,
+    contract: str | None = None,
     model_id: str | None,
     stall_stage: str | None,
 ) -> str | None:
@@ -108,7 +109,7 @@ def review_fallback_model(
 
     ``cdp/fable`` is not itself a primary: a second miss does not chain.
     """
-    if (purpose or "").strip() != REVIEW_PURPOSE:
+    if (contract or "").strip() != REVIEW_CONTRACT:
         return None
     if stall_stage != STALL_COMPLETED_WITHOUT_PROOF:
         return None

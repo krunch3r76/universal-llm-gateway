@@ -548,7 +548,7 @@ async def run_cdp_worker(
         )
 
     fallback_model = review_fallback_model(
-        purpose=purpose,
+        contract=contract,
         model_id=model_id,
         stall_stage=result.stall_stage,
     )

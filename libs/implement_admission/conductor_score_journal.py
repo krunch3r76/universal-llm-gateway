@@ -44,11 +44,11 @@ _G_LABELS: dict[str, str] = {
     "G7": "Ship / land",
 }
 _G6_PRE_LAND_REVIEW = (
-    "G6 pre-land review witness — team_dispatch op=generate job=delivery-review "
-    "contract=freeform (predicate also accepts delivery-review) model in "
+    "G6 pre-land review witness — team_dispatch op=generate "
+    "contract=delivery-review model in "
     "{cdp/opus-5, cdp/opus-5.5, cdp/fable} on the lane branch diff before merge; "
     "harvest ≺ land (a:32226 · a:32146). job=delivery-review is the prompt genre "
-    "line, not the contract argument."
+    "line inside the body, not a separate call argument."
 )
 _WITNESS_KIND_BIND = "BIND"
 _WITNESS_KIND_LAND = "LAND"

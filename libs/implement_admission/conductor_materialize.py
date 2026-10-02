@@ -439,7 +439,7 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
             "Run that missing command before the review dispatch. Do not discover "
             "the gap by receiving a WITHHOLD and then starting another row. "
             "2. One dispatch. G6 is team_dispatch(op=generate, model=cdp/opus-5.5, "
-            "contract=freeform, job=delivery-review, dispatch_thread_id=<this worker "
+            "contract=delivery-review, dispatch_thread_id=<this worker "
             "thread id>, parent_thread=<summoning_thread_id, else this worker "
             "thread id>, prompt=<body>); the body carries job=delivery-review and "
             "retrieval_report: cortex://… each on its own line, plus the evidence "
