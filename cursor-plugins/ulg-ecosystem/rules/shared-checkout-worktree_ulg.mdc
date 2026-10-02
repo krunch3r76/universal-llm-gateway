@@ -1,0 +1,53 @@
+---
+description: "Shared checkout pin — attended IDE stays on master (or the branch it already sits on); feature/branch/review work uses a clean git worktree. Never git checkout away from the shared tree for a side branch."
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+---
+# Shared checkout · clean worktree
+
+**Invariant:** `shared_attended_checkout ⇒ branch ∈ {master, current_unchanged}` ·
+`needs(feature_branch ∨ review_branch ∨ land_isolate) ⇒ git worktree add (clean)` ·
+`¬git checkout(other_branch) on the shared tree to do that work`.
+
+The shared checkout is the operator's live IDE tree. Switching it off `master`
+(or off whatever branch it already holds) for a feature/review/land branch
+steals the shared tip from peer WIP and from the next seat. Cursor-sdk Lane B
+already uses throwaway worktrees; attended seats owe the same isolation.
+
+## Forbidden / Required
+
+| Forbidden | Required |
+|---|---|
+| `git checkout <feature\|fix\|land\|review>` on the shared tree to start side work | `git worktree add [-b <branch>] <path> <start-point>` from the shared tree; do the work in that path |
+| `git switch` / `checkout -B` that leaves shared `master` for a side branch | Land by merging the worktree branch **into** shared `master` while the IDE stays on `master` |
+| Stash to "free" the shared tree for a checkout | Leave peer dirt; worktree is the isolation |
+| Treat "I need the files from branch X" as license to switch the shared tip | Read or worktree; copy/cherry-pick only when land doctrine allows |
+
+## Detents
+
+- **Already not on master** (operator or prior seat left a tip): do **not** force-switch to master mid-turn unless the operator names it. Do **not** switch further away for new side work — open a worktree from the intended start-point instead.
+- **Trivial same-tip edit that lands on the current shared branch** (typo, rule, one-file fix on `master`): stay on the shared tip; worktree optional.
+- **cursor-sdk `lane=B`**: substrate worktrees already satisfy this; do not also move the shared IDE checkout.
+
+## Land recipe (attended)
+
+```
+shared tip stays master
+  → worktree add -b land/<slug> <tmp-or-arc-path> master
+  → commit in the worktree
+  → on shared master: git merge land/<slug>   # or merge from the worktree path's branch
+  → remove worktree; delete land branch when done
+```
+
+Sole-maintainer / no-PR does not waive the invariant — it removes the PR step, not the worktree.
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| `git checkout fix/a37149` on the hub IDE tree, amend, then `checkout master` | Worktree from `master` (or `origin/master`); merge back |
+| Cherry-pick onto a branch by switching shared tip first | Cherry-pick inside a worktree checked out on that branch |
+| "Just this once" switch because the dirty tree looked scary | Worktree; leave dirt |
+
+Doctrine companions: `checkout-kernel_ulg` · skill `git-posture` · `decision:operator-request-front-door` (attended in-seat vs dispatch). Specimen: a:37149 seat switched shared tip to a review branch mid-arc.

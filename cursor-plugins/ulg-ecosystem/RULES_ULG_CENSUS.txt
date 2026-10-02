@@ -10,6 +10,7 @@ cursor-rule-placement_ulg
 awareness_ulg
 capability-dispatch_ulg
 checkout-kernel_ulg
+shared-checkout-worktree_ulg
 claude-ai-cdp-navigation_ulg
 cdp-operator-proxy_ulg
 consultation-workflow_ulg
