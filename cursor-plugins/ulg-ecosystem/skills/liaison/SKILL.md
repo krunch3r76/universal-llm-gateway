@@ -10,7 +10,7 @@ and never implements what a live dispatch owns (`in-flight-work-guard`). Consoli
 operator called *coordinator*; Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor =
 session to a designed stop), `decision:conductor-attended-vs-unattended-routing`.
 
-**Play (binding).** `played(todo:{slug}) ⇒ admit(job=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`. Sketch, Compose, densify, and `job=implement` are that conductor's steps. This seat does not fire them. This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
+**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`. Sketch, Compose, densify, and `contract=implement` are that conductor's steps. This seat does not fire them. This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
 
 | Bad | Good |
 |---|---|
@@ -98,7 +98,7 @@ House wakes, cheapest first:
 
 Binds. Later prose that conflicts with them loses.
 
-1. **One conductor.** This seat holds `team_dispatch` and the checkout. A played `todo:{slug}` is `team_dispatch(op=generate, seat=cursor-sdk, job=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)`, then end the turn. Repo write is that conductor's nested `job=implement`. This seat does not send `job=implement` or a Sketch generate for a house row. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
+1. **One conductor.** This seat holds `team_dispatch` and the checkout. A played `todo:{slug}` is `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)`, then end the turn. Repo write is that conductor's nested `contract=implement`. This seat does not send `contract=implement` or a Sketch generate for a house row. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
 2. **Do not close the house on a dead tail or an empty wake.** A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished: `watch-supervise.sh stop --label <label>`. That tail is not a watcher, not a hop, and not a reason to end the seat. No playable next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop` if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction to play. The house stays. The wake stops.
 3. **File the friction, add the house row, play a gate.** A row that cannot proceed: `friction()` on the owner the same turn, and a row on the continuity card `## Rows`. A **gate** is a friction the current row cannot pass until it is resolved. A gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn on the ladder in (1). Do not STAY on the blocked row. Do not page unless the gate is an armed `OPERATOR_GATE`.
 4. **When a row has been played, close its todo, then add the next one.** A played row is a land on master for that `todo:{slug}`. Same turn, before the next row, `pipeline(op=run, pipeline_id=todo-close)` so `workflow_state=done`. The ticker drops a policy `now_row` when that state is terminal (`done` included). An open card is still the work: the clock admits another conductor for it. That re-admit is how a night fails to replace the operator. A finished row does not empty the house. After the close, add every next deliverable that is not gated on another row, to `## Rows` and `--set now_row=`, then play it. Adding that row clears `now_row=quiet` and re-arms `--loop --heartbeat 1200` if the loop is down. Ungated rows may run at the same time. A row that waits on some other row having been played first stays off NOW until that condition is true. `now_row=quiet` and an empty NOW are legal only when the house program has no open deliverable. Do not close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
@@ -267,22 +267,22 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   lane="B",
-  model=cursor/grok-4.7,     # policy.row_bind_model; model_knobs effort=high fast=false
-  job=freeform,
+  model=cursor/grok-4.7,     # policy.row_bind_model; model_knobs {"effort":"high","fast":"false"}
+  contract=freeform,
   prompt=<row-bind wake>,    # BIND ROW_CLASS: low|trio before nested dispatch
   dispatch_thread_id=<R>,
   work_key=row-bind:<fid>:night-<night>,
 )
 ```
 
-Other sit wakes (checkpoint / hop, no friction row) stay `job=freeform` `lane="B"`
+Other sit wakes (checkpoint / hop, no friction row) stay `contract=freeform` `lane="B"`
 `model=<policy.successor_model>`:
 
 ```
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  job=freeform,
+  contract=freeform,
   lane="B",  # throwaway worktree. Lane A only on scope refusal or an explicit operator request for shared master. Bind-only and read-only are not that exception.
   model=<policy.successor_model>,
   prompt=<build_successor_message>,
@@ -313,7 +313,7 @@ dispatches (`job=implement`, omit `model=`) run **alongside** — they are not F
 |---|---|---|
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
 | Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; the successor **dispatches** instead) | none — commit path-explicit same turn |
-| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, job=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
+| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
 | Mechanical implement with dense spec (`files_expected` + ACs) | the conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
 | Repo write when this seat lacks `team_dispatch` or the checkout (life) | **`cursor_request(job=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
 | Design / judgment fork on a played row | the conductor's nest | one round inside the conductor; disagreement ⇒ CONSULT_PENDING |

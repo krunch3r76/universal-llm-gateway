@@ -109,7 +109,7 @@ explicitly chooses `cursor`.
 
 ```python
 team_dispatch(op="generate", seat="cursor-sdk", dispatch_thread_id="<thread>",
-              job="freeform"|"pure-mechanical", packet_path?=...)
+              contract="freeform"|"pure-mechanical", packet_path?=...)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Repo-venv: cursor-sdk inherits repo venv. Inline lead edits =
@@ -129,7 +129,7 @@ Outer `CURSOR_SDK_TIMEOUT` ≠ terminal. RAG ingest batches: default `scripts/in
 
 ## CONFORM lane — provisional
 
-Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", job="freeform",
+Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", contract="freeform",
 packet_path=<frozen-envelope>)`. Envelope: `objective`, `touch_points`, `acceptance_criteria_known`,
 `judgment_settled`, optional `required_skills_hint`. Verify Layer 1 wrap precondition + Layer 2 semantic diff.
 Promotion blocked until N≥5 real runs.

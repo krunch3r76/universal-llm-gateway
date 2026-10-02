@@ -176,10 +176,10 @@ When CDP posts on-behalf and bus returns **409 `unread_turns_exist`**, remake af
 
 | Job | Command |
 |---|---|
-| **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, job=freeform, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
+| **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=freeform, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
 | **Life→cursor — life_dispatch** | `life_dispatch(prompt\|thread, model=cdp/…)` on `/mcp/life` — operator-proxy Cowork CSE that drives cursor (¬ life chat). Project UUID server-pinned. `cursor_request` if no new CSE is needed. |
 | **Escape — CLI project-ask** | `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5.1`) when team_dispatch CDP unavailable. MCP `project_ask` is removed. |
-| **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, session=operator-proxy, job=freeform\|mission, …)` primary |
+| **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, purpose=operator-proxy, contract=freeform\|mission, …)` primary |
 | Path-sim R-admit (CLI fallback) | `… project-ask --register --purpose ask --converse --no-uuid --model opus-5 --prompt-file tmp/reviews/…` |
 | Long task / multitask | Default Cowork (omit flags) |
 | Auto lane (Fable) | `… project-ask --register --purpose fable --converse --no-uuid --cowork-auto --model fable-5.1` |

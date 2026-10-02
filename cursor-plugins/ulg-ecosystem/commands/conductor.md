@@ -108,7 +108,7 @@ expect (G1 / G2 / G5). On operator **go** / **admit**:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  job=conductor,
+  contract=conductor,
   source_ref="todo:{slug}",   # packet_path is refused on this contract
   dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
   model_knobs={"fast":"true"},

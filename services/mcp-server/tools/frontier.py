@@ -353,8 +353,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "cursor-sdk generate. Pass 'B'. Lane A is refused at "
                     "admit (422 CURSOR_LANE_A_REFUSED; the error carries "
                     "fix_hint). In-repo generates and empty files_expected "
-                    "use a lane-B worktree, including sdk_mode=plan and "
-                    "other read-only admits. Plan mode on lane B is "
+                    "use a lane-B worktree, including plan-mode read-only "
+                    "admits (sdk_mode on the wire, not an MCP param). Plan mode on lane B is "
                     "read-only and does not take the write lease. "
                     "cortex:// paths and paths outside the repo are 422 "
                     "CURSOR_LANE_B_SCOPE_REFUSED. The lane parameter is "
@@ -383,7 +383,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "CDP registry/mission purpose tag on model=cdp/… generate "
-                    "(default ask). Set session=operator-proxy, job=freeform or mission for "
+                    "(default ask). Set purpose=operator-proxy with contract=freeform or mission for "
                     "operator-proxy skill-chip inject; ignored on non-CDP models."
                 ),
             ),
@@ -427,7 +427,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "Stable work identity for cursor-sdk admits (D4 grammar: "
                     "todo:, plan:, agent-bus:, packet:, friction:, decision:). "
                     "Required for write-class / Lane B. write-class is the "
-                    "lane/read_only admit, including job=freeform; it does "
+                    "lane/read_only admit, including contract=freeform; it does "
                     "not select contract=implement. Allowed on every admitted "
                     "generate job."
                 ),
@@ -508,7 +508,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-        **generate:** `contract`∈{GENERATE_JOBS}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `job=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `job=freeform` and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `job=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** `contract`∈{GENERATE_JOBS}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=freeform` and plan-mode read-only admits. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
         **to_thread:** `contract`∈{TO_THREAD_JOBS}. `thread` required.
 

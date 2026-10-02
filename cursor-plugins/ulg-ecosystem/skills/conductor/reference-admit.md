@@ -7,7 +7,7 @@
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  job=conductor,
+  contract=conductor,
   source_ref="todo:{slug}",       # packet_path is REFUSED on this contract
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr

@@ -59,7 +59,7 @@ Invoked command for this seat: `runbook:maestro-loop` (trigger / refuse / steps 
 - Address: `send(to=cursor-auto)` is refused — cursor-auto is a role, not a bus address. `to=cursor` is not how this seat commissions. Falsifier: entry 1 wire refuse.
 - Hop: update the standing handoff, then `agent_bus(hop, thread=<lane>, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…)`. Successor bind `desired_model=cdp/opus-5.5-extra`. `hop` takes `desired_model` (admit coalesces it); `escalation=` is `unsupported argument`. If the hop returns `seat.identity_unresolvable`, that is the same 585f5e68 regression — file friction, then commission `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, mission_kind=hop, parent_thread=<lane>, dispatch_thread_id=<lane>, prompt=<handoff '## First acts'>)` (wire `mission_kind=hop` so a mid-stream self-handoff clears the caller's own live generate — a:37182; omit it and Stargate returns `cdp_external_gate_live`) and keep operating until `TYPE: SEAT_STAND_DOWN`. Falsifier: arrival that worked without that fallback, turns 380→384 `seating_hook.path=seated_without_occupy_target`.
 - Judgment lanes pin `desired_model=grok-4.7` on the wire — the `RULING` marker does not route (12286 turn 563 specimen).
-- Successor first acts: `Use the <slug> skill` for each birth slug, including `lane-act-gates`, and `Use the retrieval-before-authoring skill` when the deliverable is a prompt → read `cortex://notes/runbooks/maestro-loop.md` in full (`fs` read, no limit) → handoff head only (`fs` `offset=0` `limit=50`; never unbounded — the file overflows the tool ceiling) → journal → `fetch(last=3)` → `mark_read(through_turn, agent=web-anthropic)` (no `from_agent` on `mark_read`) → `send` `TYPE: SEAT_REGISTRATION` quoting the birth record, that read's `read_sha256`, and in your own words the runbook rule that governs the first commission. A hop-header line `fetch-decision: runbook:maestro-loop skipped` means nothing loaded the runbook. Falsifier: entry 6 arrival, ~4 min to first commission. Seat 40811596 skipped that read and re-admitted two conductors with `job=freeform` on 2026-09-30; admit or re-admit a conductor only with `contract=conductor`.
+- Successor first acts: `Use the <slug> skill` for each birth slug, including `lane-act-gates`, and `Use the retrieval-before-authoring skill` when the deliverable is a prompt → read `cortex://notes/runbooks/maestro-loop.md` in full (`fs` read, no limit) → handoff head only (`fs` `offset=0` `limit=50`; never unbounded — the file overflows the tool ceiling) → journal → `fetch(last=3)` → `mark_read(through_turn, agent=web-anthropic)` (no `from_agent` on `mark_read`) → `send` `TYPE: SEAT_REGISTRATION` quoting the birth record, that read's `read_sha256`, and in your own words the runbook rule that governs the first commission. A hop-header line `fetch-decision: runbook:maestro-loop skipped` means nothing loaded the runbook. Falsifier: entry 6 arrival, ~4 min to first commission. Seat 40811596 skipped that read and re-admitted two conductors with `contract=freeform` on 2026-09-30; admit or re-admit a conductor only with `contract=conductor`.
 - Identity: your identity is your birth record (CDP generate admit: model, `execution_id`, dispatch id, session URL). `thread_get(...).cse_*` and `cse_session_holders` are `relayed`, not identity — holders can still point at the predecessor after a hop. Falsifier: entry 5 wrote cse_01AoM9… into 12993; entry 6 holder-first returned predecessor 517cdefb, not successor 7830a322.
 - Held lane: when Stargate or cdp-ask returns `409 operator_seat_held` on a non-hop `team_dispatch(model=cdp/…)`, the lane already has a live operator seat — use `cse_session(op=followup, parent_thread=<lane>)` (or explicit holder identity) instead of firing another generate.
 - Poll: ulg-code `agent_bus` / `agent_bus_read` `tool=wait` with the 202 `poll_hint` `arguments_json` unchanged. Worker thread, not the parent. `completion` and `from_agent` stay what the hint says. `wait_seconds` stays what the hint says, including 0. Do not rewrite it into `job_state`. Do not promote 0 to 60. A `predicate_unmet` envelope means the completion is not satisfied yet; re-call the same hint. Do not re-dispatch on it. `job_state` is the poll_hint of deprecated `agent_bus.request`. Point: `agent-bus-discipline` § cursor-sdk closeout polling. `thread_get` on the operator lane is huge — do not use it. Sleep ≤290 s between polls. Quiet longer than ~10 min trips the quiet-with-WIP watchdog even after `TYPE: PARKED`. A poll blip: wait ~60 s and re-issue the same hint; do not re-dispatch. Falsifier: entry 1; entry 5 blip at 17:44Z.
@@ -116,7 +116,7 @@ audit — vocabulary only.
 | Need | Move | Fired by |
 |---|---|---|
 | A turn **delivered** into a live attached CSE — wake, correction, advisory | **warm follow-up** — `cse_session(op=followup)` | cursor / IDE (inv 23) |
-| Uploaded Customize skills / refreshed life MCP to go live, or stale context reset | **new CDP window** — ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, dispatch_thread_id=<SAME private lane>, handoff_prompt=...)` | this seat |
+| Uploaded Customize skills / refreshed life MCP to go live, or stale context reset | **new CDP window** — ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, dispatch_thread_id=<SAME private lane>, prompt=...)` | this seat |
 
 Warm follow-up does **not** reload chips or MCP; a new window inherits no chat context beyond
 the handoff. Either way: **¬ mint a second private lane.**
@@ -169,7 +169,7 @@ separate plane.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
 8. `tool_absent(life) ⇏ operator_gate` — a missing toys tool that ulg-code exposes is called on ulg-code. Verb for a commission is `team_dispatch`, not `request` / `send(to=cursor)`. ¬ park it on the operator in prose.
 9. **Fable** — standing outside check for architecture-suitability; encourage route, ¬ required every DIRECTIVE.
-10. **Architecture bind** — `cdp/opus-5.5` for the bind; live-checkout file:line depth is `cursor/grok-4.7` `job=freeform` on cursor-sdk. The four-condition trigger is when to **pick** that checkout seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the grok card (`effort` through `xhigh`; omitted values stay on the card). ¬ `anthropic/*` API. ¬ `cursor/claude-*`.
+10. **Architecture bind** — `cdp/opus-5.5` for the bind; live-checkout file:line depth is `cursor/grok-4.7` `contract=freeform` on cursor-sdk. The four-condition trigger is when to **pick** that checkout seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the grok card (`effort` through `xhigh`; omitted values stay on the card). ¬ `anthropic/*` API. ¬ `cursor/claude-*`.
 11. **Private operator thread** — dedicated `agent_bus.request` lane (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
 12. **Vision-resident operator.** Field SOT: skill `directive-authoring-standard` D1. Auto refuses `implement`/`investigate` without `vision:`. MAP escalation-only.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
@@ -313,7 +313,7 @@ server-pinned
 project UUID; `prompt` or `thread` (`to=life|dispatch`, not `from=life`).
 Correspondence stays in the current CSE. Opening or refreshing an operator-proxy
 window is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform,
-dispatch_thread_id=<lane>, handoff_prompt=...)`.
+dispatch_thread_id=<lane>, prompt=...)`.
 Continuity hop on an **existing** private lane is **`agent_bus(tool="hop", desired_model=cdp/opus-5.5-extra)`** — ¬ a
 contract token, ¬ hand-authored `TYPE: CONTINUITY_HANDOFF`. The verb authors that
 token (same `hop_handoff` body as cadence) and enqueues `continuity_hop=true`.
@@ -473,7 +473,7 @@ The codified sequence for binds too deep for the reasoner alone — premium spen
 
 **Preferred:** sub-PM bind after `cursor/grok-4.7` investigate — you supply hop 1 + 7 only. **Direct:** walk hops when bind *is* the work.
 
-### Standing trigger — pick T3 (`cursor/grok-4.7` `job=freeform`) when **all four** hold
+### Standing trigger — pick T3 (`cursor/grok-4.7` `contract=freeform`) when **all four** hold
 
 1. A cheaper tier already ran and left a residual — the reasoner's `investigate` closeout did not settle it.
 2. The bind needs **live-checkout verification at file:line depth**, which this seat structurally cannot perform (`inline_only`).

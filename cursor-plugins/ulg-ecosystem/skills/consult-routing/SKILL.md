@@ -103,7 +103,7 @@ Poll `poll_hint` with `agent_bus(wait)`, not `pipeline(result)`.
 
 | Want | Use | Prompt rule |
 |---|---|---|
-| Model answer, auto thread | `team_dispatch(op="generate", role=…, job=…, prompt\|sidecar_ref)` | Atomic prompt; ¬ “reply on this thread” unless handoff. |
+| Model answer, auto thread | `team_dispatch(op="generate", role=…, contract=…, prompt\|sidecar_ref)` | Atomic prompt; ¬ “reply on this thread” unless handoff. |
 | Existing thread | `op="to_thread", thread=…, prompt=…` | Stargate writes turn. |
 | Manual seat | `op="handoff", role/seat, packet_path\|source_ref` | “Reply on this thread” OK here. |
 
@@ -163,7 +163,7 @@ Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    job="implement",
+    contract="implement",
     lane="B",  # in-repo implement uses lane B; omit only with nest_under/resume_of
     packet_path="tmp/reviews/{slug}-implement.md",  # or source_ref=todo:{slug}
     dispatch_thread_id="{arc-id}",
@@ -297,7 +297,7 @@ Rationale for the independence axis (weight class vs family, self-review definit
 | `anthropic/*` on `team_dispatch` | **PROHIBITED** |
 | `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. ¬ `cursor/claude-*` |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
-| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, session=operator-proxy, job=freeform)`. Warm paste: `cse_session(op=followup)` |
+| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy, contract=freeform)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/grok-4.7` |
 
 
@@ -332,7 +332,7 @@ SoT for M1–M4 predicates and skip conditions: `runbook:score-play` (agent-bus:
 ## Implement lane — default source_ref
 
 ```python
-team_dispatch(op="generate", seat="cursor-sdk", job="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
 ```
 
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
@@ -346,7 +346,7 @@ Standing first-utterance (`agent_skill:conductor`):
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    job="conductor",   # ¬ "freeform": freeform + source_ref is 422 none_with_source_ref
+    contract="conductor",   # ¬ "freeform": freeform + source_ref is 422 none_with_source_ref
 
     lane="B",
     source_ref="todo:{slug}",
