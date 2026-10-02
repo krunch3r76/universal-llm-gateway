@@ -88,6 +88,7 @@ class Intent:
     updated_at: str
     park_live: bool = False
     park_summary: dict[str, Any] | None = None
+    wait_for_boundary: bool = False
     caller_agent: str | None = None
     armed_at: str | None = None
     expires_at: str | None = None
@@ -141,6 +142,9 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         park_summary=_decode_park_summary(row["park_summary"])
         if "park_summary" in keys
         else None,
+        wait_for_boundary=bool(row["wait_for_boundary"])
+        if "wait_for_boundary" in keys
+        else False,
         caller_agent=row["caller_agent"] if "caller_agent" in keys else None,
         armed_at=row["armed_at"] if "armed_at" in keys else None,
         expires_at=row["expires_at"] if "expires_at" in keys else None,
@@ -193,16 +197,19 @@ class RestartIntentStore:
         deadline_at: str,
         reason: str,
         park_live: bool = False,
+        wait_for_boundary: bool = False,
+        intent_ttl_s: float | None = None,
         caller_agent: str | None = None,
     ) -> Intent:
         """INSERT ``pending_drain``, or refresh the existing row's window.
 
-        A joining request does not replace ``caller_agent``. Expiry is not
-        applied here — that is the cancel path, not insert.
+        A joining request does not replace ``caller_agent`` or clear
+        ``wait_for_boundary``. Expiry is not applied here — that is the cancel
+        path, not insert. ``wait_for_boundary`` defaults to no hard expiry
+        unless ``intent_ttl_s`` is set (a:37197).
         """
-        from .restart_intent_expiry import arm_stamps
+        from .restart_intent_expiry import arm_stamps, resolve_intent_ttl_s
 
-        agent, armed, expires = arm_stamps(caller_agent, now=datetime.now(UTC))
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
@@ -211,10 +218,18 @@ class RestartIntentStore:
                 (service, *_BLOCKS_NEW_RESTART),
             ).fetchone()
             if existing is not None:
+                prior = _row_to_intent(existing)
+                wfb = prior.wait_for_boundary or wait_for_boundary
+                ttl = resolve_intent_ttl_s(
+                    wait_for_boundary=wfb, intent_ttl_s=intent_ttl_s
+                )
+                _agent, armed, expires = arm_stamps(
+                    prior.caller_agent, now=datetime.now(UTC), ttl_s=ttl
+                )
                 conn.execute(
-                    "UPDATE restart_intents SET armed_at=?, expires_at=?, updated_at=? "
-                    "WHERE intent_id=?",
-                    (armed, expires, armed, existing["intent_id"]),
+                    "UPDATE restart_intents SET armed_at=?, expires_at=?, "
+                    "wait_for_boundary=?, updated_at=? WHERE intent_id=?",
+                    (armed, expires, 1 if wfb else 0, armed, existing["intent_id"]),
                 )
                 row = conn.execute(
                     "SELECT * FROM restart_intents WHERE intent_id=?",
@@ -224,13 +239,20 @@ class RestartIntentStore:
                 out = _row_to_intent(row)
                 out.deadline_at = out.deadline_at or deadline_at
                 return out
+            ttl = resolve_intent_ttl_s(
+                wait_for_boundary=wait_for_boundary, intent_ttl_s=intent_ttl_s
+            )
+            agent, armed, expires = arm_stamps(
+                caller_agent, now=datetime.now(UTC), ttl_s=ttl
+            )
             intent_id = str(uuid.uuid4())
             now = _now()
             conn.execute(
                 "INSERT INTO restart_intents "
                 "(intent_id, service, action, status, last_seen_event_seq, reason, "
-                " park_live, caller_agent, armed_at, expires_at, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)",
+                " park_live, wait_for_boundary, caller_agent, armed_at, expires_at, "
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     intent_id,
                     service,
@@ -238,6 +260,7 @@ class RestartIntentStore:
                     STATUS_PENDING_DRAIN,
                     reason,
                     1 if park_live else 0,
+                    1 if wait_for_boundary else 0,
                     agent,
                     armed,
                     expires,
@@ -359,13 +382,19 @@ class RestartIntentStore:
 
         A joining ``create_intent`` does this. The supervisor's 30s progress
         tick must not — an abandoned intent with only that tick expires.
+        ``wait_for_boundary`` without a prior TTL stays unbounded.
         """
-        from .restart_intent_expiry import arm_stamps
+        from .restart_intent_expiry import arm_stamps, resolve_intent_ttl_s
 
         current = self.get(intent_id)
         if current is None:
             raise KeyError(intent_id)
-        _agent, armed, expires = arm_stamps(current.caller_agent, now=datetime.now(UTC))
+        ttl = resolve_intent_ttl_s(
+            wait_for_boundary=current.wait_for_boundary, intent_ttl_s=None
+        )
+        _agent, armed, expires = arm_stamps(
+            current.caller_agent, now=datetime.now(UTC), ttl_s=ttl
+        )
         self._update(intent_id, armed_at=armed, expires_at=expires)
         refreshed = self.get(intent_id)
         if refreshed is None:

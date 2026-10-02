@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS restart_intents (
     expires_at           TEXT,
     park_live            INTEGER NOT NULL DEFAULT 0,
     park_summary         TEXT,
+    wait_for_boundary    INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL,
     updated_at           TEXT NOT NULL
 );
@@ -128,15 +129,17 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
             """
         )
     _ensure_park_columns(conn)
+    _ensure_wait_for_boundary_column(conn)
     _ensure_arm_columns(conn)
     _ensure_kill_cas_indexes(conn)
 
 
 def _ensure_arm_columns(conn: sqlite3.Connection) -> None:
-    """Add arm columns. In-flight rows get a fresh window from now.
+    """Add arm columns. Legacy null windows get a fresh bound only once.
 
-    Does not write ``timeout`` and does not date the window from
-    ``created_at`` (that expired drains older than 10 minutes on first read).
+    ``wait_for_boundary`` arms may keep ``expires_at`` NULL (no hard expiry).
+    Backfill runs only when ``expires_at`` is first introduced — not on every
+    schema apply — so intentional nulls survive store reopen (a:37197).
     """
     cols = {
         row[1]
@@ -146,16 +149,19 @@ def _ensure_arm_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN caller_agent TEXT")
     if "armed_at" not in cols:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN armed_at TEXT")
-    if "expires_at" not in cols:
+    added_expires = "expires_at" not in cols
+    if added_expires:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN expires_at TEXT")
-    now = datetime.now(UTC)
-    expires = (now + timedelta(seconds=INTENT_EXPIRY_WINDOW_S)).isoformat()
-    armed = now.isoformat()
-    conn.execute(
-        "UPDATE restart_intents SET armed_at=?, expires_at=? "
-        "WHERE expires_at IS NULL AND status IN ('pending_drain', 'drained_restarting')",
-        (armed, expires),
-    )
+        now = datetime.now(UTC)
+        expires = (now + timedelta(seconds=INTENT_EXPIRY_WINDOW_S)).isoformat()
+        armed = now.isoformat()
+        conn.execute(
+            "UPDATE restart_intents SET armed_at=?, expires_at=? "
+            "WHERE expires_at IS NULL "
+            "AND COALESCE(wait_for_boundary, 0) = 0 "
+            "AND status IN ('pending_drain', 'drained_restarting')",
+            (armed, expires),
+        )
 
 
 def _ensure_park_columns(conn: sqlite3.Connection) -> None:
@@ -170,6 +176,19 @@ def _ensure_park_columns(conn: sqlite3.Connection) -> None:
         )
     if "park_summary" not in cols:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN park_summary TEXT")
+
+
+def _ensure_wait_for_boundary_column(conn: sqlite3.Connection) -> None:
+    """a:37197 — defer begin_drain until GIW idle; optional unbounded arm."""
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+    }
+    if "wait_for_boundary" not in cols:
+        conn.execute(
+            "ALTER TABLE restart_intents ADD COLUMN wait_for_boundary "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 __all__ = ["INTENT_EXPIRY_WINDOW_S", "_DDL", "apply_restart_intent_schema"]

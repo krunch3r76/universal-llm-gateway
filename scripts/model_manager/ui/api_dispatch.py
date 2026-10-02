@@ -174,6 +174,8 @@ async def execute(
                     ctl,
                     "stop",
                     park_live=giw_park_live_from_params(params),
+                    wait_for_boundary=giw_wait_for_boundary_from_params(params),
+                    intent_ttl_s=giw_intent_ttl_s_from_params(params),
                     caller_agent=caller_agent_from_manage_request(params),
                 )
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
@@ -216,6 +218,8 @@ async def execute(
                     ctl,
                     "restart",
                     park_live=giw_park_live_from_params(params),
+                    wait_for_boundary=giw_wait_for_boundary_from_params(params),
+                    intent_ttl_s=giw_intent_ttl_s_from_params(params),
                     caller_agent=caller_agent_from_manage_request(params),
                 )
             else:
@@ -287,6 +291,8 @@ async def execute(
                     code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                     row_id=_optional_attr_str(params, "row_id"),
                     park_live=giw_park_live_from_params(params),
+                    wait_for_boundary=giw_wait_for_boundary_from_params(params),
+                    intent_ttl_s=giw_intent_ttl_s_from_params(params),
                     caller_agent=caller_agent_from_manage_request(params),
                 )
             if service == "stargate" and not force:
@@ -710,6 +716,19 @@ def giw_park_live_from_params(params: dict[str, Any]) -> bool:
     return bool(params.get("park_live", True))
 
 
+def giw_wait_for_boundary_from_params(params: dict[str, Any]) -> bool:
+    """Opt-in a:37197 mode — defer begin_drain until GIW idle/row boundary."""
+    return bool(params.get("wait_for_boundary", False))
+
+
+def giw_intent_ttl_s_from_params(params: dict[str, Any]) -> float | None:
+    """Optional caller arm TTL. Absent → default 600s, or none when wait_for_boundary."""
+    raw = params.get("intent_ttl_s")
+    if raw is None or raw == "":
+        return None
+    return float(raw)
+
+
 async def _git_worker_drain_supervised(
     ctl: ServiceController,
     action: str,
@@ -717,6 +736,8 @@ async def _git_worker_drain_supervised(
     code_ref: str = "HEAD",
     row_id: str | None = None,
     park_live: bool = True,
+    wait_for_boundary: bool = False,
+    intent_ttl_s: float | None = None,
     caller_agent: str = "manage",
 ) -> dict[str, Any]:
     """Route a non-force git-worker lifecycle action to the drain supervisor.
@@ -730,21 +751,31 @@ async def _git_worker_drain_supervised(
     ``park_live`` defaults true: after ``PARK_LIVE_GRACE_S`` the sweep parks
     resume-eligible cursor-sdk occupants so the drain does not wait out a
     heartbeating job. Explicit false drain-waits every occupant.
+    ``wait_for_boundary`` defers begin_drain until idle so admits stay open
+    during a long occupant row (a:37197).
     """
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for(action),
         action=action,
     )
+    tags = []
+    if park_live:
+        tags.append("park_live")
+    if wait_for_boundary:
+        tags.append("wait_for_boundary")
+    tag_s = f", {', '.join(tags)}" if tags else ""
     return await run_gated_drain_supervised(
         ctl.restart_gate,
         action,
         "git_integration_worker",
         store=ctl.restart_intent_store,
         supervisor=supervisor,
-        reason=f"manage {action} (deferred drain{', park_live' if park_live else ''})",
+        reason=f"manage {action} (deferred drain{tag_s})",
         code_ref=code_ref,
         row_id=row_id,
         park_live=park_live,
+        wait_for_boundary=wait_for_boundary,
+        intent_ttl_s=intent_ttl_s,
         caller_agent=caller_agent,
     )
 

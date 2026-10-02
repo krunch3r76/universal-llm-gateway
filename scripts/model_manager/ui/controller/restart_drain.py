@@ -1013,12 +1013,16 @@ async def run_gated_drain_supervised(
     code_ref: str = "HEAD",
     row_id: str | None = None,
     park_live: bool = False,
+    wait_for_boundary: bool = False,
+    intent_ttl_s: float | None = None,
     caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Arm a durable git-worker drain intent and return the deferred 202 envelope.
 
     ``park_live`` (steer-restart v1) makes the supervisor park live cursor-sdk
     dispatches at drain start instead of keep-awaiting them.
+    ``wait_for_boundary`` (a:37197) defers begin_drain until GIW idle so admits
+    stay open during a long occupant row; optional ``intent_ttl_s`` bounds the arm.
     """
     outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:
@@ -1044,6 +1048,8 @@ async def run_gated_drain_supervised(
             deadline_at=deadline_at,
             reason=reason,
             park_live=park_live,
+            wait_for_boundary=wait_for_boundary,
+            intent_ttl_s=intent_ttl_s,
             caller_agent=caller_agent,
         )
         validation_id = mint_activation_validation(

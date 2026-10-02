@@ -20,13 +20,29 @@ from .restart_intent_states import STATUS_PENDING_DRAIN
 logger = get_logger(__name__)
 
 
-def arm_stamps(caller_agent: str | None, *, now: datetime) -> tuple[str, str, str]:
-    """``(caller_agent, armed_at, expires_at)``. Blank caller is ``unknown``."""
+def resolve_intent_ttl_s(
+    *, wait_for_boundary: bool, intent_ttl_s: float | None
+) -> float | None:
+    """Default 600s arm; wait_for_boundary defaults to no expiry; caller TTL wins."""
+    if intent_ttl_s is not None:
+        return float(intent_ttl_s)
+    if wait_for_boundary:
+        return None
+    return INTENT_EXPIRY_WINDOW_S
+
+
+def arm_stamps(
+    caller_agent: str | None,
+    *,
+    now: datetime,
+    ttl_s: float | None = INTENT_EXPIRY_WINDOW_S,
+) -> tuple[str, str, str | None]:
+    """``(caller_agent, armed_at, expires_at)``. ``ttl_s=None`` → no expiry."""
     agent = (caller_agent or "").strip() or "unknown"
     armed = now.astimezone(UTC).isoformat()
-    expires = (
-        now.astimezone(UTC) + timedelta(seconds=INTENT_EXPIRY_WINDOW_S)
-    ).isoformat()
+    if ttl_s is None:
+        return agent, armed, None
+    expires = (now.astimezone(UTC) + timedelta(seconds=ttl_s)).isoformat()
     return agent, armed, expires
 
 

@@ -43,9 +43,11 @@ def project_restart_intent_consumer(
         # start, and the last park sweep ({requested, refused, live_after, …}).
         "park_live": intent.park_live,
         "park_summary": intent.park_summary,
+        "wait_for_boundary": intent.wait_for_boundary,
         "caller_agent": intent.caller_agent,
         "armed_at": intent.armed_at,
         "expires_at": intent.expires_at,
+        "drain_begun": intent.drain_epoch is not None,
     }
 
 
@@ -57,21 +59,38 @@ def drain_deferred_result(
 ) -> dict[str, Any]:
     """The 202 envelope for a deferred, drain-supervised git-worker restart."""
     projected = project_restart_intent_consumer(intent)
+    waiting = intent.wait_for_boundary and intent.drain_epoch is None
+    state = "waiting_for_boundary" if waiting else "draining"
+    default_reason = (
+        "waiting for GIW idle/row boundary before begin_drain; admits stay open "
+        "until drain_epoch is set (a:37197)"
+        if waiting
+        else "draining; completion delivered via git_worker.drain events"
+    )
     result = {
         "status": "deferred",
-        "state": "draining",
+        "state": state,
         "service": intent.service,
         "restart_intent_id": projected["restart_intent_id"],
         "deadline_ceiling_at": projected["deadline_ceiling_at"],
         "deadline_semantics": projected["deadline_semantics"],
         "deadline_at": projected["deadline_at"],
-        "reason": reason or "draining; completion delivered via git_worker.drain events",
+        "wait_for_boundary": intent.wait_for_boundary,
+        "drain_begun": intent.drain_epoch is not None,
+        "expires_at": intent.expires_at,
+        "reason": reason or default_reason,
         "caller_must_exit_to_release_lease": True,
         "guidance": (
-            "If you hold the git_integration_worker write lease (cursor-sdk), "
-            "exit this dispatch now — do not wait_healthy in-window. "
-            "Activation proof is supervisor-owned; query via activation_validation_id "
-            "or fleet_liveness(code_ref=…)."
+            "wait_for_boundary arm: GIW admits remain open until begin_drain. "
+            "Query restart_intent_status / busy_status; do not poll-rearm on the "
+            "legacy 600s window when expires_at is null."
+            if waiting
+            else (
+                "If you hold the git_integration_worker write lease (cursor-sdk), "
+                "exit this dispatch now — do not wait_healthy in-window. "
+                "Activation proof is supervisor-owned; query via activation_validation_id "
+                "or fleet_liveness(code_ref=…)."
+            )
         ),
     }
     if activation_validation_id is not None:

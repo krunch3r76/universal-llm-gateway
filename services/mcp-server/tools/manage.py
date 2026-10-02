@@ -250,6 +250,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
         reenroll: bool = False,
         intent_id: str = "",
         park_live: bool = True,
+        wait_for_boundary: bool = False,
+        intent_ttl_s: float = 0.0,
         caller_dispatch_id: str = "",
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
@@ -263,6 +265,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
                    (sdk_agent_id and SDK store dir on disk) instead of waiting
                    out a heartbeating job. Non-eligible occupants drain-wait.
                    Default True. Pass false to drain-wait every occupant.
+        wait_for_boundary: for git_integration_worker — defer begin_drain until
+                   GIW active_count==0 (idle/row boundary). Admits stay open until
+                   drain_epoch is set. Default False. When True, arm has no 600s
+                   expiry unless intent_ttl_s > 0 (a:37197).
+        intent_ttl_s: optional arm TTL seconds. 0/omit = default (600s, or none
+                   when wait_for_boundary). Positive = caller-set expiry window.
         caller_dispatch_id: cursor-sdk dispatch id for self-holder busy-skip drain
                    (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
                    busy holder matches, sync_restart mints restart_intent_id and defers
@@ -473,6 +481,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
             and action in _GIW_LIFECYCLE_FORCE_ACTIONS
         ):
             params["park_live"] = bool(park_live)
+            params["wait_for_boundary"] = bool(wait_for_boundary)
+            if float(intent_ttl_s or 0.0) > 0.0:
+                params["intent_ttl_s"] = float(intent_ttl_s)
         effective_caller = (
             caller_dispatch_id or os.environ.get("CURSOR_SDK_DISPATCH_ID", "")
         ).strip()

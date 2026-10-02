@@ -197,6 +197,12 @@ class GitWorkerDrainSupervisor:
         deadline = t0 + self.deadline_s
         timeout_alerted = False
         try:
+            if intent.wait_for_boundary and intent.drain_epoch is None:
+                from .restart_intent_boundary_wait import wait_for_idle_boundary
+
+                idle = await wait_for_idle_boundary(self, intent, t0=t0)
+                if not idle or await self._abort_if_requested(intent):
+                    return
             begun = await begin_drain_or_wait(self, intent, t0=t0)
             if await self._abort_if_requested(intent) or begun is None:
                 return
