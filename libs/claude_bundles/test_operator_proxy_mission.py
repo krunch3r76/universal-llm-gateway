@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -34,12 +35,11 @@ def test_purpose_recognition() -> None:
     assert not purpose_implies_mission("ask", "# Sealed R-admit")
 
 
-def test_ensure_injects_chips_and_briefing() -> None:
+def test_ensure_injects_briefing_without_slash_prefix() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
-    assert out.startswith("/cdp-operator-proxy\n/reasoning-posture\n")
-    assert "/completion-provenance-discipline\n" in out
-    assert "/agent-bus-discipline\n" in out
-    assert out.count("/agent-bus-discipline\n") == 1
+    assert not out.startswith("/cdp-operator-proxy")
+    assert "`cdp-operator-proxy`" in out
+    assert "`agent-bus-discipline`" in out
     assert "Status / rank / liveness register (BINDING — member 6)" in out
     assert "## This hop (read first)" in out
     assert out.index("## This hop (read first)") < out.index(
@@ -72,28 +72,20 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "missing (file absent under a visible root): default STAND_DOWN" in out
 
 
-def test_ensure_idempotent_when_chips_present() -> None:
+def test_ensure_idempotent_and_strips_legacy_slash_prefix() -> None:
     once = ensure_operator_proxy_mission_prompt("TYPE: DIRECTIVE\nintent: birth\n")
     twice = ensure_operator_proxy_mission_prompt(once)
-    assert twice.count("/cdp-operator-proxy") == 1
+    assert not twice.startswith("/cdp-operator-proxy")
     assert twice.count("## Mission seat map (BINDING") == 1
     assert twice.count("## This hop (read first)") == 1
-    assert twice.count("/reasoning-posture") == 1
     assert twice.count("/ulg-for-llms") == 0
-    # Counted in the leading chip block only — the slug also appears in the
-    # seat-map prose below it.
-    assert twice.split("\n\n", 1)[0].count("/completion-provenance-discipline") == 1
-    assert twice.split("\n\n", 1)[0].count("/agent-bus-discipline") == 1
-    # strip() on re-entry may drop a trailing newline; slash block must stay single.
     assert twice.rstrip("\n") == once.rstrip("\n")
-
-
-def test_ensure_adds_missing_chip_only() -> None:
-    out = ensure_operator_proxy_mission_prompt(
-        "/cdp-operator-proxy\n\n# Already chipped\n"
+    legacy = ensure_operator_proxy_mission_prompt(
+        "/cdp-operator-proxy\n/reasoning-posture\n\n# Already chipped\n"
     )
-    assert out.startswith("/cdp-operator-proxy\n/reasoning-posture\n")
-    assert "## Mission seat map (BINDING" in out
+    assert not legacy.startswith("/cdp-operator-proxy")
+    assert "# Already chipped" in legacy
+    assert "## Mission seat map (BINDING" in legacy
 
 
 def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
@@ -225,7 +217,7 @@ def test_refuse_excerpt_is_small_against_briefing_block() -> None:
     assert refuse_len < len(_BRIEFING_BLOCK)
 
 
-def test_success_condition_names_contract_none_refusal_in_composed_block() -> None:
+def test_refuse_contract_none_in_hop_block_not_in_success_condition() -> None:
     with mock.patch(
         "claude_bundles.operator_proxy_mission.load_maestro_runbook",
         return_value=(_RUNBOOK_FIXTURE, ""),
@@ -247,27 +239,47 @@ def test_fresh_mission_prompt_resolves_maestro_runbook() -> None:
     block = _hop_block(out)
     assert "fetch-decision: runbook:maestro-loop resolved sha256=" in block
     assert (
-        "fetch-decision: skill:retrieval-before-authoring in_context" in block
+        "fetch-decision: skill:retrieval-before-authoring skipped "
+        "reason=chip_requested"
+        in block
     )
     assert "not_resolvable_by_composer" not in block
     assert "runbook:maestro-loop skipped reason=not_in_context" not in block
 
 
-# Pre-change render length (2026-10-02, same input as below): total 42019 chars.
-_PRE_CHANGE_MISSION_PROMPT_LEN = 42019
+# Render lengths for TYPE: CONTINUITY_HANDOFF + # body (2026-10-02):
+# - pre-trim baseline: 42031 (measured opening)
+# - lane-14181 @ cdc14894a (before slash removal): 42019
+_PRE_CDC14894A_MISSION_PROMPT_LEN = 42019
 _DISTINCTIVE_REFUSE_SENTENCE = "Re-arming `send_later` as a heartbeat."
+_RUNBOOK_REFUSE_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_2124_fixture.md"
+)
+
+
+def _runbook_body_for_opening_trim() -> str:
+    from claude_bundles.maestro_runbook_load import load_maestro_runbook
+
+    body, _err = load_maestro_runbook()
+    if body:
+        return body
+    return _RUNBOOK_REFUSE_FIXTURE_PATH.read_text(encoding="utf-8")
 
 
 def test_operator_opening_trim_metrics_with_real_runbook() -> None:
-    """Post-change render must shrink ≥2000 chars vs pre-change 42019 (see _PRE_CHANGE_*)."""
-    from claude_bundles.maestro_runbook_load import load_maestro_runbook
+    """Post-trim must be ≥2000 below cdc14894a (42019); post-amend records new len."""
+    from claude_bundles.runbook_excerpt import extract_sections
 
-    body, err = load_maestro_runbook()
-    if not body:
-        pytest.skip(f"maestro runbook unavailable: {err}")
-    out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
+    body = _runbook_body_for_opening_trim()
+    refuse_len = len(extract_sections(body, ("Refuse",)))
+    assert refuse_len >= 2000
+    with mock.patch(
+        "claude_bundles.operator_proxy_mission.load_maestro_runbook",
+        return_value=(body, ""),
+    ):
+        out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
     post_len = len(out)
-    assert post_len <= _PRE_CHANGE_MISSION_PROMPT_LEN - 2000
+    assert post_len <= _PRE_CDC14894A_MISSION_PROMPT_LEN - 2000
     block = _hop_block(out)
     sc_line = next(ln for ln in block.splitlines() if ln.startswith("- success-condition:"))
     assert _DISTINCTIVE_REFUSE_SENTENCE in block
@@ -290,7 +302,29 @@ def test_operator_opening_trim_metrics_with_real_runbook() -> None:
     assert "contract=none" not in briefing.replace(
         "Do not admit one with `contract=none`.", ""
     )
-    assert "/retrieval-before-authoring" in out.split("\n\n", 1)[0]
+    assert not out.startswith("/")
+    assert "`retrieval-before-authoring`" in out
+    assert "investigate`, `freeform`, and `conductor`" in out
+
+
+def test_stage_operator_proxy_omits_slash_keeps_use_line_authority() -> None:
+    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+
+    exec_id = "test-exec-amend-14181"
+    staged = stage_cdp_prompt_with_skills(
+        execution_id=exec_id,
+        prompt_text="TYPE: CONTINUITY_HANDOFF\n# body\n",
+        purpose="operator-proxy",
+    )
+    assert staged.staged
+    from claude_bundles.cdp_model_endpoint_staging import ephemeral_dir
+
+    merged = (ephemeral_dir(exec_id) / "prompt.md").read_text(encoding="utf-8")
+    assert not merged.lstrip().startswith("/cdp-operator-proxy")
+    marker, _rest = merged.split("-->", 1)
+    assert marker.startswith("<!--cdp-required-skills:")
+    for slug in MISSION_SKILL_SLUGS:
+        assert slug in marker
 
 
 def test_mission_prompt_runbook_missing_still_has_success_condition() -> None:
@@ -318,8 +352,14 @@ def test_cdp_operator_proxy_skill_keep_alive_stale_text_absent() -> None:
     assert "Do not arm Monitor" in text
 
 
+_WAKE_BRIEF_SHA256 = (
+    "4ebc236345294b82eb3332a8fb1153b356e020c9d75ad5ae2b583a3aba5c4ea0"
+)
+
+
 def test_wake_brief_unchanged_do_not_arm_monitor() -> None:
     from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
 
     text = wake_briefing_paragraph()
     assert "Do not arm Monitor" in text
+    assert hashlib.sha256(text.encode()).hexdigest() == _WAKE_BRIEF_SHA256

@@ -14,10 +14,7 @@ from __future__ import annotations
 import re
 
 from claude_bundles.act_receipt import format_act_receipt
-from claude_bundles.cowork_skill_delivery import (
-    format_cdp_slash_prefix,
-    split_leading_slash_skills,
-)
+from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.maestro_runbook_load import load_maestro_runbook
 from claude_bundles.operator_proxy_hop_status import ensure_hop_status_first
 from claude_bundles.operator_proxy_skill_introspect import skill_introspection_block
@@ -138,7 +135,7 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — commissions with ulg-code `team_dispatch` to `cursor-sdk` on lane B. DISPOSITION and CLOSEOUT go by `send` on the private lane. Cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Architecture-bind hop 5 independent check and review fallback stay, under that condition |
-| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Omitted knobs follow the grok-4.7 card. **`contract`** splits the leg: `investigate` and `conductor` stay on this model. Admit a conductor with `contract=conductor` (maestro-loop step 5a). Do not admit one with `contract=none`. Mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
+| **cursor-sdk `cursor/grok-4.7`** | **Executor / sub-PM** — omit-model default (`workflows.auto_judgment.model`). Live checkout, live probes. Omitted knobs follow the grok-4.7 card. **`contract`** splits the leg: `investigate`, `freeform`, and `conductor` stay on this model. Admit a conductor with `contract=conductor` (maestro-loop step 5a). Do not admit one with `contract=none`. Mechanical `contract=implement` is `cursor/composer-2.5` (`workflows.mechanical_implement`). Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
 | **`cdp/opus-5.5`** | **Architecture bind / independent check** — the in-use bind rung. Live-checkout file:line depth this seat cannot perform is `cursor/grok-4.7` `contract=freeform` on cursor-sdk, fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`). That trigger picks the **seat**. Independent check uses a different seat than the author. An architecture is not self-ratifiable. |
 | **cursor-sdk lane B** | **Executor** — ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). This seat directs. The cursor-sdk seat executes repo writes |
 
@@ -362,26 +359,16 @@ def ensure_operator_proxy_mission_prompt(
     *,
     standing_handoff_text: str | None = None,
 ) -> str:
-    """Ensure chips + this-hop status + seat-map briefing on *text*.
+    """Ensure this-hop status + seat-map briefing on *text*.
 
-    Idempotent. *standing_handoff_text* fills unspecified hop-status
-    fields when the caller already loaded the sidecar — this function
-    does not read the filesystem. Non-mission callers should not invoke it.
+    Skill chips are delivered via staging Use-lines (``prepend_cdp_dispatch_skills``
+    authority marker + composer induction), not a leading ``/<slug>`` prefix here.
+    Legacy leading slash lines are stripped idempotently. *standing_handoff_text*
+    fills unspecified hop-status fields when the caller already loaded the sidecar —
+    this function does not read the filesystem. Non-mission callers should not invoke it.
     """
     body = (text or "").strip()
-    tokens, rest = split_leading_slash_skills(body)
-    have = {t.lstrip("/").strip().lower() for t in tokens if t.strip()}
-    need = [s for s in MISSION_SKILL_SLUGS if s not in have]
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for slug in [t.lstrip("/").strip() for t in tokens if t.strip()] + need:
-        key = slug.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(slug)
-
-    prefix = format_cdp_slash_prefix(ordered)
+    _tokens, rest = split_leading_slash_skills(body)
     rest_body = rest.lstrip("\n")
     field_source = _field_source_without_briefing(rest_body)
     if _BRIEFING_MARKER not in rest_body:
@@ -391,8 +378,9 @@ def ensure_operator_proxy_mission_prompt(
     resolved_bodies: dict[str, str] | None = None
     trigger_excerpt = ""
     refuse_body = ""
-    skip_reasons: dict[str, str] = {}
-    in_context_refs: tuple[str, ...] = ("skill:retrieval-before-authoring",)
+    skip_reasons: dict[str, str] = {
+        "skill:retrieval-before-authoring": "chip_requested",
+    }
     if body:
         resolved_bodies = {"runbook:maestro-loop": body}
         trigger_block = extract_sections(body, ("Trigger",))
@@ -414,13 +402,12 @@ def ensure_operator_proxy_mission_prompt(
         rest_body,
         standing_handoff_text=standing_handoff_text,
         field_source=field_source,
-        in_context_refs=in_context_refs,
         resolved_bodies=resolved_bodies,
         skip_reasons=skip_reasons,
         refuse_body=refuse_body,
         trigger_excerpt=trigger_excerpt,
     )
-    return f"{prefix}\n{rest_body}"
+    return rest_body
 
 
 def _field_source_without_briefing(rest_body: str) -> str:

@@ -265,6 +265,7 @@ def prepend_cdp_dispatch_skills(
     *,
     repo_root: Path | None = None,
     hybrid_escape: bool = False,
+    omit_slash_prefix: bool = False,
 ) -> tuple[str, list[str], list[InjectedSkillBody]]:
     """Prepend CDP skills= delivery to a sealed prompt.
 
@@ -284,11 +285,15 @@ def prepend_cdp_dispatch_skills(
     root = repo_root or _REPO_ROOT
     _peeled_attach, _peeled_inline, body = peel_sealed_cdp_skill_prefix(prompt)
     slash_slugs, inline_slugs = partition_cdp_skills(list(slugs))
-    slash_block = (
-        format_cdp_hybrid_prefix(slash_slugs)
-        if hybrid_escape
-        else format_cdp_slash_prefix(slash_slugs)
-    )
+    if omit_slash_prefix:
+        slash_block = ""
+        slash_slugs = []
+    else:
+        slash_block = (
+            format_cdp_hybrid_prefix(slash_slugs)
+            if hybrid_escape
+            else format_cdp_slash_prefix(slash_slugs)
+        )
     bodies: list[InjectedSkillBody] = []
     inline_block = ""
     if inline_slugs:

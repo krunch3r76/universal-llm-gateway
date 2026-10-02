@@ -323,9 +323,24 @@ def stage_cdp_prompt_with_skills(
                     code="pool_blocked",
                 ) from exc
             raise CdpStagingError(str(exc), code="pool_blocked") from exc
+    from claude_bundles.operator_proxy_mission import (
+        MISSION_SKILL_SLUGS,
+        is_operator_proxy_mission_purpose,
+    )
+
+    omit_slash = is_operator_proxy_mission_purpose(purpose)
+    if omit_slash:
+        have = {s.lstrip("/").lower() for s in effective}
+        for slug in reversed(MISSION_SKILL_SLUGS):
+            if slug.lower() not in have:
+                effective.insert(0, slug)
     try:
         author_for_gate = body
-        merged, _, _ = prepend_cdp_dispatch_skills(body, effective)
+        merged, _, _ = prepend_cdp_dispatch_skills(
+            body,
+            effective,
+            omit_slash_prefix=omit_slash,
+        )
         # a:37183 A1 — shape from author body; charter skip uses same source.
         merged = ensure_review_reading_charter(
             merged, purpose, author_body=author_for_gate

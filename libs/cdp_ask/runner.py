@@ -436,6 +436,23 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
             text,
             standing_handoff_text=standing_handoff_text_for_prompt(text),
         )
+        from claude_bundles.cowork_skill_delivery import (
+            extract_cdp_required_authority,
+            prepend_cdp_dispatch_skills,
+        )
+        from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
+        from claude_bundles.operator_proxy_mission import MISSION_SKILL_SLUGS
+
+        if extract_cdp_required_authority(text) is None:
+            effective = list(MISSION_SKILL_SLUGS)
+            for slug in ensure_cdp_judgment_skills(None, purpose=req.purpose):
+                if slug not in effective:
+                    effective.append(slug)
+            text, _, _ = prepend_cdp_dispatch_skills(
+                text,
+                effective,
+                omit_slash_prefix=True,
+            )
     return [text]
 
 

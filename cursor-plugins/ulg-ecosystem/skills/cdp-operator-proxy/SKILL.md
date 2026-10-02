@@ -174,7 +174,7 @@ separate plane.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
 14. **Reasoning posture when framing.** Before DIRECTIVE/path-sim: pin Question, OOS, detent; steelman/calibrate/courage. Stamp `operator_framed=true` + `pinned_question` + `frame_uri`. This seat stamps; does not run path-sim (`cursor_only`).
 15. **Codework → layer.** Code change ⇒ `abstraction-layering` G1–G6; no todo ⇒ `work-item-seed-path` first. Non-codework ⇒ commission cursor for `path-sim` (`cursor_only`).
-16. One live request per private thread — § Interrupt / supersede (SOT). Exceptions: continuity hop skips supersede; `nested_sdk_finished` not a candidate.
+16. Deprecated `agent_bus.request` supersede — do not issue it; a re-issue destroys a still-queued predecessor before it starts (§ Interrupt / supersede, live hazard). Exceptions: continuity hop skips supersede; `nested_sdk_finished` not a candidate.
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
 18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
 19. **Escalation chain + nesting.** Executor is `cursor-sdk` on lane B. **CDP consult refused or failed** (including `X display exhausted`): do not wait and do not retry the CDP pool. The conductor chooses at once by the question and records `cdp_fail_route` on the scoreboard row. `nested-grok`: ulg-code `team_dispatch` nested `seat=cursor-sdk` `model=cursor/grok-4.7` `job=freeform` `model_knobs={"effort":"xhigh"}`. `operator`: post the question and its context on the worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Hop 5 is `cdp/opus-5.5`. Every later hop is nested `cursor-sdk`.
@@ -286,11 +286,7 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Interrupt / supersede (BINDING)
 
-**Rule.** Deprecated `agent_bus.request` mechanics, not this seat's commission: one live request per private thread. A second request supersedes the *first eligible predecessor* (queued or claimed) — it does not append. Candidate: a claimed job that hasn't passed nested-SDK terminal, else the oldest queued peer. Claimed arm: `run_cancel` (process stop) or `pre_register_live_run` (displacement, no process-stop). Queued arm: `queue_withdraw` before claim (`terminal_status=displaced_queued`). Never both. Exceptions: a continuity hop skips supersede entirely; a claimed job already `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester** — a foreign seat's eligible job on your thread is a candidate too.
-
 **The live hazard.** Re-issuing against a still-queued predecessor *destroys it before it does any work* — the opposite of the old belief that a queued job was safe and both would run. Under backlog (slow admits looking like a lost enqueue), **wait** rather than re-issue: a missing admit turn is not a lost enqueue, and re-issuing kills a job about to start.
-
-**Reading the receipt.** `superseded: null` means no eligible predecessor was found — it does **not** mean the predecessor is queued and survives. A populated block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw`, one-directional evidence of an interrupt *attempt*. Neither null nor populated licenses "the lane is now mine" — **the reliable detector is reading the thread**: a `status:admitted` turn for an *older* request arriving after a newer one is what caught the 7034 collision; no receipt field would have.
 
 **Trigger.** The next commission is ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Do not issue `agent_bus.request`.
 
@@ -495,7 +491,7 @@ model, effort, why. Fewer than four ⇒ do not pick T3; `TYPE: OPERATOR_GATE` wi
 | 3 | **`seat=cursor-sdk`** | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
 | 4 | `cursor/grok-4.7` `{high}` | `freeform` | Live-checkout architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
 | 5 | `cdp/opus-5.5` | `freeform` | **Independent check** — falsify hop 4's load-bearing premises. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
-| 6 | **`seat=cursor-sdk` `cursor/composer-2.5`** | `pure-mechanical` | Densify into an implement-ready orchestrator packet |
+| 6 | **`seat=cursor-sdk` `cursor/composer-2.5`** | `mechanical` | Densify into an implement-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
 | 8 | `cursor-sdk` composer-2.5 | `implement` | Run the wave |
 
@@ -589,7 +585,7 @@ mcp__claude-code-remote__send_later({
 |---|---|---|
 | `send_later` | One-shot — disables after fire | Arm again only for a new named harvest |
 | `send_later` | Minute granularity; delivery can drop | Backup, not primary |
-| Both | Wake **re-invokes**, does not **constrain** | Bounds silence; doctrine still required |
+| `send_later` | Wake **re-invokes**, does not **constrain** | Bounds silence; doctrine still required |
 
 **Notification ≠ user** — not approval; gates stay open.
 

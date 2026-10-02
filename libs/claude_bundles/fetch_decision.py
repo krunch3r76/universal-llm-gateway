@@ -42,7 +42,7 @@ class FetchDecision:
 
 
 def success_condition_line(refuse_body: str) -> str:
-    """One success-condition bullet derived from the Refuse excerpt body."""
+    """Short success-condition bullet; full Refuse text is inlined separately."""
     if not (refuse_body or "").strip():
         return "- success-condition:"
     return (
