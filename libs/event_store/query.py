@@ -19,8 +19,10 @@ from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from .errors import EventStoreBusyError
 from .ingest import IngestServer
 from .operations import execute_operation, list_operations
+from .query_path_health import snapshot as query_path_snapshot
 from .store import EventStore
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,8 @@ def create_query_router(
                     status_code=400,
                 )
             result = await execute_operation(name, params, store)
+            if result.get("error_code") == "sqlite_busy":
+                return JSONResponse(result, status_code=503)
             return JSONResponse({"type": "result", "operation": name, **result})
 
         if query_type == "query":
@@ -96,6 +100,7 @@ def create_query_router(
                 "status": "ok",
                 "subscribers": subs,
                 **metrics,
+                "query_path": query_path_snapshot(),
                 "code_version": resolve_code_version(),
                 "pid": os.getpid(),
             }
@@ -178,7 +183,13 @@ async def _structured_query(data: dict[str, Any], store: EventStore) -> JSONResp
     sql = f"SELECT * FROM events WHERE {where} ORDER BY seq DESC LIMIT ?"
     params.append(limit)
 
-    rows = await store.query(sql, tuple(params), limit=limit)
+    try:
+        rows = await store.query(sql, tuple(params), limit=limit)
+    except EventStoreBusyError as e:
+        return JSONResponse(
+            {"error": str(e), "error_code": "sqlite_busy"},
+            status_code=503,
+        )
     return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
 
 
@@ -211,6 +222,11 @@ async def _raw_sql(data: dict[str, Any], store: EventStore) -> JSONResponse:
     try:
         rows = await store.query(
             sql, tuple(raw_params), limit=limit, raise_on_error=True
+        )
+    except EventStoreBusyError as e:
+        return JSONResponse(
+            {"error": str(e), "error_code": "sqlite_busy"},
+            status_code=503,
         )
     except sqlite3.Error as e:
         # Surface malformed SQL (bad column, syntax error, etc.) as a 400

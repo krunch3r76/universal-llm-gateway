@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from .ingest import IngestServer
 from .query import create_query_router
+from .query_path_health import run_event_loop_lag_probe
 from .store import EventStore
 from .subscribe import _DEFAULT_SUBSCRIBER_QUEUE_SIZE, create_subscribe_router
 
@@ -260,6 +261,7 @@ async def run_service(
             ]
         )
         started = True
+        asyncio.create_task(run_event_loop_lag_probe())
 
         if persist:
             retention_task = asyncio.create_task(

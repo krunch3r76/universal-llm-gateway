@@ -315,4 +315,5 @@ class IngestServer:
             "events_ingested": self._events_ingested,
             "events_dropped_publish": self._events_dropped_publish,
             "queue_size": self._db_queue.qsize(),
+            "subscriber_overflow_pending": self._subscriber_overflow_pending,
         }
