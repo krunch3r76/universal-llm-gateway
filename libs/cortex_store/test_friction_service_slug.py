@@ -551,3 +551,115 @@ def test_op_friction_missing_underscore_service_steers_hyphen(
     assert "service:no-such-bus" in result["error"]
     assert "hyphens" in result["error"]
     assert create_calls == []
+
+
+def test_op_friction_underscore_canonical_service_exact(
+    migrated_db_path, monkeypatch
+) -> None:
+    """a:37201 review A4 — underscore-canonical ids must not be hyphen-rewritten."""
+    from cortex_store import db as cortex_db
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT INTO entities (id, type, name, lifecycle) VALUES (?, ?, ?, ?)",
+            (
+                "service:git_integration_worker",
+                "service",
+                "Git Integration Worker",
+                "active",
+            ),
+        )
+        conn.commit()
+
+    captured: dict[str, object] = {}
+
+    def fake_create(body: dict[str, object]) -> dict[str, object]:
+        captured.update(body)
+        return {"item": {"id": 1}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
+        lambda *a, **k: None,
+    )
+
+    result = _op_friction(
+        owner="service:git_integration_worker",
+        category="feature",
+        note="exact underscore canonical",
+        agent="pytest",
+        actionable=False,
+        actionable_false_reason="unit probe",
+        defer_enqueue=True,
+    )
+    assert "error" not in result, result
+    assert captured["entity_id"] == "service:git_integration_worker"
+
+
+def test_op_friction_ambiguous_alias_not_rewritten_as_404(monkeypatch) -> None:
+    """a:37201 review A2 — 400 ambiguous must surface, not soft-hyphen into 404."""
+    from fastapi import HTTPException
+
+    calls: list[str] = []
+
+    def fake_resolve(conn: object, eid: str, **kw: object) -> object:
+        calls.append(eid)
+        raise HTTPException(
+            status_code=400,
+            detail={"detail": f"Ambiguous owner entity alias: {eid}", "matches": []},
+        )
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.resolve_entity_reference",
+        fake_resolve,
+    )
+    create_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        lambda body: create_calls.append(body) or {"item": {"id": 1}},
+    )
+
+    result = _op_friction(
+        owner="service:agent_bus",
+        category="tool_error",
+        note="ambiguous alias probe",
+        agent="pytest",
+    )
+    assert "error" in result
+    assert result["status_code"] == 400
+    assert "Ambiguous" in str(result["error"])
+    assert calls == ["service:agent_bus"]
+    assert create_calls == []
+
+
+def test_op_frictions_resolves_underscore_owner(migrated_db_path, monkeypatch) -> None:
+    """a:37201 review A3 — list path must resolve the same way as write."""
+    from cortex_store import db as cortex_db
+    from cortex_store.conftest import bind_cortex_db
+
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    with cortex_db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT INTO entities (id, type, name, lifecycle) VALUES (?, ?, ?, ?)",
+            ("service:agent-bus", "service", "Agent Bus", "active"),
+        )
+        conn.commit()
+
+    captured: dict[str, object] = {}
+
+    def fake_list(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"items": []}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._list_assertions_impl",
+        fake_list,
+    )
+    result = _op_frictions(owner="service:agent_bus")
+    assert "error" not in result, result
+    assert captured["entity_id"] == "service:agent-bus"

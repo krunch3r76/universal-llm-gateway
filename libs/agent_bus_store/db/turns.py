@@ -445,7 +445,10 @@ def get_unread_thread_toc(
         ORDER BY last_activity_at DESC
     """
     close_candidates: list[str] = []
-    with write_connect() as conn:
+    # Same FIFO split as get_turns (a:37201 review A1): pure TOC reads must
+    # not wait behind writers; mark_read still needs IMMEDIATE.
+    conn_cm = write_connect() if mark_read else connect()
+    with conn_cm as conn:
         totals_row = conn.execute(totals_sql, inbox_params).fetchone()
         total_threads = int(totals_row["total_threads"] or 0)
         total_turns = int(totals_row["total_turns"] or 0)
@@ -677,7 +680,9 @@ def update_turn(
 
 def get_turn_by_number(thread: str, turn_number: int) -> dict[str, Any] | None:
     """Look up a single turn by thread + turn_number, including attachments."""
-    with write_connect() as conn:
+    # Pure read — hop-successor get(turn_number) must not take the write FIFO
+    # (a:37201 review A1 / bug-class-sweep of get_turns).
+    with connect() as conn:
         row = conn.execute(
             "SELECT * FROM turns WHERE thread = ? AND turn_number = ?",
             (thread, turn_number),

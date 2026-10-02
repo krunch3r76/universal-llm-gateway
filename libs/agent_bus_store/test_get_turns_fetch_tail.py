@@ -11,7 +11,13 @@ from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
-from agent_bus_store.db import create_thread, get_turns, init_db, insert_turn
+from agent_bus_store.db import (
+    create_thread,
+    get_turn_by_number,
+    get_turns,
+    init_db,
+    insert_turn,
+)
 from agent_bus_store.db import write_ticket as wt
 from agent_bus_store.db.connection import write_connect
 
@@ -192,3 +198,54 @@ def test_append_during_tip_fetch_sees_consistent_window(bus_client) -> None:
     )
     assert tip2.status_code == 200
     assert [t["turn_number"] for t in tip2.json()["turns"]] == [11, 10, 9]
+
+
+def test_get_turn_by_number_during_held_write_ticket_does_not_block(
+    tmp_path, monkeypatch
+) -> None:
+    """a:37201 review A1 — hop fallback get(turn_number) must not take write FIFO."""
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    thread_id = _seed_thread(n=5, slug="get-by-number-concurrent")
+
+    barrier = threading.Barrier(2, timeout=5)
+    fetch_done = threading.Event()
+    fetch_error: list[BaseException] = []
+
+    def hold_write() -> None:
+        with write_connect():
+            barrier.wait()
+            assert fetch_done.wait(timeout=5)
+
+    def do_get() -> None:
+        try:
+            barrier.wait()
+            row = get_turn_by_number(thread_id, 5)
+            assert row is not None
+            assert row["turn_number"] == 5
+            fetch_done.set()
+        except BaseException as exc:  # noqa: BLE001
+            fetch_error.append(exc)
+            fetch_done.set()
+
+    writer = threading.Thread(target=hold_write)
+    reader = threading.Thread(target=do_get)
+    writer.start()
+    reader.start()
+    reader.join(timeout=5)
+    writer.join(timeout=5)
+    assert not reader.is_alive(), "get_turn_by_number blocked behind write ticket"
+    assert fetch_error == []
+
+
+def test_get_turn_by_number_does_not_call_enqueue(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    thread_id = _seed_thread(n=3, slug="get-by-number-no-enqueue")
+
+    with patch.object(wt, "enqueue_and_wait", side_effect=AssertionError("write ticket")):
+        row = get_turn_by_number(thread_id, 2)
+    assert row is not None
+    assert row["turn_number"] == 2

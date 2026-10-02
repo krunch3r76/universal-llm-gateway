@@ -56,13 +56,17 @@ def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
     Service owners historically skipped ``resolve_entity_reference``, so
     ``service:agent_bus`` (tool/manage underscore) 404'd while the canonical
     entity is ``service:agent-bus`` (friction a:37201). Soft ``_``→``-`` retry
-    only after an exact miss so underscore-canonical services stay exact-first.
+    only after an exact **404** miss so underscore-canonical services stay
+    exact-first and ambiguous-alias 400s are not rewritten as not-found.
     """
     with cortex_conn() as conn:
         try:
             return resolve_entity_reference(conn, entity_id, label="owner").entity_id
         except HTTPException as exc:
-            if owner_type_of(entity_id) == "service":
+            if (
+                owner_type_of(entity_id) == "service"
+                and exc.status_code == 404
+            ):
                 slug = entity_id.removeprefix("service:")
                 if "_" in slug:
                     alt = f"service:{slug.replace('_', '-')}"
@@ -70,21 +74,31 @@ def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
                         return resolve_entity_reference(
                             conn, alt, label="owner"
                         ).entity_id
-                    except HTTPException:
+                    except HTTPException as alt_exc:
+                        if alt_exc.status_code == 404:
+                            return {
+                                "error": (
+                                    f"owner {entity_id} not found ({exc.detail}); "
+                                    f"canonical service ids use hyphens "
+                                    f"(try {alt!r}). Create the entity before "
+                                    "logging friction against it."
+                                ),
+                                "status_code": 404,
+                            }
                         return {
-                            "error": (
-                                f"owner {entity_id} not found ({exc.detail}); "
-                                f"canonical service ids use hyphens "
-                                f"(try {alt!r}). Create the entity before "
-                                "logging friction against it."
-                            ),
-                            "status_code": 404,
+                            "error": f"owner {entity_id}: {alt_exc.detail}",
+                            "status_code": alt_exc.status_code,
                         }
+            if exc.status_code == 404:
+                return {
+                    "error": (
+                        f"owner {entity_id} not found ({exc.detail}); "
+                        "create the entity before logging friction against it."
+                    ),
+                    "status_code": 404,
+                }
             return {
-                "error": (
-                    f"owner {entity_id} not found ({exc.detail}); "
-                    "create the entity before logging friction against it."
-                ),
+                "error": f"owner {entity_id}: {exc.detail}",
                 "status_code": exc.status_code,
             }
 
@@ -361,6 +375,13 @@ def _op_frictions(
         }
     owner_arg = owner if owner is not None else service
     entity_id = owner_entity_id(owner_arg) if owner_arg else None
+    # Same resolve as _op_friction so list(owner=service:agent_bus) finds rows
+    # written after underscore→hyphen alias (a:37201 review A3). On miss keep
+    # the raw id (empty list) rather than erroring the list path.
+    if entity_id is not None:
+        resolved = _resolve_friction_owner_entity_id(entity_id)
+        if not isinstance(resolved, dict):
+            entity_id = resolved
     entity_type = owner_type if (owner_type and entity_id is None) else None
     entity_type_in = (
         list(_FRICTION_OWNER_TYPES) if (entity_id is None and owner_type is None) else None
