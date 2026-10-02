@@ -169,13 +169,31 @@ cmd_start() {
     setsid nohup "${argv[@]}" >>"$log_file" 2>&1 &
     echo $! >"$pid_file"
   )
-  local new_pid
+  local new_pid waited
   new_pid="$(read_pid)"
-  sleep 0.15
+  # Import runs before argparse. A 150ms kill-0 check reports the pid
+  # alive, then SystemExit lands and no state file is written. Wait
+  # until the poller arms or dies so `status=running` is not a lie.
+  waited=0
+  while [[ "$waited" -lt 150 ]]; do
+    if [[ -f "$state_file" ]]; then
+      break
+    fi
+    if ! pid_alive "$new_pid"; then
+      echo "watch-supervise: process exited before arm; log:" >&2
+      tail -n 40 "$log_file" >&2 || true
+      exit 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
   if ! pid_alive "$new_pid"; then
-    echo "watch-supervise: process exited immediately; tail of log:" >&2
+    echo "watch-supervise: process exited before arm; log:" >&2
     tail -n 40 "$log_file" >&2 || true
     exit 1
+  fi
+  if [[ ! -f "$state_file" ]]; then
+    echo "watch-supervise: pid=$new_pid alive but state not written after 15s" >&2
   fi
   echo "started pid=$new_pid label=$safe"
   echo "log=$log_file"
@@ -239,6 +257,15 @@ cmd_tail() {
       kill "$tail_pid" 2>/dev/null || true
       wait "$tail_pid" 2>/dev/null || true
       exit 0
+    fi
+    local poller
+    poller="$(read_pid || true)"
+    if [[ -n "${poller:-}" ]] && ! pid_alive "$poller"; then
+      kill "$tail_pid" 2>/dev/null || true
+      wait "$tail_pid" 2>/dev/null || true
+      echo "watch-supervise: poller pid=$poller exited before terminal state; log:" >&2
+      tail -n 40 "$log_file" >&2 || true
+      exit 1
     fi
     sleep 0.5
   done
