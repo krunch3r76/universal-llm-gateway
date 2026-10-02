@@ -522,6 +522,7 @@ def attest_delivery_channels(
             ok=False,
             attached=attached_sorted,
             inlined=inlined_sorted,
+            induction=induction_sorted,
             undelivered=list(missing),
             wrong_channel=list(wrong_channel),
             rows=rows,
@@ -536,12 +537,14 @@ def attest_delivery_channels(
         raise SkillDeliveryError(
             "required skills fail channel attest after attach + inline seal: "
             f"{'; '.join(parts)} (attached={attached_sorted}, "
-            f"inlined={inlined_sorted}) — fail closed (friction a:27142)"
+            f"inlined={inlined_sorted}, induction={induction_sorted}) "
+            "— fail closed (friction a:27142)"
         )
     emit_skill_delivery_attested(
         ok=True,
         attached=attached_sorted,
         inlined=inlined_sorted,
+        induction=induction_sorted,
         undelivered=[],
         wrong_channel=[],
         rows=rows,

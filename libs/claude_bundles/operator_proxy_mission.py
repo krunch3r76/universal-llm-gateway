@@ -418,19 +418,23 @@ def _field_source_without_briefing(rest_body: str) -> str:
     return rest_body
 
 
+# Header declaration only. A prose quote (review packets, seat-map
+# ``team_dispatch(... purpose=operator-proxy ...)``) is not a mission.
+_PURPOSE_HEADER_LINES = 40
 _PURPOSE_DOC = re.compile(
-    r"purpose\s*[:=]\s*(operator-proxy|mission|operator_proxy)",
-    re.IGNORECASE,
+    r"^purpose\s*[:=]\s*(operator-proxy|mission|operator_proxy)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
-    """True when purpose or prompt body declares an operator-proxy mission."""
+    """True when purpose or a column-0 header line declares a mission."""
     if is_operator_proxy_mission_purpose(purpose):
         return True
-    if prompt and _PURPOSE_DOC.search(prompt):
-        return True
-    return False
+    if not prompt:
+        return False
+    head = "\n".join(prompt.splitlines()[:_PURPOSE_HEADER_LINES])
+    return _PURPOSE_DOC.search(head) is not None
 
 
 __all__ = [

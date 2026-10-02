@@ -420,3 +420,37 @@ def test_wake_brief_unchanged_do_not_arm_monitor() -> None:
     text = wake_briefing_paragraph()
     assert "Do not arm Monitor" in text
     assert hashlib.sha256(text.encode()).hexdigest() == _WAKE_BRIEF_SHA256
+
+
+def test_prose_quote_of_purpose_is_not_a_mission() -> None:
+    body = (
+        "job=delivery-review\n"
+        "The seat-map says team_dispatch(model=cdp/opus-5.5-extra, "
+        "purpose=operator-proxy, job=freeform).\n"
+        "A backticked `purpose: operator-proxy` in prose is a quotation.\n"
+    )
+    assert not purpose_implies_mission("ask", body)
+
+
+def test_column0_purpose_header_is_a_mission() -> None:
+    body = "TYPE: DIRECTIVE\npurpose: operator-proxy\n# body\n"
+    assert purpose_implies_mission("ask", body)
+
+
+def test_stage_review_packet_head_with_ask_does_not_induct_operator_proxy(
+    tmp_path, monkeypatch
+) -> None:
+    fixture = (
+        Path(__file__).resolve().parent
+        / "testdata"
+        / "review-14181-r2-delta-packet-20261002-head60.txt"
+    )
+    staged = _stage_under(
+        tmp_path,
+        monkeypatch,
+        prompt_text=fixture.read_text(encoding="utf-8"),
+        purpose="ask",
+    )
+    assert staged.staged
+    merged = (tmp_path / "prompt.md").read_text(encoding="utf-8")
+    assert "cdp-operator-proxy" not in _induction_slugs(merged)

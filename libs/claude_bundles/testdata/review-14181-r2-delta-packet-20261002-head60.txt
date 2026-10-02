@@ -1,0 +1,60 @@
+retrieval_report: cortex://notes/system/prompts/review-14181-r2-delta-retrieval-report-20261002.md
+job=delivery-review
+
+# Round-2 delta re-review — lane-14181 operator opening trim (staging / skill delivery)
+
+Genre: **delivery-review** (code-review packet). You judge whether amendment order items 1–7 are applied on the delta below. You do not run pytest, check out branches, or mutate the repo. The packet carries the code under review inline; do not reject because you cannot check out a commit, run pytest, or run quality_gate.
+
+## Frame
+
+- **Prior review:** thread 14204 turn 3 — `VERDICT: WITHHOLD` (archive `cortex://notes/system/threads/cdp-ask-archive-cdp-opus-69ff71da02cb4e298917b129c8b80e0a.md`).
+- **Amendment order:** `cortex://notes/system/prompts/amend-14181-r2-staging-mission-rule-20261002.md`.
+- **Executor closeout:** `workspaces://universal-llm-gateway/tmp/reviews/closeouts/1f78cb2a79d2-e80c8786.md` (`status: complete`, head `dbfa537109403937a78eeaa5920db401fd80b3c8`).
+- **Branch:** `cursor-sdk/lane-14208` (continues `cursor-sdk/lane-14181`).
+- **Delta:** `b60bcbce..dbfa537109403937a78eeaa5920db401fd80b3c8` — 7 files, +116/-40.
+
+| File | Δ |
+|---|---|
+| cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md | 2 +- |
+| libs/claude_bundles/cdp_model_endpoint_staging.py | 4 +- |
+| libs/claude_bundles/cowork_skill_delivery.py | 30 +++++-- |
+| libs/claude_bundles/operator_proxy_skill_introspect.py | 14 ++-- |
+| libs/claude_bundles/project_ask.py | 7 +- |
+| libs/claude_bundles/test_operator_proxy_mission.py | 95 +++++++++++++++++----- |
+| libs/claude_bundles/testdata/maestro_runbook_refuse_2124_fixture.txt | 4 - |
+
+## Amendment order — items 1–7 (verbatim)
+
+1. BLOCKING. `cdp_model_endpoint_staging.py:331` decides "mission" with `is_operator_proxy_mission_purpose(purpose)`; `runner.py:434` decides with `purpose_implies_mission(req.purpose, text)`. Make staging call `purpose_implies_mission(purpose, <the prompt body>)` so both sites share one rule. Add a test: stage with `purpose="freeform"` and a body containing `purpose: operator-proxy`; assert the induction list `partition_cdp_skills(extract_cdp_required_authority(merged))[0]` contains every slug in `MISSION_SKILL_SLUGS`, and the staged prompt has no leading `/` line.
+2. Delivery attestation. With the slash lines gone, `attest_delivery_channels` (`cowork_skill_delivery.py:445-500`) reports every operator-proxy hop `ok=False`, because `attach_slugs` come only from the leading slash lines (`parse_cdp_sealed_skill_channels`, :416-430). Pass the slugs the induction panel observed into the check as their own channel (`delivered_via=induction`). Stop rule: if that observed slug list is not already available where the check is called (see `wait_for_induction_panel` and `_insert_prompt_text`, `project_ask.py:343-372`), so that you would need new page scraping, make no change for this item and name in the closeout the call site and the missing value.
+3. `operator_proxy_skill_introspect.py:3-6` and `:45-47`: replace "the leading /<slug> lines are a request" with: the induction turn (`Use the <slug> skill`) is the request; the Context → Skills panel is the receipt.
+4. In the cdp-operator-proxy SKILL.md this lane edits (~line 177, invariant 16): delete "Exceptions: continuity hop skips supersede; nested_sdk_finished not a candidate."
+5. `test_operator_proxy_mission.py:250-253` and the docstring at ~:270: 42019 is the length before the lane started, not the render at cdc14894a. Relabel it. Measure the render at your new head and record that number in the docstring. Give the source of 42031 or delete it.
+6. `testdata/maestro_runbook_refuse_2124_fixture.txt` lines 1-4 (the `[DEBUG] Workspace validation` banner and the ✅ lines): delete them. Keep the Refuse section (2124 characters with its heading).
+7. Staging test `test_operator_proxy_mission.py:313-327`: write under `tmp_path`, not the real ephemeral dir with a fixed id; assert on the induction list (the expression in item 1), not `slug in marker`.
+
+## Questions (answer each with `file:line:` citations)
+
+(a) Are amendment items 1–7 applied as written?
+
+(b) Item 1 — Do `cdp_model_endpoint_staging.py` (~331) and `cdp_ask/runner.py` (~434) now decide "mission" by the **same rule** for every path, including a prompt-declared mission staged under another `purpose` (e.g. `purpose=freeform` with body `purpose: operator-proxy`)?
+
+(c) Item 2 — Is `induction_observed` the list the induction panel actually saw (`wait_for_induction_panel` → `LoadedSkillsReport.skills`)? Does an empty induction still fail closed? Can a slug that was only requested (never observed) be ledgered as `delivered_via=induction`?
+
+(d) Did the earlier blocking finding leave any **other** caller of the old rule (`is_operator_proxy_mission_purpose`) that should have moved to `purpose_implies_mission` for staging/slash/mission-skill parity?
+
+(e) Is anything **outside** the amendment order's file list changed in this delta?
+
+## Reply contract
+
+Your reply's **first line** must be exactly one of:
+
+`VERDICT: ADMIT` | `VERDICT: ADMIT_WITH_AMENDMENTS` | `VERDICT: WITHHOLD`
+
+Then numbered amendments, each with `file:line:` anchors. Steelman the executor's reading before WITHHOLD.
+
+## Inline diff (`git diff b60bcbce..dbfa537109403937a78eeaa5920db401fd80b3c8`)
+
+```diff
+diff --git a/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md b/cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md
+index d74753839..ef8073e53 100644

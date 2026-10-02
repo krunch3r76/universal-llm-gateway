@@ -323,7 +323,7 @@ async def _insert_prompt_text(
 
     After attach, channel attest verifies every **required** slug (from the
     staging ``<!--cdp-required-skills:…-->`` authority marker, not rebuilt from
-    delivery channels alone) was delivered via attach ∪ inline.
+    delivery channels alone) was delivered via attach ∪ inline ∪ induction.
 
     ``stargate_execution_id`` / ``satellite_execution_id`` thread into the
     ``cdp.skill.delivery_attested`` payload (Stargate id under payload key
