@@ -5,18 +5,15 @@ from __future__ import annotations
 import asyncio
 import inspect
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from agent_bus_store import create_app
-from agent_bus_store.auth import require_token
 from agent_bus_store.body_briefing_advisory import INLINE_CONTRACT_PREFIXES
 from agent_bus_store.turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_TURN_BODY_CHARS,
 )
 from contract_vocab import CANONICAL_CONTRACTS
-from fastapi.testclient import TestClient
 from hop_handoff import (
     StandingHandoffFreshness,
     build_continuity_handoff_body,
@@ -189,10 +186,7 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
 
     async def fake_relay(**kwargs: object) -> dict[str, object]:
         captured.update(kwargs)
-        return {
-            "auto_handler_status": "auto-handler-live",
-            "execution_id": "ex-hop-77",
-        }
+        return {"execution_id": "ex-hop-77"}
 
     async def run() -> dict[str, object]:
         with (
@@ -211,6 +205,9 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
             )
 
     result = asyncio.run(run())
+    assert captured["endpoint"] == "/api/v1/team/dispatch"
+    assert captured["record_prefix"] == "mcp.agentbus.hop.dispatch"
+    assert result["execution_id"] == "ex-hop-77"
     body_payload = captured["body"]
     assert body_payload["mission_kind"] == "hop"
     assert body_payload["parent_thread"] == "77"
@@ -229,20 +226,13 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     assert result["successor"]["names"] == "successor"
     assert result["successor"]["value"]
     assert "predecessor's receipt" in result["successor"]["note"]
-    assert result["auto_handler_status"] == "auto-handler-live"
     assert "status:done" not in str(result)
 
 
-def test_hop_degrades_when_auto_dead() -> None:
+def test_hop_passes_relay_payload_through() -> None:
     async def fake_relay(**kwargs: object) -> dict[str, object]:
         del kwargs
-        return {
-            "auto_handler_status": "no-auto-handler",
-            "enqueue_failure": {
-                "reason": "no_live_handler",
-                "terminal_park": True,
-            },
-        }
+        return {"status": "queued", "execution_id": "ex-q"}
 
     async def run() -> dict[str, object]:
         with (
@@ -261,9 +251,9 @@ def test_hop_degrades_when_auto_dead() -> None:
             )
 
     result = asyncio.run(run())
-    assert result["auto_handler_status"] == "no-auto-handler"
+    assert result["status"] == "queued"
+    assert result["execution_id"] == "ex-q"
     assert result["continuity_hop"] is True
-    assert result["enqueue_failure"]["terminal_park"] is True
 
 
 def test_hop_relay_error_returns_without_continuity_hop() -> None:
@@ -355,62 +345,12 @@ def test_enqueue_includes_continuity_hop_when_true() -> None:
     assert result["continuity_hop"] is True
 
 
-def _hop_store_app(tmp_path, monkeypatch):
-    """Same temp-db harness as ``test_body_briefing_advisory._app``."""
-    cortex_root = tmp_path / "cortex-files"
-    cortex_root.mkdir()
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
-    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
-    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
-
-    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
-    app = create_app(db_path=str(tmp_path / "bus.db"))
-    app.dependency_overrides[require_token] = lambda: None
-    return app, cortex_root
-
-
-def _relay_via_test_client(client: TestClient, sent: list[dict[str, Any]]):
-    def relay(
-        service: str,
-        method: str,
-        path: str,
-        body: dict | None = None,
-        **_kwargs: Any,
-    ) -> dict:
-        if service != "agent-bus":
-            return {"error": f"unexpected relay: {service} {method} {path}"}
-        if method == "GET":
-            resp = client.get(path)
-        elif method == "POST":
-            if path == "/threads/send" and isinstance(body, dict):
-                sent.append(body)
-            resp = client.post(path, json=body)
-        else:
-            return {"error": f"unexpected relay: {service} {method} {path}"}
-        if resp.status_code >= 400:
-            try:
-                detail = resp.json().get("detail", resp.text)
-            except ValueError:
-                detail = resp.text
-            return {
-                "error": f"HTTP {resp.status_code}",
-                "status_code": resp.status_code,
-                "detail": detail,
-            }
-        return resp.json()
-
-    return relay
-
-
 @pytest.mark.parametrize(
     "reason",
     ["r" * 38, "r" * 3000, "r" * (MAX_TURN_BODY_CHARS + 1)],
 )
-def test_hop_split_stores_header_under_briefing_shield(
-    reason: str, tmp_path, monkeypatch
-) -> None:
+def test_hop_relays_full_handoff_prompt(reason: str) -> None:
     """Hop relays the full structural handoff prompt (no bus enqueue path)."""
-    del tmp_path, monkeypatch
     handoff = StandingHandoffFreshness(
         status="current",
         uri="cortex://notes/system/threads/12286-standing-handoff.md",
@@ -460,14 +400,19 @@ def test_hop_split_stores_header_under_briefing_shield(
     prompt = str(captured["body"]["prompt"])
     assert prompt.splitlines()[0] == "TYPE: CONTINUITY_HANDOFF"
     assert "Sidecar:" not in prompt
-    assert "successor_birth_id:" in prompt
-    assert len(prompt) == len(specimen)
+    birth = parse_successor_birth_id(prompt)
+    assert prompt == build_continuity_handoff_body(
+        thread_id="12286",
+        trigger=reason,
+        source="agent-bus-hop-verb",
+        handoff=handoff,
+        successor_birth_id=birth,
+    )
     assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
 
 
-def test_hop_over_hard_limit_returns_body_too_large(tmp_path, monkeypatch) -> None:
+def test_hop_relays_prompt_past_long_turn_cap() -> None:
     """Past 64k the hop still builds the handoff and relays it (no bus spill)."""
-    del tmp_path, monkeypatch
     reason = "r" * (MAX_LONG_TURN_BODY_CHARS + 1)
     handoff = StandingHandoffFreshness(
         status="current",
