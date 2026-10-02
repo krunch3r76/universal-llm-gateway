@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
+from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,10 +26,18 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     hop_owed,
     maybe_fire_conductor_hop_reactor,
     merge_conductor_closeout_hop_authority,
+    post_conductor_hop_team_dispatch,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     HopBudgetConfig,
     evaluate_hop_budget,
+    load_hop_budget_config,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
+    maybe_fire_conductor_hop_watchdog,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    park_harvest_continue_owed,
 )
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
@@ -1144,7 +1155,6 @@ def test_ac7_scoreboard_land_admit_keeps_fold_gate_when_gate_in_tip_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Real gated-deliverables rows keep the fold entry gate (land admit ≠ that gate)."""
-    from pathlib import Path
 
     from implement_admission.conductor_witness import (
         FoldDeps,
@@ -1338,6 +1348,441 @@ async def test_ac7_reactor_skips_with_next_admit_blocked_gate() -> None:
             await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
     post_mock.assert_not_called()
     assert SKIP_GATE_NEXT_ADMIT_BLOCKED in skipped_gates
+
+
+_FULL_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+_PREFIX = "a1b2c3d4"
+_ZERO_ID = "ffffffffffffffff"
+_LIVE_ID = "1111111111111111"
+_SATELLITE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+_TRUTHY_SNAP = {"observed_at": "2026-10-02T00:00:00+00:00", "rows": []}
+_FINISHED_REGISTRY = {
+    "reg-1": {
+        "execution_id": _SATELLITE,
+        "execution_state": {"execution_id": _SATELLITE, "state": "finished"},
+    }
+}
+
+
+def _g2_harvest_closeout(harvest_id: str) -> str:
+    return (
+        "status: complete\n"
+        "stop: ROW_HOP\n"
+        f"NEXT_ADMIT: harvest {harvest_id}\n"
+    )
+
+
+def _stamp_g2_row(
+    ledger: CursorDispatchLedger,
+    *,
+    harvest_id: str = _FULL_ID,
+    closeout_tokens: list[str] | None = None,
+    summoning_thread_id: str = "9638",
+) -> dict:
+    tokens = closeout_tokens if closeout_tokens is not None else ["ROW_HOP"]
+    _terminal_row(
+        ledger,
+        closeout_tokens=tokens,
+        summoning_thread_id=summoning_thread_id,
+    )
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "closeout_body": _g2_harvest_closeout(harvest_id),
+            "closeout_stop_tokens": tokens,
+            "summoning_thread_id": summoning_thread_id,
+        },
+    )
+    return _refresh_row(ledger, "pred-hop-1")
+
+
+def _create_inflight_db(tmp_path: Path, execution_id: str, satellite: str) -> None:
+    db_path = tmp_path / "stargate-cdp-generate-inflight.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE cdp_inflight_leg "
+        "(execution_id TEXT PRIMARY KEY, satellite_execution_id TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO cdp_inflight_leg (execution_id, satellite_execution_id) "
+        "VALUES (?, ?)",
+        (execution_id, satellite),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _admit_nested_dispatch(
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str,
+    nest_under: str,
+    status: str = "completed",
+    thread_id: str = "9965",
+    work_key: str | None = None,
+) -> None:
+    req = _req(dispatch_id=dispatch_id, thread_id=thread_id)
+    wk = work_key or _WORK_KEY
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="implement",
+        source_repo="/repo",
+        lease_key="/repo",
+        work_key=wk,
+        source_ref=wk,
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"contract": "implement", "lane": "B"},
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"nest_under": nest_under},
+    )
+    if status in ("queued", "admitted", "running", "parked_waiting"):
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=? WHERE dispatch_id=?",
+                (status, dispatch_id),
+            )
+    else:
+        ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status=status)
+
+
+def test_g2_named_id_still_live_body_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _stamp_g2_row(ledger, harvest_id=_LIVE_ID)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, thread_id, status, fingerprint, execution_id, "
+            "caller_agent, resolved_model, contract, source_repo, lease_key, "
+            "work_key, source_ref, record_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                _LIVE_ID,
+                "9964",
+                "running",
+                "fp-live",
+                "exec-live",
+                "cursor",
+                "composer-2.5",
+                "implement",
+                "/repo",
+                "/repo",
+                _WORK_KEY,
+                _WORK_KEY,
+                "{}",
+            ),
+        )
+    assert build_hop_team_dispatch_body(row) is None
+
+    for state in ("seated", "streaming", "awaiting_wake", "transferred", "expired"):
+        monkeypatch.setattr(
+            "claude_bundles.cdp_registry_store.load_active",
+            lambda _s=state: {
+                "reg-live": {
+                    "execution_id": _FULL_ID,
+                    "execution_state": {
+                        "execution_id": _FULL_ID,
+                        "state": _s,
+                    },
+                }
+            },
+        )
+        row_exec = _stamp_g2_row(ledger, harvest_id=_FULL_ID)
+        assert build_hop_team_dispatch_body(row_exec) is None
+
+
+def test_g2_prefix_matches_zero_or_many_body_none(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
+    row_zero = _stamp_g2_row(ledger, harvest_id=_ZERO_ID)
+    assert build_hop_team_dispatch_body(row_zero) is None
+
+    ledger2 = CursorDispatchLedger.instance()
+    _stamp_g2_row(ledger2, harvest_id=_PREFIX)
+    with ledger2._connect() as conn:
+        for suffix in ("aaaaaaaa", "bbbbbbbb"):
+            conn.execute(
+                "INSERT INTO cursor_sdk_dispatches "
+                "(dispatch_id, thread_id, status, fingerprint, execution_id, "
+                "caller_agent, resolved_model, contract, source_repo, lease_key, "
+                "work_key, source_ref, record_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"{_PREFIX}{suffix}",
+                    "9964",
+                    "completed",
+                    f"fp-{suffix}",
+                    f"exec-{suffix}",
+                    "cursor",
+                    "composer-2.5",
+                    "implement",
+                    "/repo",
+                    "/repo",
+                    _WORK_KEY,
+                    _WORK_KEY,
+                    "{}",
+                ),
+            )
+    row_many = _refresh_row(ledger2, "pred-hop-1")
+    assert build_hop_team_dispatch_body(row_many) is None
+
+    def _raise_load_active() -> dict:
+        raise RuntimeError("registry down")
+
+    ledger3 = CursorDispatchLedger.instance()
+    _stamp_g2_row(ledger3, harvest_id=_FULL_ID)
+    _admit_nested_dispatch(
+        ledger3, dispatch_id=_FULL_ID, nest_under="pred-hop-1", status="completed"
+    )
+    row_term = _refresh_row(ledger3, "pred-hop-1")
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        _raise_load_active,
+    )
+    assert build_hop_team_dispatch_body(row_term) is None
+
+    bad_path = tmp_path / "stargate-cdp-generate-inflight.db"
+    bad_path.write_text("not a sqlite database", encoding="utf-8")
+    ledger4 = CursorDispatchLedger.instance()
+    row_bad = _stamp_g2_row(ledger4, harvest_id=_FULL_ID)
+    assert build_hop_team_dispatch_body(row_bad) is None
+
+
+def test_g2_terminal_id_other_nest_live_no_post() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _stamp_g2_row(ledger, harvest_id=_FULL_ID)
+    _admit_nested_dispatch(
+        ledger,
+        dispatch_id=_FULL_ID,
+        nest_under="pred-hop-1",
+        status="completed",
+    )
+    _admit_nested_dispatch(
+        ledger,
+        dispatch_id="live-nest-1",
+        nest_under="pred-hop-1",
+        status="running",
+        work_key="todo:nest-live-nest-1",
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+    skip = _hop_skip_gate(row, closeout_tokens=frozenset({"ROW_HOP"}))
+    assert skip == "live_nested"
+    assert build_hop_team_dispatch_body(row) is None
+
+
+@pytest.mark.asyncio
+async def test_g2_watchdog_admits_once_execution_terminal_past_grace(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_inflight_db(tmp_path, _FULL_ID, _SATELLITE)
+    ledger = CursorDispatchLedger.instance()
+    grace = load_hop_budget_config().reactor_grace_s
+    terminal_at = time.time() - (grace + 30)
+    _stamp_g2_row(ledger)
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"hop_last_terminal_at": terminal_at},
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET terminal_at=? WHERE dispatch_id=?",
+            (terminal_at, "pred-hop-1"),
+        )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: _FINISHED_REGISTRY,
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-g2-watch"}))
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            post,
+        ),
+    ):
+        first = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-hop-1")
+        second = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-hop-1")
+    assert first is True
+    assert second is False
+    assert post.await_count == 1
+    assert post.await_args.args[0]["hop_reason"] == "watchdog"
+    data = json.loads(_refresh_row(ledger, "pred-hop-1")["record_json"])
+    assert data.get("hop_successor") == "succ-g2-watch"
+
+
+@pytest.mark.asyncio
+async def test_g2_reactor_admits_once_nest_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit_nested_dispatch(
+        ledger,
+        dispatch_id=_FULL_ID,
+        nest_under="pred-hop-1",
+        status="completed",
+    )
+    _stamp_g2_row(ledger)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    ):
+        assert build_hop_team_dispatch_body(row) is not None
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-g2-nest"}))
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+    assert post.await_count == 1
+    assert post.await_args.args[0]["hop_reason"] == "planned"
+    data = json.loads(_refresh_row(ledger, "pred-hop-1")["record_json"])
+    assert data.get("hop_successor") == "succ-g2-nest"
+
+
+@pytest.mark.asyncio
+async def test_g2_reactor_and_watchdog_one_successor(monkeypatch) -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit_nested_dispatch(
+        ledger,
+        dispatch_id=_FULL_ID,
+        nest_under="pred-hop-1",
+        status="completed",
+    )
+    _stamp_g2_row(ledger)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"dispatch_id": "succ-g2-race"}
+    client = MagicMock()
+    client.post = AsyncMock(return_value=resp)
+
+    async def _enter(*_a, **_k):
+        return client
+
+    async def _exit(*_a, **_k):
+        return None
+
+    holder = MagicMock()
+    holder.__aenter__ = _enter
+    holder.__aexit__ = _exit
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.make_async_client",
+        lambda *_a, **_k: holder,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_TRUTHY_SNAP,
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+    data = json.loads(_refresh_row(ledger, "pred-hop-1")["record_json"])
+    assert data.get("hop_successor") == "succ-g2-race"
+    row = _refresh_row(ledger, "pred-hop-1")
+    watchdog_body = build_hop_team_dispatch_body(row, hop_reason_override="watchdog")
+    assert watchdog_body is not None
+    ok, detail = await post_conductor_hop_team_dispatch(watchdog_body)
+    assert ok is False
+    assert detail.get("reason") == "stop_not_claimed"
+    assert client.post.await_count == 1
+    fired = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-hop-1")
+    assert fired is False
+    data = json.loads(_refresh_row(ledger, "pred-hop-1")["record_json"])
+    assert data.get("hop_successor") == "succ-g2-race"
+
+
+def test_g2_empty_snap_or_health_red_not_terminal(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_inflight_db(tmp_path, _FULL_ID, _SATELLITE)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: _FINISHED_REGISTRY,
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _stamp_g2_row(ledger)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
+        return_value=False,
+    ):
+        assert build_hop_team_dispatch_body(row) is None
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_TRUTHY_SNAP,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
+        return_value=True,
+    ):
+        assert build_hop_team_dispatch_body(row) is None
+
+
+def test_g2_harvest_g1_row_hop_body_none() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _stamp_g2_row(ledger, harvest_id="G1")
+    assert build_hop_team_dispatch_body(row) is None
+
+
+def test_g2_parked_transport_terminal_harvest_body_none() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _stamp_g2_row(ledger, closeout_tokens=["PARKED_TRANSPORT"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"closeout_turn": 48},
+    )
+    _admit_nested_dispatch(
+        ledger,
+        dispatch_id=_FULL_ID,
+        nest_under="pred-hop-1",
+        status="completed",
+    )
+    assert build_hop_team_dispatch_body(row) is None
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
 
 
 def test_ac10_three_hop_post_paths_use_shared_builder() -> None:
