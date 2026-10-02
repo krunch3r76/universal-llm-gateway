@@ -112,6 +112,67 @@ def test_post_hop_without_job_skips_job_missing() -> None:
     assert "job_missing" not in text
 
 
+def test_post_to_thread_job_missing_is_422() -> None:
+    """Omitted job on to_thread. Breaks when pydantic 400s before intake."""
+    status, payload, text = _post(
+        {
+            "op": "to_thread",
+            "role": "gatherer",
+            "dispatch_thread_id": "dt-1",
+            "thread": "867",
+            "prompt": "hello",
+        }
+    )
+    assert status == 422
+    assert payload["field"] == "job"
+    assert payload["error"]["code"] == "job_missing"
+    assert payload["details"]["reason"] == "job_missing"
+    assert "job_unknown" not in text
+
+
+def test_post_to_thread_consult_is_job_unknown() -> None:
+    """Retired consult token on to_thread. Breaks when Literal rejects at parse."""
+    status, payload, _text = _post(
+        {
+            "op": "to_thread",
+            "role": "gatherer",
+            "dispatch_thread_id": "dt-1",
+            "thread": "867",
+            "prompt": "hello",
+            "job": "consult",
+        }
+    )
+    assert status == 422
+    assert payload["field"] == "job"
+    assert payload["error"]["code"] == "job_unknown"
+    assert payload["details"]["reason"] == "job_unknown"
+
+
+def test_post_hop_cdp_model_admits_202() -> None:
+    """Hop with model=cdp/… and no job. Breaks when route never reaches CDP admit."""
+    from unittest.mock import AsyncMock, patch
+
+    admit_payload = {"execution_id": "hop-cdp-exec-1", "status": "running"}
+
+    with patch(
+        "systems.frontier_consult.route.dispatch_cdp_generate",
+        new_callable=AsyncMock,
+        return_value=admit_payload,
+    ):
+        status, payload, text = _post(
+            {
+                "op": "generate",
+                "model": "cdp/opus-5",
+                "prompt": "hop successor",
+                "dispatch_thread_id": "dt-hop",
+                "mission_kind": "hop",
+            }
+        )
+    assert status == 202, text
+    assert payload.get("execution_id") == "hop-cdp-exec-1"
+    assert "job_missing" not in text
+
+
 def test_post_implement_plus_prompt_is_handle_forbidden() -> None:
     """implement plus prompt. Breaks when the model validator returns 400."""
     status, payload, _text = _post(

@@ -369,7 +369,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     model: str | None = None
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
-    job: Literal["freeform", "mechanical", "sketch", "implement"]
+    job: str | None = None
     prompt: str | None = None
     sidecar_ref: str | None = None
     auto_review_child: bool | None = None

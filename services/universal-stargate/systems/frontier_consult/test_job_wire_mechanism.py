@@ -16,8 +16,6 @@ import pytest
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from fastapi import Response
 from job_vocab import HYPOTHESIZE_ON_JOBS, job_record
-from pydantic import ValidationError
-
 from systems.frontier_consult.admission import FrontierEndpointError
 from systems.frontier_consult.cdp_generate_worker import run_cdp_worker
 from systems.frontier_consult.route import (
@@ -284,16 +282,23 @@ def test_validating_constructor_rejects_omitted_and_consult() -> None:
     )
     assert consult.job == "consult"
 
-    with pytest.raises(ValidationError) as to_thread:
-        TeamDispatchToThreadBody(
-            op="to_thread",
-            role="gatherer",
-            dispatch_thread_id="dt-1",
-            thread="867",
-            prompt="hello",
-            job="consult",  # type: ignore[arg-type]
-        )
-    assert any(err["loc"] == ("job",) for err in to_thread.value.errors())
+    omitted_thread = TeamDispatchToThreadBody(
+        op="to_thread",
+        role="gatherer",
+        dispatch_thread_id="dt-1",
+        thread="867",
+        prompt="hello",
+    )
+    assert omitted_thread.job is None
+    consult_thread = TeamDispatchToThreadBody(
+        op="to_thread",
+        role="gatherer",
+        dispatch_thread_id="dt-1",
+        thread="867",
+        prompt="hello",
+        job="consult",
+    )
+    assert consult_thread.job == "consult"
 
 
 @pytest.mark.asyncio
@@ -363,6 +368,22 @@ async def test_route_passes_job_and_refuses_omitted_and_consult(
     assert to_thread_body["details"]["reason"] == "job_unknown"
     assert to_thread_body["details"]["registry_ref"] == "job_vocab:unresolved"
     assert seen == ["consult", None, "consult"]
+
+    to_thread_omit = await team_dispatch(
+        TeamDispatchToThreadBody.model_construct(
+            op="to_thread",
+            role="gatherer",
+            dispatch_thread_id="dt-1",
+            thread="867",
+            prompt="hello",
+        ),
+        Response(),
+    )
+    omit_body = json.loads(to_thread_omit.body)
+    assert to_thread_omit.status_code == 422
+    assert omit_body["error"]["code"] == "job_missing"
+    assert omit_body["details"]["reason"] == "job_missing"
+    assert seen == ["consult", None, "consult", None]
 
 
 @pytest.mark.asyncio

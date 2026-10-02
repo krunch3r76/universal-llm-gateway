@@ -280,8 +280,8 @@ def test_team_dispatch_generate_forwards_server_tools() -> None:
         asyncio.run(
             team_dispatch_fn(
                 op="generate",
-                role="reviewer",
-                contract="none",
+                role="gatherer",
+                contract="freeform",
                 dispatch_thread_id="thread-dispatch-1",
                 server_tools=False,
             )
@@ -310,8 +310,8 @@ def test_team_dispatch_generate_forwards_inline_prompt() -> None:
         asyncio.run(
             team_dispatch_fn(
                 op="generate",
-                role="reviewer",
-                contract="none",
+                role="gatherer",
+                contract="freeform",
                 dispatch_thread_id="thread-dispatch-1",
                 prompt="Review this exact brief.",
             )

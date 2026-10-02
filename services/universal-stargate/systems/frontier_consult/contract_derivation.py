@@ -19,11 +19,10 @@ _DISPATCH_LANE_TO_CONTRACT: dict[str, str] = {
     "cursor-implement": "implement",
     "cursor-mechanical": "implement",
     "cursor-sdk-implement": "implement",
-    "web-spec": "consult",
-    "web-implement-packet": "consult",
-    "operator-gate": "consult",
-    "path-sim-admit-gate": "consult",
-    "none": "consult",
+    "web-spec": "confer",
+    "web-implement-packet": "confer",
+    "operator-gate": "confer",
+    "path-sim-admit-gate": "confer",
 }
 
 _CONTRACT_YAML = re.compile(

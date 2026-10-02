@@ -533,7 +533,7 @@ def resolve_handoff_contract(
     from_role = contract_from_role(role)
     if from_role is not None:
         return from_role
-    return "consult", "role_default"
+    return "confer", "role_default"
 
 
 def _cursor_sdk_omit_model(*, request_id: str, job: str | None = None) -> str:

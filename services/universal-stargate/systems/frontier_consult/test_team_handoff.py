@@ -2243,7 +2243,7 @@ def test_v2_seat_claude_cursor_admits(
 
 
 def test_v2_f1_acceptance_shape_does_not_set_contract(tmp_path: Path) -> None:
-    """Packet with acceptance criteria but consult lane → consult, not implement."""
+    """Packet with acceptance criteria but consult lane → confer, not implement."""
     _write_packet(tmp_path, _V2_REL, _CONFORMANT_PACKET)
     cortex = _V2LaneCortex(dispatch_lane="web-implement-packet")
     contract, source = derive_contract(
@@ -2253,7 +2253,7 @@ def test_v2_f1_acceptance_shape_does_not_set_contract(tmp_path: Path) -> None:
         cortex=cortex,
         workspaces_root=tmp_path,
     )
-    assert contract == "consult"
+    assert contract == "confer"
     assert source == "source_ref_dispatch_lane"
 
 
@@ -2305,7 +2305,7 @@ def test_v2_web_implement_packet_lane_consult_route(
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["handoff_contract"] == "consult"
+    assert body["handoff_contract"] == "confer"
     assert body["handoff_contract_source"] == "source_ref_dispatch_lane"
 
 

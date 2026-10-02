@@ -95,7 +95,7 @@ def test_cdp_generate_module_scoped_from_lb_dispatch_lane_inference() -> None:
 def test_contract_from_dispatch_lane_path_sim_admit_gate() -> None:
     from systems.frontier_consult.contract_derivation import contract_from_dispatch_lane
 
-    assert contract_from_dispatch_lane("path-sim-admit-gate") == "consult"
+    assert contract_from_dispatch_lane("path-sim-admit-gate") == "confer"
     assert contract_from_dispatch_lane("cursor-sdk-implement") == "implement"
 
 

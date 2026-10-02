@@ -361,7 +361,7 @@ def test_ac10_spawn_body_read_only_residual() -> None:
 
     body = TeamDispatchToThreadBody(
         op="to_thread",
-        role="reviewer",
+        role="gatherer",
         dispatch_thread_id="thread:parent",
         thread="thread:parent",
         job="freeform",
