@@ -878,7 +878,34 @@ def merge_conductor_closeout_hop_authority(
     thread_id: str,
     closeout_turn: int | None = None,
 ) -> None:
-    """Merge ``hop_declared`` and closeout tokens before ``mark_terminal``."""
+    """Merge ``hop_declared`` and closeout tokens before ``mark_terminal``.
+
+    Swallows ``Exception`` so every production caller can still mark the
+    dispatch terminal (friction 37404/37488). ``BaseException`` still
+    propagates.
+    """
+    try:
+        _merge_conductor_closeout_hop_authority(
+            dispatch_id=dispatch_id,
+            closeout_body=closeout_body,
+            thread_id=thread_id,
+            closeout_turn=closeout_turn,
+        )
+    except Exception:  # noqa: BLE001 — closeout always marks terminal
+        logger.exception(
+            "merge_conductor_closeout_hop_authority raised dispatch=%s",
+            dispatch_id,
+        )
+
+
+def _merge_conductor_closeout_hop_authority(
+    *,
+    dispatch_id: str,
+    closeout_body: str,
+    thread_id: str,
+    closeout_turn: int | None = None,
+) -> None:
+    """Unguarded hop-authority merge; call the public wrapper from production."""
     from bus_watch.park_harvest import harvest_still_owed
 
     parsed = parse_designed_stop_tokens(closeout_body)
