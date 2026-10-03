@@ -82,7 +82,10 @@ async def test_read_latest_rejects_pointer_turn(monkeypatch: pytest.MonkeyPatch)
         async def get(self, *_a: object, **_kw: object) -> _Resp:
             return _Resp()
 
-    monkeypatch.setattr(dtc, "make_async_client", lambda *a, **kw: _Client())
+    monkeypatch.setattr(
+        "systems.frontier_consult.dispatch_thread_bus_read.make_async_client",
+        lambda *a, **kw: _Client(),
+    )
 
     with pytest.raises(FrontierEndpointError) as excinfo:
         await dtc.read_latest_dispatch_thread_body(

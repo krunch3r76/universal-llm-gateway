@@ -80,7 +80,7 @@ async def _read_with_turn(turn: dict[str, Any], *, role: str) -> str:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
     mock_ctx.__aexit__ = AsyncMock(return_value=None)
     with patch(
-        "systems.frontier_consult.dispatch_thread_context.make_async_client",
+        "systems.frontier_consult.dispatch_thread_bus_read.make_async_client",
         return_value=mock_ctx,
     ):
         return await read_latest_dispatch_thread_body(
@@ -208,7 +208,7 @@ async def test_inline_prompt_bypasses_bad_latest_turn() -> None:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
     mock_ctx.__aexit__ = AsyncMock(return_value=None)
     with patch(
-        "systems.frontier_consult.dispatch_thread_context.make_async_client",
+        "systems.frontier_consult.dispatch_thread_bus_read.make_async_client",
         return_value=mock_ctx,
     ):
         got = await resolve_generate_prompt_body(
@@ -285,7 +285,7 @@ async def test_resolve_latest_captures_turn_number() -> None:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
     mock_ctx.__aexit__ = AsyncMock(return_value=None)
     with patch(
-        "systems.frontier_consult.dispatch_thread_context.make_async_client",
+        "systems.frontier_consult.dispatch_thread_bus_read.make_async_client",
         return_value=mock_ctx,
     ):
         resolution = await resolve_generate_prompt_resolution(
@@ -322,7 +322,7 @@ async def test_read_at_turn_rejects_admit_body() -> None:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
     mock_ctx.__aexit__ = AsyncMock(return_value=None)
     with patch(
-        "systems.frontier_consult.dispatch_thread_context.make_async_client",
+        "systems.frontier_consult.dispatch_thread_bus_read.make_async_client",
         return_value=mock_ctx,
     ):
         with pytest.raises(FrontierEndpointError) as excinfo:
