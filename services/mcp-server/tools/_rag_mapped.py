@@ -163,7 +163,7 @@ def resolve(
     )
     return {
         "status": "ok",
-        "pipeline": "rag-context",
+        "pipeline": "rag-search",
         "content_length": len(body),
         "duration_s": round(duration, 3),
         "context": body,

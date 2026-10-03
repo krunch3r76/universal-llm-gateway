@@ -72,7 +72,7 @@ def _run_theme_search(
 
     try:
         result = pipeline_call(
-            "rag-context",
+            "rag-search",
             [{"role": "user", "content": query}],
             pipeline_options=pipeline_options,
             timeout=pipeline_timeout + HTTP_BUFFER_S,
