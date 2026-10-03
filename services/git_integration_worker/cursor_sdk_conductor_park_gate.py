@@ -327,7 +327,10 @@ def _stamp_mission_cap_baseline_on_latest_terminal(
     dispatch_id = str(target.get("dispatch_id") or "")
     if not dispatch_id:
         return
-    data = _record_dict(str(target.get("record_json") or ""))
+    raw = str(target.get("record_json") or "")
+    if _record_is_partial(raw):
+        return
+    data = _record_dict(raw)
     data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] = count_hop_attempts(chain)
     conn.execute(
         "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
@@ -349,8 +352,9 @@ def release_mission_parks(
     """Stamp every open budget park in scope; queue one emit per row after commit.
 
     An empty park set is still a release for *work_key*: the mission-cap
-    baseline is written onto the latest terminal hop. Crash-cap parks stay
-    unstamped for that key because they are non-empty and not mission-cap.
+    baseline is written onto the latest terminal hop. Any non-empty budget
+    park set (mission-cap, crash-cap, no-progress, admit-retry) skips that
+    fallback; only a mission-cap row in the loop receives the baseline.
     """
     parks = open_parks(
         conn, work_key=work_key, thread_id=thread_id, kinds=frozenset({"budget"})
