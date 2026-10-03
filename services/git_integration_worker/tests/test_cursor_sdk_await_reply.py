@@ -68,7 +68,15 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def _admit_stubs(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Admission must not need live Cursor auth, MCP parity, or a real bridge."""
+    """Admission must not need live Cursor auth, MCP parity, or a real bridge.
+
+    Full ``admit_cursor_dispatch`` now refuses explicit lane=A and requires a
+    materialized Lane-B worktree — out of scope for this unit suite. The
+    reactor under test only needs ledger insert + 200 so ``mark_park_resumed``
+    runs; hand-resume 409 still exercises the real route below.
+    """
+    from fastapi.responses import JSONResponse
+
     from services.git_integration_worker.cursor_sdk_context import (
         CursorApiKeyResolution,
     )
@@ -89,6 +97,54 @@ def _admit_stubs(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     )
     spawned = MagicMock(return_value=MagicMock(done=lambda: False))
     monkeypatch.setattr(WorkAdmissionController, "create_tracked_task", spawned)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree.pin_lane_worktree_on_admit",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_concurrency_posture."
+        "b_worktree_materialized",
+        lambda **_k: True,
+    )
+
+    real_admit = route_mod.admit_cursor_dispatch
+
+    async def _ledger_admit(req, *, cfg, controller, request=None):  # noqa: ANN001
+        if req.admitted_via != ADMITTED_VIA_AWAIT_RESUME:
+            return await real_admit(req, cfg=cfg, controller=controller, request=request)
+        ledger = CursorDispatchLedger.instance()
+        try:
+            ledger.admit(
+                req=req,
+                fingerprint=ledger.fingerprint(req),
+                execution_id=req.execution_id,
+                caller_agent=req.caller_agent or "cursor",
+                resolved_model=str(req.model).split("/", 1)[-1],
+                admission=CursorDispatchResponse(
+                    admitted=True,
+                    dispatch_id=req.dispatch_id,
+                    thread_id=req.thread_id,
+                    model_id="m",
+                ),
+                contract=req.handoff_contract,
+                source_repo=str(cfg.source_repo),
+                lease_key=str(cfg.source_repo),
+                work_key=req.work_key,
+                source_ref=req.source_ref or req.work_key,
+                identity_class="declared" if req.work_key else None,
+            )
+        except ResumeAlreadyAdmitted:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                status_code=409,
+                content={"code": type(exc).__name__, "message": str(exc)},
+            )
+        ledger.mark_running(dispatch_id=req.dispatch_id)
+        controller.create_tracked_task(MagicMock())
+        return JSONResponse(status_code=200, content={"admitted": True})
+
+    monkeypatch.setattr(route_mod, "admit_cursor_dispatch", _ledger_admit)
     return spawned
 
 
@@ -196,6 +252,25 @@ def _record_generate(
         "from_agent": "web-anthropic",
         "model": "cdp/opus-5.5",
         "fired_at": datetime.now(UTC).isoformat(),
+    }
+    path = _spool(tmp_path) / f"{dispatch_id}.cdp-generates.jsonl"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row) + "\n")
+
+
+def _record_received(
+    tmp_path: Path,
+    dispatch_id: str,
+    *,
+    execution_id: str = _EXEC,
+    tool: str = "wait",
+) -> None:
+    """What the MCP bridge appends when the agent receives a qualifying reply."""
+    row = {
+        "kind": "received",
+        "execution_id": execution_id,
+        "tool": tool,
+        "received_at": datetime.now(UTC).isoformat(),
     }
     path = _spool(tmp_path) / f"{dispatch_id}.cdp-generates.jsonl"
     with path.open("a", encoding="utf-8") as fh:
@@ -358,14 +433,55 @@ async def test_terminal_with_outstanding_generate_parks_row_durably(
 
 
 @pytest.mark.asyncio
-async def test_reply_already_landed_before_exit_does_not_park(tmp_path: Path) -> None:
-    _seed_running("d-done", tmp_path=tmp_path)
-    _record_generate(tmp_path, "d-done")
+async def test_reply_received_before_exit_does_not_park(tmp_path: Path) -> None:
+    """R1: only a reply the agent received is excluded from outstanding."""
+    _seed_running("d-recv", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-recv")
+    _record_received(tmp_path, "d-recv")
     turns = _Turns({_COORD_THREAD: [_reply_turn()]})
     bus = _bus()
-    assert await _park("d-done", bus=bus, turns=turns, tmp_path=tmp_path) is False
-    assert _row("d-done")["park_kind"] is None
+    assert await _park("d-recv", bus=bus, turns=turns, tmp_path=tmp_path) is False
+    assert _row("d-recv")["park_kind"] is None
     bus.reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reply_landed_unconsumed_parks_and_resumes_at_once(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """R1: landed before exit but never received ⇒ park + immediate resume."""
+    _seed_running("d-uncons", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-uncons")
+    # Reply is on the coord thread; no received marker in the bridge ledger.
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    bus = _bus()
+    assert await _park("d-uncons", bus=bus, turns=turns, tmp_path=tmp_path) is True
+    assert _row("d-uncons")["park_kind"] == PARK_KIND_AWAIT_REPLY
+    _mark_completed("d-uncons")
+    # Closeout's immediate resume pass (same as the post-park tick).
+    summary = await _tick(bus=bus, turns=turns)
+    assert summary.admitted == [("d-uncons", "d-uncons-c1")]
+    preamble = json.loads(_row("d-uncons-c1")["record_json"])["prompt_preamble"]
+    assert _VERDICT in preamble
+    assert _admit_stubs.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reply_landed_after_exit_parks_and_resumes_on_tick(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """R1: reply arrives after terminal ⇒ park, resume on the reactor tick."""
+    _seed_running("d-after", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-after")
+    bus = _bus()
+    turns = _Turns()
+    assert await _park("d-after", bus=bus, turns=turns, tmp_path=tmp_path) is True
+    _mark_completed("d-after")
+    assert (await _tick(bus=bus, turns=turns)).waiting == ["d-after"]
+    turns.turns[_COORD_THREAD] = [_reply_turn()]
+    summary = await _tick(bus=bus, turns=turns)
+    assert summary.admitted == [("d-after", "d-after-c1")]
+    assert _admit_stubs.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -376,8 +492,14 @@ async def test_no_bridge_record_or_flag_off_keeps_todays_behaviour(
     bus = _bus()
     assert await _park("d-plain", bus=bus, turns=_Turns(), tmp_path=tmp_path) is False
     assert _row("d-plain")["park_kind"] is None
+    _mark_completed("d-plain")
 
-    _seed_running("d-flag", tmp_path=tmp_path, work_key="friction:34156-b")
+    _seed_running(
+        "d-flag",
+        tmp_path=tmp_path,
+        thread_id="14694",
+        work_key="friction:34156-b",
+    )
     _record_generate(tmp_path, "d-flag")
     monkeypatch.setenv(AWAIT_REPLY_FLAG_ENV, "0")
     assert await _park("d-flag", bus=bus, turns=_Turns(), tmp_path=tmp_path) is False
@@ -540,6 +662,9 @@ async def test_hand_resume_after_auto_child_is_refused_naming_the_child(
         message="operator resume after the auto child",
         handoff_contract="freeform",
         resume_of="d-hand",
+        lane="B",
+        worktree_isolated=True,
+        worktree_path=str(tmp_path / "wt-hand"),
     )
     with pytest.raises(ResumeAlreadyAdmitted) as excinfo:
         ledger.admit(
