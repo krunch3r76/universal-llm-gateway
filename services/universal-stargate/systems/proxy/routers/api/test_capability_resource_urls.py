@@ -135,8 +135,40 @@ def test_noncanonical_segment_stays_200_with_canonical_link(
     root = tmp_path / "pipelines"
     _write_root(root)
     client = _client(_ready_proxy(_registry(root)), monkeypatch)
-    response = client.get("/api/v1/capabilities/wrong/demo-pipe")
+    response = client.get(
+        "/api/v1/capabilities/wrong/demo-pipe",
+        follow_redirects=False,
+    )
+    assert response.history == []
     assert response.status_code == 200, response.text
+    link = response.headers["link"]
+    assert 'rel="canonical"' in link
+    assert "/api/v1/capabilities/demo/demo-pipe" in link
+
+
+def test_noncanonical_post_stays_202_with_canonical_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+
+    async def _admit(_request: Any, _proxy: Any, _dispatch: Any) -> JSONResponse:
+        return JSONResponse(
+            status_code=202,
+            content={"execution_id": "exec-wrong-cat"},
+            headers={"Location": "/api/v1/executions/exec-wrong-cat"},
+        )
+
+    monkeypatch.setattr(capabilities, "admit_dispatch", _admit)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    response = client.post(
+        "/api/v1/capabilities/wrong/demo-pipe",
+        json={"model": "demo-pipe", "messages": []},
+        follow_redirects=False,
+    )
+    assert response.history == []
+    assert response.status_code == 202, response.text
+    assert response.json()["execution_id"] == "exec-wrong-cat"
     link = response.headers["link"]
     assert 'rel="canonical"' in link
     assert "/api/v1/capabilities/demo/demo-pipe" in link
