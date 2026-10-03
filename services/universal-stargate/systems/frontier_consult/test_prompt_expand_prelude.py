@@ -438,13 +438,28 @@ def test_expand_transport_failure_skips_router_crash(
 
 
 @pytest.mark.offline
-def test_author_render_uses_prompts_yaml_cursor_key() -> None:
+def test_author_render_uses_prompts_yaml_cursor_key(monkeypatch) -> None:
     from systems.frontier_consult.prompt_expand_cursor_author import (
         AUTHOR_ADMITTED_VIA,
         AUTHOR_CONTRACT,
         AUTHOR_MODEL,
         cdp_forbidden_door,
         render_author_message,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_cursor_author.load_author_prompt_specs",
+        lambda: {
+            "author_cursor": {
+                "system_prompt": "author system",
+                "template": (
+                    "## Retrieved context\n{rag_context}\n\n"
+                    "## Profile\ncontract={contract} stage={stage} "
+                    "executor_tier={executor_tier} elicitation={elicitation}\n\n"
+                    "## Original TASK\n{text}\n"
+                ),
+            }
+        },
     )
 
     assert AUTHOR_MODEL == "cursor/grok-4.7"
