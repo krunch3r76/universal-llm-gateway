@@ -17,8 +17,8 @@ from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl, _list_assertions_impl
 from ._friction_charter_attrs import (
-    PROTOCOL_ANCHOR_VARIANTS,
     _PROTOCOL_ANCHOR_REQUIRED_ERROR,
+    PROTOCOL_ANCHOR_VARIANTS,
     _build_friction_provenance_attrs,
     _charter_variant_complete,
     _continuity_variant_complete,
@@ -43,6 +43,7 @@ from ._write_validation import (
     resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
+from .workflow_hints import _WORKFLOW_HINTS
 
 # Historical friction default when confidence is omitted or hypothesized.
 # Distinct from CONFIDENCE_WEIGHT["hypothesized"] (0.20) — keep 0.5 so
@@ -448,22 +449,17 @@ def _op_frictions(
     elif resolved_intent == "full":
         result["items"] = _project_friction_full_items(raw_items[: (limit or 50)])
     if not result.get("error"):
-        fix_cycle = (
-            "Actionable row → codified bug ticket, investigate→execute fix cycle: investigate "
-            "(cursor: seat=cursor, job=confer; web: seat=web-anthropic, job=confer) → dense spec; "
-            "execute (cursor: seat=cursor, job=implement against spec; web: inline). "
-            "DEFAULT investigate unless mechanical-only or a dense spec exists. "
-            "lifecycle investigate→fix→report. friction() is log-only. "
-            "Close via friction_close (agent_skill:|workflow:|todo:|commit:|superseded|wontfix). "
-            "Skill: .cursor/skills/friction-review/SKILL.md or consult-routing § Codified bug reports."
-        )
+        # Handler-set _next shadows _WORKFLOW_HINTS["frictions"] (dispatch
+        # __init__). Emit the static hint (ticket cycle + friction_close), not a
+        # second inline copy that vocabulary sweeps can miss (a:37439).
+        frictions_next = _WORKFLOW_HINTS["frictions"]
         if resolved_intent == "summary":
             result["_next"] = (
                 "Deepen one row: cortex(tool=assertion_get, assertion_id=<id>). "
-                "Full rows: re-call with intent=full. " + fix_cycle
+                "Full rows: re-call with intent=full. " + frictions_next
             )
         else:
-            result["_next"] = fix_cycle
+            result["_next"] = frictions_next
     return result
 
 
