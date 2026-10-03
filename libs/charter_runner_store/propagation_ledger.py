@@ -139,8 +139,8 @@ def upsert_open_rows(
                   row_id, service, action, code_ref, safe_window, hazard, reason,
                   proof, proof_class, proof_class_requested, mint_thread, mint_turn,
                   status, age_in_harvests, created_at, updated_at, allow_self_preempt,
-                  force, proof_payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?)
+                  force, proof_payload, after_json, revert_on_fail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(row_id) DO UPDATE SET
                   hazard=excluded.hazard,
                   reason=excluded.reason,
@@ -152,6 +152,8 @@ def upsert_open_rows(
                   allow_self_preempt=excluded.allow_self_preempt,
                   force=excluded.force,
                   proof_payload=COALESCE(excluded.proof_payload, propagation_ledger.proof_payload),
+                  after_json=excluded.after_json,
+                  revert_on_fail=excluded.revert_on_fail,
                   updated_at=excluded.updated_at
                 WHERE propagation_ledger.status='open'
                 """,
@@ -173,6 +175,8 @@ def upsert_open_rows(
                     int(bool(row.allow_self_preempt)),
                     int(bool(row.force)),
                     json.dumps(mint_payload) if mint_payload else None,
+                    json.dumps(list(row.after)),
+                    int(bool(row.revert_on_fail)),
                 ),
             )
     finally:
@@ -805,6 +809,102 @@ def release_consumption_claim(
             db.close()
 
 
+def mark_settling(row_id: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    """Hold per-service exclusion from restart start until the verdict."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='settling', updated_at=?
+            WHERE row_id=? AND status='open'
+            """,
+            (now, row_id),
+        )
+        return cur.rowcount == 1
+    finally:
+        if own_conn:
+            db.close()
+
+
+def service_is_settling(
+    service: str, *, conn: sqlite3.Connection | None = None
+) -> bool:
+    """True when a non-terminal ``settling`` row already owns *service*."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    try:
+        row = db.execute(
+            """
+            SELECT 1 FROM propagation_ledger
+            WHERE service=? AND status='settling'
+            LIMIT 1
+            """,
+            (service,),
+        ).fetchone()
+        return row is not None
+    finally:
+        if own_conn:
+            db.close()
+
+
+def provider_settle_verdicts(
+    *, conn: sqlite3.Connection | None = None
+) -> dict[str, str]:
+    """Latest recorded settle verdict per service, including open rows."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    try:
+        cur = db.execute(
+            """
+            SELECT service, settle_verdict FROM propagation_ledger
+            WHERE settle_verdict IS NOT NULL
+            """
+        )
+        return {
+            str(row["service"]): str(row["settle_verdict"])
+            for row in cur.fetchall()
+            if row["settle_verdict"]
+        }
+    finally:
+        if own_conn:
+            db.close()
+
+
+def record_settle_verdict(
+    row_id: str,
+    verdict: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Release ``settling``. Pass closes. Other verdicts return the row to open."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    status = "closed" if verdict == "pass" else "open"
+    defer = None if verdict == "pass" else f"settle_{verdict}"
+    try:
+        execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status=?,
+                settle_verdict=?,
+                defer_reason=?,
+                closed_at=CASE WHEN ?='closed' THEN ? ELSE closed_at END,
+                updated_at=?
+            WHERE row_id=? AND status IN ('open', 'settling')
+            """,
+            (status, verdict, defer, status, now, now, row_id),
+        )
+    finally:
+        if own_conn:
+            db.close()
+
+
 __all__ = [
     "DEFER_HARVEST_WANTED",
     "DEFER_OPERATOR_RETRACTED",
@@ -818,6 +918,10 @@ __all__ = [
     "get_open_proof_payload",
     "list_harvest_wanted_rows",
     "list_open_rows",
+    "mark_settling",
+    "provider_settle_verdicts",
+    "record_settle_verdict",
+    "service_is_settling",
     "mark_harvest_wanted",
     "mint_row_id",
     "reclaim_stale_consumption_claims",

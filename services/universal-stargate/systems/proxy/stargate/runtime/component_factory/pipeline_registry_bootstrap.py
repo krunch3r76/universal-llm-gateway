@@ -67,6 +67,42 @@ def create_model_checker(
     return checker
 
 
+def membership_payload(proxy: StargateProxy) -> dict[str, list[str]]:
+    """Reachable ``gateway_id`` set and loaded pipeline ids. Never a count."""
+    gateway_ids: list[str] = []
+    manager = proxy.federated_manager
+    if manager is not None and hasattr(manager, "get_all_gateways"):
+        for gateway in manager.get_all_gateways():
+            if getattr(gateway, "is_unreachable", False):
+                continue
+            gateway_id = getattr(gateway, "gateway_id", None)
+            if isinstance(gateway_id, str) and gateway_id:
+                gateway_ids.append(gateway_id)
+    pipeline_ids: list[str] = []
+    registry = proxy.pipeline_registry
+    pipelines = getattr(registry, "pipelines", None) if registry is not None else None
+    if isinstance(pipelines, dict):
+        pipeline_ids = [str(key) for key in pipelines]
+    return {"gateway_ids": gateway_ids, "pipeline_ids": pipeline_ids}
+
+
+async def emit_gateway_membership(proxy: StargateProxy) -> None:
+    """Publish ``federation.gateway.membership`` after a reload or pre-restart."""
+    if proxy.event_bus is None:
+        return
+    from universal_event_bus import Event
+
+    event = Event(
+        signal="federation.gateway.membership",
+        payload=membership_payload(proxy),
+        scope="global",
+    )
+    try:
+        await proxy.event_bus.publish_nowait(event)
+    except Exception:
+        logger.exception("Failed to publish federation.gateway.membership")
+
+
 async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
     """Emit pipeline.registry.unavailable for each permanently-skipped pipeline.
 
@@ -122,6 +158,8 @@ def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> Non
                 old_count,
                 new_count,
             )
+            await _emit_pipeline_unavailable_events(proxy)
+            await emit_gateway_membership(proxy)
         except Exception:
             logger.exception("Pipeline reload failed after gateway connect")
 
@@ -151,6 +189,7 @@ async def _reload_pipelines_after_federation_event(
             new_count,
         )
         await _emit_pipeline_unavailable_events(proxy)
+        await emit_gateway_membership(proxy)
     except Exception:
         logger.exception("Pipeline reload failed after %s from %s", reason, gateway_id)
 
@@ -263,6 +302,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
 
         proxy.pipeline_registry.load()
         await _emit_pipeline_unavailable_events(proxy)
+        await emit_gateway_membership(proxy)
 
         # Reload pipelines if local gateway is already connected
         # (handles case where gateway connected before pipeline system initialized)
@@ -276,6 +316,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                     "(local gateway already connected)"
                 )
                 await _emit_pipeline_unavailable_events(proxy)
+                await emit_gateway_membership(proxy)
             _subscribe_pipeline_reload_on_gateway_connected(proxy)
 
         if proxy.federation_integration is not None:
@@ -296,6 +337,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                     _new,
                 )
                 await _emit_pipeline_unavailable_events(proxy)
+                await emit_gateway_membership(proxy)
 
         proxy.pipeline_executor = PipelineExecutor(
             registry=proxy.pipeline_registry,

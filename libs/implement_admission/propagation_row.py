@@ -38,7 +38,11 @@ from implement_admission.service_lib_ownership import slug_for_service_path
 logger = logging.getLogger(__name__)
 
 SafeWindow = Literal["harvest", "standalone_ok", "drain_required"]
-ProofClass = Literal["process_live", "client_visible", "served_artifact"]
+ProofClass = Literal[
+    "process_live", "client_visible", "served_artifact", "functional_settle"
+]
+# Provider must reach verdict pass before the consumer restarts. One edge.
+ORDER_AFTER: dict[str, tuple[str, ...]] = {"mcp": ("stargate",)}
 PropagationAction = Literal["sync_restart"]
 
 _SYNC_RESTART_SLUG_RE = re.compile(
@@ -69,7 +73,7 @@ _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
     "rag": "served_artifact",
     "cloud_proxy": "process_live",
     "gateway": "process_live",
-    "stargate": "process_live",
+    "stargate": "functional_settle",
 }
 
 
@@ -162,6 +166,11 @@ def compose_proof(
                 f"no proof template for (service={slug!r}, proof_class={pc!r})"
             )
         return template
+    if pc == "functional_settle":
+        return (
+            "functional_settle: gateway_id set equality then affected pipeline "
+            f"diff and op=run ({slug})"
+        )
     if pc == "served_artifact":
         prefix = _SERVED_ARTIFACT_PREFIX_BY_SERVICE.get(slug)
         if prefix is None:
@@ -236,6 +245,12 @@ class PropagationRow(BaseModel):
     liveness_emission: LivenessEmission | None = Field(
         default=None, json_schema_extra={"parity": "stamped"}
     )
+    after: tuple[str, ...] = Field(
+        default_factory=tuple, json_schema_extra={"parity": "effect"}
+    )
+    revert_on_fail: bool = Field(
+        default=False, json_schema_extra={"parity": "effect"}
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -262,6 +277,13 @@ class PropagationRow(BaseModel):
             )
         if not data.get("action"):
             data["action"] = "sync_restart"
+        if "after" not in data or data.get("after") is None:
+            data["after"] = ORDER_AFTER.get(str(service).strip().lower(), ())
+        if "revert_on_fail" not in data or data.get("revert_on_fail") is None:
+            pc = str(data.get("proof_class") or "")
+            data["revert_on_fail"] = pc == "functional_settle" or (
+                str(service).strip().lower() == "git_integration_worker"
+            )
         return data
 
 
@@ -353,7 +375,12 @@ def row_from_mapping_strict(
     proof_class = raw.get("proof_class")
     if not isinstance(proof_class, str) or not proof_class.strip():
         return None, "missing_proof_class"
-    if proof_class.strip() not in {"process_live", "client_visible", "served_artifact"}:
+    if proof_class.strip() not in {
+        "process_live",
+        "client_visible",
+        "served_artifact",
+        "functional_settle",
+    }:
         return None, f"unknown_proof_class:{proof_class}"
     service = str(raw["service"]).strip().lower()
     service_error = validate_service_slug(service)
@@ -362,9 +389,13 @@ def row_from_mapping_strict(
     safe_window_error = validate_safe_window(raw.get("safe_window"))
     if safe_window_error:
         return None, safe_window_error
-    proof_class_error = validate_proof_class(service, proof_class.strip())
-    if proof_class_error:
-        return None, proof_class_error
+    if proof_class.strip() == "functional_settle":
+        if service != "stargate":
+            return None, "functional_settle_only_for_stargate"
+    else:
+        proof_class_error = validate_proof_class(service, proof_class.strip())
+        if proof_class_error:
+            return None, proof_class_error
     safe_window = raw.get("safe_window") or default_safe_window(service)
     expected_x_mcp_count = raw.get("expected_x_mcp_count")
     pc = proof_class.strip()

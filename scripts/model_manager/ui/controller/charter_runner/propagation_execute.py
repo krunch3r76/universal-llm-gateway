@@ -541,6 +541,8 @@ def proof_matches(
         proof_observed,
     )
 
+    if row.proof_class == "functional_settle":
+        return False
     return proof_observed(
         _projection_to_row(row),
         payload,
@@ -635,6 +637,13 @@ async def execute_propagation_plan(
         }
 
         dispatch_before = dispatch_for_projection(row)
+        if row.proof_class == "functional_settle":
+            dispatch_before = ProbeDispatchResult(
+                payload={},
+                proof_class_requested="functional_settle",
+                proof_class_executed="functional_settle",
+                error=None,
+            )
         if dispatch_before.error is not None:
             fail_row(
                 row.row_id,
@@ -719,6 +728,39 @@ async def execute_propagation_plan(
                 escalated.append({**projection, "defer_reason": defer})
             continue
 
+        from charter_runner_store.propagation_ledger import (
+            provider_settle_verdicts,
+            service_is_settling,
+        )
+        from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
+            restart_blocked_by_order,
+        )
+
+        if service_is_settling(row.service):
+            defer = "settling_exclusion"
+            set_defer_reason(row.row_id, defer)
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": defer,
+                    "proof_class_executed": dispatch_before.proof_class_executed,
+                }
+            )
+            continue
+        if restart_blocked_by_order(row.service, provider_settle_verdicts()):
+            defer = "order_after_unsatisfied"
+            set_defer_reason(row.row_id, defer)
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": defer,
+                    "proof_class_executed": dispatch_before.proof_class_executed,
+                }
+            )
+            if row.age_in_harvests >= 2:
+                escalated.append({**projection, "defer_reason": defer})
+            continue
+
         try:
             outcome = await sync_restart_charter_harvest(
                 ctl, row.service, event_bus=event_bus
@@ -743,6 +785,13 @@ async def execute_propagation_plan(
             continue
 
         dispatch_after = dispatch_for_projection(row)
+        if row.proof_class == "functional_settle":
+            dispatch_after = ProbeDispatchResult(
+                payload={},
+                proof_class_requested="functional_settle",
+                proof_class_executed="functional_settle",
+                error=None,
+            )
         if dispatch_after.error is not None:
             fail_row(
                 row.row_id,
@@ -758,6 +807,32 @@ async def execute_propagation_plan(
                     "defer_reason": dispatch_after.error,
                     "proof_class_executed": None,
                     "disposition": "failed_proof_class_unsupported",
+                }
+            )
+            continue
+
+        if row.proof_class == "functional_settle":
+            from charter_runner_store.propagation_ledger import (
+                mark_settling,
+                record_settle_verdict,
+            )
+            from implement_admission.settle_gate import judge_event_window
+
+            mark_settling(row.row_id)
+            verdict = judge_event_window(
+                (),
+                snapshot_gateway_ids=None,
+                snapshot_pipeline_ids=None,
+                timed_out=False,
+            )
+            record_settle_verdict(row.row_id, verdict)
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": f"settle_{verdict}",
+                    "proof_class_executed": "functional_settle",
+                    "disposition": "settle_gate",
+                    "verdict": verdict,
                 }
             )
             continue

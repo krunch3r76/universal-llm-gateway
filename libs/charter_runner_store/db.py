@@ -82,6 +82,12 @@ from .migrations.migration_012_validation_pending import (
 from .migrations.migration_012_validation_pending import (
     migrate as migrate_012,
 )
+from .migrations.migration_013_propagation_settle import (
+    MIGRATION_ID as MIGRATION_013_ID,
+)
+from .migrations.migration_013_propagation_settle import (
+    migrate as migrate_013,
+)
 
 logger = get_logger(__name__)
 
@@ -150,6 +156,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         (MIGRATION_010_ID, migrate_010),
         (MIGRATION_011_ID, migrate_011),
         (MIGRATION_012_ID, migrate_012),
+        (MIGRATION_013_ID, migrate_013),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:
