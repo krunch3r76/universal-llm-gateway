@@ -37,7 +37,6 @@ _LOCI_REL = (
     "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md",
     "cursor-plugins/ulg-ecosystem/commands/conductor.md",
     "scripts/model_manager/ui/controller/charter_runner/tick_sos.py",
-    "pipelines/prompt_expand/v1/test_prompt_expand_v1.py",
 )
 
 
