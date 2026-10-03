@@ -39,6 +39,8 @@ from ._grounding import (
     closeout_source_text,
     fold_evidence_uris,
     grounded_in_closeout,
+    partial_card_description,
+    resume_evidence_uris,
     select_mission,
     select_resume,
     stamp_watermark_on_description,
@@ -208,13 +210,12 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                     f"live={resume.get('live') or ''} | "
                     f"next={resume.get('next') or ''} (after {trigger_ref})"
                 )
-                resume_uris = fold_evidence_uris(
-                    text=" ".join(resume.values()),
+                resume_uris = resume_evidence_uris(
+                    resume=resume,
                     trigger_ref=trigger_ref,
                     trigger_body=trigger_body,
                     tip_ref=tip_ref,
                     tip_residue=tip_residue,
-                    quoted=False,
                 )
                 if not resume_uris:
                     plan.skip("resume", "no_closeout_evidence_uri")
@@ -331,14 +332,19 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 )
                 existing_targets.add(target)
 
-            # 6. Hub description — card summary_row. Ungrounded folds must
-            #    not rewrite mission/resume (stamp watermark only).
+            # 6. Hub description — card summary_row. An ungrounded fold keeps
+            #    the prior "Consolidated through" clause (R3). A grounded resume
+            #    with no grounded mission must not blank that mission sentence.
             prior_description = str(
                 (ingest_json.get("hub") or {}).get("description") or ""
             )
             if mission_source == "none" and not resume:
                 description = stamp_watermark_on_description(
                     prior_description, trigger_ref, stamp
+                )
+            elif mission_source == "none":
+                description = partial_card_description(
+                    prior_description, resume, trigger_ref, stamp
                 )
             else:
                 description = describe_hub(

@@ -5,9 +5,12 @@ from __future__ import annotations
 import pytest
 
 from pipelines.continuity_consolidate.v1.handlers._grounding import (
+    _MIN_GROUND,
     closeout_source_text,
     fold_evidence_uris,
     grounded_in_closeout,
+    partial_card_description,
+    resume_evidence_uris,
     select_mission,
     select_resume,
     stamp_watermark_on_description,
@@ -105,7 +108,50 @@ def test_evidence_uris_cite_trigger_when_body_holds_text():
     assert uris == ["agent-bus:14759#8"]
 
 
-def test_watermark_stamp_preserves_prior_mission_clause():
+def test_prefix_match_with_hub_tail_not_grounded():
+    mixed = (
+        "Bind: pipelines/rag/v2/, id stays rag-context "
+        "and restore paid plan on crsr_fb account."
+    )
+    needle = " ".join(mixed.lower().split())
+    hay = " ".join(_CLOSEOUT.lower().split())
+    assert needle[:_MIN_GROUND] in hay
+    assert needle not in hay
+    assert not grounded_in_closeout(mixed, _CLOSEOUT)
+    uris = fold_evidence_uris(
+        text=mixed,
+        trigger_ref="agent-bus:14759#8",
+        trigger_body=_CLOSEOUT,
+        tip_ref=None,
+        tip_residue="",
+        quoted=False,
+    )
+    assert uris == []
+
+
+def test_resume_uris_union_per_field():
+    settled = "Bind: pipelines/rag/v2/, id stays rag-context for this house."
+    next_line = "Seed todo:rag-search-pipeline-v2 after the design closeout lands."
+    uris = resume_evidence_uris(
+        resume={"settled": settled, "next": next_line},
+        trigger_ref="agent-bus:14759#8",
+        trigger_body=f"Done. {settled}",
+        tip_ref="agent-bus:12286#200",
+        tip_residue=f"Next: {next_line}",
+    )
+    assert uris == ["agent-bus:14759#8", "agent-bus:12286#200"]
+    joined = fold_evidence_uris(
+        text=f"{settled} {next_line}",
+        trigger_ref="agent-bus:14759#8",
+        trigger_body=f"Done. {settled}",
+        tip_ref="agent-bus:12286#200",
+        tip_residue=f"Next: {next_line}",
+        quoted=False,
+    )
+    assert joined == []
+
+
+def test_watermark_stamp_keeps_prior_consolidated_through():
     prior = (
         "Mission: Harvest CONSULT_PENDING tokens. "
         "Next: Restore paid plan on crsr_fb. "
@@ -116,5 +162,31 @@ def test_watermark_stamp_preserves_prior_mission_clause():
         prior, "agent-bus:14759#8", "2026-10-03T06:40:19Z"
     )
     assert "Harvest CONSULT_PENDING" in out
-    assert "agent-bus:14759#8" in out
-    assert "12286#1308" not in out
+    assert "Consolidated through agent-bus:12286#1308" in out
+    assert "Consolidated through agent-bus:14759#8" not in out
+    assert (
+        "Last fold agent-bus:14759#8 at 2026-10-03T06:40:19Z: "
+        "no grounded mission/resume."
+    ) in out
+
+
+def test_partial_resume_does_not_blank_mission():
+    prior = (
+        "Mission: Harvest CONSULT_PENDING tokens. "
+        "Next: Restore paid plan on crsr_fb. "
+        "Consolidated through agent-bus:12286#1308 at 2026-09-30T06:41:29Z "
+        "(consolidate-continuity v1)."
+    )
+    grounded_next = "Seed todo:rag-search-pipeline-v2 after the design closeout."
+    out = partial_card_description(
+        prior,
+        {"next": grounded_next},
+        "agent-bus:14759#8",
+        "2026-10-03T06:40:19Z",
+    )
+    assert "Harvest CONSULT_PENDING" in out
+    assert "(none folded yet)" not in out
+    assert grounded_next in out
+    assert "Consolidated through agent-bus:12286#1308" in out
+    assert "Consolidated through agent-bus:14759#8" not in out
+    assert "Resume fold agent-bus:14759#8 at 2026-10-03T06:40:19Z." in out
