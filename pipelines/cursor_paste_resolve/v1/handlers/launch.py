@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -118,7 +119,17 @@ class CursorPasteLaunchHandler(BaseHandler):
         if isinstance(bound, str):
             return _step({"ok": False, "error": bound}, error=bound)
 
-        message_path = _message_path(step, context, bound)
+        composed = _compose_json(context)
+        if composed.get("ok") is not True:
+            err = "compose did not succeed — do not launch"
+            detail = composed.get("error")
+            if detail:
+                err = f"{err}: {detail}"
+            return _step(
+                {"ok": False, "error": err, "compose": composed or None},
+                error=err,
+            )
+        message_path = str(composed.get("message_path") or "")
         target = bound["launch_target"]
         if not target:
             return _step(
@@ -148,29 +159,18 @@ class CursorPasteLaunchHandler(BaseHandler):
             )
 
         if target in {"glass", "ide"}:
-            return _launch_bridge(self, bound, Path(message_path), window=target)
+            return await _launch_bridge(self, bound, Path(message_path), window=target)
         return await _launch_cursor_sdk(bound, Path(message_path))
 
 
-def _message_path(step: Any, context: Any, bound: dict[str, Any]) -> str:
+def _compose_json(context: Any) -> dict[str, Any]:
     outputs = getattr(context, "outputs", {}) or {}
     compose = outputs.get("compose")
     json_out = getattr(compose, "json", None) if compose is not None else None
-    if isinstance(json_out, dict) and json_out.get("message_path"):
-        return str(json_out["message_path"])
-    handler_inputs = getattr(step, "handler_inputs", None) or {}
-    raw = (
-        handler_inputs.get("message_path") if isinstance(handler_inputs, dict) else None
-    )
-    if isinstance(raw, str) and raw and not raw.startswith("compose."):
-        return raw
-    rel = f"tmp/prompts/cursor-paste-{bound['kind']}-{bound['assertion_id']}.md"
-    from implement_admission.closeout_helpers import workspaces_root
-
-    return str(workspaces_root() / rel)
+    return json_out if isinstance(json_out, dict) else {}
 
 
-def _launch_bridge(
+async def _launch_bridge(
     handler: CursorPasteLaunchHandler,
     bound: dict[str, Any],
     message_file: Path,
@@ -190,7 +190,7 @@ def _launch_bridge(
     env["CURSOR_BRIDGE_SSH_HOST"] = host
     env["CURSOR_BRIDGE_WINDOW"] = window
     env["CURSOR_BRIDGE_REMOTE_ENV"] = bridge_remote_env(window)
-    result = handler.bridge_runner(argv, env)
+    result = await asyncio.to_thread(handler.bridge_runner, argv, env)
     parsed = result.get("parsed") if isinstance(result, dict) else None
     payload: dict[str, Any] = {
         "ok": bool(parsed.get("ok"))
@@ -228,13 +228,23 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
         return _step(payload, error=payload["error"])
 
     prompt = message_file.read_text(encoding="utf-8")
-    async with make_async_client(
-        DEFAULT_AGENT_BUS_URL, timeout=_REQUEST_TIMEOUT
-    ) as bus:
-        if not thread_id:
+    if not thread_id:
+        headers = agent_bus_headers()
+        if headers is None:
+            payload = cursor_sdk_refuse_payload(
+                reason="AGENT_BUS_TOKEN unset — cannot mint a thread",
+                admit=admit,
+            )
+            return _step(payload, error=payload["error"])
+        async with make_async_client(
+            DEFAULT_AGENT_BUS_URL, timeout=_REQUEST_TIMEOUT
+        ) as bus:
             slug = f"cursor-paste-{kind}-{assertion_id}"
             mint = await _post_json(
-                bus, "/threads", {"slug": slug, "idempotency_key": slug}
+                bus,
+                "/threads",
+                {"slug": slug, "idempotency_key": slug},
+                headers=headers,
             )
             if "error" in mint:
                 payload = cursor_sdk_refuse_payload(
@@ -285,9 +295,22 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
     )
 
 
-async def _post_json(client: Any, path: str, body: dict[str, Any]) -> dict[str, Any]:
+def agent_bus_headers() -> dict[str, str] | None:
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    if not token:
+        return None
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def _post_json(
+    client: Any,
+    path: str,
+    body: dict[str, Any],
+    *,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
     try:
-        resp = await client.post(path, json=body)
+        resp = await client.post(path, json=body, headers=headers)
     except Exception as exc:
         return {"error": f"transport_error: {exc}"}
     try:

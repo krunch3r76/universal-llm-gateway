@@ -10,6 +10,7 @@ import yaml
 from systems.pipeline.core.pipeline_config import PipelineSpec
 from work_key_grammar import is_valid_work_key_scheme
 
+from . import launch
 from ._message import (
     compose_message,
     cursor_sdk_dispatch_body,
@@ -60,7 +61,9 @@ def test_bridge_argv_is_open_tab() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_launch_target_is_422() -> None:
+async def test_unknown_launch_target_is_422(tmp_path: Path) -> None:
+    msg = tmp_path / "msg.md"
+    msg.write_text("prompt", encoding="utf-8")
     handler = CursorPasteLaunchHandler()
     ctx = SimpleNamespace(
         options={
@@ -68,7 +71,9 @@ async def test_unknown_launch_target_is_422() -> None:
             "assertion_id": 1,
             "launch_target": "wayland",
         },
-        outputs={},
+        outputs={
+            "compose": SimpleNamespace(json={"ok": True, "message_path": str(msg)}),
+        },
     )
     out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
     assert out.json["http_status"] == 422
@@ -89,7 +94,7 @@ async def test_cursor_sdk_refuses_maestro_thread_12286(tmp_path: Path) -> None:
             "dispatch_thread_id": "12286",
         },
         outputs={
-            "compose": SimpleNamespace(json={"message_path": str(msg)}),
+            "compose": SimpleNamespace(json={"ok": True, "message_path": str(msg)}),
         },
     )
     out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
@@ -127,7 +132,9 @@ async def test_glass_launch_uses_script_argv(tmp_path: Path) -> None:
             "host": "orion-node",
             "launch_target": "glass",
         },
-        outputs={"compose": SimpleNamespace(json={"message_path": str(msg)})},
+        outputs={
+            "compose": SimpleNamespace(json={"ok": True, "message_path": str(msg)}),
+        },
     )
     out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
     assert out.json["ok"] is True
@@ -150,7 +157,9 @@ async def test_glass_omitted_host_refuses(tmp_path: Path) -> None:
             "assertion_id": 1,
             "launch_target": "glass",
         },
-        outputs={"compose": SimpleNamespace(json={"message_path": str(msg)})},
+        outputs={
+            "compose": SimpleNamespace(json={"ok": True, "message_path": str(msg)}),
+        },
     )
     out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
     assert out.json["ok"] is False
@@ -168,7 +177,9 @@ async def test_missing_message_file_refuses() -> None:
             "launch_target": "ide",
         },
         outputs={
-            "compose": SimpleNamespace(json={"message_path": "/no/such/file.md"}),
+            "compose": SimpleNamespace(
+                json={"ok": True, "message_path": "/no/such/file.md"}
+            ),
         },
     )
     out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
@@ -198,6 +209,94 @@ def test_admit_shape_names_generate() -> None:
     assert body["model"] == "cursor/grok-4.7"
     assert body["job"] == "freeform"
     assert body["work_key"] == "friction:7"
+
+
+@pytest.mark.asyncio
+async def test_failed_compose_does_not_launch(tmp_path: Path) -> None:
+    stale = tmp_path / "cursor-paste-friction-1.md"
+    stale.write_text("STALE", encoding="utf-8")
+    called = {"n": 0}
+
+    def runner(_argv: list[str], _env: dict[str, str]) -> dict[str, object]:
+        called["n"] += 1
+        return {"returncode": 0, "parsed": {"ok": True}}
+
+    handler = CursorPasteLaunchHandler()
+    handler.bridge_runner = runner  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        options={
+            "kind": "friction",
+            "assertion_id": 1,
+            "host": "orion-node",
+            "launch_target": "glass",
+        },
+        outputs={
+            "compose": SimpleNamespace(
+                json={
+                    "ok": False,
+                    "error": "assertion_get failed",
+                    "message_path": str(stale),
+                }
+            ),
+        },
+    )
+    out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
+    assert out.json["ok"] is False
+    assert called["n"] == 0
+    assert "compose did not succeed" in out.error
+
+
+@pytest.mark.asyncio
+async def test_cursor_sdk_mint_sends_bearer(tmp_path: Path, monkeypatch) -> None:
+    msg = tmp_path / "msg.md"
+    msg.write_text("prompt", encoding="utf-8")
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "bus-secret")
+    posts: list[dict[str, object]] = []
+
+    class _Resp:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.status_code = 200
+            self.text = ""
+            self._payload = payload
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+        async def post(
+            self,
+            path: str,
+            json: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> _Resp:
+            posts.append({"path": path, "json": json, "headers": headers})
+            if path == "/threads":
+                return _Resp({"id": "4242"})
+            return _Resp({"execution_id": "e1"})
+
+    monkeypatch.setattr(launch, "make_async_client", lambda *a, **k: _Client())
+    handler = CursorPasteLaunchHandler()
+    ctx = SimpleNamespace(
+        options={
+            "kind": "friction",
+            "assertion_id": 1,
+            "launch_target": "cursor_sdk",
+        },
+        outputs={
+            "compose": SimpleNamespace(json={"ok": True, "message_path": str(msg)}),
+        },
+    )
+    out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
+    assert out.json["ok"] is True
+    assert out.json["dispatch_thread_id"] == "4242"
+    mint = next(item for item in posts if item["path"] == "/threads")
+    assert mint["headers"] == {"Authorization": "Bearer bus-secret"}
 
 
 def test_paste_thread_prefix() -> None:
