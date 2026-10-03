@@ -31,8 +31,12 @@ def _status(dispatch_id: str) -> str:
     return str(row["status"])
 
 
-def _raise_merge(**_kw: Any) -> None:
-    raise RuntimeError("hop merge boom")
+def _counting_raise(calls: list[str]):
+    def _raise_merge(**_kw: Any) -> None:
+        calls.append("merge-raise")
+        raise RuntimeError("hop merge boom")
+
+    return _raise_merge
 
 
 @pytest.mark.asyncio
@@ -45,7 +49,12 @@ async def test_deliver_sdk_closeout_merge_raise_still_terminal(
     _install_closeout_stubs(
         monkeypatch, closeout_body="status: complete\n", call_order=call_order
     )
-    monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", _raise_merge)
+    raise_calls: list[str] = []
+    monkeypatch.setattr(
+        route_mod,
+        "merge_conductor_closeout_hop_authority",
+        _counting_raise(raise_calls),
+    )
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     bus = MagicMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=201, body={"turn_number": 2}))
@@ -62,6 +71,7 @@ async def test_deliver_sdk_closeout_merge_raise_still_terminal(
         packet_text="---\ncontract: conductor\n---\n",
     )
 
+    assert raise_calls == ["merge-raise"]
     assert "promote" in call_order
     assert _status(req.dispatch_id) == "completed"
 
@@ -97,10 +107,11 @@ async def test_finalize_parked_merge_raise_still_terminal(
         "services.git_integration_worker.cursor_sdk_closeout.park_finalize.mark_parked",
         lambda **_kw: None,
     )
+    raise_calls: list[str] = []
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.park_finalize."
         "merge_conductor_closeout_hop_authority",
-        _raise_merge,
+        _counting_raise(raise_calls),
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.park_finalize."
@@ -132,4 +143,5 @@ async def test_finalize_parked_merge_raise_still_terminal(
         exc=None,
     )
 
+    assert raise_calls == ["merge-raise"]
     assert _status(req.dispatch_id) == "cancelled"
