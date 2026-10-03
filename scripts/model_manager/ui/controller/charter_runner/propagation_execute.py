@@ -588,9 +588,14 @@ async def execute_propagation_plan(
         except Exception:
             return False
 
+    # Drain snapshot is shared by ancestry retirement and the fire set so a
+    # GIW row that harvest may not restart is not closed on a newer SHA first.
+    drain_snapshot = _fetch_drain_state()
+
     # D2: retire ancestor-satisfied rows (incl. harvest_wanted) before the fire
     # set. Equal-ref still enters harvest — post-restart close needs a
     # process-identity delta; settle-time equal retirement is a separate path.
+    # GIW without a relay-loss hazard (or with I2 occupancy) stays open.
     for row in list(list_open_rows()):
         if _pending_activation_row(row):
             continue
@@ -604,6 +609,12 @@ async def execute_propagation_plan(
             probe=lambda _service, _payload=pre_payload: _payload,
         )
         if live.answer == "yes" and live.relation == "ancestor":
+            giw_ok, giw_reason = giw_restart_precondition(
+                row, drain_snapshot=drain_snapshot
+            )
+            if not giw_ok:
+                set_defer_reason(row.row_id, giw_reason)
+                continue
             settle_open_row(
                 row,
                 lambda _service, _payload=pre_payload: _payload,
@@ -618,7 +629,6 @@ async def execute_propagation_plan(
         if open_row_in_harvest_fire_set(row.defer_reason)
         and not _pending_activation_row(row)
     ]
-    drain_snapshot = _fetch_drain_state()
 
     closed: list[dict[str, Any]] = []
     remaining: list[dict[str, Any]] = []
@@ -682,6 +692,21 @@ async def execute_propagation_plan(
             ),
         )
         if live.answer == "yes" and live.relation == "ancestor":
+            giw_ok, giw_reason = giw_restart_precondition(
+                row, drain_snapshot=drain_snapshot
+            )
+            if not giw_ok:
+                set_defer_reason(row.row_id, giw_reason)
+                remaining.append(
+                    {
+                        **projection,
+                        "defer_reason": giw_reason,
+                        "proof_class_executed": dispatch_before.proof_class_executed,
+                    }
+                )
+                if row.age_in_harvests >= 2:
+                    escalated.append({**projection, "defer_reason": giw_reason})
+                continue
             pre = settle_open_row(
                 row,
                 lambda _service, _payload=before: _payload,
@@ -732,6 +757,7 @@ async def execute_propagation_plan(
             provider_settle_verdicts,
             service_is_settling,
         )
+
         from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
             restart_blocked_by_order,
         )

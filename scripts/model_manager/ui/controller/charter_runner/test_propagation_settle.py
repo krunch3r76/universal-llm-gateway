@@ -1,8 +1,8 @@
 """Order edge, one revert, and GIW ready-join attribution."""
 
 import pytest
-
 from implement_admission.propagation_row import ORDER_AFTER, PropagationRow
+
 from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
     proof_matches,
 )
