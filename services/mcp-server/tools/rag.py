@@ -431,9 +431,14 @@ def register_rag_tools(mcp: FastMCP) -> None:
             pipeline_options["rerank_enabled"] = rerank_enabled
         if catalog_retry_enabled is not None:
             pipeline_options["catalog_retry_enabled"] = catalog_retry_enabled
-        from systems.pipeline.core.step_controls import fold_legacy_enable_flags
+        from systems.pipeline.core.step_controls import finalize_relay_pipeline_options
 
-        pipeline_options = fold_legacy_enable_flags(pipeline_options)
+        pipeline_options, step_controls_error = finalize_relay_pipeline_options(
+            "rag-context",
+            pipeline_options,
+        )
+        if step_controls_error:
+            return {"error": step_controls_error}
 
         def _start() -> dict[str, Any]:
             return run_rag_search(

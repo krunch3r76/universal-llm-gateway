@@ -73,6 +73,29 @@ def failure_is_retryable(exc: BaseException) -> bool:
     return bool(getattr(exc, "retryable", False))
 
 
+RAG_CONTEXT_STEP_CONTROLS_ERROR = "step controls apply to rag-search only"
+
+
+def finalize_relay_pipeline_options(
+    relay_target: str,
+    options: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Prepare ``pipeline_options`` for a Stargate relay target.
+
+    ``rag-context`` keeps ``hyde_enabled`` / ``rerank_enabled`` /
+    ``catalog_retry_enabled`` as raw keys and rejects ``step_overrides`` or
+    ``skip_steps``. ``rag-search`` folds legacy enable flags into
+    ``step_overrides``.
+    """
+    if relay_target == "rag-context":
+        if options.get("step_overrides") or options.get("skip_steps"):
+            return None, RAG_CONTEXT_STEP_CONTROLS_ERROR
+        return dict(options), None
+    if relay_target == "rag-search":
+        return fold_legacy_enable_flags(options), None
+    return dict(options), None
+
+
 def fold_legacy_enable_flags(options: dict[str, Any]) -> dict[str, Any]:
     """Map hyde/rerank/catalog_retry flags onto step_overrides and drop them."""
     folded = dict(options)
