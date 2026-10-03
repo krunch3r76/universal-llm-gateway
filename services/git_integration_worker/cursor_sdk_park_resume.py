@@ -165,8 +165,11 @@ def build_park_resume_request(
     worktree_path = record.get("worktree_path")
     worktree_isolated = bool(record.get("worktree_isolated", False))
     if lane == "A":
+        # Explicit A is refused at admit (CURSOR_LANE_A_REFUSED). Legacy park
+        # rows still store it; omit so select_lane can assign after the gate.
         worktree_path = None
         worktree_isolated = False
+        lane = None
     return CursorDispatchRequest(
         thread_id=row.thread_id,
         model=str(record.get("model") or row.resolved_model),
