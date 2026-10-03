@@ -2312,17 +2312,25 @@ async def _deliver_sdk_closeout(
             **association_fields,
         )
         turn_number = extract_turn_number(bus_result.body)
-        await emit_implement_closeout_trigger(
-            body_json=delivery.body,
-            source_ref=normalize_closeout_source_ref(
-                work_item_ref or delivery.sidecar_ref
-            ),
-            idempotency_key=build_closeout_idempotency_key(
-                execution_id=req.execution_id,
-                thread_id=req.thread_id,
-                turn_number=turn_number,
-            ),
-        )
+        # friction 37490: trigger can raise (json.loads before its inner try);
+        # a non-terminal dispatch is worse than a missed Stargate POST.
+        try:
+            await emit_implement_closeout_trigger(
+                body_json=delivery.body,
+                source_ref=normalize_closeout_source_ref(
+                    work_item_ref or delivery.sidecar_ref
+                ),
+                idempotency_key=build_closeout_idempotency_key(
+                    execution_id=req.execution_id,
+                    thread_id=req.thread_id,
+                    turn_number=turn_number,
+                ),
+            )
+        except Exception:  # noqa: BLE001 — closeout always marks terminal
+            logger.exception(
+                "emit_implement_closeout_trigger raised dispatch=%s",
+                req.dispatch_id,
+            )
         hop_terminal = "failed" if refusal is not None else "completed"
         # friction 37404: hop merge can raise (DB); a non-terminal dispatch is
         # worse than a missing hop token. Same locality as 34156 F1.
