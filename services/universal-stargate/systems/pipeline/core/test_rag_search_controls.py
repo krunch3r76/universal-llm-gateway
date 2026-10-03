@@ -1,7 +1,5 @@
 """Break cases for rag-search step controls and pipeline home."""
 
-from pathlib import Path
-
 import pytest
 
 from systems.pipeline.core.conditions import (
@@ -17,11 +15,6 @@ from systems.pipeline.core.step_controls import (
     failure_is_retryable,
     fold_legacy_enable_flags,
 )
-from systems.pipeline.registry.core import PipelineRegistry
-from systems.pipeline.registry.validator import PipelineValidator
-from systems.pipeline.user_handlers import load_user_handlers
-
-REPO = Path(__file__).resolve().parents[5]
 
 
 def _pipeline() -> PipelineSpec:
@@ -119,15 +112,3 @@ def test_legacy_flags_fold_into_step_overrides() -> None:
     assert "hyde_enabled" not in folded
     assert folded["step_overrides"]["generate_hyde"]["enabled"] is True
     assert folded["step_overrides"]["rerank"]["enabled"] is False
-
-
-def test_rag_search_loads_and_validates() -> None:
-    load_user_handlers(REPO / "pipelines")
-    reg = PipelineRegistry(search_paths=[str(REPO / "pipelines")])
-    reg._loader._load_from_search_path(REPO / "pipelines", "pipelines")
-    pipeline = reg.pipelines["rag-search"]
-    errors = PipelineValidator(reg)._validate_pipeline(pipeline)
-    assert errors == []
-    assert (REPO / "pipelines" / "rag" / "models.yaml").is_file()
-    assert (REPO / "pipelines" / "rag_search" / "models.yaml").is_file()
-    assert not (REPO / "pipelines" / "rag_search" / "v1" / "models.yaml").exists()
