@@ -75,6 +75,40 @@ async def request_pre_restart_gateway_membership(
             await http.aclose()
 
 
+async def op_run_affected_pipelines(
+    pipeline_ids: Iterable[str],
+    *,
+    base_url: str,
+    client: httpx.AsyncClient | None = None,
+) -> list[str]:
+    """Dispatch affected pipelines (``op=run``) and collect failures."""
+    ids = [str(pid) for pid in pipeline_ids]
+    if not ids:
+        return []
+    own = client is None
+    http = client or httpx.AsyncClient(timeout=120.0)
+    failures: list[str] = []
+    try:
+        for pipeline_id in ids:
+            try:
+                resp = await http.post(
+                    f"{base_url.rstrip('/')}/api/v1/pipelines/dispatch",
+                    json={
+                        "model": pipeline_id,
+                        "messages": [{"role": "user", "content": "settle-smoke"}],
+                        "max_tokens": 1,
+                    },
+                )
+                if resp.status_code >= 400:
+                    failures.append(pipeline_id)
+            except httpx.HTTPError:
+                failures.append(pipeline_id)
+    finally:
+        if own:
+            await http.aclose()
+    return failures
+
+
 async def _collect_events_until(
     agen: AsyncIterator[dict[str, Any]],
     *,
@@ -157,6 +191,7 @@ async def wait_functional_settle(
 __all__ = [
     "FunctionalSettleResult",
     "membership_snapshot_from_event",
+    "op_run_affected_pipelines",
     "request_pre_restart_gateway_membership",
     "wait_functional_settle",
 ]

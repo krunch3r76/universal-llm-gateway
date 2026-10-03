@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -870,10 +870,14 @@ async def execute_propagation_plan(
                 apply_verdict,
             )
             from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+                op_run_affected_pipelines,
                 wait_functional_settle,
             )
             from scripts.model_manager.ui.controller.charter_runner.wake_hub import (
                 default_events_query_socket,
+            )
+            from scripts.model_manager.ui.controller.restart_drain import (
+                STARGATE_PROBE_URL,
             )
             from services.git_integration_worker.config import load_config
             from services.git_integration_worker.cursor_sdk_git_head import (
@@ -882,12 +886,18 @@ async def execute_propagation_plan(
 
             cfg = load_config()
             land_paths = land_paths_from_merge_sha(cfg.source_repo, row.code_ref)
+            async def _run_op_run(ids: Iterable[str]) -> list[str]:
+                return await op_run_affected_pipelines(
+                    ids, base_url=STARGATE_PROBE_URL
+                )
+
             settle_result = await wait_functional_settle(
                 query_sock=default_events_query_socket(),
                 resume_from=None,
                 snapshot_gateway_ids=snap_gw,
                 snapshot_pipeline_ids=snap_pipes,
                 land_paths=land_paths,
+                run_op_run=_run_op_run,
             )
             verdict = settle_result.verdict
             record_settle_verdict(row.row_id, verdict)
@@ -928,6 +938,7 @@ async def execute_propagation_plan(
                         snapshot_gateway_ids=snap_gw,
                         snapshot_pipeline_ids=snap_pipes,
                         land_paths=land_paths,
+                        run_op_run=_run_op_run,
                     )
                     reprobe_verdict = reprobe.verdict
                     if reprobe_verdict != "pass":
