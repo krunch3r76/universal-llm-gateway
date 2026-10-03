@@ -18,7 +18,7 @@ After kind and id, zero to three target tokens. The sets do not overlap, so orde
 
 A missing window focuses Cursor Glass. A missing host is never filled with `jupiter` or `orion-node` by default. The launch script's unset-host default is `jupiter`. Attended Glass living on `orion-node` is not a host for this command. Use a host only when this invocation names it, or this request's context names exactly one of the two.
 
-`maestro` is a notify token. It does not choose window or host. When present, the prompt preamble (before the inline general prompt) tells the resolving agent to memo maestro on agent-bus thread `12286` after the item is closed, and to use the closed title suffix `complete-to-maestro`. The preamble always tells the resolving agent to suffix the tab title with the current stage (`initial`, `review`, then the closed suffix).
+`maestro` is a notify token. It does not choose window or host. When present, the prompt preamble (before the inline general prompt) tells the resolving agent to memo maestro on agent-bus thread `12286` after the item is closed, and to use the closed title suffix `complete-to-maestro`. Thread `12286` receives that closure memo only. The preamble forbids passing it as `dispatch_thread_id`, posting the code review on it, or harvesting the review there. The preamble always tells the resolving agent to suffix the tab title with the current stage (`initial`, `review`, then the closed suffix).
 
 ## Refuse
 
@@ -39,7 +39,7 @@ cortex(tool="assertion_get", arguments='{"assertion_id": <id>}')
 
 Friction rows are assertions. A missing row is a stop.
 3. Read `cortex://notes/system/prompts/work-item-implementer-friction.md` at this moment (`fs` `op=read`). Do not use a copy stored in this command.
-4. Write `tmp/prompts/cursor-paste-<kind>-<id>.md`. The file is the full prompt `/cursor-paste` will send. Bind the closed suffix: `complete-to-maestro` when notify is `maestro`, else `complete`. First the rename + stage block, then — only when notify is `maestro` — the maestro line, then the prompt bytes unchanged:
+4. Write `tmp/prompts/cursor-paste-<kind>-<id>.md`. The file is the full prompt `/cursor-paste` will send. Bind the closed suffix: `complete-to-maestro` when notify is `maestro`, else `complete`. First the rename + stage block, then — only when notify is `maestro` — both paragraphs in the maestro block below, then the prompt bytes unchanged:
 
 ```
 Rename this chat tab to <kind>:<id> · initial.
@@ -60,6 +60,8 @@ When notify is `maestro`, insert this paragraph after that block and before the 
 
 ```
 When this <kind> is closed, inform maestro: send a memo on agent-bus thread 12286 reporting the closure (kind, id, and outcome). Do this after closure, before you stop.
+
+Thread 12286 is that closure memo only. Do not pass 12286 as dispatch_thread_id, do not post the code review on it, and do not harvest the review there. Mint the review thread the way the work-item prompt says. Glass and the IDE both arm a terminal for the harvest watcher.
 
 ```
 
