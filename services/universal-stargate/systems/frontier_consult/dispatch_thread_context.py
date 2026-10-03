@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlencode
 
 import httpx
-from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from .admission import FrontierEndpointError
+from .dispatch_thread_bus_read import (
+    bus_http_error_preview,
+    format_bus_read_exc,
+    get_agent_bus,
+)
 from .operator_packet_author_gate import operator_packet_author_refusal
 
 _PLACEHOLDER_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -111,11 +114,6 @@ def allowed_prompt_recipients(role: str) -> frozenset[str]:
     if role == "cursor-sdk":
         allowed.update({"cursor", "cursor-sdk", "claude-cursor"})
     return frozenset(allowed)
-
-
-def _auth_headers() -> dict[str, str]:
-    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
-    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def reject_unresolved_placeholders(
@@ -254,13 +252,15 @@ async def read_dispatch_thread_body_at_turn(
 
     qs = urlencode({"thread": thread, "turn_number": turn_number})
     try:
-        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            resp = await client.get(f"/turns/by-number?{qs}", headers=_auth_headers())
-    except httpx.HTTPError as exc:
+        resp = await get_agent_bus(f"/turns/by-number?{qs}")
+    except (httpx.HTTPError, OSError) as exc:
         raise FrontierEndpointError(
             request_id=request_id,
             field="dispatch_thread_id",
-            reason=f"could not read dispatch thread {thread!r} turn {turn_number}: {exc}",
+            reason=(
+                f"could not read dispatch thread {thread!r} turn {turn_number}: "
+                f"{format_bus_read_exc(exc)}"
+            ),
             status_code=503,
             code="dispatch_thread_read_failed",
         ) from exc
@@ -269,9 +269,7 @@ async def read_dispatch_thread_body_at_turn(
         raise FrontierEndpointError(
             request_id=request_id,
             field="dispatch_thread_id",
-            reason=(
-                f"turn {turn_number} on dispatch thread {thread!r} was not found"
-            ),
+            reason=(f"turn {turn_number} on dispatch thread {thread!r} was not found"),
             status_code=422,
             code="dispatch_thread_turn_not_found",
         )
@@ -281,7 +279,8 @@ async def read_dispatch_thread_body_at_turn(
             field="dispatch_thread_id",
             reason=(
                 f"agent-bus returned {resp.status_code} while reading dispatch "
-                f"thread {thread!r} turn {turn_number}: {resp.text[:200]}"
+                f"thread {thread!r} turn {turn_number}: "
+                f"{bus_http_error_preview(resp)}"
             ),
             status_code=503,
             code="dispatch_thread_read_failed",
@@ -340,13 +339,14 @@ async def resolve_latest_dispatch_thread_turn(
 
     qs = urlencode({"thread": thread, "last": 1})
     try:
-        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
-            resp = await client.get(f"/turns?{qs}", headers=_auth_headers())
-    except httpx.HTTPError as exc:
+        resp = await get_agent_bus(f"/turns?{qs}")
+    except (httpx.HTTPError, OSError) as exc:
         raise FrontierEndpointError(
             request_id=request_id,
             field="dispatch_thread_id",
-            reason=f"could not read dispatch thread {thread!r}: {exc}",
+            reason=(
+                f"could not read dispatch thread {thread!r}: {format_bus_read_exc(exc)}"
+            ),
             status_code=503,
             code="dispatch_thread_read_failed",
         ) from exc
@@ -365,7 +365,7 @@ async def resolve_latest_dispatch_thread_turn(
             field="dispatch_thread_id",
             reason=(
                 f"agent-bus returned {resp.status_code} while reading dispatch "
-                f"thread {thread!r}: {resp.text[:200]}"
+                f"thread {thread!r}: {bus_http_error_preview(resp)}"
             ),
             status_code=503,
             code="dispatch_thread_read_failed",
@@ -526,9 +526,7 @@ async def resolve_generate_prompt_resolution(
         reject_unresolved_placeholders(
             request_id=request_id, text=text, field="packet_path"
         )
-        return GeneratePromptResolution(
-            text=text, prompt_bind_mode="explicit_external"
-        )
+        return GeneratePromptResolution(text=text, prompt_bind_mode="explicit_external")
 
     if prompt is not None:
         text = prompt.strip()
@@ -541,9 +539,7 @@ async def resolve_generate_prompt_resolution(
                 code="dispatch_prompt_empty",
             )
         reject_unresolved_placeholders(request_id=request_id, text=text, field="prompt")
-        return GeneratePromptResolution(
-            text=text, prompt_bind_mode="explicit_external"
-        )
+        return GeneratePromptResolution(text=text, prompt_bind_mode="explicit_external")
 
     if sidecar_ref is not None:
         ref = sidecar_ref.strip()
@@ -580,9 +576,7 @@ async def resolve_generate_prompt_resolution(
         reject_unresolved_placeholders(
             request_id=request_id, text=text, field="sidecar_ref"
         )
-        return GeneratePromptResolution(
-            text=text, prompt_bind_mode="explicit_external"
-        )
+        return GeneratePromptResolution(text=text, prompt_bind_mode="explicit_external")
 
     if not dispatch_thread_id or not dispatch_thread_id.strip():
         raise FrontierEndpointError(
