@@ -182,7 +182,9 @@ def _park_mark(dispatch_id: str, thread_id: str) -> ParkMark:
     return mark
 
 
-def _stub_park_finalize_preamble(monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_park_finalize_preamble(
+    monkeypatch: pytest.MonkeyPatch, *, assume_terminal_emitted: bool = True
+) -> None:
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.park_finalize."
         "emit_partial_harvest_on_park",
@@ -197,10 +199,11 @@ def _stub_park_finalize_preamble(monkeypatch: pytest.MonkeyPatch) -> None:
         "emit_sdk_park_parked",
         lambda **_kw: None,
     )
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.park_finalize.terminal_emitted",
-        lambda *_a, **_k: True,
-    )
+    if assume_terminal_emitted:
+        monkeypatch.setattr(
+            "services.git_integration_worker.cursor_sdk_closeout.park_finalize.terminal_emitted",
+            lambda *_a, **_k: True,
+        )
     monkeypatch.setattr(route_mod, "_promote_queued_for_lease", AsyncMock())
     monkeypatch.setattr(
         route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None
@@ -212,10 +215,8 @@ def _stub_park_finalize_preamble(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_finalize_parked_merge_cancelled_still_promotes_and_clears_mark(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """friction 37491: task cancel during hop merge still promotes and drops the mark."""
-    from services.git_integration_worker.cursor_sdk_closeout.park_finalize import (
-        finalize_parked,
-    )
+    """friction 37491: cancel during hop merge waits for merge, then promote."""
+    from services.git_integration_worker.cursor_sdk_closeout import park_finalize as pf
     from services.git_integration_worker.cursor_sdk_park_for_restart import park_mark
 
     req = _req(
@@ -225,26 +226,45 @@ async def test_finalize_parked_merge_cancelled_still_promotes_and_clears_mark(
     )
     _admit_running_conductor(req, tmp_path)
     mark = _park_mark(req.dispatch_id, req.thread_id)
-    _stub_park_finalize_preamble(monkeypatch)
-    entered = threading.Event()
-    released = threading.Event()
-
-    def _block_merge(**_kw: Any) -> None:
-        entered.set()
-        released.wait(timeout=30)
-
+    _stub_park_finalize_preamble(monkeypatch, assume_terminal_emitted=False)
+    cancelled_emits: list[str] = []
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.park_finalize."
-        "merge_conductor_closeout_hop_authority",
-        _block_merge,
+        "emit_sdk_worker_cancelled",
+        lambda **kw: cancelled_emits.append(str(kw.get("terminal_status") or "")),
     )
+    hop_posts: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
+        "post_conductor_hop_team_dispatch",
+        AsyncMock(side_effect=lambda body, **_k: hop_posts.append(body) or (True, {})),
+    )
+    entered = threading.Event()
+    released = threading.Event()
+    order: list[str] = []
+    real_merge = pf.merge_conductor_closeout_hop_authority
+
+    def _block_then_merge(**kw: Any) -> None:
+        entered.set()
+        released.wait(timeout=30)
+        real_merge(**kw)
+        order.append("merge")
+
+    monkeypatch.setattr(pf, "merge_conductor_closeout_hop_authority", _block_then_merge)
+    real_promote = route_mod._mark_terminal_and_promote
+
+    async def _promote(**kw: Any) -> None:
+        order.append("promote")
+        await real_promote(**kw)
+
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", _promote)
     bus = MagicMock()
     bus.reply = AsyncMock(
         return_value=MagicMock(status_code=201, body={"turn_number": 3})
     )
 
     task = asyncio.create_task(
-        finalize_parked(
+        pf.finalize_parked(
             req=req,
             source_repo=tmp_path / "repo",
             bus=bus,
@@ -257,8 +277,11 @@ async def test_finalize_parked_merge_cancelled_still_promotes_and_clears_mark(
     )
     assert await asyncio.to_thread(entered.wait, 5)
     task.cancel()
-    await task
     released.set()
+    await task
+    assert order == ["merge", "promote"]
+    assert cancelled_emits == ["cancelled"]
+    assert hop_posts == []
     assert park_mark(req.dispatch_id) is None
     assert _status(req.dispatch_id) == "cancelled"
 
@@ -267,7 +290,7 @@ async def test_finalize_parked_merge_cancelled_still_promotes_and_clears_mark(
 async def test_finalize_parked_promote_cancelled_still_promotes_and_clears_mark(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """friction 37491: cancel during promote retries after uncancel and clears the mark."""
+    """friction 37491: outer cancel during promote does not abort the shielded tail."""
     from services.git_integration_worker.cursor_sdk_closeout.park_finalize import (
         finalize_parked,
     )
@@ -287,14 +310,14 @@ async def test_finalize_parked_promote_cancelled_still_promotes_and_clears_mark(
         lambda **_kw: None,
     )
     entered = asyncio.Event()
+    gate = asyncio.Event()
     promote_calls: list[int] = []
     real_promote = route_mod._mark_terminal_and_promote
 
     async def _promote_then_real(**kw: Any) -> None:
         promote_calls.append(len(promote_calls) + 1)
-        if len(promote_calls) == 1:
-            entered.set()
-            await asyncio.sleep(60)
+        entered.set()
+        await gate.wait()
         await real_promote(**kw)
 
     monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", _promote_then_real)
@@ -317,7 +340,8 @@ async def test_finalize_parked_promote_cancelled_still_promotes_and_clears_mark(
     )
     await asyncio.wait_for(entered.wait(), timeout=5)
     task.cancel()
+    gate.set()
     await task
-    assert promote_calls == [1, 2]
+    assert promote_calls == [1]
     assert park_mark(req.dispatch_id) is None
     assert _status(req.dispatch_id) == "cancelled"

@@ -433,7 +433,8 @@ async def finalize_parked(
             bus_result.status_code,
             bus_result.body,
         )
-    try:
+
+    async def _closeout_tail() -> None:
         if conductor:
             # friction 37404: hop merge can raise; still mark terminal (34156 F1).
             try:
@@ -488,23 +489,24 @@ async def finalize_parked(
             controller=controller,
             emit_tag=PARKED_EMIT_TAG,
         )
+
+    # friction 37491: keep merge → cancelled emit → promote as one task so a
+    # shutdown cancel cannot promote (and hop) while the merge thread still
+    # runs, and cannot skip the I-SR-3 cancelled emit. Shield the tail; on
+    # CancelledError uncancel and await the same task. Swallow so
+    # _close_ticket_after does not emergency-terminate a parked link.
+    tail = asyncio.create_task(_closeout_tail())
+    try:
+        await asyncio.shield(tail)
     except asyncio.CancelledError:
-        # friction 37491: CancelledError bypasses except Exception; 3.12
-        # sticky-cancels the next await. Uncancel, still promote, swallow so
-        # _close_ticket_after does not emergency-terminate a parked link.
         logger.exception(
-            "finalize_parked cancelled dispatch=%s; still promoting",
+            "finalize_parked cancelled dispatch=%s; still finishing closeout",
             dispatch_id,
         )
         _task = asyncio.current_task()
         if _task is not None and _task.cancelling():
             _task.uncancel()
-        await _mark_terminal_and_promote(
-            dispatch_id=dispatch_id,
-            terminal_status="cancelled",
-            controller=controller,
-            emit_tag=PARKED_EMIT_TAG,
-        )
+        await tail
     finally:
         clear_park_mark(dispatch_id)
 
