@@ -167,3 +167,62 @@ async def test_hot_reload_unregisters_yaml_moved_out_of_tree(tmp_path: Path) -> 
         assert "ok-pipe" not in registry.pipelines
     finally:
         await hot.stop()
+
+
+_BOGUS_STEP_TYPE = "bogus_unregistered_step_type_xyz"
+
+
+def test_reload_keeps_last_good_when_step_type_unregistered(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+    previous_step_type = registry.pipelines["ok-pipe"].steps[0].type
+
+    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}")
+    _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
+    with caplog.at_level("WARNING"):
+        old_count, new_count = registry.reload_pipelines()
+
+    assert "ok-pipe" in registry.pipelines
+    assert registry.pipelines["ok-pipe"].steps[0].type == previous_step_type
+    assert old_count == new_count == 1
+    assert any(
+        "Keeping last good pipeline 'ok-pipe'" in rec.message
+        and _BOGUS_STEP_TYPE in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_reload_unregistered_step_type_never_loaded_stays_absent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}")
+    _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" not in registry.pipelines
+
+    registry.reload_pipelines()
+    assert "ok-pipe" not in registry.pipelines
+
+
+def test_reload_drops_pipeline_on_catalog_skip_not_unregistered_type(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+
+    bad_yaml = _OK_YAML.replace("model_ref: ok", "model_ref: expand")
+    _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
+    registry.reload_pipelines()
+    assert "ok-pipe" not in registry.pipelines
+    assert any(row["pipeline_id"] == "ok-pipe" for row in registry.catalog_skips)
