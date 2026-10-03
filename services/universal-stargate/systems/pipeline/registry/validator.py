@@ -174,26 +174,6 @@ class PipelineValidator:
         errors = []
         step_ids = {step.id for step in pipeline.steps}
 
-        if pipeline.id == "rag-search":
-            from ..core.conditions import KNOWN_CONDITION_NAMES
-            from ..core.step_controls import BANNED_REQUEST_FIELDS
-
-            extra = pipeline.options.model_extra or {}
-            for banned in BANNED_REQUEST_FIELDS:
-                if banned in extra:
-                    errors.append(
-                        f"Pipeline '{pipeline.id}': option {banned!r} is not "
-                        "in the schema; use step_overrides"
-                    )
-            for step in pipeline.steps:
-                if not step.condition:
-                    continue
-                if step.condition.strip() not in KNOWN_CONDITION_NAMES:
-                    errors.append(
-                        f"Step '{step.id}': unknown condition "
-                        f"{step.condition.strip()!r}"
-                    )
-
         for step in pipeline.steps:
             if step.type == "sub_pipeline":
                 continue

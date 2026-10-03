@@ -41,26 +41,16 @@ def should_execute_step(
     if not step.condition:
         return True, None
 
-    from ....conditions import ConditionDefinitionError, evaluate_condition
-    from ....step_controls import StepDefinitionError
+    from ....conditions import evaluate_condition
 
-    try:
-        ok = evaluate_condition(
+    return (
+        evaluate_condition(
             condition=step.condition,
             outputs=executor.context.outputs,
             options=executor.context.options,
-        )
-    except ConditionDefinitionError as exc:
-        pipeline_id = getattr(executor.context.pipeline, "id", "")
-        if pipeline_id == "rag-search":
-            raise StepDefinitionError(step.id, str(exc)) from exc
-        logger.warning(
-            "Condition evaluation failed: '%s' - %s. Defaulting to skip.",
-            step.condition,
-            exc,
-        )
-        return False, step.condition
-    return ok, step.condition
+        ),
+        step.condition,
+    )
 
 
 async def execute_step(executor: DAGExecutor, node: StepNode) -> None:

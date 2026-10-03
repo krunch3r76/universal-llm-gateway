@@ -481,7 +481,9 @@ See `agent_skill:claude-ai-cdp-navigation` for call-time doctrine.
 
 **Sole primary MCP/agent surface** for RAG. Returns raw context chunks with
 source labels for the agent to cite, gate (lawyer-stance), reason over, and
-synthesize. `rag_search_preview` provides
+synthesize. **Agents must use this exclusively**; `rag_answer` (and `rag(op="answer")`)
+is buried in MCP and reserved exclusively for debugging the rag-answer* pipelines
+(via direct dispatch or Stargate /v1/chat/completions). `rag_search_preview` provides
 bounded snippets for Cursor UIs.
 
 ### Surface hierarchy
@@ -661,6 +663,33 @@ When calling Stargate `/v1/chat/completions` with `model=rag-context`, pass
 `pipeline_options.include_retrieval_metadata: true` to receive the same fields
 under top-level `pipeline.retrieval` (MCP `rag_search` maps this to
 top-level `retrieval`).
+
+## rag_answer
+
+**DEBUG ONLY** — buried MCP surface for exercising the `rag-answer` /
+`rag-answer-deep` pipelines. Agents must use `rag_search` for retrieval work.
+
+Delegates retrieval to `rag-context` via an internal `pipeline_call_v1` step,
+then runs relevance gating and answer generation.
+
+### Args
+
+| Arg | Type | Description |
+|---|---|---|
+| `question` | str | Natural language question — REQUIRED |
+| `scope` | str\|list\|None | Same semantics as `rag_search` |
+| `prefix` | str\|list\|None | Source path prefix; mutually exclusive with `scope` |
+| `deep` | bool | Use `rag-answer-deep` iterative retrieval (default false) |
+
+### Returns
+
+On success: same `retrieval` + optional `scope_note` shape as `rag_search`,
+with grounded text in `answer` instead of raw `context`:
+
+```
+{"status": "ok", "pipeline": "rag-answer", "content_length": <int>,
+ "duration_s": <float>, "answer": "<grounded answer>", "retrieval": {...}}
+```
 
 ## rag_recon
 

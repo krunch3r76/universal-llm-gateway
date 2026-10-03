@@ -121,10 +121,6 @@ class ConditionEvaluator:
         if not condition or not condition.strip():
             return True  # No condition = always execute
 
-        named = evaluate_named_condition(condition, outputs, options)
-        if named is not None:
-            return named
-
         # Build evaluation context
         context = self._build_context(outputs, options)
 
@@ -188,79 +184,14 @@ def get_condition_evaluator() -> ConditionEvaluator:
     return _condition_evaluator
 
 
-KNOWN_CONDITION_NAMES: frozenset[str] = frozenset(
-    {
-        "scope_scoped",
-        "chunks_present",
-        "catalog_unavailable",
-    }
-)
-"""Named conditions the rag-search load path accepts. An unknown name fails load."""
-
-
-class ConditionDefinitionError(Exception):
-    """Non-retryable condition evaluation failure. ``name`` is the condition."""
-
-    def __init__(self, name: str, detail: str) -> None:
-        self.name = name
-        self.detail = detail
-        super().__init__(f"condition {name!r}: {detail}")
-
-
-def _chunks_present(outputs: dict[str, Any], _options: dict[str, Any]) -> bool:
-    for output in outputs.values():
-        payload = getattr(output, "json", None)
-        if isinstance(payload, dict) and payload.get("chunks"):
-            return True
-        if isinstance(output, dict) and output.get("chunks"):
-            return True
-    return False
-
-
-_NAMED_CONDITIONS = {
-    "scope_scoped": lambda _outputs, options: bool(
-        (options or {}).get("scope_override")
-    ),
-    "chunks_present": _chunks_present,
-    "catalog_unavailable": lambda _outputs, options: (options or {}).get(
-        "catalog_unavailable"
-    )
-    is True,
-}
-
-
-def evaluate_named_condition(
-    condition: str,
-    outputs: dict[str, Any],
-    options: dict[str, Any],
-) -> bool | None:
-    """Evaluate a known condition name.
-
-    Returns None when ``condition`` is not a registered name (caller falls
-    through to expression eval). A registered name that raises becomes
-    ``ConditionDefinitionError``.
-    """
-    name = (condition or "").strip()
-    predicate = _NAMED_CONDITIONS.get(name)
-    if predicate is None:
-        return None
-    try:
-        return bool(predicate(outputs, options))
-    except Exception as exc:
-        raise ConditionDefinitionError(name, str(exc) or type(exc).__name__) from exc
-
-
 def extract_condition_deps(condition: str) -> set[str]:
     """
     Extract referenced step names from a condition expression.
 
     Uses Python AST parsing to collect `Name` references and excludes safe
     builtins plus `options` (which is pipeline options context, not a step).
-    Named rag-search conditions are not step ids.
     """
     if not condition or not condition.strip():
-        return set()
-    if condition.strip() in KNOWN_CONDITION_NAMES:
         return set()
 
     try:
