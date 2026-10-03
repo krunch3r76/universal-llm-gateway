@@ -40,6 +40,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park impo
     park_conductor_hop_mission,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    backfill_no_progress_claimed_successor,
     consult_pending_continue_owed,
     fire_consult_pending_continue,
     fire_no_progress_producer_continue,
@@ -183,6 +184,8 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     # Before the mission-park short-circuit: a no-progress park with a
     # finished linked producer owes one harvest admit. Other park reasons
     # still stop here.
+    if backfill_no_progress_claimed_successor(row):
+        return True
     if no_progress_producer_continue_owed(row, closeout_tokens=closeout_tokens):
         return await fire_no_progress_producer_continue(row)
     if _mission_park_blocks_hop(row):
