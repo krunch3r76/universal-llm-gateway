@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from .db import query
+from .file_lookup_refusal import FILE_LOOKUP_STATUS, file_lookup_refusal
 from .trait_vocabulary import NON_LIVE_LIFECYCLE as _NON_LIVE_LIFECYCLE
 
 _LIVE_LIFECYCLE_SQL = (
@@ -316,7 +317,12 @@ def resolve_entity_reference(
       1. exact active entity row
       2. exact merged tombstone → ``merged_into`` redirect
       3. alias lookup (when ``resolve_aliases``)
+
+    A cortex file URI is refused before any of those lookups.
     """
+    refusal = file_lookup_refusal(ref)
+    if refusal is not None:
+        raise HTTPException(FILE_LOOKUP_STATUS, refusal)
     rows = query(
         conn,
         "SELECT id, lifecycle, attributes FROM entities WHERE id = ?",

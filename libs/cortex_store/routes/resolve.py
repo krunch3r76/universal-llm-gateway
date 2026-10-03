@@ -15,6 +15,7 @@ from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, query
+from ..file_lookup_refusal import FILE_LOOKUP_STATUS, file_lookup_refusal
 
 _resolve_logger = get_logger("cortex-api.resolve")
 
@@ -105,6 +106,13 @@ def resolve_cortex_uri(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        )
+
+    refusal = file_lookup_refusal(uri)
+    if refusal is not None:
+        raise HTTPException(
+            status_code=FILE_LOOKUP_STATUS,
+            detail=refusal,
         )
 
     with cortex_conn() as conn:
