@@ -12,6 +12,7 @@ import httpx
 
 from .admission import FrontierEndpointError
 from .dispatch_thread_bus_read import (
+    AgentBusGetError,
     bus_http_error_preview,
     format_bus_read_exc,
     get_agent_bus,
@@ -253,6 +254,17 @@ async def read_dispatch_thread_body_at_turn(
     qs = urlencode({"thread": thread, "turn_number": turn_number})
     try:
         resp = await get_agent_bus(f"/turns/by-number?{qs}")
+    except AgentBusGetError as wrap:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="dispatch_thread_id",
+            reason=(
+                f"could not read dispatch thread {thread!r} turn {turn_number}: "
+                f"{format_bus_read_exc(wrap.exc, retried=wrap.retried)}"
+            ),
+            status_code=503,
+            code="dispatch_thread_read_failed",
+        ) from wrap
     except (httpx.HTTPError, OSError) as exc:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -340,6 +352,17 @@ async def resolve_latest_dispatch_thread_turn(
     qs = urlencode({"thread": thread, "last": 1})
     try:
         resp = await get_agent_bus(f"/turns?{qs}")
+    except AgentBusGetError as wrap:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="dispatch_thread_id",
+            reason=(
+                f"could not read dispatch thread {thread!r}: "
+                f"{format_bus_read_exc(wrap.exc, retried=wrap.retried)}"
+            ),
+            status_code=503,
+            code="dispatch_thread_read_failed",
+        ) from wrap
     except (httpx.HTTPError, OSError) as exc:
         raise FrontierEndpointError(
             request_id=request_id,
