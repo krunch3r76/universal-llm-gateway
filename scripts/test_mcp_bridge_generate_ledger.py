@@ -28,6 +28,7 @@ from scripts.mcp_bridge_generate_ledger import (  # noqa: E402
     GenerateObserver,
     generate_ledger_path,
     read_generate_records,
+    read_received_execution_ids,
 )
 
 _EXEC = "b08ecb6d-4c1e-4b8e-9d4e-000000000001"
@@ -182,6 +183,74 @@ def test_never_raises_on_the_relay_hot_path(tmp_path: Path) -> None:
     off.on_request(_request(3, "team_dispatch", {"op": "generate"}))
     off.on_result(_result(3, _cdp_admit_payload()))
     assert read_generate_records("", spool_dir=tmp_path) == []
+
+
+def test_records_received_when_agent_wait_returns_qualifying_reply(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    """R1: wait/get/fetch that carries the reply marks the generate received."""
+    observer.on_request(
+        _request(1, "team_dispatch", {"op": "generate", "model": "cdp/opus-5.5"})
+    )
+    observer.on_result(_result(1, _cdp_admit_payload()))
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
+
+    observer.on_request(
+        _request(
+            2,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": "14692",
+                    "after_turn": 3,
+                    "execution_id": _EXEC,
+                    "completion": "proof_reply_from",
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    observer.on_result(
+        _result(
+            2,
+            {
+                "complete": True,
+                "qualifying_reply_turn": 4,
+                "producer": {"execution_id": _EXEC, "state": "terminal"},
+            },
+        )
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == {_EXEC}
+    # Fire rows unchanged.
+    assert [
+        r["execution_id"]
+        for r in read_generate_records("bb28fae31960-dd251b78", spool_dir=tmp_path)
+    ] == [_EXEC]
+
+
+def test_incomplete_wait_does_not_mark_received(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    observer.on_request(_request(1, "team_dispatch", {"op": "generate"}))
+    observer.on_result(_result(1, _cdp_admit_payload()))
+    observer.on_request(
+        _request(
+            2,
+            "agent_bus_read",
+            {"tool": "wait", "arguments": json.dumps({"thread": "14692"})},
+        )
+    )
+    observer.on_result(
+        _result(2, {"complete": False, "qualifying_reply_turn": None})
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
 
 
 def test_proxy_copy_loops_feed_the_observer(tmp_path: Path) -> None:
