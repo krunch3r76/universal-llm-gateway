@@ -1,4 +1,4 @@
-"""Resolve pipeline_options.register to rag-context prefix or whole-scope."""
+"""Resolve pipeline_options.register to a rag-search prefix or whole-scope."""
 
 from __future__ import annotations
 
