@@ -13,6 +13,7 @@ from systems.pipeline.core.step_controls import (  # noqa: E402
     RAG_CONTEXT_STEP_CONTROLS_ERROR,
     finalize_relay_pipeline_options,
 )
+
 from tools import _rag_search_exec  # noqa: E402
 
 _OK = {
