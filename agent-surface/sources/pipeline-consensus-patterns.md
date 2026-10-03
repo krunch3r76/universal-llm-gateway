@@ -215,7 +215,8 @@ async def _call_pipeline_with_options(
 Use a `--rag-pipeline` flag to have the `rag-context` pipeline supply assembled
 context to normal ask/consult models (query rewriting + parallel retrieval +
 RRF merge). Use `--models rag-search` (without `--rag-pipeline`) to route through
-the retrieval conductor, or call MCP `rag(op="search")` for direct HTTP search.
+the retrieval conductor, or MCP `rag(op="search")` (relays to `rag-search`). For
+direct RAG HTTP `/search` without the conductor, use builtin step `rag_api_search_v1`.
 *(Archived `rag-answer` was generation-on-top-of-context; prefer rag-search + your own generate step.)*
 
 ### Invariants

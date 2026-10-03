@@ -222,7 +222,7 @@ and routes to the pipeline executor transparently.
 **Current service pipelines**:
 | `rag-context` | Query rewrite → parallel RAG retrieval + RRF merge → returns context chunks |
 | `rag-search` | Retrieval conductor (`pipelines/rag_search/v1/`) — prefer over archived `rag-answer` |
-| MCP `rag(op="search")` | Direct RAG HTTP `/search` when a pipeline step is not needed |
+| MCP `rag(op="search")` | MCP entry point that relays to the `rag-search` conductor pipeline |
 
 ```python
 # Call rag-context from a handler — injects retrieved chunks as context
