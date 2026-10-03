@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_UNREGISTERED_HANDLER_MARKER = "No handler for type"
+_UNREGISTERED_HANDLER_MARKER = "': No handler for type '"
 _UNKNOWN_STEP_TYPE_RE = re.compile(r"No handler for type '([^']+)'")
 
 
@@ -73,7 +73,11 @@ def _apply_keep_last_good_on_reload(
         should_filter, _ = fresh._should_filter_pipeline(prior)
         if should_filter:
             continue
+        # Re-validation records unknown model refs onto the fresh registry.
+        # Those rows describe the prior spec, not the YAML just loaded.
+        saved_catalog_skips = list(fresh._catalog_skips)
         revalidation_errors = fresh._validator._validate_pipeline(prior)
+        fresh._catalog_skips = saved_catalog_skips
         if revalidation_errors:
             continue
         unknown_type = _extract_unknown_step_type(pipeline_errors) or "unknown"

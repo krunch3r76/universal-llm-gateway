@@ -14,6 +14,7 @@ from systems.pipeline.registry.core import PipelineRegistry
 pytestmark = pytest.mark.offline
 
 _OK_MODEL = "phi-4-q4-k-m-16384"
+_OTHER_MODEL = "phi-4-q4-k-m-32768"
 
 _OK_YAML = """
 schema_version: 6
@@ -246,19 +247,71 @@ def test_reload_drops_when_handler_and_catalog_errors_mixed(tmp_path: Path) -> N
 def test_reload_does_not_restore_when_prior_models_unavailable(
     tmp_path: Path,
 ) -> None:
+    """New YAML fails only on an unregistered handler; the prior model is gone.
+
+    The new model_ref stays available so the loader validates (and does not
+    filter) the broken YAML. The old model id is unavailable, so
+    ``_should_filter_pipeline(prior)`` is true and keep-last-good must not
+    restore.
+    """
     root = tmp_path / "pipelines"
     _write_tree(root)
+    models = (
+        "models:\n"
+        f"  ok:\n    model: {_OK_MODEL}\n"
+        f"  other:\n    model: {_OTHER_MODEL}\n"
+    )
+    _write(root / "ok_domain" / "models.yaml", models)
+    available = {_OK_MODEL: True, _OTHER_MODEL: True}
     registry = PipelineRegistry(
         search_paths=[str(root)],
         config_base_dir=root.parent,
         snapshot_dir=tmp_path / "snap",
-        is_model_available=lambda _model_id: True,
+        is_model_available=lambda model_id: available.get(model_id, False),
     )
     registry.load()
     assert "ok-pipe" in registry.pipelines
 
-    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}")
+    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}").replace(
+        "model_ref: ok", "model_ref: other"
+    )
     _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
-    registry._is_model_available = lambda _model_id: False
+    available[_OK_MODEL] = False
     registry.reload_pipelines()
     assert "ok-pipe" not in registry.pipelines
+    assert any(
+        "[ok-pipe] " in err and "': No handler for type '" in err
+        for err in registry._validation_errors
+    )
+
+
+def test_revalidate_prior_does_not_append_catalog_skips(tmp_path: Path) -> None:
+    """Prior alias removed from models.yaml must not land in fresh catalog_skips.
+
+    New YAML points at a live alias and an unregistered step type, so the
+    restore path re-validates the prior spec. That re-validation sees the
+    stale alias and must not record it on the fresh registry.
+    """
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    models = (
+        "models:\n"
+        f"  ok:\n    model: {_OK_MODEL}\n"
+        f"  other:\n    model: {_OTHER_MODEL}\n"
+    )
+    _write(root / "ok_domain" / "models.yaml", models)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+
+    _write(
+        root / "ok_domain" / "models.yaml",
+        f"models:\n  other:\n    model: {_OTHER_MODEL}\n",
+    )
+    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}").replace(
+        "model_ref: ok", "model_ref: other"
+    )
+    _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
+    registry.reload_pipelines()
+    assert "ok-pipe" not in registry.pipelines
+    assert all(row.get("alias") != "ok" for row in registry.catalog_skips)
