@@ -26,7 +26,6 @@ FALLBACK_WALL_CAP_S = 1200.0
 ALLOWED_ARGUMENT_KEYS = frozenset(
     {
         "op",
-        "purpose",
         "model",
         "contract",
         "prompt",

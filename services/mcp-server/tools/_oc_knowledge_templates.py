@@ -64,7 +64,7 @@ AGENT_BUS_COMPACT = """\
 **Recipient (`to`) — canonical bus addresses only:** `cursor` (every cursor seat: IDE and SDK), `web-anthropic`, `api-{{provider}}`, `charter-runner`, `all`.
 A retired executor role name is not a bus address. Address cursor work to `cursor`.
 **Arm code work (repo write, build, deploy) → `team_dispatch`, ¬ `send`:**
-`team_dispatch(model=cdp/opus-5, …)` or `team_dispatch(seat=cursor-sdk, job=implement|freeform, lane=B, …)`.
+`team_dispatch(model=cdp/opus-5, …)` or `team_dispatch(seat=cursor-sdk, contract=implement|none, lane=B, …)`.
 The bus turn from `request` does not enqueue a worker.
 **CSE continuity hop (existing private lane) → `hop`, ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`:**
 `agent_bus(tool="hop", arguments='{{"thread": "ID", "reason": "mcp-restart-healthy", "from": "web-anthropic"}}')`

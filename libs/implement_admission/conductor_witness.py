@@ -110,7 +110,11 @@ def _missing_witness_message(
             )
         return "nest implement commits or hang L1==HEAD (away G5; a:37198)"
     if row_id == "G6":
-        return "hang R1 pre-land review URI (`cdp/opus-5` job=delivery-review on lane branch before merge)"
+        return (
+            "hang R1 pre-land review URI (team_dispatch op=generate, "
+            "contract=delivery-review, model=cdp/opus-5 or cdp/opus-5.5, …; "
+            "put job=delivery-review on a prompt line, not as a dispatch argument)"
+        )
     if row_id == "G7":
         return "land L-sha on master after G6 review harvest"
     if row_id.startswith("R"):

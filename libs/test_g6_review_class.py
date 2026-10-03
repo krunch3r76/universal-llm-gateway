@@ -151,6 +151,11 @@ def test_review_class_refuses_nest_lane_and_packet() -> None:
     assert not is_review_class_call({**_REVIEW, "purpose": "ask"}, seat_thread="12988")
 
 
+def test_purpose_key_not_in_allowed_argument_keys() -> None:
+    """purpose is refused as an unknown key, not only via the explicit purpose check."""
+    assert not is_review_class_call({**_REVIEW, "purpose": "review"}, seat_thread="12988")
+
+
 def test_non_team_dispatch_is_not_refused() -> None:
     message = {
         "jsonrpc": "2.0",
