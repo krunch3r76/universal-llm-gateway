@@ -463,7 +463,7 @@ At merge time the pipeline applies reciprocal rank fusion across pools, then met
 <!-- AUTHORED -->
 ### Stargate Pipeline Registration
 
-Contextualization and knowledge extraction are **Stargate-registered pipelines**, not inline LLM calls. `contextualize.py` submits to the `rag-contextualize` pipeline; `knowledge_extractor.py` submits to `rag-extraction` and polls for completion. Pipeline YAML lives under `pipelines/rag_contextualize/` and `pipelines/rag_extraction/`; Stargate loads them at startup and exposes them as virtual model IDs on `/v1/chat/completions`.
+Contextualization and knowledge extraction are **Stargate-registered pipelines**, not inline LLM calls. `contextualize.py` submits to the `rag-contextualize` pipeline; `knowledge_extractor.py` submits to `rag-extraction` and polls for completion. Pipeline YAML lives under `pipelines/rag_contextualize/v1/` and `pipelines/rag_extraction/v2/` (domain-root `models.yaml` for model refs); Stargate loads them at startup and exposes them as virtual model IDs on `/v1/chat/completions`.
 
 The RAG service discovers pipeline availability through the same Stargate `/v1/models` catalog used for embedding models. Index-time submissions coordinate capacity through `AdmissionGate` (contextualize) and `ExtractionAdmissionGate` (extraction worker), subscribing to Stargate coordination signals rather than using hand-rolled concurrency caps.
 

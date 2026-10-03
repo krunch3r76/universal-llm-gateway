@@ -25,7 +25,7 @@ steps:
   - name: contextualize
     type: generate
     model_ref: contextualize
-    prompt_ref: rag_contextualize.contextualize_chunk
+    prompt_ref: rag_contextualize.v1.contextualize_chunk
     # Stall timeout: resets whenever any map iteration completes.
     # Covers cold-model load; not a file-size cap. Stargate queues the rest.
     timeout_seconds: 900

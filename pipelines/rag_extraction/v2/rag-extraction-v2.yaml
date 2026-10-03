@@ -17,7 +17,7 @@ steps:
   - name: extract_batch
     type: generate
     model_ref: extraction
-    prompt_ref: rag_extraction.extract_batch
+    prompt_ref: rag_extraction.v2.extract_batch
     # Stall timeout: resets whenever any map iteration completes (liveness under queue pressure).
     # Under concurrent ingest load (3 docs × 8 concurrency), late iterations queue 23–40s before
     # inference. 900s gives ~22 stall cycles without any completion — effectively never fires.
