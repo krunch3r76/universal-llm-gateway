@@ -2,6 +2,7 @@
 
 from .cursor_capabilities import (
     CARD_TO_LIVE_MODEL_ID,
+    CURSOR_BARE_ALIASES,
     CURSOR_DENIED_MODELS,
     CURSOR_MODEL_CAPABILITIES,
     DESCRIPTOR_VERSION,
@@ -13,6 +14,7 @@ from .cursor_capabilities import (
     default_variant,
     effective_knobs,
     effort_knob_name,
+    fold_cursor_bare_id,
     is_cursor_model_denied,
     live_model_id,
     suggest_effort_knobs,
@@ -26,6 +28,7 @@ CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
 __all__ = [
     "CARD_TO_LIVE_MODEL_ID",
+    "CURSOR_BARE_ALIASES",
     "CURSOR_DENIED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",
     "DESCRIPTOR_VERSION",
@@ -34,6 +37,7 @@ __all__ = [
     "canonical_cursor_bare_id",
     "catalog_divergences",
     "context_window_tokens",
+    "fold_cursor_bare_id",
     "default_variant",
     "effective_knobs",
     "effort_knob_name",

@@ -40,12 +40,13 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 20
+    assert len(CURSOR_MODEL_CAPABILITIES) == 21
     opus5 = CURSOR_MODEL_CAPABILITIES["claude-opus-5"]
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
     assert opus55.knobs == opus5.knobs
     assert opus55.fixed_params == opus5.fixed_params
     assert opus55.default_variant == opus5.default_variant
+    assert opus55.probed_at == opus5.probed_at
     sonnet5 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5"]
     sonnet55 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5-5"]
     assert sonnet55.knobs == sonnet5.knobs

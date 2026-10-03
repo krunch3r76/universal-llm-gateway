@@ -877,7 +877,7 @@ def test_packet_reference_forbids_land_disposition_before_done() -> None:
     text = packet.read_text(encoding="utf-8")
     assert "do not declare `land_disposition`" in text
     assert "lane_retained_for_mission" in text
-    assert "| G5 implement | `agent` | `implement` \\| `pure-mechanical` | path-explicit commit / `land_disposition` |" in text
+    assert "| G5 implement | `agent` | `implement` \\| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |" in text
     skill = packet.parent / "SKILL.md"
     body = skill.read_text(encoding="utf-8")
     assert len(body.encode()) <= 4096

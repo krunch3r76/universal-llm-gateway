@@ -64,7 +64,7 @@ async def wait_for_induction_panel(
                 reason="panel_timeout",
             )
             raise SkillDeliveryError(
-                "induction Context → Skills panel not ready before work prompt: "
+                "induction Context → Skills panel not ready after combined submit: "
                 f"required={required} observed={last_observed} "
                 f"open_grid_reads={attempts} elapsed_s={elapsed:.1f} — fail closed "
                 "(decision:web-seat-skill-body-delivery)"

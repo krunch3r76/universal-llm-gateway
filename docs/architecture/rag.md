@@ -454,7 +454,7 @@ Inside the gate, `_index_file_impl` runs the indexing funnel: chunk → contextu
 
 **Pool A (dense + sparse hybrid)** runs inside the RAG service `/search` endpoint: ChromaDB cosine similarity on precomputed query embeddings, merged with a BM25 sidecar via mini-RRF in `search_scope/bm25_sidecar.py`. It finds semantically related chunks even when query vocabulary differs from corpus text.
 
-**Pool B (vocabulary-aware sparse)** is orchestrated by the pipeline layer (`rag-context`, `rag-answer`): FTS5 BM25 queries built from phrase factoring and corpus-hint IDF expansion, dispatched with `sparse_only=True` so no embedding model is involved. Pool B searches the full corpus independently — it does not re-score Pool A hits.
+**Pool B (vocabulary-aware sparse)** is orchestrated by the pipeline layer (`rag-context`, `rag-search`): FTS5 BM25 queries built from phrase factoring and corpus-hint IDF expansion, dispatched with `sparse_only=True` so no embedding model is involved. Pool B searches the full corpus independently — it does not re-score Pool A hits.
 
 At merge time the pipeline applies reciprocal rank fusion across pools, then metadata boost, source habituation, and optional Pool-B-source swap. The RAG service exposes the low-level `/search` primitive; the two-pool architecture lives in the pipeline handlers that call it.
 

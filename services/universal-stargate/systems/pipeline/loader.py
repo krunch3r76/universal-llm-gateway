@@ -6,6 +6,7 @@ the referenced YAML is loaded as a ``SubPipelineSpec`` and attached to the
 step for later DAG expansion.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -142,6 +143,7 @@ def resolve_sub_pipelines(
     steps: list,
     yaml_dir: Path,
     visited: set[str],
+    on_open: Callable[[Path], None] | None = None,
 ) -> None:
     """Recursively load sub-pipeline YAMLs referenced by ``pipeline_ref``.
 
@@ -152,6 +154,7 @@ def resolve_sub_pipelines(
         steps: Steps to scan for pipeline_ref fields.
         yaml_dir: Directory containing the parent YAML (for relative resolution).
         visited: Paths already being loaded (cycle detection).
+        on_open: Called with the resolved sub-pipeline path before it is read.
     """
     for step in steps:
         pipeline_ref: str | None = step.get_domain_field("pipeline_ref")
@@ -173,6 +176,8 @@ def resolve_sub_pipelines(
             )
 
         visited.add(path_key)
+        if on_open is not None:
+            on_open(sub_path)
         content = read_text_preserving_timestamps(sub_path)
         data = yaml.safe_load(content) or {}
         try:
@@ -180,7 +185,7 @@ def resolve_sub_pipelines(
         except Exception as exc:
             raise ValueError(f"Invalid sub-pipeline spec {sub_path}: {exc}") from exc
 
-        resolve_sub_pipelines(sub_spec.steps, sub_path.parent, visited)
+        resolve_sub_pipelines(sub_spec.steps, sub_path.parent, visited, on_open)
 
         step.__pydantic_extra__["_sub_pipeline_spec"] = sub_spec
         visited.discard(path_key)

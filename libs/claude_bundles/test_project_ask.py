@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -89,7 +89,7 @@ def test_finalize_scrape_body_drops_37508_chrome_keeps_command() -> None:
         "Used toys integration, loaded tools, loaded a skill\n"
         "\n"
         "VERDICT: Change\n"
-        "not `$ULG_REPO`: HOME=\"$(getent passwd \"$(id -un)\" | cut -d: -f6)\" "
+        'not `$ULG_REPO`: HOME="$(getent passwd "$(id -un)" | cut -d: -f6)" '
         "/mnt/torus/projects/universal-llm-gateway/scripts/cursor/"
         "install-ecosystem-plugin.sh\n"
         "3 minutes ago"
@@ -104,16 +104,7 @@ def test_finalize_scrape_body_drops_37508_chrome_keeps_command() -> None:
 
 
 def test_finalize_scrape_body_keeps_code_block_brace_lines() -> None:
-    raw = (
-        "Here is the patch:\n"
-        "```python\n"
-        "def f(x):\n"
-        "    return x\n"
-        "}\n"
-        "```\n"
-        "---\n"
-        "done\n"
-    )
+    raw = "Here is the patch:\n```python\ndef f(x):\n    return x\n}\n```\n---\ndone\n"
     cleaned = finalize_scrape_body(raw)
     assert "}\n```" in cleaned.replace("\r", "")
     assert "---" in cleaned
@@ -374,18 +365,13 @@ async def test_project_ask_on_page_harvest_incomplete_preserves_body() -> None:
 
 @pytest.mark.asyncio
 async def test_send_prompt_induction_fires_for_review_floor() -> None:
-    """Review-purpose sealed prompt still gets the induction turn (not mission-gated)."""
+    """Marked review prompt submits Use-lines and the packet in one message."""
     from claude_bundles.chat_context_skills import LoadedSkillsReport
     from claude_bundles.project_ask import send_prompt
 
     page = AsyncMock()
     composer = AsyncMock()
-    inserted: list[str] = []
-
-    async def _insert(text: str) -> None:
-        inserted.append(text)
-
-    page.keyboard.insert_text = _insert
+    submit = AsyncMock()
     report = LoadedSkillsReport(
         url="https://claude.ai/chat/x",
         skills=(
@@ -416,7 +402,7 @@ async def test_send_prompt_induction_fires_for_review_floor() -> None:
         ),
         patch(
             "claude_bundles.project_ask._submit_composer_draft",
-            new=AsyncMock(),
+            new=submit,
         ),
         patch(
             "claude_bundles.project_ask._insert_prompt_text",
@@ -440,11 +426,11 @@ async def test_send_prompt_induction_fires_for_review_floor() -> None:
         ),
     ):
         await send_prompt(page, text)
-    assert inserted == [
-        "Use the reasoning-posture skill\n"
-        "Use the consult-posture skill\n"
-        "Use the hypothesize-simulate skill"
-    ]
+    assert submit.await_count == 1
+    draft = submit.await_args.kwargs["draft_text"]
+    assert "Use the reasoning-posture skill" in draft
+    assert "Use the hypothesize-simulate skill" in draft
+    assert "## Review packet" in draft
 
 
 _SEALED = (
@@ -496,31 +482,21 @@ def _induction_patches(page_composer, report, *, extra=()):
             "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
             return_value=["reasoning-posture", "hypothesize-simulate"],
         ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.check_delivery_channels_before_submit",
+            return_value=[],
+        ),
         *extra,
     )
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
-    """a:37267 — work body pastes only after the skill-load turn has idled."""
+async def test_marked_hop_prompt_submits_use_lines_and_body_once() -> None:
+    """a:37716 AC1 — one submit carries Use-lines, hop header, and birth id."""
     from claude_bundles.chat_context_skills import LoadedSkillsReport
     from claude_bundles.project_ask import send_prompt
 
     page, composer = _induction_page()
-    order: list[str] = []
-    ack = {"n": 1, "body": "There's no substantive question", "body_len": 34}
-    harvest = AsyncMock(return_value={"n": 0, "body_len": 0})
-
-    async def _capture(_page, *, before):
-        order.append(f"capture:{before.get('n')}")
-        return ack
-
-    async def _insert(*_a, **_k):
-        order.append("work")
-        return [], []
-
-    insert = AsyncMock(side_effect=_insert)
-
     report = LoadedSkillsReport(
         url="https://claude.ai/cowork/cse_x",
         skills=("reasoning-posture", "hypothesize-simulate"),
@@ -530,39 +506,263 @@ async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
         selectors=(),
         raw_section_text="",
     )
+    submit = AsyncMock()
+    prompt = (
+        "<!--cdp-required-skills:reasoning-posture,hypothesize-simulate-->\n"
+        "# Hop on agent-bus:14863\n"
+        "successor_birth_id: 98d356f4\n"
+    )
+    with contextlib.ExitStack() as stack:
+        for ctx in _induction_patches(
+            composer,
+            report,
+            extra=(
+                patch("claude_bundles.project_ask._submit_composer_draft", new=submit),
+            ),
+        ):
+            stack.enter_context(ctx)
+        baseline = await send_prompt(page, prompt, await_induction_reply=True)
+    assert baseline is None
+    assert submit.await_count == 1
+    draft = submit.await_args.kwargs["draft_text"]
+    assert "Use the reasoning-posture skill" in draft
+    assert "Use the hypothesize-simulate skill" in draft
+    assert "# Hop on agent-bus:" in draft
+    assert "successor_birth_id: 98d356f4" in draft
+
+
+@pytest.mark.asyncio
+async def test_combined_message_does_not_wait_for_induction_reply() -> None:
+    """a:37716 AC2 — await_induction_reply does not harvest a second turn."""
+    from claude_bundles.chat_context_skills import LoadedSkillsReport
+    from claude_bundles.project_ask import project_ask_on_page, send_prompt
+
+    page, composer = _induction_page()
+    report = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture", "hypothesize-simulate"),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    capture = AsyncMock()
     with contextlib.ExitStack() as stack:
         for ctx in _induction_patches(
             composer,
             report,
             extra=(
                 patch(
-                    "claude_bundles.project_ask.harvest_assistant",
-                    new=harvest,
-                ),
-                patch(
                     "claude_bundles.induction_reply_baseline.capture_induction_reply_baseline",
-                    new=_capture,
-                ),
-                patch(
-                    "claude_bundles.project_ask._insert_prompt_text",
-                    new=insert,
+                    new=capture,
                 ),
             ),
         ):
             stack.enter_context(ctx)
         baseline = await send_prompt(page, _SEALED, await_induction_reply=True)
-    assert baseline == ack
-    assert order == ["capture:0", "work"]
-    harvest.assert_awaited_once_with(page, min_msg_chars=10)
+    assert baseline is None
+    capture.assert_not_awaited()
+
+    caller = {"n": 0, "body_len": 0, "body": ""}
+    wait = AsyncMock(
+        return_value={"body": "desk answer", "body_len": 40, "n": 1, "url": page.url}
+    )
+    page.url = "https://claude.ai/cowork/cse_x"
+    with (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value=caller),
+        ),
+        patch(
+            "claude_bundles.project_ask.send_prompt",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("claude_bundles.project_ask.wait_assistant_reply", new=wait),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=type(
+                    "H",
+                    (),
+                    {"content": "desk answer", "provenance": None},
+                )()
+            ),
+        ),
+        patch("claude_bundles.project_ask._attest_model", return_value=None),
+    ):
+        result = await project_ask_on_page(
+            page,
+            _SEALED,
+            project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
+            delete_after=False,
+            archive_path=None,
+        )
+    assert result.body == "desk answer"
+    assert wait.await_count == 1
+    assert wait.await_args.kwargs["before"] == caller
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_does_not_paste_work_when_induction_never_idles() -> None:
-    """Idle timeout on the skill-load turn must not submit the author body."""
+async def test_unmarked_prompt_keeps_single_body_submit() -> None:
+    """a:37716 AC3 — no marker: one submit, no induction panel."""
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    submit = AsyncMock()
+    panel = AsyncMock()
+    with (
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch("claude_bundles.project_ask._submit_composer_draft", new=submit),
+        patch(
+            "claude_bundles.project_ask._insert_prompt_text",
+            new=AsyncMock(return_value=([], [])),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=panel,
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+    ):
+        await send_prompt(page, "plain body, no marker\n")
+    assert submit.await_count == 1
+    assert submit.await_args.kwargs["draft_text"] == "plain body, no marker\n"
+    panel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unmarked_induction_slugs_still_split_submit() -> None:
+    """a:37716 AC3 — unmarked channel slugs keep the induction-then-body submits."""
     from claude_bundles.chat_context_skills import LoadedSkillsReport
     from claude_bundles.project_ask import send_prompt
 
     page, composer = _induction_page()
+    report = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture",),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    submit = AsyncMock()
+    with (
+        patch(
+            "claude_bundles.cowork_skill_delivery.partition_cdp_skills",
+            return_value=(["reasoning-posture"], []),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.parse_cdp_sealed_skill_channels",
+            return_value=(["reasoning-posture"], [], "body"),
+        ),
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch("claude_bundles.project_ask._submit_composer_draft", new=submit),
+        patch(
+            "claude_bundles.project_ask._insert_prompt_text",
+            new=AsyncMock(return_value=([], [])),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=AsyncMock(return_value=report),
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+            return_value=["reasoning-posture"],
+        ),
+    ):
+        await send_prompt(page, "/reasoning-posture\nbody")
+    assert submit.await_count == 2
+    assert (
+        "Use the reasoning-posture skill"
+        in submit.await_args_list[0].kwargs["draft_text"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_marked_empty_induction_list_is_one_body_submit() -> None:
+    """a:37716 AC4 — marker with no induction slugs does not open a Use-line turn."""
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    submit = AsyncMock()
+    panel = AsyncMock()
+    text = "<!--cdp-required-skills:path-sim-->\ninline work\n"
+    with (
+        patch(
+            "claude_bundles.cowork_skill_delivery.partition_cdp_skills",
+            return_value=([], ["path-sim"]),
+        ),
+        patch("claude_bundles.composer_session_skills.require_compose_surface"),
+        patch(
+            "claude_bundles.project_ask.find_composer",
+            new=AsyncMock(return_value=composer),
+        ),
+        patch(
+            "claude_bundles.composer_submit.clear_composer_verified",
+            new=AsyncMock(),
+        ),
+        patch("claude_bundles.project_ask._submit_composer_draft", new=submit),
+        patch(
+            "claude_bundles.project_ask._insert_prompt_text",
+            new=AsyncMock(return_value=([], [])),
+        ),
+        patch(
+            "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+            new=panel,
+        ),
+        patch(
+            "claude_bundles.skill_context_receipt.record_post_submit_skills_receipt",
+            new=AsyncMock(),
+        ),
+    ):
+        await send_prompt(page, text)
+    assert submit.await_count == 1
+    assert submit.await_args.kwargs["draft_text"] == text
+    panel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
+    """Marked prompts no longer idle-wait before the body (a:37267 split removed by a:37716).
+
+    The split-turn baseline still applies to unmarked induction submits; a marked
+    prompt returns None and does not capture an induction ack.
+    """
+    from claude_bundles.chat_context_skills import LoadedSkillsReport
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    capture = AsyncMock(
+        return_value={"n": 1, "body": "There's no substantive question", "body_len": 34}
+    )
     report = LoadedSkillsReport(
         url="https://claude.ai/cowork/cse_x",
         skills=("reasoning-posture", "hypothesize-simulate"),
@@ -572,34 +772,62 @@ async def test_send_prompt_does_not_paste_work_when_induction_never_idles() -> N
         selectors=(),
         raw_section_text="",
     )
-    insert = AsyncMock(return_value=([], []))
-
-    async def _capture(_page, *, before):
-        del before
-        raise HarvestIncompleteError(
-            "induction still streaming", body="Loaded 2 skills"
-        )
-
     with contextlib.ExitStack() as stack:
         for ctx in _induction_patches(
             composer,
             report,
             extra=(
                 patch(
-                    "claude_bundles.project_ask.harvest_assistant",
-                    new=AsyncMock(return_value={"n": 0}),
-                ),
-                patch(
                     "claude_bundles.induction_reply_baseline.capture_induction_reply_baseline",
-                    new=_capture,
+                    new=capture,
                 ),
-                patch("claude_bundles.project_ask._insert_prompt_text", new=insert),
             ),
         ):
             stack.enter_context(ctx)
-        with pytest.raises(HarvestIncompleteError, match="induction still streaming"):
+        baseline = await send_prompt(page, _SEALED, await_induction_reply=True)
+    assert baseline is None
+    capture.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> None:
+    """Panel failure after combined submit → SkillReceiptUnverifiedError (a:37716).
+
+    The message is already submitted; channel attest does not run.
+    """
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
+    from claude_bundles.project_ask import send_prompt
+
+    page, composer = _induction_page()
+    submit = AsyncMock()
+    attest = MagicMock()
+    with contextlib.ExitStack() as stack:
+        for ctx in _induction_patches(
+            composer,
+            report=AsyncMock(),
+            extra=(
+                patch("claude_bundles.project_ask._submit_composer_draft", new=submit),
+                patch(
+                    "claude_bundles.skill_induction_panel.wait_for_induction_panel",
+                    new=AsyncMock(side_effect=RuntimeError("panel closed")),
+                ),
+                patch(
+                    "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
+                    new=attest,
+                ),
+                patch(
+                    "claude_bundles.cowork_skill_delivery.check_delivery_channels_before_submit",
+                    return_value=[],
+                ),
+            ),
+        ):
+            stack.enter_context(ctx)
+        with pytest.raises(SkillReceiptUnverifiedError, match="panel closed"):
             await send_prompt(page, _SEALED, await_induction_reply=True)
-    insert.assert_not_awaited()
+    assert submit.await_count == 1
+    draft = submit.await_args.kwargs["draft_text"]
+    assert "Question. Is the desk memo" in draft
+    attest.assert_not_called()
 
 
 def test_induction_ack_is_not_complete_against_its_own_baseline() -> None:

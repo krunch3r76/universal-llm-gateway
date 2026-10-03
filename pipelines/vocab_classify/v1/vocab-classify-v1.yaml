@@ -33,7 +33,7 @@ steps:
     source_type: rag_corpus_hints
 
   - name: retrieve_samples
-    type: rag_search_v1
+    type: rag_api_search_v1
     map_over:
       row: load_hints.json.scopes
     map_inputs:

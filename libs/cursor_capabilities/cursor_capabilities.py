@@ -15,6 +15,7 @@ _FULL_EFFORT: Final[tuple[str, ...]] = WIRE_LADDER
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CURSOR_BARE_ALIASES",
     "CURSOR_DENIED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",
     "DESCRIPTOR_VERSION",
@@ -23,6 +24,7 @@ __all__ = [
     "CARD_TO_LIVE_MODEL_ID",
     "canonical_cursor_bare_id",
     "catalog_divergences",
+    "fold_cursor_bare_id",
     "live_model_id",
     "default_variant",
     "effort_knob_name",
@@ -170,6 +172,9 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     # knob surface as claude-opus-5 until a ListModels probe diverges.
     # API adaptive thinking cannot be turned off; the thinking knob stays so
     # this card remains interchangeable with claude-opus-5 at admission.
+    # probed_at inherits the claude-opus-5 ListModels stamp (2026-10-03):
+    # admit requires a non-null stamp, and this id is a live SDK model, not a
+    # draft row. Re-stamp if a later probe diverges knobs or default_variant.
     "claude-opus-5-5": ModelCapability(
         knobs={
             "thinking": KnobSpec(accepted=("false", "true"), default="true"),
@@ -186,6 +191,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": "false",
         },
         instruction_profile="reasoner",
+        probed_at="2026-10-03",
     ),
     "claude-opus-4-8": ModelCapability(
         knobs={
@@ -409,6 +415,27 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
 # Card id → ListModels id when they differ.
 CARD_TO_LIVE_MODEL_ID: Final[dict[str, str]] = {"auto": "default"}
 
+# Spelling aliases → CURSOR_MODEL_CAPABILITIES keys. Applied after cursor/
+# strip + lowercase. Hyphen and dotted vendor slugs both fold.
+CURSOR_BARE_ALIASES: Final[dict[str, str]] = {
+    "fable-5.1": "claude-fable-5-1",
+    "fable-5": "claude-fable-5",
+    "opus-5": "claude-opus-5",
+    "opus-5.5": "claude-opus-5-5",
+    "opus-5-5": "claude-opus-5-5",
+    "sonnet-5": "claude-sonnet-5",
+    "sonnet-5.5": "claude-sonnet-5-5",
+    "haiku-4.5": "claude-haiku-4-5",
+}
+
+
+def fold_cursor_bare_id(bare: str) -> str:
+    """Map a lowercase bare id through ``CURSOR_BARE_ALIASES`` (identity if absent)."""
+    lowered = bare.lower()
+    if lowered.startswith("cursor/"):
+        lowered = lowered.removeprefix("cursor/")
+    return CURSOR_BARE_ALIASES.get(lowered, lowered)
+
 
 def live_model_id(card_id: str) -> str:
     """ListModels id for a capability-card id (identity when unmapped)."""
@@ -425,7 +452,7 @@ def canonical_cursor_bare_id(model: str) -> str:
             f"model {parsed.original!r} has provider {parsed.provider!r}; "
             f"cursor canonicalization accepts bare ids or 'cursor/' prefix only"
         )
-    return parsed.api_model_id.lower()
+    return fold_cursor_bare_id(parsed.api_model_id.lower())
 
 
 def is_cursor_model_denied(model: str) -> bool:
@@ -436,7 +463,7 @@ def is_cursor_model_denied(model: str) -> bool:
 
 def supported_knobs(model_id: str) -> Mapping[str, KnobSpec]:
     """Return knob specs for a canonical Cursor wire model id."""
-    cap = CURSOR_MODEL_CAPABILITIES.get(model_id)
+    cap = CURSOR_MODEL_CAPABILITIES.get(fold_cursor_bare_id(model_id))
     if cap is None:
         return {}
     return cap.knobs
@@ -444,7 +471,7 @@ def supported_knobs(model_id: str) -> Mapping[str, KnobSpec]:
 
 def default_variant(model_id: str) -> Mapping[str, str]:
     """Return the catalog default variant for a canonical Cursor wire model id."""
-    cap = CURSOR_MODEL_CAPABILITIES.get(model_id)
+    cap = CURSOR_MODEL_CAPABILITIES.get(fold_cursor_bare_id(model_id))
     if cap is None:
         return {}
     return cap.default_variant

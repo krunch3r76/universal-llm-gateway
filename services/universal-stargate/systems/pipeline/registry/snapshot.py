@@ -8,15 +8,19 @@ before-walk values only when both pairs are equal. A YAML file created during
 the walk is therefore not stored under the post-write fingerprints with a
 build that omitted it. The snapshot file is reused when the source fingerprint
 matches. Inside that file, an entry is reused only when its availability
-decisions still hold and its definition fingerprint matches the pipeline YAML
-bytes and the handler-registry names of this process. Entries written under
-the older availability-only key are skipped, so a flap does not pay one full
-build per restart and a stale build cannot replace a walk that includes a
+decisions still hold and its definition fingerprint matches the YAML bytes
+the loader walk opens (including ``pipeline_ref`` sub-pipelines) and the
+handler code identity of this process. Entries written under the older
+availability-only key are skipped, so a flap does not pay one full build
+per restart and a stale build cannot replace a walk that includes a
 pipeline the stale build omitted.
 
-This does not guarantee (b) handler code identity, where ``validate()`` can
-change without a name change, or (c) ``pipeline_ref`` sub-pipeline files
-missing from the fingerprint.
+(b) handler code identity is the bytes of ``systems/pipeline`` ``*.py`` files
+plus ``*.py`` under each handler class module directory (MRO, site-packages
+excluded). Helpers under ``libs/`` that ``validate`` calls are not covered.
+(c) sub-pipeline files opened by the walk are covered. A byte-identical
+restore after an edit made mid-walk still matches the before-walk
+fingerprints (low, accepted).
 
 Bump ``SNAPSHOT_VERSION`` when the persisted state shape or load semantics
 change. A mismatch falls through to a full build.
@@ -25,11 +29,13 @@ change. A mismatch falls through to a full build.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from universal_logging import get_logger
 
 from ..core.schemas import PipelineSpec
@@ -43,6 +49,7 @@ logger = get_logger(__name__)
 SNAPSHOT_VERSION = 1
 _MAX_AVAILABILITY_ENTRIES = 4
 _ENV_SNAPSHOT_DIR = "STARGATE_PIPELINE_REGISTRY_SNAPSHOT_DIR"
+_EXCLUDED_PIPELINE_YAML = frozenset({"prompts.yaml", "models.yaml", "categories.yaml"})
 
 
 def default_snapshot_dir() -> Path:
@@ -92,13 +99,180 @@ def source_fingerprint(registry: PipelineRegistry) -> str:
             lines.append(f"empty:{resolved}")
         for yaml_path in files:
             rel = yaml_path.relative_to(resolved).as_posix()
+            # Accepted residual (cortex a:37721, CARRY 5): fingerprint uses
+            # size+mtime_ns only — a file edited mid-walk then restored with
+            # identical bytes and mtime_ns (e.g. touch -r) still matches.
+            # Content hashing would require one read per YAML per boot.
             stat = yaml_path.stat()
             lines.append(f"{resolved}:{rel}:{stat.st_size}:{stat.st_mtime_ns}")
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
+def _resolve_search_path(registry: PipelineRegistry, search_path: str) -> Path:
+    expanded = Path(search_path).expanduser()
+    if not expanded.is_absolute():
+        return (registry._config_base_dir / expanded).resolve()
+    return expanded.resolve()
+
+
+def _is_domain_dir(domain_dir: Path) -> bool:
+    return (
+        domain_dir.is_dir()
+        and not domain_dir.name.startswith(".")
+        and domain_dir.name != "__pycache__"
+    )
+
+
+def _sub_pipeline_paths(pipeline_file: Path) -> list[Path]:
+    """Paths ``resolve_sub_pipelines`` opens for one pipeline file.
+
+    Resolution uses the loader function, so ``pipeline_ref`` matches runtime
+    (``(yaml_dir / pipeline_ref).resolve()``, including ``.yml``). A missing or
+    invalid ref does not fail fingerprinting; the parent file is still hashed.
+    """
+    from ..core.schemas import StepConfig
+    from ..loader import resolve_sub_pipelines
+
+    try:
+        data = yaml.safe_load(pipeline_file.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    pipeline_data = data.get("pipeline", data)
+    if not isinstance(pipeline_data, dict):
+        return []
+    raw_steps = pipeline_data.get("steps") or []
+    if not isinstance(raw_steps, list):
+        return []
+    steps = []
+    try:
+        for step_data in raw_steps:
+            if isinstance(step_data, dict):
+                steps.append(StepConfig(**step_data))
+    except (TypeError, ValueError):
+        return []
+
+    opened: list[Path] = []
+    try:
+        resolve_sub_pipelines(
+            steps,
+            pipeline_file.parent,
+            visited=set(),
+            on_open=opened.append,
+        )
+    except Exception:
+        return opened
+    return opened
+
+
+def discover_definition_yaml_paths(registry: PipelineRegistry) -> list[Path]:
+    """YAML the loader walk opens, without running pipeline validation.
+
+    For each resolved search path, domain iteration matches
+    ``PipelineLoader._load_from_search_path`` / ``_load_domain``: domain
+    ``models.yaml``, domain and nested ``prompts.yaml``, and pipeline
+    ``*.yaml`` except prompts, models, and categories, plus root
+    ``models.yaml`` when that file exists. Each pipeline file is
+    ``yaml.safe_load``-ed and ``resolve_sub_pipelines`` is run so ``pipeline_ref``
+    targets are included, including ``.yml`` and paths outside the search-path
+    ``*.yaml`` rglob.
+    """
+    found: dict[Path, None] = {}
+
+    def add(path: Path) -> None:
+        found.setdefault(path.resolve(), None)
+
+    for search_path in registry._search_paths:
+        resolved = _resolve_search_path(registry, search_path)
+        if not resolved.exists():
+            continue
+        root_models = resolved / "models.yaml"
+        if root_models.is_file():
+            add(root_models)
+        for domain_dir in sorted(p for p in resolved.iterdir() if _is_domain_dir(p)):
+            models_file = domain_dir / "models.yaml"
+            if models_file.is_file():
+                add(models_file)
+            prompts_file = domain_dir / "prompts.yaml"
+            if prompts_file.is_file():
+                add(prompts_file)
+            for nested_prompts in sorted(domain_dir.rglob("prompts.yaml")):
+                if nested_prompts.parent == domain_dir:
+                    continue
+                if nested_prompts.is_file():
+                    add(nested_prompts)
+            for yaml_file in sorted(domain_dir.rglob("*.yaml")):
+                if not yaml_file.is_file() or yaml_file.name in _EXCLUDED_PIPELINE_YAML:
+                    continue
+                add(yaml_file)
+                for sub_path in _sub_pipeline_paths(yaml_file):
+                    add(sub_path)
+    return list(found)
+
+
+_PIPELINE_PKG = Path(__file__).resolve().parents[1]
+
+
+def _py_files_under(directory: Path) -> set[Path]:
+    return {
+        path.resolve()
+        for path in directory.rglob("*.py")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+
+
+def _code_identity_files() -> list[Path]:
+    """Python files whose bytes are the handler code identity.
+
+    Every ``*.py`` under ``systems/pipeline``, plus every ``*.py`` in the
+    module directory of each handler class on the MRO (site-packages
+    excluded). Helpers under ``libs/`` that ``validate`` calls, outside
+    those directories, are not included.
+    """
+    from ..core.domain_router import get_domain_router
+    from ..core.handlers.registry import HandlerRegistry
+
+    HandlerRegistry._ensure_initialized()
+    router = get_domain_router()
+    files = _py_files_under(_PIPELINE_PKG)
+    classes = {
+        *HandlerRegistry._generic_handler_classes.values(),
+        *router._generic_handler_classes.values(),
+        *router._domain_handler_classes.values(),
+    }
+    for cls in classes:
+        for klass in cls.__mro__:
+            try:
+                src = Path(inspect.getfile(klass)).resolve()
+            except (TypeError, OSError):
+                continue
+            if src.suffix != ".py" or "site-packages" in src.parts:
+                continue
+            files.update(_py_files_under(src.parent))
+    return sorted(files)
+
+
+def _handler_code_lines() -> list[str]:
+    """Sorted ``code:{path}:{sha256}`` lines for :func:`_code_identity_files`."""
+    lines: list[str] = []
+    for path in _code_identity_files():
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        lines.append(f"code:{path}:{digest}")
+    return lines
+
+
 def definition_fingerprint(registry: PipelineRegistry) -> str:
-    """Hash of pipeline YAML bytes and the live handler-registry identity."""
+    """Hash of walk-opened YAML bytes and handler source-file identity.
+
+    Code lines are ``code:{path}:{sha256}`` for :func:`_code_identity_files`.
+    YAML lines are content hashes of :func:`discover_definition_yaml_paths`,
+    keyed by resolved path. A file that vanishes between discovery and read
+    contributes ``{path}:missing`` instead of raising. Handler name lists
+    stay in the hash so a new step_type in an already-hashed module still
+    moves the fingerprint. Helpers under ``libs/`` that ``validate`` calls
+    are not covered.
+    """
     from ..core.handlers.registry import HandlerRegistry
 
     HandlerRegistry._ensure_initialized()
@@ -107,23 +281,28 @@ def definition_fingerprint(registry: PipelineRegistry) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
-    lines = [identity]
+    lines = [identity, *_handler_code_lines()]
+    discovered = discover_definition_yaml_paths(registry)
+    discovered_set = set(discovered)
     for search_path in registry._search_paths:
-        expanded = Path(search_path).expanduser()
-        if not expanded.is_absolute():
-            resolved = (registry._config_base_dir / expanded).resolve()
-        else:
-            resolved = expanded.resolve()
+        resolved = _resolve_search_path(registry, search_path)
         if not resolved.exists():
             lines.append(f"missing:{search_path}")
             continue
-        files = sorted(path for path in resolved.rglob("*.yaml") if path.is_file())
-        if not files:
+        owned = [
+            path
+            for path in discovered_set
+            if path == resolved or path.is_relative_to(resolved)
+        ]
+        if not owned:
             lines.append(f"empty:{resolved}")
-        for yaml_path in files:
-            rel = yaml_path.relative_to(resolved).as_posix()
+    for yaml_path in sorted(discovered, key=lambda item: str(item)):
+        try:
             digest = hashlib.sha256(yaml_path.read_bytes()).hexdigest()
-            lines.append(f"{resolved}:{rel}:{digest}")
+        except OSError:
+            lines.append(f"{yaml_path}:missing")
+            continue
+        lines.append(f"{yaml_path}:{digest}")
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 

@@ -154,7 +154,8 @@ routes to the pipeline executor transparently.
 | Pipeline ID | Description | Best for |
 |---|---|---|
 | `rag-context` | Rewrites query → parallel RAG retrieval + RRF merge → returns context chunks | Any pipeline needing RAG injection |
-| `rag-answer` | Calls `rag-context` (pipeline-as-service) → generates grounded answer | Single-call RAG Q&A endpoint |
+| `rag-search` | Conductor pipeline: query rewrite, retrieval, rerank (`pipelines/rag_search/v1/`) | Full retrieval pipeline as virtual model ID |
+| *(archived)* `rag-answer` | Was: `rag-context` → grounded generation (`pipelines/answer_v1/`) | Use `rag-search` or MCP `rag(op="search")` instead |
 
 ### Calling a pipeline from a handler
 
@@ -164,7 +165,7 @@ class MyHandler(BaseHandler):
 
     async def execute(self, step, context) -> StepOutput:
         # Call rag-context for retrieval — returns assembled context chunks
-        # Use rag-answer instead to get a fully generated answer
+        # For the rag-search conductor pipeline, use virtual model id "rag-search"
         result = await self._call_model(
             "rag-context",                 # Virtual model ID = pipeline id
             context.source_text,           # Question / user input
@@ -173,10 +174,10 @@ class MyHandler(BaseHandler):
             system_prompt=None,            # Pipeline's own system prompt applies
             temperature=0.3,
         )
-        rag_answer = result.content
+        retrieved = result.content
 
-        # ... use rag_answer in further processing ...
-        return StepOutput(raw=rag_answer)
+        # ... use retrieved in further processing ...
+        return StepOutput(raw=retrieved)
 ```
 
 ### Calling with `pipeline_options`
@@ -213,9 +214,10 @@ async def _call_pipeline_with_options(
 
 Use a `--rag-pipeline` flag to have the `rag-context` pipeline supply assembled
 context to normal ask/consult models (query rewriting + parallel retrieval +
-RRF merge). Use a `--models rag-answer` variant (without `--rag-pipeline`) to
-route the entire question through the full pipeline including generation — a
-single-model answer rather than a two-step retrieval+consultation flow.
+RRF merge). Use `--models rag-search` (without `--rag-pipeline`) to route through
+the retrieval conductor, or MCP `rag(op="search")` (relays to `rag-search`). For
+direct RAG HTTP `/search` without the conductor, use builtin step `rag_api_search_v1`.
+*(Archived `rag-answer` was generation-on-top-of-context; prefer rag-search + your own generate step.)*
 
 ### Invariants
 

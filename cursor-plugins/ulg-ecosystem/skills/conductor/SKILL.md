@@ -1,15 +1,10 @@
 ---
 name: conductor
-description: "On cursor-sdk as mission operator of a continuity root — author/admit a conductor packet, drive G-rows via nested legs, cost-aware model tier, interactive /conductor setup."
+description: "cursor-sdk mission operator: admit a conductor packet, drive G-rows via nested legs, cost-aware tier."
 lifecycle: active
 skill_category: orchestration
 trigger_match_terms:
   - conductor
-  - mission conductor
-  - off-tick conductor
-  - cursor-sdk conductor
-  - conductor packet
-  - conductor score
   - /conductor
   - follow up
   - page me when done
@@ -28,49 +23,49 @@ related_skills:
   - life-operator-do-chain
 ---
 
-# Conductor — cursor-sdk as mission operator
+# Conductor — cursor-sdk
 
-Index and before-acting kernel. Flat `reference-*.md` files beside this file carry the full master text; install copies them into the plugin tree, and the cursor-sdk dispatch HOME copies that tree, so SDK seats have them. Read one when a step needs it; where absent (Customize), act from the kernel and step falsifiers.
+`reference-*.md` = full text beside this file; install + HOME copy. Read per step; Customize: kernel + falsifiers.
 
 ## Before acting (kernel)
 
-- **Run, don't ask; land on green.** Once admitted, drive every open G-row in one standing commission; the packet is standing merge ack — land when tests and AC are met, not for a second "ok to merge?" (see `reference-run-to-completion.md`).
-- **ROW_HOP vs exit-and-persist.** `ROW_HOP` = journal → hop CHECKPOINT → closeout `stop: ROW_HOP`; substrate admits the successor — never `team_dispatch(reuse_thread=<own thread>)`. `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` persist and stop progression past the unpaid gate (see `reference-invariant.md`, `reference-packet.md`).
-- **Nested CDP prompt authoring (a:37183).** Before `team_dispatch(model=cdp/…)` **or** `cse_session(op=followup)` on a G1·G2·G4·G6 / width seat: Use `retrieval-before-authoring`, write the report sidecar with `target:` bound to the prompt, cite `retrieval_report: cortex://…` on its own line in the author body (line-anchored declarations — not mid-sentence mentions). G4 / SKEPTIC / adversarial-spec prompts must not open as delivery/code-review chrome. Hop closeout lists every nested prompt URI from this hop with its report bundle — missing ⇒ not green.
-- **Review harvest ≺ land ≺ DONE.** On codework claiming land or terminal `DONE`, harvest the owed stronger-model review verdict before those claims — not background, not land-then-review (see `reference-run-to-completion.md`, `reference-packet.md`).
-- **CDP-ratified G5 witness (a:37198).** After G3→G5 CDP score-ratify harvest, the **required attended witness** is `SCORE_RESURFACE` on `summoning_thread_id` (subject slug + body CDP exec/review sha) — not tip `DONE`, not operator steer-inject, not the harvest alone. Fold hangs attended G5 only when that turn **and** implement completeness (`ledger:nested_implement` ∨ `git:lane_head`) both exist. Fold already shows `bus:SCORE_RESURFACE` ⇒ ¬ re-post · ¬ re-ratify (see `reference-packet.md`).
-- **Explicit `lane="B"`.** Top-level conductor admit passes `lane="B"` explicitly; omit inherits on nest/resume only — default at GIW is Lane A, not "no preference" (see `reference-admit.md`, `reference-gotchas.md`).
+- **Run, don't ask; land on green.** Admitted ⇒ drive all open G-rows in one commission; packet = standing merge ack — land at tests+AC, ¬ second "ok to merge?" → `reference-run-to-completion.md`.
+- **ROW_HOP vs exit-and-persist.** `ROW_HOP` = journal → hop CHECKPOINT → closeout `stop: ROW_HOP`; substrate admits successor — never `team_dispatch(reuse_thread=<own thread>)`. `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` persist and stop past the unpaid gate → `reference-invariant.md`, `reference-packet.md`.
+- **Nested CDP (a:37183).** Before `team_dispatch(model=cdp/…)` **or** `cse_session(op=followup)` on G1·G2·G4·G6/width: Use `retrieval-before-authoring`, write report sidecar, `target:` bound to prompt, `retrieval_report: cortex://…` own line (line-anchored). G4/SKEPTIC/adversarial-spec ¬ delivery/code-review chrome. Hop closeout: every nested prompt URI + report bundle — missing ⇒ not green.
+- **Review harvest ≺ land ≺ DONE.** Land/`DONE`: harvest stronger-model review first — ¬ background, ¬ land-then-review → `reference-run-to-completion.md`, `reference-packet.md`.
+- **G5 witness (a:37198).** After G3→G5 CDP score-ratify harvest, required attended witness = `SCORE_RESURFACE` on `summoning_thread_id` (slug subject; CDP exec/review sha) — ¬ tip `DONE`, ¬ steer-inject, ¬ harvest alone. Attended G5 fold needs that turn **and** implement (`ledger:nested_implement` ∨ `git:lane_head`). `bus:SCORE_RESURFACE` ⇒ ¬ re-post · ¬ re-ratify → `reference-packet.md`.
+- **Explicit `lane="B"`.** Top-level admit passes `lane="B"`; omit nest/resume only — GIW default Lane A, not "no preference" → `reference-admit.md`, `reference-gotchas.md`.
 
 ## Trigger
 
-Author or admit a conductor packet, drive G-rows on cursor-sdk, run `/conductor`, or answer `follow up`, `page me when done`, or `I'm leaving`.
+Author/admit packet, drive G-rows, `/conductor`, or `follow up` / `page me when done` / `I'm leaving`.
 
 ## Refuse
 
-- Drop or rewrite a rule while moving it between this index and a reference file.
+- Drop or rewrite a rule when moving it between this index and a reference file.
 
 ## Steps
 
-1. **Duty and audience.** Full text: `reference-overview.md`, `reference-audience.md`.
-   Falsifier: a conductor admit lacks `Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; cost tier from this skill.` in `<invariants>`.
+1. **Duty and audience.** → `reference-overview.md`, `reference-audience.md`.
+   Falsifier: admit lacks `Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; cost tier from this skill.` in `<invariants>`.
    Specimen: Gate-2 slug `conductor`.
 
-2. **Invariant and run to completion.** Full text: `reference-invariant.md`, `reference-run-to-completion.md`.
-   Falsifier: a failed CDP consult waits, retries the pool, or is labeled DEFERRED while the lane continues.
+2. **Invariant + RTC.** → `reference-invariant.md`, `reference-run-to-completion.md`.
+   Falsifier: failed CDP consult waits, retries pool, or DEFERRED while lane continues.
    Specimen: `cdp_fail_route` `nested-grok` and `operator`.
 
-3. **When, tier, roles.** Full text: `reference-when.md`, `reference-model-tier.md`, `reference-role-split.md`.
-   Falsifier: a refused effort pin is swapped to another rung, or the conductor writes a mechanical G-row.
+3. **When, tier, roles.** → `reference-when.md`, `reference-model-tier.md`, `reference-role-split.md`.
+   Falsifier: refused effort pin swapped to another rung, or conductor writes a mechanical G-row.
    Specimen: S7-I.
 
-4. **Packet through resume.** Full text: `reference-packet.md`.
-   Falsifier: the live seat calls `team_dispatch(reuse_thread=<own thread>)`.
+4. **Packet through resume.** → `reference-packet.md`.
+   Falsifier: `team_dispatch(reuse_thread=<own thread>)` from live seat.
    Specimen: `422 CURSOR_WORKER_THREAD_OCCUPIED`.
 
-5. **Plan, admit, gotchas, close.** Full text: `reference-admit-from-plan.md`, `reference-admit.md`, `reference-gotchas.md`, `reference-interactive-and-anti-patterns.md`.
-   Falsifier: `lane=` is omitted after `CURSOR_LANE_B_SCOPE_REFUSED`, or DONE is claimed with no quoted commit and recycle or named skip.
-   Specimen: failure class 7281 / 7286, 2026-08-15.
+5. **Plan, admit, close.** → `reference-admit-from-plan.md`, `reference-admit.md`, `reference-gotchas.md`, `reference-interactive-and-anti-patterns.md`.
+   Falsifier: `lane=` omitted after `CURSOR_LANE_B_SCOPE_REFUSED`, or DONE without quoted commit + recycle/skip.
+   Specimen: 7281 / 7286, 2026-08-15.
 
 ## Falsifier
 
-This index failed to bind if an item-2 kernel rule is missing here, or a reference file is absent from plugin SoT beside `SKILL.md` while install still expects the split body.
+Failed if a kernel rule is missing, or a reference file is absent from plugin SoT beside `SKILL.md` while install expects split body.

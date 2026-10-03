@@ -15,8 +15,12 @@ from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+    HOP_MISSION_CAP_RELEASE_BASELINE_KEY,
     HOP_PARK_REASON_KEY,
     HOP_PARKED_KEY,
+    PARK_REASON_MISSION_CAP,
+    count_hop_attempts,
+    list_mission_terminal_chain,
 )
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
     is_conductor_dispatch_row,
@@ -44,8 +48,10 @@ def open_restart_park_sql(table_alias: str = "") -> str:
     )
 
     col = f"{table_alias}." if table_alias else ""
-    parent_id = f"{table_alias}.dispatch_id" if table_alias else (
-        "cursor_sdk_dispatches.dispatch_id"
+    parent_id = (
+        f"{table_alias}.dispatch_id"
+        if table_alias
+        else ("cursor_sdk_dispatches.dispatch_id")
     )
     like = '%"admitted_via":"' + ADMITTED_VIA_PARK_RESUME + '"%'
     return (
@@ -231,7 +237,9 @@ def _restart_open_parks(
                 thread_id=str(mapped.get("thread_id") or "") or None,
                 reason="park_for_restart",
                 hop_seq=None,
-                parked_at=str(mapped.get("parked_at") or mapped.get("terminal_at") or ""),
+                parked_at=str(
+                    mapped.get("parked_at") or mapped.get("terminal_at") or ""
+                ),
             )
         )
     return parks
@@ -312,6 +320,7 @@ def release_mission_parks(
         conn, work_key=work_key, thread_id=thread_id, kinds=frozenset({"budget"})
     )
     released: list[ParkState] = []
+    baseline_by_work_key: dict[str, int] = {}
     for p in parks:
         row = conn.execute(
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -321,6 +330,17 @@ def release_mission_parks(
             continue
         data = _record_dict(str(row["record_json"] or ""))
         data[HOP_PARK_RELEASED_AT_KEY] = time.time()
+        park_work_key = str(p.work_key or "").strip()
+        if p.reason == PARK_REASON_MISSION_CAP and park_work_key:
+            if park_work_key not in baseline_by_work_key:
+                chain = list_mission_terminal_chain(
+                    work_key=park_work_key,
+                    conn=conn,
+                )
+                baseline_by_work_key[park_work_key] = count_hop_attempts(chain)
+            data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] = baseline_by_work_key[
+                park_work_key
+            ]
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
             (

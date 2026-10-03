@@ -1,7 +1,7 @@
-"""Built-in rag_search_v1 pipeline handler: semantic search against the RAG service.
+"""Built-in rag_api_search_v1 pipeline handler: POST /search on the RAG HTTP API.
 
-``RagSearchV1Handler`` is registered via ``register_handler`` for step type
-``rag_search_v1``. It resolves a ``query`` (list inputs are space-joined) and an
+``RagApiSearchV1Handler`` is registered via ``register_handler`` for step type
+``rag_api_search_v1``. It resolves a ``query`` (list inputs are space-joined) and an
 optional ``scope`` from map inputs or ``handler_inputs``, clamps ``top_k`` to
 1..50 (default 5), POSTs to the RAG API ``/search`` endpoint over UDS/TCP
 (``resolve_rag_base_url``), and returns chunk texts plus metadata as JSON in a
@@ -28,10 +28,10 @@ logger = get_logger(__name__)
 
 
 @register_handler
-class RagSearchV1Handler:
+class RagApiSearchV1Handler:
     """POST /search on the RAG API; returns chunk texts + metadata as JSON."""
 
-    step_type = "rag_search_v1"
+    step_type = "rag_api_search_v1"
 
     async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         resolver = NamespaceResolver(context)
@@ -42,7 +42,9 @@ class RagSearchV1Handler:
         if isinstance(query, list):
             query = " ".join(str(t) for t in query if t is not None and str(t).strip())
         if not isinstance(query, str) or not query.strip():
-            raise ValueError(f"Step '{step.id}': rag_search_v1 needs non-empty query")
+            raise ValueError(
+                f"Step '{step.id}': rag_api_search_v1 needs non-empty query"
+            )
 
         scope: str | list[str] | None = None
         if "scope" in resolved_map:

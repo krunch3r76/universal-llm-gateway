@@ -6,6 +6,7 @@ Contains main initialization, reload logic, and pipeline filtering.
 Part of the pipeline registry package.
 """
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,72 @@ if TYPE_CHECKING:
     from ..schemas import ModelRef
 
 logger = get_logger(__name__)
+
+_UNREGISTERED_HANDLER_MARKER = "': No handler for type '"
+_UNKNOWN_STEP_TYPE_RE = re.compile(r"No handler for type '([^']+)'")
+
+
+def _validation_errors_for_pipeline(
+    validation_errors: list[str], pipeline_id: str
+) -> list[str]:
+    prefix = f"[{pipeline_id}] "
+    return [
+        err[len(prefix) :]
+        for err in validation_errors
+        if err.startswith(prefix)
+    ]
+
+
+def _only_unregistered_handler_errors(messages: list[str]) -> bool:
+    if not messages:
+        return False
+    return all(_UNREGISTERED_HANDLER_MARKER in msg for msg in messages)
+
+
+def _extract_unknown_step_type(messages: list[str]) -> str | None:
+    for msg in messages:
+        match = _UNKNOWN_STEP_TYPE_RE.search(msg)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _apply_keep_last_good_on_reload(
+    previous_pipelines: dict[str, PipelineSpec],
+    fresh: "PipelineRegistry",
+) -> None:
+    """Restore pipelines dropped only for unregistered step types (hot-reload)."""
+    removed_ids = set(previous_pipelines) - set(fresh.pipelines)
+    for pipeline_id in removed_ids:
+        pipeline_errors = _validation_errors_for_pipeline(
+            fresh._validation_errors, pipeline_id
+        )
+        if not _only_unregistered_handler_errors(pipeline_errors):
+            continue
+        prior = previous_pipelines[pipeline_id]
+        should_filter, _ = fresh._should_filter_pipeline(prior)
+        if should_filter:
+            continue
+        # Re-validation records unknown model refs onto the fresh registry.
+        # Those rows describe the prior spec, not the YAML just loaded.
+        saved_catalog_skips = list(fresh._catalog_skips)
+        revalidation_errors = fresh._validator._validate_pipeline(prior)
+        fresh._catalog_skips = saved_catalog_skips
+        if revalidation_errors:
+            continue
+        unknown_type = _extract_unknown_step_type(pipeline_errors) or "unknown"
+        fresh.pipelines[pipeline_id] = prior
+        error_prefix = f"[{pipeline_id}] "
+        fresh._validation_errors = [
+            err
+            for err in fresh._validation_errors
+            if not err.startswith(error_prefix)
+        ]
+        logger.warning(
+            "Keeping last good pipeline '%s' after reload: unregistered step type '%s'",
+            pipeline_id,
+            unknown_type,
+        )
 
 
 class PipelineRegistry:
@@ -98,11 +165,17 @@ class PipelineRegistry:
         again after it. The snapshot is persisted under the before-walk values
         only when both pairs still match, so a file written during the walk
         is not masked by a snapshot of the incomplete build. A process restart
-        reuses the last build if the YAML fingerprint and the availability
-        decisions from that build still hold. This does not guarantee (b)
-        handler code identity, where ``validate()`` can change without a name
-        change, or (c) ``pipeline_ref`` sub-pipeline files missing from the
-        fingerprint. ``last_load_was_full`` is True only for the YAML walk.
+        reuses the last build if the definition fingerprint and the availability
+        decisions from that build still hold. The definition fingerprint covers
+        (b) handler code identity as the bytes of ``systems/pipeline`` ``*.py``
+        files plus ``*.py`` under each handler class module directory (MRO,
+        site-packages excluded), so a ``validate()`` body change is visible
+        without a step_type rename, and (c) sub-pipeline files the walk opens
+        via ``pipeline_ref``, including paths outside the search-path
+        ``*.yaml`` rglob. Helpers under ``libs/`` that ``validate`` calls are
+        not covered. A byte-identical restore after an edit made mid-walk
+        still matches the before-walk fingerprints (low, accepted).
+        ``last_load_was_full`` is True only for the YAML walk.
 
         Pre: search_paths ≠ ∅
         Post: pipelines ∪ models ∪ prompts loaded ∧ validated
@@ -124,7 +197,10 @@ class PipelineRegistry:
             return
         pinned: tuple[str, str] | None = None
         if snapshot_dir is not None:
-            pinned = (source_fingerprint(self), definition_fingerprint(self))
+            try:
+                pinned = (source_fingerprint(self), definition_fingerprint(self))
+            except OSError:
+                pinned = None
         decisions = self._load_from_sources()
         self.last_load_was_full = True
         if snapshot_dir is not None and pinned is not None:
@@ -232,6 +308,7 @@ class PipelineRegistry:
         old_pipeline_count = len(self.pipelines)
         old_model_count = len(self.models)
         old_prompt_count = len(self.prompts)
+        previous_pipelines = dict(self.pipelines)
 
         fresh = PipelineRegistry(
             search_paths=self._search_paths,
@@ -241,6 +318,7 @@ class PipelineRegistry:
             snapshot_dir=self._snapshot_dir,
         )
         fresh.load()
+        _apply_keep_last_good_on_reload(previous_pipelines, fresh)
 
         self.pipelines = fresh.pipelines
         self.models = fresh.models

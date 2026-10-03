@@ -53,6 +53,16 @@ def test_cdp_suffix_rungs() -> None:
     assert cursor_max.rung == "max"
 
 
+def test_opus_5_5_alias_folds_to_claude_opus_5_5() -> None:
+    cursor_full = consultant_identity("cursor/claude-opus-5-5")
+    cursor_short = consultant_identity("cursor/opus-5-5")
+    cdp_dotted = consultant_identity("cdp/opus-5.5")
+    assert cursor_full.model_identity == "claude-opus-5-5"
+    assert cursor_short.model_identity == "claude-opus-5-5"
+    assert cdp_dotted.model_identity == "claude-opus-5-5"
+    assert independently_measured(cursor_full, cursor_short) is False
+
+
 def test_different_model_same_vendor_independent() -> None:
     terra = consultant_identity("cursor/gpt-5.6-terra")
     sol = consultant_identity("cursor/gpt-5.6-sol")

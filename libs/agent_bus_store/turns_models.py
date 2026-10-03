@@ -109,6 +109,57 @@ def sidecar_content_limit_error(content: str) -> dict[str, object] | None:
     return sidecar_content_too_large_envelope(body_chars=len(content))
 
 
+def sidecar_content_is_unexpanded_shell(content: str) -> bool:
+    """True when stripped content is exactly one unexpanded shell substitution.
+
+    Matches a single balanced ``$(...)`` or a single backtick-quoted string.
+    Mixed bodies that merely contain those forms return False.
+    """
+    text = content.strip()
+    if len(text) < 2:
+        return False
+    if text.startswith("$(") and _whole_string_is_balanced_dollar_paren(text):
+        return True
+    return text[0] == "`" and text[-1] == "`" and text.count("`") == 2
+
+
+def _whole_string_is_balanced_dollar_paren(text: str) -> bool:
+    """``text`` is exactly one ``$(...)`` whose parentheses balance at the end."""
+    if not text.startswith("$(") or not text.endswith(")"):
+        return False
+    depth = 0
+    for i in range(1, len(text)):
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i == len(text) - 1
+            if depth < 0:
+                return False
+    return False
+
+
+def sidecar_unexpanded_shell_envelope() -> dict[str, object]:
+    """Structured 422 detail when sidecar_content is a literal shell substitution."""
+    return {
+        "code": "sidecar_unexpanded_shell",
+        "reason": "sidecar_unexpanded_shell",
+        "message": (
+            "sidecar_content is an unexpanded shell substitution. "
+            "The gateway stores the literal string and does not run a shell."
+        ),
+        "fix_hint": (
+            "Paste the expanded markdown as sidecar_content, or write the file with "
+            "fs(sandbox=cortex, op=write, …) and put a cortex:// pointer in the turn "
+            "body. Do not send a shell substitution string such as $(...) or `...`."
+        ),
+        "retryable": True,
+        "source": "agent_bus_store.send",
+    }
+
+
 def over_briefing_target_envelope(
     *,
     body_chars: int,
