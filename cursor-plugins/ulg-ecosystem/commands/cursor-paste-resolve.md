@@ -14,11 +14,11 @@ After kind and id, zero to three target tokens. The sets do not overlap, so orde
 | id | positive integer | required |
 | window | `glass` or `ide` | `glass` — Cursor Glass, not the IDE |
 | host | `orion-node` or `jupiter` | the one host this request's context names |
-| notify | `maestro` | no maestro memo — preamble stays kind/id only |
+| notify | `maestro` | no maestro memo — closed title suffix is `complete` |
 
 A missing window focuses Cursor Glass. A missing host is never filled with `jupiter` or `orion-node` by default. The launch script's unset-host default is `jupiter`. Attended Glass living on `orion-node` is not a host for this command. Use a host only when this invocation names it, or this request's context names exactly one of the two.
 
-`maestro` is a notify token. It does not choose window or host. When present, the prompt preamble (before the inline general prompt) tells the resolving agent to memo maestro on agent-bus thread `12286` after the item is closed.
+`maestro` is a notify token. It does not choose window or host. When present, the prompt preamble (before the inline general prompt) tells the resolving agent to memo maestro on agent-bus thread `12286` after the item is closed, and to use the closed title suffix `complete-to-maestro`. The preamble always tells the resolving agent to suffix the tab title with the current stage (`initial`, `review`, then the closed suffix).
 
 ## Refuse
 
@@ -39,16 +39,24 @@ cortex(tool="assertion_get", arguments='{"assertion_id": <id>}')
 
 Friction rows are assertions. A missing row is a stop.
 3. Read `cortex://notes/system/prompts/work-item-implementer-friction.md` at this moment (`fs` `op=read`). Do not use a copy stored in this command.
-4. Write `tmp/prompts/cursor-paste-<kind>-<id>.md`. The file is the full prompt `/cursor-paste` will send. First lines, then — only when notify is `maestro` — the maestro line, then the prompt bytes unchanged:
+4. Write `tmp/prompts/cursor-paste-<kind>-<id>.md`. The file is the full prompt `/cursor-paste` will send. Bind the closed suffix: `complete-to-maestro` when notify is `maestro`, else `complete`. First the rename + stage block, then — only when notify is `maestro` — the maestro line, then the prompt bytes unchanged:
 
 ```
-Rename this chat tab to <kind>:<id>.
+Rename this chat tab to <kind>:<id> · initial.
 
 You are resolving <kind>:<id>.
 
+Keep the title base <kind>:<id>. Append exactly one stage suffix and replace it when the stage changes (do not stack suffixes):
+
+| Suffix | When |
+|---|---|
+| initial | first rename; until review or close |
+| review | while verifying the fix |
+| <closed-suffix> | after the item is closed |
+
 ```
 
-When notify is `maestro`, insert this paragraph after those two sentences and before the general prompt:
+When notify is `maestro`, insert this paragraph after that block and before the general prompt:
 
 ```
 When this <kind> is closed, inform maestro: send a memo on agent-bus thread 12286 reporting the closure (kind, id, and outcome). Do this after closure, before you stop.
