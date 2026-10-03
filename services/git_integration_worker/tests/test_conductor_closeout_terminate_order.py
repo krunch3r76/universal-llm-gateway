@@ -224,13 +224,21 @@ def _install_closeout_stubs(
 
     def _track_merge(**kw: Any) -> None:
         call_order.append("merge")
-        if merge_raises is not None:
-            raise merge_raises
         return orig_merge(**kw)
 
     monkeypatch.setattr(
         route_mod, "merge_conductor_closeout_hop_authority", _track_merge
     )
+    if merge_raises is not None:
+        boom = merge_raises
+
+        def _raise_inner(**_kw: Any) -> None:
+            raise boom
+
+        monkeypatch.setattr(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._merge_conductor_closeout_hop_authority",
+            _raise_inner,
+        )
 
     orig_promote = route_mod._mark_terminal_and_promote
 

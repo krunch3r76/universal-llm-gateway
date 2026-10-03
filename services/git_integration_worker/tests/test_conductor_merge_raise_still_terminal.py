@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_closeout import conductor_hop as hop_mod
 from services.git_integration_worker.routes import cursor_sdk as route_mod
 from services.git_integration_worker.tests.test_conductor_closeout_terminate_order import (
     _admit_running_conductor,
@@ -19,6 +20,22 @@ from services.git_integration_worker.tests.test_conductor_closeout_terminate_ord
 )
 
 pytestmark = pytest.mark.offline
+
+
+def test_public_merge_swallows_inner_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A third caller of the public name needs no call-site try/except."""
+    raise_calls: list[str] = []
+    monkeypatch.setattr(
+        hop_mod,
+        "_merge_conductor_closeout_hop_authority",
+        _counting_raise(raise_calls),
+    )
+    hop_mod.merge_conductor_closeout_hop_authority(
+        dispatch_id="merge-raise-direct",
+        closeout_body="",
+        thread_id="1",
+    )
+    assert raise_calls == ["merge-raise"]
 
 
 def _status(dispatch_id: str) -> str:
@@ -50,7 +67,12 @@ async def test_deliver_sdk_closeout_merge_raise_still_terminal(
         monkeypatch,
         closeout_body="status: complete\n",
         call_order=call_order,
-        merge_raises=RuntimeError("hop merge boom"),
+    )
+    raise_calls: list[str] = []
+    monkeypatch.setattr(
+        hop_mod,
+        "_merge_conductor_closeout_hop_authority",
+        _counting_raise(raise_calls),
     )
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     bus = MagicMock()
@@ -70,6 +92,7 @@ async def test_deliver_sdk_closeout_merge_raise_still_terminal(
         packet_text="---\ncontract: conductor\n---\n",
     )
 
+    assert raise_calls == ["merge-raise"]
     assert call_order[:2] == ["merge", "promote"]
     assert _status(req.dispatch_id) == "completed"
 
@@ -111,8 +134,8 @@ async def test_finalize_parked_merge_raise_still_terminal(
     )
     raise_calls: list[str] = []
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.park_finalize."
-        "merge_conductor_closeout_hop_authority",
+        hop_mod,
+        "_merge_conductor_closeout_hop_authority",
         _counting_raise(raise_calls),
     )
     monkeypatch.setattr(
