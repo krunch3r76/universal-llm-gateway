@@ -1,4 +1,9 @@
-"""Git worktree lock helpers for Lane-B pin enforcement (S1 Leg A)."""
+"""Git worktree lock helpers for Lane-B pin enforcement (S1 Leg A).
+
+Admit calls ``lock_lane_worktree`` after resolving ``source_repo``. A satellite
+tree locked with hub ULG as ``-C`` used to fail as git's ``is not a working
+tree``; the helper now refuses that mismatch by comparing ``git-common-dir``.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,21 @@ _LOCK_GRAMMAR_RE = re.compile(
 
 class ForeignLockError(RuntimeError):
     """A worktree carries a lock reason this service must not override."""
+
+
+class SourceRepoMismatchError(RuntimeError):
+    """``source_repo`` is not the git that owns ``worktree_path``.
+
+    Raised before ``git worktree lock`` so a hub-vs-satellite pin surfaces as
+    ``CURSOR_WORKTREE_SOURCE_REPO_MISMATCH`` instead of git's retryable
+    ``is not a working tree``. Callers map ``.code`` at the admit boundary.
+    """
+
+    code = "CURSOR_WORKTREE_SOURCE_REPO_MISMATCH"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +68,11 @@ def _format_lock_reason(*, dispatch_id: str, thread_id: str) -> str:
 
 
 def parse_lock_reason(reason: str | None) -> ParsedLockReason | None:
+    """Parse a ULG lock reason, or return ``None`` when the string is foreign.
+
+    Only ``ulg:dispatch=…;thread=…;pinned_at=…`` matches. Callers treat
+    ``None`` as a lock this service must not override (``ForeignLockError``).
+    """
     if not reason or not reason.startswith(_LOCK_REASON_PREFIX):
         return None
     match = _LOCK_GRAMMAR_RE.match(reason.strip())
@@ -105,6 +130,31 @@ def list_locked_worktrees(source_repo: Path) -> list[LockedWorktree]:
     return out
 
 
+def _git_common_dir(cwd: Path) -> Path | None:
+    """Return the resolved ``--git-common-dir`` for ``cwd``, or ``None`` on failure.
+
+    Relative git output is resolved against ``cwd`` because ``git -C`` prints
+    common-dir relative to that tree. Two checkouts of the same repo share
+    this path; a satellite worktree and hub ULG do not.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(cwd.resolve()), "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = cwd.resolve() / path
+    return path.resolve()
+
+
 def _current_lock_reason(source_repo: Path, worktree_path: Path) -> str | None:
     target = worktree_path.resolve()
     for entry in list_locked_worktrees(source_repo):
@@ -158,9 +208,20 @@ def lock_lane_worktree(
     When ``inherit_lane_thread_id`` is set and the worktree is already locked for
     that lane thread, return the existing reason without re-locking onto
     ``thread_id`` (CSE nest on the holder's Lane-B tree).
+
+    Compares ``git-common-dir`` of ``worktree_path`` against ``source_repo``
+    before lock so a mismatched caller gets ``SourceRepoMismatchError`` rather
+    than git's ``is not a working tree``. Probe failure falls through to lock.
     """
     repo = source_repo.resolve()
     wt = worktree_path.resolve()
+    wt_common = _git_common_dir(wt)
+    repo_common = _git_common_dir(repo)
+    if wt_common is not None and repo_common is not None and wt_common != repo_common:
+        raise SourceRepoMismatchError(
+            f"{SourceRepoMismatchError.code}: source_repo {repo} does not own "
+            f"worktree {wt} (git-common-dir {wt_common} != {repo_common})"
+        )
     reason = _current_lock_reason(repo, wt)
     if reason is not None:
         parsed = parse_lock_reason(reason)
@@ -205,6 +266,7 @@ __all__ = [
     "LockLaneResult",
     "LockedWorktree",
     "ParsedLockReason",
+    "SourceRepoMismatchError",
     "list_locked_worktrees",
     "lock_lane_worktree",
     "parse_lock_reason",
