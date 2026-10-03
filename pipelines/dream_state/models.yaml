@@ -1,5 +1,0 @@
-models:
-  # Unversioned Sonnet alias tracks the live Anthropic card. The API catalog
-  # has no Sonnet 5.5 id; that generation is the CDP picker cdp/sonnet.
-  claude_sonnet:
-    model: anthropic/claude-sonnet-5

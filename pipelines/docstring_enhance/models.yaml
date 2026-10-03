@@ -1,5 +1,0 @@
-models:
-  enhance_model:
-    model: google/gemini-2.5-pro
-  review_model:
-    model: google/gemini-2.5-pro
