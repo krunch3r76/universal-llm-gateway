@@ -215,7 +215,9 @@ def read_density_harness_meter(
     )
 
 
-def steer_threshold_tokens(*, model: str, config: DensityHarnessConfig | None = None) -> int | None:
+def steer_threshold_tokens(
+    *, model: str, config: DensityHarnessConfig | None = None
+) -> int | None:
     window = context_window_tokens(model)
     if window is None:
         return None
@@ -665,6 +667,15 @@ def _effective_tool_call_count(
     return reading.stream_tool_call_count
 
 
+def _open_cdp_generate(dispatch_id: str) -> bool:
+    """True when the bridge ledger still has a CDP generate this run has not received."""
+    from services.git_integration_worker.cursor_sdk_await_reply import (
+        outstanding_generates,
+    )
+
+    return bool(outstanding_generates(dispatch_id))
+
+
 def maybe_park_ignored_density_steer(
     row: Mapping[str, Any],
     *,
@@ -686,12 +697,24 @@ def maybe_park_ignored_density_steer(
     if effective - baseline < _IGNORED_STEER_TOOL_CALLS:
         return None
     dispatch_id = str(row.get("dispatch_id") or "")
+    if _open_cdp_generate(dispatch_id):
+        # This run still has to harvest the consult. Cancelling now drops
+        # the reply on the floor (a:37450).
+        logger.info(
+            "density-harness park deferred dispatch=%s reason=outstanding_cdp_generate",
+            dispatch_id,
+        )
+        return None
+    from services.git_integration_worker.cursor_sdk_park_resume import (
+        DENSITY_HARNESS_IGNORED_STEER_REASON,
+    )
+
     result = signal_park(
         dispatch_id,
         intent_id=None,
         drain_epoch=None,
         actor=actor,
-        reason="density-harness-ignored-steer",
+        reason=DENSITY_HARNESS_IGNORED_STEER_REASON,
     )
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
@@ -732,9 +755,7 @@ def sync_density_steer_delivery(
         return False
     reading = read_density_harness_meter(str(row.get("record_json") or ""), model="")
     effective = _effective_tool_call_count(reading, tool_call_count)
-    mark_density_steer_delivered(
-        dispatch_id=dispatch_id, tool_call_count=effective
-    )
+    mark_density_steer_delivered(dispatch_id=dispatch_id, tool_call_count=effective)
     return True
 
 
