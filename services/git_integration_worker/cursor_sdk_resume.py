@@ -112,8 +112,9 @@ def _bridge_death_resume_eligible(record_json: str | None) -> bool:
 
 
 def _parked_for_restart(ledger: CursorDispatchLedger, *, parent_id: str) -> bool:
+    """True only for ``park_for_restart`` (not ``await_cdp_reply`` — F4)."""
     data = load_row_columns(ledger, dispatch_id=parent_id, columns="park_kind")
-    return bool(data and data.get("park_kind"))
+    return bool(data and data.get("park_kind") == "park_for_restart")
 
 
 def resume_eligibility_reason(
@@ -121,9 +122,10 @@ def resume_eligibility_reason(
 ) -> ResumeIneligibleReason | None:
     """Return ineligibility reason, or ``None`` when parent may be resumed.
 
-    A ``park_for_restart`` parent (``park_kind`` set) is terminal ``cancelled``
-    by design with a consistent store, so only the identity and on-disk store
-    checks apply to it — named here so the path is a contract, not incidental.
+    A ``park_for_restart`` parent is terminal ``cancelled`` by design with a
+    consistent store, so only the identity and on-disk store checks apply to
+    it — named here so the path is a contract, not incidental. Other park
+    kinds (e.g. ``await_cdp_reply``) do not inherit that exemption (F4).
     """
     row = load_parent_row(ledger, parent_id=parent_id)
     if row is None:

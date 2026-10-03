@@ -280,3 +280,122 @@ def test_proxy_copy_loops_feed_the_observer(tmp_path: Path) -> None:
     assert [
         r["execution_id"] for r in read_generate_records("d-proxy", spool_dir=tmp_path)
     ] == [_EXEC]
+
+
+def test_f3_wait_fallback_requires_matching_thread_and_web_anthropic(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    """F3 positive: unqualified wait counts only on the generate's web-anthropic thread."""
+    observer.on_request(_request(1, "team_dispatch", {"op": "generate"}))
+    observer.on_result(_result(1, _cdp_admit_payload()))
+    observer.on_request(
+        _request(
+            2,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": "14692",
+                    "after_turn": 3,
+                    "completion": "proof_reply_from",
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    observer.on_result(
+        _result(
+            2,
+            {
+                "complete": True,
+                "qualifying_reply_turn": 4,
+                "producer": {"state": "terminal"},
+            },
+        )
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == {_EXEC}
+
+
+def test_f3_wait_fallback_negative_wrong_thread_or_named_other_id(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    """F3 negative: wait on another producer / thread must not mark the CDP generate."""
+    observer.on_request(_request(1, "team_dispatch", {"op": "generate"}))
+    observer.on_result(_result(1, _cdp_admit_payload()))
+    # Named a different execution_id (nested cursor-sdk) — must not credit CDP.
+    observer.on_request(
+        _request(
+            2,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": "14692",
+                    "execution_id": "nested-cursor-sdk-exec",
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    observer.on_result(
+        _result(
+            2,
+            {
+                "complete": True,
+                "qualifying_reply_turn": 4,
+                "producer": {
+                    "execution_id": "nested-cursor-sdk-exec",
+                    "state": "terminal",
+                },
+            },
+        )
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
+    # Unqualified wait on the wrong thread.
+    observer.on_request(
+        _request(
+            3,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": "99999",
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    observer.on_result(
+        _result(3, {"complete": True, "qualifying_reply_turn": 1})
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
+    # Unqualified wait without from_agent=web-anthropic.
+    observer.on_request(
+        _request(
+            4,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {"thread": "14692", "from_agent": "cursor-sdk"},
+            },
+        )
+    )
+    observer.on_result(
+        _result(4, {"complete": True, "qualifying_reply_turn": 1})
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
+
+
+def test_f9_from_env_disabled_when_spool_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-env")
+    monkeypatch.delenv("ULG_STEER_SPOOL_DIR", raising=False)
+    obs = GenerateObserver.from_env()
+    assert obs.enabled is False

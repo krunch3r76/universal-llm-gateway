@@ -129,7 +129,7 @@ def _is_generate_call(params: Any) -> bool:
 
 
 def _receive_call(params: Any) -> dict[str, Any] | None:
-    """Return ``{op, execution_id}`` when the call is wait/get/fetch on agent_bus*."""
+    """Return wait/get/fetch args when the call is on agent_bus*."""
     target = _tool_call_target(params)
     if target is None:
         return None
@@ -149,9 +149,17 @@ def _receive_call(params: Any) -> dict[str, Any] | None:
     if op not in _RECEIVE_OPS:
         return None
     execution_id = inner.get("execution_id")
+    thread = inner.get("thread") or inner.get("thread_id")
+    from_agent = inner.get("from_agent")
     return {
         "op": op,
         "execution_id": execution_id if isinstance(execution_id, str) else None,
+        "thread": (
+            str(thread).replace("agent-bus:", "")
+            if isinstance(thread, str) and thread
+            else None
+        ),
+        "from_agent": from_agent if isinstance(from_agent, str) else None,
     }
 
 
@@ -213,8 +221,21 @@ def _execution_ids_in_text(text: str, known: set[str]) -> set[str]:
 
 
 def _received_from_wait(
-    payload: dict[str, Any], *, pending_execution_id: str | None, known: set[str]
+    payload: dict[str, Any],
+    *,
+    pending_execution_id: str | None,
+    pending_thread: str | None,
+    pending_from_agent: str | None,
+    known: set[str],
+    known_by_thread: dict[str, str],
 ) -> set[str]:
+    """Map a completed wait onto known CDP generates.
+
+    Named ``execution_id`` / producer id win when they match a known generate.
+    The no-id fallback (exactly one open generate) counts only when the request
+    named no execution_id, its thread equals that generate's thread_id, and
+    ``from_agent`` is web-anthropic (friction 34156 F3).
+    """
     if payload.get("complete") is not True:
         return set()
     if payload.get("qualifying_reply_turn") is None:
@@ -228,10 +249,18 @@ def _received_from_wait(
     for candidate in (pending_execution_id, producer_eid):
         if candidate and candidate in known:
             return {candidate}
-    # Wait without execution_id still counts when exactly one generate is open.
-    if len(known) == 1:
-        return set(known)
-    return set()
+    # Fallback: only an unqualified wait on the generate's own web-anthropic lane.
+    if pending_execution_id is not None:
+        return set()
+    if len(known) != 1:
+        return set()
+    only = next(iter(known))
+    if pending_from_agent != CDP_REPLY_FROM_AGENT:
+        return set()
+    gen_thread = known_by_thread.get(only)
+    if not pending_thread or not gen_thread or pending_thread != gen_thread:
+        return set()
+    return {only}
 
 
 def _received_from_get_or_fetch(
@@ -264,11 +293,14 @@ class GenerateObserver:
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> GenerateObserver:
+        """Build from env; disabled when dispatch id or spool dir is unset (F9)."""
         source = env if env is not None else os.environ
-        return cls(
-            dispatch_id=source.get(CURSOR_SDK_DISPATCH_ID_ENV, ""),
-            spool_dir=source.get(ULG_STEER_SPOOL_DIR_ENV, "") or ".",
-        )
+        spool = (source.get(ULG_STEER_SPOOL_DIR_ENV) or "").strip()
+        dispatch_id = source.get(CURSOR_SDK_DISPATCH_ID_ENV, "")
+        if not spool:
+            # Do not fall back to cwd — GIW never reads that path.
+            return cls(dispatch_id="", spool_dir=".")
+        return cls(dispatch_id=dispatch_id, spool_dir=spool)
 
     @property
     def enabled(self) -> bool:
@@ -314,19 +346,29 @@ class GenerateObserver:
         except Exception:  # noqa: BLE001 — never into the relay
             return
 
-    def _known_execution_ids(self) -> set[str]:
-        return {
-            str(r["execution_id"])
-            for r in read_generate_records(
-                self.dispatch_id, spool_dir=self.spool_dir
-            )
-            if r.get("execution_id")
-        } - read_received_execution_ids(self.dispatch_id, spool_dir=self.spool_dir)
+    def _known_generates(self) -> tuple[set[str], dict[str, str]]:
+        """Outstanding fire ids and execution_id → thread_id."""
+        received = read_received_execution_ids(
+            self.dispatch_id, spool_dir=self.spool_dir
+        )
+        known: set[str] = set()
+        by_thread: dict[str, str] = {}
+        for row in read_generate_records(
+            self.dispatch_id, spool_dir=self.spool_dir
+        ):
+            eid = row.get("execution_id")
+            if not isinstance(eid, str) or not eid or eid in received:
+                continue
+            known.add(eid)
+            thread = row.get("thread_id")
+            if isinstance(thread, str) and thread:
+                by_thread[eid] = str(thread).replace("agent-bus:", "")
+        return known, by_thread
 
     def _observe_receive(
         self, payload: dict[str, Any], *, pending: dict[str, Any]
     ) -> None:
-        known = self._known_execution_ids()
+        known, known_by_thread = self._known_generates()
         if not known:
             return
         op = str(pending.get("op") or "")
@@ -334,7 +376,10 @@ class GenerateObserver:
             hits = _received_from_wait(
                 payload,
                 pending_execution_id=pending.get("execution_id"),
+                pending_thread=pending.get("thread"),
+                pending_from_agent=pending.get("from_agent"),
                 known=known,
+                known_by_thread=known_by_thread,
             )
         elif op in ("get", "fetch"):
             hits = _received_from_get_or_fetch(payload, known=known)

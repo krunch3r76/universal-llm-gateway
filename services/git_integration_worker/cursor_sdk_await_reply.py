@@ -15,6 +15,7 @@ once with the reply text.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -39,6 +40,7 @@ from services.git_integration_worker.cursor_sdk_await_reply_events import (
 )
 from services.git_integration_worker.cursor_sdk_await_reply_gate import (
     PARK_KIND_AWAIT_REPLY,
+    RECONCILE_CHILD_STATUSES_SQL,
 )
 from services.git_integration_worker.cursor_sdk_context import steer_spool_dir
 from services.git_integration_worker.cursor_sdk_packet import _IMPLEMENT_PREAMBLE
@@ -62,6 +64,8 @@ AWAIT_REPLY_TTL_ENV = "CURSOR_SDK_AWAIT_CDP_REPLY_TTL_S"
 ADMITTED_VIA_AWAIT_RESUME = "giw_await_reply_resume"
 AWAIT_REPLY_PREAMBLE_VERSION = 1
 _DEFAULT_TTL_S = 7200
+_MAX_RESUME_ATTEMPTS = 10
+_REFUSAL_GRACE_S = 300
 _LEDGER_SUFFIX = ".cdp-generates.jsonl"
 _RECORD_KEY = "park"
 _PERMANENT_INELIGIBLE = frozenset(
@@ -278,7 +282,11 @@ def find_reply(
 
 
 def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
-    """Sync GET /turns; raise on transport failure so the caller can park."""
+    """Sync GET /turns with after_turn cursor; raise on transport failure.
+
+    Agent-bus ``last`` defaults to None (no LIMIT). Passing ``after_turn`` uses
+    the server's ASC page filter so a tip-window ``last`` cannot hide a reply.
+    """
     from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
@@ -286,7 +294,7 @@ def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
     with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
         resp = client.get(
             "/turns",
-            params={"thread": thread_id},
+            params={"thread": thread_id, "after_turn": after_turn},
             headers=headers,
         )
     if resp.status_code >= 400:
@@ -297,11 +305,7 @@ def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
     turns = payload.get("turns")
     if not isinstance(turns, list):
         raise ConnectionError("bus turns missing turns list")
-    return [
-        t
-        for t in turns
-        if isinstance(t, dict) and int(t.get("turn_number") or 0) > after_turn
-    ]
+    return [t for t in turns if isinstance(t, dict)]
 
 
 def _is_conductor_dispatch(dispatch_id: str) -> bool:
@@ -320,7 +324,7 @@ def _is_conductor_dispatch(dispatch_id: str) -> bool:
     return is_conductor_dispatch_row({"contract": row["contract"]})
 
 
-def _snapshot_replies(
+async def _snapshot_replies(
     awaited: list[AwaitedGenerate],
     *,
     bus_turns_fn: BusTurnsFn,
@@ -333,7 +337,9 @@ def _snapshot_replies(
         key = (gen.thread_id, gen.after_turn)
         if key not in by_thread:
             try:
-                by_thread[key] = bus_turns_fn(gen.thread_id, gen.after_turn)
+                by_thread[key] = await asyncio.to_thread(
+                    bus_turns_fn, gen.thread_id, gen.after_turn
+                )
             except Exception:  # noqa: BLE001 — park rather than drop
                 by_thread[key] = None
                 fetch_failed = True
@@ -351,7 +357,10 @@ def mark_await_parked(
     awaited: list[AwaitedGenerate],
     ttl_s: int | None = None,
 ) -> ParkRow | None:
-    """Stamp await park columns + ``record_json.park``; status untouched (D1)."""
+    """Stamp await park columns + ``record_json.park``; status untouched (D1).
+
+    Refuses to overwrite a lineage that already has ``park_resumed_by`` set (F8).
+    """
     ttl = await_reply_ttl_s() if ttl_s is None else ttl_s
     parked_dt = _now_dt()
     parked_at = parked_dt.isoformat()
@@ -385,23 +394,32 @@ def mark_await_parked(
             "resume_attempts": 0,
             "resume_refusals": [],
         }
-        conn.execute(
+        cur = conn.execute(
             "UPDATE cursor_sdk_dispatches SET park_kind=?, parked_at=?, "
             "park_expires_at=?, park_resumed_by=NULL, record_json=? "
-            "WHERE dispatch_id=?",
+            "WHERE dispatch_id=? AND (park_kind IS NULL OR "
+            "(park_kind=? AND park_resumed_by IS NULL))",
             (
                 PARK_KIND_AWAIT_REPLY,
                 parked_at,
                 expires_at,
                 _dump(data),
                 dispatch_id,
+                PARK_KIND_AWAIT_REPLY,
             ),
         )
+        if cur.rowcount == 0:
+            return None
     return load_park_row(dispatch_id=dispatch_id)
 
 
 def open_await_rows() -> list[ParkRow]:
-    """Open ``await_cdp_reply`` rows, oldest first (includes TTL-expired)."""
+    """Open ``await_cdp_reply`` rows, oldest first (includes TTL-expired).
+
+    Terminal statuses only — a crash between park and terminal mark is recovered
+    by the stale-lease reaper, not by admitting while the parent is still running
+    (friction 34156 F4).
+    """
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         rows = conn.execute(
@@ -411,7 +429,7 @@ def open_await_rows() -> list[ParkRow]:
             "park_intent_id, parked_at, park_resumed_by, park_expires_at, "
             "record_json FROM cursor_sdk_dispatches "
             "WHERE park_kind=? AND park_resumed_by IS NULL "
-            "AND status IN ('completed','failed','cancelled','running') "
+            "AND status IN ('completed','failed','cancelled') "
             "ORDER BY parked_at ASC, rowid ASC",
             (PARK_KIND_AWAIT_REPLY,),
         ).fetchall()
@@ -464,6 +482,7 @@ def render_await_resume_preamble(
     awaited: list[AwaitedGenerate],
     code_version: str,
     ttl_s: int,
+    bus_unreachable: bool = False,
 ) -> str:
     """CDP-REPLY-RESUME v1 notice with every awaited reply / timeout line."""
     lines = [
@@ -482,10 +501,17 @@ def render_await_resume_preamble(
         hit = replies[index - 1] if index - 1 < len(replies) else None
         header = f"Awaited reply {index}/{total} — execution_id {gen.execution_id}"
         if hit is None:
-            lines.append(
-                f"{header} (timeout) — no reply within {ttl_s}s on "
-                f"agent-bus:{gen.thread_id}; treat the generate as failed."
-            )
+            if bus_unreachable:
+                lines.append(
+                    f"{header} (unknown) — bus unreachable when the await TTL "
+                    f"elapsed on agent-bus:{gen.thread_id}; treat the generate "
+                    "as failed."
+                )
+            else:
+                lines.append(
+                    f"{header} (timeout) — no reply within {ttl_s}s on "
+                    f"agent-bus:{gen.thread_id}; treat the generate as failed."
+                )
             continue
         ref = f"agent-bus:{hit.thread_id}#{hit.turn_number}"
         lines.append(f"{header} ({hit.outcome}) — {ref}")
@@ -500,6 +526,7 @@ def build_await_resume_request(
     attempt: int,
     code_version: str,
     ttl_s: int | None = None,
+    bus_unreachable: bool = False,
 ) -> CursorDispatchRequest:
     """Mint the ``resume_of`` child carrying every awaited reply body."""
     awaited = _awaited_from_row(row)
@@ -515,6 +542,7 @@ def build_await_resume_request(
         awaited=awaited,
         code_version=code_version,
         ttl_s=ttl,
+        bus_unreachable=bus_unreachable,
     )
     preamble = (
         f"{notice}\n\n{original_preamble}".strip() if original_preamble else notice
@@ -581,56 +609,66 @@ async def maybe_await_park_at_terminal(
     spool_dir: Path | str | None = None,
     bus_turns_fn: BusTurnsFn | None = None,
 ) -> bool:
-    """Park when outstanding (unreceived) CDP generates remain. True ⇒ parked."""
+    """Park when outstanding (unreceived) CDP generates remain. True ⇒ parked.
+
+    Never raises into the closeout path (F1). ``await_parked`` is True only after
+    ``mark_await_parked`` commits; the AWAITING bus post and frontier event are
+    best-effort. Park-time bus snapshot is omitted (F5) — the reactor / immediate
+    resume pass observes replies.
+    """
     del execution_id  # reserved for future link-aware logging
-    if not await_reply_enabled():
+    del bus_turns_fn  # park no longer snapshots; reactor observes
+    try:
+        if not await_reply_enabled():
+            return False
+        # Cheap filesystem check before the conductor DB read (F9).
+        outstanding = outstanding_generates(dispatch_id, spool_dir=spool_dir)
+        if not outstanding:
+            return False
+        if _is_conductor_dispatch(dispatch_id):
+            return False
+        row = mark_await_parked(dispatch_id=dispatch_id, awaited=outstanding)
+        if row is None:
+            return False
+        # Park columns committed — closeout must treat this as parked even if
+        # the awareness post / event fail (so the link is not terminated).
+        ttl = await_reply_ttl_s()
+        try:
+            emit_sdk_await_reply_parked(
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                execution_ids=[g.execution_id for g in outstanding],
+                awaited_threads=sorted({g.thread_id for g in outstanding}),
+                ttl_s=ttl,
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            logger.exception(
+                "await_cdp_reply parked event failed dispatch=%s", dispatch_id
+            )
+        try:
+            await _post_awaiting_turn(
+                bus,
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                caller_agent=row.caller_agent,
+                awaited=outstanding,
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            logger.exception(
+                "await_cdp_reply AWAITING post failed dispatch=%s", dispatch_id
+            )
+        logger.info(
+            "cursor-sdk await_cdp_reply parked dispatch=%s awaited=%s ttl_s=%s",
+            dispatch_id,
+            [g.execution_id for g in outstanding],
+            ttl,
+        )
+        return True
+    except Exception:  # noqa: BLE001 — never block _deliver_sdk_closeout (F1)
+        logger.exception(
+            "await_cdp_reply park hook failed open dispatch=%s", dispatch_id
+        )
         return False
-    if _is_conductor_dispatch(dispatch_id):
-        return False
-    outstanding = outstanding_generates(dispatch_id, spool_dir=spool_dir)
-    if not outstanding:
-        return False
-    turns_fn = bus_turns_fn or _default_bus_turns
-    # Snapshot now: bus-down keeps every generate outstanding (park, tick retries).
-    _hits, _failed = _snapshot_replies(outstanding, bus_turns_fn=turns_fn)
-    row = mark_await_parked(dispatch_id=dispatch_id, awaited=outstanding)
-    if row is None:
-        return False
-    ttl = await_reply_ttl_s()
-    emit_sdk_await_reply_parked(
-        dispatch_id=dispatch_id,
-        thread_id=thread_id,
-        execution_ids=[g.execution_id for g in outstanding],
-        awaited_threads=sorted({g.thread_id for g in outstanding}),
-        ttl_s=ttl,
-    )
-    await _post_awaiting_turn(
-        bus,
-        dispatch_id=dispatch_id,
-        thread_id=thread_id,
-        caller_agent=row.caller_agent,
-        awaited=outstanding,
-    )
-    logger.info(
-        "cursor-sdk await_cdp_reply parked dispatch=%s awaited=%s ttl_s=%s",
-        dispatch_id,
-        [g.execution_id for g in outstanding],
-        ttl,
-    )
-    return True
-
-
-def _existing_await_child(parent_id: str) -> str | None:
-    ledger = CursorDispatchLedger.instance()
-    needle = f'%"admitted_via":"{ADMITTED_VIA_AWAIT_RESUME}"%'
-    with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT dispatch_id FROM cursor_sdk_dispatches "
-            "WHERE resume_of=? AND record_json LIKE ? "
-            "ORDER BY rowid DESC LIMIT 1",
-            (parent_id, needle),
-        ).fetchone()
-    return str(row["dispatch_id"]) if row is not None else None
 
 
 def _response_code(response: Any) -> str:
@@ -654,6 +692,33 @@ def _ttl_elapsed(row: ParkRow, *, now: datetime) -> bool:
         if expires is not None and now >= expires:
             return True
     return bool(row.park.get("expired_at"))
+
+
+def _refusal_cap_elapsed(row: ParkRow, *, now: datetime) -> bool:
+    """True when resume attempts or TTL+grace say stop retrying refusals (F6)."""
+    attempts = int(row.park.get("resume_attempts") or 0)
+    if attempts >= _MAX_RESUME_ATTEMPTS:
+        return True
+    if not row.park_expires_at:
+        return False
+    try:
+        expires = datetime.fromisoformat(row.park_expires_at)
+    except ValueError:
+        return False
+    return now >= (expires + timedelta(seconds=_REFUSAL_GRACE_S))
+
+
+def _usable_resume_child(parent_id: str) -> str | None:
+    """Live or completed resume_of child; ignores failed-before-run rows (F2)."""
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE resume_of=? "
+            f"AND status IN {RECONCILE_CHILD_STATUSES_SQL} "
+            "ORDER BY rowid LIMIT 1",
+            (parent_id,),
+        ).fetchone()
+    return str(row["dispatch_id"]) if row is not None else None
 
 
 async def _post_resumed_turn(
@@ -727,8 +792,13 @@ async def resume_await_parked_dispatches(
     bus: CursorBusClient | None = None,
     bus_turns_fn: BusTurnsFn | None = None,
     now: datetime | None = None,
+    parent_dispatch_id: str | None = None,
 ) -> AwaitResumeSummary:
-    """Admit one resume child per ready await-park row; idempotent on stamp."""
+    """Admit one resume child per ready await-park row; idempotent on stamp.
+
+    When *parent_dispatch_id* is set (closeout immediate pass), only that row
+    is considered so other open parks keep their own code_version (F7).
+    """
     from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
 
     summary = AwaitResumeSummary()
@@ -739,6 +809,8 @@ async def resume_await_parked_dispatches(
     ttl = await_reply_ttl_s()
 
     for row in open_await_rows():
+        if parent_dispatch_id is not None and row.dispatch_id != parent_dispatch_id:
+            continue
         if controller.is_draining():
             break
         if row.park.get("expired_at"):
@@ -746,27 +818,16 @@ async def resume_await_parked_dispatches(
         if _is_conductor_dispatch(row.dispatch_id):
             summary.skipped_conductor.append(row.dispatch_id)
             continue
-        existing = _existing_await_child(row.dispatch_id)
+        # Live or completed resume_of child closes the park; failed-before-run
+        # children (drain 503 after ledger.admit) do not (F2).
+        existing = _usable_resume_child(row.dispatch_id)
         if existing is not None:
             mark_park_resumed(parent_id=row.dispatch_id, child_id=existing)
             summary.reconciled.append((row.dispatch_id, existing))
             continue
-        # Any live resume_of child (hand path) also closes the park.
-        with ledger._connect() as conn:
-            live = conn.execute(
-                "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE resume_of=? "
-                "ORDER BY rowid LIMIT 1",
-                (row.dispatch_id,),
-            ).fetchone()
-        if live is not None:
-            mark_park_resumed(
-                parent_id=row.dispatch_id, child_id=str(live["dispatch_id"])
-            )
-            summary.reconciled.append((row.dispatch_id, str(live["dispatch_id"])))
-            continue
 
         awaited = _awaited_from_row(row)
-        hits, fetch_failed = _snapshot_replies(awaited, bus_turns_fn=turns_fn)
+        hits, fetch_failed = await _snapshot_replies(awaited, bus_turns_fn=turns_fn)
         reply_list = [hits.get(g.execution_id) for g in awaited]
         all_landed = bool(awaited) and all(h is not None for h in reply_list)
         timed_out = _ttl_elapsed(row, now=clock)
@@ -783,6 +844,9 @@ async def resume_await_parked_dispatches(
         if reason is not None:
             if reason in _PERMANENT_INELIGIBLE:
                 if await _expire_await(row, bus, reason=reason):
+                    summary.expired.append(row.dispatch_id)
+            elif _refusal_cap_elapsed(row, now=clock):
+                if await _expire_await(row, bus, reason=f"resume_refused_cap:{reason}"):
                     summary.expired.append(row.dispatch_id)
             else:
                 attempt = bump_resume_attempt(parent_id=row.dispatch_id)
@@ -802,6 +866,7 @@ async def resume_await_parked_dispatches(
             attempt=attempt,
             code_version=code_version,
             ttl_s=ttl,
+            bus_unreachable=bool(fetch_failed and not all_landed),
         )
         response = await admit_cursor_dispatch(req, cfg=cfg, controller=controller)
         if response.status_code not in (200, 202):
@@ -817,10 +882,21 @@ async def resume_await_parked_dispatches(
                 req.dispatch_id,
                 code,
             )
+            # Reload park for attempt count after bump; expire when capped (F6).
+            refreshed = load_park_row(dispatch_id=row.dispatch_id)
+            if refreshed is not None and _refusal_cap_elapsed(refreshed, now=clock):
+                if await _expire_await(
+                    refreshed, bus, reason=f"resume_refused_cap:{code}"
+                ):
+                    summary.expired.append(row.dispatch_id)
             continue
         mark_park_resumed(parent_id=row.dispatch_id, child_id=req.dispatch_id)
         outcomes = {
-            g.execution_id: (hits[g.execution_id].outcome if hits.get(g.execution_id) else "timeout")
+            g.execution_id: (
+                hits[g.execution_id].outcome
+                if hits.get(g.execution_id)
+                else ("unknown" if fetch_failed else "timeout")
+            )
             for g in awaited
         }
         emit_sdk_await_reply_resume_admitted(

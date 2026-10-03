@@ -42,9 +42,6 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     WriteLeaseHeld,
     resolve_conductor_summoning_thread_id,
 )
-from services.git_integration_worker.cursor_sdk_await_reply_gate import (
-    ResumeAlreadyAdmitted,
-)
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
@@ -61,6 +58,9 @@ from services.git_integration_worker.cursor_models import (
 )
 from services.git_integration_worker.cursor_sdk_association import (
     build_dispatch_association_fields,
+)
+from services.git_integration_worker.cursor_sdk_await_reply_gate import (
+    ResumeAlreadyAdmitted,
 )
 from services.git_integration_worker.cursor_sdk_bridge_launch import (
     launch_sdk_bridge,
@@ -2332,17 +2332,24 @@ async def _deliver_sdk_closeout(
         )
         # friction 34156: park before terminal mark so resume_retain is stamped
         # and the bus link can stay open (D3) while CDP replies are outstanding.
+        # Hook failures must never block the terminal mark (F1).
         from services.git_integration_worker.cursor_sdk_await_reply import (
             maybe_await_park_at_terminal,
             resume_await_parked_dispatches,
         )
 
-        await_parked = await maybe_await_park_at_terminal(
-            dispatch_id=req.dispatch_id,
-            thread_id=req.thread_id,
-            execution_id=req.execution_id,
-            bus=bus,
-        )
+        try:
+            await_parked = await maybe_await_park_at_terminal(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                execution_id=req.execution_id,
+                bus=bus,
+            )
+        except Exception:  # noqa: BLE001 — F1: closeout always marks terminal
+            logger.exception(
+                "await_cdp_reply park hook raised dispatch=%s", req.dispatch_id
+            )
+            await_parked = False
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status=hop_terminal,
@@ -2358,12 +2365,20 @@ async def _deliver_sdk_closeout(
         )
         if await_parked:
             # R1: replies already on the bus but never received → resume now.
+            # Scope to this dispatch; use the worker's real code_version (F7).
+            try:
+                from services.git_integration_worker.app import _resolve_version
+
+                closeout_code_version = _resolve_version()
+            except Exception:  # noqa: BLE001
+                closeout_code_version = "unknown"
             try:
                 await resume_await_parked_dispatches(
                     cfg=_CONFIG,
                     controller=controller,
-                    code_version="closeout",
+                    code_version=closeout_code_version,
                     bus=bus,
+                    parent_dispatch_id=req.dispatch_id,
                 )
             except Exception:  # noqa: BLE001 — tick will retry
                 logger.exception(

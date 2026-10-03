@@ -404,7 +404,8 @@ async def test_terminal_with_outstanding_generate_parks_row_durably(
     parked = await _park("d-park", bus=bus, turns=turns, tmp_path=tmp_path)
 
     assert parked is True
-    assert turns.calls == [(_COORD_THREAD, 3)]
+    # F5: park no longer snapshots the bus; the reactor observes replies.
+    assert turns.calls == []
     row = _row("d-park")
     assert row["park_kind"] == PARK_KIND_AWAIT_REPLY
     assert row["park_resumed_by"] is None
@@ -509,7 +510,7 @@ async def test_no_bridge_record_or_flag_off_keeps_todays_behaviour(
 
 @pytest.mark.asyncio
 async def test_bus_snapshot_failure_parks_rather_than_drops(tmp_path: Path) -> None:
-    """Bus unreachable at terminal: the generate stays awaited; the tick re-checks."""
+    """Bus unreachable at park is irrelevant (F5); tick keeps waiting on bus-down."""
     _seed_running("d-busdown", tmp_path=tmp_path)
     _record_generate(tmp_path, "d-busdown")
 
@@ -518,6 +519,10 @@ async def test_bus_snapshot_failure_parks_rather_than_drops(tmp_path: Path) -> N
 
     assert await _park("d-busdown", bus=_bus(), turns=_boom, tmp_path=tmp_path) is True
     assert _row("d-busdown")["park_kind"] == PARK_KIND_AWAIT_REPLY
+    _mark_completed("d-busdown")
+    summary = await _tick(bus=_bus(), turns=_boom)
+    assert summary.waiting == ["d-busdown"]
+    assert summary.admitted == []
 
 
 # ------------------------------------------------------------- done item 2
@@ -924,3 +929,596 @@ async def test_permanent_ineligibility_expires_the_park_once(
     second = await _tick(bus=bus, turns=turns)
     assert second.expired == [] and second.admitted == []
     assert _children("d-nostore") == []
+
+
+# ------------------------------------------------------------- review F1–F9 + gaps
+
+
+@pytest.mark.asyncio
+async def test_f1_park_hook_exception_still_allows_terminal_mark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1: mark_await_parked raising must not leave the closeout without a terminal."""
+    from services.git_integration_worker import cursor_sdk_await_reply as mod
+
+    _seed_running("d-f1", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f1")
+
+    def _boom(**_kw: Any) -> None:
+        raise RuntimeError("spool torn")
+
+    monkeypatch.setattr(mod, "mark_await_parked", _boom)
+    bus = _bus()
+    assert await _park("d-f1", bus=bus, turns=_Turns(), tmp_path=tmp_path) is False
+    _mark_completed("d-f1")
+    assert _row("d-f1")["status"] == "completed"
+    assert _row("d-f1")["park_kind"] is None
+
+
+@pytest.mark.asyncio
+async def test_f1_awaiting_post_failure_still_counts_as_parked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1: after mark_await_parked commits, post/event failures keep await_parked True."""
+    _seed_running("d-f1post", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f1post")
+    bus = _bus()
+    bus.reply = AsyncMock(side_effect=RuntimeError("bus reply down"))
+    parked = await _park("d-f1post", bus=bus, turns=_Turns(), tmp_path=tmp_path)
+    assert parked is True
+    assert _row("d-f1post")["park_kind"] == PARK_KIND_AWAIT_REPLY
+
+
+@pytest.mark.asyncio
+async def test_f2_failed_pre_run_child_does_not_close_park(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """F2: drain-503 child (failed, never started) must not stamp park_resumed_by."""
+    _seed_running("d-f2", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f2")
+    bus = _bus()
+    await _park("d-f2", bus=bus, turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-f2")
+    ledger = CursorDispatchLedger.instance()
+    # Simulate post-admit Draining503: row inserted, marked failed, never running.
+    # Use a non-cN id so the reactor's first mint (d-f2-c1) does not collide.
+    dead = CursorDispatchRequest(
+        thread_id=_WORKER_THREAD,
+        model="cursor/grok-4.7",
+        dispatch_id="d-f2-phantom",
+        execution_id="exec-d-f2",
+        caller_agent="cursor",
+        message="phantom",
+        handoff_contract="freeform",
+        resume_of="d-f2",
+        admitted_via=ADMITTED_VIA_AWAIT_RESUME,
+        work_key=_WORK_KEY,
+    )
+    ledger.admit(
+        req=dead,
+        fingerprint=ledger.fingerprint(dead),
+        execution_id=dead.execution_id,
+        caller_agent="cursor",
+        resolved_model="grok-4.7",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="d-f2-phantom",
+            thread_id=_WORKER_THREAD,
+            model_id="m",
+        ),
+        contract="freeform",
+        source_repo=str(load_config().source_repo),
+        lease_key="lease-f2",
+        work_key=_WORK_KEY,
+        identity_class="declared",
+    )
+    ledger.mark_terminal(dispatch_id="d-f2-phantom", terminal_status="failed")
+    assert _row("d-f2-phantom")["started_at"] is None
+    assert _row("d-f2-phantom")["status"] == "failed"
+
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    summary = await _tick(bus=bus, turns=turns)
+    assert summary.reconciled == []
+    assert summary.admitted == [("d-f2", "d-f2-c1")]
+    assert _row("d-f2")["park_resumed_by"] == "d-f2-c1"
+
+
+@pytest.mark.asyncio
+async def test_f2_gate_ignores_stamped_failed_pre_run_child(tmp_path: Path) -> None:
+    """F2: stamped park_resumed_by naming a pre-run failure does not 409 a new child."""
+    _seed_running("d-f2g", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f2g")
+    await _park("d-f2g", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-f2g")
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, resume_of, started_at) "
+            "VALUES ('d-f2g-dead', 'fp', ?, 'e', 'm', 1, 'failed', 'd-f2g', NULL)",
+            (_WORKER_THREAD,),
+        )
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_resumed_by='d-f2g-dead' "
+            "WHERE dispatch_id='d-f2g'"
+        )
+    hand = CursorDispatchRequest(
+        thread_id=_WORKER_THREAD,
+        model="cursor/grok-4.7",
+        dispatch_id="d-f2g-hand",
+        execution_id="exec-hand",
+        caller_agent="cursor",
+        message="recover",
+        handoff_contract="freeform",
+        resume_of="d-f2g",
+        work_key=_WORK_KEY,
+    )
+    assert (
+        ledger.admit(
+            req=hand,
+            fingerprint=ledger.fingerprint(hand),
+            execution_id=hand.execution_id,
+            caller_agent="cursor",
+            resolved_model="grok-4.7",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id="d-f2g-hand",
+                thread_id=_WORKER_THREAD,
+                model_id="m",
+            ),
+            contract="freeform",
+            source_repo=str(load_config().source_repo),
+            lease_key="lease-f2g",
+            work_key=_WORK_KEY,
+            identity_class="declared",
+        )
+        is None
+    )
+    assert _row("d-f2g-hand") is not None
+
+
+@pytest.mark.asyncio
+async def test_f2_reactor_admit_inserts_then_503(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap: admit inserts the child then returns 503 — park stays open for retry."""
+    from fastapi.responses import JSONResponse
+
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    _seed_running("d-f2s", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f2s")
+    await _park("d-f2s", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-f2s")
+
+    async def _admit_then_503(req, *, cfg, controller, request=None):  # noqa: ANN001
+        ledger = CursorDispatchLedger.instance()
+        ledger.admit(
+            req=req,
+            fingerprint=ledger.fingerprint(req),
+            execution_id=req.execution_id,
+            caller_agent=req.caller_agent or "cursor",
+            resolved_model="grok-4.7",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                model_id="m",
+            ),
+            contract=req.handoff_contract,
+            source_repo=str(cfg.source_repo),
+            lease_key=str(cfg.source_repo),
+            work_key=req.work_key,
+            source_ref=req.source_ref or req.work_key,
+            identity_class="declared" if req.work_key else None,
+        )
+        ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="failed")
+        return JSONResponse(
+            status_code=503,
+            content={"code": "Draining503", "message": "draining"},
+        )
+
+    monkeypatch.setattr(route_mod, "admit_cursor_dispatch", _admit_then_503)
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    first = await _tick(bus=_bus(), turns=turns)
+    assert first.admitted == []
+    assert first.refused
+    assert _row("d-f2s")["park_resumed_by"] is None
+    assert _row("d-f2s-c1")["status"] == "failed"
+    assert _row("d-f2s-c1")["started_at"] is None
+
+    # Second tick with a healthy admit stub recovers.
+    async def _ok(req, *, cfg, controller, request=None):  # noqa: ANN001
+        ledger = CursorDispatchLedger.instance()
+        ledger.admit(
+            req=req,
+            fingerprint=ledger.fingerprint(req),
+            execution_id=req.execution_id,
+            caller_agent=req.caller_agent or "cursor",
+            resolved_model="grok-4.7",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                model_id="m",
+            ),
+            contract=req.handoff_contract,
+            source_repo=str(cfg.source_repo),
+            lease_key=str(cfg.source_repo),
+            work_key=req.work_key,
+            source_ref=req.source_ref or req.work_key,
+            identity_class="declared" if req.work_key else None,
+        )
+        ledger.mark_running(dispatch_id=req.dispatch_id)
+        return JSONResponse(status_code=200, content={"admitted": True})
+
+    monkeypatch.setattr(route_mod, "admit_cursor_dispatch", _ok)
+    second = await _tick(bus=_bus(), turns=turns)
+    assert second.admitted == [("d-f2s", "d-f2s-c2")]
+
+
+@pytest.mark.asyncio
+async def test_f4_running_parent_not_in_open_await_rows(tmp_path: Path) -> None:
+    """F4: park while still running is invisible to the reactor until terminal."""
+    _seed_running("d-f4run", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f4run")
+    assert await _park("d-f4run", bus=_bus(), turns=_Turns(), tmp_path=tmp_path) is True
+    assert _row("d-f4run")["status"] == "running"
+    assert open_await_rows() == []
+    summary = await _tick(bus=_bus(), turns=_Turns({_COORD_THREAD: [_reply_turn()]}))
+    assert summary.admitted == [] and summary.waiting == []
+    _mark_completed("d-f4run")
+    assert [r.dispatch_id for r in open_await_rows()] == ["d-f4run"]
+
+
+@pytest.mark.asyncio
+async def test_f4_bridge_death_await_parent_not_auto_resumed(
+    tmp_path: Path,
+) -> None:
+    """F4: await_cdp_reply does not inherit park_for_restart eligibility exemption."""
+    from services.git_integration_worker.cursor_sdk_resume import (
+        resume_eligibility_reason,
+    )
+
+    _seed_running("d-f4bd", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f4bd")
+    await _park("d-f4bd", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="d-f4bd", terminal_status="failed")
+    ledger.merge_record_json(
+        dispatch_id="d-f4bd",
+        patch={
+            "bridge_death_partial_uri": "cortex://notes/system/threads/x.md",
+            "resume_eligible": False,
+            "bridge_death_degraded_reason": "spawn_enoent_missing_cwd",
+        },
+    )
+    assert (
+        resume_eligibility_reason(ledger, parent_id="d-f4bd")
+        == "bridge_death_not_resume_eligible"
+    )
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    # Permanent? bridge_death_not_resume_eligible is not in _PERMANENT_INELIGIBLE —
+    # it refuses until the cap expires. First tick refuses.
+    summary = await _tick(bus=_bus(), turns=turns)
+    assert summary.admitted == []
+    assert summary.refused == [("d-f4bd", "bridge_death_not_resume_eligible")]
+
+
+@pytest.mark.asyncio
+async def test_f6_refusal_cap_expires_the_park(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6: after N refused attempts the park expires instead of retrying forever."""
+    from services.git_integration_worker import cursor_sdk_await_reply as mod
+
+    monkeypatch.setattr(mod, "_MAX_RESUME_ATTEMPTS", 2)
+    _seed_running("d-f6", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f6")
+    await _park("d-f6", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="d-f6", terminal_status="failed")
+    ledger.merge_record_json(
+        dispatch_id="d-f6",
+        patch={
+            "bridge_death_partial_uri": "cortex://notes/x.md",
+            "resume_eligible": False,
+        },
+    )
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    bus = _bus()
+    first = await _tick(bus=bus, turns=turns)
+    assert first.refused == [("d-f6", "bridge_death_not_resume_eligible")]
+    second = await _tick(bus=bus, turns=turns)
+    # attempt already 1; second bump hits cap on the following refuse path
+    third = await _tick(bus=bus, turns=turns)
+    assert "d-f6" in (second.expired + third.expired + first.expired)
+    assert json.loads(_row("d-f6")["record_json"])["park"].get("expired_at")
+
+
+@pytest.mark.asyncio
+async def test_f7_immediate_resume_scoped_to_parent(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """F7: closeout pass resumes only the closing dispatch, with a real code_version."""
+    _seed_running("d-f7a", tmp_path=tmp_path, work_key="friction:34156-a")
+    _seed_running(
+        "d-f7b", tmp_path=tmp_path, thread_id="14695", work_key="friction:34156-b"
+    )
+    _record_generate(tmp_path, "d-f7a")
+    _record_generate(tmp_path, "d-f7b", execution_id=_EXEC2)
+    bus = _bus()
+    await _park("d-f7a", bus=bus, turns=_Turns(), tmp_path=tmp_path)
+    await _park("d-f7b", bus=bus, turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-f7a")
+    _mark_completed("d-f7b")
+    turns = _Turns(
+        {
+            _COORD_THREAD: [
+                _reply_turn(),
+                _reply_turn(execution_id=_EXEC2, turn_number=5),
+            ]
+        }
+    )
+    summary = await resume_await_parked_dispatches(
+        cfg=load_config(),
+        controller=_controller(),
+        code_version="deadbeef",
+        bus=bus,
+        bus_turns_fn=turns,
+        parent_dispatch_id="d-f7a",
+    )
+    assert summary.admitted == [("d-f7a", "d-f7a-c1")]
+    assert _row("d-f7b")["park_resumed_by"] is None
+    preamble = json.loads(_row("d-f7a-c1")["record_json"])["prompt_preamble"]
+    assert "code_version deadbeef" in preamble
+    assert "code_version closeout" not in preamble
+
+
+@pytest.mark.asyncio
+async def test_f8_mark_await_parked_does_not_reset_resumed_lineage(
+    tmp_path: Path,
+) -> None:
+    """F8: a duplicate park stamp cannot clear park_resumed_by."""
+    from services.git_integration_worker.cursor_sdk_await_reply import mark_await_parked
+
+    _seed_running("d-f8", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f8")
+    await _park("d-f8", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-f8")
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET park_resumed_by='d-f8-c1' "
+            "WHERE dispatch_id='d-f8'"
+        )
+    again = mark_await_parked(
+        dispatch_id="d-f8",
+        awaited=fired_generates("d-f8", spool_dir=_spool(tmp_path)),
+    )
+    assert again is None
+    assert _row("d-f8")["park_resumed_by"] == "d-f8-c1"
+
+
+@pytest.mark.asyncio
+async def test_f9_ttl_preamble_says_unknown_when_bus_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(AWAIT_REPLY_TTL_ENV, "60")
+    _seed_running("d-f9ttl", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-f9ttl")
+    await _park("d-f9ttl", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-f9ttl")
+    parked_at = datetime.fromisoformat(_row("d-f9ttl")["parked_at"])
+
+    def _boom(_thread: str, _after: int) -> list[dict[str, Any]]:
+        raise ConnectionError("bus down")
+
+    summary = await _tick(
+        bus=_bus(), turns=_boom, now=parked_at + timedelta(seconds=61)
+    )
+    assert summary.admitted == [("d-f9ttl", "d-f9ttl-c1")]
+    preamble = json.loads(_row("d-f9ttl-c1")["record_json"])["prompt_preamble"]
+    assert "(unknown)" in preamble and "bus unreachable" in preamble
+
+
+def test_f9_ledger_path_matches_bridge_and_giw() -> None:
+    from scripts.mcp_bridge_generate_ledger import generate_ledger_path
+    from services.git_integration_worker.cursor_sdk_await_reply import _ledger_path
+
+    spool = Path("/tmp/spool-f9")
+    assert generate_ledger_path(spool, "a/b:c") == _ledger_path(spool, "a/b:c")
+
+
+def test_f9_default_bus_turns_passes_after_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F9: GET /turns uses after_turn so a tip ``last`` cannot hide replies."""
+    from services.git_integration_worker import cursor_sdk_await_reply as mod
+
+    captured: dict[str, Any] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict[str, Any]:
+            return {"turns": [{"turn_number": 4, "from": "web-anthropic"}]}
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def get(self, path: str, *, params: dict[str, Any], headers: Any) -> _Resp:
+            captured["path"] = path
+            captured["params"] = params
+            return _Resp()
+
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client", lambda *_a, **_k: _Client()
+    )
+    turns = mod._default_bus_turns("14692", 3)
+    assert captured["params"] == {"thread": "14692", "after_turn": 3}
+    assert len(turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap: _deliver_sdk_closeout — park before terminal; exception ⇒ still terminal; F7 scope."""
+    from implement_admission.spec import CloseoutStatus
+
+    from services.git_integration_worker.cursor_sdk_closeout import SdkRunOutcome
+    from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+        CloseoutDelivery,
+    )
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    monkeypatch.setenv(AWAIT_REPLY_FLAG_ENV, "1")
+    _seed_running("d-close", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-close")
+    # Point steer spool at the test spool so outstanding_generates sees the fire.
+    monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(_spool(tmp_path)))
+
+    order: list[str] = []
+    real_park = __import__(
+        "services.git_integration_worker.cursor_sdk_await_reply", fromlist=["x"]
+    ).maybe_await_park_at_terminal
+
+    async def _track_park(**kw: Any) -> bool:
+        order.append("park")
+        return await real_park(**kw)
+
+    real_promote = route_mod._mark_terminal_and_promote
+
+    async def _track_promote(**kw: Any) -> None:
+        order.append("promote")
+        return await real_promote(**kw)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.maybe_await_park_at_terminal",
+        _track_park,
+    )
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", _track_promote)
+
+    async def _prep(**_kw: Any) -> CloseoutDelivery:
+        return CloseoutDelivery(
+            body="status: complete\n",
+            sidecar_ref=None,
+            sidecar_path=None,
+            full_result_bytes=10,
+            closeout_status=CloseoutStatus.COMPLETE,
+        )
+
+    monkeypatch.setattr(route_mod, "prepare_closeout_delivery_async", _prep)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_closeout_pager."
+        "page_conductor_silence",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(route_mod, "emit_implement_closeout_trigger", AsyncMock())
+    monkeypatch.setattr(
+        CursorDispatchLedger,
+        "read_wt_baseline",
+        lambda self, **_kw: {"files": {}, "codes": {}},
+    )
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child", AsyncMock(return_value="released")
+    )
+    monkeypatch.setattr(
+        route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None
+    )
+    monkeypatch.setattr(route_mod, "_promote_queued_for_lease", AsyncMock())
+    monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", lambda **_k: None)
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_k: None)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.resume_await_parked_dispatches",
+        AsyncMock(
+            return_value=__import__(
+                "services.git_integration_worker.cursor_sdk_await_reply",
+                fromlist=["AwaitResumeSummary"],
+            ).AwaitResumeSummary()
+        ),
+    )
+
+    bus = _bus()
+    req = CursorDispatchRequest(
+        thread_id=_WORKER_THREAD,
+        model="cursor/grok-4.7",
+        dispatch_id="d-close",
+        execution_id="exec-d-close",
+        caller_agent="cursor",
+        message="packet",
+        handoff_contract="freeform",
+        work_key=_WORK_KEY,
+    )
+    await route_mod._deliver_sdk_closeout(
+        req=req,
+        source_repo=tmp_path / "repo",
+        outcome=SdkRunOutcome(
+            body="status: complete\n",
+            status="finished",
+            duration_ms=10,
+            tool_call_count=1,
+        ),
+        degraded_reason=None,
+        bus=bus,
+        reply_to="dispatch",
+        work_item_ref=_WORK_KEY,
+        controller=_controller(),
+    )
+    assert order == ["park", "promote"]
+    assert _row("d-close")["status"] == "completed"
+    assert _row("d-close")["park_kind"] == PARK_KIND_AWAIT_REPLY
+
+    # Exception path: park raises → still promoted.
+    _seed_running(
+        "d-close-x",
+        tmp_path=tmp_path,
+        thread_id="14696",
+        work_key="friction:34156-x",
+    )
+    _record_generate(tmp_path, "d-close-x")
+
+    async def _raise(**_kw: Any) -> bool:
+        order.append("park-raise")
+        raise RuntimeError("hook boom")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.maybe_await_park_at_terminal",
+        _raise,
+    )
+    order.clear()
+    # Re-bind promote tracker
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", _track_promote)
+    req2 = CursorDispatchRequest(
+        thread_id="14696",
+        model="cursor/grok-4.7",
+        dispatch_id="d-close-x",
+        execution_id="exec-d-close-x",
+        caller_agent="cursor",
+        message="packet",
+        handoff_contract="freeform",
+        work_key="friction:34156-x",
+    )
+    await route_mod._deliver_sdk_closeout(
+        req=req2,
+        source_repo=tmp_path / "repo",
+        outcome=SdkRunOutcome(
+            body="status: complete\n",
+            status="finished",
+            duration_ms=10,
+            tool_call_count=1,
+        ),
+        degraded_reason=None,
+        bus=_bus(),
+        reply_to="dispatch",
+        work_item_ref="friction:34156-x",
+        controller=_controller(),
+    )
+    assert "promote" in order
+    assert _row("d-close-x")["status"] == "completed"
