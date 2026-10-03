@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """io → SSH → GUI-host keystroke relay for the Cursor keystroke bridge.
 
-Host: ``CURSOR_BRIDGE_SSH_HOST`` (default ``jupiter``; orion-node for attended
-Glass). Same hopper shape as ``grokbot-routine-launch.py`` minus scp — the repo
+Host: ``CURSOR_BRIDGE_SSH_HOST`` (default ``jupiter``; attended Glass is
+``orion-node``). ``/cursor-paste`` must pass the host and window; do not
+treat this default as the attended target. Same hopper shape as
+``grokbot-routine-launch.py`` minus scp — the repo
 is one NFS mount, so message files written here are visible on the graphical host.
 
 Ops delegate to ``cursor_tab_keystroke.py`` (Glass default):

@@ -246,13 +246,20 @@ def _chord(ui: UInput, *keys: int) -> None:
 
 
 def _paste(ui: UInput) -> None:
-    """Ctrl+V slow enough for a composer that just took focus."""
+    """Ctrl+Shift+V so the composer expands the clipboard.
+
+    Ctrl+V alone leaves the paste unexpanded in Glass and the IDE.
+    """
     _key_down(ui, e.KEY_LEFTCTRL)
-    time.sleep(0.18)
+    time.sleep(0.05)
+    _key_down(ui, e.KEY_LEFTSHIFT)
+    time.sleep(0.12)
     _key_down(ui, e.KEY_V)
     time.sleep(0.15)
     _key_up(ui, e.KEY_V)
-    time.sleep(0.08)
+    time.sleep(0.05)
+    _key_up(ui, e.KEY_LEFTSHIFT)
+    time.sleep(0.05)
     _key_up(ui, e.KEY_LEFTCTRL)
 
 

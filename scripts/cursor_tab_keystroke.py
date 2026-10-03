@@ -218,7 +218,18 @@ def _chord(ui: UInput, *keys: int) -> None:
 
 
 def _paste(ui: UInput) -> None:
-    _chord(ui, e.KEY_LEFTCTRL, e.KEY_V)
+    """Ctrl+Shift+V so the composer expands the clipboard. Ctrl+V alone does not."""
+    _key_down(ui, e.KEY_LEFTCTRL)
+    time.sleep(0.05)
+    _key_down(ui, e.KEY_LEFTSHIFT)
+    time.sleep(0.12)
+    _key_down(ui, e.KEY_V)
+    time.sleep(0.15)
+    _key_up(ui, e.KEY_V)
+    time.sleep(0.05)
+    _key_up(ui, e.KEY_LEFTSHIFT)
+    time.sleep(0.05)
+    _key_up(ui, e.KEY_LEFTCTRL)
 
 
 def _paste_text_enter(ui: UInput, text: str, *, pause_s: float = 0.25) -> None:
