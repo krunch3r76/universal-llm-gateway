@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-
 import pytest
 
 from event_store.dispatch_economics_core import (
@@ -293,28 +290,10 @@ async def test_operation_registered_and_dispatched() -> None:
     assert "double_count_rate" in body["join_audit"]
 
 
-def test_mcp_events_allowlist_accepts_dispatch_economics_rollup() -> None:
-    events_path = (
-        Path(__file__).resolve().parents[2]
-        / "services"
-        / "mcp-server"
-        / "tools"
-        / "events.py"
-    )
-    tree = ast.parse(events_path.read_text(encoding="utf-8"))
-    valid_operations: set[str] | None = None
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "_VALID_OPERATIONS":
-                value = node.value
-                if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
-                    if value.func.id == "frozenset" and value.args:
-                        valid_operations = set(ast.literal_eval(value.args[0]))
-                break
-    assert isinstance(valid_operations, set)
-    assert "dispatch-economics-token-rollup" in valid_operations
+def test_catalog_includes_dispatch_economics_rollup() -> None:
+    from event_store.operation_catalog import get_operation
+
+    assert get_operation("dispatch-economics-token-rollup") is not None
 
 
 def test_anthropic_exception_inventory_procedure() -> None:

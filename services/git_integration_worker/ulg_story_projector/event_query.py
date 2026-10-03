@@ -6,7 +6,7 @@ import json
 import os
 from typing import Any
 
-from transport_utils import EVENTS_QUERY_SOCK, make_sync_client
+from transport_utils import EVENTS_QUERY_SOCK
 
 from .allowlist import SIGNAL_ALLOWLIST
 
@@ -14,21 +14,13 @@ _EVENTS_QUERY_URL = f"unix://{EVENTS_QUERY_SOCK}"
 _DEFAULT_BATCH_LIMIT = 500
 
 
-def _post_query(body: dict[str, Any]) -> dict[str, Any]:
-    try:
-        with make_sync_client(_EVENTS_QUERY_URL, timeout=10.0) as client:
-            resp = client.post("/v1/query", json=body)
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception:
-        return {}
-    return {}
-
-
 def _raw_sql(sql: str, params: list[Any], *, limit: int) -> list[dict[str, Any]]:
-    result = _post_query(
-        {"type": "sql", "sql": sql, "params": params, "limit": limit},
-    )
+    from event_store.query_client import query_sql
+
+    try:
+        result = query_sql(sql, params=params, limit=limit, url=_EVENTS_QUERY_URL)
+    except Exception:
+        return []
     rows = result.get("rows")
     return list(rows) if isinstance(rows, list) else []
 

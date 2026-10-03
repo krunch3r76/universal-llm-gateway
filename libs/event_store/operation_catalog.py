@@ -147,6 +147,7 @@ _register(
             "limit": {"type": "int", "default": 20},
             "execution_id": {"type": "string"},
             "since_ts": {"type": "int"},
+            "minutes": {"type": "int"},
         },
         returns="event rows with payload",
     )
@@ -204,7 +205,8 @@ _register(
         name="delivery-audit-parent",
         description=(
             "Fetch one B3 delivery-audit parent row from the sibling "
-            "delivery-audit.db registry"
+            "delivery-audit.db registry. Exactly one of audit_id, "
+            "execution_id, request_id, or dispatch_id is required."
         ),
         params={
             "audit_id": {"type": "string"},
@@ -354,8 +356,22 @@ _register(
 
 
 def list_operations() -> list[dict[str, Any]]:
-    """Return all registered operation definitions as serializable dicts."""
-    return [asdict(op) for op in _OPERATIONS.values()]
+    """Return catalog operations plus the sql member."""
+    rows = [asdict(op) for op in _OPERATIONS.values()]
+    rows.append(
+        {
+            "name": "sql",
+            "description": "SELECT/EXPLAIN escape hatch",
+            "params": {
+                "sql": {"type": "string", "required": True},
+                "params": {"type": "list"},
+                "limit": {"type": "int", "default": 100},
+            },
+            "returns": "rows and count",
+            "method": "POST",
+        }
+    )
+    return rows
 
 
 def get_operation(name: str) -> OperationDef | None:

@@ -228,20 +228,20 @@ def _query_event_service(
     limit: int = 100,
 ) -> list[dict[str, object]]:
     """Query event service via UDS. Returns rows or empty list on failure."""
-    import httpx
+    from event_store.query_client import query_sql
 
     if not _EVENTS_QUERY_SOCKET.exists():
         return []
-    transport = httpx.HTTPTransport(uds=str(_EVENTS_QUERY_SOCKET))
-    body: dict[str, object] = {"type": "sql", "sql": sql, "limit": limit}
-    if params:
-        body["params"] = params
     try:
-        with httpx.Client(transport=transport, timeout=5.0) as client:
-            resp = client.post("http://localhost/v1/query", json=body)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("rows", [])
+        data = query_sql(
+            sql,
+            params=list(params) if params else None,
+            limit=limit,
+            url=f"unix://{_EVENTS_QUERY_SOCKET}",
+            timeout=5.0,
+        )
+        rows = data.get("rows", [])
+        return list(rows) if isinstance(rows, list) else []
     except Exception as e:
         logger.warning("Event service query failed: %s", e)
         return []

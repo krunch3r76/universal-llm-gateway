@@ -115,8 +115,12 @@ async def test_ac2_create_app_lifespan_starts_lag_probe() -> None:
     await store.close()
 
 
-# AC3 — finished /v1/query stamps completion age; 503 lock-wait included; no query yet unset.
+# AC3 — finished observability calls stamp completion age; 503 lock-wait included.
 def test_ac3_no_query_leaves_completion_age_unset(client: TestClient) -> None:
+    import event_store.query_path_health as query_path_health
+
+    query_path_health._last_completed_monotonic = None
+    query_path_health._last_duration_s = None
     qp = client.get("/health").json()["query_path"]
     assert qp["query_completed_age_ms"] is None
     assert qp["last_query_duration_s"] is None
@@ -124,8 +128,8 @@ def test_ac3_no_query_leaves_completion_age_unset(client: TestClient) -> None:
 
 def test_ac3_finished_query_stamps_completion_age(client: TestClient) -> None:
     client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "SELECT signal FROM events LIMIT 1"},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT signal FROM events LIMIT 1"},
     )
     qp = client.get("/health").json()["query_path"]
     assert qp["query_completed_age_ms"] is not None
@@ -141,8 +145,8 @@ def test_ac3_lock_wait_503_stamps_completion_age(
 
     monkeypatch.setattr(EventStore, "query", _busy)
     resp = client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "SELECT 1"},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT 1"},
     )
     assert resp.status_code == 503
     qp = client.get("/health").json()["query_path"]
@@ -186,14 +190,11 @@ def test_ac5_named_operation_busy_via_store_returns_503(
         raise EventStoreBusyError("database is locked")
 
     monkeypatch.setattr(EventStore, "query", _busy)
-    resp = client.post(
-        "/v1/query",
-        json={"type": "operation", "name": "stack-last-started", "params": {}},
-    )
+    resp = client.get("/api/v1/observability/stack-last-started")
     assert resp.status_code == 503
     body = resp.json()
-    assert body["error_class"] == ERROR_CLASS_LOCK_WAIT
-    assert "wait" in body["error"].lower()
+    assert body["data"]["error_class"] == ERROR_CLASS_LOCK_WAIT
+    assert "wait" in body["message"].lower()
 
 
 def test_ac5_named_operation_non_busy_sqlite_stays_lenient(
@@ -203,12 +204,9 @@ def test_ac5_named_operation_non_busy_sqlite_stays_lenient(
         "event_store.query.execute_operation",
         AsyncMock(return_value={"rows": [], "count": 0}),
     )
-    resp = client.post(
-        "/v1/query",
-        json={"type": "operation", "name": "stack-last-started", "params": {}},
-    )
+    resp = client.get("/api/v1/observability/stack-last-started")
     assert resp.status_code == 200
-    assert resp.json()["type"] == "result"
+    assert resp.json()["operation"] == "stack-last-started"
 
 
 # AC6 — busy on structured/raw → 503 lock_wait; syntax stays 400 without lock_wait.
@@ -218,22 +216,22 @@ def test_ac6_structured_query_busy_returns_503(client: TestClient, monkeypatch: 
 
     monkeypatch.setattr(EventStore, "query", _busy)
     resp = client.post(
-        "/v1/query",
-        json={"type": "query", "filter": {"signal": "test.signal"}},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT 1"},
     )
     assert resp.status_code == 503
-    assert resp.json()["error_class"] == ERROR_CLASS_LOCK_WAIT
+    assert resp.json()["data"]["error_class"] == ERROR_CLASS_LOCK_WAIT
 
 
 def test_ac6_raw_sql_bad_column_not_busy(client: TestClient) -> None:
     resp = client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "SELECT ts FROM events LIMIT 1"},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT ts FROM events LIMIT 1"},
     )
     assert resp.status_code == 400
     body = resp.json()
-    assert body.get("error_class") != ERROR_CLASS_LOCK_WAIT
-    assert "no such column" in body["error"].lower()
+    assert body.get("code") != "LOCK_WAIT"
+    assert "no such column" in body["message"].lower()
 
 
 def test_ac6_raw_sql_busy_returns_503(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,11 +240,11 @@ def test_ac6_raw_sql_busy_returns_503(client: TestClient, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(EventStore, "query", _busy)
     resp = client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "SELECT 1"},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT 1"},
     )
     assert resp.status_code == 503
-    assert resp.json()["error_class"] == ERROR_CLASS_LOCK_WAIT
+    assert resp.json()["data"]["error_class"] == ERROR_CLASS_LOCK_WAIT
 
 
 # AC7/8 — client deadline envelope (local route) states 10s deadline; no narrow-query hint.

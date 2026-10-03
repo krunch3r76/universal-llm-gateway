@@ -13,7 +13,7 @@ from event_store.query_client_errors import (
 
 
 def test_envelope_from_http_status_error_lock_wait() -> None:
-    request = httpx.Request("POST", "http://localhost/v1/query")
+    request = httpx.Request("POST", "http://localhost/api/v1/observability/sql")
     response = httpx.Response(
         503,
         json={

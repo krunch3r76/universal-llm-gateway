@@ -1,0 +1,6 @@
+categories:
+  observability:
+    description: Event Service telemetry, traces, request snapshots, delivery audit and dispatch economics
+    implementation: satellite
+    upstream: events_query
+    origin_prefix: /api/v1/observability

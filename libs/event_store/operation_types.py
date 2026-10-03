@@ -18,9 +18,8 @@ if TYPE_CHECKING:
 class ParamDef(TypedDict, total=False):
     """Discovery metadata for a single named-operation parameter.
 
-    The metadata is descriptive rather than authoritative: handlers still own
-    runtime coercion and validation. This keeps the catalog stable for agents
-    while allowing operation-specific parameter semantics.
+    Presence, unknown keys, and shape are authoritative at the HTTP boundary.
+    Handlers still own semantic coercion (limit clamps, since_ts units).
     """
 
     type: str
@@ -43,6 +42,7 @@ class OperationDef:
     description: str
     params: dict[str, ParamDef]
     returns: str
+    method: str = "GET"
 
 
 OperationCallable = Callable[[dict[str, Any], "EventStore"], Awaitable[dict[str, Any]]]
