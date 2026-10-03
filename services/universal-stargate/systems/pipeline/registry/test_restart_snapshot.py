@@ -247,6 +247,49 @@ def test_catalog_reload_keeps_pipeline_absent_from_matching_availability_entry(
         _unregister_probe()
 
 
+_PIPE_Q_YAML = """
+schema_version: 6
+id: pipe-q
+version: "1.0"
+type: ok_domain
+output: author
+steps:
+  - name: author
+    type: generate
+    model_ref: ok
+    prompt_ref: ok_domain.dummy
+"""
+
+
+def test_yaml_written_during_walk_is_not_masked_by_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A YAML file created after the walk returns must appear on the next reload."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    builds = {"n": 0}
+    real = PipelineLoader._load_from_search_path
+
+    def counted(self: PipelineLoader, search_path: Path, path_name: str) -> None:
+        builds["n"] += 1
+        real(self, search_path, path_name)
+        if builds["n"] == 1:
+            _write(root / "ok_domain" / "pipe-q.yaml", _PIPE_Q_YAML)
+
+    monkeypatch.setattr(PipelineLoader, "_load_from_search_path", counted)
+    registry = PipelineRegistry(
+        search_paths=[str(root)],
+        config_base_dir=root.parent,
+    )
+    registry.load()
+    assert "pipe-q" not in registry.pipelines
+
+    registry.reload_pipelines()
+
+    assert "pipe-q" in registry.pipelines
+
+
 def test_availability_only_snapshot_entry_is_not_reused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

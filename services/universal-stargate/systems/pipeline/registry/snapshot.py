@@ -2,13 +2,21 @@
 
 A stargate health restart stop/starts the process. ``PipelineRegistry.load``
 walks every pipeline YAML, and ``reload_pipelines`` does that walk again on a
-fresh instance. The snapshot file is reused when the source fingerprint matches.
-Inside that file, an entry is reused only when its availability decisions still hold and
-its definition fingerprint matches the pipeline YAML bytes and the
-handler-registry identity of this process. Entries written under the older
-availability-only key are skipped, so a flap does not pay one full build per
-restart and a stale build cannot replace a walk that includes a pipeline the
-stale build omitted.
+fresh instance. The source fingerprint and the definition fingerprint are
+taken before that walk and again after it. The snapshot is written under the
+before-walk values only when both pairs are equal. A YAML file created during
+the walk is therefore not stored under the post-write fingerprints with a
+build that omitted it. The snapshot file is reused when the source fingerprint
+matches. Inside that file, an entry is reused only when its availability
+decisions still hold and its definition fingerprint matches the pipeline YAML
+bytes and the handler-registry names of this process. Entries written under
+the older availability-only key are skipped, so a flap does not pay one full
+build per restart and a stale build cannot replace a walk that includes a
+pipeline the stale build omitted.
+
+This does not guarantee (b) handler code identity, where ``validate()`` can
+change without a name change, or (c) ``pipeline_ref`` sub-pipeline files
+missing from the fingerprint.
 
 Bump ``SNAPSHOT_VERSION`` when the persisted state shape or load semantics
 change. A mismatch falls through to a full build.
@@ -142,6 +150,7 @@ def try_restore(registry: PipelineRegistry, snapshot_dir: Path) -> bool:
         if not _definition_present(entry):
             continue
         if entry.get("definition") != current_definition:
+            logger.info("entry skipped: definition differs")
             continue
         recorded = _parse_availability(entry.get("availability"))
         if recorded is None or not _availability_holds(registry, recorded):
@@ -162,13 +171,25 @@ def persist(
     registry: PipelineRegistry,
     snapshot_dir: Path,
     availability: list[tuple[str, bool]],
+    *,
+    source: str,
+    definition: str,
 ) -> None:
-    """Write this build under its source fingerprint. Failure leaves the build live."""
+    """Write this build under the before-walk fingerprints when they still match.
+
+    ``source`` and ``definition`` are the fingerprints taken before the walk.
+    A tree that changed during the walk is left unsnapshotted. Failure of the
+    write itself leaves the in-memory build live.
+    """
     try:
+        if (
+            source_fingerprint(registry) != source
+            or definition_fingerprint(registry) != definition
+        ):
+            return
         snapshot_dir.mkdir(parents=True, exist_ok=True)
-        path = _snapshot_path(registry, snapshot_dir)
+        path = snapshot_dir / f"{source}.json"
         existing = _read_entries(path)
-        definition = definition_fingerprint(registry)
         signature = _entry_key(availability, definition)
         kept = [entry for entry in existing if _entry_signature(entry) != signature]
         fresh = {

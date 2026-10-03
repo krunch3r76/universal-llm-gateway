@@ -93,10 +93,16 @@ class PipelineRegistry:
         Later paths override earlier for same pipeline ID only.
 
         When a snapshot dir is set (constructor or
-        ``STARGATE_PIPELINE_REGISTRY_SNAPSHOT_DIR``), a process restart reuses
-        the last build if the YAML fingerprint and the availability decisions
-        from that build still hold. ``last_load_was_full`` is True only for
-        the YAML walk.
+        ``STARGATE_PIPELINE_REGISTRY_SNAPSHOT_DIR``), the source fingerprint
+        and the definition fingerprint are taken before the YAML walk and
+        again after it. The snapshot is persisted under the before-walk values
+        only when both pairs still match, so a file written during the walk
+        is not masked by a snapshot of the incomplete build. A process restart
+        reuses the last build if the YAML fingerprint and the availability
+        decisions from that build still hold. This does not guarantee (b)
+        handler code identity, where ``validate()`` can change without a name
+        change, or (c) ``pipeline_ref`` sub-pipeline files missing from the
+        fingerprint. ``last_load_was_full`` is True only for the YAML walk.
 
         Pre: search_paths ≠ ∅
         Post: pipelines ∪ models ∪ prompts loaded ∧ validated
@@ -104,16 +110,31 @@ class PipelineRegistry:
         Raises:
             PipelineConfigError: If validation errors found
         """
-        from .snapshot import persist, snapshot_dir_for, try_restore
+        from .snapshot import (
+            definition_fingerprint,
+            persist,
+            snapshot_dir_for,
+            source_fingerprint,
+            try_restore,
+        )
 
         snapshot_dir = snapshot_dir_for(self)
         if snapshot_dir is not None and try_restore(self, snapshot_dir):
             self.last_load_was_full = False
             return
+        pinned: tuple[str, str] | None = None
+        if snapshot_dir is not None:
+            pinned = (source_fingerprint(self), definition_fingerprint(self))
         decisions = self._load_from_sources()
         self.last_load_was_full = True
-        if snapshot_dir is not None:
-            persist(self, snapshot_dir, decisions)
+        if snapshot_dir is not None and pinned is not None:
+            persist(
+                self,
+                snapshot_dir,
+                decisions,
+                source=pinned[0],
+                definition=pinned[1],
+            )
 
     def _load_from_sources(self) -> list[tuple[str, bool]]:
         """Walk search paths. Return availability decisions taken during the walk."""
