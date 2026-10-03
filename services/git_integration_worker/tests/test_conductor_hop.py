@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -459,6 +461,79 @@ def test_hop_wire_body_is_a_legal_stargate_generate() -> None:
     assert body["hop_reason"] == "planned"
     assert body["hop_from"] == "pred-hop-1"
     assert "resume_of" not in body
+
+
+_HOP_SUCCESSOR_DISPATCH_ID = re.compile(r"^[0-9a-f]{12}-[0-9a-f]{8}$")
+
+
+@pytest.mark.asyncio
+async def test_omitted_dispatch_id_mints_12hex_8hex(monkeypatch) -> None:
+    """Breaks when a hop with no dispatch_id posts a bare uuid4.
+
+    Reactor and watchdog both call this with the body from
+    ``build_hop_team_dispatch_body``, which omits ``dispatch_id``. That UUID
+    shape is an execution_id, so nest_under has to read the ledger. A reserved
+    id already on the body is left unchanged.
+    """
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-shape-1", terminal_status="completed")
+    ledger.mark_terminal(dispatch_id="pred-shape-2", terminal_status="completed")
+    posted: list[dict[str, Any]] = []
+
+    async def _post(_endpoint: str, *, json: dict[str, Any]) -> MagicMock:
+        posted.append(json)
+        resp = MagicMock()
+        resp.status_code = 202
+        resp.json.return_value = {
+            "dispatch_id": json["dispatch_id"],
+            "status": "queued",
+        }
+        return resp
+
+    client = MagicMock()
+    client.post = _post
+
+    async def _enter(*_a: object, **_k: object) -> MagicMock:
+        return client
+
+    async def _exit(*_a: object, **_k: object) -> None:
+        return None
+
+    holder = MagicMock()
+    holder.__aenter__ = _enter
+    holder.__aexit__ = _exit
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.make_async_client",
+        lambda *_a, **_k: holder,
+    )
+
+    ok, detail = await post_conductor_hop_team_dispatch(
+        {"op": "generate", "hop_from": "pred-shape-1", "seat": "cursor-sdk"},
+    )
+    assert ok is True
+    minted = posted[0]["dispatch_id"]
+    assert _HOP_SUCCESSOR_DISPATCH_ID.fullmatch(minted)
+    with pytest.raises(ValueError):
+        uuid.UUID(minted)
+    assert detail["dispatch_id"] == minted
+    with ledger._connect() as conn:
+        claimed = conn.execute(
+            "SELECT serviced_admit FROM cursor_dispatch_stop_service WHERE stop_id=?",
+            ("pred-shape-1",),
+        ).fetchone()
+    assert claimed["serviced_admit"] == minted
+
+    reserved = "caller-reserved-hop-id"
+    ok_reserved, _detail_reserved = await post_conductor_hop_team_dispatch(
+        {
+            "op": "generate",
+            "hop_from": "pred-shape-2",
+            "seat": "cursor-sdk",
+            "dispatch_id": reserved,
+        },
+    )
+    assert ok_reserved is True
+    assert posted[1]["dispatch_id"] == reserved
 
 
 def test_build_hop_team_dispatch_body_carries_model_knobs() -> None:

@@ -648,7 +648,7 @@ def test_nest_under_execution_uuid_maps_dispatch_id_in_fix_hint(
 def test_nest_under_uuid_shaped_dispatch_id_in_ledger_not_422(
     _mock_task: MagicMock, client: TestClient, git_repo: Path
 ) -> None:
-    """Hop successors use bare uuid4 dispatch_ids; nest_under must not 422 them."""
+    """Legacy rows may still carry bare uuid4 dispatch_ids; nest_under must not 422 those."""
     from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
 
     hop_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
