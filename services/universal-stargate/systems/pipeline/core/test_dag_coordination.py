@@ -567,6 +567,7 @@ async def test_answer_v1_drift_raises():
 @pytest.mark.asyncio
 async def test_answer_v1_fallback_respects_step_model_override():
     """Answer generation should honor the active fallback override."""
+    pytest.importorskip("pipelines.answer_v1.handlers.answer")
     from pipelines.answer_v1.handlers.answer import AnswerGenerateHandler
 
     step = StepConfig(

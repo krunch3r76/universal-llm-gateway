@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -54,7 +55,17 @@ def _reset_waiter_state() -> None:
     reset_skill_suggest_dispatch_config_cache()
 
 
+_SKILL_SUGGEST_YAML = (
+    Path(__file__).resolve().parents[4]
+    / "pipelines/skill_suggest_rank/v1/skill-suggest-rank.yaml"
+)
+
+
 @pytest.mark.offline
+@pytest.mark.skipif(
+    not _SKILL_SUGGEST_YAML.is_file(),
+    reason="skill-suggest-rank pipeline archived (friction:37557)",
+)
 def test_config_loads_dispatch_section_from_pipeline_yaml() -> None:
     cfg = _test_config()
     loaded = __import__(
