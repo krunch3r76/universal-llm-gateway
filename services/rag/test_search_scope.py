@@ -75,6 +75,23 @@ def test_search_scoped_pushes_prefix_filter_into_sql() -> None:
     assert params == ("needle", "/allowed%", "/also%", 7)
 
 
+def test_sources_for_prefixes_uses_like_without_fts_match() -> None:
+    conn = _RecordingConn(rows=[("/allowed/a.md",), ("/also/b.md",)])
+    index = FtsIndex()
+    index._conn = conn  # type: ignore[assignment]
+    index._seq = object()  # type: ignore[assignment]
+
+    sources = index.sources_for_prefixes(["/allowed", "/also"])
+
+    assert sources == ["/allowed/a.md", "/also/b.md"]
+    assert len(conn.calls) == 1
+    sql, params = conn.calls[0]
+    assert "SELECT DISTINCT source FROM chunks_fts" in sql
+    assert "chunks_fts MATCH" not in sql
+    assert "source LIKE ?" in sql
+    assert params == ("/allowed%", "/also%")
+
+
 def test_apply_bm25_sidecar_does_not_widen_scoped_queries() -> None:
     fts = _FakeFts(
         scoped_hits=[("scoped", -1.0)],

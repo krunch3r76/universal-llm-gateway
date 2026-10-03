@@ -8,6 +8,7 @@ distance filter, and recency sort) from router wiring. API handlers call
 from __future__ import annotations
 
 from fastapi import HTTPException
+from universal_logging import get_logger
 
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.embeddings import EmbeddingTransientError, embed_query
@@ -28,9 +29,38 @@ from services.rag.search_scope import (
     apply_source_prefix_filter_with_ids,
     resolve_scope_request,
 )
+from services.rag.search_scope.vector_window import query_vector_window
 from services.rag.tier_weighting import apply_tier_weight
 
 from . import state
+
+logger = get_logger(__name__)
+
+
+def _indexed_sources_for_scope(source_prefixes: list[str] | None) -> list[str] | None:
+    """FTS paths for a scoped query, or None when the list cannot be loaded.
+
+    None selects geometric over-fetch. An empty list means the scope has no
+    indexed paths, so the vector window does not scan the global neighbor list.
+    An empty FTS table returns None, not [].
+    """
+    if not source_prefixes or state._property_index is None:
+        return None
+    try:
+        fts = state._property_index.fts
+        sources = fts.sources_for_prefixes(source_prefixes)
+        if not sources and fts.get_count() == 0:
+            # FTS is empty (cleared or not yet built); the list says nothing
+            # about Chroma, so use over-fetch instead of returning no hits.
+            return None
+        return sources
+    except Exception as exc:
+        logger.warning(
+            "scoped source list failed; falling back to over-fetch: %s",
+            exc,
+            exc_info=True,
+        )
+        return None
 
 
 async def execute_search(request: SearchRequest) -> SearchResponse:
@@ -100,17 +130,21 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
                     f"attempts (model={exc.model_id}, last_status={exc.last_status})",
                 )
 
-        fetch_k = request.top_k * (5 if request.source_prefixes else 3)
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=fetch_k,
-            include=["documents", "metadatas", "distances"],
+        # Scoped: source $in prefilter when FTS can list the paths (at most 10
+        # Chroma queries, n_results <= 2000). Unscoped stays one top_k * 3 query.
+        # See search_scope.vector_window for the bound.
+        indexed_sources = _indexed_sources_for_scope(request.source_prefixes)
+        window = query_vector_window(
+            collection,
+            query_embedding,
+            top_k=request.top_k,
+            source_prefixes=request.source_prefixes,
+            indexed_sources=indexed_sources,
         )
-
-        result_ids = results["ids"][0] if results["ids"] else []
-        chunks = results["documents"][0] if results["documents"] else []
-        metadatas = results["metadatas"][0] if results["metadatas"] else []
-        distances = results["distances"][0] if results["distances"] else []
+        result_ids = window.ids
+        chunks = window.documents
+        metadatas = window.metadatas
+        distances = window.distances
 
         if result_ids:
             clean = [
