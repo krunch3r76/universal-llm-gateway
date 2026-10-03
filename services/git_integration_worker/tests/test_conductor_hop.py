@@ -1230,13 +1230,18 @@ async def test_next_admit_blocked_releases_when_reply_on_summoning_thread() -> N
         },
     )
     post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-reply-present"}))
-    state = {"reply": False}
+    state = {"after_harvest": False}
+
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if thread_id != "9638" or not closeout_instant.startswith("2023-11-14"):
+            return None
+        return 7
 
     def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
         return (
-            state["reply"]
+            state["after_harvest"]
             and thread_id == "9638"
-            and after_turn == 0
+            and after_turn == 7
             and from_agent == "web-anthropic"
         )
 
@@ -1244,6 +1249,10 @@ async def test_next_admit_blocked_releases_when_reply_on_summoning_thread() -> N
         patch(
             "claude_bundles.cdp_registry_store.load_active",
             return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
         ),
         patch(
             "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
@@ -1256,7 +1265,10 @@ async def test_next_admit_blocked_releases_when_reply_on_summoning_thread() -> N
     ):
         await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
         post_mock.assert_not_called()
-        state["reply"] = True
+        held = await release_deferred_conductor_hops()
+        assert held == 0
+        post_mock.assert_not_called()
+        state["after_harvest"] = True
         admitted = await release_deferred_conductor_hops()
         again = await release_deferred_conductor_hops()
     assert admitted == 1
@@ -1288,13 +1300,24 @@ async def test_next_admit_blocked_releases_when_reply_precedes_closeout() -> Non
     post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-early-reply"}))
     state = {"reply": False}
 
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if not closeout_instant.startswith("2023-11-14"):
+            return None
+        return 2
+
     def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
-        return state["reply"] and after_turn == 0 and from_agent == "web-anthropic"
+        # closeout_turn is 12. A reply after the harvest watermark (2) and
+        # before that closeout must count. after_turn=0 must not.
+        return state["reply"] and after_turn == 2 and from_agent == "web-anthropic"
 
     with (
         patch(
             "claude_bundles.cdp_registry_store.load_active",
             return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
         ),
         patch(
             "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",

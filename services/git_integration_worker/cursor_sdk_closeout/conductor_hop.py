@@ -433,25 +433,62 @@ def hop_body_build_refused(
     if not _named_target_is_terminal(token, absent_counts_terminal=absent):
         # Reply lift only after the deferral is stamped. Before that, an
         # early reply must not skip the stamp, and a bus read must not run.
-        if not (absent and _expected_harvest_reply_present(row, data)):
+        if not (absent and _expected_harvest_reply_present(row, data, token)):
             return True
     if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
         return True
     return False
 
 
-def _expected_harvest_reply_present(
-    row: dict[str, Any], rec: dict[str, Any]
-) -> bool:
-    """Web-anthropic reply on the summoning or worker thread for this harvest.
+def _harvest_execution_started_at_iso(token: str) -> str | None:
+    """ISO instant of the one live registry row for this harvest id.
 
-    ``after_turn=0`` counts a reply that landed before the row's closeout.
-    The bus read fails closed.
+    Fail closed on a missing row, a transport error, or more than one match.
+    """
+    from claude_bundles.cdp_registry_store import load_active
+
+    try:
+        active = load_active()
+    except Exception:
+        return None
+    started_at: list[float] = []
+    for row in active.values():
+        if not isinstance(row, dict):
+            continue
+        top = str(row.get("execution_id") or "").strip()
+        entry = execution_state_of(row)
+        nested = str(entry.get("execution_id") or "").strip() if entry else ""
+        if not (
+            _prefix_match_id(top, token)
+            or (nested and _prefix_match_id(nested, token))
+        ):
+            continue
+        started = entry.get("started_at") if entry else None
+        if isinstance(started, (int, float)):
+            started_at.append(float(started))
+    if len(started_at) != 1:
+        return None
+    return datetime.fromtimestamp(started_at[0], UTC).isoformat()
+
+
+def _expected_harvest_reply_present(
+    row: dict[str, Any], rec: dict[str, Any], token: str
+) -> bool:
+    """Web-anthropic reply after the harvest execution started.
+
+    The watermark is the latest bus turn at or before the registry
+    ``started_at``. A reply before the conductor closeout still counts when
+    the harvest started earlier. The summon itself is excluded. Unresolved
+    watermark fails closed.
     """
     from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
         reply_arrived_on_thread,
+        resolve_consult_summoning_watermark_at_instant,
     )
 
+    started_iso = _harvest_execution_started_at_iso(token)
+    if started_iso is None:
+        return False
     thread_ids: list[str] = []
     summoning_id = str(rec.get("summoning_thread_id") or "").strip()
     worker_id = str(row.get("thread_id") or "").strip()
@@ -459,8 +496,13 @@ def _expected_harvest_reply_present(
         if thread_id and thread_id not in thread_ids:
             thread_ids.append(thread_id)
     for thread_id in thread_ids:
+        watermark = resolve_consult_summoning_watermark_at_instant(
+            thread_id=thread_id, closeout_instant=started_iso
+        )
+        if not isinstance(watermark, int):
+            continue
         if reply_arrived_on_thread(
-            thread_id=thread_id, after_turn=0, from_agent="web-anthropic"
+            thread_id=thread_id, after_turn=watermark, from_agent="web-anthropic"
         ):
             return True
     return False
