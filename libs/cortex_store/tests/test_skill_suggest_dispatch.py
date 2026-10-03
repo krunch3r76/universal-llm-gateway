@@ -11,6 +11,19 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(autouse=True)
+def _stub_skill_suggest_dispatch_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from systems.frontier_consult.conftest import offline_skill_suggest_dispatch_config
+
+    cfg = offline_skill_suggest_dispatch_config()
+    monkeypatch.setattr(
+        "systems.frontier_consult.skill_suggest_dispatch._dispatch_config",
+        lambda: cfg,
+    )
+
+
 STARGATE_SYSTEMS = ROOT / "services" / "universal-stargate"
 if str(STARGATE_SYSTEMS) not in sys.path:
     sys.path.insert(0, str(STARGATE_SYSTEMS))

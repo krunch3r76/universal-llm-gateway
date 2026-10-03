@@ -30,6 +30,7 @@ from .skill_suggest_dispatch_helpers import (
     parse_envelope_from_closeout,
     validate_skill_suggest_envelope,
 )
+from .conftest import offline_skill_suggest_dispatch_config
 from .skill_suggest_worker_waiter import WorkerWaitOutcome
 
 
@@ -463,6 +464,7 @@ async def test_await_worker_ack_true_when_admitted() -> None:
                 thread_id="2111",
                 execution_id="exec-ack",
                 dispatch_id="d-ack",
+                config=offline_skill_suggest_dispatch_config(),
             )
             is True
         )
@@ -517,6 +519,7 @@ async def test_await_worker_ack_false_when_stays_queued(
                 thread_id="2111",
                 execution_id="exec-q",
                 dispatch_id="d-q",
+                config=offline_skill_suggest_dispatch_config(),
             )
             is False
         )
@@ -555,6 +558,7 @@ async def test_await_worker_ack_fail_fast_on_probe_error_without_ledger() -> Non
                 thread_id="2111",
                 execution_id="exec-down",
                 dispatch_id="d-down",
+                config=offline_skill_suggest_dispatch_config(),
             )
             is False
         )
