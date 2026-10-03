@@ -146,6 +146,22 @@ def test_recorded_workspace_omits_hub_through_symlink(tmp_path: Path) -> None:
     assert recorded_workspace(record={}, source_repo=str(link), hub=real) is None
 
 
+def test_recorded_workspace_omits_stock_hub_name_after_rename(tmp_path: Path) -> None:
+    """a:37530 review — old stock-path rows must not inherit HubUseOmit after rename."""
+    hub = tmp_path / "ulg-install"
+    hub.mkdir()
+    stock = "/mnt/torus/projects/universal-llm-gateway"
+    assert recorded_workspace(record={}, source_repo=stock, hub=hub) is None
+    assert (
+        recorded_workspace(
+            record={"workspace": "universal-llm-gateway"},
+            source_repo=stock,
+            hub=hub,
+        )
+        is None
+    )
+
+
 def test_recorded_workspace_derives_satellite_when_hub_name_differs(
     tmp_path: Path,
 ) -> None:
