@@ -22,8 +22,11 @@ steps:
     timeout_seconds: 90
     pipeline_options:
       scope_override: writing_exemplars
-      hyde_enabled: false
-      rerank_enabled: false
+      step_overrides:
+        generate_hyde:
+          enabled: false
+        rerank:
+          enabled: false
       rag_top_k_per_query: 5
       rag_max_chunks: 5
       noise_filter_disable: true
