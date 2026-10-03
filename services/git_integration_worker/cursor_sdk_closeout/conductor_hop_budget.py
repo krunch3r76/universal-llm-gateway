@@ -57,6 +57,8 @@ logger = get_logger(__name__)
 
 HOP_PARKED_KEY = "hop_parked"
 HOP_PARK_REASON_KEY = "hop_park_reason"
+# Mission hop count stamped when ``release_mission_parks`` clears a mission-cap park.
+HOP_MISSION_CAP_RELEASE_BASELINE_KEY = "hop_mission_cap_release_baseline"
 # Stops that owe no successor by themselves.
 _CAP_EXEMPT_STOPS = frozenset({"DONE", "ROW_PINNED", "HOLD_MERGE", "OPERATOR_GATE"})
 # Continue-owed stops whose successor is budgeted only by evaluate_hop_budget:
@@ -232,6 +234,26 @@ def _no_progress_verdict(
     return HopBudgetVerdict(ok=True)
 
 
+def mission_cap_baseline(chain: list[dict[str, Any]]) -> int:
+    """Largest hop-attempt count recorded at a mission-cap park release."""
+    baseline = 0
+    for prior in chain:
+        record = record_data(str(prior.get("record_json") or ""))
+        raw = record.get(HOP_MISSION_CAP_RELEASE_BASELINE_KEY)
+        if raw is None:
+            continue
+        try:
+            baseline = max(baseline, int(raw))
+        except (TypeError, ValueError):
+            logger.warning(
+                "invalid %s=%r on dispatch %s",
+                HOP_MISSION_CAP_RELEASE_BASELINE_KEY,
+                raw,
+                prior.get("dispatch_id"),
+            )
+    return baseline
+
+
 def count_hop_attempts(chain: list[dict[str, Any]]) -> int:
     """Terminal rows that were real hop attempts, for the mission cap.
 
@@ -301,7 +323,8 @@ def evaluate_hop_budget(
     dispatch_id = str(row.get("dispatch_id") or "")
     chain = list_mission_terminal_chain(work_key=work_key, exclude_dispatch_id=None)
     mission_hops = count_hop_attempts(chain)
-    if cfg.mission_cap > 0 and mission_hops >= cfg.mission_cap:
+    hops_since_release = mission_hops - mission_cap_baseline(chain)
+    if cfg.mission_cap > 0 and hops_since_release >= cfg.mission_cap:
         return HopBudgetVerdict(
             ok=False,
             park=True,
@@ -406,6 +429,8 @@ __all__ = [
     "build_budget_authority_patch",
     "count_hop_attempts",
     "evaluate_hop_budget",
+    "HOP_MISSION_CAP_RELEASE_BASELINE_KEY",
+    "mission_cap_baseline",
     "list_mission_terminal_chain",
     "load_hop_budget_config",
     "prior_record_tokens",

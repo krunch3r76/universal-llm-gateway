@@ -15,12 +15,20 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     _PARK_REASON_CRASH_CAP,
     _PARK_REASON_MISSION_CAP,
     _PARK_REASON_NO_PROGRESS_CAP,
+    HOP_MISSION_CAP_RELEASE_BASELINE_KEY,
+    HOP_PARK_REASON_KEY,
+    HOP_PARKED_KEY,
     HopBudgetConfig,
+    count_hop_attempts,
     evaluate_hop_budget,
+    list_mission_terminal_chain,
     load_hop_budget_config,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
     build_parked_transport_body,
+)
+from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+    release_mission_parks,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -1081,3 +1089,144 @@ def test_cancel_discard_row_refuses_budget_without_park() -> None:
     assert verdict.park is False
     assert verdict.ok is False
     assert verdict.reason == "cancel_discard"
+
+
+def _planned_hop_row(
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str,
+    hop_seq: int,
+    hop_from: str,
+) -> dict:
+    return _admit_and_terminal(
+        ledger,
+        dispatch_id=dispatch_id,
+        hop_seq=hop_seq,
+        hop_from=hop_from,
+        hop_reason="planned" if hop_seq > 1 else "spawn",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+    )
+
+
+def _release_mission_cap_park(ledger: CursorDispatchLedger, *, parked_id: str) -> None:
+    ledger.merge_record_json(
+        dispatch_id=parked_id,
+        patch={
+            HOP_PARKED_KEY: True,
+            HOP_PARK_REASON_KEY: _PARK_REASON_MISSION_CAP,
+        },
+    )
+    with ledger._connect() as conn:
+        release_mission_parks(
+            conn,
+            work_key=_WORK_KEY,
+            thread_id="9964",
+            caller_agent="liaison",
+            post_commit_emits=[],
+        )
+
+
+def test_mission_cap_release_allows_hops_until_window_exhausted() -> None:
+    """Released mission-cap park resets the window; re-parks only after cap hops since release."""
+    ledger = CursorDispatchLedger.instance()
+    cap = 3
+    for idx in range(1, cap + 1):
+        _planned_hop_row(
+            ledger,
+            dispatch_id=f"rel-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"rel-{idx - 1}",
+        )
+    row_at_cap = _planned_hop_row(
+        ledger,
+        dispatch_id="rel-at-cap",
+        hop_seq=cap + 1,
+        hop_from=f"rel-{cap}",
+    )
+    assert (
+        evaluate_hop_budget(
+            row_at_cap,
+            closeout_tokens=frozenset({"ROW_HOP"}),
+            config=_tight_config(mission_cap=cap),
+        ).park
+        is True
+    )
+    _release_mission_cap_park(ledger, parked_id="rel-at-cap")
+    chain = list_mission_terminal_chain(work_key=_WORK_KEY)
+    baseline = count_hop_attempts(chain)
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='rel-at-cap'"
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == baseline
+
+    for extra in range(1, cap):
+        row = _planned_hop_row(
+            ledger,
+            dispatch_id=f"rel-post-{extra}",
+            hop_seq=cap + 1 + extra,
+            hop_from="rel-at-cap" if extra == 1 else f"rel-post-{extra - 1}",
+        )
+        verdict = evaluate_hop_budget(
+            row,
+            closeout_tokens=frozenset({"ROW_HOP"}),
+            config=_tight_config(mission_cap=cap),
+        )
+        assert verdict.park is False, f"extra hop {extra} should stay under window"
+
+    row_repark = _planned_hop_row(
+        ledger,
+        dispatch_id="rel-repark",
+        hop_seq=cap + 1 + cap,
+        hop_from=f"rel-post-{cap - 1}",
+    )
+    verdict = evaluate_hop_budget(
+        row_repark,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(mission_cap=cap),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_MISSION_CAP
+
+
+def test_mission_cap_second_release_restarts_window() -> None:
+    """A second mission-cap release replaces the baseline for the next window."""
+    ledger = CursorDispatchLedger.instance()
+    cap = 3
+    for idx in range(1, cap + 2):
+        _planned_hop_row(
+            ledger,
+            dispatch_id=f"win-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"win-{idx - 1}",
+        )
+    _release_mission_cap_park(ledger, parked_id=f"win-{cap + 1}")
+    for idx in range(cap + 2, cap + cap + 1):
+        _planned_hop_row(
+            ledger,
+            dispatch_id=f"win-{idx}",
+            hop_seq=idx,
+            hop_from=f"win-{idx - 1}",
+        )
+    repark_id = f"win-{cap + cap + 1}"
+    _planned_hop_row(
+        ledger,
+        dispatch_id=repark_id,
+        hop_seq=cap + cap + 1,
+        hop_from=f"win-{cap + cap}",
+    )
+    _release_mission_cap_park(ledger, parked_id=repark_id)
+    row = _planned_hop_row(
+        ledger,
+        dispatch_id="win-after-second-release",
+        hop_seq=cap + cap + 2,
+        hop_from=repark_id,
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(mission_cap=cap),
+    )
+    assert verdict.park is False
