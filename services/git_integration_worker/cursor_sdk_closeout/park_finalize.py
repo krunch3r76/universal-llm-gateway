@@ -433,55 +433,72 @@ async def finalize_parked(
             bus_result.status_code,
             bus_result.body,
         )
-    if conductor:
-        # friction 37404: hop merge can raise; still mark terminal (34156 F1).
-        try:
-            await asyncio.to_thread(
-                merge_conductor_closeout_hop_authority,
-                dispatch_id=dispatch_id,
-                closeout_body=body,
-                thread_id=req.thread_id,
-                closeout_turn=extract_turn_number(bus_result.body),
-            )
-        except Exception:  # noqa: BLE001 — park closeout always marks terminal
-            logger.exception(
-                "merge_conductor_closeout_hop_authority raised dispatch=%s",
-                dispatch_id,
-            )
-    emit_sdk_park_parked(
-        dispatch_id=dispatch_id,
-        thread_id=req.thread_id,
-        intent_id=mark.intent_id,
-        method=mark.method,
-        tool_call_count=tool_call_count,
-        sidecar_uri=sidecar_uri,
-        sdk_agent_id_present=bool(park_row is not None and park_row.sdk_agent_id),
-    )
-    if not terminal_emitted(dispatch_id):
-        # signal_park normally emitted worker.cancelled; guarantee the foldable
-        # terminal is cancelled so the terminal path never synthesizes failed
-        # for a park (I-SR-3).
-        emit_sdk_worker_cancelled(
-            dispatch_id=dispatch_id,
-            method=mark.method,
-            reason=(
-                f"park_for_restart:{mark.intent_id}"
-                if mark.intent_id
-                else "park_for_restart"
-            ),
-            thread_id=req.thread_id,
-            terminal_status="cancelled",
-        )
-    logger.warning(
-        "cursor-sdk dispatch parked dispatch_id=%s intent_id=%s method=%s "
-        "tool_calls=%s sidecar=%s",
-        dispatch_id,
-        mark.intent_id,
-        mark.method,
-        tool_call_count,
-        sidecar_uri,
-    )
     try:
+        if conductor:
+            # friction 37404: hop merge can raise; still mark terminal (34156 F1).
+            try:
+                await asyncio.to_thread(
+                    merge_conductor_closeout_hop_authority,
+                    dispatch_id=dispatch_id,
+                    closeout_body=body,
+                    thread_id=req.thread_id,
+                    closeout_turn=extract_turn_number(bus_result.body),
+                )
+            except Exception:  # noqa: BLE001 — park closeout always marks terminal
+                logger.exception(
+                    "merge_conductor_closeout_hop_authority raised dispatch=%s",
+                    dispatch_id,
+                )
+        emit_sdk_park_parked(
+            dispatch_id=dispatch_id,
+            thread_id=req.thread_id,
+            intent_id=mark.intent_id,
+            method=mark.method,
+            tool_call_count=tool_call_count,
+            sidecar_uri=sidecar_uri,
+            sdk_agent_id_present=bool(park_row is not None and park_row.sdk_agent_id),
+        )
+        if not terminal_emitted(dispatch_id):
+            # signal_park normally emitted worker.cancelled; guarantee the foldable
+            # terminal is cancelled so the terminal path never synthesizes failed
+            # for a park (I-SR-3).
+            emit_sdk_worker_cancelled(
+                dispatch_id=dispatch_id,
+                method=mark.method,
+                reason=(
+                    f"park_for_restart:{mark.intent_id}"
+                    if mark.intent_id
+                    else "park_for_restart"
+                ),
+                thread_id=req.thread_id,
+                terminal_status="cancelled",
+            )
+        logger.warning(
+            "cursor-sdk dispatch parked dispatch_id=%s intent_id=%s method=%s "
+            "tool_calls=%s sidecar=%s",
+            dispatch_id,
+            mark.intent_id,
+            mark.method,
+            tool_call_count,
+            sidecar_uri,
+        )
+        await _mark_terminal_and_promote(
+            dispatch_id=dispatch_id,
+            terminal_status="cancelled",
+            controller=controller,
+            emit_tag=PARKED_EMIT_TAG,
+        )
+    except asyncio.CancelledError:
+        # friction 37491: CancelledError bypasses except Exception; 3.12
+        # sticky-cancels the next await. Uncancel, still promote, swallow so
+        # _close_ticket_after does not emergency-terminate a parked link.
+        logger.exception(
+            "finalize_parked cancelled dispatch=%s; still promoting",
+            dispatch_id,
+        )
+        _task = asyncio.current_task()
+        if _task is not None and _task.cancelling():
+            _task.uncancel()
         await _mark_terminal_and_promote(
             dispatch_id=dispatch_id,
             terminal_status="cancelled",
