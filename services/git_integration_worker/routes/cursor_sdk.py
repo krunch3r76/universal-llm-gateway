@@ -3868,17 +3868,19 @@ async def admit_cursor_dispatch(
             "resumed",
         ):
             from services.git_integration_worker.cse_nest_parent_lease import (
-                lookup_cse_nest_inherit_lane_thread_id,
+                inherit_lane_thread_id_for_admit,
             )
             from services.git_integration_worker.cursor_sdk_worktree import (
                 pin_lane_worktree_on_admit,
             )
 
-            inherit_lane_thread_id: str | None = None
-            if req.nest_under:
-                inherit_lane_thread_id = lookup_cse_nest_inherit_lane_thread_id(
-                    req.nest_under
-                )
+            # cse: nest_under inherits the holder lane. resume_of of a nested
+            # child inherits the nest parent's lock (friction 37432) so the
+            # child's worker thread can pin without stealing it.
+            inherit_lane_thread_id = inherit_lane_thread_id_for_admit(
+                nest_under=req.nest_under,
+                resume_of=req.resume_of,
+            )
 
             try:
                 await asyncio.to_thread(

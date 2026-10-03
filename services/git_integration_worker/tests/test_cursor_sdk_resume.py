@@ -77,21 +77,26 @@ def _insert_parent_row(
     record_json: dict | None = None,
     terminal_at: str | None = None,
     resume_of: str | None = None,
+    thread_id: str | None = None,
+    nest_under: str | None = None,
 ) -> None:
     if state_root:
         store = Path(state_root)
         store.mkdir(parents=True, exist_ok=True)
         (store / ".keep").write_text("")
     ledger = CursorDispatchLedger.instance()
-    req = _req(dispatch_id=dispatch_id, message="parent")
+    req_kwargs: dict[str, object] = {"dispatch_id": dispatch_id, "message": "parent"}
+    if thread_id is not None:
+        req_kwargs["thread_id"] = thread_id
+    req = _req(**req_kwargs)
     fp = ledger.fingerprint(req)
     with ledger._connect() as conn:
         conn.execute(
             "INSERT INTO cursor_sdk_dispatches "
             "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
             "message_present, status, record_json, state_root, sdk_agent_id, "
-            "terminal_status, terminal_at, resume_of) "
-            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+            "terminal_status, terminal_at, resume_of, nest_under) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 dispatch_id,
                 fp,
@@ -105,6 +110,7 @@ def _insert_parent_row(
                 status if status in {"completed", "failed", "cancelled"} else None,
                 terminal_at,
                 resume_of,
+                nest_under,
             ),
         )
 
@@ -121,6 +127,71 @@ def test_reject_resume_thread_mismatch() -> None:
     body = json.loads(response.body.decode())
     assert body["code"] == "CURSOR_RESUME_INELIGIBLE"
     assert body["data"]["reason"] == "thread_mismatch"
+
+
+def test_resume_of_nested_child_rejects_nest_parent_worker_thread(
+    tmp_path: Path,
+) -> None:
+    """Breaks when resume_of on the nest parent's thread is admitted.
+
+    friction:37432 — the child worker thread is the only eligible reuse_thread.
+    The nest parent being terminal does not move that check.
+    """
+    store = tmp_path / "child-store"
+    _insert_parent_row(
+        dispatch_id="nest-parent",
+        status="cancelled",
+        state_root=str(tmp_path / "parent-store"),
+        thread_id="14714",
+    )
+    _insert_parent_row(
+        dispatch_id="nested-child",
+        status="completed",
+        state_root=str(store),
+        thread_id="14716",
+        nest_under="nest-parent",
+    )
+    response = reject_resume_if_ineligible(
+        _req(
+            dispatch_id="hand-resume",
+            resume_of="nested-child",
+            thread_id="14714",
+        )
+    )
+    assert response is not None
+    body = json.loads(response.body.decode())
+    assert body["code"] == "CURSOR_RESUME_INELIGIBLE"
+    assert body["data"]["reason"] == "thread_mismatch"
+
+
+def test_resume_of_nested_child_on_child_thread_stays_eligible(
+    tmp_path: Path,
+) -> None:
+    """Breaks when a terminal nest parent makes the nested child ineligible."""
+    store = tmp_path / "child-store"
+    _insert_parent_row(
+        dispatch_id="nest-parent",
+        status="cancelled",
+        state_root=str(tmp_path / "parent-store"),
+        thread_id="14714",
+    )
+    _insert_parent_row(
+        dispatch_id="nested-child",
+        status="completed",
+        state_root=str(store),
+        thread_id="14716",
+        nest_under="nest-parent",
+    )
+    assert (
+        reject_resume_if_ineligible(
+            _req(
+                dispatch_id="hand-resume",
+                resume_of="nested-child",
+                thread_id="14716",
+            )
+        )
+        is None
+    )
 
 
 def test_reject_resume_same_thread_admits_eligibility() -> None:

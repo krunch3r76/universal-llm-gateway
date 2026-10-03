@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -39,14 +40,17 @@ from services.git_integration_worker.cursor_sdk_await_reply import (
 from services.git_integration_worker.cursor_sdk_await_reply_gate import (
     ResumeAlreadyAdmitted,
 )
+from services.git_integration_worker.cursor_sdk_orphan import BridgeReapResult
 from services.git_integration_worker.cursor_sdk_park_ledger import (
     load_park_row,
     open_park_rows,
 )
+from services.git_integration_worker.cursor_sdk_worktree_prune import ReapSweepResult
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
+from services.git_integration_worker.routes import cursor_sdk as route_mod
 
 _WORK_KEY = "friction:34156"
 _EXEC = "b08ecb6d-4c1e-4b8e-9d4e-000000000001"
@@ -112,7 +116,9 @@ def _admit_stubs(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     async def _ledger_admit(req, *, cfg, controller, request=None):  # noqa: ANN001
         if req.admitted_via != ADMITTED_VIA_AWAIT_RESUME:
-            return await real_admit(req, cfg=cfg, controller=controller, request=request)
+            return await real_admit(
+                req, cfg=cfg, controller=controller, request=request
+            )
         ledger = CursorDispatchLedger.instance()
         try:
             ledger.admit(
@@ -378,7 +384,9 @@ async def _tick(*, bus: AsyncMock, turns: _Turns, now: datetime | None = None):
 
 def test_fired_generates_reads_bridge_ledger(tmp_path: Path) -> None:
     _record_generate(tmp_path, "d1")
-    _record_generate(tmp_path, "d1", execution_id=_EXEC2, thread_id="14693", after_turn=2)
+    _record_generate(
+        tmp_path, "d1", execution_id=_EXEC2, thread_id="14693", after_turn=2
+    )
     (_spool(tmp_path) / "d1.cdp-generates.jsonl").open("a").write("not json\n")
     fired = fired_generates("d1", spool_dir=_spool(tmp_path))
     assert [g.execution_id for g in fired] == [_EXEC, _EXEC2]
@@ -423,9 +431,7 @@ async def test_terminal_with_outstanding_generate_parks_row_durably(
     assert events == []
     _mark_completed("d-park")
     assert _row("d-park")["status"] == "completed"
-    await announce_await_parked(
-        dispatch_id="d-park", thread_id=_WORKER_THREAD, bus=bus
-    )
+    await announce_await_parked(dispatch_id="d-park", thread_id=_WORKER_THREAD, bus=bus)
     awaiting = [c.kwargs for c in bus.reply.await_args_list]
     assert len(awaiting) == 1
     assert awaiting[0]["thread_id"] == _WORKER_THREAD
@@ -596,9 +602,14 @@ async def test_reactor_admits_resume_child_when_reply_lands_on_coord_thread(
     assert preamble.endswith("ORIGINAL PREAMBLE")
     assert _row("d-res")["park_resumed_by"] == "d-res-c1"
     assert _admit_stubs.call_count == 1
-    resumed = [c.kwargs for c in bus.reply.await_args_list if "RESUMED" in c.kwargs["subject"]]
+    resumed = [
+        c.kwargs for c in bus.reply.await_args_list if "RESUMED" in c.kwargs["subject"]
+    ]
     assert len(resumed) == 1 and resumed[0]["thread_id"] == _WORKER_THREAD
-    assert "d-res-c1" in resumed[0]["subject"] and "resume_of d-res" in resumed[0]["subject"]
+    assert (
+        "d-res-c1" in resumed[0]["subject"]
+        and "resume_of d-res" in resumed[0]["subject"]
+    )
     signals = [ev.signal for ev in events]
     assert signals.count("sdk.await_reply.resume_admitted") == 1
 
@@ -611,8 +622,12 @@ def test_resume_request_builder_inherits_identity(tmp_path: Path) -> None:
     asyncio.run(_park("d-build", bus=_bus(), turns=_Turns(), tmp_path=tmp_path))
     row = load_park_row(dispatch_id="d-build")
     assert row is not None
-    hit = find_reply(fired_generates("d-build", spool_dir=_spool(tmp_path))[0], [_reply_turn()])
-    req = build_await_resume_request(row, replies=[hit], attempt=2, code_version="deadbee")
+    hit = find_reply(
+        fired_generates("d-build", spool_dir=_spool(tmp_path))[0], [_reply_turn()]
+    )
+    req = build_await_resume_request(
+        row, replies=[hit], attempt=2, code_version="deadbee"
+    )
     assert req.dispatch_id == "d-build-c2"
     assert req.resume_of == "d-build"
     assert req.execution_id == "exec-d-build"
@@ -621,7 +636,10 @@ def test_resume_request_builder_inherits_identity(tmp_path: Path) -> None:
     assert req.model_knobs == {"effort": "high"}
     assert req.admitted_via == ADMITTED_VIA_AWAIT_RESUME
     assert req.lane == "B" and req.worktree_path == str(tmp_path / "wt-d-build")
-    assert req.prompt_preamble is not None and "code_version deadbee" in req.prompt_preamble
+    assert (
+        req.prompt_preamble is not None
+        and "code_version deadbee" in req.prompt_preamble
+    )
 
 
 # ------------------------------------------------------------- done item 3
@@ -898,7 +916,12 @@ async def test_several_generates_resume_once_after_all_land(
     assert partial.admitted == [] and partial.waiting == ["d-multi"]
 
     turns.turns[_WORKER_THREAD] = [
-        _reply_turn(execution_id=_EXEC2, thread=_WORKER_THREAD, turn_number=6, text="second verdict")
+        _reply_turn(
+            execution_id=_EXEC2,
+            thread=_WORKER_THREAD,
+            turn_number=6,
+            text="second verdict",
+        )
     ]
     full = await _tick(bus=bus, turns=turns)
     assert full.admitted == [("d-multi", "d-multi-c1")]
@@ -928,7 +951,9 @@ async def test_permanent_ineligibility_expires_the_park_once(
     assert first.admitted == [] and first.expired == ["d-nostore"]
     assert json.loads(_row("d-nostore")["record_json"])["park"]["expired_at"]
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id=_WORKER_THREAD, terminal_status="completed", execution_id="exec-d-nostore"
+        thread_id=_WORKER_THREAD,
+        terminal_status="completed",
+        execution_id="exec-d-nostore",
     )
     assert [ev.signal for ev in events].count("sdk.await_reply.expired") == 1
 
@@ -1369,9 +1394,7 @@ def test_f9_default_bus_turns_passes_after_turn(
             captured["params"] = params
             return _Resp()
 
-    monkeypatch.setattr(
-        "transport_utils.make_sync_client", lambda *_a, **_k: _Client()
-    )
+    monkeypatch.setattr("transport_utils.make_sync_client", lambda *_a, **_k: _Client())
     turns = mod._default_bus_turns("14692", 3)
     assert captured["params"] == {"thread": "14692", "after_turn": 3}
     assert len(turns) == 1
@@ -1445,7 +1468,9 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
         route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None
     )
     monkeypatch.setattr(route_mod, "_promote_queued_for_lease", AsyncMock())
-    monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", lambda **_k: None)
+    monkeypatch.setattr(
+        route_mod, "merge_conductor_closeout_hop_authority", lambda **_k: None
+    )
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_k: None)
     from services.git_integration_worker.cursor_sdk_await_reply import (
@@ -1654,3 +1679,121 @@ async def test_1d_started_then_failed_child_reconciles(
     assert summary.reconciled == [("d-1d", "d-1d-ran")]
     assert summary.admitted == []
     assert _row("d-1d")["park_resumed_by"] == "d-1d-ran"
+
+
+def _stub_boot_host(monkeypatch: pytest.MonkeyPatch, turns: _Turns) -> None:
+    """Keep startup off the host git/process surface; inject bus turns."""
+
+    async def _reclaim() -> list[str]:
+        return []
+
+    monkeypatch.setattr(route_mod, "prune_stale_dispatch_homes", lambda: 0)
+    monkeypatch.setattr(
+        route_mod, "reap_orphan_worktrees", lambda **_k: ReapSweepResult()
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate.reclaim_cross_lane_phantom_holders",
+        _reclaim,
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "reap_orphan_bridge_os",
+        lambda _dispatch_id: BridgeReapResult(bridge_aborted=False),
+    )
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child", AsyncMock(return_value="released")
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "salvage_restart_survivor_worktree",
+        lambda **_k: SimpleNamespace(
+            pruned=False, salvaged=False, branch_retained=False
+        ),
+    )
+    monkeypatch.setattr(
+        route_mod, "_promote_queued_for_lease", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(route_mod, "_resume_parked_rows", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.CursorBusClient",
+        lambda: _bus(),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply._default_bus_turns",
+        turns,
+    )
+
+
+def _boot_app() -> SimpleNamespace:
+    return SimpleNamespace(
+        state=SimpleNamespace(
+            worker_config=load_config(),
+            admission_controller=_controller(),
+            worker_version="boot-test",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_boot_admits_await_when_reply_landed_during_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Breaks when a terminal await park is invisible until the stale sweeper.
+
+    friction:37431 — GIW died after the await was durable. The reply is already
+    on the bus at the next process start. Boot must admit -c1 without waiting
+    out CURSOR_STALE_SWEEP_S.
+    """
+    _seed_running("d-boot", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-boot")
+    assert await _park("d-boot", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-boot")
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    _stub_boot_host(monkeypatch, turns)
+
+    await route_mod.startup_ledger_reconcile(_boot_app())
+
+    assert _children("d-boot") == ["d-boot-c1"]
+    child = _row("d-boot-c1")
+    assert child is not None
+    assert child["thread_id"] == _row("d-boot")["thread_id"]
+    assert _row("d-boot")["park_resumed_by"] == "d-boot-c1"
+
+
+@pytest.mark.asyncio
+async def test_restart_then_reply_seals_running_await(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Breaks when boot rewrites a pre-terminal await as park_for_restart.
+
+    friction:37431 — park columns are stamped while status is still running
+    (NEST_CHAIN can refuse the drain park, so the row stays the live holder).
+    A restart must keep park_kind=await_cdp_reply, and the reply that lands
+    after boot must admit -c1 on the next await pass (sweeper tick ≤30s).
+    """
+    _seed_running("d-live", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-live")
+    assert await _park("d-live", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    assert _row("d-live")["status"] == "running"
+    assert _row("d-live")["park_kind"] == PARK_KIND_AWAIT_REPLY
+    turns = _Turns()
+    _stub_boot_host(monkeypatch, turns)
+
+    await route_mod.startup_ledger_reconcile(_boot_app())
+
+    row = _row("d-live")
+    assert row is not None
+    assert row["park_kind"] == PARK_KIND_AWAIT_REPLY
+    assert row["status"] == "cancelled"
+    assert [r.dispatch_id for r in open_park_rows()] == []
+    assert [r.dispatch_id for r in open_await_rows()] == ["d-live"]
+    assert _children("d-live") == []
+
+    turns.turns = {_COORD_THREAD: [_reply_turn()]}
+    await route_mod._resume_await_reply_rows(
+        controller=_controller(),
+        cfg=load_config(),
+        code_version="boot-test",
+    )
+    assert _children("d-live") == ["d-live-c1"]
+    assert _row("d-live-c1")["thread_id"] == _row("d-live")["thread_id"]

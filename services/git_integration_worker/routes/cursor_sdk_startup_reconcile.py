@@ -39,6 +39,9 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     ``thread_id`` — do not require a prior park, do not mark-failed. Terminal
     rows are never in ``running_orphans`` and are left alone.
     """
+    from services.git_integration_worker.cursor_sdk_await_reply import (
+        seal_running_await_on_boot,
+    )
     from services.git_integration_worker.cursor_sdk_park_ledger import mark_parked
     from services.git_integration_worker.cursor_sdk_park_resume import (
         BOOT_REWIRE_REASON,
@@ -101,6 +104,15 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
                 survivor_prune.salvaged,
                 survivor_prune.branch_retained,
             )
+        if await asyncio.to_thread(seal_running_await_on_boot, orphan.dispatch_id):
+            # Keep park_kind=await_cdp_reply. mark_parked would rewrite it as
+            # park_for_restart and resume before the CDP reply lands.
+            logger.info(
+                "startup preserved await_cdp_reply dispatch_id=%s thread_id=%s",
+                orphan.dispatch_id,
+                orphan.thread_id,
+            )
+            continue
         parked = await asyncio.to_thread(
             mark_parked,
             dispatch_id=orphan.dispatch_id,
@@ -131,8 +143,7 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
         if lease_key:
             repos.append(lease_key)
         logger.info(
-            "startup boot-rewire parked dispatch_id=%s thread_id=%s "
-            "execution_id=%s",
+            "startup boot-rewire parked dispatch_id=%s thread_id=%s execution_id=%s",
             orphan.dispatch_id,
             orphan.thread_id,
             orphan.execution_id or orphan.dispatch_id,
@@ -144,10 +155,19 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     )
     # Parked rows (prior park_for_restart + boot-rewire) re-enter before queued
     # heads: lineage continuity outranks FIFO newcomers.
+    code_version = str(getattr(app.state, "worker_version", "unknown"))
     await route_mod._resume_parked_rows(
         controller=controller,
         cfg=cfg,
-        code_version=str(getattr(app.state, "worker_version", "unknown")),
+        code_version=code_version,
+    )
+    # Await parks are not running orphans. Re-arm them at boot; the sweeper's
+    # first pass sleeps CURSOR_STALE_SWEEP_S before it would otherwise notice
+    # a reply that landed while this process was down.
+    await route_mod._resume_await_reply_rows(
+        controller=controller,
+        cfg=cfg,
+        code_version=code_version,
     )
     for lease_key in sorted(set(repos)):
         await route_mod._promote_queued_for_lease(

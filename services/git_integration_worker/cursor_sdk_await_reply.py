@@ -418,6 +418,29 @@ def mark_await_parked(
     return load_park_row(dispatch_id=dispatch_id)
 
 
+def seal_running_await_on_boot(dispatch_id: str) -> bool:
+    """Terminal-seal a restart orphan that already carries ``await_cdp_reply``.
+
+    ``mark_await_parked`` stamps park columns before the terminal mark. A
+    crash in that window leaves ``status=running``. Boot rewire would
+    overwrite that row as ``park_for_restart`` and resume without the CDP
+    reply. Preserve the await park and seal ``cancelled`` so
+    ``open_await_rows`` can see it. Returns True when this call sealed.
+    """
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status, park_kind FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return False
+    if row["status"] != "running" or row["park_kind"] != PARK_KIND_AWAIT_REPLY:
+        return False
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="cancelled")
+    return True
+
+
 def open_await_rows() -> list[ParkRow]:
     """Open ``await_cdp_reply`` rows, oldest first (includes TTL-expired).
 
@@ -690,9 +713,7 @@ async def announce_await_parked(
             ttl_s=ttl,
         )
     except Exception:  # noqa: BLE001 — best-effort
-        logger.exception(
-            "await_cdp_reply parked event failed dispatch=%s", dispatch_id
-        )
+        logger.exception("await_cdp_reply parked event failed dispatch=%s", dispatch_id)
     try:
         await _post_awaiting_turn(
             bus,
@@ -793,9 +814,7 @@ async def _post_resumed_turn(
         )
 
 
-async def _expire_await(
-    row: ParkRow, bus: CursorBusClient, *, reason: str
-) -> bool:
+async def _expire_await(row: ParkRow, bus: CursorBusClient, *, reason: str) -> bool:
     """Stamp expiry once; terminate link; awareness turn. False if already done."""
     if not mark_park_expired(parent_id=row.dispatch_id):
         return False
@@ -980,6 +999,7 @@ __all__ = [
     "mark_await_parked",
     "maybe_await_park_at_terminal",
     "open_await_rows",
+    "seal_running_await_on_boot",
     "outstanding_generates",
     "received_execution_ids",
     "resume_await_parked_dispatches",
