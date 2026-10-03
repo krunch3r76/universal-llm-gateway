@@ -74,6 +74,13 @@ def test_restart_owed_docs_only_is_none() -> None:
     assert restart_owed_line(["docs/guide.md", "README.md"]) == "restart_owed: none"
 
 
+def test_restart_owed_charter_runner_script_is_unmapped() -> None:
+    path = "scripts/model_manager/ui/controller/charter_runner/propagation_execute.py"
+    text = restart_owed_line([path])
+    assert text.startswith("restart_owed: none\n")
+    assert f"unmapped: {path}" in text
+
+
 def test_restart_owed_unmapped_service_path_is_reported() -> None:
     text = restart_owed_line(["services/not-a-fleet-service/app.py"])
     assert text.startswith("restart_owed: none\n")

@@ -261,6 +261,45 @@ def test_bridge_refuses_conductor_manage_without_forwarding_omitted_arg() -> Non
     assert refused["error"]["data"]["reason"] == CONDUCTOR_DESCENDED_MANAGE_REASON
 
 
+def test_bridge_refuses_recycle_giw_and_cancel_restart_intent() -> None:
+    """A deny-list of restart verbs lets recycle_giw through. Allow-list refuses it."""
+    rows = {"cond": LineageView(contract="conductor")}
+    for action in ("recycle_giw", "cancel_restart_intent"):
+        message = _manage_call(action)
+        forwarded, refused = _drive_manage(message, dispatch_id="cond", rows=rows)
+        assert forwarded is None
+        assert refused["error"]["data"]["reason"] == CONDUCTOR_DESCENDED_MANAGE_REASON
+
+
+def test_bridge_real_ledger_lookup_refuses_conductor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production lookup, not a stub. Breaks when the ledger import fails open."""
+    import sqlite3
+
+    db = tmp_path / "dispatch.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE cursor_sdk_dispatches ("
+        "dispatch_id TEXT, contract TEXT, nest_under TEXT, "
+        "hop_from TEXT, resume_of TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO cursor_sdk_dispatches VALUES (?, ?, NULL, NULL, NULL)",
+        ("cond-real", "conductor"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    refused = refuse_conductor_descended_manage(
+        _manage_call("sync_restart"),
+        dispatch_id="cond-real",
+        lookup=None,
+    )
+    assert refused is not None
+    assert refused["error"]["data"]["reason"] == CONDUCTOR_DESCENDED_MANAGE_REASON
+
+
 def test_bridge_forwards_status_and_non_conductor_restart() -> None:
     rows = {"plain": LineageView(contract="implement")}
     status = _manage_call("status")

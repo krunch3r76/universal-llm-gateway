@@ -69,12 +69,12 @@ def _conductor_descended_manage_refused(dispatch_id: str, action: str) -> bool:
     using the GIW-stamped dispatch id.
     """
     from implement_admission.conductor_descent import (
-        STATE_CHANGING_MANAGE_ACTIONS,
+        READ_ONLY_MANAGE_ACTIONS,
         descends_from_conductor,
         ledger_lineage_lookup,
     )
 
-    if action not in STATE_CHANGING_MANAGE_ACTIONS:
+    if action in READ_ONLY_MANAGE_ACTIONS:
         return False
     try:
         return descends_from_conductor(dispatch_id, ledger_lineage_lookup)

@@ -12,8 +12,19 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
-STATE_CHANGING_MANAGE_ACTIONS = frozenset(
-    {"sync_restart", "restart", "stop", "start", "rebuild"}
+# Allow-list, not a deny-list: a new mutating manage action (recycle_giw,
+# cancel_restart_intent) must refuse until it is named here.
+READ_ONLY_MANAGE_ACTIONS = frozenset(
+    {
+        "status",
+        "health",
+        "wait_healthy",
+        "busy_status",
+        "restart_intent_status",
+        "whoami",
+        "charter_hold_status",
+        "charter_root_status",
+    }
 )
 CONDUCTOR_DESCENDED_MANAGE_REASON = "conductor_descended_manage_refused"
 _MAX_WALK = 32

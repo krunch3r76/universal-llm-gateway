@@ -19,7 +19,6 @@ from implement_admission.service_lib_ownership import (
     slug_for_service_path,
     unserved_libs,
 )
-from implement_admission.serving_coverage import path_serving_coverage
 
 _SKIP_PREFIXES = (
     "docs/",
@@ -80,10 +79,12 @@ def restart_owed_line(paths: Sequence[str]) -> str:
             name = lib_name_for_path(path)
             if name is not None and name in unserved_libs():
                 continue
-            if path_serving_coverage(path) == "unmapped":
-                unmapped.add(path)
-                continue
             unmapped.add(path)
+            continue
+        if path.startswith("scripts/") and path.endswith(".py"):
+            name = path.rsplit("/", 1)[-1]
+            if not name.startswith("test_"):
+                unmapped.add(path)
             continue
         if path.startswith("services/"):
             unmapped.add(path)

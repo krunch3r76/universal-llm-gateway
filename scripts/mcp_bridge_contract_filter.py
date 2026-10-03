@@ -218,19 +218,25 @@ def refuse_conductor_descended_manage(
         arguments = {}
     action = str(arguments.get("action") or "")
     from implement_admission.conductor_descent import (
-        STATE_CHANGING_MANAGE_ACTIONS,
+        READ_ONLY_MANAGE_ACTIONS,
         descends_from_conductor,
         ledger_lineage_lookup,
         refusal_body,
     )
 
-    if action not in STATE_CHANGING_MANAGE_ACTIONS:
+    if action in READ_ONLY_MANAGE_ACTIONS:
         return None
 
     reader = lookup if lookup is not None else ledger_lineage_lookup
     try:
         descended = descends_from_conductor(stamp, reader)
-    except Exception:
+    except Exception as exc:
+        print(
+            "mcp-bridge: conductor descent lookup failed "
+            f"dispatch_id={stamp}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
         return None
     if not descended:
         return None
