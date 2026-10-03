@@ -116,7 +116,8 @@ class AwaitResumeSummary:
 
 
 def await_reply_enabled() -> bool:
-    raw = os.environ.get(AWAIT_REPLY_FLAG_ENV, "0").strip().lower()
+    # Default on after done items 1–5 pass (friction 34156 last increment).
+    raw = os.environ.get(AWAIT_REPLY_FLAG_ENV, "1").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
 
