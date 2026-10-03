@@ -1024,6 +1024,16 @@ def build_hop_team_dispatch_body(
     return body
 
 
+def mint_hop_successor_dispatch_id() -> str:
+    """Mint a worker dispatch_id in the server's 12hex-8hex shape.
+
+    Reactor and watchdog omit ``dispatch_id``. A bare ``uuid4`` matches an
+    execution_id, so ``nest_under`` cannot separate them by shape. Rows already
+    admitted under a UUID still go through the ledger check.
+    """
+    return f"{uuid.uuid4().hex[:12]}-{uuid.uuid4().hex[:8]}"
+
+
 async def post_conductor_hop_team_dispatch(
     body: dict[str, Any],
     *,
@@ -1033,7 +1043,9 @@ async def post_conductor_hop_team_dispatch(
     stop_id = str(body.get("hop_from") or "").strip()
     if not stop_id:
         return False, {"reason": "missing_hop_from"}
-    admit_dispatch_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
+    admit_dispatch_id = (
+        str(body.get("dispatch_id") or "").strip() or mint_hop_successor_dispatch_id()
+    )
     wire_body = dict(body)
     wire_body["dispatch_id"] = admit_dispatch_id
     ledger = CursorDispatchLedger.instance()
