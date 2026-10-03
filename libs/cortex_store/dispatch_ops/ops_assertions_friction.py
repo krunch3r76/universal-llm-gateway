@@ -43,7 +43,7 @@ from ._write_validation import (
     resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
-from .workflow_hints import _FRICTION_TICKET_NEXT
+from .workflow_hints import _WORKFLOW_HINTS
 
 # Historical friction default when confidence is omitted or hypothesized.
 # Distinct from CONFIDENCE_WEIGHT["hypothesized"] (0.20) — keep 0.5 so
@@ -65,7 +65,10 @@ def _resolve_friction_owner_entity_id(entity_id: str) -> str | dict[str, Any]:
         try:
             return resolve_entity_reference(conn, entity_id, label="owner").entity_id
         except HTTPException as exc:
-            if owner_type_of(entity_id) == "service" and exc.status_code == 404:
+            if (
+                owner_type_of(entity_id) == "service"
+                and exc.status_code == 404
+            ):
                 slug = entity_id.removeprefix("service:")
                 if "_" in slug:
                     alt = f"service:{slug.replace('_', '-')}"
@@ -120,7 +123,6 @@ def _resolve_friction_confidence(
     if resolved == _FRICTION_DEFAULT_CONFIDENCE:
         return resolved, _FRICTION_DEFAULT_SCORE
     return resolved, float(CONFIDENCE_WEIGHT[resolved])
-
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
@@ -306,9 +308,7 @@ def _op_friction(
     if "error" not in result:
         anchor_kind = "unanchored"
         if provenance_attrs:
-            anchor_kind = _friction_anchor_view(provenance_attrs).get(
-                "anchor_kind", "unanchored"
-            )
+            anchor_kind = _friction_anchor_view(provenance_attrs).get("anchor_kind", "unanchored")
         logger.info("cortex friction: %s/%s — %s", entity_id, category, note[:60])
         record(
             "mcp.cortex.friction.logged",
@@ -392,9 +392,7 @@ def _op_frictions(
             entity_id = resolved
     entity_type = owner_type if (owner_type and entity_id is None) else None
     entity_type_in = (
-        list(_FRICTION_OWNER_TYPES)
-        if (entity_id is None and owner_type is None)
-        else None
+        list(_FRICTION_OWNER_TYPES) if (entity_id is None and owner_type is None) else None
     )
     claim_filter = f"[{category}]" if category else None
     filters_active = _anchor_filters_active(
@@ -452,15 +450,16 @@ def _op_frictions(
         result["items"] = _project_friction_full_items(raw_items[: (limit or 50)])
     if not result.get("error"):
         # Handler-set _next shadows _WORKFLOW_HINTS["frictions"] (dispatch
-        # __init__). Keep this string on the same constant as the static hint
-        # so a vocabulary sweep cannot miss the live list path (a:37439).
+        # __init__). Emit the static hint (ticket cycle + friction_close), not a
+        # second inline copy that vocabulary sweeps can miss (a:37439).
+        frictions_next = _WORKFLOW_HINTS["frictions"]
         if resolved_intent == "summary":
             result["_next"] = (
                 "Deepen one row: cortex(tool=assertion_get, assertion_id=<id>). "
-                "Full rows: re-call with intent=full. " + _FRICTION_TICKET_NEXT
+                "Full rows: re-call with intent=full. " + frictions_next
             )
         else:
-            result["_next"] = _FRICTION_TICKET_NEXT
+            result["_next"] = frictions_next
     return result
 
 
