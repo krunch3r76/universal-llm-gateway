@@ -253,7 +253,7 @@ def _validate_step_types(
         "conditional",
         "pipeline_call_v1",
         "data_source_v1",
-        "rag_search_v1",
+        "rag_api_search_v1",
         "data_sink_v1",
     }
     all_known_types = builtin_types | registered_step_types

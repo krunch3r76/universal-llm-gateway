@@ -66,7 +66,7 @@ class AssembleThreadV1Handler:
             ) from exc
 
         # window_size is a static numeric domain field, matching the
-        # rag_search_v1 precedent for top_k. Pipeline YAML may set it
+        # rag_api_search_v1 precedent for top_k. Pipeline YAML may set it
         # via `window_size: 16` at step level; default 8 mirrors the
         # MVP spec's default_window.
         window_size_raw = step.get_domain_field("window_size", _DEFAULT_WINDOW_SIZE)

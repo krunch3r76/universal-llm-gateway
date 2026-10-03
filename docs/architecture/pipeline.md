@@ -133,7 +133,7 @@ response = await executor.execute(context)
 | `core/handlers/pipeline_call.py` | `pipeline_call_v1` step handler — calls another pipeline as a service. |
 | `core/handlers/pipeline_context.py` | Pipeline execution context passed through step handlers. |
 | `core/handlers/protocol.py` | Step handler protocol and execution context. |
-| `core/handlers/rag_search.py` | Built-in `rag_search_v1`: semantic search against the RAG service. |
+| `core/handlers/rag_search.py` | Built-in `rag_api_search_v1`: POST `/search` on the RAG HTTP API. |
 | `core/handlers/registry.py` | Step handler registry integrated with domain routing. |
 | `core/handlers/select_output.py` | Select-output handler: picks first non-skipped result from candidate steps. |
 | `core/handlers/step_output.py` | Step output types for pipeline handler execution. |

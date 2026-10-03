@@ -221,7 +221,8 @@ and routes to the pipeline executor transparently.
 
 **Current service pipelines**:
 | `rag-context` | Query rewrite → parallel RAG retrieval + RRF merge → returns context chunks |
-| `rag-answer` | Calls `rag-context` → generates grounded answer |
+| `rag-search` | Retrieval conductor (`pipelines/rag_search/v1/`) — prefer over archived `rag-answer` |
+| MCP `rag(op="search")` | Direct RAG HTTP `/search` when a pipeline step is not needed |
 
 ```python
 # Call rag-context from a handler — injects retrieved chunks as context
@@ -231,7 +232,7 @@ result = await self._call_model(
     step,
     context,
 )
-rag_answer = result.content
+retrieved = result.content
 ```
 
 **Invariant**: ∀ pipeline-as-service call: `step.timeout_seconds` ≥ callee's `options.timeout_seconds`
