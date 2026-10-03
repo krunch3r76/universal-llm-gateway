@@ -5,6 +5,7 @@ from implement_admission.propagation_row import PropagationRow
 from charter_runner_store.db import open_ledger_db
 from charter_runner_store.propagation_ledger import (
     mark_settling,
+    release_settling,
     service_is_settling,
     upsert_open_rows,
 )
@@ -25,5 +26,7 @@ def test_second_land_sees_settling_row(tmp_path, monkeypatch):
         assert mark_settling(ids[0], conn=conn)
         assert service_is_settling("stargate", conn=conn)
         assert not service_is_settling("mcp", conn=conn)
+        assert release_settling(ids[0], conn=conn)
+        assert not service_is_settling("stargate", conn=conn)
     finally:
         conn.close()
