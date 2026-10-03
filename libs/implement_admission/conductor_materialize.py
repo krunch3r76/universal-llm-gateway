@@ -15,6 +15,11 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
+from implement_admission.conductor_no_restart import (
+    G7_RESTART_OWED_RULE,
+    NESTED_PROMPT_RULE,
+    NO_RESTART_LINE,
+)
 from implement_admission.conductor_score_journal import (
     G_ROWS,
     birth_scoreboard,
@@ -341,6 +346,9 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         ),
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
+        f"- {NESTED_PROMPT_RULE}",
+        f"- {NO_RESTART_LINE}",
+        f"- {G7_RESTART_OWED_RULE}",
         (
             "- Before you author any `prompt=` or packet body a nested seat will act "
             "on (investigate/confer legs, CDP ask/review gates), Use the "
@@ -545,6 +553,7 @@ CLOSEOUT JSON with status, G-row progress, scoreboard tip sha, journal record id
 Include recon_method when breadth recon was owed.
 Declare land_disposition on Lane-B branch retirement.
 On every hop that authored a nested CDP prompt: list each prompt URI + its `retrieval_report:` bundle URI (or fail closeout — a:37183).
+G7 land closeout includes the restart_owed line (slug_for_service_path / path_prefix on the landed diff). {NO_RESTART_LINE}
 Designed stop tokens (last lines of final message when owed): stop: ROW_HOP | ROW_PINNED | HOLD_MERGE | OPERATOR_GATE | PARKED_TRANSPORT | DONE
 On ROW_HOP closeout include hop_seq: <n> as the last line after stop: ROW_HOP.
 </output_format>

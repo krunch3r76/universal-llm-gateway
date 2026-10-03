@@ -143,6 +143,34 @@ team_dispatch(
 )
 ```
 
+The nested implement prompt and the G7 land prompt must both include this line
+verbatim:
+
+No manage restart, stop, start, rebuild, or force, and no propagate: a restart from this seat kills work it cannot see on other lanes; the operator seat restarts after G7 land using restart_owed:.
+
+**G7 land nest** (same line; closeout names owed restarts, the nest does not call `manage`):
+
+```text
+team_dispatch(
+  op=generate,
+  seat=cursor-sdk,
+  contract=implement,
+  nest_under=<conductor dispatch_id>,
+  lane="B",
+)
+```
+
+Prompt body for that land seat:
+
+```text
+No manage restart, stop, start, rebuild, or force, and no propagate: a restart from this seat kills work it cannot see on other lanes; the operator seat restarts after G7 land using restart_owed:.
+```
+
+G7 land closeout includes one line from `restart_owed_line` on the landed diff
+(`slug_for_service_path` and `_SERVICE_OWNERSHIP` path_prefix). Shape:
+`restart_owed: event_service` or `restart_owed: none`. A path no rule maps is
+`unmapped: <path>`, not dropped. The operator seat restarts the named slugs.
+
 Harvest plan sidecar URIs into the implement packet `<corpus>` before admit.
 Plan closeout **forbids** `landed` / path-explicit commit claims
 (`apply_plan_mode_closeout_gate`).
