@@ -15,9 +15,12 @@ availability-only key are skipped, so a flap does not pay one full build
 per restart and a stale build cannot replace a walk that includes a
 pipeline the stale build omitted.
 
-(b) handler code identity and (c) sub-pipeline files opened by the walk are
-covered. A byte-identical restore after a mid-walk edit still matches the
-before-walk fingerprints (low, accepted).
+(b) handler code identity is the bytes of ``systems/pipeline`` ``*.py`` files
+plus ``*.py`` under each handler class module directory (MRO, site-packages
+excluded). Helpers under ``libs/`` that ``validate`` calls are not covered.
+(c) sub-pipeline files opened by the walk are covered. A byte-identical
+restore after an edit made mid-walk still matches the before-walk
+fingerprints (low, accepted).
 
 Bump ``SNAPSHOT_VERSION`` when the persisted state shape or load semantics
 change. A mismatch falls through to a full build.
@@ -123,8 +126,6 @@ def _sub_pipeline_paths(pipeline_file: Path) -> list[Path]:
     (``(yaml_dir / pipeline_ref).resolve()``, including ``.yml``). A missing or
     invalid ref does not fail fingerprinting; the parent file is still hashed.
     """
-    import systems.pipeline.loader as loader_mod
-
     from ..core.schemas import StepConfig
     from ..loader import resolve_sub_pipelines
 
@@ -149,19 +150,15 @@ def _sub_pipeline_paths(pipeline_file: Path) -> list[Path]:
         return []
 
     opened: list[Path] = []
-    real = loader_mod.read_text_preserving_timestamps
-
-    def _tracking(file_path: Path, encoding: str = "utf-8") -> str:
-        opened.append(Path(file_path).resolve())
-        return real(file_path, encoding=encoding)
-
-    loader_mod.read_text_preserving_timestamps = _tracking
     try:
-        resolve_sub_pipelines(steps, pipeline_file.parent, visited=set())
-    except (OSError, ValueError, yaml.YAMLError):
+        resolve_sub_pipelines(
+            steps,
+            pipeline_file.parent,
+            visited=set(),
+            on_open=opened.append,
+        )
+    except Exception:
         return opened
-    finally:
-        loader_mod.read_text_preserving_timestamps = real
     return opened
 
 
@@ -171,7 +168,8 @@ def discover_definition_yaml_paths(registry: PipelineRegistry) -> list[Path]:
     For each resolved search path, domain iteration matches
     ``PipelineLoader._load_from_search_path`` / ``_load_domain``: domain
     ``models.yaml``, domain and nested ``prompts.yaml``, and pipeline
-    ``*.yaml`` except prompts, models, and categories. Each pipeline file is
+    ``*.yaml`` except prompts, models, and categories, plus root
+    ``models.yaml`` when that file exists. Each pipeline file is
     ``yaml.safe_load``-ed and ``resolve_sub_pipelines`` is run so ``pipeline_ref``
     targets are included, including ``.yml`` and paths outside the search-path
     ``*.yaml`` rglob.
@@ -185,6 +183,9 @@ def discover_definition_yaml_paths(registry: PipelineRegistry) -> list[Path]:
         resolved = _resolve_search_path(registry, search_path)
         if not resolved.exists():
             continue
+        root_models = resolved / "models.yaml"
+        if root_models.is_file():
+            add(root_models)
         for domain_dir in sorted(p for p in resolved.iterdir() if _is_domain_dir(p)):
             models_file = domain_dir / "models.yaml"
             if models_file.is_file():
@@ -206,64 +207,67 @@ def discover_definition_yaml_paths(registry: PipelineRegistry) -> list[Path]:
     return list(found)
 
 
-def _handler_module_digest(path: Path, classes: list[type]) -> str:
-    """File bytes plus each class's live ``validate`` code object.
+_PIPELINE_PKG = Path(__file__).resolve().parents[1]
 
-    File bytes cover a ``validate()`` body edit seen by the next process.
-    The code object covers an in-process replacement of ``validate`` that
-    leaves the step_type name unchanged.
+
+def _py_files_under(directory: Path) -> set[Path]:
+    return {
+        path.resolve()
+        for path in directory.rglob("*.py")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+
+
+def _code_identity_files() -> list[Path]:
+    """Python files whose bytes are the handler code identity.
+
+    Every ``*.py`` under ``systems/pipeline``, plus every ``*.py`` in the
+    module directory of each handler class on the MRO (site-packages
+    excluded). Helpers under ``libs/`` that ``validate`` calls, outside
+    those directories, are not included.
     """
-    hasher = hashlib.sha256()
-    hasher.update(path.read_bytes())
-    for cls in sorted(classes, key=lambda item: item.__qualname__):
-        validate = getattr(cls, "validate", None)
-        code = getattr(validate, "__code__", None)
-        if code is None:
-            continue
-        hasher.update(cls.__qualname__.encode())
-        hasher.update(code.co_code)
-        hasher.update(repr(code.co_consts).encode())
-    return hasher.hexdigest()
-
-
-def _handler_code_lines() -> list[str]:
-    """Sorted ``handler:{path}:{digest}`` lines for registered handler classes."""
     from ..core.domain_router import get_domain_router
     from ..core.handlers.registry import HandlerRegistry
 
     HandlerRegistry._ensure_initialized()
     router = get_domain_router()
-    classes: list[type] = [
+    files = _py_files_under(_PIPELINE_PKG)
+    classes = {
         *HandlerRegistry._generic_handler_classes.values(),
         *router._generic_handler_classes.values(),
         *router._domain_handler_classes.values(),
-    ]
-    by_path: dict[str, list[type]] = {}
-    seen: set[int] = set()
+    }
     for cls in classes:
-        if id(cls) in seen:
-            continue
-        seen.add(id(cls))
-        try:
-            file_path = str(Path(inspect.getfile(cls)).resolve())
-        except (TypeError, OSError):
-            continue
-        by_path.setdefault(file_path, []).append(cls)
+        for klass in cls.__mro__:
+            try:
+                src = Path(inspect.getfile(klass)).resolve()
+            except (TypeError, OSError):
+                continue
+            if src.suffix != ".py" or "site-packages" in src.parts:
+                continue
+            files.update(_py_files_under(src.parent))
+    return sorted(files)
+
+
+def _handler_code_lines() -> list[str]:
+    """Sorted ``code:{path}:{sha256}`` lines for :func:`_code_identity_files`."""
     lines: list[str] = []
-    for file_path in sorted(by_path):
-        digest = _handler_module_digest(Path(file_path), by_path[file_path])
-        lines.append(f"handler:{file_path}:{digest}")
+    for path in _code_identity_files():
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        lines.append(f"code:{path}:{digest}")
     return lines
 
 
 def definition_fingerprint(registry: PipelineRegistry) -> str:
-    """Hash of walk-opened YAML bytes and live handler code identity.
+    """Hash of walk-opened YAML bytes and handler source-file identity.
 
-    Handler lines are ``handler:{path}:{digest}`` for each registered class
-    file (generic map and domain-router class map). YAML lines are content
-    hashes of :func:`discover_definition_yaml_paths`, keyed by resolved path.
-    Handler name lists stay in the hash so a new step_type in an
-    already-hashed module still moves the fingerprint.
+    Code lines are ``code:{path}:{sha256}`` for :func:`_code_identity_files`.
+    YAML lines are content hashes of :func:`discover_definition_yaml_paths`,
+    keyed by resolved path. A file that vanishes between discovery and read
+    contributes ``{path}:missing`` instead of raising. Handler name lists
+    stay in the hash so a new step_type in an already-hashed module still
+    moves the fingerprint. Helpers under ``libs/`` that ``validate`` calls
+    are not covered.
     """
     from ..core.handlers.registry import HandlerRegistry
 
@@ -289,7 +293,11 @@ def definition_fingerprint(registry: PipelineRegistry) -> str:
         if not owned:
             lines.append(f"empty:{resolved}")
     for yaml_path in sorted(discovered, key=lambda item: str(item)):
-        digest = hashlib.sha256(yaml_path.read_bytes()).hexdigest()
+        try:
+            digest = hashlib.sha256(yaml_path.read_bytes()).hexdigest()
+        except OSError:
+            lines.append(f"{yaml_path}:missing")
+            continue
         lines.append(f"{yaml_path}:{digest}")
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 

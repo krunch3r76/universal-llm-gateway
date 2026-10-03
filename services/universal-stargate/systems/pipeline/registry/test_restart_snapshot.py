@@ -8,6 +8,9 @@ wall-clock.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -346,12 +349,27 @@ steps:
 """
 
 
+def _track_identity_files(monkeypatch: pytest.MonkeyPatch, *paths: Path) -> None:
+    """Include temp ``.py`` files in the file-based code identity set."""
+    from systems.pipeline.registry import snapshot as snapshot_mod
+
+    extra = [path.resolve() for path in paths]
+    real = snapshot_mod._code_identity_files
+
+    def tracked() -> list[Path]:
+        return sorted({*real(), *extra})
+
+    monkeypatch.setattr(snapshot_mod, "_code_identity_files", tracked)
+
+
 def test_handler_validate_change_pays_full_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A validate() body change with the same step_type must not reuse the snapshot."""
-    from systems.pipeline.core.handlers.generate.handler import GenericGenerateHandler
-
+    """Editing a tracked handler ``.py`` must not reuse the snapshot."""
+    handler_py = tmp_path / "identity" / "handler.py"
+    handler_py.parent.mkdir(parents=True)
+    handler_py.write_bytes(b"def validate(step):\n    return []\n")
+    _track_identity_files(monkeypatch, handler_py)
     _enable_snapshot(monkeypatch, tmp_path)
     root = tmp_path / "pipelines"
     _write_tree(root)
@@ -360,14 +378,72 @@ def test_handler_validate_change_pays_full_build(
     _start(root)
     assert builds["n"] == 1
 
-    def _changed_validate(self: object, step: object) -> list[str]:
-        return ["fingerprint-validate-change"]
-
-    monkeypatch.setattr(GenericGenerateHandler, "validate", _changed_validate)
+    handler_py.write_bytes(b"def validate(step):\n    return ['changed']\n")
     last = _start(root)
 
     assert builds["n"] == 2
-    assert "ok-pipe" in last.pipelines or last._validation_errors
+    assert "ok-pipe" in last.pipelines
+
+
+def test_delegated_validate_helper_edit_pays_full_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing a delegated validate helper file must not reuse the snapshot."""
+    handler_py = tmp_path / "identity" / "handler.py"
+    helper_py = tmp_path / "identity" / "admission_checks.py"
+    handler_py.parent.mkdir(parents=True)
+    handler_py.write_bytes(
+        b"from admission_checks import validate_step\n"
+        b"def validate(step):\n"
+        b"    return validate_step(step)\n"
+    )
+    helper_py.write_bytes(b"def validate_step(step):\n    return []\n")
+    _track_identity_files(monkeypatch, handler_py, helper_py)
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    builds = _count_walks(monkeypatch)
+
+    _start(root)
+    assert builds["n"] == 1
+
+    helper_py.write_bytes(b"def validate_step(step):\n    return ['changed']\n")
+    last = _start(root)
+
+    assert builds["n"] == 2
+    assert "ok-pipe" in last.pipelines
+
+
+def test_definition_fingerprint_stable_across_hash_seeds(tmp_path: Path) -> None:
+    """definition_fingerprint must not depend on PYTHONHASHSEED."""
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from systems.pipeline.registry.core import PipelineRegistry\n"
+        "from systems.pipeline.registry.snapshot import definition_fingerprint\n"
+        "root = Path(sys.argv[1])\n"
+        "registry = PipelineRegistry(\n"
+        "    search_paths=[str(root)], config_base_dir=root.parent\n"
+        ")\n"
+        "print(definition_fingerprint(registry))\n"
+    )
+    fingerprints: list[str] = []
+    for seed in ("1", "2"):
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        env["PYTHONPATH"] = os.pathsep.join(sys.path)
+        proc = subprocess.run(
+            [sys.executable, "-c", code, str(root)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        fingerprints.append(proc.stdout.strip())
+    assert fingerprints[0]
+    assert fingerprints[0] == fingerprints[1]
 
 
 def test_sub_pipeline_yml_edit_pays_full_build(
