@@ -14,14 +14,22 @@ RevertFn = Callable[..., Awaitable[dict[str, Any]]]
 def restart_blocked_by_order(
     service: str,
     provider_verdicts: Mapping[str, str],
+    *,
+    land_code_ref: str | None = None,
 ) -> bool:
     """True when an ``after`` provider has not reached verdict ``pass``.
 
     Missing, ``indeterminate``, and ``fail_attributable`` all block. Harvest
     uses the same predicate so a re-fire cannot bypass the edge.
+
+    When *land_code_ref* is set, only the provider row for that land counts —
+    not an older provider verdict from a different merge on the same service.
     """
     for provider in ORDER_AFTER.get(service, ()):
-        if provider_verdicts.get(provider) != "pass":
+        key = provider
+        if land_code_ref:
+            key = f"{provider}:{land_code_ref}"
+        if provider_verdicts.get(key, provider_verdicts.get(provider)) != "pass":
             return True
     return False
 

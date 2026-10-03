@@ -773,7 +773,11 @@ async def execute_propagation_plan(
                 }
             )
             continue
-        if restart_blocked_by_order(row.service, provider_settle_verdicts()):
+        if restart_blocked_by_order(
+            row.service,
+            provider_settle_verdicts(),
+            land_code_ref=row.code_ref,
+        ):
             defer = "order_after_unsatisfied"
             set_defer_reason(row.row_id, defer)
             remaining.append(
@@ -786,6 +790,25 @@ async def execute_propagation_plan(
             if row.age_in_harvests >= 2:
                 escalated.append({**projection, "defer_reason": defer})
             continue
+
+        snap_gw: list[str] | None = None
+        snap_pipes: list[str] | None = None
+        if row.proof_class == "functional_settle":
+            from charter_runner_store.propagation_ledger import mark_settling
+            from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+                request_pre_restart_gateway_membership,
+            )
+            from scripts.model_manager.ui.controller.restart_drain import (
+                STARGATE_PROBE_URL,
+            )
+
+            mark_settling(row.row_id)
+            pre_snapshot = await request_pre_restart_gateway_membership(
+                base_url=STARGATE_PROBE_URL,
+            )
+            snap_gw, snap_pipes = (None, None)
+            if pre_snapshot is not None:
+                snap_gw, snap_pipes = pre_snapshot
 
         try:
             outcome = await sync_restart_charter_harvest(
@@ -839,28 +862,83 @@ async def execute_propagation_plan(
 
         if row.proof_class == "functional_settle":
             from charter_runner_store.propagation_ledger import (
-                mark_settling,
+                DEFER_SETTLE_INDETERMINATE,
                 record_settle_verdict,
             )
-            from implement_admission.settle_gate import judge_event_window
+            from git_integrate.revert import revert_op
+            from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
+                apply_verdict,
+            )
+            from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+                wait_functional_settle,
+            )
+            from scripts.model_manager.ui.controller.charter_runner.wake_hub import (
+                default_events_query_socket,
+            )
+            from services.git_integration_worker.config import load_config
+            from services.git_integration_worker.cursor_sdk_git_head import (
+                land_paths_from_merge_sha,
+            )
 
-            mark_settling(row.row_id)
-            verdict = judge_event_window(
-                (),
-                snapshot_gateway_ids=None,
-                snapshot_pipeline_ids=None,
-                timed_out=False,
+            cfg = load_config()
+            land_paths = land_paths_from_merge_sha(cfg.source_repo, row.code_ref)
+            settle_result = await wait_functional_settle(
+                query_sock=default_events_query_socket(),
+                resume_from=None,
+                snapshot_gateway_ids=snap_gw,
+                snapshot_pipeline_ids=snap_pipes,
+                land_paths=land_paths,
             )
+            verdict = settle_result.verdict
             record_settle_verdict(row.row_id, verdict)
-            remaining.append(
-                {
-                    **projection,
-                    "defer_reason": f"settle_{verdict}",
-                    "proof_class_executed": "functional_settle",
-                    "disposition": "settle_gate",
-                    "verdict": verdict,
-                }
-            )
+            disposition: dict[str, Any] = {
+                **projection,
+                "defer_reason": (
+                    DEFER_SETTLE_INDETERMINATE
+                    if verdict == "indeterminate"
+                    else f"settle_{verdict}"
+                ),
+                "proof_class_executed": "functional_settle",
+                "disposition": "settle_gate",
+                "verdict": verdict,
+            }
+            remaining.append(disposition)
+            if verdict == "indeterminate":
+                escalated.append(disposition)
+            elif verdict == "fail_attributable":
+                async def _revert(**_kwargs: Any) -> dict[str, Any]:
+                    return await revert_op(
+                        source_repo=str(cfg.source_repo),
+                        merge_sha=row.code_ref,
+                    )
+
+                applied = await apply_verdict(
+                    verdict,
+                    revert=_revert,
+                    already_reverted=False,
+                    revert_kwargs={},
+                )
+                if applied.get("revert_calls"):
+                    await sync_restart_charter_harvest(
+                        ctl, row.service, event_bus=event_bus
+                    )
+                    reprobe = await wait_functional_settle(
+                        query_sock=default_events_query_socket(),
+                        resume_from=None,
+                        snapshot_gateway_ids=snap_gw,
+                        snapshot_pipeline_ids=snap_pipes,
+                        land_paths=land_paths,
+                    )
+                    reprobe_verdict = reprobe.verdict
+                    if reprobe_verdict != "pass":
+                        escalated.append(
+                            {
+                                **projection,
+                                "defer_reason": f"settle_reprobe_{reprobe_verdict}",
+                                "disposition": "settle_reprobe_escalated",
+                                "verdict": reprobe_verdict,
+                            }
+                        )
             continue
 
         live_after = dispatch_after.payload

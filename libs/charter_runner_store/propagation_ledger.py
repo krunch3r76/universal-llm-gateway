@@ -72,6 +72,7 @@ DEFER_HARVEST_WANTED = "harvest_wanted"
 # charter fire and the harvest-wanted consumer both skip it. An operator
 # re-fire is what runs the probe again.
 DEFER_PROBE_UNDETERMINED = "probe_undetermined"
+DEFER_SETTLE_INDETERMINATE = "settle_indeterminate"
 # Terminal defer on a seat-retracted obligation (status=failed, not open).
 DEFER_OPERATOR_RETRACTED = "operator_retracted"
 STALE_CONSUMPTION_CLAIM_S = 600.0
@@ -85,7 +86,11 @@ def open_row_in_harvest_fire_set(defer_reason: str | None) -> bool:
     is excluded from both: the busy probe returned no determination, so the
     row must not become a later restart.
     """
-    return defer_reason not in {DEFER_HARVEST_WANTED, DEFER_PROBE_UNDETERMINED}
+    return defer_reason not in {
+        DEFER_HARVEST_WANTED,
+        DEFER_PROBE_UNDETERMINED,
+        DEFER_SETTLE_INDETERMINATE,
+    }
 
 
 def upsert_open_rows(
@@ -854,21 +859,27 @@ def service_is_settling(
 def provider_settle_verdicts(
     *, conn: sqlite3.Connection | None = None
 ) -> dict[str, str]:
-    """Latest recorded settle verdict per service, including open rows."""
+    """Latest recorded settle verdict per service and per (service, land) pair."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
         cur = db.execute(
             """
-            SELECT service, settle_verdict FROM propagation_ledger
+            SELECT service, code_ref, settle_verdict FROM propagation_ledger
             WHERE settle_verdict IS NOT NULL
+            ORDER BY updated_at DESC
             """
         )
-        return {
-            str(row["service"]): str(row["settle_verdict"])
-            for row in cur.fetchall()
-            if row["settle_verdict"]
-        }
+        out: dict[str, str] = {}
+        for row in cur.fetchall():
+            service = str(row["service"])
+            verdict = str(row["settle_verdict"])
+            if service not in out:
+                out[service] = verdict
+            land_key = f"{service}:{row['code_ref']}"
+            if land_key not in out:
+                out[land_key] = verdict
+        return out
     finally:
         if own_conn:
             db.close()
@@ -885,7 +896,12 @@ def record_settle_verdict(
     db = conn or open_ledger_db()
     now = time.time()
     status = "closed" if verdict == "pass" else "open"
-    defer = None if verdict == "pass" else f"settle_{verdict}"
+    if verdict == "pass":
+        defer = None
+    elif verdict == "indeterminate":
+        defer = DEFER_SETTLE_INDETERMINATE
+    else:
+        defer = f"settle_{verdict}"
     try:
         execute_with_retry(
             db,
@@ -909,6 +925,7 @@ __all__ = [
     "DEFER_HARVEST_WANTED",
     "DEFER_OPERATOR_RETRACTED",
     "DEFER_PROBE_UNDETERMINED",
+    "DEFER_SETTLE_INDETERMINATE",
     "open_row_in_harvest_fire_set",
     "OpenPropagationProjection",
     "STALE_CONSUMPTION_CLAIM_S",

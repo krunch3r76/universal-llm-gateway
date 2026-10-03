@@ -520,6 +520,14 @@ async def sync_restart_charter_harvest(
 
     before_snap = await snapshot_before_restart(ctl.service_state, service)
 
+    if service == "stargate":
+        from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+            request_pre_restart_gateway_membership,
+        )
+        from scripts.model_manager.ui.controller.restart_drain import STARGATE_PROBE_URL
+
+        await request_pre_restart_gateway_membership(base_url=STARGATE_PROBE_URL)
+
     if service == "git_integration_worker":
         supervisor = ctl.build_git_worker_drain_supervisor(
             kill=ctl.git_worker_kill_for("sync_restart"),
