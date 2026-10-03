@@ -70,3 +70,73 @@ async def test_absent_rerank_enabled_key_honors_step_enabled() -> None:
 
     out = await handler.execute(step, context)
     assert out.json["rerank_status"] != "disabled"
+
+
+def _emit_context(outputs: dict):
+    context = SimpleNamespace(
+        options={},
+        source=SimpleNamespace(text="", messages=None),
+        outputs=outputs,
+    )
+    context.get_output = lambda name: outputs.get(name)
+    return context
+
+
+def _chunk() -> dict[str, str | dict | float]:
+    return {
+        "content": "letter body about a friend",
+        "source": "familiar/emerson/sample.md",
+        "indexed_at": "2026-01-01",
+        "metadata": {},
+        "content_hash": "abc12345deadbeef",
+        "score": 0.4,
+    }
+
+
+@pytest.mark.asyncio
+async def test_skipped_rerank_still_emits_formatted_context() -> None:
+    """Break: output step is the skipped rerank, so chunks_found>0 becomes content=''."""
+    from systems.pipeline.core.handlers.protocol import StepOutput as _Out
+
+    module = importlib.import_module(f"{_LOADER}.rag_emit_context")
+    handler = module.RagEmitContextHandler()
+    step = StepConfig.model_validate(
+        {
+            "name": "emit_context",
+            "type": "rag_emit_context_v1",
+            "handler_inputs": {"chunks_data": "retrieve.json.chunks"},
+        }
+    )
+    context = _emit_context({"rerank": _Out(raw="", json={"_skipped": True})})
+
+    def _resolve(*_args, **_kwargs):
+        return [_chunk()]
+
+    handler._resolve_input = _resolve
+    out = await handler.execute(step, context)
+    assert "letter body about a friend" in out.raw
+    assert out.json["rerank_status"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_completed_rerank_output_is_unchanged() -> None:
+    """Break: emit reformats or drops the rerank step's formatted context."""
+    from systems.pipeline.core.handlers.protocol import StepOutput as _Out
+
+    module = importlib.import_module(f"{_LOADER}.rag_emit_context")
+    handler = module.RagEmitContextHandler()
+    step = StepConfig.model_validate(
+        {
+            "name": "emit_context",
+            "type": "rag_emit_context_v1",
+            "handler_inputs": {"chunks_data": "retrieve.json.chunks"},
+        }
+    )
+    formatted = "[Source: familiar/emerson/sample.md]\n\nreranked body"
+    context = _emit_context(
+        {"rerank": _Out(raw=formatted, json={"rerank_status": "ok", "chunks_reranked": 1})}
+    )
+    handler._resolve_input = lambda *_a, **_k: [_chunk()]
+    out = await handler.execute(step, context)
+    assert out.raw == formatted
+    assert out.json["rerank_status"] == "ok"

@@ -7,7 +7,7 @@ description: >
   rag-context, then rewrites sourceNs.text with that block bound as
   {writing_context}. Steal rhythm, not period diction. Not the 4917
   external_prose judge stack. pipeline_options.register selects a prefix
-  well (humor, oratory, familiar, letters, civic, travel) or all.
+  well (humor, familiar, civic) or all.
 
 output: rewrite
 

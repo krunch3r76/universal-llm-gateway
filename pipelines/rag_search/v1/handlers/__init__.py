@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .direct_scope import DirectScopeHandler
+from .rag_emit_context import RagEmitContextHandler
 from .rag_query_retrieve import RagMultiRetrieveHandler
 from .rag_rerank_assemble import RagRerankAssembleHandler
 
@@ -22,4 +23,7 @@ def register_handlers(router: DomainRouter) -> None:
     )
     router.register_domain_handler_class(
         "rag_search", "rag_rerank_assemble_v1", RagRerankAssembleHandler
+    )
+    router.register_domain_handler_class(
+        "rag_search", "rag_emit_context_v1", RagEmitContextHandler
     )
