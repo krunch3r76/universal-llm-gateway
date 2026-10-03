@@ -130,8 +130,11 @@ async def test_cdp_worker_freeform_opus_high_without_proof_does_not_call_fable(
 ) -> None:
     """Opus-high completed_without_proof with contract=freeform must not call cdp/fable.
 
-    Breaks when run_cdp_worker stops passing contract into review_fallback_model
-    (a freeform miss would then look like delivery-review and stage fable).
+    Breaks when run_cdp_worker substitutes or defaults the contract it passes
+    into review_fallback_model (e.g. hard-codes delivery-review), or when
+    review_fallback_model drops its contract gate. Dropping the contract kwarg
+    is caught by test_cdp_worker_delivery_review_high_triggers_fable_fallback,
+    not here: review_fallback_model defaults contract to None, which returns None.
     """
     from systems.frontier_consult import cdp_generate_worker as worker
 
