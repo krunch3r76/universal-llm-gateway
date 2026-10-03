@@ -113,6 +113,41 @@ def test_load_promoted_request_recovers_admitted_via(
     assert loaded.admitted_via == "cursor-auto"
 
 
+def test_load_promoted_request_recovers_workspace(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="37504p",
+        model="cursor/composer-2.5",
+        dispatch_id="auto-ws-promo",
+        execution_id="exec-auto-ws-promo",
+        message="hello",
+        workspace="cryptax",
+        admitted_via="cursor-auto",
+    )
+    promoted = ledger.promote_next_queued(lease_key="unused", worker_instance="w1")
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        PromotedDispatch,
+    )
+
+    promoted = PromotedDispatch(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        caller_agent="web-anthropic",
+        resolved_model="composer-2.5",
+        source_repo=None,
+        contract="consult",
+        read_only=True,
+        record_json=_dispatch_record_json(req),
+    )
+    loaded = ledger.load_promoted_request(promoted)
+    assert loaded.workspace == "cryptax"
+
+
 @pytest.mark.parametrize("admitted_via", [None, "stargate"])
 def test_maybe_emit_giw_dispatched_skips_non_cursor_auto(
     admitted_via: str | None,

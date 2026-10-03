@@ -728,6 +728,167 @@ def test_parent_row_recorded_workspace_is_what_admit_inherits(tmp_path: Path) ->
     )
 
 
+def _init_git(path: Path) -> None:
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "init", "-b", "master", str(path)], check=True, capture_output=True
+    )
+    for key, value in (("user.email", "t@example.com"), ("user.name", "t")):
+        subprocess.run(
+            ["git", "-C", str(path), "config", key, value],
+            check=True,
+            capture_output=True,
+        )
+    (path / "README.md").write_text("init\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(path), "add", "README.md"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_of_omitted_workspace_pins_satellite(
+    tmp_path: Path, _admit_stubs: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37506 — admit inherit must reach pin with the satellite repo (14750#2)."""
+    import subprocess
+
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    projects = tmp_path / "projects"
+    hub = projects / "hub"
+    satellite = projects / "cryptax"
+    _init_git(hub)
+    _init_git(satellite)
+    roster = hub / "cursor-plugins/ulg-ecosystem/SATELLITES.txt"
+    roster.parent.mkdir(parents=True)
+    roster.write_text("cryptax\n", encoding="utf-8")
+    wt = tmp_path / "lane-14724"
+    tip = subprocess.run(
+        ["git", "-C", str(satellite), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(satellite), "branch", "lane-14724", tip],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(satellite), "worktree", "add", str(wt), "lane-14724"],
+        check=True,
+        capture_output=True,
+    )
+
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=hub,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace=projects,
+        green_gate_cmd=["true"],
+    )
+    pins: list[dict[str, object]] = []
+
+    def _pin(**kwargs: object) -> str:
+        pins.append(kwargs)
+        return "ulg:lock"
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree.pin_lane_worktree_on_admit",
+        _pin,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_concurrency_posture."
+        "b_worktree_materialized",
+        lambda **_k: True,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    parent = CursorDispatchRequest(
+        thread_id="14724",
+        model="cursor/composer-2.5",
+        dispatch_id="p-sat-parent",
+        execution_id="exec-p-sat-parent",
+        caller_agent="cursor",
+        message="satellite parent",
+        handoff_contract="conductor",
+        workspace="cryptax",
+        lane="B",
+        worktree_isolated=True,
+        worktree_path=str(wt),
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    ledger.admit(
+        req=parent,
+        fingerprint=ledger.fingerprint(parent),
+        execution_id=parent.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=parent.dispatch_id,
+            thread_id=parent.thread_id,
+            model_id="m",
+        ),
+        contract="conductor",
+        source_repo=str(satellite.resolve()),
+        lease_key=str(wt.resolve()),
+        work_key=parent.work_key,
+        source_ref=parent.work_key,
+        identity_class="declared",
+    )
+    store = tmp_path / "store-p-sat-parent"
+    store.mkdir(parents=True)
+    (store / "index.db").write_text("x")
+    ledger.record_state_root(dispatch_id=parent.dispatch_id, state_root=str(store))
+    ledger.record_sdk_identity(
+        dispatch_id=parent.dispatch_id, agent_id="agent-p-sat-parent", run_id="r"
+    )
+    ledger.mark_running(dispatch_id=parent.dispatch_id)
+    mark_parked(
+        dispatch_id=parent.dispatch_id,
+        intent_id="intent-37504",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="x",
+        method="run_cancel",
+        tool_call_count=1,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    child = CursorDispatchRequest(
+        thread_id="14724",
+        model="cursor/composer-2.5",
+        dispatch_id="p-sat-child",
+        execution_id="exec-p-sat-child",
+        caller_agent="cursor",
+        message="resume without workspace",
+        handoff_contract="conductor",
+        resume_of="p-sat-parent",
+        lane="B",
+        worktree_isolated=True,
+        worktree_path=str(wt),
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    resp = await admit_cursor_dispatch(child, cfg=cfg, controller=_controller())
+    assert resp.status_code == 200, bytes(resp.body).decode()
+    assert pins, "pin_lane_worktree_on_admit must run"
+    assert Path(str(pins[0]["source_repo"])).resolve() == satellite.resolve()
+    child_row = _row("p-sat-child")
+    assert child_row is not None
+    assert json.loads(child_row["record_json"])["workspace"] == "cryptax"
+
+
 @pytest.mark.asyncio
 async def test_legacy_lane_a_park_row_strips_before_admit(
     tmp_path: Path, _admit_stubs: MagicMock
