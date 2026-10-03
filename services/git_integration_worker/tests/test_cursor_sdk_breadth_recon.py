@@ -36,9 +36,9 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
 
 
 def test_packet_preamble_none_is_freeform() -> None:
-    """``contract=none``: no harness stack; posture slash is the judgment floor."""
+    """``contract=freeform``: no harness stack; posture slash is the judgment floor."""
     preamble = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="freeform",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",

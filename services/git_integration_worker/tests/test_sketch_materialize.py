@@ -40,4 +40,4 @@ def test_sketch_source_ref_route_contract(tmp_path: Path) -> None:
             workspaces_root=tmp_path,
             contract="sketch",
         )
-    assert result.route_contract == {"contract": "sketch", "lane": "B"}
+    assert result.route_contract == {"job": "sketch", "lane": "B"}
