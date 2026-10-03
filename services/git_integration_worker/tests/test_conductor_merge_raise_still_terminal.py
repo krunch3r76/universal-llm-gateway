@@ -128,10 +128,8 @@ async def test_finalize_parked_merge_raise_still_terminal(
         "emit_partial_harvest_on_park",
         lambda *_a, **_k: {},
     )
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.park_finalize.mark_parked",
-        lambda **_kw: None,
-    )
+    # friction 37492: real mark_parked already writes status cancelled, so
+    # cancelled alone cannot prove _mark_terminal_and_promote ran.
     raise_calls: list[str] = []
     monkeypatch.setattr(
         hop_mod,
@@ -151,7 +149,8 @@ async def test_finalize_parked_merge_raise_still_terminal(
         "services.git_integration_worker.cursor_sdk_closeout.park_finalize.clear_park_mark",
         lambda *_a, **_k: None,
     )
-    monkeypatch.setattr(route_mod, "_promote_queued_for_lease", AsyncMock())
+    promote_lease = AsyncMock()
+    monkeypatch.setattr(route_mod, "_promote_queued_for_lease", promote_lease)
     monkeypatch.setattr(
         route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None
     )
@@ -174,3 +173,4 @@ async def test_finalize_parked_merge_raise_still_terminal(
 
     assert raise_calls == ["merge-raise"]
     assert _status(req.dispatch_id) == "cancelled"
+    promote_lease.assert_awaited_once()
