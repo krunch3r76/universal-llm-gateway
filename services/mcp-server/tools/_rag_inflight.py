@@ -111,7 +111,7 @@ class SearchInFlightError(Exception):
         """Render the caller-facing ``in_flight`` envelope (never an ``error`` key)."""
         return {
             "status": "in_flight",
-            "pipeline": "rag-context",
+            "pipeline": "rag-search",
             "search_id": self.search_id,
             "elapsed_s": round(self.elapsed_s, 1),
             "wait_budget_s": self.wait_budget_s,
