@@ -31,6 +31,10 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
 
 HOP_PARK_RELEASED_AT_KEY = "hop_park_released_at"
 CONDUCTOR_MISSION_PARKED_CODE = "CONDUCTOR_MISSION_PARKED"
+# a:37748: a producer-harvest admit releases only this park, inside the admit
+# transaction, and only on the hop_from row. Other budget reasons stay put.
+_HOP_REASON_PRODUCER_HARVEST = "producer_harvest"
+_PARK_REASON_NO_PROGRESS_CAP = "hop_budget_no_progress_cap"
 
 PARK_KINDS: frozenset[str] = frozenset({"budget", "restart"})
 
@@ -339,6 +343,74 @@ def _stamp_mission_cap_baseline_on_latest_terminal(
             dispatch_id,
         ),
     )
+
+
+def release_linked_no_progress_park(
+    conn: sqlite3.Connection,
+    *,
+    hop_from: str | None,
+    hop_reason: str | None,
+    thread_id: str | None,
+    work_key: str | None,
+    caller_agent: str,
+    post_commit_emits: list[Callable[[], None]],
+) -> bool:
+    """Release the hop_from no-progress park before ``refuse_parked_conductor_mission``.
+
+    Runs on the admit connection, so a later exception rolls the stamp back.
+    A mission-cap, crash-cap, or admit-retry row is left open. ``hop_park_release``
+    stays unset; the park-released event is queued on *post_commit_emits*.
+    """
+    if str(hop_reason or "") != _HOP_REASON_PRODUCER_HARVEST:
+        return False
+    pred = str(hop_from or "").strip()
+    if not pred:
+        return False
+    row = conn.execute(
+        "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (pred,),
+    ).fetchone()
+    if row is None:
+        return False
+    raw = str(row["record_json"] or "")
+    data = _record_dict(raw)
+    if data.get(HOP_PARKED_KEY) is not True:
+        return False
+    if _park_released(raw):
+        return False
+    if str(data.get(HOP_PARK_REASON_KEY) or "") != _PARK_REASON_NO_PROGRESS_CAP:
+        return False
+    data[HOP_PARK_RELEASED_AT_KEY] = time.time()
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+        (
+            json.dumps(data, sort_keys=True, separators=(",", ":")),
+            pred,
+        ),
+    )
+    admit_thread = thread_id or ""
+    admit_work_key = work_key
+    admit_caller = caller_agent
+
+    def _emit(
+        pid: str = pred,
+        tid: str = admit_thread,
+        wk: str | None = admit_work_key,
+        agent: str = admit_caller,
+    ) -> None:
+        from services.git_integration_worker.cursor_sdk_hop_events import (
+            emit_frontier_sdk_conductor_hop_park_released,
+        )
+
+        emit_frontier_sdk_conductor_hop_park_released(
+            parked_dispatch_id=pid,
+            thread_id=tid,
+            work_key=wk,
+            caller_agent=agent,
+        )
+
+    post_commit_emits.append(_emit)
+    return True
 
 
 def release_mission_parks(

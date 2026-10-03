@@ -242,9 +242,10 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
 
 _TERMINAL_EXECUTION_STATES = frozenset({"finished", "failed", "aborted"})
 _HARVEST_ID_TOKEN_RE = re.compile(r"^[0-9a-fA-F-]{8,}$")
-# ``harvest <id>`` with optional backticks and trailing prose (a:37748:
-# 14902 ``harvest `<uuid>``` and 14915 ``harvest <uuid> (poll …)``).
-_HARVEST_ID_IN_ADMIT_RE = re.compile(r"(?i)\bharvest\s+`?([0-9a-fA-F-]{8,})`?")
+# Anchored to the payload start so ``none — prior harvest <id>`` and
+# ``land after harvest <id>`` stay unrecognized (a:37748 review).
+_HARVEST_NONE_RE = re.compile(r"(?i)none\b")
+_HARVEST_ID_IN_ADMIT_RE = re.compile(r"(?i)harvest\s+`?([0-9a-fA-F-]{8,})`?(?:\s.*)?\Z")
 
 
 def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
@@ -266,7 +267,10 @@ def _harvest_target_token(guard: str) -> str | None:
     admit = last_next_admit_payload(guard)
     if not admit:
         return None
-    match = _HARVEST_ID_IN_ADMIT_RE.search(admit)
+    stripped = admit.strip()
+    if _HARVEST_NONE_RE.match(stripped):
+        return None
+    match = _HARVEST_ID_IN_ADMIT_RE.match(stripped)
     if match is None:
         return None
     token = match.group(1)

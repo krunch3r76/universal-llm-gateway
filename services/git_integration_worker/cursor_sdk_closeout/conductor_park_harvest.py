@@ -848,7 +848,6 @@ async def fire_no_progress_producer_continue(row: dict[str, Any]) -> bool:
     from services.git_integration_worker.cursor_sdk_hop_events import (
         emit_frontier_sdk_conductor_hop_admit_failed,
         emit_frontier_sdk_conductor_hop_admitted,
-        emit_frontier_sdk_conductor_hop_park_released,
     )
     from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
 
@@ -881,6 +880,9 @@ async def fire_no_progress_producer_continue(row: dict[str, Any]) -> bool:
         except json.JSONDecodeError:
             data = {}
         if isinstance(data, dict):
+            # The admit transaction already stamped hop_park_released_at and
+            # queued the park-released event. This row is the pre-POST snapshot,
+            # so the successor write must put the stamp back or it would wipe it.
             released_at = time.time()
             data[_NO_PROGRESS_PRODUCER_CONTINUED_KEY] = released_at
             data[HOP_PARK_RELEASED_AT_KEY] = released_at
@@ -891,12 +893,6 @@ async def fire_no_progress_producer_continue(row: dict[str, Any]) -> bool:
                 "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
                 (merged, dispatch_id),
             )
-        emit_frontier_sdk_conductor_hop_park_released(
-            parked_dispatch_id=dispatch_id,
-            thread_id=thread_id,
-            work_key=str(row.get("work_key") or "") or None,
-            caller_agent="conductor-hop",
-        )
         emit_frontier_sdk_conductor_hop_admitted(
             predecessor_dispatch_id=dispatch_id,
             successor_dispatch_id=successor,

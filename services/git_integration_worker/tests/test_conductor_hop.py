@@ -1293,6 +1293,15 @@ def test_harvest_target_token_accepts_backticks_and_trailing_prose() -> None:
     assert _harvest_target_token(backtick) == "64b84918-f552-47a1-bf7e-ab634fcf9673"
     assert _harvest_target_token(prose) == "940600a3-fc7e-421c-bc63-5971620900bd"
     assert _harvest_target_token("NEXT_ADMIT: none\nstop: ROW_HOP\n") is None
+    prior = (
+        "NEXT_ADMIT: none — prior harvest "
+        "64b84918-f552-47a1-bf7e-ab634fcf9673 already answered\n"
+    )
+    land = "NEXT_ADMIT: land after harvest 64b84918-f552-47a1-bf7e-ab634fcf9673\n"
+    notes = "NEXT_ADMIT: see notes then harvest deadbeef\n"
+    assert _harvest_target_token(prior) is None
+    assert _harvest_target_token(land) is None
+    assert _harvest_target_token(notes) is None
 
 
 @pytest.mark.asyncio
