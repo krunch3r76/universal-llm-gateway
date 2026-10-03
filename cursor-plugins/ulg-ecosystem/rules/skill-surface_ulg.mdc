@@ -11,10 +11,19 @@ load matched description-gated rules **before** advising or acting; follow skill
 (do not fs-read skill SOT into context).
 
 **Cursor owns sync.** `edit(cursor-plugins/ulg-ecosystem/{skills,commands,rules} ∨ census) ⇒ run
-scripts/cursor/install-ecosystem-plugin.sh ∧ verify ~/.cursor/plugins/local/ulg-ecosystem matches SoT` same
+scripts/cursor/install-ecosystem-plugin.sh ∧ verify $HOME and PLUGIN_INSTALL_DESTS copies match SoT` same
 turn; Claude-slug bodies (`shared_sync` / uploadable `life_local`) additionally regen + upload + verify.
 Installed trees are copies — Reload Window is not install. `¬ ask(operator, install ∨ upload ∨ "sync the plugin")`;
 `¬ claim live` before the install/upload ran this session. `cursor_only` never uploads.
+
+A new or edited command is unfinished until this turn quotes `cmp` MATCH for that file under
+`$HOME/.cursor/plugins/local/ulg-ecosystem/commands/` **and** each dest in
+`PLUGIN_INSTALL_DESTS.txt`. Commit does not install. Do not wait for the operator
+to say "install the commands."
+
+| Bad | Good |
+|---|---|
+| Commit the command file and stop | Install, quote MATCH for that command, then commit |
 
 Census slugs live in the plugin tree only — never re-add under `{repo}/.cursor/skills` or `.claude/skills`.
 Runbook: Use the `claude-ai-bundle-sync` skill · doctrine `decision:claude-ai-skill-upload-automation` ·

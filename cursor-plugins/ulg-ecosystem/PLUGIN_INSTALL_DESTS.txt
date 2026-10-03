@@ -1,0 +1,7 @@
+# Extra Cursor plugin copies. Local $HOME is always installed first.
+# NFS checkout is SoT only - each Cursor home is a local copy.
+# host:/absolute/plugin/dir  (Glass user on that host)
+# Re-run install-ecosystem-plugin.sh from the hub seat (no --local-only).
+
+orion-node:/home/krunch3r/.cursor/plugins/local/ulg-ecosystem
+jupiter:/home/krunch3r/.cursor/plugins/local/ulg-ecosystem

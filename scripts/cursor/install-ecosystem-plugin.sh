@@ -5,15 +5,21 @@
 # Usage:
 #   ./scripts/cursor/install-ecosystem-plugin.sh
 #   ./scripts/cursor/install-ecosystem-plugin.sh --dry-run
+#   ./scripts/cursor/install-ecosystem-plugin.sh --local-only
 #
 # After install: Developer → Reload Window (or restart Cursor).
 
 set -euo pipefail
 
 DRY_RUN=0
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN=1
-fi
+LOCAL_ONLY=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --local-only) LOCAL_ONLY=1 ;;
+    *) echo "ERROR: unknown arg: $_arg" >&2; exit 1 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ULG_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -45,6 +51,12 @@ cleanup() {
 trap cleanup EXIT
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+# NFS SoT → local ext4: GNU cp -a / --preserve=mode dies ("Operation not
+# supported"). Same class as fix-jupiter-resume-fence-hook (cp -f).
+copy_portable() {
+  cp -dR --preserve=timestamps "$@"
+}
 
 [[ -d "$PLUGIN_SRC" ]] || die "plugin SoT missing: $PLUGIN_SRC"
 [[ -f "$CENSUS" ]] || die "census missing: $CENSUS"
@@ -108,13 +120,13 @@ mkdir -p "$STAGING"/{.cursor-plugin,skills,commands,rules,hooks,scripts}
 # Static assets (plugin.json is gitignored — arc worktrees fall back to source repo)
 PLUGIN_JSON="$(resolve_plugin_asset ".cursor-plugin/plugin.json")" \
   || die "plugin manifest missing in worktree and source repo"
-cp -a "$PLUGIN_JSON" "$STAGING/.cursor-plugin/"
+copy_portable "$PLUGIN_JSON" "$STAGING/.cursor-plugin/"
 HOOKS_JSON="$(resolve_plugin_asset "hooks/hooks.json")" \
   || die "hooks.json missing in worktree and source repo"
-cp -a "$HOOKS_JSON" "$STAGING/hooks/"
+copy_portable "$HOOKS_JSON" "$STAGING/hooks/"
 VERIFY_LIBS="$(resolve_plugin_asset "scripts/verify-ulg-libs.sh")" \
   || die "verify-ulg-libs.sh missing in worktree and source repo"
-cp -a "$VERIFY_LIBS" "$STAGING/scripts/"
+copy_portable "$VERIFY_LIBS" "$STAGING/scripts/"
 chmod +x "$STAGING/scripts/verify-ulg-libs.sh"
 RESUME_HOOK="$ULG_ROOT/scripts/cursor/resume_fence_hook.py"
 [[ -f "$RESUME_HOOK" ]] || RESUME_HOOK="$SOURCE_REPO/scripts/cursor/resume_fence_hook.py"
@@ -122,14 +134,14 @@ RESUME_HOOK="$ULG_ROOT/scripts/cursor/resume_fence_hook.py"
 mkdir -p "$STAGING/scripts/cursor"
 cp -f "$RESUME_HOOK" "$STAGING/scripts/cursor/resume_fence_hook.py"
 chmod 755 "$STAGING/scripts/cursor/resume_fence_hook.py"
-cp -a "$PLUGIN_SRC/README.md" "$STAGING/"
-cp -a "$CENSUS" "$STAGING/SKILLS_CENSUS.txt"
-[[ -f "$RULES_CENSUS" ]] && cp -a "$RULES_CENSUS" "$STAGING/RULES_ULG_CENSUS.txt"
-[[ -f "$PLUGIN_SRC/RULES_ULG_CENSUS.md" ]] && cp -a "$PLUGIN_SRC/RULES_ULG_CENSUS.md" "$STAGING/"
-[[ -f "$PLUGIN_SRC/SATELLITES.txt" ]] && cp -a "$PLUGIN_SRC/SATELLITES.txt" "$STAGING/"
+copy_portable "$PLUGIN_SRC/README.md" "$STAGING/"
+copy_portable "$CENSUS" "$STAGING/SKILLS_CENSUS.txt"
+[[ -f "$RULES_CENSUS" ]] && copy_portable "$RULES_CENSUS" "$STAGING/RULES_ULG_CENSUS.txt"
+[[ -f "$PLUGIN_SRC/RULES_ULG_CENSUS.md" ]] && copy_portable "$PLUGIN_SRC/RULES_ULG_CENSUS.md" "$STAGING/"
+[[ -f "$PLUGIN_SRC/SATELLITES.txt" ]] && copy_portable "$PLUGIN_SRC/SATELLITES.txt" "$STAGING/"
 if [[ -d "$PLUGIN_SRC/templates" ]]; then
   mkdir -p "$STAGING/templates"
-  cp -a "$PLUGIN_SRC/templates/." "$STAGING/templates/"
+  copy_portable "$PLUGIN_SRC/templates/." "$STAGING/templates/"
 fi
 
 # Skills from census
@@ -156,14 +168,14 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     continue
   fi
 
-  cp -a "$src" "$dest/SKILL.md"
+  copy_portable "$src" "$dest/SKILL.md"
   # Copy companion files if present next to SoT
   src_dir="$(dirname "$src")"
   shopt -s nullglob
   for extra in "$src_dir"/*; do
     base="$(basename "$extra")"
     [[ "$base" == "SKILL.md" ]] && continue
-    [[ -f "$extra" ]] && cp -a "$extra" "$dest/"
+    [[ -f "$extra" ]] && copy_portable "$extra" "$dest/"
   done
   shopt -u nullglob
   echo "  skill: $slug ← $src"
@@ -183,7 +195,7 @@ fi
 cmd_count=0
 shopt -s nullglob
 for cmd in "$COMMANDS_SOT"/*.md; do
-  cp -a "$cmd" "$STAGING/commands/"
+  copy_portable "$cmd" "$STAGING/commands/"
   cmd_count=$((cmd_count + 1))
 done
 shopt -u nullglob
@@ -205,7 +217,7 @@ if [[ -f "$RULES_CENSUS" ]]; then
       rule_missing=$((rule_missing + 1))
       continue
     fi
-    cp -a "$src" "$STAGING/rules/"
+    copy_portable "$src" "$STAGING/rules/"
     rule_count=$((rule_count + 1))
     echo "  rule: ${name}.mdc ← $src"
   done < "$RULES_CENSUS"
@@ -226,17 +238,17 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     [[ -d "$d" ]] || continue
     slug="$(basename "$d")"
     rm -rf "$PLUGIN_SRC/skills/$slug"
-    cp -a "$d" "$PLUGIN_SRC/skills/$slug"
+    copy_portable "$d" "$PLUGIN_SRC/skills/$slug"
   done
 
   # Commands: replace contents
   find "$PLUGIN_SRC/commands" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  cp -a "$STAGING/commands/." "$PLUGIN_SRC/commands/"
+  copy_portable "$STAGING/commands/." "$PLUGIN_SRC/commands/"
 
   # Rules: replace contents
   find "$PLUGIN_SRC/rules" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   if [[ "$rule_count" -gt 0 ]]; then
-    cp -a "$STAGING/rules/." "$PLUGIN_SRC/rules/"
+    copy_portable "$STAGING/rules/." "$PLUGIN_SRC/rules/"
   fi
 fi
 
@@ -254,7 +266,7 @@ mkdir -p "$(dirname "$INSTALL_DIR")"
 INSTALL_TMP="${INSTALL_DIR}.new-$$"
 rm -rf "$INSTALL_TMP"
 mkdir -p "$INSTALL_TMP"
-cp -a "$STAGING"/. "$INSTALL_TMP/"
+copy_portable "$STAGING"/. "$INSTALL_TMP/"
 rm -rf "$INSTALL_DIR"
 mv "$INSTALL_TMP" "$INSTALL_DIR"
 
@@ -286,8 +298,8 @@ sync_satellite_pins() {
       die "satellite $name has .cursor/mcp.json — shadows user-global vortex-code/life; delete it"
     fi
     mkdir -p "$sat/.vscode"
-    cp -a "$tpl_vscode" "$sat/.vscode/settings.json"
-    cp -a "$tpl_envrc" "$sat/.envrc"
+    copy_portable "$tpl_vscode" "$sat/.vscode/settings.json"
+    copy_portable "$tpl_envrc" "$sat/.envrc"
     echo "  pin: $name → universal venv"
     pinned=$((pinned + 1))
   done < "$roster"
@@ -296,6 +308,48 @@ sync_satellite_pins() {
 
 echo "==> Syncing satellite universal-venv pins from SATELLITES.txt"
 sync_satellite_pins
+
+# Glass/IDE homes are per-host local disks. NFS shares SoT only. Roster
+# dests get the assembled tree from this run (skip this INSTALL_DIR).
+propagate_plugin_copies() {
+  local roster="$PLUGIN_SRC/PLUGIN_INSTALL_DESTS.txt"
+  [[ -f "$roster" ]] || { echo "  copies: SKIP (no PLUGIN_INSTALL_DESTS.txt)"; return 0; }
+  local this_host
+  this_host="$(hostname -s 2>/dev/null || hostname)"
+  local copied=0 skipped=0
+  local -a lines=()
+  # Load roster first — rsync/ssh must not consume the dest list on stdin.
+  mapfile -t lines < "$roster"
+  local line dest host path
+  for line in "${lines[@]}"; do
+    dest="${line%%#*}"
+    dest="$(echo "$dest" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$dest" ]] && continue
+    [[ "$dest" == *:* ]] || die "PLUGIN_INSTALL_DESTS: want host:/abs/path, got: $dest"
+    host="${dest%%:*}"
+    path="${dest#*:}"
+    [[ "$path" == /* ]] || die "PLUGIN_INSTALL_DESTS path must be absolute: $dest"
+    if [[ "$host" == "$this_host" && "$path" == "$INSTALL_DIR" ]]; then
+      echo "  copy SKIP (this home): $dest"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$host" "mkdir -p $(printf '%q' "$(dirname "$path")")"
+    rsync -a --delete --no-acls --no-xattrs --no-perms \
+      -e 'ssh -o BatchMode=yes -o ConnectTimeout=8' \
+      "$INSTALL_DIR/" "$host:$path/"
+    echo "  copy: $dest"
+    copied=$((copied + 1))
+  done
+  echo "  copies: $copied synced, $skipped skipped"
+}
+
+if [[ "$LOCAL_ONLY" -eq 1 ]]; then
+  echo "==> Skipping extra plugin dests (--local-only)"
+else
+  echo "==> Copying assembled plugin to PLUGIN_INSTALL_DESTS.txt"
+  propagate_plugin_copies
+fi
 
 echo
 echo "Installed ulg-ecosystem → $INSTALL_DIR"

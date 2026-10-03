@@ -22,12 +22,13 @@ lead duties. One obligation survives, and it is a real one.
 ```
 edit(cursor-plugins/ulg-ecosystem/{skills,commands,rules}/ ∨ census)
   ⇒ HOME="$(getent passwd "$(id -un)" | cut -d: -f6)" \
-      scripts/cursor/install-ecosystem-plugin.sh
+      scripts/cursor/install-ecosystem-plugin.sh --local-only
 ```
 
 Bare `scripts/cursor/install-ecosystem-plugin.sh` exits 1 here: `REFUSED` from
-`dispatch_home_host_guard` (overlay HOME). The prefix above is the run. Copies
-land in `~/.cursor/plugins/local/ulg-ecosystem/`. No install ⇒ landed, not live.
+`dispatch_home_host_guard` (overlay HOME). The prefix above is the run. `--local-only`
+skips Glass dest rsync (lead/hub install without that flag lands those copies).
+Copies land in `~/.cursor/plugins/local/ulg-ecosystem/`. No install ⇒ landed, not live.
 Do not hand-copy.
 
 | SoT path you touched | Install required? |

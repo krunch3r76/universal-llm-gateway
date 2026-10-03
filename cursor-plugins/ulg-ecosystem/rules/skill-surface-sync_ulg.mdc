@@ -10,15 +10,23 @@ Detail behind `skill-surface_ulg.mdc`'s kernel duty ("Cursor owns sync, same tur
 
 ## Plugin / local census skills
 
-Installed plugin trees are **copies** (`cp -a`), not hardlinks/symlinks to the repo. Reload Window alone does **not** pick up SoT edits.
+Installed plugin trees are **copies**, not hardlinks/symlinks to the repo. NFS
+shares SoT only. Each Cursor home (`$HOME/.cursor/plugins/local/ulg-ecosystem`)
+is a local disk. Reload Window alone does **not** pick up SoT edits. Restart
+does not install. ¬ install on every Glass restart — install after SoT change.
 
 ```
 ∀ create|edit under cursor-plugins/ulg-ecosystem/{skills,commands,rules}/
   ∨ census (SKILLS_CENSUS.txt | RULES_ULG_CENSUS.txt):
     cursor MUST run scripts/cursor/install-ecosystem-plugin.sh
-    ∧ verify ~/.cursor/plugins/local/ulg-ecosystem/ matches SoT
+    ∧ verify $HOME copy matches SoT
+    ∧ verify each dest in PLUGIN_INSTALL_DESTS.txt matches SoT
     ∧ ¬ ask operator to install or "sync the plugin"
 ```
+
+Hub seat (IDE on `io`) runs the script **without** `--local-only` so Glass
+homes on `orion-node` / `jupiter` (`krunch3r`) receive the assembled tree.
+`cursor-sdk` uses `--local-only`. `cmp` MATCH on `$HOME` alone is not Glass-live.
 
 | SoT path | Install required? |
 |---|---|
@@ -27,7 +35,7 @@ Installed plugin trees are **copies** (`cp -a`), not hardlinks/symlinks to the r
 | `…/rules/*_ulg.mdc` (+ RULES_ULG_CENSUS) | **Yes** (same script; placement detail: `cursor-rule-placement_ulg`) |
 | `{repo}/.cursor/skills/` or `*_ws.mdc` | No (checkout-local) |
 
-¬ claim "skill/command is live in Cursor" until install has been run in this session (or verify installed copy under `~/.cursor/plugins/local/ulg-ecosystem/` matches SoT).
+¬ claim "skill/command is live in Cursor" until this session's install has been run and `cmp` MATCH is quoted for `$HOME` **and** each `PLUGIN_INSTALL_DESTS.txt` dest (or `--local-only` with that limit named).
 
 **Reload Window:** IDE discovery cache only — optional one-line note if the picker is stale after install. **¬** an operator sync duty; **¬** a substitute for install; **¬** "please sync / please Reload so the skill is live."
 
@@ -54,6 +62,7 @@ Runbook detail: Use the `claude-ai-bundle-sync` skill. Doctrine: `decision:claud
 
 ¬ re-add census skills under hub `.cursor/skills/` or `.claude/skills/` — that duplexes the plugin picker. SoT = plugin tree only for census slugs. Shared_sync Customize Skills staging = `/mnt/torus/gateway/claude-ai-sync/skills/` (`CLAUDE_AI_SKILLS_STAGING` override); ¬ repo `.claude/skills/` for census. `life_local` SOT may live under `.claude/skills/` (not in `SKILLS_CENSUS`).
 ¬ edit ecosystem SoT and stop without install (plugin) and/or Customize upload (Claude slug). ¬ hand those steps to the operator.
+¬ commit a new or edited command and end the turn. Quote `cmp` MATCH for that file under `$HOME` plugin `commands/` and each `PLUGIN_INSTALL_DESTS.txt` dest. Commit does not install.
 
 **Work-complete finishing (last).** Install/upload is land of the plugin or Customize copy, not a
 substitute for the session-path commit. Default: land (install/upload) → path-explicit commit of

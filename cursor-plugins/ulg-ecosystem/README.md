@@ -12,8 +12,10 @@ From the ULG repo:
 ./scripts/cursor/install-ecosystem-plugin.sh
 ```
 
-Cursor seat runs install after SoT edits (**¬** ask the operator). Reload Window
-only if the IDE picker is still stale after install.
+Cursor seat runs install after SoT edits (**¬** ask the operator). Hub install
+also rsyncs the assembled tree to dests in `PLUGIN_INSTALL_DESTS.txt` (Glass
+homes). `--local-only` skips those. Reload Window only if the picker is still
+stale after install. Restart is not install.
 
 Confirm: **Settings → Plugins → Installed** lists `ulg-ecosystem`.
 
