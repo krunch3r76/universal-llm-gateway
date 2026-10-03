@@ -316,8 +316,7 @@ async def test_startup_resume_admits_open_rows_in_order_and_expires_stale(
         assert child_row["status"] in ("admitted", "running", "queued")
         record = json.loads(child_row["record_json"])
         assert record["admitted_via"] == "giw_park_resume"
-        # Omitted parent lane is not replayed; select_lane assigns A after the
-        # explicit-lane gate (nest_inherit when the parent lease is not isolated).
+        # select_lane assigns A after the explicit-lane gate.
         assert record["lane"] == "A"
         assert record["skills"] == ["reasoning-posture"]
         assert record["prompt_preamble"].startswith("PARK-RESUME v1")
