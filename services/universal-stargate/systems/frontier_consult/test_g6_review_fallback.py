@@ -124,6 +124,74 @@ async def test_cdp_worker_delivery_review_high_triggers_fable_fallback(
     assert final.extras.get("review_fallback_model") == "cdp/fable"
 
 
+@pytest.mark.asyncio
+async def test_cdp_worker_freeform_opus_high_without_proof_does_not_call_fable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opus-high completed_without_proof with contract=freeform must not call cdp/fable.
+
+    Breaks when run_cdp_worker stops passing contract into review_fallback_model
+    (a freeform miss would then look like delivery-review and stage fable).
+    """
+    from systems.frontier_consult import cdp_generate_worker as worker
+
+    finalize = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.finalize_cdp_generate",
+        finalize,
+    )
+    monkeypatch.setattr(worker, "publish_cdp_kwargs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.attach_satellite_execution_id",
+        lambda **kw: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.maybe_expand_cdp_prompt",
+        lambda **kw: kw["prompt_uri"],
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_inflight_ledger.upsert_inflight_leg",
+        lambda **kw: None,
+    )
+
+    generate_calls: list[str] = []
+
+    def _fake_generate(**kwargs: object) -> CdpGenerateResult:
+        model_id = str(kwargs["model_id"])
+        generate_calls.append(model_id)
+        if model_id != "cdp/opus-5.5-high":
+            raise AssertionError(f"unexpected model_id {model_id!r}")
+        return _result(
+            execution_id=str(kwargs["execution_id"]),
+            stall_stage="completed_without_proof",
+            error="no proof",
+            satellite_execution_id="sat-opus",
+        )
+
+    async def _sync_to_thread(fn, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(worker.asyncio, "to_thread", _sync_to_thread)
+    monkeypatch.setattr(worker, "run_cdp_generate", _fake_generate)
+
+    await run_cdp_worker(
+        execution_id="exec-freeform-high",
+        model_id="cdp/opus-5.5-high",
+        thread_id="14698",
+        caller_agent="dispatch",
+        prompt_uri="cortex://notes/prompt.md",
+        request_id="req-freeform-high",
+        contract="freeform",
+    )
+
+    assert generate_calls == ["cdp/opus-5.5-high"]
+    finalize.assert_awaited_once()
+    final = finalize.await_args.kwargs["result"]
+    assert final.execution_id == "exec-freeform-high"
+    assert final.stall_stage == "completed_without_proof"
+    assert "review_fallback_model" not in final.extras
+
+
 def test_empty_fable_body_is_not_adopted() -> None:
     primary = _result(
         stall_stage="completed_without_proof",
