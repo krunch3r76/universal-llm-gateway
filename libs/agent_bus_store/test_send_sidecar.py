@@ -6,8 +6,8 @@ import hashlib
 from unittest.mock import patch
 
 import pytest
+from cortex_store.dispatch_ops import execute_op
 from cortex_store.dispatch_ops._thread_sidecar import SidecarWriteError
-from cortex_store.dispatch_ops.ops_misc import _op_thread_sidecar_write
 from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
@@ -398,12 +398,17 @@ def test_cortex_thread_sidecar_write_refuses_unexpanded_shell(tmp_path, monkeypa
     import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
 
     monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
-    result = _op_thread_sidecar_write(
-        thread="t-shell",
-        subject="Findings",
-        content="$(cat /tmp/x.md)",
-        from_agent="cursor",
+    result = execute_op(
+        "thread_sidecar_write",
+        {
+            "thread": "t-shell",
+            "subject": "Findings",
+            "content": "$(cat /tmp/x.md)",
+            "from_agent": "cursor",
+        },
     )
+    assert "error" in result
+    assert result["error"] == "sidecar_unexpanded_shell"
     assert result["status_code"] == 422
     assert result["code"] == "sidecar_unexpanded_shell"
     assert "fix_hint" in result
