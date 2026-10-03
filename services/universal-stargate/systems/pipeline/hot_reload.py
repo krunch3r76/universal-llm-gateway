@@ -75,7 +75,6 @@ class PipelineHotReload:
                     name=f"pipeline:{path.name}",
                     watch_path=path,
                     on_change=self._reload_callback,
-                    on_delete=self._reload_callback,
                     debounce_ms=self.debounce_ms,
                     recursive=True,  # Watch domain subdirectories
                     patterns=[".yaml", ".yml"],
