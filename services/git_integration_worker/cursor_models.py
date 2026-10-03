@@ -11,6 +11,7 @@ from cursor_capabilities import (
     canonical_cursor_bare_id,
     catalog_divergences,
     is_cursor_model_denied,
+    live_model_id,
 )
 from cursor_sdk.types import ModelParameterValue, ModelSelection, SDKModel
 from model_id import ModelId
@@ -96,9 +97,7 @@ def _card_knob_catalog_projection(
         card_default: dict[str, str] = {}
         if isinstance(live_default, Mapping):
             for wire_id, value in live_default.items():
-                card_default[wire_id_to_card_knob(model_id, str(wire_id))] = str(
-                    value
-                )
+                card_default[wire_id_to_card_knob(model_id, str(wire_id))] = str(value)
         projected[model_id] = {
             "knobs": card_knobs,
             "default_variant": card_default,
@@ -113,6 +112,8 @@ def live_admission_error(bare_id: str, models: Sequence[SDKModel]) -> str | None
         return f"model {bare_id!r} not in CURSOR_MODEL_CAPABILITIES"
     projected = _card_knob_catalog_projection(models)
     live = projected.get(bare_id)
+    if live is None:
+        live = projected.get(live_model_id(bare_id))
     if live is None:
         return f"missing model {bare_id!r} in live catalog"
     errors: list[str] = []
@@ -255,4 +256,4 @@ def build_model_selection(
             )
         elif spec.default is not None:
             params.append(ModelParameterValue(id=wire_id, value=spec.default))
-    return ModelSelection(id=config.model_id, params=tuple(params))
+    return ModelSelection(id=live_model_id(config.model_id), params=tuple(params))

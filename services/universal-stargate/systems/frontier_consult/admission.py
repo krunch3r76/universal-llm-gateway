@@ -723,6 +723,11 @@ def resolve_auto_seat_generate_target(
             code="sdk_substrate_required",
         )
     resolved_model = model or _cursor_sdk_omit_model(request_id=request_id, job=job)
+    # Bare ``auto`` is the Cursor product name; the card id is ``cursor/auto``.
+    # Breaks when a non-sdk seat reaches this rewrite (this function already
+    # required an SDK substrate above).
+    if resolved_model == "auto":
+        resolved_model = "cursor/auto"
     if not resolved_model:
         raise FrontierEndpointError(
             request_id=request_id,

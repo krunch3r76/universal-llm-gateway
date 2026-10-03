@@ -1,6 +1,7 @@
 """Cursor model capability descriptor shared by Stargate and git_integration_worker."""
 
 from .cursor_capabilities import (
+    CARD_TO_LIVE_MODEL_ID,
     CURSOR_DENIED_MODELS,
     CURSOR_MODEL_CAPABILITIES,
     DESCRIPTOR_VERSION,
@@ -13,6 +14,7 @@ from .cursor_capabilities import (
     effective_knobs,
     effort_knob_name,
     is_cursor_model_denied,
+    live_model_id,
     suggest_effort_knobs,
     supported_knobs,
     to_model_card_dict,
@@ -23,6 +25,7 @@ from .model_pools import OTHER_MODELS_BARE, is_other_models_pool
 CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
 __all__ = [
+    "CARD_TO_LIVE_MODEL_ID",
     "CURSOR_DENIED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",
     "DESCRIPTOR_VERSION",
@@ -35,6 +38,7 @@ __all__ = [
     "effective_knobs",
     "effort_knob_name",
     "is_cursor_model_denied",
+    "live_model_id",
     "is_other_models_pool",
     "OTHER_MODELS_BARE",
     "suggest_effort_knobs",

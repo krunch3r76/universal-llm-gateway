@@ -20,8 +20,10 @@ __all__ = [
     "DESCRIPTOR_VERSION",
     "KnobSpec",
     "ModelCapability",
+    "CARD_TO_LIVE_MODEL_ID",
     "canonical_cursor_bare_id",
     "catalog_divergences",
+    "live_model_id",
     "default_variant",
     "effort_knob_name",
     "is_cursor_model_denied",
@@ -84,6 +86,8 @@ def catalog_divergences(
     errors: list[str] = []
     for model_id, capability in CURSOR_MODEL_CAPABILITIES.items():
         live = live_catalog.get(model_id)
+        if live is None:
+            live = live_catalog.get(live_model_id(model_id))
         if live is None:
             errors.append(f"missing model {model_id!r} in live catalog")
             continue
@@ -386,7 +390,25 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"thinking": "true"},
         instruction_profile="mechanical",
     ),
+    # Cursor Auto. ListModels id is ``default`` (no parameters). Card id is
+    # ``auto`` so ``cursor/auto`` admits. ``fast`` and ``effort`` are absent:
+    # Cursor picks the tier; callers must not send those knobs.
+    # Live ListModels probe 2026-10-02: id=default, knobs=[], default variant [].
+    "auto": ModelCapability(
+        knobs={},
+        default_variant={},
+        instruction_profile="mechanical",
+        probed_at="2026-10-02",
+    ),
 }
+
+# Card id → ListModels id when they differ.
+CARD_TO_LIVE_MODEL_ID: Final[dict[str, str]] = {"auto": "default"}
+
+
+def live_model_id(card_id: str) -> str:
+    """ListModels id for a capability-card id (identity when unmapped)."""
+    return CARD_TO_LIVE_MODEL_ID.get(card_id, card_id)
 
 
 def canonical_cursor_bare_id(model: str) -> str:

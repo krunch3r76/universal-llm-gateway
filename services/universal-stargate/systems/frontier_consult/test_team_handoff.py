@@ -3288,6 +3288,22 @@ def test_t4b_resolve_auto_seat_generate_target_default_model() -> None:
     assert model == "cursor/grok-4.7"
 
 
+def test_t4c2_bare_auto_resolves_to_cursor_auto() -> None:
+    """Bare ``auto`` on seat=cursor-sdk is the product name for ``cursor/auto``.
+
+    Breaks when a caller sends ``auto`` and admission still demands a
+    ``cursor/`` prefix (sdk_generate_model_invalid).
+    """
+    from .admission import resolve_auto_seat_generate_target
+
+    _to, _f, _p, model = resolve_auto_seat_generate_target(
+        "cursor-sdk",
+        model="auto",
+        request_id="req-t4c2",
+    )
+    assert model == "cursor/auto"
+
+
 def test_t4c_resolve_auto_seat_generate_target_explicit_model() -> None:
     from .admission import resolve_auto_seat_generate_target
 

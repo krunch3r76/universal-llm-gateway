@@ -185,6 +185,51 @@ def test_card_knob_wire_map_is_single_grok_effort_pair() -> None:
     assert not hasattr(cm_mod, "_PARAM_WIRE_ID")
 
 
+def test_auto_selection_uses_listmodels_id_and_refuses_knobs() -> None:
+    """Cursor Auto is card id ``auto`` and ListModels id ``default``.
+
+    Breaks when ListModels renames ``default`` or starts accepting fast/effort
+    on that entry: the wire id and the refusal both go stale.
+    """
+    cfg = resolve_cursor("cursor/auto")
+    assert cfg.model_id == "auto"
+    assert cfg.params == ()
+    selection = build_model_selection(cfg)
+    assert selection.id == "default"
+    assert selection.params == ()
+    with pytest.raises(ValueError, match="unknown knob 'fast'"):
+        build_model_selection(cfg, {"fast": "true"})
+    with pytest.raises(ValueError, match="unknown knob 'effort'"):
+        build_model_selection(cfg, {"effort": "high"})
+
+
+def test_auto_card_found_under_live_default_id() -> None:
+    errors = catalog_divergences({"default": {"knobs": {}, "default_variant": {}}})
+    assert not any("model 'auto'" in err and "missing" in err for err in errors)
+    assert (
+        live_admission_error(
+            "auto",
+            [
+                SDKModel(
+                    id="default",
+                    display_name="Auto",
+                    description="Auto",
+                    parameters=[],
+                    variants=[
+                        ModelVariant(
+                            params=[],
+                            display_name="default",
+                            description="default",
+                            is_default=True,
+                        )
+                    ],
+                )
+            ],
+        )
+        is None
+    )
+
+
 def test_live_admission_error_none_when_accepted_values_reordered() -> None:
     reordered = SDKModel(
         id="composer-2.5",
