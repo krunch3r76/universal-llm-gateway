@@ -7,6 +7,7 @@ Fires after ``ledger.mark_terminal`` on the closeout hot path. Closeout authorit
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -378,7 +379,16 @@ def _collect_execution_targets(token: str) -> list[tuple[str, bool]]:
     return targets
 
 
-def _named_target_is_terminal(token: str) -> bool:
+def _named_target_is_terminal(
+    token: str, *, absent_counts_terminal: bool = False
+) -> bool:
+    """Whether the harvest id is finished.
+
+    ``absent_counts_terminal`` is only for a deferral already stamped while the
+    id was in flight. An empty registry after that means the execution left,
+    which is the 9c54 case: the review replied and both the inflight row and
+    the active registry row were gone, so ``len(combined) != 1`` stayed false.
+    """
     try:
         dispatch_targets = _collect_dispatch_targets(token)
         execution_targets = _collect_execution_targets(token)
@@ -387,12 +397,14 @@ def _named_target_is_terminal(token: str) -> bool:
     combined: list[tuple[str, str, bool]] = [
         ("dispatch", key, terminal) for key, terminal in dispatch_targets
     ] + [("execution", key, terminal) for key, terminal in execution_targets]
+    if len(combined) == 0:
+        return absent_counts_terminal
     if len(combined) != 1:
         return False
     kind, _key, terminal = combined[0]
     if not terminal:
         return False
-    if kind == "execution":
+    if kind == "execution" and not absent_counts_terminal:
         try:
             snap = conductor_exit_reasons.read_external_gate_lane_snapshot()
         except Exception:
@@ -417,7 +429,8 @@ def hop_body_build_refused(
     token = _harvest_target_token(guard)
     if token is None:
         return True
-    if not _named_target_is_terminal(token):
+    absent = str(data.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
+    if not _named_target_is_terminal(token, absent_counts_terminal=absent):
         return True
     if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
         return True
@@ -511,6 +524,18 @@ def _hop_skip_gate(
     return None
 
 
+def _deferral_stamp_allowed(row: dict[str, Any], gate: str) -> bool:
+    """Stamp only gates that can clear. ``NEXT_ADMIT: none`` is not one of them."""
+    if gate == SKIP_GATE_LIVE_EXTERNAL:
+        return True
+    if gate != SKIP_GATE_NEXT_ADMIT_BLOCKED:
+        return False
+    if not _row_hop_tokens_allow_lift(row):
+        return False
+    rec = _record_data(row)
+    return _harvest_target_token(_next_admit_guard_text(row, rec)) is not None
+
+
 def _emit_hop_skipped(
     row: dict[str, Any],
     *,
@@ -532,7 +557,7 @@ def _emit_hop_skipped(
         hop_seq=int(hop_seq),
         gate=gate,
     )
-    if gate in _TRANSIENT_DEFERRAL_GATES:
+    if _deferral_stamp_allowed(row, gate):
         CursorDispatchLedger.instance().merge_record_json(
             dispatch_id=dispatch_id,
             patch={HOP_DEFERRAL_GATE_KEY: gate},
@@ -1165,24 +1190,43 @@ def _deferral_cleared(row: dict[str, Any]) -> bool:
     return False
 
 
+def _release_backoff_blocks(row: dict[str, Any]) -> bool:
+    """Hold a retry after a failed POST. The first release does not wait."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
+        _admit_error_permanent,
+        _backoff_elapsed,
+    )
+
+    if _admit_error_permanent(row):
+        return True
+    fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
+    if not isinstance(fields.get("hop_admit_error"), dict):
+        return False
+    verdict = evaluate_hop_budget(
+        row, closeout_tokens=_closeout_tokens_from_row(row)
+    )
+    return not _backoff_elapsed(row, backoff_s=verdict.backoff_s)
+
+
 def _deferred_hop_dispatch_ids() -> list[str]:
+    from services.git_integration_worker.cursor_sdk_park import (
+        _latest_terminal_conductor_rows,
+    )
+
     ledger = CursorDispatchLedger.instance()
     found: list[str] = []
     with ledger._connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches "
-            "WHERE status IN ('completed', 'failed', 'cancelled')"
-        ).fetchall()
+        rows = _latest_terminal_conductor_rows(conn)
     for raw in rows:
         row = {k: raw[k] for k in raw.keys()}
-        if not _is_conductor_row(row):
-            continue
         rec = _record_data(row)
         if str(rec.get(HOP_DEFERRAL_GATE_KEY) or "") not in _TRANSIENT_DEFERRAL_GATES:
             continue
         if hop_fields_from_record_json(str(row.get("record_json") or "")).get(
             "hop_successor"
         ):
+            continue
+        if _release_backoff_blocks(row):
             continue
         if not _deferral_cleared(row):
             continue
@@ -1195,11 +1239,11 @@ def _deferred_hop_dispatch_ids() -> list[str]:
 async def release_deferred_conductor_hops() -> int:
     """Re-run admit for hops deferred on a gate that has since cleared.
 
-    Does not wait for reactor grace. A CDP review going terminal (lane snap
-    no longer live, or the named harvest target terminal) is enough.
+    The first release does not wait for reactor grace. A later failed POST
+    waits out the hop backoff and stops once the admit error is permanent.
     """
     admitted = 0
-    for dispatch_id in _deferred_hop_dispatch_ids():
+    for dispatch_id in await asyncio.to_thread(_deferred_hop_dispatch_ids):
         await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
         row = _load_row(dispatch_id)
         if row is None:

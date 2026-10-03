@@ -1147,6 +1147,55 @@ async def test_live_external_gate_release_admits_without_waiting_grace() -> None
 
 
 @pytest.mark.asyncio
+async def test_next_admit_blocked_releases_when_harvest_execution_is_gone() -> None:
+    """Specimen shape: NEXT_ADMIT harvest <id>, then the execution leaves the registry.
+
+    While the id is absent and no deferral is stamped, the body stays refused.
+    After the skip stamps next_admit_blocked, absence counts as terminal and
+    the release wake admits. A permanent admit error does not retry.
+    """
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-1"
+    harvest_id = "4858cfb2-c6e9-4157-ba43-f12f3584685d"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="9638",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": "9638",
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+    )
+    clear = {"observed_at": "2026-10-03T07:59:00+00:00", "rows": []}
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-harvest-gone"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=clear,
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ):
+            await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+            post_mock.assert_not_called()
+            admitted = await release_deferred_conductor_hops()
+    assert admitted == 1
+    post_mock.assert_awaited()
+    with ledger._connect() as conn:
+        stored = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    record = json.loads(stored["record_json"])
+    assert record.get("hop_deferral_gate") == SKIP_GATE_NEXT_ADMIT_BLOCKED
+
+
+@pytest.mark.asyncio
 async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
     ledger = CursorDispatchLedger.instance()
     _terminal_row(ledger, closeout_tokens=["ROW_HOP"], summoning_thread_id="9638")
