@@ -121,6 +121,28 @@ def FrontierSdkConductorHopParked(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkConductorHopDeferralReleased(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    prior_gate: str,
+    successor_dispatch_id: str,
+) -> Event:
+    """A transient hop deferral cleared and the successor was admitted."""
+    return Event(
+        signal="frontier.sdk.conductor.hop.deferral_released",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "hop_seq": hop_seq,
+            "prior_gate": prior_gate,
+            "successor_dispatch_id": successor_dispatch_id,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkConductorHopSkipped(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -415,6 +437,26 @@ def emit_frontier_sdk_conductor_hop_lineage_stamped(
             thread_id=thread_id,
             hop_seq=hop_seq,
             hop_admitted_by=hop_admitted_by,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_deferral_released(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    prior_gate: str,
+    successor_dispatch_id: str,
+) -> None:
+    """Publish that a live-gate or next-admit deferral admitted its successor."""
+    emit_frontier_event(
+        FrontierSdkConductorHopDeferralReleased(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            prior_gate=prior_gate,
+            successor_dispatch_id=successor_dispatch_id,
         )
     )
 

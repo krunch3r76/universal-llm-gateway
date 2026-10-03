@@ -134,6 +134,11 @@ async def _stamp_admit_outcome(
             hop_seq=hop_seq,
             hop_reason=hop_reason,
         )
+        from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+            _emit_deferral_released,
+        )
+
+        _emit_deferral_released(row, hop_seq=hop_seq, successor_dispatch_id=successor)
         if emit_watchdog:
             emit_frontier_sdk_conductor_hop_watchdog_fired(
                 last_dispatch_id=dispatch_id,
@@ -364,6 +369,11 @@ async def sweep_conductor_hop_watchdog(
 ) -> int:
     """One watchdog pass inside ``reconcile_stale_leases``; return admit count."""
     ledger = ledger or CursorDispatchLedger.instance()
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        release_deferred_conductor_hops,
+    )
+
+    released = await release_deferred_conductor_hops()
     continue_candidates = await asyncio.to_thread(
         conductor_park_harvest_continue_candidates, ledger
     )
@@ -385,7 +395,7 @@ async def sweep_conductor_hop_watchdog(
                 dispatch_id,
                 exc_info=True,
             )
-    return fired
+    return fired + released
 
 
 __all__ = [

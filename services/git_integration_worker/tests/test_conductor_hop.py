@@ -29,6 +29,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
     merge_conductor_closeout_hop_authority,
     post_conductor_hop_team_dispatch,
+    release_deferred_conductor_hops,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     HopBudgetConfig,
@@ -1080,6 +1081,69 @@ async def test_ac2_five_terminals_zero_posts_while_external_gate_live() -> None:
             for _ in range(5):
                 await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
     post_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_live_external_gate_release_admits_without_waiting_grace() -> None:
+    """A ROW_HOP deferred on a live CDP review admits once that stream ends.
+
+    Reactor grace is 120s; the release wake must admit on the cleared snap
+    with no sleep. While the snap is still live the wake posts nothing.
+    """
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="9638",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": True},
+    )
+    state = {"snap": _live_gate_snap()}
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-gate-release"}))
+    released: list[dict] = []
+
+    def _read_snap() -> dict:
+        return state["snap"]
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        side_effect=_read_snap,
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ):
+            with patch(
+                "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.emit_frontier_sdk_conductor_hop_deferral_released",
+                side_effect=lambda **kw: released.append(kw),
+            ):
+                await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+                post_mock.assert_not_called()
+                held = await release_deferred_conductor_hops()
+                assert held == 0
+                state["snap"] = {
+                    "observed_at": "2026-09-05T00:00:01+00:00",
+                    "rows": [
+                        {
+                            "execution_id": "exec-ext-gate",
+                            "parent_thread": "9638",
+                            "status": "completed",
+                            "stream_state": "completed",
+                            "purpose": "review",
+                        }
+                    ],
+                }
+                admitted = await release_deferred_conductor_hops()
+    assert admitted == 1
+    post_mock.assert_awaited()
+    assert released
+    assert released[0]["prior_gate"] == SKIP_GATE_LIVE_EXTERNAL
+    assert released[0]["successor_dispatch_id"] == "succ-gate-release"
+    assert released[0]["dispatch_id"] == dispatch_id
 
 
 @pytest.mark.asyncio

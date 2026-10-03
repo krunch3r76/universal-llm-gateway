@@ -67,6 +67,7 @@ from services.git_integration_worker.cursor_sdk_hop_events import (
     emit_frontier_sdk_conductor_hop_admit_failed,
     emit_frontier_sdk_conductor_hop_admitted,
     emit_frontier_sdk_conductor_hop_declared,
+    emit_frontier_sdk_conductor_hop_deferral_released,
     emit_frontier_sdk_conductor_hop_skipped,
 )
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
@@ -84,6 +85,10 @@ _CLOSEOUT_TOKENS_KEY = "closeout_stop_tokens"
 _HOP_SEQ_LINE_RE = re.compile(r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$")
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
 SKIP_GATE_NEXT_ADMIT_BLOCKED = "next_admit_blocked"
+HOP_DEFERRAL_GATE_KEY = "hop_deferral_gate"
+_TRANSIENT_DEFERRAL_GATES = frozenset(
+    {SKIP_GATE_LIVE_EXTERNAL, SKIP_GATE_NEXT_ADMIT_BLOCKED}
+)
 
 
 def _load_row(dispatch_id: str) -> dict[str, Any] | None:
@@ -527,6 +532,11 @@ def _emit_hop_skipped(
         hop_seq=int(hop_seq),
         gate=gate,
     )
+    if gate in _TRANSIENT_DEFERRAL_GATES:
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={HOP_DEFERRAL_GATE_KEY: gate},
+        )
 
 
 def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
@@ -1120,6 +1130,87 @@ def _mission_park_blocks_hop(row: dict[str, Any]) -> bool:
         )
 
 
+def _emit_deferral_released(
+    row: dict[str, Any],
+    *,
+    hop_seq: int,
+    successor_dispatch_id: str,
+) -> None:
+    rec = _record_data(row)
+    prior = str(rec.get(HOP_DEFERRAL_GATE_KEY) or "")
+    if prior not in _TRANSIENT_DEFERRAL_GATES or not successor_dispatch_id:
+        return
+    dispatch_id = str(row.get("dispatch_id") or "")
+    thread_id = str(row.get("thread_id") or "")
+    if not dispatch_id or not thread_id:
+        return
+    emit_frontier_sdk_conductor_hop_deferral_released(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        hop_seq=hop_seq,
+        prior_gate=prior,
+        successor_dispatch_id=successor_dispatch_id,
+    )
+
+
+def _deferral_cleared(row: dict[str, Any]) -> bool:
+    """True when a stamped transient gate no longer withholds the successor."""
+    rec = _record_data(row)
+    gate = str(rec.get(HOP_DEFERRAL_GATE_KEY) or "")
+    if gate == SKIP_GATE_LIVE_EXTERNAL:
+        verdict, _skip = external_gate_hop_verdict(row)
+        return verdict != "live"
+    if gate == SKIP_GATE_NEXT_ADMIT_BLOCKED:
+        return not hop_body_build_refused(row, rec)
+    return False
+
+
+def _deferred_hop_dispatch_ids() -> list[str]:
+    ledger = CursorDispatchLedger.instance()
+    found: list[str] = []
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches "
+            "WHERE status IN ('completed', 'failed', 'cancelled')"
+        ).fetchall()
+    for raw in rows:
+        row = {k: raw[k] for k in raw.keys()}
+        if not _is_conductor_row(row):
+            continue
+        rec = _record_data(row)
+        if str(rec.get(HOP_DEFERRAL_GATE_KEY) or "") not in _TRANSIENT_DEFERRAL_GATES:
+            continue
+        if hop_fields_from_record_json(str(row.get("record_json") or "")).get(
+            "hop_successor"
+        ):
+            continue
+        if not _deferral_cleared(row):
+            continue
+        dispatch_id = str(row.get("dispatch_id") or "")
+        if dispatch_id:
+            found.append(dispatch_id)
+    return found
+
+
+async def release_deferred_conductor_hops() -> int:
+    """Re-run admit for hops deferred on a gate that has since cleared.
+
+    Does not wait for reactor grace. A CDP review going terminal (lane snap
+    no longer live, or the named harvest target terminal) is enough.
+    """
+    admitted = 0
+    for dispatch_id in _deferred_hop_dispatch_ids():
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        row = _load_row(dispatch_id)
+        if row is None:
+            continue
+        if hop_fields_from_record_json(str(row.get("record_json") or "")).get(
+            "hop_successor"
+        ):
+            admitted += 1
+    return admitted
+
+
 async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     """Evaluate ``hop_owed`` and POST successor admit when due (after terminal)."""
     row = _load_row(dispatch_id)
@@ -1190,6 +1281,9 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
                 hop_seq=hop_seq,
                 hop_reason=hop_reason,
             )
+            _emit_deferral_released(
+                row, hop_seq=hop_seq, successor_dispatch_id=successor
+            )
         else:
             logger.warning(
                 "conductor hop admit ok but no successor id dispatch_id=%s detail=%s",
@@ -1219,7 +1313,9 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
 
 
 __all__ = [
+    "HOP_DEFERRAL_GATE_KEY",
     "SKIP_GATE_NEXT_ADMIT_BLOCKED",
+    "release_deferred_conductor_hops",
     "build_conductor_hop_idempotency_key",
     "build_hop_team_dispatch_body",
     "budget_ok_for_hop",
