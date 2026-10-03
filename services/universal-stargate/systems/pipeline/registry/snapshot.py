@@ -2,9 +2,13 @@
 
 A stargate health restart stop/starts the process. ``PipelineRegistry.load``
 walks every pipeline YAML, and ``reload_pipelines`` does that walk again on a
-fresh instance. The snapshot is reused when the source fingerprint matches and
-the availability decisions recorded at build time still hold, so a flap does
-not pay one full build per restart.
+fresh instance. The snapshot file is reused when the source fingerprint matches.
+Inside that file, an entry is reused only when its availability decisions still hold and
+its definition fingerprint matches the pipeline YAML bytes and the
+handler-registry identity of this process. Entries written under the older
+availability-only key are skipped, so a flap does not pay one full build per
+restart and a stale build cannot replace a walk that includes a pipeline the
+stale build omitted.
 
 Bump ``SNAPSHOT_VERSION`` when the persisted state shape or load semantics
 change. A mismatch falls through to a full build.
@@ -85,13 +89,44 @@ def source_fingerprint(registry: PipelineRegistry) -> str:
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
+def definition_fingerprint(registry: PipelineRegistry) -> str:
+    """Hash of pipeline YAML bytes and the live handler-registry identity."""
+    from ..core.handlers.registry import HandlerRegistry
+
+    HandlerRegistry._ensure_initialized()
+    identity = json.dumps(
+        HandlerRegistry.list_handlers(),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    lines = [identity]
+    for search_path in registry._search_paths:
+        expanded = Path(search_path).expanduser()
+        if not expanded.is_absolute():
+            resolved = (registry._config_base_dir / expanded).resolve()
+        else:
+            resolved = expanded.resolve()
+        if not resolved.exists():
+            lines.append(f"missing:{search_path}")
+            continue
+        files = sorted(path for path in resolved.rglob("*.yaml") if path.is_file())
+        if not files:
+            lines.append(f"empty:{resolved}")
+        for yaml_path in files:
+            rel = yaml_path.relative_to(resolved).as_posix()
+            digest = hashlib.sha256(yaml_path.read_bytes()).hexdigest()
+            lines.append(f"{resolved}:{rel}:{digest}")
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
 def try_restore(registry: PipelineRegistry, snapshot_dir: Path) -> bool:
-    """Install a prior build when sources and availability decisions still hold."""
+    """Install a prior build when sources, definitions, and availability still hold."""
     path = _snapshot_path(registry, snapshot_dir)
     if not path.is_file():
         return False
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        current_definition = definition_fingerprint(registry)
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("pipeline registry snapshot unreadable: %s", exc)
         return False
@@ -102,6 +137,11 @@ def try_restore(registry: PipelineRegistry, snapshot_dir: Path) -> bool:
         return False
     for entry in entries:
         if not isinstance(entry, dict):
+            continue
+        # Availability-only entries (pre-definition key) must not win.
+        if not _definition_present(entry):
+            continue
+        if entry.get("definition") != current_definition:
             continue
         recorded = _parse_availability(entry.get("availability"))
         if recorded is None or not _availability_holds(registry, recorded):
@@ -128,10 +168,12 @@ def persist(
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         path = _snapshot_path(registry, snapshot_dir)
         existing = _read_entries(path)
-        signature = _availability_signature(availability)
+        definition = definition_fingerprint(registry)
+        signature = _entry_key(availability, definition)
         kept = [entry for entry in existing if _entry_signature(entry) != signature]
         fresh = {
             "availability": [[model_id, bit] for model_id, bit in availability],
+            "definition": definition,
             "state": _encode_state(registry),
         }
         entries = [fresh, *kept][:_MAX_AVAILABILITY_ENTRIES]
@@ -169,11 +211,21 @@ def _availability_signature(availability: list[tuple[str, bool]]) -> str:
     return json.dumps(availability, separators=(",", ":"))
 
 
+def _definition_present(entry: dict[str, Any]) -> bool:
+    definition = entry.get("definition")
+    return isinstance(definition, str) and bool(definition)
+
+
+def _entry_key(availability: list[tuple[str, bool]], definition: str) -> str:
+    return _availability_signature(availability) + "\n" + definition
+
+
 def _entry_signature(entry: dict[str, Any]) -> str:
     recorded = _parse_availability(entry.get("availability"))
-    if recorded is None:
+    definition = entry.get("definition")
+    if recorded is None or not isinstance(definition, str) or not definition:
         return ""
-    return _availability_signature(recorded)
+    return _entry_key(recorded, definition)
 
 
 def _parse_availability(raw: object) -> list[tuple[str, bool]] | None:

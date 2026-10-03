@@ -7,13 +7,16 @@ wall-clock.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from systems.pipeline.core.domain_router import get_domain_router
 from systems.pipeline.core.handlers.registry import HandlerRegistry
 from systems.pipeline.registry.core import PipelineRegistry
 from systems.pipeline.registry.loader import PipelineLoader
+from systems.pipeline.registry.snapshot import snapshot_dir_for, source_fingerprint
 
 pytestmark = pytest.mark.offline
 
@@ -43,6 +46,21 @@ prompts:
   dummy:
     description: fixture
     template: "hello"
+"""
+
+_PROBE_STEP = "lane_probe_step"
+
+_PROBE_YAML = f"""
+schema_version: 6
+id: pipe-p
+version: "1.0"
+type: ok_domain
+output: author
+steps:
+  - name: author
+    type: {_PROBE_STEP}
+    model_ref: ok
+    prompt_ref: ok_domain.dummy
 """
 
 
@@ -181,3 +199,78 @@ def test_reload_after_prompt_edit_updates_template(
     registry.reload_pipelines()
 
     assert registry.prompts["ok_domain"]["dummy"]["template"] == "hello-edited"
+
+
+class _LaneProbeHandler:
+    step_type = _PROBE_STEP
+
+
+def _register_probe() -> None:
+    HandlerRegistry.register_class(_LaneProbeHandler)
+
+
+def _unregister_probe() -> None:
+    HandlerRegistry._generic_handler_classes.pop(_PROBE_STEP, None)
+    get_domain_router()._generic_handler_classes.pop(_PROBE_STEP, None)
+
+
+def _snapshot_file(root: Path) -> Path:
+    registry = PipelineRegistry(
+        search_paths=[str(root)],
+        config_base_dir=root.parent,
+    )
+    directory = snapshot_dir_for(registry)
+    assert directory is not None
+    return directory / f"{source_fingerprint(registry)}.json"
+
+
+def test_catalog_reload_keeps_pipeline_absent_from_matching_availability_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-availability entry built before P's handler must not replace the walk."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    _write(root / "ok_domain" / "pipe-p.yaml", _PROBE_YAML)
+    try:
+        first = _start(root)
+        assert "ok-pipe" in first.pipelines
+        assert "pipe-p" not in first.pipelines
+
+        _register_probe()
+        old_count, new_count = first.reload_pipelines()
+
+        assert old_count == 1
+        assert new_count == 2
+        assert "pipe-p" in first.pipelines
+    finally:
+        _unregister_probe()
+
+
+def test_availability_only_snapshot_entry_is_not_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Availability-only entries (no definition fingerprint) are not restored."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    _write(root / "ok_domain" / "pipe-p.yaml", _PROBE_YAML)
+    try:
+        _register_probe()
+        registry = _start(root)
+        assert "pipe-p" in registry.pipelines
+
+        path = _snapshot_file(root)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        current = payload["entries"][0]
+        stale_state = json.loads(json.dumps(current["state"]))
+        stale_state["pipelines"].pop("pipe-p")
+        payload["entries"] = [
+            {"availability": current["availability"], "state": stale_state}
+        ]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        registry.reload_pipelines()
+        assert "pipe-p" in registry.pipelines
+    finally:
+        _unregister_probe()
