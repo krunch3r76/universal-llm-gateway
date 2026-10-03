@@ -305,7 +305,12 @@ def _default_bus_turns(thread_id: str, after_turn: int) -> list[dict[str, Any]]:
     turns = payload.get("turns")
     if not isinstance(turns, list):
         raise ConnectionError("bus turns missing turns list")
-    return [t for t in turns if isinstance(t, dict)]
+    # Client-side backstop if the server ignores after_turn (1e).
+    return [
+        t
+        for t in turns
+        if isinstance(t, dict) and int(t.get("turn_number") or 0) > after_turn
+    ]
 
 
 def _is_conductor_dispatch(dispatch_id: str) -> bool:
@@ -418,10 +423,27 @@ def open_await_rows() -> list[ParkRow]:
 
     Terminal statuses only — a crash between park and terminal mark is recovered
     by the stale-lease reaper, not by admitting while the parent is still running
-    (friction 34156 F4).
+    (friction 34156 F4). Also reclaims parks whose hand-stamped child failed
+    before ``started_at`` was set (delta-review 1b).
     """
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
+        # Clear orphan stamps before selecting open rows.
+        orphans = conn.execute(
+            "SELECT p.dispatch_id AS parent_id, p.park_resumed_by AS child_id "
+            "FROM cursor_sdk_dispatches p "
+            "JOIN cursor_sdk_dispatches c ON c.dispatch_id = p.park_resumed_by "
+            "WHERE p.park_kind=? AND p.park_resumed_by IS NOT NULL "
+            "AND p.status IN ('completed','failed','cancelled') "
+            "AND c.status='failed' AND c.started_at IS NULL",
+            (PARK_KIND_AWAIT_REPLY,),
+        ).fetchall()
+        for orphan in orphans:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET park_resumed_by=NULL "
+                "WHERE dispatch_id=? AND park_resumed_by=?",
+                (orphan["parent_id"], orphan["child_id"]),
+            )
         rows = conn.execute(
             "SELECT dispatch_id, thread_id, execution_id, caller_agent, "
             "resolved_model, status, terminal_status, sdk_agent_id, state_root, "
@@ -609,15 +631,16 @@ async def maybe_await_park_at_terminal(
     spool_dir: Path | str | None = None,
     bus_turns_fn: BusTurnsFn | None = None,
 ) -> bool:
-    """Park when outstanding (unreceived) CDP generates remain. True ⇒ parked.
+    """Stamp await-park columns when outstanding CDP generates remain.
 
-    Never raises into the closeout path (F1). ``await_parked`` is True only after
-    ``mark_await_parked`` commits; the AWAITING bus post and frontier event are
-    best-effort. Park-time bus snapshot is omitted (F5) — the reactor / immediate
-    resume pass observes replies.
+    Never raises into the closeout path (F1). Returns True only after
+    ``mark_await_parked`` commits. The AWAITING post and parked event run
+    *after* ``_mark_terminal_and_promote`` via ``announce_await_parked`` (1c).
     """
     del execution_id  # reserved for future link-aware logging
+    del bus  # announce after terminal mark
     del bus_turns_fn  # park no longer snapshots; reactor observes
+    del thread_id  # announce uses the row's thread
     try:
         if not await_reply_enabled():
             return False
@@ -630,38 +653,11 @@ async def maybe_await_park_at_terminal(
         row = mark_await_parked(dispatch_id=dispatch_id, awaited=outstanding)
         if row is None:
             return False
-        # Park columns committed — closeout must treat this as parked even if
-        # the awareness post / event fail (so the link is not terminated).
-        ttl = await_reply_ttl_s()
-        try:
-            emit_sdk_await_reply_parked(
-                dispatch_id=dispatch_id,
-                thread_id=thread_id,
-                execution_ids=[g.execution_id for g in outstanding],
-                awaited_threads=sorted({g.thread_id for g in outstanding}),
-                ttl_s=ttl,
-            )
-        except Exception:  # noqa: BLE001 — best-effort
-            logger.exception(
-                "await_cdp_reply parked event failed dispatch=%s", dispatch_id
-            )
-        try:
-            await _post_awaiting_turn(
-                bus,
-                dispatch_id=dispatch_id,
-                thread_id=thread_id,
-                caller_agent=row.caller_agent,
-                awaited=outstanding,
-            )
-        except Exception:  # noqa: BLE001 — best-effort
-            logger.exception(
-                "await_cdp_reply AWAITING post failed dispatch=%s", dispatch_id
-            )
         logger.info(
             "cursor-sdk await_cdp_reply parked dispatch=%s awaited=%s ttl_s=%s",
             dispatch_id,
             [g.execution_id for g in outstanding],
-            ttl,
+            await_reply_ttl_s(),
         )
         return True
     except Exception:  # noqa: BLE001 — never block _deliver_sdk_closeout (F1)
@@ -669,6 +665,46 @@ async def maybe_await_park_at_terminal(
             "await_cdp_reply park hook failed open dispatch=%s", dispatch_id
         )
         return False
+
+
+async def announce_await_parked(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    bus: CursorBusClient,
+) -> None:
+    """Best-effort AWAITING post + parked event after the terminal mark (1c)."""
+    row = load_park_row(dispatch_id=dispatch_id)
+    if row is None or row.park_kind != PARK_KIND_AWAIT_REPLY:
+        return
+    awaited = _awaited_from_row(row)
+    if not awaited:
+        return
+    ttl = await_reply_ttl_s()
+    try:
+        emit_sdk_await_reply_parked(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_ids=[g.execution_id for g in awaited],
+            awaited_threads=sorted({g.thread_id for g in awaited}),
+            ttl_s=ttl,
+        )
+    except Exception:  # noqa: BLE001 — best-effort
+        logger.exception(
+            "await_cdp_reply parked event failed dispatch=%s", dispatch_id
+        )
+    try:
+        await _post_awaiting_turn(
+            bus,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            caller_agent=row.caller_agent,
+            awaited=awaited,
+        )
+    except Exception:  # noqa: BLE001 — best-effort
+        logger.exception(
+            "await_cdp_reply AWAITING post failed dispatch=%s", dispatch_id
+        )
 
 
 def _response_code(response: Any) -> str:
@@ -709,12 +745,17 @@ def _refusal_cap_elapsed(row: ParkRow, *, now: datetime) -> bool:
 
 
 def _usable_resume_child(parent_id: str) -> str | None:
-    """Live or completed resume_of child; ignores failed-before-run rows (F2)."""
+    """Live, completed, or started-then-terminal child; ignores failed-before-run.
+
+    A child that reached ``started_at`` and then failed/cancelled reconciles so
+    we do not mint a second resume of work that already ran (1d).
+    """
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         row = conn.execute(
             "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE resume_of=? "
-            f"AND status IN {RECONCILE_CHILD_STATUSES_SQL} "
+            f"AND (status IN {RECONCILE_CHILD_STATUSES_SQL} "
+            "OR (status IN ('failed','cancelled') AND started_at IS NOT NULL)) "
             "ORDER BY rowid LIMIT 1",
             (parent_id,),
         ).fetchone()
@@ -935,6 +976,7 @@ __all__ = [
     "child_dispatch_id",
     "find_reply",
     "fired_generates",
+    "announce_await_parked",
     "mark_await_parked",
     "maybe_await_park_at_terminal",
     "open_await_rows",

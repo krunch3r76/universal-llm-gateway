@@ -2330,15 +2330,17 @@ async def _deliver_sdk_closeout(
             thread_id=req.thread_id,
             closeout_turn=turn_number,
         )
-        # friction 34156: park before terminal mark so resume_retain is stamped
-        # and the bus link can stay open (D3) while CDP replies are outstanding.
-        # Hook failures must never block the terminal mark (F1).
-        from services.git_integration_worker.cursor_sdk_await_reply import (
-            maybe_await_park_at_terminal,
-            resume_await_parked_dispatches,
-        )
-
+        # friction 34156: park columns before terminal mark so resume_retain is
+        # stamped and the bus link can stay open (D3). Import + hook are inside
+        # the try so an ImportError cannot skip the terminal mark (1c / F1).
+        await_parked = False
         try:
+            from services.git_integration_worker.cursor_sdk_await_reply import (
+                announce_await_parked,
+                maybe_await_park_at_terminal,
+                resume_await_parked_dispatches,
+            )
+
             await_parked = await maybe_await_park_at_terminal(
                 dispatch_id=req.dispatch_id,
                 thread_id=req.thread_id,
@@ -2364,6 +2366,17 @@ async def _deliver_sdk_closeout(
             _load_dispatch_record_json_sync, dispatch_id=req.dispatch_id
         )
         if await_parked:
+            # Awareness after terminal mark so a hung bus.reply cannot block it.
+            try:
+                await announce_await_parked(
+                    dispatch_id=req.dispatch_id,
+                    thread_id=req.thread_id,
+                    bus=bus,
+                )
+            except Exception:  # noqa: BLE001 — best-effort
+                logger.exception(
+                    "await_cdp_reply announce failed dispatch=%s", req.dispatch_id
+                )
             # R1: replies already on the bus but never received → resume now.
             # Scope to this dispatch; use the worker's real code_version (F7).
             try:

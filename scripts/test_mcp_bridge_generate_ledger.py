@@ -399,3 +399,105 @@ def test_f9_from_env_disabled_when_spool_unset(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.delenv("ULG_STEER_SPOOL_DIR", raising=False)
     obs = GenerateObserver.from_env()
     assert obs.enabled is False
+
+
+def test_1a_stale_qualifying_reply_turn_does_not_credit(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    """1a: qualifying_reply_turn <= generate after_turn must not mark received."""
+    observer.on_request(_request(1, "team_dispatch", {"op": "generate"}))
+    observer.on_result(_result(1, _cdp_admit_payload()))  # after_turn=3
+    observer.on_request(
+        _request(
+            2,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": "14692",
+                    "execution_id": _EXEC,
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    # Stale: turn 3 is not > after_turn 3.
+    observer.on_result(
+        _result(
+            2,
+            {
+                "complete": True,
+                "qualifying_reply_turn": 3,
+                "producer": {"execution_id": _EXEC, "state": "terminal"},
+            },
+        )
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
+    # Missing after_turn on the fire row ⇒ never credit.
+    path = generate_ledger_path(tmp_path, "bb28fae31960-dd251b78")
+    path.write_text("")
+    observer.on_request(_request(3, "team_dispatch", {"op": "generate"}))
+    payload = _cdp_admit_payload()
+    # Force a fire row without after_turn by writing manually.
+    import json as _json
+    from datetime import UTC, datetime
+
+    with path.open("a") as fh:
+        fh.write(
+            _json.dumps(
+                {
+                    "execution_id": _EXEC,
+                    "thread_id": "14692",
+                    "from_agent": "web-anthropic",
+                    "fired_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            + "\n"
+        )
+    observer.on_request(
+        _request(
+            4,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": "14692",
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    observer.on_result(
+        _result(4, {"complete": True, "qualifying_reply_turn": 9})
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == set()
+
+
+def test_1a_int_thread_accepted_on_wait_fallback(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    observer.on_request(_request(1, "team_dispatch", {"op": "generate"}))
+    observer.on_result(_result(1, _cdp_admit_payload()))
+    observer.on_request(
+        _request(
+            2,
+            "agent_bus",
+            {
+                "tool": "wait",
+                "arguments": {
+                    "thread": 14692,
+                    "from_agent": "web-anthropic",
+                },
+            },
+        )
+    )
+    observer.on_result(
+        _result(2, {"complete": True, "qualifying_reply_turn": 4})
+    )
+    assert read_received_execution_ids(
+        "bb28fae31960-dd251b78", spool_dir=tmp_path
+    ) == {_EXEC}

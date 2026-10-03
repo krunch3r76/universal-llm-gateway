@@ -28,6 +28,7 @@ from services.git_integration_worker.cursor_sdk_await_reply import (
     AWAIT_REPLY_TTL_ENV,
     PARK_KIND_AWAIT_REPLY,
     AwaitedGenerate,
+    announce_await_parked,
     build_await_resume_request,
     find_reply,
     fired_generates,
@@ -417,9 +418,14 @@ async def test_terminal_with_outstanding_generate_parks_row_durably(
     assert record["park"]["awaited"][0]["thread_id"] == _COORD_THREAD
     # The hook does not pre-empt the ordinary terminal: status is the route's job.
     assert row["status"] == "running"
+    # Announce runs after the terminal mark (1c).
+    bus.reply.assert_not_awaited()
+    assert events == []
     _mark_completed("d-park")
     assert _row("d-park")["status"] == "completed"
-    # Not plain complete: the AWAITING turn names the execution id the lineage waits on.
+    await announce_await_parked(
+        dispatch_id="d-park", thread_id=_WORKER_THREAD, bus=bus
+    )
     awaiting = [c.kwargs for c in bus.reply.await_args_list]
     assert len(awaiting) == 1
     assert awaiting[0]["thread_id"] == _WORKER_THREAD
@@ -957,15 +963,19 @@ async def test_f1_park_hook_exception_still_allows_terminal_mark(
 
 @pytest.mark.asyncio
 async def test_f1_awaiting_post_failure_still_counts_as_parked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    """F1: after mark_await_parked commits, post/event failures keep await_parked True."""
+    """F1/1c: park stamp succeeds even when the post-terminal announce fails."""
     _seed_running("d-f1post", tmp_path=tmp_path)
     _record_generate(tmp_path, "d-f1post")
     bus = _bus()
-    bus.reply = AsyncMock(side_effect=RuntimeError("bus reply down"))
     parked = await _park("d-f1post", bus=bus, turns=_Turns(), tmp_path=tmp_path)
     assert parked is True
+    assert _row("d-f1post")["park_kind"] == PARK_KIND_AWAIT_REPLY
+    bus.reply = AsyncMock(side_effect=RuntimeError("bus reply down"))
+    await announce_await_parked(
+        dispatch_id="d-f1post", thread_id=_WORKER_THREAD, bus=bus
+    )
     assert _row("d-f1post")["park_kind"] == PARK_KIND_AWAIT_REPLY
 
 
@@ -1230,10 +1240,13 @@ async def test_f6_refusal_cap_expires_the_park(
     bus = _bus()
     first = await _tick(bus=bus, turns=turns)
     assert first.refused == [("d-f6", "bridge_death_not_resume_eligible")]
+    assert first.expired == []
     second = await _tick(bus=bus, turns=turns)
-    # attempt already 1; second bump hits cap on the following refuse path
+    assert second.refused == [("d-f6", "bridge_death_not_resume_eligible")]
+    assert second.expired == []
+    # With max=2, the third tick hits the refusal cap and expires (1f).
     third = await _tick(bus=bus, turns=turns)
-    assert "d-f6" in (second.expired + third.expired + first.expired)
+    assert third.expired == ["d-f6"]
     assert json.loads(_row("d-f6")["record_json"])["park"].get("expired_at")
 
 
@@ -1435,14 +1448,24 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
     monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", lambda **_k: None)
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_k: None)
+    from services.git_integration_worker.cursor_sdk_await_reply import (
+        AwaitResumeSummary,
+    )
+
+    resume_mock = AsyncMock(return_value=AwaitResumeSummary())
+    announce_mock = AsyncMock()
+
+    async def _track_announce(**kw: Any) -> None:
+        order.append("announce")
+        return None
+
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_await_reply.resume_await_parked_dispatches",
-        AsyncMock(
-            return_value=__import__(
-                "services.git_integration_worker.cursor_sdk_await_reply",
-                fromlist=["AwaitResumeSummary"],
-            ).AwaitResumeSummary()
-        ),
+        resume_mock,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.announce_await_parked",
+        _track_announce,
     )
 
     bus = _bus()
@@ -1471,9 +1494,14 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
         work_item_ref=_WORK_KEY,
         controller=_controller(),
     )
-    assert order == ["park", "promote"]
+    assert order == ["park", "promote", "announce"]
     assert _row("d-close")["status"] == "completed"
     assert _row("d-close")["park_kind"] == PARK_KIND_AWAIT_REPLY
+    # 1f: route wiring scopes resume and never passes code_version="closeout".
+    resume_mock.assert_awaited_once()
+    resume_kwargs = resume_mock.await_args.kwargs
+    assert resume_kwargs["parent_dispatch_id"] == req.dispatch_id
+    assert resume_kwargs["code_version"] != "closeout"
 
     # Exception path: park raises → still promoted.
     _seed_running(
@@ -1522,3 +1550,108 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
     )
     assert "promote" in order
     assert _row("d-close-x")["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_1b_hand_path_phantom_child_reclaimed_by_reactor(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """1b: hand-stamped child that failed before run is cleared; reactor resumes."""
+    _seed_running("d-1b", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-1b")
+    await _park("d-1b", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-1b")
+    ledger = CursorDispatchLedger.instance()
+    hand = CursorDispatchRequest(
+        thread_id=_WORKER_THREAD,
+        model="cursor/grok-4.7",
+        dispatch_id="d-1b-hand",
+        execution_id="exec-hand",
+        caller_agent="cursor",
+        message="hand resume phantom",
+        handoff_contract="freeform",
+        resume_of="d-1b",
+        work_key=_WORK_KEY,
+    )
+    assert (
+        ledger.admit(
+            req=hand,
+            fingerprint=ledger.fingerprint(hand),
+            execution_id=hand.execution_id,
+            caller_agent="cursor",
+            resolved_model="grok-4.7",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id="d-1b-hand",
+                thread_id=_WORKER_THREAD,
+                model_id="m",
+            ),
+            contract="freeform",
+            source_repo=str(load_config().source_repo),
+            lease_key="lease-1b",
+            work_key=_WORK_KEY,
+            identity_class="declared",
+        )
+        is None
+    )
+    assert _row("d-1b")["park_resumed_by"] == "d-1b-hand"
+    ledger.mark_terminal(dispatch_id="d-1b-hand", terminal_status="failed")
+    assert _row("d-1b-hand")["started_at"] is None
+
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    summary = await _tick(bus=_bus(), turns=turns)
+    assert summary.admitted == [("d-1b", "d-1b-c1")]
+    assert _row("d-1b")["park_resumed_by"] == "d-1b-c1"
+
+
+@pytest.mark.asyncio
+async def test_1d_started_then_failed_child_reconciles(
+    tmp_path: Path,
+) -> None:
+    """1d: a child that ran then failed closes the park; no second resume."""
+    _seed_running("d-1d", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-1d")
+    await _park("d-1d", bus=_bus(), turns=_Turns(), tmp_path=tmp_path)
+    _mark_completed("d-1d")
+    ledger = CursorDispatchLedger.instance()
+    child = CursorDispatchRequest(
+        thread_id=_WORKER_THREAD,
+        model="cursor/grok-4.7",
+        dispatch_id="d-1d-ran",
+        execution_id="exec-d-1d",
+        caller_agent="cursor",
+        message="ran then failed",
+        handoff_contract="freeform",
+        resume_of="d-1d",
+        admitted_via=ADMITTED_VIA_AWAIT_RESUME,
+        work_key=_WORK_KEY,
+    )
+    ledger.admit(
+        req=child,
+        fingerprint=ledger.fingerprint(child),
+        execution_id=child.execution_id,
+        caller_agent="cursor",
+        resolved_model="grok-4.7",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="d-1d-ran",
+            thread_id=_WORKER_THREAD,
+            model_id="m",
+        ),
+        contract="freeform",
+        source_repo=str(load_config().source_repo),
+        lease_key="lease-1d",
+        work_key=_WORK_KEY,
+        identity_class="declared",
+    )
+    ledger.mark_running(dispatch_id="d-1d-ran")
+    ledger.mark_terminal(dispatch_id="d-1d-ran", terminal_status="failed")
+    assert _row("d-1d-ran")["started_at"] is not None
+    # Crash window: stamp never written.
+    assert _row("d-1d")["park_resumed_by"] is None
+
+    turns = _Turns({_COORD_THREAD: [_reply_turn()]})
+    summary = await _tick(bus=_bus(), turns=turns)
+    assert summary.reconciled == [("d-1d", "d-1d-ran")]
+    assert summary.admitted == []
+    assert _row("d-1d")["park_resumed_by"] == "d-1d-ran"

@@ -150,15 +150,17 @@ def _receive_call(params: Any) -> dict[str, Any] | None:
         return None
     execution_id = inner.get("execution_id")
     thread = inner.get("thread") or inner.get("thread_id")
+    if isinstance(thread, int):
+        thread_s: str | None = str(thread)
+    elif isinstance(thread, str) and thread:
+        thread_s = str(thread).replace("agent-bus:", "")
+    else:
+        thread_s = None
     from_agent = inner.get("from_agent")
     return {
         "op": op,
         "execution_id": execution_id if isinstance(execution_id, str) else None,
-        "thread": (
-            str(thread).replace("agent-bus:", "")
-            if isinstance(thread, str) and thread
-            else None
-        ),
+        "thread": thread_s,
         "from_agent": from_agent if isinstance(from_agent, str) else None,
     }
 
@@ -220,6 +222,24 @@ def _execution_ids_in_text(text: str, known: set[str]) -> set[str]:
     return {eid for eid in known if eid and eid in text}
 
 
+def _qualifying_turn_fresh(
+    payload: dict[str, Any], *, after_turn: int | None
+) -> bool:
+    """True when qualifying_reply_turn is strictly after the generate's after_turn.
+
+    Missing ``after_turn`` on the ledger record ⇒ never credit (stale-safe).
+    """
+    if after_turn is None:
+        return False
+    raw = payload.get("qualifying_reply_turn")
+    if raw is None:
+        return False
+    try:
+        return int(raw) > int(after_turn)
+    except (TypeError, ValueError):
+        return False
+
+
 def _received_from_wait(
     payload: dict[str, Any],
     *,
@@ -228,13 +248,16 @@ def _received_from_wait(
     pending_from_agent: str | None,
     known: set[str],
     known_by_thread: dict[str, str],
+    known_after_turn: dict[str, int | None],
 ) -> set[str]:
     """Map a completed wait onto known CDP generates.
 
-    Named ``execution_id`` / producer id win when they match a known generate.
+    Named ``execution_id`` / producer id win when they match a known generate
+    and ``qualifying_reply_turn`` is fresher than that generate's ``after_turn``.
     The no-id fallback (exactly one open generate) counts only when the request
     named no execution_id, its thread equals that generate's thread_id, and
-    ``from_agent`` is web-anthropic (friction 34156 F3).
+    ``from_agent`` is web-anthropic (friction 34156 F3). A missing ledger
+    ``after_turn`` never credits (stale-reply guard).
     """
     if payload.get("complete") is not True:
         return set()
@@ -248,7 +271,11 @@ def _received_from_wait(
             producer_eid = raw
     for candidate in (pending_execution_id, producer_eid):
         if candidate and candidate in known:
-            return {candidate}
+            if _qualifying_turn_fresh(
+                payload, after_turn=known_after_turn.get(candidate)
+            ):
+                return {candidate}
+            return set()
     # Fallback: only an unqualified wait on the generate's own web-anthropic lane.
     if pending_execution_id is not None:
         return set()
@@ -259,6 +286,8 @@ def _received_from_wait(
         return set()
     gen_thread = known_by_thread.get(only)
     if not pending_thread or not gen_thread or pending_thread != gen_thread:
+        return set()
+    if not _qualifying_turn_fresh(payload, after_turn=known_after_turn.get(only)):
         return set()
     return {only}
 
@@ -346,13 +375,16 @@ class GenerateObserver:
         except Exception:  # noqa: BLE001 — never into the relay
             return
 
-    def _known_generates(self) -> tuple[set[str], dict[str, str]]:
-        """Outstanding fire ids and execution_id → thread_id."""
+    def _known_generates(
+        self,
+    ) -> tuple[set[str], dict[str, str], dict[str, int | None]]:
+        """Outstanding fire ids, thread map, and after_turn (None = missing)."""
         received = read_received_execution_ids(
             self.dispatch_id, spool_dir=self.spool_dir
         )
         known: set[str] = set()
         by_thread: dict[str, str] = {}
+        after_by: dict[str, int | None] = {}
         for row in read_generate_records(
             self.dispatch_id, spool_dir=self.spool_dir
         ):
@@ -363,12 +395,19 @@ class GenerateObserver:
             thread = row.get("thread_id")
             if isinstance(thread, str) and thread:
                 by_thread[eid] = str(thread).replace("agent-bus:", "")
-        return known, by_thread
+            if "after_turn" not in row:
+                after_by[eid] = None
+            else:
+                try:
+                    after_by[eid] = int(row["after_turn"])
+                except (TypeError, ValueError):
+                    after_by[eid] = None
+        return known, by_thread, after_by
 
     def _observe_receive(
         self, payload: dict[str, Any], *, pending: dict[str, Any]
     ) -> None:
-        known, known_by_thread = self._known_generates()
+        known, known_by_thread, known_after = self._known_generates()
         if not known:
             return
         op = str(pending.get("op") or "")
@@ -380,6 +419,7 @@ class GenerateObserver:
                 pending_from_agent=pending.get("from_agent"),
                 known=known,
                 known_by_thread=known_by_thread,
+                known_after_turn=known_after,
             )
         elif op in ("get", "fetch"):
             hits = _received_from_get_or_fetch(payload, known=known)
