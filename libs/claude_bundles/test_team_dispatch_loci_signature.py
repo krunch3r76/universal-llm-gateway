@@ -116,8 +116,52 @@ def test_mcp_teaching_surfaces_omit_job_call_syntax() -> None:
     )
 
 
+# a:37410 — skill bodies that teach team_dispatch. Whole-file ``job=`` is the
+# wrong predicate here: those files still name Stargate body ``job``,
+# ``cse_session`` ``job=``, and prompt-line ``job=delivery-review``. Call
+# syntax is a ``job`` keyword on a parsed ``team_dispatch(`` example.
+_SKILL_TEACHING_ROOT = _REPO / "cursor-plugins/ulg-ecosystem/skills"
+_KNOWN_SKILL_TEACHING = "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
+
+
+def _skill_team_dispatch_teaching_rels() -> list[str]:
+    rels: list[str] = []
+    for path in sorted(_SKILL_TEACHING_ROOT.rglob("*.md")):
+        if "team_dispatch(" not in path.read_text(encoding="utf-8"):
+            continue
+        rels.append(path.relative_to(_REPO).as_posix())
+    return rels
+
+
+def test_skill_teaching_surfaces_omit_job_call_syntax() -> None:
+    assert "job" in call_example_keywords("op=generate, job=freeform, lane=B")
+    assert "job" not in call_example_keywords(
+        'op=generate, contract=delivery-review, prompt="job=delivery-review\\n"'
+    )
+    assert call_bodies("session=ask, job=freeform\n") == []
+
+    rels = _skill_team_dispatch_teaching_rels()
+    assert rels, "no skill bodies teach team_dispatch("
+    assert _KNOWN_SKILL_TEACHING in rels, (
+        f"teaching walk missed {_KNOWN_SKILL_TEACHING}"
+    )
+    hits: list[str] = []
+    for rel in rels:
+        text = (_REPO / rel).read_text(encoding="utf-8")
+        for body in call_bodies(text):
+            if "job" in call_example_keywords(body):
+                hits.append(rel)
+                break
+    assert not hits, (
+        "skill bodies that teach team_dispatch still use job= call syntax: "
+        + ", ".join(hits)
+    )
+
+
 def test_claude_ai_cdp_navigation_cse_session_example_matches_schema() -> None:
-    path = _REPO / "cursor-plugins/ulg-ecosystem/skills/claude-ai-cdp-navigation/SKILL.md"
+    path = (
+        _REPO / "cursor-plugins/ulg-ecosystem/skills/claude-ai-cdp-navigation/SKILL.md"
+    )
     allowed = mcp_tool_param_names(_CSE_SESSION, "cse_session")
     unknown: list[str] = []
     for body in call_bodies(path.read_text(encoding="utf-8"), needle="cse_session("):
