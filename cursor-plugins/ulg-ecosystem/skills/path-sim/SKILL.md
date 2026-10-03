@@ -120,7 +120,7 @@ recon → Q (lead CDP ACTIVE L0) → A (Composer enumerate → cdp/fable bind + 
 |---|---|
 | → A | Q sidecar with verdict (ranked Q table, or `frame_verdict` + `frame_delta` when framed) |
 | → R-admit | A sidecar with ranked L1 ∧ L2 + recommended bind; **Gate-2 densify closeout done** — todo `source_uri` = `cortex://notes/system/specs/{slug}.md`, `doc_validate` gates 6/8/9 PASS, non-empty `files_expected` + `acceptance_criteria`, `implement_ready` assertion citing current `spec_sha256:` |
-| → Stage-B implement | R-admit sidecar citing a real **CDP harvest URI** (`archive_uri`, or `content_proof` after consumer fs-read + sha re-verify) + admit-class verdict, **or** closed-set skip evidence; `implement_ready_preflight(source_ref=todo:{slug}).admitted === true`; amended binds re-validated + `spec_sha256` refreshed; halt on a duplicate non-terminal `job=implement` for the same `source_ref` |
+| → Stage-B implement | R-admit sidecar citing a real **CDP harvest URI** (`archive_uri`, or `content_proof` after consumer fs-read + sha re-verify) + admit-class verdict, **or** closed-set skip evidence; `implement_ready_preflight(source_ref=todo:{slug}).admitted === true`; amended binds re-validated + `spec_sha256` refreshed; halt on a duplicate non-terminal `contract=implement` for the same `source_ref` |
 | → R-after | Stage-B closeout present; spec + attrs current; lead fires `/work-item-review todo:{slug}` on **`cdp/opus-5` `contract=delivery-review` `reasoning_effort="high"`** |
 | → Closeout | R-after verdict sidecar (or skip evidence); REVISE applied or follow-up seeded; **docstring criticals=0**; event-instrumentation closeout one-liner when applicable |
 

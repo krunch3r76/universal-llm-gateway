@@ -183,7 +183,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 | Bad | Good |
 |---|---|
 | A bind seat plus implement acceptance in one packet | Bind sidecar → nested `cursor-sdk` `contract=implement` `model=cursor/composer-2.5` |
-| A reasoning model named as the mechanical implement executor | Pin `model=cursor/composer-2.5` on `job=implement` |
+| A reasoning model named as the mechanical implement executor | Pin `model=cursor/composer-2.5` on `contract=implement` |
 | Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
 | Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
 | Treat the split as guidance the orchestrator may skip when in a hurry | On `cursor-auto` it is substrate; the redirect fires whether or not you meant it |
@@ -312,7 +312,7 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
 | Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
-| Non-code adversarial (life/analysis) | `job=freeform` + `xai/grok-4.7` — life/analysis lane only |
+| Non-code adversarial (life/analysis) | `contract=freeform` + `xai/grok-4.7` — life/analysis lane only |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
 
 ### Skeptic / reviewer substrate matrix (codework, R2)

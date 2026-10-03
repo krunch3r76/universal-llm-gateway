@@ -66,7 +66,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
    handoff routing.
 5. **Bug/friction tickets (investigate→execute + pass zoom-out)**: an actionable defect needing a fix
    cycle routes in **two stages** — **investigate + decide** (`seat=cursor, contract=confer`
-   from the IDE, or `seat=web-anthropic, job=confer` from web) to trace root cause, inventory touch points,
+   from the IDE, or `seat=web-anthropic, contract=confer` from web) to trace root cause, inventory touch points,
    and resolve design choice into a dense spec; **investigate close** distills `files_expected` /
    `acceptance_criteria` (+ `required_skills`) and records implement-ready + `spec_sha256`;
    **execute** default = `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B",

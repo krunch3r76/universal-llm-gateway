@@ -99,7 +99,7 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 |---|---|---|---|
 | 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, contract=investigate)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** `contract=investigate` → `cursor/grok-4.7` high (facts + `OPEN FORK:` — never binds; omitted knobs follow the card); pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
 | 1 Q (L0) | **Lead fires the conductor width seat** — default bundled/full arc. Primary: `team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>, contract=freeform, …)`. Escape: CLI `claude-ai-sync-jupiter project-ask` with `--model` equal to ACTIVE.model without the `cdp/` prefix. MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **width-seat Q** → A — ¬ escalate to human (§ L0 / Q pairing). When ACTIVE's usage channel is Opus, Q shares R-admit's wire; `ACTIVE = RESTORE` returns Q to `cdp/fable-5.1`. | reasoning_effort per ACTIVE | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
-| 2 A (L1+L2) | **Stage-A three-leg:** Composer enumerate (`omit model=`, `{fast:true}`, `job=freeform`) → **`team_dispatch(model=cdp/fable, contract=freeform, …)` bind** → Composer Gate-2 closeout — **halts at admit-gate, ¬ implement** | Fable Max (CDP bind) | `…/path-sim-{slug}-fable-a-l1l2.md` |
+| 2 A (L1+L2) | **Stage-A three-leg:** Composer enumerate (`omit model=`, `{fast:true}`, `contract=freeform`) → **`team_dispatch(model=cdp/fable, contract=freeform, …)` bind** → Composer Gate-2 closeout — **halts at admit-gate, ¬ implement** | Fable Max (CDP bind) | `…/path-sim-{slug}-fable-a-l1l2.md` |
 
 | 3 R-admit | **LEAD fires `team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
 | 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
@@ -138,7 +138,7 @@ These are **three surfaces** — conflating them is a cascade defect (dogfood 20
 | Surface | What | Who | Satisfies |
 |---|---|---|---|
 | **Path-sim R** | External check of the A-bind (scope-lock `RATIFY\|REVISE\|SCOPE-DRIFT`) | **web-anthropic via CDP** (lead-owned) | Path-sim phase 3 only |
-| **Axis-2 panel** | Adversarial design ratification | **code lane: `cursor/*` on `seat=cursor-sdk`** · non-code / checkout-free: API `contract=freeform` + `contract=freeform` | `skeptic_ratified` / Gate-6 when `check_requested` |
+| **Axis-2 panel** | Adversarial design ratification | **code lane: `cursor/*` on `seat=cursor-sdk`** · non-code / checkout-free: API `role=skeptic` + `contract=freeform` | `skeptic_ratified` / Gate-6 when `check_requested` |
 | **Gate-6 bypasses** | Alternate admit proofs | `gate6_ratification_uri` or hash-matched `recon_waived` | Implement admission — **¬** path-sim R |
 
 **Panel substrate on code (operator 2026-07-26).** A review pass **on code** defaults to
@@ -314,7 +314,7 @@ Lead auto-advances legs without operator "go": **recon → lead CDP width-seat Q
 
 ```
 # Stage-A three-leg (single worker packet orchestrates all three):
-# 1. Composer enumerate (omit model=, model_knobs={"fast":"true"}, job=freeform)
+# 1. Composer enumerate (omit model=, model_knobs={"fast":"true"}, contract=freeform)
 # 2. team_dispatch(model=cdp/fable, contract=freeform, …) bind — ¬ Composer ranks
 # 3. Composer Gate-2 closeout → STOP
 team_dispatch(
@@ -471,7 +471,7 @@ team_dispatch(
 | Lead: "mechanical ⇒ skip R" | Fire CDP R; let web-anthropic challenge that claim |
 | Lead: "`running` for N minutes ⇒ stalled / `cdp_unavailable` ⇒ abort + implement" | Keep polling until `content_proof`/`archive_uri` or `failed`+`stall_stage`; wall-clock alone ≠ unavailable |
 | Lead self-writes `…-web-anthropic-review.md` ADMIT without CDP | Real `project-ask` harvest URI on the R sidecar |
-| Stamp `recon_waived` / `skeptic_ratified` as if path-sim R ran | Path-sim R is CDP; skeptic is `contract=freeform` — keep separate |
+| Stamp `recon_waived` / `skeptic_ratified` as if path-sim R ran | Path-sim R is CDP; skeptic is `role=skeptic` + `contract=freeform` — keep separate |
 | R-admit `--uuid` from falsifier / endeavor chrome map | `--converse --no-uuid` on `/new` (§ R-admit CDP recipe) |
 | Pre-pinned / operator-framed Question ⇒ skip Q (`q_skipped`) | Framed ⇒ adopt-or-contradict ACTIVE Q (`frame_verdict`); lead-pre-pinned ⇒ thin off-seat Q; then A |
 | Dispatch path-sim **A** with `xai/grok-*` | Composer enumerate → `cdp/fable` bind (coding lane) |

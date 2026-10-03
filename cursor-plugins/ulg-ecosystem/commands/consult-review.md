@@ -12,8 +12,8 @@ current modified and untracked files. Do not dispatch.
 
 `team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`
 
-`cdp/opus-5` is the same class. `contract=freeform` (wrong MCP param). There is no `contract=review`.
-Passing `job=` as an MCP param is not this request (use `contract=code-review`). `scripts/consult -r reviewer` exits with
+`cdp/opus-5` is the same class. `contract=freeform` is not this request. There is no `contract=review`.
+`job=` is not a `team_dispatch` parameter; use `contract=code-review`. `scripts/consult -r reviewer` exits with
 that shape. `scripts/consult_review_submit.py` exits the same way.
 
 Packet body is `review-task-guidance` Code Review Dimension. The reviewer reads

@@ -225,7 +225,7 @@ cortex(tool="assert", arguments='{"entity_id":"<work-item-id>",
 | Fork the shared review body | Embed `review-task-guidance` by reference |
 | Re-catch the same finding class every item | G4 distill → mint a rule/skill |
 | Default R-after to Composer implement | `cdp/opus-5` `contract=delivery-review` (R-admit keeps web Opus) |
-| `job=freeform, model=xai/grok-*` for checkout review | `cdp/opus-5` `contract=delivery-review`; Composer `pure-mechanical` for execution probes |
+| `contract=freeform, model=xai/grok-*` for checkout review | `cdp/opus-5` `contract=delivery-review`; Composer `pure-mechanical` for execution probes |
 | Skip after path-sim Stage-B without closed-set evidence | Path-sim fires R-after by default — run it |
 | Silent on event-bearing ON_CHARTER delivery | Challenge closeout one-liner + missed add/prune |
 | Route REVISE through `/review-apply` | Direct patch or implement dispatch (24952) |

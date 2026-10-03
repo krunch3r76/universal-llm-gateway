@@ -3,7 +3,7 @@ name: cursor-sdk-instruction-standard
 description: "Before authoring cursor-sdk dispatch turns — none, pure-mechanical, or implement contracts; ensures Composer executors get verifiable instructions."
 skill_category: dispatch-delegation
 trigger_short: cursor-sdk ∨ none ∨ pure-mechanical ∨ self-check ∨ acceptance_criteria
-trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "contract=implement", "lane"]
+trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "job=implement", "contract=implement", "lane"]
 canonical: workspaces://universal-llm-gateway/.cursor/skills/cursor-sdk-instruction-standard/SKILL.md
 ---
 

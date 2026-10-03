@@ -37,7 +37,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 |---|---|
 | Admit conductor packet without `Use the conductor skill` in `<invariants>` | Continuity-lead required-skill gate (Audience) |
 | Hand-author `tmp/reviews/{slug}-conductor-packet.md` and pass `packet_path=` on `contract=conductor` | Shape the **todo**; `source_ref=todo:` — the materializer writes the packet and the scoreboard (§ Admit from an existing plan) |
-| Spawn with `job="freeform"` + `source_ref=todo:` (post-`19ab1566a` residue) | `job="conductor"` — `none_with_source_ref` is a 422, not a lighter admit |
+| Spawn with `contract="freeform"` + `source_ref=todo:` (post-`19ab1566a` residue) | `contract="conductor"` — `none_with_source_ref` is a 422, not a lighter admit |
 | Stamp `derived_from` attribute only (or edge only) to skip G1 | Both attribute and `consult_kind=architecture` edge, or neither — a `consult_kind: sketch` doc is not a G1 witness |
 | Seed `implement_ready` / `files_modified` / `acceptance` on the todo | Readiness is a Gate-2 assertion; canonical keys are `files_expected` / `acceptance_criteria` / `required_skills` (non-empty `list[str]`) |
 | Reconstruct the admit path from source + 422s because the plan “isn't a sketch” | Register the plan as the substitute sketch (`consult_kind: sketch`), then follow § Admit from an existing plan |

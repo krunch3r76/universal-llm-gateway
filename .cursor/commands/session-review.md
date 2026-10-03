@@ -22,7 +22,7 @@ review without session context.
 
 **Session critique lane:** `team_dispatch(op="handoff")` → `web-anthropic`
 (alias `claude-web`); full MCP toolset. This lane is session critique, not the
-code-review request. The code-review request is the `job=code-review` generate
+code-review request. The code-review request is the `contract=code-review` generate
 above. Packet on disk; Stargate posts a short bus pointer.
 
 **cursor-claude**: same handoff primitive → `claude-cursor` (dedicated Cursor IDE
