@@ -1,5 +1,7 @@
 Open a new Cursor agent and paste a prompt on a named window and host.
 
+Thin wrapper (specimen: `cursor-plugins/ulg-ecosystem/commands/path-sim.md`). Procedure lives in `runbook:cursor-bridge-paste` — ¬ restate env exports, remote env, or the keystroke chord here.
+
 ## Invocation
 
 ```
@@ -22,19 +24,11 @@ Attended Glass is `orion-node`. The launch script's unset-host default is `jupit
 
 ## Steps
 
-1. Parse the three tokens from the invocation. Write them down before the shell call.
-2. Confirm the message file exists. It is the full prompt, including any rename line.
-3. From the repo root, with the universal venv:
+1. Parse the three tokens. Write them down before launch.
+2. Confirm the message file exists.
+3. `cite(runbook:cursor-bridge-paste)` — execute that runbook's steps this call.
+4. Report the fields that runbook names: `ok`, `keystroke.steps`, `focused.title`, `focused.identifier`, exported host.
 
-```bash
-export CURSOR_BRIDGE_SSH_HOST=<orion-node|jupiter>
-export CURSOR_BRIDGE_WINDOW=<glass|ide>
-export CURSOR_BRIDGE_REMOTE_ENV="WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 CURSOR_BRIDGE_UINPUT_ENABLED=1 CURSOR_BRIDGE_WINDOW=<glass|ide>"
-"$HOME/.venvs/universal/bin/python" scripts/cursor-bridge-launch.py open-tab \
-  --force --thread "paste-$(date -u +%H%M%S)" --slug cursor-paste \
-  --message-file <message-file>
-```
+## Skills
 
-4. Quote `ok`, `keystroke.steps`, `focused.title`, `focused.identifier`, and the host exported in step 3.
-
-Paste chord is Ctrl+Shift+V in `scripts/orchestrator_tab_keystroke.py` and `scripts/cursor_tab_keystroke.py`. Do not send Ctrl+V alone.
+cite `runbook:cursor-bridge-paste`
