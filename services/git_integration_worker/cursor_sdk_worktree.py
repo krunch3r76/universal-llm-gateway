@@ -73,6 +73,10 @@ class WorktreeMintError(RuntimeError):
         self.retryable = retryable
 
 
+class NestParentNotFoundError(WorktreeMintError):
+    """``nest_under`` names no ledger parent. Caller error, not a mint failure."""
+
+
 def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
     """True when ``path`` resolves under ``worktree_root``."""
     try:
@@ -440,7 +444,7 @@ def resolve_admit_binding(
     if req.nest_under:
         parent_key = lookup_parent_lease_key(req.nest_under, source_repo=source_repo)
         if parent_key is None:
-            raise WorktreeMintError(f"nest parent not found: {req.nest_under!r}")
+            raise NestParentNotFoundError(f"nest parent not found: {req.nest_under!r}")
         workspace = Path(parent_key).resolve()
         return AdmitBindingResult(
             workspace=workspace,
@@ -600,6 +604,7 @@ __all__ = [
     "DispatchWorktreeRecord",
     "PruneResult",
     "ReapSweepResult",
+    "NestParentNotFoundError",
     "WorktreeMintError",
     "accept_dispatch_worktree",
     "collapse_doubled_worktree_root",

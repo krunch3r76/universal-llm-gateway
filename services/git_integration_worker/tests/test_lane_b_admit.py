@@ -535,6 +535,33 @@ def test_explicit_lane_a_refused_with_fix_hint(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_nest_under_missing_non_uuid_parent_is_422(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """Breaks when a well-formed nest_under absent from the ledger returns 503."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="B",
+            nest_under="deadbeef0000-00000000",
+            dispatch_id="child-deadbeef",
+            execution_id="exec-child-deadbeef",
+            thread_id="6707",
+            source_ref="todo:child-deadbeef",
+        ),
+    )
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["code"] == "nest_parent_not_found"
+    assert payload["retryable"] is False
+    assert "do not retry" in payload["data"]["fix_hint"]
+    assert resp.status_code != 503
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_nest_under_execution_uuid_is_422(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
