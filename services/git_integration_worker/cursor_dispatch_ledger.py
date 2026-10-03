@@ -804,18 +804,20 @@ def _resume_parent_work_key_exempt(conn: sqlite3.Connection, *, resume_of: str) 
 def _stamp_hand_park_resume(
     conn: sqlite3.Connection, *, parent_id: str, child_id: str
 ) -> None:
-    """Close an open restart-park hold when a hand ``resume_of`` admits.
+    """Close an open park hold when a hand ``resume_of`` admits.
 
+    Covers ``park_for_restart`` and ``await_cdp_reply`` (friction 34156).
     GIW auto-resume stamps ``park_resumed_by`` from ``mark_park_resumed`` after
     its own admit returns success. This helper is the hand-admit path only;
-    the caller skips ``admitted_via=giw_park_resume`` so a post-admit refusal
-    does not close the park. A caller admit never reached the GIW stamp, so
-    the cancelled parent kept the work key and later plain admits 409'd. This
-    UPDATE shares the child admit transaction; a later conflict rolls it back.
+    the caller skips ``admitted_via`` in {giw_park_resume, giw_await_reply_resume}
+    so a post-admit refusal does not close the park. A caller admit never
+    reached the GIW stamp, so the cancelled parent kept the work key and later
+    plain admits 409'd. This UPDATE shares the child admit transaction; a later
+    conflict rolls it back.
     """
     conn.execute(
         "UPDATE cursor_sdk_dispatches SET park_resumed_by=? "
-        "WHERE dispatch_id=? AND park_kind='park_for_restart' "
+        "WHERE dispatch_id=? AND park_kind IN ('park_for_restart','await_cdp_reply') "
         "AND park_resumed_by IS NULL "
         "AND (park_expires_at IS NULL OR park_expires_at > ?)",
         (child_id, parent_id, _now()),
@@ -1434,7 +1436,18 @@ class CursorDispatchLedger:
                                 holder_thread_id=peer["thread_id"],
                             ),
                         )
-            if req.resume_of and req.admitted_via != "giw_park_resume":
+            if req.resume_of:
+                from services.git_integration_worker.cursor_sdk_await_reply_gate import (
+                    refuse_if_await_resume_taken,
+                )
+
+                refuse_if_await_resume_taken(
+                    conn, parent_id=req.resume_of, child_id=req.dispatch_id
+                )
+            if req.resume_of and req.admitted_via not in (
+                "giw_park_resume",
+                "giw_await_reply_resume",
+            ):
                 # GIW stamps in mark_park_resumed after the route returns
                 # success. Stamping here would close the park on a post-admit
                 # refusal (drain) onto a child the route did not accept.

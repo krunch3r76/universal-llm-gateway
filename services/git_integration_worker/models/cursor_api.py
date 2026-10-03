@@ -79,7 +79,15 @@ class CursorDispatchRequest(BaseModel):
             "parallel under the derived standard load pool. There is no branch= arg."
         ),
     )
-    admitted_via: Literal["cursor-auto", "stargate", "giw_park_resume"] | None = None
+    admitted_via: (
+        Literal[
+            "cursor-auto",
+            "stargate",
+            "giw_park_resume",
+            "giw_await_reply_resume",
+        ]
+        | None
+    ) = None
     work_key: str | None = None
     resume_of: str | None = None
     continuity_root_thread_id: str | None = None

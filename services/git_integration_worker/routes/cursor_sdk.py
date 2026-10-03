@@ -42,6 +42,9 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     WriteLeaseHeld,
     resolve_conductor_summoning_thread_id,
 )
+from services.git_integration_worker.cursor_sdk_await_reply_gate import (
+    ResumeAlreadyAdmitted,
+)
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
@@ -1829,6 +1832,45 @@ async def _resume_parked_rows(
         )
 
 
+async def _resume_await_reply_rows(
+    *,
+    controller: WorkAdmissionController,
+    cfg: WorkerConfig,
+    code_version: str,
+) -> None:
+    """Admit resume children for ``await_cdp_reply`` parks (friction 34156)."""
+    from services.git_integration_worker.cursor_sdk_await_reply import (
+        await_reply_enabled,
+        resume_await_parked_dispatches,
+    )
+
+    if not await_reply_enabled():
+        return
+    try:
+        summary = await resume_await_parked_dispatches(
+            cfg=cfg, controller=controller, code_version=code_version
+        )
+    except Exception:  # noqa: BLE001 — resume is recovery; tick must proceed
+        logger.exception("await-reply auto-resume pass failed")
+        return
+    if (
+        summary.admitted
+        or summary.refused
+        or summary.expired
+        or summary.reconciled
+        or summary.waiting
+    ):
+        logger.info(
+            "await-reply auto-resume admitted=%s refused=%s expired=%s "
+            "reconciled=%s waiting=%s",
+            summary.admitted,
+            summary.refused,
+            summary.expired,
+            summary.reconciled,
+            summary.waiting,
+        )
+
+
 async def reconcile_stale_leases(
     controller: WorkAdmissionController,
     *,
@@ -1912,6 +1954,9 @@ async def reconcile_stale_leases(
     if reap_only:
         return
     await _resume_parked_rows(
+        controller=controller, cfg=cfg, code_version=code_version or "unknown"
+    )
+    await _resume_await_reply_rows(
         controller=controller, cfg=cfg, code_version=code_version or "unknown"
     )
     for lease_key in repos:
@@ -2285,6 +2330,19 @@ async def _deliver_sdk_closeout(
             thread_id=req.thread_id,
             closeout_turn=turn_number,
         )
+        # friction 34156: park before terminal mark so resume_retain is stamped
+        # and the bus link can stay open (D3) while CDP replies are outstanding.
+        from services.git_integration_worker.cursor_sdk_await_reply import (
+            maybe_await_park_at_terminal,
+            resume_await_parked_dispatches,
+        )
+
+        await_parked = await maybe_await_park_at_terminal(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            execution_id=req.execution_id,
+            bus=bus,
+        )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status=hop_terminal,
@@ -2298,7 +2356,21 @@ async def _deliver_sdk_closeout(
         record_json = await asyncio.to_thread(
             _load_dispatch_record_json_sync, dispatch_id=req.dispatch_id
         )
-        if not _row_hop_defers_link_terminate(
+        if await_parked:
+            # R1: replies already on the bus but never received → resume now.
+            try:
+                await resume_await_parked_dispatches(
+                    cfg=_CONFIG,
+                    controller=controller,
+                    code_version="closeout",
+                    bus=bus,
+                )
+            except Exception:  # noqa: BLE001 — tick will retry
+                logger.exception(
+                    "await-reply immediate resume failed dispatch=%s",
+                    req.dispatch_id,
+                )
+        elif not _row_hop_defers_link_terminate(
             hop_terminal=hop_terminal,
             closeout_body=outcome.body,
             record_json=record_json,
@@ -3950,6 +4022,28 @@ async def admit_cursor_dispatch(
                 "holder_dispatch_id": exc.holder_dispatch_id,
                 "holder_thread_id": exc.holder_thread_id,
                 "queue_depth": exc.queue_depth,
+            },
+        )
+    except ResumeAlreadyAdmitted as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=resolved_source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="resume_already_admitted",
+        )
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_RESUME_ALREADY_ADMITTED",
+            failure_layer="admission",
+            http_status=409,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_await_resume",
+            extra_data={
+                "parent_dispatch_id": exc.parent_dispatch_id,
+                "existing_child_id": exc.existing_child_id,
+                "holder_thread_id": exc.thread_id,
             },
         )
     except SourceRefConflict as exc:
