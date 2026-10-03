@@ -19,9 +19,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     HOP_PARKED_KEY,
     PARK_REASON_MISSION_CAP,
     HopBudgetConfig,
-    count_hop_attempts,
     evaluate_hop_budget,
-    list_mission_terminal_chain,
     load_hop_budget_config,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
@@ -86,6 +84,7 @@ def _admit_and_terminal(
     closeout_tokens: list[str] | None = None,
     terminal_status: str = "completed",
     record_patch: dict | None = None,
+    work_key: str = _WORK_KEY,
 ) -> dict:
     req = _req(dispatch_id=dispatch_id)
     ledger.admit(
@@ -103,8 +102,8 @@ def _admit_and_terminal(
         contract="conductor",
         source_repo="/repo",
         lease_key="/repo",
-        work_key=_WORK_KEY,
-        source_ref=_WORK_KEY,
+        work_key=work_key,
+        source_ref=work_key,
         hop_seq=hop_seq,
         hop_from=hop_from,
         hop_reason=hop_reason,
@@ -1154,14 +1153,12 @@ def test_mission_cap_release_allows_hops_until_window_exhausted() -> None:
         is True
     )
     _release_mission_cap_park(ledger, parked_id="rel-at-cap")
-    chain = list_mission_terminal_chain(work_key=_WORK_KEY)
-    baseline = count_hop_attempts(chain)
     with ledger._connect() as conn:
         row = conn.execute(
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='rel-at-cap'"
         ).fetchone()
     data = json.loads(row["record_json"])
-    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == baseline
+    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
 
     for extra in range(1, cap):
         row = _planned_hop_row(
@@ -1267,6 +1264,59 @@ def test_mission_cap_release_baseline_uses_park_work_key_not_caller() -> None:
         ).fetchone()
     data = json.loads(row["record_json"])
     assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
+
+
+def test_mission_cap_release_baseline_uses_parked_mission_not_caller_work_key() -> None:
+    """Release scoped to caller work_key W1 must still count hops on parked mission W2."""
+    ledger = CursorDispatchLedger.instance()
+    w1 = "todo:hop-budget-cross-w1"
+    w2 = "todo:hop-budget-cross-w2"
+    cap = 3
+    for idx in range(1, cap + 2):
+        _admit_and_terminal(
+            ledger,
+            dispatch_id=f"x2-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"x2-{idx - 1}",
+            hop_reason="planned" if idx > 1 else "spawn",
+            closeout_tokens=["ROW_HOP"],
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            work_key=w2,
+        )
+    _admit_and_terminal(
+        ledger,
+        dispatch_id="x1-only",
+        hop_seq=1,
+        hop_from="spawn",
+        hop_reason="spawn",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        work_key=w1,
+    )
+    parked_id = f"x2-{cap + 1}"
+    ledger.merge_record_json(
+        dispatch_id=parked_id,
+        patch={
+            HOP_PARKED_KEY: True,
+            HOP_PARK_REASON_KEY: PARK_REASON_MISSION_CAP,
+        },
+    )
+    with ledger._connect() as conn:
+        release_mission_parks(
+            conn,
+            work_key=w1,
+            thread_id="9964",
+            caller_agent="liaison",
+            post_commit_emits=[],
+        )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parked_id,),
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
+    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] != 1
 
 
 def test_crash_cap_release_does_not_stamp_mission_baseline() -> None:
