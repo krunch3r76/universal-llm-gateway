@@ -20,6 +20,7 @@ import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_orphan import BridgeOccupancy
+from services.git_integration_worker.cursor_sdk_park_ledger import mark_parked
 from services.git_integration_worker.cursor_sdk_worktree import (
     mint_dispatch_worktree,
     reap_orphan_worktrees,
@@ -642,6 +643,58 @@ def test_active_set_covers_lane_row_when_lease_key_points_outside_root(
     assert str(wt.resolve()) in active_managed_worktree_paths(
         worktree_root=worktree_root
     )
+
+
+def test_open_park_for_restart_holds_worktree_through_boot_reap(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37507: cancelled + open park_for_restart is occupancy, not an orphan.
+
+    mark_parked writes status=cancelled before resume admits a child. Boot
+    ``reap_orphan_worktrees`` runs first and treats cancelled as reapable.
+    Breaks when the live-ledger scan only lists admitted|running|queued|
+    parked_waiting: the satellite (or hub) lane tree is gone when pin runs.
+    No sdk_agent_id so resume_retain cannot be the reason the tree survives.
+    """
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "guard-open-park"
+    thread_id = "37507"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger=ledger,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+        lease_key=str(wt.resolve()),
+    )
+    ledger.mark_running(dispatch_id=dispatch_id)
+    mark_parked(
+        dispatch_id=dispatch_id,
+        intent_id="intent-37507",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="2026-10-03T00:00:00Z",
+        method="run_cancel",
+        tool_call_count=0,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    _stub_occupancy(monkeypatch)
+
+    assert str(wt.resolve()) in live_ledger_worktree_paths(worktree_root=worktree_root)
+    sweep = reap_orphan_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+    assert sweep.reaped == 0
+    assert wt.is_dir()
 
 
 def test_registry_ghost_row_is_surfaced_not_dropped(
