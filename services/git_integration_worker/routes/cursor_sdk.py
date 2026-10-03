@@ -4284,6 +4284,30 @@ async def admit_cursor_dispatch(
             reason=str(exc.code),
         )
         return JSONResponse(status_code=422, content=exc.to_dict())
+    if req.resume_of:
+        # Friction 37401: child bridge ledger starts empty; copy parent's
+        # outstanding CDP fire rows so receive/await still see them. Idempotent
+        # so a cached replay after a crash between insert and copy still lands.
+        # Import and copy both fail-open — a missing module must not 500
+        # park resumes at GIW startup. Copy off the loop: restart fan-out
+        # is many small files.
+        try:
+            from services.git_integration_worker.cursor_sdk_generate_ledger_inherit import (
+                inherit_outstanding_generates,
+            )
+
+            await asyncio.to_thread(
+                inherit_outstanding_generates,
+                parent_id=req.resume_of,
+                child_id=req.dispatch_id,
+                admitted_via=req.admitted_via,
+            )
+        except Exception:  # noqa: BLE001 — never block resume_of admit
+            logger.exception(
+                "generate-ledger inherit failed open parent=%s child=%s",
+                req.resume_of,
+                req.dispatch_id,
+            )
     if cached is not None:
         status_code = 202 if cached.status == "queued" else 200
         if cached.status == "queued":
