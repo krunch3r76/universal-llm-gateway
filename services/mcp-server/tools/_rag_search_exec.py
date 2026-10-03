@@ -8,8 +8,10 @@ helpers directly) and ``tools/_rag_recon.py`` (per-theme recon searches).
 request: it POSTs ``model=rag-context`` to Stargate ``/v1/chat/completions``,
 records ``mcp.rag.pipeline.called`` / ``.completed`` / ``.failed``, and returns
 the caller-facing envelope — ``status: ok`` with ``context`` + ``retrieval``
-metadata, or ``{"error": ...}``. It never raises for transport failures; those
-become error envelopes so every attached waiter receives the same answer.
+metadata, or ``{"error": ...}``. Transport failures also set ``retryable: true``
+so the in-flight registry uses the failure TTL instead of caching them as a
+600 s success. It never raises for transport failures; those become error
+envelopes so every attached waiter receives the same answer.
 
 Timeouts: the pipeline wall-clock comes from ``provider_model_limits
 .rag_pipeline_timeout`` (model-load budget + reranker inference); the httpx
@@ -85,17 +87,30 @@ def pipeline_call(
         return resp.json()
 
 
+def _pipeline_transport_retryable(exc: BaseException) -> bool:
+    """True for Stargate POST failures that must not sit in the success cache.
+
+    Timeouts, connect/read failures, and HTTP 5xx are transient. A 4xx is the
+    same request failing the same way and is left non-retryable.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return isinstance(exc, httpx.RequestError)
+
+
 def handle_pipeline_error(
     exc: BaseException,
     pipeline: str,
     t0: float,
     user_message: str,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Log, record ``mcp.rag.pipeline.failed``, and return the error envelope.
 
     Surfaces Stargate's own ``detail``/``error`` message for HTTP-status failures
     when present, otherwise *user_message*. Timeouts carry ``duration_s`` on the
     event so a wall-clock exhaustion is distinguishable from a connect failure.
+    Transient transport failures set ``retryable: true`` so ``_retryable_failure``
+    evicts them from the in-flight success cache.
     """
     extra: dict[str, Any] = {}
     surfaced_message = user_message
@@ -126,7 +141,10 @@ def handle_pipeline_error(
 
     logger.warning(log_message, exc_info=True)
     record("mcp.rag.pipeline.failed", pipeline=pipeline, error=error_type, **extra)
-    return {"error": surfaced_message}
+    envelope: dict[str, Any] = {"error": surfaced_message}
+    if _pipeline_transport_retryable(exc):
+        envelope["retryable"] = True
+    return envelope
 
 
 def extract_content(response: dict[str, Any]) -> str:
