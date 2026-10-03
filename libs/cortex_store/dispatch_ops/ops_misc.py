@@ -85,6 +85,15 @@ def _op_thread_sidecar_write(
     sidecar_slug: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
+    from agent_bus_store.turns_models import (
+        sidecar_content_is_unexpanded_shell,
+        sidecar_unexpanded_shell_envelope,
+    )
+
+    if sidecar_content_is_unexpanded_shell(content):
+        envelope = sidecar_unexpanded_shell_envelope()
+        envelope["status_code"] = 422
+        return envelope
     try:
         result = write_thread_sidecar_for_send(
             thread=thread,

@@ -11,8 +11,12 @@ from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
-from agent_bus_store.turns_models import MAX_SIDECAR_CONTENT_CHARS
+from agent_bus_store.turns_models import (
+    MAX_SIDECAR_CONTENT_CHARS,
+    sidecar_content_is_unexpanded_shell,
+)
 from cortex_store.dispatch_ops._thread_sidecar import SidecarWriteError
+from cortex_store.dispatch_ops.ops_misc import _op_thread_sidecar_write
 
 
 def _app(tmp_path, monkeypatch):
@@ -235,3 +239,173 @@ def test_f4a_dangling_sidecar_pointers_zero(
             for thread in threads:
                 dangling += _count_sidecar_pointers(client, thread["id"])
             assert dangling == 0
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "$(cat /tmp/x.md)",
+        "  $(echo hi)  ",
+        "`cat /tmp/x`",
+        "  `echo hi`  ",
+    ],
+)
+def test_sidecar_content_is_unexpanded_shell_matches_exact_forms(content: str) -> None:
+    assert sidecar_content_is_unexpanded_shell(content) is True
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "# Findings\n\nSee $(cat /tmp/x) for detail.",
+        "see `cat /tmp/x` then continue",
+        "$(unbalanced",
+        "$(foo) trailing",
+        "`only one",
+        "",
+        "plain markdown",
+    ],
+)
+def test_sidecar_content_is_unexpanded_shell_accepts_mixed(content: str) -> None:
+    assert sidecar_content_is_unexpanded_shell(content) is False
+
+
+def _assert_shell_refused(resp, *, fix_hint_fragment: str = "fs(sandbox=cortex") -> None:
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "sidecar_unexpanded_shell"
+    assert fix_hint_fragment in detail["fix_hint"]
+
+
+def test_send_refuses_dollar_paren_sidecar_no_thread_or_file(tmp_path, monkeypatch) -> None:
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "shell-sub",
+                "from": "cursor",
+                "to": "web",
+                "subject": "Findings",
+                "body": "brief",
+                "sidecar_content": "$(cat /tmp/x.md)",
+            },
+        )
+        _assert_shell_refused(resp)
+        threads = client.get("/threads").json()["threads"]
+        assert all(t["slug"] != "shell-sub" for t in threads)
+    sidecar_dir = cortex_root / "notes/system/threads"
+    assert not sidecar_dir.exists() or list(sidecar_dir.glob("*.md")) == []
+
+
+def test_send_refuses_padded_dollar_paren_sidecar(tmp_path, monkeypatch) -> None:
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "shell-pad",
+                "from": "cursor",
+                "to": "web",
+                "subject": "Findings",
+                "body": "brief",
+                "sidecar_content": "  $(echo hi)  ",
+            },
+        )
+        _assert_shell_refused(resp)
+    sidecar_dir = cortex_root / "notes/system/threads"
+    assert not sidecar_dir.exists() or list(sidecar_dir.glob("*.md")) == []
+
+
+def test_send_refuses_backtick_sidecar(tmp_path, monkeypatch) -> None:
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "shell-bt",
+                "from": "cursor",
+                "to": "web",
+                "subject": "Findings",
+                "body": "brief",
+                "sidecar_content": "`cat /tmp/x`",
+            },
+        )
+        _assert_shell_refused(resp)
+    sidecar_dir = cortex_root / "notes/system/threads"
+    assert not sidecar_dir.exists() or list(sidecar_dir.glob("*.md")) == []
+
+
+def test_send_continue_refuses_shell_sidecar_no_new_turn(tmp_path, monkeypatch) -> None:
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "continue-shell",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        thread_id = create.json()["thread"]["id"]
+        before = client.get(f"/turns?thread={thread_id}").json()["turns"]
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "Follow-up",
+                "body": "brief",
+                "sidecar_content": "$(cat /tmp/x.md)",
+            },
+        )
+        _assert_shell_refused(resp)
+        after = client.get(f"/turns?thread={thread_id}").json()["turns"]
+        assert len(after) == len(before)
+    sidecar_dir = cortex_root / "notes/system/threads"
+    assert not sidecar_dir.exists() or list(sidecar_dir.glob("*.md")) == []
+
+
+def test_send_accepts_mixed_body_containing_shell_text(tmp_path, monkeypatch) -> None:
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    content = "# Findings\n\nSee $(cat /tmp/x) for detail."
+    with TestClient(app) as client:
+        resp = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "mixed-shell",
+                "from": "cursor",
+                "to": "web",
+                "subject": "Findings",
+                "body": "brief",
+                "sidecar_content": content,
+                "sidecar_slug": "findings",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        rel = data["sidecar_uri"].removeprefix("cortex://")
+        file_text = (cortex_root / rel).read_text(encoding="utf-8")
+        assert content in file_text
+        assert data["sidecar_sha256"] == hashlib.sha256(content.encode()).hexdigest()
+
+
+def test_cortex_thread_sidecar_write_refuses_unexpanded_shell(tmp_path, monkeypatch) -> None:
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
+    result = _op_thread_sidecar_write(
+        thread="t-shell",
+        subject="Findings",
+        content="$(cat /tmp/x.md)",
+        from_agent="cursor",
+    )
+    assert result["status_code"] == 422
+    assert result["code"] == "sidecar_unexpanded_shell"
+    assert "fix_hint" in result
+    assert list(cortex_root.rglob("*.md")) == []
