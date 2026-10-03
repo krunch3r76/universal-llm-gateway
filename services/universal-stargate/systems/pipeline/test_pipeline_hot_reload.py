@@ -59,15 +59,38 @@ def _write_tree(root: Path) -> None:
     _write(domain / "prompts.yaml", _OK_PROMPTS)
 
 
+def _registry(root: Path, tmp_path: Path) -> PipelineRegistry:
+    # Snapshot enabled: a stale restore would hide delete/prompt edits (review nit).
+    return PipelineRegistry(
+        search_paths=[str(root)],
+        config_base_dir=root.parent,
+        snapshot_dir=tmp_path / "snap",
+    )
+
+
+@pytest.mark.asyncio
+async def test_hot_reload_wires_on_delete_callback(tmp_path: Path) -> None:
+    """Without on_delete, Change.deleted is dropped (base 6ecdf2e7c)."""
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    hot = PipelineHotReload(registry=registry, debounce_ms=80, enabled=True)
+    assert await hot.start()
+    try:
+        assert hot._watchers
+        for watcher in hot._watchers:
+            assert watcher.on_delete is not None
+    finally:
+        await hot.stop()
+
+
 @pytest.mark.asyncio
 async def test_hot_reload_unregisters_deleted_pipeline_yaml(tmp_path: Path) -> None:
     root = tmp_path / "pipelines"
     _write_tree(root)
     yaml_path = root / "ok_domain" / "ok-v1.yaml"
-    registry = PipelineRegistry(
-        search_paths=[str(root)],
-        config_base_dir=root.parent,
-    )
+    registry = _registry(root, tmp_path)
     registry.load()
     assert "ok-pipe" in registry.pipelines
 
@@ -89,10 +112,7 @@ async def test_hot_reload_registers_added_pipeline_yaml(tmp_path: Path) -> None:
     yaml_path = root / "ok_domain" / "ok-v1.yaml"
     yaml_text = yaml_path.read_text(encoding="utf-8")
     yaml_path.unlink()
-    registry = PipelineRegistry(
-        search_paths=[str(root)],
-        config_base_dir=root.parent,
-    )
+    registry = _registry(root, tmp_path)
     registry.load()
     assert "ok-pipe" not in registry.pipelines
 
@@ -111,10 +131,7 @@ async def test_hot_reload_registers_added_pipeline_yaml(tmp_path: Path) -> None:
 async def test_hot_reload_applies_prompt_edit(tmp_path: Path) -> None:
     root = tmp_path / "pipelines"
     _write_tree(root)
-    registry = PipelineRegistry(
-        search_paths=[str(root)],
-        config_base_dir=root.parent,
-    )
+    registry = _registry(root, tmp_path)
     registry.load()
     assert registry.prompts["ok_domain"]["dummy"]["template"] == "hello"
 
@@ -128,5 +145,25 @@ async def test_hot_reload_applies_prompt_edit(tmp_path: Path) -> None:
         )
         await asyncio.sleep(0.5)
         assert registry.prompts["ok_domain"]["dummy"]["template"] == "next-run"
+    finally:
+        await hot.stop()
+
+
+@pytest.mark.asyncio
+async def test_hot_reload_unregisters_yaml_moved_out_of_tree(tmp_path: Path) -> None:
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    yaml_path = root / "ok_domain" / "ok-v1.yaml"
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+
+    hot = PipelineHotReload(registry=registry, debounce_ms=80, enabled=True)
+    assert await hot.start()
+    try:
+        await asyncio.sleep(0.2)
+        yaml_path.rename(tmp_path / "ok-v1-moved.yaml")
+        await asyncio.sleep(0.5)
+        assert "ok-pipe" not in registry.pipelines
     finally:
         await hot.stop()
