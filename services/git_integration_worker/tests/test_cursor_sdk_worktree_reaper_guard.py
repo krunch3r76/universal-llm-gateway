@@ -697,6 +697,88 @@ def test_open_park_for_restart_holds_worktree_through_boot_reap(
     assert wt.is_dir()
 
 
+def test_open_park_occupancy_ignores_resume_of_without_park_admit(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37672: a refused/hand resume_of row must not drop the occupancy hold."""
+    from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+        OPEN_RESTART_PARK_SQL,
+        open_restart_park_sql,
+    )
+    from services.git_integration_worker.cursor_sdk_park_resume import (
+        ADMITTED_VIA_PARK_RESUME,
+    )
+
+    assert OPEN_RESTART_PARK_SQL == open_restart_park_sql()
+    assert "d.park_kind" in open_restart_park_sql("d")
+    assert ADMITTED_VIA_PARK_RESUME in OPEN_RESTART_PARK_SQL
+
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "guard-stray-child"
+    thread_id = "37672"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger=ledger,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+        lease_key=str(wt.resolve()),
+    )
+    ledger.mark_running(dispatch_id=dispatch_id)
+    mark_parked(
+        dispatch_id=dispatch_id,
+        intent_id="intent-37672",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="2026-10-03T00:00:00Z",
+        method="run_cancel",
+        tool_call_count=0,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    stray = CursorDispatchRequest(
+        thread_id=thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id="stray-resume-child",
+        execution_id="exec-stray",
+        message="refused resume",
+        resume_of=dispatch_id,
+        worktree_isolated=True,
+    )
+    ledger.admit(
+        req=stray,
+        fingerprint="fp-stray",
+        execution_id="exec-stray",
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="stray-resume-child",
+            thread_id=thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=str(source_repo.resolve()),
+        lease_key=str(wt.resolve()),
+        contract="implement",
+        worker_instance="worker-a",
+    )
+    _stub_occupancy(monkeypatch)
+    assert str(wt.resolve()) in live_ledger_worktree_paths(worktree_root=worktree_root)
+    sweep = reap_orphan_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+    assert sweep.reaped == 0
+    assert wt.is_dir()
+
+
 def test_registry_ghost_row_is_surfaced_not_dropped(
     source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

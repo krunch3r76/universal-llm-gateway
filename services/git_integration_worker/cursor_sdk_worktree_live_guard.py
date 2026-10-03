@@ -332,19 +332,16 @@ def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
     is still NULL — boot reaps cancelled lanes before ``_resume_parked_rows``
     (a:37507). Occupancy must hold that tree until a resume child exists.
     """
+    from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+        open_restart_park_sql,
+    )
     from services.git_integration_worker.cursor_sdk_worktree_registry import (
         ensure_worktree_schema,
     )
 
     active: set[str] = set()
     placeholders = ", ".join("?" for _ in _LIVE_LEDGER_STATUSES)
-    open_restart_park = (
-        "(d.park_kind='park_for_restart' AND d.park_resumed_by IS NULL "
-        "AND (d.park_expires_at IS NULL OR d.park_expires_at > ?) "
-        "AND NOT EXISTS ("
-        "SELECT 1 FROM cursor_sdk_dispatches AS c "
-        "WHERE c.resume_of = d.dispatch_id))"
-    )
+    open_restart_park = open_restart_park_sql("d")
     now = datetime.now(UTC).isoformat()
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)

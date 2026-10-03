@@ -30,14 +30,36 @@ CONDUCTOR_MISSION_PARKED_CODE = "CONDUCTOR_MISSION_PARKED"
 
 PARK_KINDS: frozenset[str] = frozenset({"budget", "restart"})
 
-OPEN_RESTART_PARK_SQL = (
-    "(park_kind='park_for_restart' AND park_resumed_by IS NULL "
-    "AND (park_expires_at IS NULL OR park_expires_at > ?) "
-    "AND NOT EXISTS ("
-    "SELECT 1 FROM cursor_sdk_dispatches AS park_resume_child "
-    "WHERE park_resume_child.resume_of = cursor_sdk_dispatches.dispatch_id"
-    "))"
-)
+
+def open_restart_park_sql(table_alias: str = "") -> str:
+    """Open ``park_for_restart`` predicate; *table_alias* is the dispatch-row alias.
+
+    Child match is ``_existing_child``: only ``admitted_via`` park-resume
+    children close the park (a:37671, a:37672). Unaliased SQL qualifies the
+    outer table name so the ``NOT EXISTS`` subquery cannot bind ``dispatch_id``
+    to ``park_resume_child``.
+    """
+    from services.git_integration_worker.cursor_sdk_park_resume import (
+        ADMITTED_VIA_PARK_RESUME,
+    )
+
+    col = f"{table_alias}." if table_alias else ""
+    parent_id = f"{table_alias}.dispatch_id" if table_alias else (
+        "cursor_sdk_dispatches.dispatch_id"
+    )
+    like = '%"admitted_via":"' + ADMITTED_VIA_PARK_RESUME + '"%'
+    return (
+        f"({col}park_kind='park_for_restart' AND {col}park_resumed_by IS NULL "
+        f"AND ({col}park_expires_at IS NULL OR {col}park_expires_at > ?) "
+        f"AND NOT EXISTS ("
+        f"SELECT 1 FROM cursor_sdk_dispatches AS park_resume_child "
+        f"WHERE park_resume_child.resume_of = {parent_id} "
+        f"AND park_resume_child.record_json LIKE '{like}'"
+        f"))"
+    )
+
+
+OPEN_RESTART_PARK_SQL = open_restart_park_sql()
 
 _LOG = get_logger(__name__)
 
@@ -360,6 +382,7 @@ __all__ = [
     "ConductorMissionParked",
     "HOP_PARK_RELEASED_AT_KEY",
     "OPEN_RESTART_PARK_SQL",
+    "open_restart_park_sql",
     "OpenPark",
     "PARK_KINDS",
     "ParkState",
