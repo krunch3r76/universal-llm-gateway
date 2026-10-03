@@ -48,6 +48,12 @@ class CursorWorkspaceHubUseOmit(CursorWorkspaceError):
     code = "CURSOR_WORKSPACE_HUB_USE_OMIT"
 
 
+class CursorWorkspaceParentMismatch(CursorWorkspaceError):  # noqa: N818
+    """Explicit ``workspace=`` on resume_of/nest_under disagrees with the parent."""
+
+    code = "CURSOR_WORKSPACE_PARENT_MISMATCH"
+
+
 def load_satellite_allowlist(*, hub: Path) -> frozenset[str]:
     """Load allowlisted satellite directory names from hub ``SATELLITES.txt``.
 
@@ -94,6 +100,38 @@ def recorded_workspace(
     if not name or name == _HUB_REPO_NAME:
         return None
     return name
+
+
+def refuse_parent_workspace_mismatch(
+    *,
+    explicit: str | None,
+    recorded: str | None,
+) -> None:
+    """Raise when a caller-supplied workspace disagrees with the parent row.
+
+    Omitted ``workspace`` is inherit, not a mismatch. Hub name is left to
+    ``resolve_dispatch_source_repo`` (``CURSOR_WORKSPACE_HUB_USE_OMIT``).
+    Call only when a resume_of/nest_under parent row was found — a top-level
+    admit with ``workspace=satellite`` must not compare against recorded None.
+    """
+    if explicit is None:
+        return
+    name = str(explicit).strip()
+    if not name or name == _HUB_REPO_NAME:
+        return
+    recorded_name = (
+        recorded.strip() if isinstance(recorded, str) and recorded.strip() else None
+    )
+    if recorded_name == name:
+        return
+    if recorded_name is None:
+        raise CursorWorkspaceParentMismatch(
+            f"workspace={name!r} disagrees with hub parent; omit workspace for hub"
+        )
+    raise CursorWorkspaceParentMismatch(
+        f"workspace={name!r} disagrees with parent recorded workspace "
+        f"{recorded_name!r}; omit workspace to inherit"
+    )
 
 
 def resolve_dispatch_source_repo(
@@ -143,8 +181,10 @@ __all__ = [
     "CursorWorkspaceHubUseOmit",
     "CursorWorkspaceInvalid",
     "CursorWorkspaceNotGit",
+    "CursorWorkspaceParentMismatch",
     "CursorWorkspaceUnknown",
     "load_satellite_allowlist",
     "recorded_workspace",
+    "refuse_parent_workspace_mismatch",
     "resolve_dispatch_source_repo",
 ]

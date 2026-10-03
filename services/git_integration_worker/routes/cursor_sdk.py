@@ -267,6 +267,7 @@ from services.git_integration_worker.cursor_sdk_resume import (
 from services.git_integration_worker.cursor_sdk_satellite_workspace import (
     CursorWorkspaceError,
     recorded_workspace,
+    refuse_parent_workspace_mismatch,
     resolve_dispatch_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_skills_mount import (
@@ -3738,20 +3739,23 @@ async def admit_cursor_dispatch(
             identity_class = "derived"
     files_expected = _files_from_packet(packet_text) if packet_text else []
     source_repo_str = str(cfg.source_repo.resolve())
-    if not (req.workspace and str(req.workspace).strip()):
-        parent_id = req.resume_of or req.nest_under
-        if parent_id:
-            parent = load_parent_row(
-                CursorDispatchLedger.instance(), parent_id=parent_id
+    parent_id = req.resume_of or req.nest_under
+    inherited: str | None = None
+    parent_row = None
+    if parent_id:
+        parent_row = load_parent_row(
+            CursorDispatchLedger.instance(), parent_id=parent_id
+        )
+        if parent_row is not None:
+            inherited = recorded_workspace(
+                record_json=parent_row.record_json,
+                source_repo=parent_row.source_repo,
             )
-            if parent is not None:
-                inherited = recorded_workspace(
-                    record_json=parent.record_json,
-                    source_repo=parent.source_repo,
-                )
-                if inherited:
-                    req.workspace = inherited
     try:
+        if parent_id and parent_row is not None:
+            refuse_parent_workspace_mismatch(explicit=req.workspace, recorded=inherited)
+        if inherited and not (req.workspace and str(req.workspace).strip()):
+            req.workspace = inherited
         resolved_source_repo = resolve_dispatch_source_repo(
             req.workspace,
             hub=cfg.source_repo,

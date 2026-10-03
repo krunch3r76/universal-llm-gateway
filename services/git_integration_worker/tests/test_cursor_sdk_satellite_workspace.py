@@ -28,8 +28,10 @@ from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orche
 from services.git_integration_worker.cursor_sdk_satellite_workspace import (
     CursorWorkspaceHubUseOmit,
     CursorWorkspaceNotGit,
+    CursorWorkspaceParentMismatch,
     CursorWorkspaceUnknown,
     recorded_workspace,
+    refuse_parent_workspace_mismatch,
     resolve_dispatch_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
@@ -107,6 +109,37 @@ def test_recorded_workspace_omits_hub() -> None:
         )
         is None
     )
+
+
+def test_refuse_mismatch_same_token_is_ok() -> None:
+    refuse_parent_workspace_mismatch(explicit="cryptax", recorded="cryptax")
+
+
+def test_refuse_mismatch_omitted_is_inherit() -> None:
+    refuse_parent_workspace_mismatch(explicit=None, recorded="cryptax")
+    refuse_parent_workspace_mismatch(explicit="  ", recorded="cryptax")
+
+
+def test_refuse_mismatch_hub_name_defers_to_resolve() -> None:
+    refuse_parent_workspace_mismatch(
+        explicit="universal-llm-gateway", recorded="cryptax"
+    )
+
+
+def test_refuse_mismatch_different_satellite_raises() -> None:
+    with pytest.raises(CursorWorkspaceParentMismatch) as exc:
+        refuse_parent_workspace_mismatch(explicit="email-bridge", recorded="cryptax")
+    assert exc.value.code == "CURSOR_WORKSPACE_PARENT_MISMATCH"
+
+
+def test_refuse_mismatch_hub_parent_explicit_satellite_raises() -> None:
+    with pytest.raises(CursorWorkspaceParentMismatch) as exc:
+        refuse_parent_workspace_mismatch(explicit="cryptax", recorded=None)
+    assert exc.value.code == "CURSOR_WORKSPACE_PARENT_MISMATCH"
+
+
+def test_refuse_mismatch_strips_whitespace() -> None:
+    refuse_parent_workspace_mismatch(explicit="  cryptax  ", recorded="cryptax")
 
 
 def test_omit_workspace_resolves_hub(

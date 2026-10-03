@@ -890,6 +890,142 @@ async def test_resume_of_omitted_workspace_pins_satellite(
 
 
 @pytest.mark.asyncio
+async def test_resume_of_explicit_workspace_mismatch_is_422_before_pin(
+    tmp_path: Path, _admit_stubs: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37532 — explicit wrong workspace must 422 before lock, not 503 pin."""
+    import subprocess
+
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    projects = tmp_path / "projects"
+    hub = projects / "hub"
+    satellite = projects / "cryptax"
+    _init_git(hub)
+    _init_git(satellite)
+    roster = hub / "cursor-plugins/ulg-ecosystem/SATELLITES.txt"
+    roster.parent.mkdir(parents=True)
+    roster.write_text("cryptax\nemail-bridge\n", encoding="utf-8")
+    wt = tmp_path / "lane-14724"
+    tip = subprocess.run(
+        ["git", "-C", str(satellite), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(satellite), "branch", "lane-14724", tip],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(satellite), "worktree", "add", str(wt), "lane-14724"],
+        check=True,
+        capture_output=True,
+    )
+
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=hub,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace=projects,
+        green_gate_cmd=["true"],
+    )
+    pins: list[dict[str, object]] = []
+
+    def _pin(**kwargs: object) -> str:
+        pins.append(kwargs)
+        return "ulg:lock"
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree.pin_lane_worktree_on_admit",
+        _pin,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_concurrency_posture."
+        "b_worktree_materialized",
+        lambda **_k: True,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    parent = CursorDispatchRequest(
+        thread_id="14724",
+        model="cursor/composer-2.5",
+        dispatch_id="p-sat-parent-mm",
+        execution_id="exec-p-sat-parent-mm",
+        caller_agent="cursor",
+        message="satellite parent",
+        handoff_contract="conductor",
+        workspace="cryptax",
+        lane="B",
+        worktree_isolated=True,
+        worktree_path=str(wt),
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    ledger.admit(
+        req=parent,
+        fingerprint=ledger.fingerprint(parent),
+        execution_id=parent.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=parent.dispatch_id,
+            thread_id=parent.thread_id,
+            model_id="m",
+        ),
+        contract="conductor",
+        source_repo=str(satellite.resolve()),
+        lease_key=str(wt.resolve()),
+        work_key=parent.work_key,
+        source_ref=parent.work_key,
+        identity_class="declared",
+    )
+    store = tmp_path / "store-p-sat-parent-mm"
+    store.mkdir(parents=True)
+    (store / "index.db").write_text("x")
+    ledger.record_state_root(dispatch_id=parent.dispatch_id, state_root=str(store))
+    ledger.record_sdk_identity(
+        dispatch_id=parent.dispatch_id, agent_id="agent-p-sat-parent-mm", run_id="r"
+    )
+    ledger.mark_running(dispatch_id=parent.dispatch_id)
+    mark_parked(
+        dispatch_id=parent.dispatch_id,
+        intent_id="intent-37532",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="x",
+        method="run_cancel",
+        tool_call_count=1,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    child = CursorDispatchRequest(
+        thread_id="14724",
+        model="cursor/composer-2.5",
+        dispatch_id="p-sat-child-mm",
+        execution_id="exec-p-sat-child-mm",
+        caller_agent="cursor",
+        message="resume with wrong workspace",
+        handoff_contract="conductor",
+        resume_of="p-sat-parent-mm",
+        workspace="email-bridge",
+        lane="B",
+        worktree_isolated=True,
+        worktree_path=str(wt),
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    resp = await admit_cursor_dispatch(child, cfg=cfg, controller=_controller())
+    assert resp.status_code == 422, bytes(resp.body).decode()
+    body = json.loads(bytes(resp.body).decode())
+    assert body["code"] == "CURSOR_WORKSPACE_PARENT_MISMATCH"
+    assert pins == []
+
+
+@pytest.mark.asyncio
 async def test_legacy_lane_a_park_row_strips_before_admit(
     tmp_path: Path, _admit_stubs: MagicMock
 ) -> None:
