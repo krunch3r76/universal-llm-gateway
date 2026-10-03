@@ -18,6 +18,7 @@ from claude_bundles.chat_model_match import (
     sealed_ask_default_effort,
 )
 from cursor_capabilities import (
+    CURSOR_BARE_ALIASES,
     CURSOR_MODEL_CAPABILITIES,
     default_variant,
     effective_knobs,
@@ -52,17 +53,10 @@ _JUDGMENT_ROLES = frozenset({"reviewer", "skeptic"})
 # substrate slug or a real bare id — a later ``!=`` must not certify it.
 UNKNOWN_MODEL_IDENTITY = "unknown"
 
-# Vendor-spelling fold: CDP picker slugs → cursor/API bare wire id (the
-# ``CURSOR_MODEL_CAPABILITIES`` key). One locus; ``normalize_picker_request``
-# owns the floating ``fable`` alias, this table owns spelling only.
-_IDENTITY_ALIASES: dict[str, str] = {
-    "fable-5.1": "claude-fable-5-1",
-    "fable-5": "claude-fable-5",
-    "opus-5": "claude-opus-5",
-    "sonnet-5": "claude-sonnet-5",
-    "sonnet-5.5": "claude-sonnet-5-5",
-    "haiku-4.5": "claude-haiku-4-5",
-}
+# Vendor-spelling fold: CDP picker slugs → cursor/API bare wire id.
+# SOT: ``CURSOR_BARE_ALIASES``. ``normalize_picker_request`` still owns the
+# floating ``fable`` alias.
+_IDENTITY_ALIASES = CURSOR_BARE_ALIASES
 
 # Knob names that carry a reasoning-effort rung, in precedence order.
 _EFFORT_KNOB_KEYS: tuple[str, ...] = ("effort", "reasoning", "reasoning_effort")

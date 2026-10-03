@@ -326,6 +326,38 @@ def test_dispatch_admits_and_spawns_task(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_dispatch_opus_5_5_alias_admits(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(model="cursor/opus-5-5"),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+    assert resp.json()["model_id"] == "claude-opus-5-5"
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_dispatch_claude_opus_5_5_admits(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(model="cursor/claude-opus-5-5"),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+    assert resp.json()["model_id"] == "claude-opus-5-5"
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_dispatch_idempotent_hit(_mock_task: MagicMock, client: TestClient) -> None:
     payload = _dispatch_body()
     first = client.post("/api/v1/cursor/dispatch", json=payload)
