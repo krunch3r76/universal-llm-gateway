@@ -303,6 +303,7 @@ from services.git_integration_worker.cursor_sdk_workspace import (
     resolve_promoted_workspace,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
+    NestParentNotFoundError,
     WorktreeMintError,
     collapse_doubled_worktree_root,
     lookup_parent_lease_key,
@@ -644,6 +645,11 @@ _NEST_UNDER_DISPATCH_ID_HINT = (
     "nest_under must be the dispatch_id that team_dispatch returned for the "
     "parent (for example 97d53fe54ef3-71669093; inside a cursor-sdk seat it "
     "is $CURSOR_SDK_DISPATCH_ID), not the execution_id UUID."
+)
+
+_NEST_PARENT_NOT_FOUND_HINT = (
+    "nest_under must name a dispatch_id already in the cursor-sdk ledger "
+    "(or cse:<holder_id>). A missing parent is a caller error; do not retry."
 )
 
 
@@ -3800,6 +3806,18 @@ async def admit_cursor_dispatch(
                     retryable=True,
                     validation_stage="lane_pin",
                 )
+    except NestParentNotFoundError as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="nest_parent_not_found",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=str(exc),
+            invalid_fields=["nest_under"],
+            retryable=False,
+            validation_stage="nest_under",
+            extra_data={"fix_hint": _NEST_PARENT_NOT_FOUND_HINT},
+        )
     except WorktreeMintError as exc:
         return _reject_pre_admission(
             req,
