@@ -28,7 +28,8 @@ FREEFORM_CONTRACTS: frozenset[str] = HARNESS_STACK_SKIP_JOBS
 
 REASONING_POSTURE_SLASH = "/reasoning-posture"
 
-# Shared Use-line for GIW preamble, Stargate handoff enrich, and cursor-auto admit.
+# Use-line text injected by GIW resolve_prompt_preamble only.
+# Stargate handoff enrich gates the skill slug; it does not read this string.
 # Plain-language cue matching core SKILL.md (a:37289); keep the Use-line stem
 # so _USE_LINE_RE de-dup still matches author-supplied copies.
 REASONING_POSTURE_PREAMBLE = (
