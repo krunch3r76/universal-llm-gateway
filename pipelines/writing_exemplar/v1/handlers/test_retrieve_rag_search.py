@@ -5,8 +5,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from pipelines.writing_exemplar.v1.handlers.register_bind import prefixes_for_register
 from pipelines.writing_exemplar.v1.handlers.retrieve import (
     WritingExemplarRetrieveHandler,
 )
@@ -64,3 +66,21 @@ async def test_retrieve_posts_rag_search_with_prefixes_and_response_shape() -> N
     assert out.json.get("rag_source_prefixes") == prefixes
     assert out.json.get("retrieval", {}).get("chunks_found") == 1
     assert "[Source: sample.md]" in out.raw
+
+
+def test_removed_register_fails_closed_with_known_names() -> None:
+    """Break: letters/oratory/travel have no prefix directory and returned empty context."""
+    with pytest.raises(
+        PipelineExecutionError,
+        match="Unknown writing_exemplar register 'letters'",
+    ) as exc:
+        prefixes_for_register("letters")
+    message = str(exc.value)
+    assert "familiar" in message
+    assert "humor" in message
+    assert "civic" in message
+    for gone in ("oratory", "travel", "letter", "speech", "speeches"):
+        with pytest.raises(
+            PipelineExecutionError, match="Unknown writing_exemplar register"
+        ):
+            prefixes_for_register(gone)

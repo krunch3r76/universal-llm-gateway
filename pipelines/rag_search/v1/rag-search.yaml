@@ -5,7 +5,9 @@ type: rag_search
 description: >
   RAG search pipeline (v2 home). Retrieval and rerank handlers are copied from
   rag_context_v1; request step enablement uses step_overrides / skip_steps.
-output: rerank
+  output is emit_context, which copies a completed rerank or formats retrieve
+  chunks when rerank is skipped.
+output: emit_context
 
 options:
   timeout_seconds: 250
@@ -111,3 +113,9 @@ steps:
                     type: string
                 required: ["chunk_id", "rank", "confidence", "reason"]
           required: ["ranking"]
+
+  - name: emit_context
+    type: rag_emit_context_v1
+    handler_inputs:
+      chunks_data: "retrieve.json.chunks"
+      rerank_result: "rerank.raw"
