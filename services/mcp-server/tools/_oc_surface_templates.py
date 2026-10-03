@@ -289,7 +289,7 @@ agent bus — the next session picks it up.
 |---|---|---|---|---|
 | Lead dialectic + adjudication | agent-bus + operator push | `web-anthropic` (`web-consult`) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
 | Automated review, closes w/o push | `team_dispatch(op=generate, contract=freeform)` | gpt-5.5 | full MCP | reviewer family MUST be gpt/claude — never gemini (Guard 1) |
-| Adversarial panel member | `team_dispatch` or `panel_dispatch` | `contract=freeform` | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
+| Adversarial panel member | `team_dispatch(op=generate, contract=freeform)` or `panel_dispatch` (no `contract` param) | skeptic | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
 | Analysis / RAG, NO writes | `team_dispatch(contract=freeform)` | gemini | inline-only (enforced) | lead-adjudicated input only |
 | ≥2-family panel (hard triggers) | `panel_dispatch(disposition=panel, ...)` | skeptic + reviewer (+synthesizer tiebreaker) | mixed | returns `panel_executions`; lead artifact still required |
 | Provider-specific inline | `team_dispatch(contract=freeform, model=xai/…)` | grok | inline | role + model override |

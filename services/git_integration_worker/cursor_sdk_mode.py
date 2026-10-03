@@ -15,7 +15,11 @@ from services.git_integration_worker.models.cursor_api import CursorDispatchRequ
 
 SdkMode = Literal["agent", "plan"]
 
-_IMPLEMENT_CLASS_JOBS = frozenset({"implement", "pure-mechanical", "conductor"})
+# ``mechanical`` is the admitted rename of ``pure-mechanical``. The retired
+# token stays in the set so a stray pre-rename body still refuses plan mode.
+_IMPLEMENT_CLASS_JOBS = frozenset(
+    {"implement", "mechanical", "pure-mechanical", "conductor"}
+)
 _PLAN_CLOSEOUT_VERDICT = "plan:closeout_verdict"
 
 

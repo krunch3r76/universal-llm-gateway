@@ -11,7 +11,7 @@ Authoring-time map for `seat=cursor-sdk` `op=generate` — do not mix shapes:
 | `implement` | `source_ref` **or** `packet_path` | — |
 | `conductor` | `packet_path` **or** bus-turn body | `source_ref` (except conductor spawn — next row) |
 | `none` + `` | `source_ref=todo:{slug}` only | `packet_path`, `prompt`, `sidecar_ref` |
-| `pure-mechanical` | `packet_path` **or** bus-turn body | `source_ref` |
+| `mechanical` | `packet_path` **or** bus-turn body | `source_ref` |
 | `wrap` | `source_ref` only | `packet_path` |
 
 **Conductor spawn:** Stargate materializes from `source_ref`; kickoff body = materializer
@@ -109,7 +109,7 @@ explicitly chooses `cursor`.
 
 ```python
 team_dispatch(op="generate", seat="cursor-sdk", dispatch_thread_id="<thread>",
-              contract="freeform"|"pure-mechanical", packet_path?=...)
+              contract="freeform"|"mechanical", packet_path?=...)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Repo-venv: cursor-sdk inherits repo venv. Inline lead edits =

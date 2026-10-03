@@ -3640,7 +3640,7 @@ tools:
   fol_descriptor: "Async relay to POST /api/v1/continuity/checkpoint (continuity-checkpoint-v1 pipeline).
     Required: thread, surface. Lean cursor: pre_consolidate=false explicitly. Tip author after
     mechanical post: team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7,
-    job=freeform, dispatch_thread_id=…, lane=A) — not seat=cursor (handoff); model-only without
+    contract=freeform, dispatch_thread_id=…, lane=B) — not seat=cursor (handoff); model-only without
     lane= → 422 lane_required. Skill checkpoint-discipline § Pipeline step 2.\n"
   json_schema:
     type: object
@@ -4612,7 +4612,7 @@ tools:
     split_thread=true.\nGenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\n\
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.\n\
     \  contract=implement is the materialized work-item path (source_ref required; inline prompt
-    refused) — not a generic repo-write. Ad-hoc edits use job=freeform with prompt or packet_path.\n\
+    refused) — not a generic repo-write. Ad-hoc edits use contract=freeform with prompt or packet_path, lane=B, and work_key.\n\
     \  Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate
     across GENERATE_ADMITTED_JOBS; source_ref is the materializer input
     (implement|wrap|sketch|conductor), not the generic write channel; dispatch-thread

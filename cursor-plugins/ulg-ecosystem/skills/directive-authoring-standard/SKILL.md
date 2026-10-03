@@ -40,7 +40,7 @@ Attended bind: wire `require_attended=true` **or** body `require_attended: true`
 
 | density | Cursor binds |
 |---|---|
-| dense | Mechanical implement / dense amend: pin `cursor/composer-2.5`. Verify: `cursor/grok-4.7` (`workflows.auto_judgment`). `contract: implement` stays `handoff=pure-mechanical` unless a Judgment marker (below) raises |
+| dense | Mechanical implement / dense amend: pin `cursor/composer-2.5`. Verify: `cursor/grok-4.7` (`workflows.auto_judgment`). `contract: implement` stays `mechanical` unless a Judgment marker (below) raises |
 | investigate | `cursor/grok-4.7` (`contract: investigate`; omit `model=` resolves this id). Escalate to `cdp/opus-5.5` when the bind needs a CDP seat |
 | confer (challenge-seeking) | `cursor/grok-4.7` + `contract: confer`. `cdp/fable` only when Kaywan asks and the challenge needs that width |
 | sparse amend | Mechanical amend: pin `cursor/composer-2.5`. Judgment amend: `cursor/grok-4.7` |
@@ -50,17 +50,17 @@ Escalate on the class of unknown. **2 failed dispatches on the same AC ⇒ stop*
 
 ### Judgment marker (admit-visible) — `contract: implement`
 
-Declaring a judgment fork is not enough. Admit only sees an **opt-in line-start marker**. Unmarked `contract: implement` stays `handoff=pure-mechanical`.
+Declaring a judgment fork is not enough. Admit only sees an **opt-in line-start marker**. Unmarked `contract: implement` stays `mechanical`.
 
-**Convention (as landed):** a line that starts (optional indent, optional `- `/`* ` bullet, optional `#{1,6} ` heading, optional `**`) then optional `AC<n> — ` (hyphen / en / em dash) then `RULING` or `RULING AC` / `RULING ACs`. Mid-sentence `RULING` does not raise. Also raise: `density:` / `density_triage:` ∈ `{judgment_required, investigate, judgment, recon_pending}`; line-start `open fork` / `named architecture fork` / `architecture fork`; explicit `handoff:` other than `pure-mechanical`.
+**Convention (as landed):** a line that starts (optional indent, optional `- `/`* ` bullet, optional `#{1,6} ` heading, optional `**`) then optional `AC<n> — ` (hyphen / en / em dash) then `RULING` or `RULING AC` / `RULING ACs`. Mid-sentence `RULING` does not raise. Also raise: `density:` / `density_triage:` ∈ `{judgment_required, investigate, judgment, recon_pending}`; line-start `open fork` / `named architecture fork` / `architecture fork`; explicit `handoff:` other than `mechanical`.
 
-**Consequence:** a judgment AC written any other way admits `handoff=pure-mechanical`, which skips the reasoning-posture preamble AND redirects a pinned reasoning model onto Composer.
+**Consequence:** a judgment AC written any other way admits `mechanical`, which skips the reasoning-posture preamble AND redirects a pinned reasoning model onto Composer. `pure-mechanical` is not an admitted contract.
 
 **Coverage (honest):** of 13 `contract: implement` bodies on agent-bus:9470, exactly 1 raises today (turn 302, `AC<n> — RULING`). The other twelve — including genuine withheld-lean forks — classify mechanical. This convention does not make the detector broadly work; it tells authors how to send the signal the detector already looks for.
 
 | Bad (turn 343 AC2 — real fork, does not raise) | Good (same fork, raises) |
 |---|---|
-| `AC2 — seed 1, and this is the fork.` then a bolded imperative: `**Before you pick, answer this and put the answer first: which direction of error is worse here, and why?**` A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? Withheld lean. Still admitted `handoff=pure-mechanical`. | `AC2 — RULING: which direction of error is worse here, and why?` A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? Withheld lean. Line-start `AC<n> — RULING` is what the admit path can see. |
+| `AC2 — seed 1, and this is the fork.` then a bolded imperative: `**Before you pick, answer this and put the answer first: which direction of error is worse here, and why?**` A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? Withheld lean. Still admitted `mechanical`. | `AC2 — RULING: which direction of error is worse here, and why?` A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? Withheld lean. Line-start `AC<n> — RULING` is what the admit path can see. |
 
 ## D2 — Wire contract enum
 
@@ -73,7 +73,7 @@ Live enum: `cursor_request` **Contract vocabulary** (do not re-copy). Digest:
 |---|---|
 | `execute` | One tier-M allowlisted op (`tool_op:` + `effects_expected:` + optional `tool_args:`); `manage.*` **denied** |
 | `propagate` | Restart request — ledger rows + drain-gated `sync_restart`; **not** `execute` + `manage.*` |
-| `implement` / `investigate` | `vision:` required. `implement` without a Judgment marker (D1) admits `handoff=pure-mechanical` |
+| `implement` / `investigate` | `vision:` required. `implement` without a Judgment marker (D1) admits `mechanical` |
 | `seed` | Mint closable work item via seed path |
 | `recon` | Recon front-half |
 
@@ -119,14 +119,14 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 
 **Transport:** this seat has ulg-code `team_dispatch`. Commission is `team_dispatch(op=generate, seat=cursor-sdk, lane=B, ...)`. The cursor-sdk seat nests its own further dispatches. `cursor_request` is not the wire.
 
-**Reachability:** no `conductor` contract token exists; body prose is the instruction. A non-roaming reasoning model on mechanical `handoff=pure-mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `contract=investigate` when the leg is facts, not edits.
+**Reachability:** `contract=conductor` is the admitted commission token on `team_dispatch`. Body prose is the instruction; the token is what admit sees. A non-roaming reasoning model on `mechanical` redirects to `cursor/composer-2.5` (`redirect_mechanical_executor`). `cursor/grok-4.7` is roaming and stays. Use `contract=investigate` when the leg is facts, not edits.
 
 **Model + lane (BINDING):**
 - Omit `model=` resolves `cursor/grok-4.7` (`workflows.auto_judgment.model`). Omitted knobs follow that card. Pin `model=cursor/composer-2.5` when the leg is mechanical implement.
 - Name `cdp/opus-5.5` in the directive when the leg needs a CDP bind. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor model is `desired_model=cdp/opus-5.5-extra`.
 - Pass `lane="B"` on the wire (`team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. `team_dispatch` top-level omit is 422 `lane_required`. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
 
-Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, contract=investigate, …)`. The cursor-sdk seat nests further dispatches. `contract=implement` redirects the executor to Composer, so a conductor-class commission uses the contract the conductor recipe names, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
+Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, contract=conductor, …)`. The cursor-sdk seat nests further dispatches. `contract=implement` redirects the executor to Composer, so a conductor-class commission uses `contract=conductor`, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
 
 
 This seat: frame the Question, ratify conductor Leg-boundary DISPOSITIONs, hold true operator-only gates — ¬ personally drive each nested admit/poll/harvest.
@@ -165,4 +165,4 @@ Live field contract: full grammar in `cortex://notes/system/specs/directive-loop
 - [ ] Mint-then-quote: every id in the body was read from a tool payload this turn
 - [ ] Framed multi-step (≥3 G-row or bind-then-compose) ⇒ D4 conductor, not a G-row loop
 - [ ] Pre-frame shape talk ⇒ D5 `negotiation_phase` on `contract: confer`, then D4
-- [ ] Conductor: `contract=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)
+- [ ] Conductor: `contract=conductor` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)

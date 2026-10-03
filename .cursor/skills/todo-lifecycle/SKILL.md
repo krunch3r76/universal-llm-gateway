@@ -72,7 +72,7 @@ Create the `todo:` entity. Charter = a **confirmed assertion** citing the source
 
 Set `attributes.density_triage ∈ {judgment_required, mechanical}` explicitly. `density_triage ∈ {unset, unknown} ⇒ implement_dispatch_blocked` — silent until checked. **Declared** by an authorized reasoner/operator, ¬ inferred by the stager (the tier that would need to escalate is the one that won't). → consult-routing § Densify lane; `rule:todo-lifecycle` § Staging-tier triage.
 
-**`mechanical` is a triage label, not a dispatch `contract=` value** — do not carry it into `team_dispatch`. Gate 7's `job=implement` is correct for `source_ref`-based cursor-sdk dispatch regardless of `density_triage`; `job='mechanical'` is a different, `packet_path`-only lane and rejects `source_ref` with a `validation_error` (friction 23525).
+**`density_triage=mechanical` is not `contract=mechanical`.** Gate 7's `contract=implement` is the `source_ref` cursor-sdk dispatch regardless of triage. `contract=mechanical` is the admitted rename of retired `pure-mechanical`: a `packet_path` lane, not the `source_ref` implement lane (friction 23525).
 
 ### 3. Recon + settlement (judgment_required)
 
@@ -110,9 +110,9 @@ Multi-round is expected: a round-1 `REJECT` naming a decisive falsifier is the g
 
 ### 7. Implement (Gate 3)
 
-Thread-consolidation preflight first: pre-stage a pending+empty shell thread, verify (`bus_lifecycle_state=pending`, `turn_count=0`), THEN `team_dispatch(op=generate, seat=cursor-sdk, job=implement, source_ref=todo:{slug}, dispatch_thread_id=<shell>)`. On spine default this fires after Gate 6 check pass; on attended/non-spine paths, after the operator prompt.
+Thread-consolidation preflight first: pre-stage a pending+empty shell thread, verify (`bus_lifecycle_state=pending`, `turn_count=0`), THEN `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug}, dispatch_thread_id=<shell>)`. On spine default this fires after Gate 6 check pass; on attended/non-spine paths, after the operator prompt.
 
-`contract=implement` is correct here regardless of `density_triage` — a `mechanical`-triaged todo does NOT mean `job='mechanical'`; that contract is `packet_path`-only and rejects `source_ref` (friction 23525; see § 2 Triage).
+`contract=implement` is correct here regardless of `density_triage` — a `mechanical`-triaged todo does NOT mean `contract=mechanical`; that contract is `packet_path`-only and rejects `source_ref` (friction 23525; see § 2 Triage).
 
 ### 8. Verify
 

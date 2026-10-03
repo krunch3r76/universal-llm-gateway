@@ -23,18 +23,18 @@ stamp honest deferral / operator bridge — ¬ call CODE_EXTRA from life.
 
 Read `consult-routing` before consult/review routing. **All recipes in this section = code MCP only.**
 
-Non-mechanical `team_dispatch` (cursor-sdk generate `none`/`sketch`, and
-consult/none handoff) auto-invokes `reasoning-posture`. Mechanical
-`implement` / `pure-mechanical` skip. Independent of life/operator-proxy.
+Non-mechanical `team_dispatch` (cursor-sdk generate `freeform`/`sketch`, and
+confer/freeform handoff) auto-invokes `reasoning-posture`. Mechanical
+`implement` / `mechanical` skip. Independent of life/operator-proxy.
 
 | Goal | Surface |
 |---|---|
 | Model answer/reasoning | `team_dispatch(op="generate", role=<api_role>, contract=…, dispatch_thread_id=…, model?="provider/model")` |
 | ≥2-provider material-decision panel | `panel_dispatch`; see `consensus-steelman-posture` |
 | Code changes (settled, unattended) | `team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id=…)` — in-repo implement uses lane B; attended `cursor-implement`/`web-implement` handoff is fallback |
-| Sparse recon / bind before implement | `team_dispatch(…, job=freeform\|recon\|seed\|consult, sdk_mode=plan)` — artifact URIs only; follow with separate `job=implement` after `implement_ready` — see `consult-routing` § cursor-sdk `sdk_mode` |
-| Packet heavy reasoning / web research | `team_dispatch(op="handoff", seat="web-anthropic", job="confer", …)` or `panel_dispatch` |
-| Manual web handoff / self-handoff | `team_dispatch(op="handoff", seat="web-anthropic", job="confer", packet_path=…)` |
+| Sparse recon / bind before implement | `team_dispatch(…, contract=freeform\|sketch\|investigate, sdk_mode=plan)` — artifact URIs only; follow with separate `contract=implement` after `implement_ready` — see `consult-routing` § cursor-sdk `sdk_mode` |
+| Packet heavy reasoning / web research | `team_dispatch(op="handoff", seat="web-anthropic", contract="confer", …)` or `panel_dispatch` |
+| Manual web handoff / self-handoff | `team_dispatch(op="handoff", seat="web-anthropic", contract="confer", packet_path=…)` |
 | Cursor IDE consult / implement | `handoff` roles `cursor-consult` / `cursor-implement` |
 | Work this session can do with MCP | Do locally; do not generate to own seat |
 
@@ -43,8 +43,8 @@ Model family ≠ surface. `want_grok_answer ⇒ team_dispatch(generate, role=<ap
 FOL:
 
 ```text
-want_answer ⇒ team_dispatch(generate, api_role, contract∈{none,pure-mechanical}, dispatch_thread_id, model?)
-want_code_changes ∧ settled ⇒ team_dispatch(generate, seat=cursor-sdk, lane="B", contract∈{implement,sketch,pure-mechanical,wrap,none}, source_ref|packet_path, dispatch_thread_id)
+want_answer ⇒ team_dispatch(generate, api_role, contract∈{freeform,confer}, dispatch_thread_id, model?)
+want_code_changes ∧ settled ⇒ team_dispatch(generate, seat=cursor-sdk, lane="B", contract∈{implement,sketch,mechanical,wrap,freeform}, source_ref|packet_path, dispatch_thread_id)
 want_code_changes ∧ ¬settled ⇒ R1_reasoning_first  # see consult-routing
 want_answer ∧ grok_model ⇒ team_dispatch(generate, api_role, model="xai/…")  # role=surface, model=affordance
 caller_has_local_mcp ∧ task∈local_surface ⇒ do_locally
@@ -75,7 +75,7 @@ Self-handoff is supported via matching handoff roster role to open a new bus thr
 Handoff submit/wait (**code surface only** — see Surface gate):
 
 ```text
-team_dispatch(handoff, seat=web-anthropic, job=confer|cursor-consult|cursor-implement, packet_path, subject)
+team_dispatch(handoff, seat=web-anthropic, contract=confer|implement, packet_path, subject)
 read result_handle + poll_hint; surface push_reminder
 agent_bus(wait, poll_hint.arguments_json) until complete=true
 ```
