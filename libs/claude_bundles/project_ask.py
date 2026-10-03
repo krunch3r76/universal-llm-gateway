@@ -23,6 +23,8 @@ from implement_admission.closeout_helpers import cortex_files_root
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
+from chat_harvest.chrome import strip_chrome
+
 from claude_bundles.chat_model_match import (
     normalize_picker_request,
     sealed_ask_default_effort,
@@ -84,6 +86,11 @@ def strip_thinking_prefix(body: str) -> str:
         return ""
     cleaned = _THINKING_LINE.sub("", text)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def finalize_scrape_body(body: str) -> str:
+    """Thinking-prefix then Cowork chrome — archive/bus body, not wait polls."""
+    return strip_chrome(strip_thinking_prefix(body))
 
 
 @dataclass(frozen=True)
@@ -700,7 +707,7 @@ async def project_ask_on_page(
             on_harvest=on_harvest,
             require_review_verdict=(purpose or "").strip().lower() == "review",
         )
-        body = strip_thinking_prefix(state.get("body") or "")
+        body = finalize_scrape_body(state.get("body") or "")
         attested = _attest_model(model, state, model_info)
         cards = artifact_cards_from_state(state)
         harvest_provenance: HarvestProvenance | None = None
@@ -797,7 +804,7 @@ async def project_ask_on_page(
         )
     except HarvestIncompleteError as exc:
         # a:37226 — preserve nonzero last scrape; bare Exception path zeroed body.
-        partial = strip_thinking_prefix(exc.body or "")
+        partial = finalize_scrape_body(exc.body or "")
         return ProjectAskResult(
             ok=False,
             body=partial,

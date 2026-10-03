@@ -14,7 +14,8 @@ import re
 # "Ran a command, loaded tools" is a progress badge, not the reply (12887 turn 27).
 _TOOL_BADGE_SEGMENT = (
     r"(searched the web|used toys integration|used a skill|used \d+ skills?|"
-    r"used \d+ tools?|loaded tools|ran a command|ran \d+ commands?)"
+    r"used \d+ tools?|loaded tools|loaded a skill|loaded \d+ skills?|"
+    r"ran a command|ran \d+ commands?)"
 )
 TOOL_BADGE_LINE_RE = re.compile(
     rf"^{_TOOL_BADGE_SEGMENT}(,\s*{_TOOL_BADGE_SEGMENT})*\.?$",
@@ -69,14 +70,29 @@ _IRREGULAR_PAST_VERBS = frozenset(
 _TOOL_STATUS_PRONOUNS = frozenset({"it"})
 
 
+_PUA_MIN = 0xE000
+_PUA_MAX = 0xF8FF
+
+
+def _is_private_use_char(ch: str) -> bool:
+    return _PUA_MIN <= ord(ch) <= _PUA_MAX
+
+
 def _is_badge_line(line: str) -> bool:
     return bool(TOOL_BADGE_LINE_RE.match(line.strip()))
 
 
 def _is_symbol_only_line(line: str) -> bool:
-    """Cowork icon glyphs (private-use) sit between tool badges and are not prose."""
+    """Cowork icon glyphs (BMP private-use) between tool badges are not prose.
+
+    ASCII punctuation used in code (``}``, ``---``) must survive strip_chrome
+    (a:37508 B2). Lone non-PUA glyphs next to a badge still drop via
+    ``_is_lone_glyph_adjacent_to_badge``.
+    """
     stripped = line.strip()
-    return bool(stripped) and not any(ch.isalnum() for ch in stripped)
+    if not stripped:
+        return False
+    return all(_is_private_use_char(ch) or ch.isspace() for ch in stripped)
 
 
 def _is_lone_glyph_adjacent_to_badge(lines: list[str], index: int) -> bool:
@@ -103,7 +119,9 @@ def strip_chrome(text: str) -> str:
     ]
     while lines and not lines[0].strip():
         lines.pop(0)
-    while lines and _TRAILING_TIMESTAMP_RE.match(lines[-1].strip()):
+    while lines and (
+        not lines[-1].strip() or _TRAILING_TIMESTAMP_RE.match(lines[-1].strip())
+    ):
         lines.pop()
     return "\n".join(lines).strip()
 

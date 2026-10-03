@@ -31,9 +31,9 @@ from claude_bundles.project_ask import (
     _attest_model,
     _compose_model_selected,
     artifact_cards_from_state,
+    finalize_scrape_body,
     project_ask_on_page,
     send_prompt,
-    strip_thinking_prefix,
 )
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
@@ -283,7 +283,7 @@ async def project_followup_on_page(
             on_harvest=on_harvest,
             require_review_verdict=require_review_verdict,
         )
-        body = strip_thinking_prefix(state.get("body") or "")
+        body = finalize_scrape_body(state.get("body") or "")
         attested = _attest_model(model, state, {})
         cards = artifact_cards_from_state(state)
         try:
@@ -330,7 +330,7 @@ async def project_followup_on_page(
         )
     except HarvestIncompleteError as exc:
         # a:37226 — preserve nonzero last scrape on follow-up timeout.
-        partial = strip_thinking_prefix(exc.body or "")
+        partial = finalize_scrape_body(exc.body or "")
         return ProjectAskResult(
             ok=False,
             body=partial,
@@ -457,7 +457,7 @@ async def run_project_conversation(
                 )
             except HarvestIncompleteError as exc:
                 # a:37226 — compose first-turn timeout must keep last scrape.
-                partial = strip_thinking_prefix(exc.body or "")
+                partial = finalize_scrape_body(exc.body or "")
                 return [
                     ProjectAskResult(
                         ok=False,
@@ -471,7 +471,7 @@ async def run_project_conversation(
                         error=str(exc),
                     )
                 ]
-            body = strip_thinking_prefix(state.get("body") or "")
+            body = finalize_scrape_body(state.get("body") or "")
             try:
                 attested = _attest_model(model, state, model_info)
             except RuntimeError as exc:
