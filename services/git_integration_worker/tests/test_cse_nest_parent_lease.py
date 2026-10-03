@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 from claude_bundles.holder_strings import format_nest_under_cse
 
+from services.git_integration_worker.cse_nest_parent_lease import (
+    inherit_lane_thread_id_for_admit,
+    lookup_resume_inherit_lane_thread_id,
+)
 from services.git_integration_worker.cse_session_holders import (
     ensure_schema,
     upsert_holder,
@@ -343,3 +347,138 @@ def test_dispatch_id_nest_under_still_inherits_parent_lease(
     assert child_binding.binding_kind == "nested"
     assert child_binding.lease_key == parent_binding.lease_key
     assert child_binding.workspace == parent_binding.workspace
+
+
+def _insert_thread_row(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    nest_under: str | None = None,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id=thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message=dispatch_id,
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, terminal_status, nest_under) "
+            "VALUES (?, ?, ?, ?, ?, 1, 'completed', 'completed', ?)",
+            (
+                dispatch_id,
+                ledger.fingerprint(req),
+                thread_id,
+                req.execution_id,
+                "composer-2.5",
+                nest_under,
+            ),
+        )
+
+
+def test_resume_of_nested_child_inherits_parent_lane_lock(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Breaks when resume_of on the child thread 503s CURSOR_LANE_PIN_FAILED.
+
+    friction:37432 — lock held by the nest parent's worker thread is inherited,
+    not stolen, when resume_of names the nested child.
+    """
+    parent_thread = "14714"
+    child_thread = "14716"
+    parent_req = CursorDispatchRequest(
+        thread_id=parent_thread,
+        model="cursor/composer-2.5",
+        dispatch_id="nest-parent",
+        execution_id="exec-nest-parent",
+        message="nest parent",
+        lane="B",
+    )
+    parent_binding = resolve_admit_binding(
+        req=parent_req,
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    parent_lock = lock_lane_worktree(
+        source_repo,
+        parent_binding.workspace,
+        dispatch_id="nest-parent",
+        thread_id=parent_thread,
+    )
+    _insert_thread_row(dispatch_id="nest-parent", thread_id=parent_thread)
+    _insert_thread_row(
+        dispatch_id="nested-child",
+        thread_id=child_thread,
+        nest_under="nest-parent",
+    )
+    inherit = inherit_lane_thread_id_for_admit(
+        nest_under=None,
+        resume_of="nested-child",
+    )
+    assert inherit == parent_thread
+    assert lookup_resume_inherit_lane_thread_id("nested-child") == parent_thread
+    pin_lane_worktree_on_admit(
+        source_repo=source_repo,
+        thread_id=child_thread,
+        dispatch_id="nested-child-c1",
+        worktree_path=parent_binding.workspace,
+        inherit_lane_thread_id=inherit,
+    )
+    locked = list_locked_worktrees(source_repo)
+    assert len(locked) == 1
+    assert locked[0].parsed is not None
+    assert locked[0].parsed.thread_id == parent_thread
+    assert locked[0].reason == parent_lock.lock_reason
+
+
+def test_resume_inherit_refuses_unrelated_foreign_lock(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Breaks when resume inherit accepts a lock held by some other thread."""
+    parent_thread = "14714"
+    child_thread = "14716"
+    parent_req = CursorDispatchRequest(
+        thread_id=parent_thread,
+        model="cursor/composer-2.5",
+        dispatch_id="nest-parent-foreign",
+        execution_id="exec-nest-parent-foreign",
+        message="nest parent",
+        lane="B",
+    )
+    parent_binding = resolve_admit_binding(
+        req=parent_req,
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    lock_lane_worktree(
+        source_repo,
+        parent_binding.workspace,
+        dispatch_id="stranger",
+        thread_id="99999",
+    )
+    _insert_thread_row(dispatch_id="nest-parent-foreign", thread_id=parent_thread)
+    _insert_thread_row(
+        dispatch_id="nested-child-foreign",
+        thread_id=child_thread,
+        nest_under="nest-parent-foreign",
+    )
+    inherit = lookup_resume_inherit_lane_thread_id("nested-child-foreign")
+    assert inherit == parent_thread
+    with pytest.raises(ForeignLockError):
+        pin_lane_worktree_on_admit(
+            source_repo=source_repo,
+            thread_id=child_thread,
+            dispatch_id="nested-child-foreign-c1",
+            worktree_path=parent_binding.workspace,
+            inherit_lane_thread_id=inherit,
+        )

@@ -73,7 +73,59 @@ def lookup_cse_nest_inherit_lane_thread_id(nest_under: str) -> str | None:
     return lane or None
 
 
+def lookup_resume_inherit_lane_thread_id(resume_of: str) -> str | None:
+    """Lane thread whose pin a ``resume_of`` child may inherit.
+
+    A nested child runs on its own worker thread while the nest parent
+    (SDK dispatch or ``cse:`` holder) keeps the lane worktree lock.
+    Resume on the child thread inherits that lock. Same-thread resumes
+    return None so the ordinary relock path runs. The returned id is only
+    the nest parent's thread, so an unrelated lock still fails.
+    """
+    with ledger_connection() as conn:
+        row = conn.execute(
+            "SELECT thread_id, nest_under FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            (resume_of,),
+        ).fetchone()
+    if row is None:
+        return None
+    nest_under = str(row["nest_under"] or "").strip()
+    if not nest_under:
+        return None
+    holder = lookup_cse_nest_inherit_lane_thread_id(nest_under)
+    if holder:
+        return holder
+    with ledger_connection() as conn:
+        parent = conn.execute(
+            "SELECT thread_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (nest_under,),
+        ).fetchone()
+    if parent is None:
+        return None
+    lane = str(parent["thread_id"] or "").strip()
+    child = str(row["thread_id"] or "").strip()
+    if not lane or lane == child:
+        return None
+    return lane
+
+
+def inherit_lane_thread_id_for_admit(
+    *,
+    nest_under: str | None,
+    resume_of: str | None,
+) -> str | None:
+    """Pin inherit id for a nest child or a resume of a nested child."""
+    if nest_under:
+        return lookup_cse_nest_inherit_lane_thread_id(nest_under)
+    if resume_of:
+        return lookup_resume_inherit_lane_thread_id(resume_of)
+    return None
+
+
 __all__ = [
+    "inherit_lane_thread_id_for_admit",
     "lookup_cse_nest_inherit_lane_thread_id",
     "lookup_nest_parent_lease_key",
+    "lookup_resume_inherit_lane_thread_id",
 ]
