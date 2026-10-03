@@ -23,8 +23,7 @@ class PipelineHotReload:
     Manages hot-reload for pipeline configurations.
 
     Watches all search paths from PipelineRegistry and triggers
-    reload_pipelines() when YAML files change, including deletes and
-    moves (watchfiles reports a delete for the old path).
+    reload_pipelines() when YAML files change.
     """
 
     def __init__(
@@ -76,7 +75,6 @@ class PipelineHotReload:
                     name=f"pipeline:{path.name}",
                     watch_path=path,
                     on_change=self._reload_callback,
-                    on_delete=self._reload_callback,
                     debounce_ms=self.debounce_ms,
                     recursive=True,  # Watch domain subdirectories
                     patterns=[".yaml", ".yml"],
