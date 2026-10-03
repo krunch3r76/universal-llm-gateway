@@ -34,6 +34,9 @@ logger = get_logger(__name__)
 _HOP_PARK_HARVEST_FIRED_KEY = "hop_park_harvest_fired_at"
 _HOP_PARK_HARVEST_CONTINUED_KEY = "hop_park_harvest_continued_at"
 _CONSULT_PENDING_CONTINUED_KEY = "hop_consult_harvest_continued_at"
+_NO_PROGRESS_PRODUCER_CONTINUED_KEY = "hop_no_progress_producer_continued_at"
+_PARK_REASON_NO_PROGRESS_CAP = "hop_budget_no_progress_cap"
+HOP_REASON_PRODUCER_HARVEST = "producer_harvest"
 
 
 def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
@@ -490,9 +493,10 @@ def consult_pending_continue_owed(
     summoning_reply = False
     if summoning_id:
         if not isinstance(rec.get("consult_summoning_after_turn"), int):
-            rec = _maybe_retry_summoning_watermark(
-                dispatch_id=dispatch_id, rec=rec
-            ) or rec
+            rec = (
+                _maybe_retry_summoning_watermark(dispatch_id=dispatch_id, rec=rec)
+                or rec
+            )
         watermark = rec.get("consult_summoning_after_turn")
         if isinstance(watermark, int):
             summoning_reply = snapshot(summoning_id, watermark, "web-anthropic")
@@ -749,13 +753,194 @@ async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
     return False
 
 
+def no_progress_producer_continue_owed(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str] | None = None,
+) -> bool:
+    """No-progress park whose linked producer has replied or gone terminal.
+
+    Mission-cap, crash-cap, and admit-retry parks are not this predicate.
+    A hop with no nest and no harvest id stays parked (true no-progress loop).
+    """
+    status = str(row.get("status") or "")
+    if status not in ("completed", "failed", "cancelled"):
+        return False
+    tokens = closeout_tokens or _closeout_tokens_from_row(row)
+    if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
+        return False
+    rec = _record_data(row)
+    if rec.get("hop_parked") is not True:
+        return False
+    if str(rec.get("hop_park_reason") or "") != _PARK_REASON_NO_PROGRESS_CAP:
+        return False
+    if rec.get(_NO_PROGRESS_PRODUCER_CONTINUED_KEY):
+        return False
+    from services.git_integration_worker.cursor_sdk_park import _successor_admitted
+
+    dispatch_id = str(row.get("dispatch_id") or "")
+    record_json = str(row.get("record_json") or "")
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        if _successor_admitted(
+            conn, predecessor_id=dispatch_id, record_json=record_json
+        ):
+            return False
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        linked_producer_disposition,
+        live_conductor_row_on_thread,
+        mission_open_for_row,
+    )
+
+    thread_id = str(row.get("thread_id") or "")
+    if thread_id and live_conductor_row_on_thread(
+        thread_id=thread_id, exclude_dispatch_id=dispatch_id
+    ):
+        return False
+    if not mission_open_for_row(row, closeout_tokens=tokens):
+        return False
+    return linked_producer_disposition(row) == "ready"
+
+
+def _stamp_reply_deferral_when_harvest_live(row: dict[str, Any]) -> dict[str, Any]:
+    """Stamp ``next_admit_blocked`` so a live harvest with a reply can lift.
+
+    The reactor refuses the lift until the deferral exists. A no-progress
+    park returns before that stamp, so the continue path writes it itself
+    when the id is still live and the reply is what made the producer ready.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        HOP_DEFERRAL_GATE_KEY,
+        SKIP_GATE_NEXT_ADMIT_BLOCKED,
+        _harvest_target_token,
+        _load_row,
+        _named_target_is_terminal,
+        _next_admit_guard_text,
+        _record_data,
+    )
+
+    rec = _record_data(row)
+    token = _harvest_target_token(_next_admit_guard_text(row, rec))
+    if token is None:
+        return row
+    absent = str(rec.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
+    if absent or _named_target_is_terminal(token, absent_counts_terminal=absent):
+        return row
+    dispatch_id = str(row.get("dispatch_id") or "")
+    if not dispatch_id:
+        return row
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={HOP_DEFERRAL_GATE_KEY: SKIP_GATE_NEXT_ADMIT_BLOCKED},
+    )
+    return _load_row(dispatch_id) or row
+
+
+async def fire_no_progress_producer_continue(row: dict[str, Any]) -> bool:
+    """Release one no-progress park and admit a harvest successor. No re-fire."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        build_hop_team_dispatch_body,
+        post_conductor_hop_team_dispatch,
+    )
+    from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+        HOP_PARK_RELEASED_AT_KEY,
+    )
+    from services.git_integration_worker.cursor_sdk_hop_events import (
+        emit_frontier_sdk_conductor_hop_admit_failed,
+        emit_frontier_sdk_conductor_hop_admitted,
+        emit_frontier_sdk_conductor_hop_park_released,
+    )
+    from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
+
+    row = _stamp_reply_deferral_when_harvest_live(row)
+    dispatch_id = str(row.get("dispatch_id") or "")
+    thread_id = str(row.get("thread_id") or "")
+    body = build_hop_team_dispatch_body(
+        row, hop_reason_override=HOP_REASON_PRODUCER_HARVEST
+    )
+    if body is None:
+        return False
+    hop_seq = int(body.get("hop_seq") or 1)
+    ok, detail = await post_conductor_hop_team_dispatch(body)
+    record_json = str(row.get("record_json") or "")
+    if ok:
+        successor = str(detail.get("dispatch_id") or "") or str(
+            detail.get("execution_id") or ""
+        )
+        if not successor:
+            logger.warning(
+                "no-progress producer continue admit ok but no successor id "
+                "dispatch_id=%s detail=%s",
+                dispatch_id,
+                detail,
+            )
+            return False
+        merged = merge_hop_patch(record_json, {"hop_successor": successor})
+        try:
+            data = json.loads(merged) if merged else {}
+        except json.JSONDecodeError:
+            data = {}
+        if isinstance(data, dict):
+            released_at = time.time()
+            data[_NO_PROGRESS_PRODUCER_CONTINUED_KEY] = released_at
+            data[HOP_PARK_RELEASED_AT_KEY] = released_at
+            merged = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        ledger = CursorDispatchLedger.instance()
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                (merged, dispatch_id),
+            )
+        emit_frontier_sdk_conductor_hop_park_released(
+            parked_dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=str(row.get("work_key") or "") or None,
+            caller_agent="conductor-hop",
+        )
+        emit_frontier_sdk_conductor_hop_admitted(
+            predecessor_dispatch_id=dispatch_id,
+            successor_dispatch_id=successor,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            hop_reason=HOP_REASON_PRODUCER_HARVEST,
+        )
+        return True
+    error_text = json.dumps(detail, sort_keys=True)[:500]
+    merged = merge_hop_patch(
+        record_json,
+        {
+            "hop_admit_error": {
+                "error": error_text,
+                "status_code": detail.get("status_code"),
+            }
+        },
+    )
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+            (merged, dispatch_id),
+        )
+    emit_frontier_sdk_conductor_hop_admit_failed(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        hop_seq=hop_seq,
+        hop_reason=HOP_REASON_PRODUCER_HARVEST,
+        error=error_text,
+        status_code=detail.get("status_code"),
+    )
+    return False
+
+
 __all__ = [
     "build_park_harvest_arm_recipe",
     "consult_pending_continue_owed",
     "fire_consult_pending_continue",
     "fire_park_harvest",
+    "fire_no_progress_producer_continue",
     "fire_park_harvest_continue",
     "maybe_fire_conductor_park_harvest",
+    "no_progress_producer_continue_owed",
     "park_harvest_continue_owed",
     "park_harvest_owed",
     "reply_arrived_on_thread",

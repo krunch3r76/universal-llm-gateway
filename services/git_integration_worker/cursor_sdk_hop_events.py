@@ -24,6 +24,7 @@ _HOP_REASONS = frozenset(
         "watchdog",
         "park_harvest",
         "cdp_probe_indeterminate",
+        "producer_harvest",
     }
 )
 

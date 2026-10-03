@@ -118,6 +118,7 @@ class CursorDispatchRequest(BaseModel):
             "watchdog",
             "park_harvest",
             "cdp_probe_indeterminate",
+            "producer_harvest",
         ]
         | None
     ) = None
