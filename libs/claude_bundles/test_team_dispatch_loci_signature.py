@@ -116,35 +116,45 @@ def test_mcp_teaching_surfaces_omit_job_call_syntax() -> None:
     )
 
 
-# a:37410 — skill bodies that teach team_dispatch. Whole-file ``job=`` is the
-# wrong predicate here: those files still name Stargate body ``job``,
+# a:37410 — plugin surfaces that teach team_dispatch. Whole-file ``job=`` is
+# the wrong predicate: these files still name Stargate body ``job``,
 # ``cse_session`` ``job=``, and prompt-line ``job=delivery-review``. Call
 # syntax is a ``job`` keyword on a parsed ``team_dispatch(`` example.
-_SKILL_TEACHING_ROOT = _REPO / "cursor-plugins/ulg-ecosystem/skills"
-_KNOWN_SKILL_TEACHING = "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
+# Review 14729#2: skills/ alone leaves commands/*.md and rules/*.mdc green.
+_PLUGIN_ROOT = _REPO / "cursor-plugins/ulg-ecosystem"
+_TEACHING_WALKS = (
+    (_PLUGIN_ROOT / "skills", "*.md"),
+    (_PLUGIN_ROOT / "commands", "*.md"),
+    (_PLUGIN_ROOT / "rules", "*.mdc"),
+)
+_KNOWN_TEACHING = (
+    "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md",
+    "cursor-plugins/ulg-ecosystem/commands/conductor.md",
+    "cursor-plugins/ulg-ecosystem/rules/dispatch-kernel_ulg.mdc",
+)
 
 
-def _skill_team_dispatch_teaching_rels() -> list[str]:
+def _plugin_team_dispatch_teaching_rels() -> list[str]:
     rels: list[str] = []
-    for path in sorted(_SKILL_TEACHING_ROOT.rglob("*.md")):
-        if "team_dispatch(" not in path.read_text(encoding="utf-8"):
-            continue
-        rels.append(path.relative_to(_REPO).as_posix())
+    for base, pattern in _TEACHING_WALKS:
+        for path in sorted(base.rglob(pattern)):
+            if "team_dispatch(" not in path.read_text(encoding="utf-8"):
+                continue
+            rels.append(path.relative_to(_REPO).as_posix())
     return rels
 
 
-def test_skill_teaching_surfaces_omit_job_call_syntax() -> None:
+def test_plugin_teaching_surfaces_omit_job_call_syntax() -> None:
     assert "job" in call_example_keywords("op=generate, job=freeform, lane=B")
     assert "job" not in call_example_keywords(
         'op=generate, contract=delivery-review, prompt="job=delivery-review\\n"'
     )
     assert call_bodies("session=ask, job=freeform\n") == []
 
-    rels = _skill_team_dispatch_teaching_rels()
-    assert rels, "no skill bodies teach team_dispatch("
-    assert _KNOWN_SKILL_TEACHING in rels, (
-        f"teaching walk missed {_KNOWN_SKILL_TEACHING}"
-    )
+    rels = _plugin_team_dispatch_teaching_rels()
+    assert rels, "no plugin surfaces teach team_dispatch("
+    for pinned in _KNOWN_TEACHING:
+        assert pinned in rels, f"teaching walk missed {pinned}"
     hits: list[str] = []
     for rel in rels:
         text = (_REPO / rel).read_text(encoding="utf-8")
@@ -153,7 +163,7 @@ def test_skill_teaching_surfaces_omit_job_call_syntax() -> None:
                 hits.append(rel)
                 break
     assert not hits, (
-        "skill bodies that teach team_dispatch still use job= call syntax: "
+        "plugin surfaces that teach team_dispatch still use job= call syntax: "
         + ", ".join(hits)
     )
 
