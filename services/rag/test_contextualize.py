@@ -24,7 +24,7 @@ def _pipeline_http_response(items: list[object]) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_contextualize_abandons_tail_after_success_threshold(
+async def test_contextualize_partial_pipeline_result_marks_null_iteration_failed(
     monkeypatch: Any,
 ) -> None:
     """Partial pipeline success: caller records failed chunks; no tail-abandon seam.
@@ -59,12 +59,12 @@ async def test_contextualize_abandons_tail_after_success_threshold(
     assert posted["json"]["model"] == "rag-contextualize"
     chunk_payloads = posted["json"]["pipeline_options"]["chunks"]
     assert len(chunk_payloads) == 3
-    assert "slow chunk" in chunk_payloads[2]["user_msg"]
+    assert "[TARGET CHUNK]\nslow chunk" in chunk_payloads[2]["user_msg"]
 
 
 @pytest.mark.asyncio
-async def test_contextualize_waits_until_success_threshold(monkeypatch: Any) -> None:
-    """Full pipeline success: all chunk iterations return context (threshold met)."""
+async def test_contextualize_full_pipeline_result_maps_contexts(monkeypatch: Any) -> None:
+    """Full pipeline success: all chunk iterations return context."""
     mock_post = AsyncMock(
         return_value=_pipeline_http_response(
             [
