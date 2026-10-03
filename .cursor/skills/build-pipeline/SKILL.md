@@ -5,6 +5,24 @@ description: "Build new Stargate pipelines or add versions — golden-path first
 
 # Build Pipeline
 
+<!-- pipeline-first -->
+**Trigger**
+New workflow: two or more ordered model, tool, or service calls.
+**Refuse**
+- A new MCP tool or the REST or service handler behind it.
+- A packet or DIRECTIVE naming an MCP tool. Raise in the review request.
+- A hide or archive flag. None exists; later `search_paths` override the same `pipeline.id`.
+**Steps**
+1. Land `pipelines/{domain}/vN/`. Kaywan reviews pipelines as self-contained units of workflow logic, and tool-plus-service code hides that workflow from review.
+   Falsifier: outside that directory.
+2. MCP only if the review names `[universal:mcp]` (thin relay, no business logic in the handler) or `pipeline` `model`=existing id (`services/mcp-server/tools/pipeline.py`).
+   Falsifier: any other reason.
+3. In the change moving callers, delete the old `vN/`; update every `pipeline_call_v1` `pipeline_id`, skill, config, and caller (`[universal:no-bc]`).
+   Falsifier: old `vN/`, stale id, or hide flag remains.
+**Falsifier**
+Tool or handler logic, unnamed exception, or a hide or archive claim.
+<!-- pipeline-first -->
+
 ## 1. Golden Path: First Pipeline in 10 Minutes
 
 Create a minimal 1-step pipeline that runs end-to-end. Only add complexity after this works.
