@@ -4277,6 +4277,19 @@ async def admit_cursor_dispatch(
             reason=str(exc.code),
         )
         return JSONResponse(status_code=422, content=exc.to_dict())
+    if req.resume_of:
+        # Friction 37401: child bridge ledger starts empty; copy parent's
+        # outstanding CDP fire rows so receive/await still see them. Idempotent
+        # so a cached replay after a crash between insert and copy still lands.
+        from services.git_integration_worker.cursor_sdk_generate_ledger_inherit import (
+            inherit_outstanding_generates,
+        )
+
+        inherit_outstanding_generates(
+            parent_id=req.resume_of,
+            child_id=req.dispatch_id,
+            admitted_via=req.admitted_via,
+        )
     if cached is not None:
         status_code = 202 if cached.status == "queued" else 200
         if cached.status == "queued":
