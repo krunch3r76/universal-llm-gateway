@@ -114,15 +114,20 @@ def ensure_land_lease_schema(conn: sqlite3.Connection) -> None:
         row[1] for row in conn.execute("PRAGMA table_info(cursor_sdk_land_leases)")
     }
     for name, decl in _LAND_LEASE_COLUMN_MIGRATIONS:
-        if cols and name not in cols:
+        if cols and name in cols:
+            continue
+        try:
             conn.execute(
                 f"ALTER TABLE cursor_sdk_land_leases ADD COLUMN {name} {decl}"
             )
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
 
 
 def _holder_pid_alive(pid: int | None) -> bool | None:
     """Return True/False when pid is checkable on this host, else None."""
-    if pid is None:
+    if pid is None or pid <= 0:
         return None
     try:
         os.kill(pid, 0)
@@ -157,12 +162,11 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
             )
             return True
         if row["holder_op_id"] == holder_op_id:
-            if row["holder_pid"] is None:
-                conn.execute(
-                    "UPDATE cursor_sdk_land_leases SET holder_pid=? "
-                    "WHERE lease_key=? AND holder_op_id=?",
-                    (os.getpid(), lease_key, holder_op_id),
-                )
+            conn.execute(
+                "UPDATE cursor_sdk_land_leases SET holder_pid=?, acquired_at=? "
+                "WHERE lease_key=? AND holder_op_id=?",
+                (os.getpid(), _now(), lease_key, holder_op_id),
+            )
             return True
         return False
 
@@ -228,7 +232,8 @@ def release_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
 def refresh_land_lease_heartbeat(*, lease_key: str, holder_op_id: str) -> bool:
     """Refresh ``acquired_at`` for holders without a recorded pid.
 
-    Callers that cannot record ``holder_pid`` must invoke this at least every
+    Legacy or rollback rows may lack ``holder_pid``; no current acquire path
+    needs this. Callers that cannot record a pid must invoke at least every
     :data:`_HEARTBEAT_INTERVAL_S` while the lease is held.
     """
     with _connect() as conn:
@@ -265,7 +270,8 @@ def reap_stale_land_leases(
     with _connect() as conn:
         ensure_land_lease_schema(conn)
         rows = conn.execute(
-            "SELECT lease_key, acquired_at, holder_pid FROM cursor_sdk_land_leases"
+            "SELECT lease_key, holder_op_id, acquired_at, holder_pid "
+            "FROM cursor_sdk_land_leases"
         ).fetchall()
         for row in rows:
             pid = row["holder_pid"]
@@ -281,11 +287,18 @@ def reap_stale_land_leases(
                     seen = 0.0
                 should_reap = seen < cutoff
             if should_reap:
-                conn.execute(
-                    "DELETE FROM cursor_sdk_land_leases WHERE lease_key=?",
-                    (row["lease_key"],),
+                deleted = conn.execute(
+                    "DELETE FROM cursor_sdk_land_leases "
+                    "WHERE lease_key=? AND holder_op_id=? "
+                    "AND acquired_at=? AND holder_pid IS ?",
+                    (
+                        row["lease_key"],
+                        row["holder_op_id"],
+                        row["acquired_at"],
+                        row["holder_pid"],
+                    ),
                 )
-                reaped += 1
+                reaped += deleted.rowcount
     if reaped:
         logger.warning("reaped %d stale master land lease(s)", reaped)
     return reaped
