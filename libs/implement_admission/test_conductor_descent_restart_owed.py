@@ -57,6 +57,26 @@ def test_two_level_nest_and_hop_successor() -> None:
     assert descends_from_conductor("", lookup) is False
 
 
+def test_restart_owed_implement_admission_includes_stargate() -> None:
+    """S1 a:37762: Stargate executes conductor_materialize in-process."""
+    text = restart_owed_line(["libs/implement_admission/conductor_materialize.py"])
+    assert text == "restart_owed: git_integration_worker, stargate"
+
+
+def test_restart_owed_stargate_service_tree_is_stargate_only() -> None:
+    """S2 a:37748: a stargate tree edit restarts stargate via path prefix."""
+    text = restart_owed_line(
+        ["services/universal-stargate/systems/frontier_consult/route.py"]
+    )
+    assert text == "restart_owed: stargate"
+
+
+def test_restart_owed_event_store_lib_is_event_service() -> None:
+    """S3: event_service runs python -m event_store; the lib is its job set."""
+    text = restart_owed_line(["libs/event_store/query_client.py"])
+    assert text == "restart_owed: event_service"
+
+
 def test_restart_owed_event_service_ignores_unrelated_docs() -> None:
     text = restart_owed_line(
         [

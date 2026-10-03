@@ -99,6 +99,8 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     "event_service": ServiceOwnership(
         path_prefix="services/event-service/",
         owned_libs=frozenset({}),
+        serves_libs=frozenset({"event_store"}),
+        runtime_entrypoint="libs/event_store/__main__.py",
     ),
     "git_integration_worker": ServiceOwnership(
         path_prefix="services/git_integration_worker/",
@@ -333,6 +335,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_transport",
             }
         ),
+        serves_libs=frozenset({"implement_admission"}),
     ),
 }
 

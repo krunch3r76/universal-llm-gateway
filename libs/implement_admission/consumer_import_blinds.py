@@ -62,6 +62,7 @@ def measure_import_grammar_blinds(
         _tree_files,
         repo_root,
     )
+    from implement_admission.service_lib_ownership import service_ownership
 
     base_root = Path(root_str) if root_str else repo_root()
     service_dir = _service_dir(str(base_root), slug)
@@ -71,10 +72,22 @@ def measure_import_grammar_blinds(
     if not base.is_dir():
         return frozenset()
 
+    scan_files = list(_tree_files(base))
+    own = service_ownership().get(slug)
+    if own is not None and own.runtime_entrypoint:
+        ep = base_root / own.runtime_entrypoint
+        if ep.is_file() and ep.suffix == ".py":
+            scan_files.append(ep)
+        elif ep.is_dir():
+            scan_files.extend(_tree_files(ep))
     service_relative = 0
     from_import_name = 0
     dynamic = 0
-    for path in _tree_files(base):
+    seen_files: set[Path] = set()
+    for path in scan_files:
+        if path in seen_files:
+            continue
+        seen_files.add(path)
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
