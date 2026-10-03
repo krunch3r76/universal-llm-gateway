@@ -78,9 +78,11 @@ def render_payload(
         "## Current hub assertions (id · seeded_by · claim)",
     ]
     for row in assertions:
+        seeded = row.get("seeded_by") or "unattributed"
+        # Prior pipeline singletons are history, not this CLOSEOUT's evidence.
+        tag = "prior fold" if seeded == SEEDED_BY else seeded
         lines.append(
-            f"- [{row.get('id')}] ({row.get('seeded_by') or 'unattributed'}) "
-            f"{compact(row.get('claim') or '', _CLAIM_CAP)}"
+            f"- [{row.get('id')}] ({tag}) {compact(row.get('claim') or '', _CLAIM_CAP)}"
         )
     if not assertions:
         lines.append("- (none)")

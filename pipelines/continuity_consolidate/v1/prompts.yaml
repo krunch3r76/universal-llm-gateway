@@ -25,7 +25,9 @@ prompts:
         kind in [closed, decided, open, superseded, artifact].
         Each claim is one atomic, decontextualized sentence (readable with no other
         context, names the lane/turn it comes from, e.g. "Lane 10303#54 ..."), <= 240
-        chars. Only claims the CLOSEOUT text supports verbatim or by direct paraphrase.
+        chars. The claim sentence must reuse wording from the Trigger CLOSEOUT
+        body or the Tip CHECKPOINT residue. Do not paraphrase a hub assertion
+        into a claim.
         evidence_uris: only URIs / bus refs that literally appear in the payload.
       - "relationships": objects {"target_entity_id","type","evidence"}.
         target_entity_id MUST be an entity id that appears verbatim in the payload
@@ -40,5 +42,10 @@ prompts:
 
       Rules: no prose outside the JSON; no markdown fences; no speculation; when in
       doubt leave a list empty. Do not restate the whole CLOSEOUT — fold it.
+      Current hub assertions are prior graph state. Do not copy them into
+      mission, resume, or claims. Mission text, each resume field, and each
+      claim must reuse wording from the Trigger CLOSEOUT body or the Tip
+      CHECKPOINT residue. An empty mission or resume is correct when that
+      wording is not there.
     template: |
       {payload}
