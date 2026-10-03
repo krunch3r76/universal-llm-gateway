@@ -53,20 +53,25 @@ def slugs_from_card_labels(labels: list[str]) -> set[str]:
 
 
 async def yours_created_slugs(page: Page) -> set[str] | None:
-    """Slugs under Created by you, or None when that section is not in the DOM.
+    """Slugs under Created by you, or None only when the Yours radio is absent.
 
     None lets the caller fall back to the legacy HTML table. An empty set
-    means the section is present and lists no user skills.
+    means the section is present and lists no user skills. Once Yours is
+    selected, a missing section raises: the table fallback would report
+    ``on_ui=0`` on a page that has no table.
     """
     state = await page.evaluate(_SELECT_YOURS_JS)
+    if state == "absent":
+        return None
+    if state not in {"clicked", "checked"}:
+        raise RuntimeError(f"unexpected Yours radio state: {state!r}")
     if state == "clicked":
-        try:
-            await page.get_by_role("heading", name="Created by you").wait_for(
-                state="visible", timeout=3_000
-            )
-        except Exception:
-            return None
+        await page.get_by_role("heading", name="Created by you").wait_for(
+            state="visible", timeout=3_000
+        )
     labels = await page.evaluate(_CARD_LABELS_JS)
     if labels is None:
-        return None
+        raise RuntimeError(
+            "Yours is selected but the Created by you section is missing"
+        )
     return slugs_from_card_labels(labels)
