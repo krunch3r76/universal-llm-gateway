@@ -317,6 +317,11 @@ def _format_report(all_issues: list[Issue]) -> str:
     return "\n".join(lines)
 
 
+def _is_editor_lock(path: Path) -> bool:
+    """Editor lock stubs (``.lock.<module>.py``) are not production modules."""
+    return path.name.startswith(".lock.")
+
+
 def _scan_cmd(args: argparse.Namespace) -> None:
     target = Path(args.directory)
     if not target.is_dir():
@@ -326,7 +331,7 @@ def _scan_cmd(args: argparse.Namespace) -> None:
     skip = {"__pycache__", ".venv", "node_modules"}
     issues: list[Issue] = []
     for py in sorted(target.rglob("*.py")):
-        if any(part in skip for part in py.parts):
+        if any(part in skip for part in py.parts) or _is_editor_lock(py):
             continue
         issues.extend(_check_file(py))
 

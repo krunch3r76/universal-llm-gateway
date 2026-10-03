@@ -115,7 +115,13 @@ def _covered_scopes(request: HintRebuildRequest) -> set[str] | None:
 
 
 class HintRebuildGate:
-    """Serialize rebuilds for one database path."""
+    """Hold one corpus-hint rebuild per metadata database and collapse waiters.
+
+    ``gate_for`` creates the instance and keeps it for the process lifetime.
+    ``run`` is the entry: the first caller executes the worker, later callers
+    set the dirty flag and wait, and a cancelled runner leaves the pending
+    union for a waiter instead of publishing the cancellation.
+    """
 
     def __init__(self) -> None:
         self._cond: asyncio.Condition | None = None
@@ -307,7 +313,11 @@ class HintRebuildGate:
 
 
 def gate_for(db_path: Path) -> HintRebuildGate:
-    """Return the process-wide gate for this metadata database."""
+    """Return the process-wide gate for this metadata database, creating it on first use.
+
+    The same path always receives the same ``HintRebuildGate``. Tests clear
+    that map through ``reset_hint_rebuild_gates``.
+    """
     key = str(db_path)
     gate = _gates.get(key)
     if gate is None:
