@@ -15,6 +15,7 @@ from systems.pipeline.core.step_controls import (  # noqa: E402
 )
 
 from tools import _rag_search_exec  # noqa: E402
+from tools.rag import register_rag_tools  # noqa: E402
 
 _OK = {
     "choices": [{"message": {"content": "[Source: x]\nbody"}}],
@@ -102,6 +103,81 @@ def test_hyde_and_rerank_flags_reach_rag_context_call(monkeypatch) -> None:
     assert "generate_hyde" not in captured["pipeline_options"].get(
         "step_overrides", {}
     )
+
+
+class _RagToolRecorder:
+    """Capture rag_search from register_rag_tools without running MCP."""
+
+    def __init__(self) -> None:
+        self.functions: dict = {}
+
+    def tool(self, **_kwargs):
+        def decorator(fn):
+            self.functions[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+
+def _registered_rag_search():
+    recorder = _RagToolRecorder()
+    register_rag_tools(recorder)  # type: ignore[arg-type]
+    return recorder.functions["rag_search"]
+
+
+def test_rag_search_mapped_hit_rejects_step_overrides(monkeypatch) -> None:
+    attach_calls = {"n": 0}
+    resolve_calls = {"n": 0}
+
+    def fake_resolve(*_args, **_kwargs):
+        resolve_calls["n"] += 1
+        return {"status": "ok", "pipeline": "rag-context", "context": "pack"}
+
+    def fake_attach(_search_id: str):
+        attach_calls["n"] += 1
+        return {"status": "ok", "attached": True}
+
+    monkeypatch.setattr("tools.rag.resolve_mapped_pack", fake_resolve)
+    monkeypatch.setattr("tools.rag._attach_rag_search", fake_attach)
+
+    rag_search = _registered_rag_search()
+    out = rag_search(
+        query="good cause late filing reinstatement plea grounds ordinary care board member human reader short form",
+        scope="legal_writing_samples",
+        mapped=True,
+        step_overrides={"rerank": {"enabled": False}},
+    )
+
+    assert out == {"error": RAG_CONTEXT_STEP_CONTROLS_ERROR}
+    assert resolve_calls["n"] == 0
+    assert attach_calls["n"] == 0
+
+
+def test_rag_search_search_id_rejects_skip_steps(monkeypatch) -> None:
+    attach_calls = {"n": 0}
+    resolve_calls = {"n": 0}
+
+    def fake_resolve(*_args, **_kwargs):
+        resolve_calls["n"] += 1
+        return {"status": "ok", "context": "pack"}
+
+    def fake_attach(_search_id: str):
+        attach_calls["n"] += 1
+        return {"status": "ok", "attached": True}
+
+    monkeypatch.setattr("tools.rag.resolve_mapped_pack", fake_resolve)
+    monkeypatch.setattr("tools.rag._attach_rag_search", fake_attach)
+
+    rag_search = _registered_rag_search()
+    out = rag_search(
+        query="ignored on poll",
+        search_id="rs-test-poll",
+        skip_steps=["rerank"],
+    )
+
+    assert out == {"error": RAG_CONTEXT_STEP_CONTROLS_ERROR}
+    assert attach_calls["n"] == 0
+    assert resolve_calls["n"] == 0
 
 
 def test_step_overrides_do_not_call_pipeline(monkeypatch) -> None:

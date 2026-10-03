@@ -71,6 +71,18 @@ def rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, An
     return _rag_post_http(STARGATE_URL, path, body, timeout=timeout)
 
 
+def _rag_context_step_controls_blocked(
+    step_overrides: dict[str, Any] | None,
+    skip_steps: list[str] | None,
+) -> dict[str, Any] | None:
+    """Reject step controls on early-return paths that bypass rag-context finalize."""
+    if step_overrides or skip_steps:
+        from systems.pipeline.core.step_controls import RAG_CONTEXT_STEP_CONTROLS_ERROR
+
+        return {"error": RAG_CONTEXT_STEP_CONTROLS_ERROR}
+    return None
+
+
 def _attach_rag_search(search_id: str) -> dict[str, Any]:
     """Serve a ``search_id`` poll: the finished envelope, ``in_flight`` again, or
     an ``error`` envelope when the handle was never issued or has expired."""
@@ -390,8 +402,18 @@ def register_rag_tools(mcp: FastMCP) -> None:
             On error:   {"error": "<message>", "search_id"?} (+ ``scope_note`` when unscoped)
         """
         if search_id:
+            step_controls_error = _rag_context_step_controls_blocked(
+                step_overrides, skip_steps
+            )
+            if step_controls_error:
+                return step_controls_error
             return _attach_rag_search(search_id)
         if mapped:
+            step_controls_error = _rag_context_step_controls_blocked(
+                step_overrides, skip_steps
+            )
+            if step_controls_error:
+                return step_controls_error
             hit = resolve_mapped_pack(query, scope)
             if hit is not None:
                 return hit
