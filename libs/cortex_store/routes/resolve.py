@@ -15,7 +15,7 @@ from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, query
-from ..file_lookup_refusal import FILE_LOOKUP_STATUS, file_lookup_refusal
+from ..file_lookup_refusal import raise_missing_or_file
 
 _resolve_logger = get_logger("cortex-api.resolve")
 
@@ -99,6 +99,9 @@ def resolve_cortex_uri(
 
     When *tag* is provided, resolve to the assertion pointed to by that tag
     instead of the latest non-superseded assertion.
+
+    An existing cortex file is refused only when the assertion or entity
+    lookup misses. Tag and revision misses stay 404: the row was found.
     """
     try:
         parsed = parse_cortex_uri(uri)
@@ -106,13 +109,6 @@ def resolve_cortex_uri(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
-
-    refusal = file_lookup_refusal(uri)
-    if refusal is not None:
-        raise HTTPException(
-            status_code=FILE_LOOKUP_STATUS,
-            detail=refusal,
         )
 
     with cortex_conn() as conn:
@@ -131,10 +127,7 @@ def resolve_cortex_uri(
                 (assertion_id,),
             )
             if not rows:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Assertion not found: {assertion_id}",
-                )
+                raise_missing_or_file(uri, f"Assertion not found: {assertion_id}")
             return {
                 "resolved": "assertion",
                 "uri": uri,
@@ -149,10 +142,7 @@ def resolve_cortex_uri(
             (entity_id,),
         )
         if not entity_rows:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Entity not found: {entity_id}",
-            )
+            raise_missing_or_file(uri, f"Entity not found: {entity_id}")
 
         result: dict = {
             "resolved": "entity",

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fastapi import HTTPException
 from implement_admission.closeout_helpers import cortex_files_root
 
 # 422 — wrong tool, not a missing entity. Literal avoids the deprecated
@@ -40,6 +41,18 @@ def file_lookup_refusal(ref: str, *, cortex_root: Path | None = None) -> str | N
         f"{raw!r} is a cortex file, not an entity id. "
         f'Read it with fs(op="read", path="{uri}").'
     )
+
+
+def raise_missing_or_file(ref: str, missing_detail: str) -> None:
+    """Raise 422 when *ref* is an existing cortex file, otherwise 404.
+
+    Call this only after the entity or assertion lookup misses. A refusal
+    before that lookup hides a row whose id rebuilds to the same file.
+    """
+    refusal = file_lookup_refusal(ref)
+    if refusal is not None:
+        raise HTTPException(FILE_LOOKUP_STATUS, refusal)
+    raise HTTPException(404, missing_detail)
 
 
 def _file_rel(raw: str) -> str | None:

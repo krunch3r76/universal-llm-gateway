@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from .db import query
-from .file_lookup_refusal import FILE_LOOKUP_STATUS, file_lookup_refusal
+from .file_lookup_refusal import raise_missing_or_file
 from .trait_vocabulary import NON_LIVE_LIFECYCLE as _NON_LIVE_LIFECYCLE
 
 _LIVE_LIFECYCLE_SQL = (
@@ -318,11 +318,9 @@ def resolve_entity_reference(
       2. exact merged tombstone → ``merged_into`` redirect
       3. alias lookup (when ``resolve_aliases``)
 
-    A cortex file URI is refused before any of those lookups.
+    An existing cortex file is refused only when those lookups miss, so a
+    row whose id rebuilds to that file is not shadowed.
     """
-    refusal = file_lookup_refusal(ref)
-    if refusal is not None:
-        raise HTTPException(FILE_LOOKUP_STATUS, refusal)
     rows = query(
         conn,
         "SELECT id, lifecycle, attributes FROM entities WHERE id = ?",
@@ -342,10 +340,7 @@ def resolve_entity_reference(
         return ResolvedEntityRef(entity_id=str(row["id"]))
 
     if raw_id or not resolve_aliases:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"{label.title()} entity not found: {ref}",
-        )
+        raise_missing_or_file(ref, f"{label.title()} entity not found: {ref}")
 
     alias_candidates = [ref]
     type_hint: str | None = None
@@ -373,10 +368,7 @@ def resolve_entity_reference(
             raise
         rows = []
     if not rows:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"{label.title()} entity not found: {ref}",
-        )
+        raise_missing_or_file(ref, f"{label.title()} entity not found: {ref}")
     entity_ids = {str(row["entity_id"]) for row in rows}
     if len(entity_ids) > 1:
         from .event_publisher import cortex_entity_alias_ambiguous

@@ -99,12 +99,33 @@ def test_empty_files_root_does_not_refuse(
     assert file_lookup_refusal(_URI) is None
 
 
-def test_resolve_entity_reference_refuses_before_lookup(
+def _memory_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+class _Conn:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._conn
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+def test_resolve_entity_reference_refuses_on_miss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """No row and an existing file is 422, which is the miss path, not a pre-check."""
     _note(tmp_path)
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    conn = sqlite3.connect(":memory:")
+    conn = _memory_conn()
+    conn.execute(
+        "CREATE TABLE entities (id TEXT PRIMARY KEY, lifecycle TEXT, attributes TEXT)"
+    )
     with pytest.raises(HTTPException) as exc:
         resolve_entity_reference(conn, _URI)
     assert exc.value.status_code == FILE_LOOKUP_STATUS
@@ -112,15 +133,58 @@ def test_resolve_entity_reference_refuses_before_lookup(
     conn.close()
 
 
-def test_resolve_uri_refuses_before_entity_query(
+def test_resolve_entity_reference_row_wins_over_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entity id that rebuilds to an existing file still returns the row."""
+    _note(tmp_path)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    entity_id = "notes:system/threads/example.md"
+    conn = _memory_conn()
+    conn.execute(
+        "CREATE TABLE entities (id TEXT PRIMARY KEY, lifecycle TEXT, attributes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO entities (id, lifecycle, attributes) VALUES (?, NULL, NULL)",
+        (entity_id,),
+    )
+    resolved = resolve_entity_reference(conn, entity_id)
+    assert resolved.entity_id == entity_id
+    conn.close()
+
+
+def test_resolve_uri_refuses_on_entity_miss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _note(tmp_path)
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    conn = _memory_conn()
+    conn.execute("CREATE TABLE entities (id TEXT PRIMARY KEY)")
+    monkeypatch.setattr("cortex_store.routes.resolve.cortex_conn", lambda: _Conn(conn))
     with pytest.raises(HTTPException) as exc:
         resolve_cortex_uri(uri=_URI)
     assert exc.value.status_code == FILE_LOOKUP_STATUS
     assert _READ in str(exc.value.detail)
+    conn.close()
+
+
+def test_resolve_uri_row_wins_over_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _note(tmp_path)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    entity_id = "notes:system/threads/example.md"
+    conn = _memory_conn()
+    conn.execute("CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT, name TEXT)")
+    conn.execute(
+        "INSERT INTO entities (id, type, name) VALUES (?, ?, ?)",
+        (entity_id, "notes", "example.md"),
+    )
+    monkeypatch.setattr("cortex_store.routes.resolve.cortex_conn", lambda: _Conn(conn))
+    result = resolve_cortex_uri(uri=_URI, tag=None)
+    assert result["resolved"] == "entity"
+    assert result["entity"]["id"] == entity_id
+    conn.close()
 
 
 def test_resolve_entity_whose_type_matches_a_files_folder(
@@ -137,14 +201,7 @@ def test_resolve_entity_whose_type_matches_a_files_folder(
         ("agent-bus:7182", "agent-bus", "7182"),
     )
 
-    class _Conn:
-        def __enter__(self) -> sqlite3.Connection:
-            return conn
-
-        def __exit__(self, *_exc: object) -> bool:
-            return False
-
-    monkeypatch.setattr("cortex_store.routes.resolve.cortex_conn", lambda: _Conn())
+    monkeypatch.setattr("cortex_store.routes.resolve.cortex_conn", lambda: _Conn(conn))
     result = resolve_cortex_uri(uri="cortex://agent-bus/7182", tag=None)
     assert result["resolved"] == "entity"
     assert result["entity"]["id"] == "agent-bus:7182"
