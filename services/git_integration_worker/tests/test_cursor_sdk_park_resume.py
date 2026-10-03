@@ -128,6 +128,7 @@ def _seed_parked(
     omit_sdk_agent_id: bool = False,
     with_store: bool = True,
     lease_key: str | None = None,
+    reason: str = "deploy",
 ) -> None:
     # Each parked mission owns its work_key: an open park row reserves it (D5.4b).
     work_key = work_key or f"{_WORK_KEY}-{dispatch_id}"
@@ -183,7 +184,7 @@ def _seed_parked(
         intent_id="intent-r",
         drain_epoch=5,
         actor="manage",
-        reason="deploy",
+        reason=reason,
         requested_at="x",
         method="run_cancel",
         tool_call_count=4,
@@ -285,6 +286,29 @@ async def test_same_process_park_is_not_auto_resumed(
     assert summary.admitted == []
     assert summary.refused == [("p-live", RESUME_REFUSAL_SAME_PROCESS)]
     assert park_projection(load_park_row(dispatch_id="p-live"))["state"] == "parked"
+
+
+@pytest.mark.asyncio
+async def test_density_harness_park_resumes_on_same_process(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """a:37450 — ignored-steer is not a restart; same-process refuse strands it."""
+    _seed_parked(
+        "p-density",
+        thread_id="14724",
+        tmp_path=tmp_path,
+        parked_offset_s=0,
+        reason="density-harness-ignored-steer",
+    )
+    started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    summary = await resume_parked_dispatches(
+        cfg=load_config(),
+        controller=_controller(started_at=started),
+        code_version="6e1cd6755",
+        bus=_bus(),
+    )
+    assert summary.refused == []
+    assert summary.admitted == [("p-density", "p-density-r1")]
 
 
 @pytest.mark.asyncio
@@ -583,7 +607,9 @@ def test_giw_park_resume_admit_leaves_stamp_to_mark_park_resumed(
         load_park_row(dispatch_id="p-giw"), attempt=1, code_version="v"
     )
     assert child.admitted_via == "giw_park_resume"
-    _admit_on_key(child, work_key=_WORK_KEY, caller_agent=child.caller_agent or "cursor")
+    _admit_on_key(
+        child, work_key=_WORK_KEY, caller_agent=child.caller_agent or "cursor"
+    )
     assert _row(child.dispatch_id) is not None
     assert _row(child.dispatch_id)["resume_of"] == "p-giw"
     assert _row("p-giw")["park_resumed_by"] is None

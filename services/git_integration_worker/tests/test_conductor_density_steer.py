@@ -282,6 +282,67 @@ def test_delivered_steer_plus_eight_tools_parks_once(
     assert len(parks) == 1
 
 
+def test_outstanding_cdp_generate_defers_ignored_steer_park(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """a:37450 — do not cancel a conductor that still owes a CDP harvest."""
+    from datetime import UTC, datetime
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="dens-cdp-open", execution_id="exec-cdp-open")
+    _admit_row(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch=density_harness_control_patch(
+            {
+                "density_steer_deposited": True,
+                "density_steer_delivered": True,
+                "density_steer_delivered_at_tool_count": 10,
+            }
+        ),
+    )
+    spool = tmp_path / "steer-spool"
+    spool.mkdir()
+    fired = {
+        "execution_id": "cdp-exec-1",
+        "thread_id": "14724",
+        "after_turn": 4,
+        "from_agent": "web-anthropic",
+        "model": "cdp/opus-5.5",
+        "fired_at": datetime.now(UTC).isoformat(),
+    }
+    ledger_path = spool / f"{req.dispatch_id}.cdp-generates.jsonl"
+    ledger_path.write_text(json.dumps(fired) + "\n", encoding="utf-8")
+    mock = MagicMock()
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_row_density_harness_meter.signal_park",
+        mock,
+    )
+    deferred = maybe_tick_density_harness_steer(
+        dispatch_id=req.dispatch_id, tool_call_count=30
+    )
+    assert deferred.get("parked") is not True
+    mock.assert_not_called()
+    with ledger_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "kind": "received",
+                    "execution_id": "cdp-exec-1",
+                    "tool": "wait",
+                    "received_at": datetime.now(UTC).isoformat(),
+                }
+            )
+            + "\n"
+        )
+    parked = maybe_tick_density_harness_steer(
+        dispatch_id=req.dispatch_id, tool_call_count=30
+    )
+    assert parked.get("parked") is True
+    mock.assert_called_once()
+    assert mock.call_args.kwargs["reason"] == "density-harness-ignored-steer"
+
+
 def test_terminal_before_plus_eight_no_park(monkeypatch: pytest.MonkeyPatch) -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req()

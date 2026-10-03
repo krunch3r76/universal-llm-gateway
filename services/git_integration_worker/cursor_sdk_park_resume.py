@@ -64,6 +64,13 @@ RESUME_REFUSAL_SAME_PROCESS = "same_process"
 # Boot stamps this reason when rewiring unparked running orphans; same-process
 # refuse must not apply — park and worker start share this boot (cdp-ask parity).
 BOOT_REWIRE_REASON = "giw_boot_rewire"
+# Density ignored-steer is not a restart. Refusing until the next GIW boot
+# strands the conductor (and any CDP reply still unread) until the worktree
+# is gone (a:37450).
+DENSITY_HARNESS_IGNORED_STEER_REASON = "density-harness-ignored-steer"
+_SAME_PROCESS_RESUME_EXEMPT = frozenset(
+    {BOOT_REWIRE_REASON, DENSITY_HARNESS_IGNORED_STEER_REASON}
+)
 _SAME_PROCESS_SKIPPED: set[str] = set()
 
 _PREAMBLE_TEMPLATE = (
@@ -328,9 +335,9 @@ async def resume_parked_dispatches(
                 summary.expired.append(row.dispatch_id)
             continue
         if not process_started_after_park(controller.worker_started_at, row.parked_at):
-            # Boot-rewire parks are stamped on this process start; refuse would
-            # strand the lineage that startup_ledger_reconcile just prepared.
-            if row.park.get("reason") != BOOT_REWIRE_REASON:
+            # Boot-rewire parks share this boot. Density ignored-steer parks
+            # are not restarts — same-process refuse strands them (a:37450).
+            if row.park.get("reason") not in _SAME_PROCESS_RESUME_EXEMPT:
                 if row.dispatch_id not in _SAME_PROCESS_SKIPPED:
                     _SAME_PROCESS_SKIPPED.add(row.dispatch_id)
                     logger.info(
@@ -402,6 +409,7 @@ async def resume_parked_dispatches(
 __all__ = [
     "ADMITTED_VIA_PARK_RESUME",
     "BOOT_REWIRE_REASON",
+    "DENSITY_HARNESS_IGNORED_STEER_REASON",
     "PARK_RESUME_PREAMBLE_VERSION",
     "RESUME_REFUSAL_SAME_PROCESS",
     "ParkResumeSummary",
