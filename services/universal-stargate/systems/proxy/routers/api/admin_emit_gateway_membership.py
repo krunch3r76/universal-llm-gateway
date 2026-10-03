@@ -22,4 +22,7 @@ async def emit_gateway_membership_admin(
     """Publish ``federation.gateway.membership`` before a supervised restart."""
     payload = membership_payload(proxy)
     await emit_gateway_membership(proxy)
-    return JSONResponse(status_code=200, content={"signal": "federation.gateway.membership", **payload})
+    return JSONResponse(
+        status_code=200,
+        content={"signal": "federation.gateway.membership", **payload},
+    )

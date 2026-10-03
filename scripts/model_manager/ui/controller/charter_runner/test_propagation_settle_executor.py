@@ -129,7 +129,7 @@ async def test_revert_op_uses_gate_cas_and_rev_parse_head(monkeypatch: pytest.Mo
     """Item 6: revert_op runs gate + CAS and reads SHA from rev-parse HEAD."""
     import subprocess
 
-    from git_integrate import git_cas, revert as revert_mod
+    from git_integrate import revert as revert_mod
     from git_integrate.revert import revert_op
     from git_integrate.schema import CasResult
 
