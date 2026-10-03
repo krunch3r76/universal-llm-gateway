@@ -92,7 +92,12 @@ def do_prepare_execution(
     if pipeline.fragments:
         executor.fragment_loader.register_inline_fragments(pipeline.fragments)
 
+    runtime_options = extract_runtime_options(context, pipeline)
+
     steps = expand_steps(executor, pipeline.steps)
+    from ..step_controls import apply_request_step_controls
+
+    steps = apply_request_step_controls(pipeline, steps, runtime_options)
 
     dag_builder = DAGBuilder(steps)
     nodes = dag_builder.build()
@@ -103,8 +108,6 @@ def do_prepare_execution(
         f"Pipeline '{pipeline.id}' DAG: {len(nodes)} nodes, "
         f"{ready_count} ready for parallel execution"
     )
-
-    runtime_options = extract_runtime_options(context, pipeline)
 
     if pipeline.id == "rag-context" and "corpus_hints" not in runtime_options:
         try:
