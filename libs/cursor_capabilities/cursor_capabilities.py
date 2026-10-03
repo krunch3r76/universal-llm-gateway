@@ -163,6 +163,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": "false",
         },
         instruction_profile="reasoner",
+        # Live ListModels probe 2026-10-03.
+        probed_at="2026-10-03",
     ),
     # Opus 5.5 (Anthropic 2026-09-22, API id claude-opus-5-5). Same Cursor
     # knob surface as claude-opus-5 until a ListModels probe diverges.
@@ -260,6 +262,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "effort": "high",
         },
         instruction_profile="reasoner",
+        # Live ListModels probe 2026-10-03.
+        probed_at="2026-10-03",
     ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
     # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route
