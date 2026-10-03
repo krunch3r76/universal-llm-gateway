@@ -98,11 +98,14 @@ class PipelineRegistry:
         again after it. The snapshot is persisted under the before-walk values
         only when both pairs still match, so a file written during the walk
         is not masked by a snapshot of the incomplete build. A process restart
-        reuses the last build if the YAML fingerprint and the availability
-        decisions from that build still hold. This does not guarantee (b)
-        handler code identity, where ``validate()`` can change without a name
-        change, or (c) ``pipeline_ref`` sub-pipeline files missing from the
-        fingerprint. ``last_load_was_full`` is True only for the YAML walk.
+        reuses the last build if the definition fingerprint and the availability
+        decisions from that build still hold. The definition fingerprint covers
+        (b) handler code identity, so a ``validate()`` body change is visible
+        without a step_type rename, and (c) sub-pipeline files the walk opens
+        via ``pipeline_ref``, including paths outside the search-path
+        ``*.yaml`` rglob. A byte-identical restore after a mid-walk edit still
+        matches the before-walk fingerprints (low, accepted).
+        ``last_load_was_full`` is True only for the YAML walk.
 
         Pre: search_paths ≠ ∅
         Post: pipelines ∪ models ∪ prompts loaded ∧ validated

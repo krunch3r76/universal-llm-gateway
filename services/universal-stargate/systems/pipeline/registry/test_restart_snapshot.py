@@ -317,3 +317,77 @@ def test_availability_only_snapshot_entry_is_not_reused(
         assert "pipe-p" in registry.pipelines
     finally:
         _unregister_probe()
+
+
+_PARENT_WITH_YML_REF = """
+schema_version: 6
+id: parent-pipe
+version: "1.0"
+type: ok_domain
+output: author
+steps:
+  - name: author
+    type: generate
+    model_ref: ok
+    prompt_ref: ok_domain.dummy
+    pipeline_ref: ../../outside/child.yml
+"""
+
+_CHILD_YML = """
+id: child-pipe
+type: ok_domain
+inputs: []
+output: inner
+steps:
+  - name: inner
+    type: generate
+    model_ref: ok
+    prompt_ref: ok_domain.dummy
+"""
+
+
+def test_handler_validate_change_pays_full_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A validate() body change with the same step_type must not reuse the snapshot."""
+    from systems.pipeline.core.handlers.generate.handler import GenericGenerateHandler
+
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    builds = _count_walks(monkeypatch)
+
+    _start(root)
+    assert builds["n"] == 1
+
+    def _changed_validate(self: object, step: object) -> list[str]:
+        return ["fingerprint-validate-change"]
+
+    monkeypatch.setattr(GenericGenerateHandler, "validate", _changed_validate)
+    last = _start(root)
+
+    assert builds["n"] == 2
+    assert "ok-pipe" in last.pipelines or last._validation_errors
+
+
+def test_sub_pipeline_yml_edit_pays_full_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pipeline_ref .yml outside the *.yaml rglob must invalidate the snapshot."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    _write(root / "ok_domain" / "parent.yaml", _PARENT_WITH_YML_REF)
+    child = tmp_path / "outside" / "child.yml"
+    _write(child, _CHILD_YML)
+    builds = _count_walks(monkeypatch)
+
+    first = _start(root)
+    assert "parent-pipe" in first.pipelines
+    assert builds["n"] == 1
+
+    _write(child, _CHILD_YML.replace("child-pipe", "child-pipe-edited"))
+    second = _start(root)
+
+    assert builds["n"] == 2
+    assert "parent-pipe" in second.pipelines
