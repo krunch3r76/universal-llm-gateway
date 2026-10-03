@@ -113,18 +113,26 @@ def resolve_timeout(pipeline_id: str, explicit: float | None) -> float:
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
-    """POST a structured query to the event-service UDS endpoint."""
+    """Call the origin observability resource described by a legacy body."""
+    from event_store.query_client import list_members, query_member, query_sql
+
+    url = f"unix://{_QUERY_SOCKET}"
     try:
-        with make_sync_client(f"unix://{_QUERY_SOCKET}", timeout=10.0) as client:
-            resp = client.post("/v1/query", json=body)
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPError as exc:
-        logger.warning("Event service HTTP query failed: %s", exc)
-        return {"error": f"Event service HTTP query failed: {exc}"}
-    except ValueError as exc:
-        logger.warning("Event service query returned invalid JSON: %s", exc)
-        return {"error": f"Event service query returned invalid JSON: {exc}"}
+        kind = body.get("type")
+        if kind == "sql":
+            return query_sql(
+                str(body.get("sql") or ""),
+                params=body.get("params") or None,
+                limit=int(body.get("limit", 100)),
+                url=url,
+            )
+        if kind == "operations":
+            return list_members(url=url)
+        return query_member(
+            str(body.get("name") or ""),
+            body.get("params") or {},
+            url=url,
+        )
     except Exception as exc:
         logger.warning("Event service query failed: %s", exc)
         return {"error": f"Event service query failed: {exc}"}

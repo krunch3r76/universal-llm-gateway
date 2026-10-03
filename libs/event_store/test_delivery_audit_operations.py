@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
@@ -512,34 +511,17 @@ async def test_execute_operation_dispatches_delivery_audit_selfassess(
     )
 
 
-def test_mcp_events_allowlist_accepts_delivery_audit_operations() -> None:
-    from pathlib import Path
+def test_catalog_includes_delivery_audit_operations() -> None:
+    from event_store.operation_catalog import get_operation
 
-    events_path = (
-        Path(__file__).resolve().parents[2]
-        / "services"
-        / "mcp-server"
-        / "tools"
-        / "events.py"
-    )
-    tree = ast.parse(events_path.read_text(encoding="utf-8"))
-    valid_operations: set[str] | None = None
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "_VALID_OPERATIONS":
-                value = node.value
-                if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
-                    if value.func.id == "frozenset" and value.args:
-                        valid_operations = set(ast.literal_eval(value.args[0]))
-                break
-    assert isinstance(valid_operations, set)
-    assert "delivery-audit-parent" in valid_operations
-    assert "delivery-audit-artifacts" in valid_operations
-    assert "delivery-audit-token-rollup" in valid_operations
-    assert "delivery-audit-baseline-campaign" in valid_operations
-    assert "delivery-audit-selfassess" in valid_operations
+    for name in (
+        "delivery-audit-parent",
+        "delivery-audit-artifacts",
+        "delivery-audit-token-rollup",
+        "delivery-audit-baseline-campaign",
+        "delivery-audit-selfassess",
+    ):
+        assert get_operation(name) is not None
 
 
 def test_migrate_artifact_class_check_rebuilds_stale_table(

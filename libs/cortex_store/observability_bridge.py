@@ -64,14 +64,12 @@ def _parse_payload(raw: Any) -> dict[str, Any]:
 
 def query_event_service(operation: str, params: dict[str, Any]) -> dict[str, Any]:
     try:
-        with make_sync_client(_EVENTS_QUERY_URL, timeout=5.0) as client:
-            resp = client.post(
-                "/v1/query",
-                json={"type": "operation", "name": operation, "params": params},
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning("Event Service %s returned %d", operation, resp.status_code)
+        from event_store.query_client import query_member
+
+        result = query_member(operation, params, url=_EVENTS_QUERY_URL, timeout=5.0)
+        if result.get("status") in (None, 200) and "error" not in result:
+            return result
+        logger.warning("Event Service %s failed: %s", operation, result.get("error"))
     except Exception:
         logger.warning("Event Service unreachable for %s", operation, exc_info=True)
     return {}

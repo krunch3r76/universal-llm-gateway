@@ -1,4 +1,4 @@
-"""Shared client-side error envelopes for event-service /v1/query callers."""
+"""Shared client-side error envelopes for Event Service observability callers."""
 
 from __future__ import annotations
 

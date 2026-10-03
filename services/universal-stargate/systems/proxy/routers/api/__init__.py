@@ -2,12 +2,13 @@
 
 from fastapi import APIRouter
 
+from systems.continuity import continuity_router
+
 from .admin_active_work import router as admin_active_work_router
 from .admission_state import router as admission_state_router
+from .capabilities import router as capabilities_router
 from .gateways import router as gateways_router
 from .git import router as git_router
-from .triggers import router as triggers_router
-from systems.continuity import continuity_router
 from .model_availability_watch import router as model_availability_watch_router
 from .model_capacity import router as model_capacity_router
 from .model_status import router as model_status_router
@@ -23,6 +24,7 @@ from .rag_coverage import router as rag_coverage_router
 from .rag_scopes import router as rag_scopes_router
 from .report_model import router as report_model_router
 from .rerank import router as rerank_router
+from .triggers import router as triggers_router
 from .v1.cancel import router as cancel_router
 
 # Create main API v1 router
@@ -50,4 +52,5 @@ router.include_router(admission_state_router)
 router.include_router(model_capacity_router)
 router.include_router(git_router)
 router.include_router(triggers_router)
+router.include_router(capabilities_router)
 router.include_router(continuity_router)

@@ -34,7 +34,7 @@ EVENT_QUERY_SOCKET = Path(
     os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
 )
 EVENT_QUERY_URL = "http://localhost/v1/subscribe"
-EVENT_QUERY_API_URL = "http://localhost/v1/query"
+EVENT_QUERY_API_URL = "http://localhost/api/v1/observability/sql"
 WATCH_INTERVAL = 1.5  # seconds between event service availability checks
 WATCH_HEARTBEAT_SECONDS = 120.0
 WS_RETRY_BASE_SECONDS = 1.0
@@ -113,14 +113,15 @@ async def _iter_event_service_events(
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
-    """Synchronous HTTP POST to event service over UDS."""
-    import httpx
+    """Call the origin sql member over the query socket."""
+    from event_store.query_client import query_sql
 
-    transport = httpx.HTTPTransport(uds=str(EVENT_QUERY_SOCKET))
-    with httpx.Client(transport=transport, timeout=10.0) as client:
-        resp = client.post(EVENT_QUERY_API_URL, json=body)
-        resp.raise_for_status()
-        result = resp.json()
+    result = query_sql(
+        str(body.get("sql") or ""),
+        params=body.get("params") or None,
+        limit=int(body.get("limit", 100)),
+        url=f"unix://{EVENT_QUERY_SOCKET}",
+    )
     return result if isinstance(result, dict) else {}
 
 

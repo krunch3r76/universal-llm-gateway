@@ -72,25 +72,39 @@ def make_sync_client(
     url: str = DEFAULT_RAG_URL,
     *,
     timeout: float = 10.0,
+    follow_redirects: bool = False,
 ) -> httpx.Client:
     """Create a sync httpx client for UDS or TCP service URLs."""
     uds_path, base_url = parse_rag_url(url)
     if uds_path:
         transport = httpx.HTTPTransport(uds=uds_path)
-        return httpx.Client(transport=transport, base_url=base_url, timeout=timeout)
-    return httpx.Client(base_url=base_url, timeout=timeout)
+        return httpx.Client(
+            transport=transport,
+            base_url=base_url,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
+        )
+    return httpx.Client(
+        base_url=base_url, timeout=timeout, follow_redirects=follow_redirects
+    )
 
 
 def make_async_client(
     url: str = DEFAULT_RAG_URL,
     *,
     timeout: float = 10.0,
+    follow_redirects: bool = False,
 ) -> httpx.AsyncClient:
     """Create an async httpx client for UDS or TCP service URLs."""
     uds_path, base_url = parse_rag_url(url)
     if uds_path:
         transport = httpx.AsyncHTTPTransport(uds=uds_path)
         return httpx.AsyncClient(
-            transport=transport, base_url=base_url, timeout=timeout
+            transport=transport,
+            base_url=base_url,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
         )
-    return httpx.AsyncClient(base_url=base_url, timeout=timeout)
+    return httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, follow_redirects=follow_redirects
+    )

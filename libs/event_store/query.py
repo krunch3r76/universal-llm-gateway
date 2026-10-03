@@ -1,10 +1,6 @@
-"""HTTP query handler - operations, structured filter, raw SQL.
+"""HTTP resource namespace for Event Service observability.
 
-Three-tier API:
-  1. Named operations (primary agent API) - discoverable, typed
-  2. Structured filter - safe ad-hoc queries
-  3. Raw SQL - restricted escape hatch for debugging
-
+GET /api/v1/observability and /api/v1/observability/<member>, plus POST sql.
 Served over UDS + optional TCP via FastAPI/uvicorn.
 """
 
@@ -22,8 +18,10 @@ from fastapi.responses import JSONResponse
 
 from .errors import EventStoreBusyError
 from .ingest import IngestServer
-from .operations import execute_operation, list_operations
-from .query_client_errors import ERROR_CLASS_LOCK_WAIT, lock_wait_body
+from .operation_admission import admit
+from .operation_catalog import get_operation, list_operations
+from .operations import execute_operation
+from .query_client_errors import ERROR_CLASS_LOCK_WAIT
 from .query_path_health import record_query_completed
 from .query_path_health import snapshot as query_path_snapshot
 from .store import EventStore
@@ -46,60 +44,57 @@ def create_query_router(
     """Build a FastAPI router with store/ingest injected via closure."""
     router = APIRouter()
 
-    @router.post("/v1/query")
-    async def query_handler(request: Request) -> JSONResponse:
-        try:
-            data: dict[str, Any] = await request.json()
-        except Exception:
-            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-        if not isinstance(data, dict):
-            return JSONResponse(
-                {"error": "Request body must be a JSON object"}, status_code=400
+    @router.get("/api/v1/observability")
+    async def list_members() -> JSONResponse:
+        members = []
+        for row in list_operations():
+            members.append(
+                {
+                    "name": row["name"],
+                    "description": row["description"],
+                    "params": row["params"],
+                    "returns": row["returns"],
+                    "method": row.get("method", "GET"),
+                }
             )
+        return JSONResponse({"category": "observability", "members": members})
 
-        query_type = data.get("type", "")
-        if not isinstance(query_type, str):
-            return JSONResponse(
-                {"error": "Field 'type' must be a string"}, status_code=400
+    @router.api_route(
+        "/api/v1/observability/{member}",
+        methods=["GET", "POST"],
+    )
+    async def member_handler(member: str, request: Request) -> JSONResponse:
+        names = {row["name"] for row in list_operations()}
+        if member not in names:
+            return _envelope(
+                404,
+                "UNKNOWN_MEMBER",
+                f"Unknown member: {member}",
+                data={"members": sorted(names)},
             )
-
-        if query_type == "operations":
-            return JSONResponse({"type": "operations", "operations": list_operations()})
-
-        if query_type == "operation":
-            name = data.get("name", "")
-            params = data.get("params", {})
-            if not isinstance(name, str) or not name.strip():
-                return JSONResponse(
-                    {"error": "Field 'name' must be a non-empty string"},
-                    status_code=400,
-                )
-            if not isinstance(params, dict):
-                return JSONResponse(
-                    {"error": "Field 'params' must be an object"},
-                    status_code=400,
-                )
-            started = time.perf_counter()
-            try:
-                result = await execute_operation(name, params, store)
-            finally:
-                _stamp_query_finished(started)
-            if result.get("error_class") == ERROR_CLASS_LOCK_WAIT:
-                return JSONResponse(result, status_code=503)
-            return JSONResponse({"type": "result", "operation": name, **result})
-
-        if query_type == "query":
-            return await _structured_query(data, store)
-
-        if query_type == "sql":
-            return await _raw_sql(data, store)
-
-        return JSONResponse(
-            {
-                "error": f"Unknown query type: {query_type}. Use: operations, operation, query, sql"
-            },
-            status_code=400,
+        method = "POST" if member == "sql" else (
+            get_operation(member).method if get_operation(member) else "GET"
         )
+        if request.method != method:
+            return _envelope(
+                405,
+                "METHOD_NOT_ALLOWED",
+                f"{request.method} not allowed for {member}",
+                data={"allow": method},
+            )
+        if member == "sql":
+            return await _raw_sql(request, store)
+        raw = dict(request.query_params)
+        failure = admit(member, raw)
+        if failure is not None:
+            return JSONResponse(failure, status_code=400)
+        params = _coerce_admitted(member, raw)
+        started = time.perf_counter()
+        try:
+            result = await execute_operation(member, params, store)
+        finally:
+            _stamp_query_finished(started)
+        return _handler_response(member, result)
 
     @router.get("/health")
     async def health_handler() -> JSONResponse:
@@ -126,130 +121,116 @@ def create_query_router(
     return router
 
 
-async def _structured_query(data: dict[str, Any], store: EventStore) -> JSONResponse:
-    """Handle structured filter queries."""
-    filt = data.get("filter", {})
-    if not isinstance(filt, dict):
-        return JSONResponse(
-            {"error": "Field 'filter' must be an object"}, status_code=400
-        )
-    limit_raw = data.get("limit", 100)
-    if not isinstance(limit_raw, int):
-        return JSONResponse(
-            {"error": "Field 'limit' must be an integer"}, status_code=400
-        )
-    limit = min(limit_raw, _MAX_QUERY_ROWS)
-    since = data.get("since")
-    if since is not None and not isinstance(since, str):
-        return JSONResponse(
-            {"error": "Field 'since' must be an ISO-8601 string"},
-            status_code=400,
-        )
+def _envelope(
+    status: int,
+    code: str,
+    message: str,
+    *,
+    retryable: bool = False,
+    data: dict[str, Any] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        {
+            "code": code,
+            "message": message,
+            "source": "rpc",
+            "retryable": retryable,
+            "data": data or {},
+        },
+        status_code=status,
+    )
 
-    conditions: list[str] = []
-    params: list[Any] = []
 
-    if "signal" in filt:
-        pattern = filt["signal"]
-        if "*" in pattern:
-            conditions.append("signal LIKE ?")
-            params.append(pattern.replace("*", "%"))
+def _coerce_admitted(member: str, raw: dict[str, str]) -> dict[str, Any]:
+    op = get_operation(member)
+    declared = dict(op.params) if op else {}
+    out: dict[str, Any] = {}
+    for key, value in raw.items():
+        kind = declared.get(key, {}).get("type", "string")
+        if kind == "int":
+            out[key] = int(value, 10)
         else:
-            conditions.append("signal = ?")
-            params.append(pattern)
+            out[key] = value
+    return out
 
-    if "scope" in filt:
-        conditions.append("scope = ?")
-        params.append(filt["scope"])
 
-    if "role" in filt:
-        conditions.append("role = ?")
-        params.append(filt["role"])
+def _handler_response(member: str, result: dict[str, Any]) -> JSONResponse:
+    if result.get("error_class") == ERROR_CLASS_LOCK_WAIT:
+        return _envelope(
+            503,
+            "LOCK_WAIT",
+            str(result.get("error") or "Event store waited on a database lock."),
+            retryable=True,
+            data={"error_class": ERROR_CLASS_LOCK_WAIT},
+        )
+    if (
+        isinstance(result.get("error"), str)
+        and not result.get("error_type")
+        and not result.get("error_class")
+    ):
+        return _envelope(
+            422,
+            "OPERATION_REJECTED",
+            str(result["error"]),
+            data={"member": member},
+        )
+    if result.get("error_type"):
+        return _envelope(
+            500,
+            "OPERATION_FAILED",
+            str(result.get("error") or "Operation failed"),
+            data={"error_type": result["error_type"]},
+        )
+    return JSONResponse({"operation": member, **result})
 
-    if "source" in filt:
-        conditions.append("source = ?")
-        params.append(filt["source"])
 
-    if "request_id" in filt:
-        conditions.append("request_id = ?")
-        params.append(filt["request_id"])
-
-    if "execution_id" in filt:
-        conditions.append("execution_id = ?")
-        params.append(filt["execution_id"])
-
-    if since:
-        from .store import _ts_ms_from_iso
-
-        try:
-            params.append(_ts_ms_from_iso(since))
-            conditions.append("ts_unix_ms > ?")
-        except ValueError:
-            return JSONResponse(
-                {"error": "Invalid 'since' timestamp format. Expected ISO 8601."},
-                status_code=400,
-            )
-
-    where = " AND ".join(conditions) if conditions else "1=1"
-    sql = f"SELECT * FROM events WHERE {where} ORDER BY seq DESC LIMIT ?"
-    params.append(limit)
-
-    started = time.perf_counter()
+async def _raw_sql(request: Request, store: EventStore) -> JSONResponse:
+    """POST body ``{"sql", "params"?, "limit"?}``. SELECT/EXPLAIN only."""
     try:
-        try:
-            rows = await store.query(sql, tuple(params), limit=limit)
-        except EventStoreBusyError as e:
-            return JSONResponse(lock_wait_body(str(e)), status_code=503)
-        return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
-    finally:
-        _stamp_query_finished(started)
-
-
-async def _raw_sql(data: dict[str, Any], store: EventStore) -> JSONResponse:
-    """Handle raw SQL queries (restricted to SELECT/EXPLAIN).
-
-    Accepts optional ``params`` list for parameterized queries::
-
-        {"type": "sql", "sql": "SELECT ... WHERE execution_id = ?", "params": ["abc123"]}
-    """
-    sql = data.get("sql", "").strip()
+        data = await request.json()
+    except Exception:
+        return _envelope(400, "INVALID_PARAMS", "Invalid JSON", data={"member": "sql"})
+    if not isinstance(data, dict):
+        return _envelope(
+            400, "INVALID_PARAMS", "Request body must be an object", data={"member": "sql"}
+        )
+    failure = admit("sql", data)
+    if failure is not None:
+        return JSONResponse(failure, status_code=400)
+    sql = str(data.get("sql", "")).strip()
     if not sql:
-        return JSONResponse({"error": "Empty SQL"}, status_code=400)
-
+        return _envelope(400, "INVALID_PARAMS", "Empty SQL", data={"member": "sql"})
     upper = sql.upper().lstrip()
-    if not any(upper.startswith(p) for p in _ALLOWED_SQL_PREFIXES):
-        return JSONResponse(
-            {"error": "Only SELECT and EXPLAIN queries are allowed"},
-            status_code=403,
+    if not any(upper.startswith(prefix) for prefix in _ALLOWED_SQL_PREFIXES):
+        return _envelope(
+            403,
+            "SQL_FORBIDDEN",
+            "Only SELECT and EXPLAIN queries are allowed",
         )
-
     raw_params = data.get("params", [])
-    if not isinstance(raw_params, list):
-        return JSONResponse(
-            {"error": "Field 'params' must be a list of bind values"},
-            status_code=400,
-        )
-
-    limit = min(data.get("limit", 100), _MAX_QUERY_ROWS)
+    limit_raw = data.get("limit", 100)
+    limit = min(int(limit_raw), _MAX_QUERY_ROWS)
     started = time.perf_counter()
     try:
         try:
             rows = await store.query(
                 sql, tuple(raw_params), limit=limit, raise_on_error=True
             )
-        except EventStoreBusyError as e:
-            return JSONResponse(lock_wait_body(str(e)), status_code=503)
-        except sqlite3.Error as e:
-            # Surface malformed SQL (bad column, syntax error, etc.) as a 400
-            # instead of silently returning []. The escape hatch is only useful
-            # if failures are visible; silent-empty looks like "no data" and
-            # causes agents to chase ghosts. Columns of `events`: seq, event_id,
-            # signal, role, scope, ts_unix_ms, timestamp, source, request_id,
-            # execution_id, model_id, gateway_id, payload.
-            return JSONResponse(
-                {"error": f"SQL error: {e}", "sql": sql[:200]},
-                status_code=400,
+        except EventStoreBusyError as exc:
+            return _envelope(
+                503,
+                "LOCK_WAIT",
+                f"Event store waited on a database lock: {exc}",
+                retryable=True,
+                data={"error_class": ERROR_CLASS_LOCK_WAIT},
             )
-        return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})
+        except sqlite3.Error as exc:
+            return _envelope(
+                400,
+                "SQL_ERROR",
+                f"SQL error: {exc}",
+                data={"sql": sql[:200]},
+            )
+        return JSONResponse({"rows": rows, "count": len(rows)})
     finally:
         _stamp_query_finished(started)

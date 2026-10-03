@@ -1,4 +1,4 @@
-"""Regression tests for the /v1/query raw SQL path.
+"""Regression tests for the observability sql member.
 
 Thread 631 reported that `observability(raw_sql, ...)` with a typo'd column
 name (`ts` instead of `ts_unix_ms`) returned `{rows: [], count: 0}` rather
@@ -69,15 +69,13 @@ def client() -> TestClient:
 
 def test_raw_sql_valid_returns_rows(client: TestClient) -> None:
     resp = client.post(
-        "/v1/query",
+        "/api/v1/observability/sql",
         json={
-            "type": "sql",
             "sql": "SELECT signal, ts_unix_ms FROM events ORDER BY ts_unix_ms DESC",
         },
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["type"] == "result"
     assert body["count"] == 2
     assert body["rows"][0]["signal"] == "test.signal.two"
 
@@ -87,23 +85,22 @@ def test_raw_sql_bad_column_returns_400(client: TestClient) -> None:
     # this returned {rows: [], count: 0} silently. It MUST now be a 400 with
     # the sqlite error message so the caller can correct the query.
     resp = client.post(
-        "/v1/query",
+        "/api/v1/observability/sql",
         json={
-            "type": "sql",
             "sql": "SELECT seq, signal, ts FROM events ORDER BY ts DESC LIMIT 3",
         },
     )
     assert resp.status_code == 400
     body = resp.json()
-    assert "error" in body
-    assert "no such column" in body["error"].lower()
-    assert "ts" in body["error"]
+    assert body["code"] == "SQL_ERROR"
+    assert "no such column" in body["message"].lower()
+    assert "ts" in body["message"]
 
 
 def test_raw_sql_non_select_is_blocked(client: TestClient) -> None:
     resp = client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "DELETE FROM events"},
+        "/api/v1/observability/sql",
+        json={"sql": "DELETE FROM events"},
     )
     assert resp.status_code == 403
 
@@ -112,10 +109,9 @@ def test_structured_query_still_returns_rows(client: TestClient) -> None:
     # The lenient store.query() default must remain unchanged for named and
     # structured paths that rely on hard-coded SQL.
     resp = client.post(
-        "/v1/query",
-        json={"type": "query", "filter": {"signal": "test.signal.*"}},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT signal FROM events WHERE signal LIKE 'test.signal%'"},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["type"] == "result"
     assert body["count"] == 2

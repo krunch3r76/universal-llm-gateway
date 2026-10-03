@@ -24,7 +24,7 @@ def test_subscriber_overflow_warning_is_rate_limited(
 
     Fan-out runs on the event-loop thread. A log line per full subscriber
     per event dirties the log fast enough to stall that thread in writeback,
-    and /v1/query then misses its client timeout.
+    and the observability query then misses its client timeout.
     """
     clock = {"now": 1000.0}
     monkeypatch.setattr("event_store.ingest.time.monotonic", lambda: clock["now"])

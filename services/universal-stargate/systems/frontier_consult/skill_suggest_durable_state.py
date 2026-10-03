@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from transport_utils import EVENTS_QUERY_SOCK, make_sync_client
+from transport_utils import EVENTS_QUERY_SOCK
 
 TerminalSignal = Literal[
     "frontier.sdk.worker.completed",
@@ -71,13 +71,11 @@ def _parse_payload(raw: Any) -> dict[str, Any]:
 
 def query_event_service(operation: str, params: dict[str, Any]) -> dict[str, Any]:
     try:
-        with make_sync_client(_EVENTS_QUERY_URL, timeout=5.0) as client:
-            resp = client.post(
-                "/v1/query",
-                json={"type": "operation", "name": operation, "params": params},
-            )
-            if resp.status_code == 200:
-                return resp.json()
+        from event_store.query_client import query_member
+
+        result = query_member(operation, params, url=_EVENTS_QUERY_URL, timeout=5.0)
+        if "error" not in result:
+            return result
     except Exception:
         return {}
     return {}

@@ -139,31 +139,25 @@ def _relay_bus_tip(*, thread_id: str) -> dict[str, Any]:
 
 
 def _relay_event_query(arguments: dict[str, Any]) -> dict[str, Any]:
+    from event_store.query_client import list_members, query_member, query_sql
+
     operation = str(arguments.get("operation") or "").strip()
     if not operation:
         return {"error": "substrate_event_read requires operation"}
     params = arguments.get("params") or {}
-    if operation == "operations":
-        body: dict[str, Any] = {"type": "operations"}
-    elif operation == "raw_sql":
-        body = {
-            "type": "sql",
-            "sql": params.get("sql", ""),
-            "params": params.get("params", []),
-            "limit": params.get("limit", 100),
-        }
-    else:
-        body = {"type": "operation", "name": operation, "params": params}
     url = f"unix://{_EVENTS_QUERY_SOCK}"
-    try:
-        with make_sync_client(url, timeout=_QUERY_TIMEOUT) as client:
-            resp = client.post("/v1/query", json=body)
-            resp.raise_for_status()
-            payload = resp.json()
-    except FileNotFoundError:
-        return {"error": "Event service socket not found"}
-    except httpx.HTTPError as exc:
-        return {"error": f"Event service error: {exc}"}
+    if operation == "operations":
+        payload = list_members(url=url, timeout=_QUERY_TIMEOUT)
+    elif operation == "raw_sql":
+        payload = query_sql(
+            str(params.get("sql") or ""),
+            params=params.get("params") or None,
+            limit=int(params.get("limit", 100)),
+            url=url,
+            timeout=_QUERY_TIMEOUT,
+        )
+    else:
+        payload = query_member(operation, params, url=url, timeout=_QUERY_TIMEOUT)
     if not isinstance(payload, dict):
         return {"error": f"event service returned {type(payload).__name__}"}
     return payload

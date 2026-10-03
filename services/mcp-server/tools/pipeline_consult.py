@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
-from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -43,18 +42,16 @@ _QUERY_SOCKET = os.environ.get(
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
-    """POST to event service query endpoint over UDS."""
+    """Call the origin sql member over UDS."""
+    from event_store.query_client import query_sql
+
     try:
-        with make_sync_client(
-            f"unix://{_QUERY_SOCKET}",
-            timeout=10.0,
-        ) as client:
-            resp = client.post("/v1/query", json=body)
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.RequestError as e:
-        logger.error("Event service request failed: %s", e, exc_info=True)
-        return {"error": f"Event service request failed: {e}"}
+        return query_sql(
+            str(body.get("sql") or ""),
+            params=body.get("params") or None,
+            limit=int(body.get("limit", 100)),
+            url=f"unix://{_QUERY_SOCKET}",
+        )
     except Exception as e:
         logger.error("Event service query failed: %s", e, exc_info=True)
         return {"error": f"Event service query failed: {e}"}
