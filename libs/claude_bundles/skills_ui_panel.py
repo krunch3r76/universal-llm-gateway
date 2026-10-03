@@ -20,6 +20,7 @@ from claude_bundles.skills_ui_menu import (
     assert_add_menu_upload_ready,
     stability_guarded_add_click,
 )
+from claude_bundles.skills_ui_yours import yours_created_slugs
 
 SKILLS_URL = "https://claude.ai/customize/skills"
 DEFAULT_CDP_URL = os.environ.get("BROWSER_CDP_URL", "http://127.0.0.1:9222")
@@ -244,6 +245,10 @@ async def snapshot_slug_row(page: Page, slug: str) -> str | None:
 
 
 async def listed_skill_names(page: Page) -> set[str]:
+    """Slugs in the user library (Yours → Created by you), else the legacy table."""
+    yours = await yours_created_slugs(page)
+    if yours is not None:
+        return yours
     if not await _skills_table_has_slugs(page):
         return set()
     cells = page.locator("table tbody tr td:first-child")
@@ -310,9 +315,9 @@ async def _reopen_skills_from_hash(page: Page) -> None:
         page.get_by_role("button", name=_SKILLS_NAV),
         page.get_by_role("tab", name=_SKILLS_NAV),
         page.get_by_role("link", name=_SKILLS_NAV),
-        page.locator("a, button, [role='button'], [role='menuitem'], [role='tab']").filter(
-            has_text=_SKILLS_NAV
-        ),
+        page.locator(
+            "a, button, [role='button'], [role='menuitem'], [role='tab']"
+        ).filter(has_text=_SKILLS_NAV),
     ):
         btn = await _first_visible(skills)
         if btn:
@@ -590,6 +595,8 @@ async def prepare_session(cdp_url: str) -> None:
         await loop.run_in_executor(None, sys.stdin.readline)
         page = await open_skills_panel(page, context)
         existing = await listed_skill_names(page)
-        print(f"OK — tab {page.url} — {len(existing)} skill(s) in table", file=sys.stderr)
+        print(
+            f"OK — tab {page.url} — {len(existing)} skill(s) in table", file=sys.stderr
+        )
     finally:
         await pw.stop()

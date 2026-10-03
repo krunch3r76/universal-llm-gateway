@@ -61,21 +61,37 @@ async def _fresh_chat(ctx) -> Page:
 
 
 async def _click_chat_zip_card(page: Page, out: Path) -> Path:
-    """Click the in-chat skills-zip card and save the download."""
-    buttons = page.get_by_role("button")
+    """Click the in-chat skills-zip Download control and save the file.
+
+    The card's visible text is often just ``Download`` while the accessible
+    name is ``Download Claude skills``. A chat-title More options button
+    shares the title words and sits under the transcript, so a coordinate
+    click times out (``subtree intercepts pointer events``). Scope to
+    ``main`` and invoke ``HTMLElement.click`` so the row overlay does not
+    take the hit.
+    """
+    root = page.locator("main")
+    if not await root.count():
+        root = page.locator("body")
+    buttons = root.get_by_role("button")
     labels: list[str] = []
     count = await buttons.count()
     for i in range(count):
         text = ((await buttons.nth(i).inner_text()) or "").strip()
-        aria = (await buttons.nth(i).get_attribute("aria-label")) or ""
-        labels.append(text or aria)
+        aria = ((await buttons.nth(i).get_attribute("aria-label")) or "").strip()
+        if aria:
+            labels.append(aria)
+        elif text:
+            labels.append(text)
     chosen = pick_download_label(labels)
     if chosen:
-        btn = page.get_by_role("button", name=chosen)
-    else:
-        btn = page.get_by_role("button", name="Download Claude skills")
+        btn = root.get_by_role("button", name=chosen, exact=True)
         if not await btn.count():
-            btn = page.get_by_role("button", name="Download")
+            btn = root.get_by_role("button", name=chosen)
+    else:
+        btn = root.get_by_role("button", name="Download Claude skills", exact=True)
+        if not await btn.count():
+            btn = root.get_by_role("button", name="Download", exact=True)
     if not await btn.count():
         raise RuntimeError(
             "skills zip download control not found "
@@ -83,7 +99,7 @@ async def _click_chat_zip_card(page: Page, out: Path) -> Path:
         )
     out.parent.mkdir(parents=True, exist_ok=True)
     async with page.expect_download(timeout=60_000) as dl_info:
-        await btn.first.click()
+        await btn.first.evaluate("el => el.click()")
     download = await dl_info.value
     await download.save_as(str(out))
     return out

@@ -121,3 +121,14 @@ def test_pick_download_prefers_skills_card() -> None:
     )
     assert pick_download_label(["Download skills zip"]) == "Download skills zip"
     assert pick_download_label(["Copy", "Open"]) is None
+
+
+def test_pick_download_skips_chat_title_and_more_options() -> None:
+    """Chat title 'downloadable zip' is not the Download control (a:37442)."""
+    title = "Compress skills directory into downloadable zip"
+    more = "More options for Compress skills directory into downloadable zip"
+    assert pick_download_label([title, more, "Download", "Download Claude skills"]) == (
+        "Download Claude skills"
+    )
+    assert pick_download_label([title, more]) is None
+    assert pick_download_label([title, "Download"]) == "Download"
