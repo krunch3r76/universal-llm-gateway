@@ -5,7 +5,8 @@ This module owns the entire pipeline subsystem initialization:
 - Construction of PipelineRegistry with a live model-availability checker
 - Loading of user domain handlers from configured search paths
 - Creation of PipelineExecutor wired to the request executor
-- Async dispatch tracker (PipelineExecutionTracker) for /pipelines/dispatch
+- Async dispatch tracker (PipelineExecutionTracker) for
+  /api/v1/capabilities/{category}/{id}
 - Optional PipelineHotReload watcher
 - Subscription to GATEWAY_STATE_CHANGED, FEDERATION_GATEWAY_CATALOG_CHANGED,
   and FEDERATION_GATEWAY_REACHABILITY_RESTORED so pipelines re-gate when

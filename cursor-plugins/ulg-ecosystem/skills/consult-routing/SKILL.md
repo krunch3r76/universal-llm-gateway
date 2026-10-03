@@ -514,7 +514,7 @@ producer table. Not GIW. Not `import cursor_sdk`. Not a fourth git identity.
 
 | Producer | Happy path (L3) | Compound inference (L2) | Failure (O2′) | Judgment / self-correct (O1) |
 |---|---|---|---|---|
-| Fleet script / tick | SHA/JSON or thin HTTP | `pipeline` / `:9999/pipelines/dispatch` | `friction` over cortex UDS | POST `:9999/team/dispatch`; hub omit `workspace=` |
+| Fleet script / tick | SHA/JSON or thin HTTP | `pipeline` / `:9999/api/v1/capabilities/{category}/{id}` | `friction` over cortex UDS | POST `:9999/team/dispatch`; hub omit `workspace=` |
 | claudeburst / hydra netns | observe + SHA; Opus stub stays; `FORBIDDEN_BINDERS` | **not** from inside netns (no MCP; no pipeline trigger) | **host-side circle** files friction; evidence_uris → container artifact | Host or netns O1 via `GATEWAY_URL` IP (proven). Circle binds auto-live, not Composer |
 | `scripts.local` | Playwright / Graph / SHA-gate | `pipelines.local/` YAML (not personal Python into a new identity) | friction; `git_identity=personal` | hub Lane A or artifact-mediated; **never** `SATELLITES.txt` |
 

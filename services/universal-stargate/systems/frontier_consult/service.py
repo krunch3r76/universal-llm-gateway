@@ -425,7 +425,9 @@ def _inject_profile_for_generate(req: FrontierGenerateRequest) -> str | None:
 async def build_dispatch_body(
     req: FrontierGenerateRequest, event_publisher: EventPublisher | None = None
 ) -> dict[str, Any]:
-    """Apply role rules and shape dispatch JSON for ``/pipelines/dispatch``.
+    """Apply role rules and shape dispatch JSON.
+
+    Target route: ``/api/v1/capabilities/{category}/{id}``.
 
     Phase 5: ``req.role`` selects a ``role:{slug}`` execution contract loaded
     by ``hydrate_agent`` (which fetches the role: entity per the updated

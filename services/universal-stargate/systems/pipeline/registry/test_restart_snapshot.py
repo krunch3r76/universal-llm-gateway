@@ -30,6 +30,7 @@ schema_version: 6
 id: ok-pipe
 version: "1.0"
 type: ok_domain
+category: ok_domain
 output: author
 steps:
   - name: author
@@ -58,6 +59,7 @@ schema_version: 6
 id: pipe-p
 version: "1.0"
 type: ok_domain
+category: ok_domain
 output: author
 steps:
   - name: author
@@ -80,6 +82,10 @@ def _write(path: Path, text: str) -> None:
 def _write_tree(root: Path, *, template: str = "hello") -> None:
     prompts = _OK_PROMPTS.replace("hello", template)
     domain = root / "ok_domain"
+    _write(
+        root / "categories.yaml",
+        "categories:\n  ok_domain:\n    description: d\n",
+    )
     _write(domain / "ok-v1.yaml", _OK_YAML)
     _write(domain / "models.yaml", _OK_MODELS)
     _write(domain / "prompts.yaml", prompts)
@@ -255,6 +261,7 @@ schema_version: 6
 id: pipe-q
 version: "1.0"
 type: ok_domain
+category: ok_domain
 output: author
 steps:
   - name: author
@@ -327,6 +334,7 @@ schema_version: 6
 id: parent-pipe
 version: "1.0"
 type: ok_domain
+category: ok_domain
 output: author
 steps:
   - name: author
@@ -339,6 +347,7 @@ steps:
 _CHILD_YML = """
 id: child-pipe
 type: ok_domain
+category: ok_domain
 inputs: []
 output: inner
 steps:
@@ -467,3 +476,47 @@ def test_sub_pipeline_yml_edit_pays_full_build(
 
     assert builds["n"] == 2
     assert "parent-pipe" in second.pipelines
+
+
+_SKIP_CATEGORY_YAML = """
+schema_version: 6
+id: skipped-pipe
+version: "1.0"
+type: ok_domain
+category: not_in_vocab
+output: author
+steps:
+  - name: author
+    type: generate
+    model_ref: ok
+    prompt_ref: ok_domain.dummy
+"""
+
+
+def test_category_skip_stays_skipped_across_snapshot_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unknown category stays out of the catalog after a snapshot restore."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    _write(root / "ok_domain" / "skipped.yaml", _SKIP_CATEGORY_YAML)
+    builds = _count_walks(monkeypatch)
+
+    first = _start(root)
+    assert "ok-pipe" in first.pipelines
+    assert "skipped-pipe" not in first.pipelines
+    assert any(
+        row.get("pipeline_id") == "skipped-pipe"
+        and row.get("reason") == "unknown_category"
+        for row in first.catalog_skips
+    )
+
+    second = _start(root)
+    assert builds["n"] == 1
+    assert "skipped-pipe" not in second.pipelines
+    assert any(
+        row.get("pipeline_id") == "skipped-pipe"
+        and row.get("reason") == "unknown_category"
+        for row in second.catalog_skips
+    )

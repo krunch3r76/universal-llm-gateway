@@ -21,6 +21,7 @@ schema_version: 6
 id: ok-pipe
 version: "1.0"
 type: ok_domain
+category: ok_domain
 output: author
 steps:
   - name: author
@@ -55,6 +56,10 @@ def _write(path: Path, text: str) -> None:
 
 def _write_tree(root: Path) -> None:
     domain = root / "ok_domain"
+    _write(
+        root / "categories.yaml",
+        "categories:\n  ok_domain:\n    description: d\n",
+    )
     _write(domain / "ok-v1.yaml", _OK_YAML)
     _write(domain / "models.yaml", _OK_MODELS)
     _write(domain / "prompts.yaml", _OK_PROMPTS)
@@ -315,3 +320,37 @@ def test_revalidate_prior_does_not_append_catalog_skips(tmp_path: Path) -> None:
     registry.reload_pipelines()
     assert "ok-pipe" not in registry.pipelines
     assert all(row.get("alias") != "ok" for row in registry.catalog_skips)
+
+
+@pytest.mark.asyncio
+async def test_hot_reload_on_categories_yaml_edit(tmp_path: Path) -> None:
+    """A categories.yaml-only edit must reload; pipeline YAML stays untouched."""
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+    reloads: list[tuple[int, int]] = []
+    hot = PipelineHotReload(
+        registry=registry,
+        debounce_ms=80,
+        enabled=True,
+        on_reload_success=lambda old, new: reloads.append((old, new)),
+    )
+    assert await hot.start()
+    try:
+        await asyncio.sleep(0.2)
+        (root / "categories.yaml").write_text(
+            "categories:\n  other:\n    description: d\n",
+            encoding="utf-8",
+        )
+        await asyncio.sleep(0.5)
+        assert reloads
+        assert "ok-pipe" not in registry.pipelines
+        assert any(
+            row.get("pipeline_id") == "ok-pipe"
+            and row.get("reason") == "unknown_category"
+            for row in registry.catalog_skips
+        )
+    finally:
+        await hot.stop()

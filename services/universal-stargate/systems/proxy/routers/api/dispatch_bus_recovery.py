@@ -2,7 +2,7 @@
 
 When the in-memory tracker and sqlite journal both miss after a restart, the
 dispatch link row (and optional closeout turn on the thread) still holds enough
-signal to synthesize a recovered GET /pipelines/executions/{id} payload.
+signal to synthesize a recovered GET /api/v1/executions/{id} payload.
 
 B-middle: optional ``wait_seconds`` blocks on agent-bus wait for SDK closeout
 turns and attaches the closeout body to ``result``.
