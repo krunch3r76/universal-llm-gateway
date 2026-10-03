@@ -241,11 +241,17 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
 
 
 _TERMINAL_EXECUTION_STATES = frozenset({"finished", "failed", "aborted"})
-_HARVEST_ID_TOKEN_RE = re.compile(r"^[0-9a-fA-F-]{8,}$")
-# Anchored to the payload start so ``none — prior harvest <id>`` and
-# ``land after harvest <id>`` stay unrecognized (a:37748 review).
+# One harvest id, anchored at the payload start. A date (``2026-10-03``),
+# a second id, and ``none`` / ``land`` prose stay unrecognized.
 _HARVEST_NONE_RE = re.compile(r"(?i)none\b")
-_HARVEST_ID_IN_ADMIT_RE = re.compile(r"(?i)harvest\s+`?([0-9a-fA-F-]{8,})`?(?:\s.*)?\Z")
+_HARVEST_ID_COUNT_RE = re.compile(r"(?i)\bharvest\s+`?[0-9a-f]")
+_HARVEST_ID_IN_ADMIT_RE = re.compile(
+    r"(?i)^\W*harvest\s+`?"
+    r"(?P<id>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    r"|[0-9a-f]{12}-[0-9a-f]{8}"
+    r"|[0-9a-f]{8,32})"
+    r"`?(?![0-9a-z_-])"
+)
 
 
 def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
@@ -270,16 +276,12 @@ def _harvest_target_token(guard: str) -> str | None:
     stripped = admit.strip()
     if _HARVEST_NONE_RE.match(stripped):
         return None
+    if len(_HARVEST_ID_COUNT_RE.findall(stripped)) != 1:
+        return None
     match = _HARVEST_ID_IN_ADMIT_RE.match(stripped)
     if match is None:
         return None
-    token = match.group(1)
-    if not _HARVEST_ID_TOKEN_RE.fullmatch(token):
-        return None
-    hex_digits = sum(1 for ch in token if ch in "0123456789abcdefABCDEF")
-    if hex_digits < 8:
-        return None
-    return token
+    return match.group("id")
 
 
 def _inflight_db_path() -> Path:

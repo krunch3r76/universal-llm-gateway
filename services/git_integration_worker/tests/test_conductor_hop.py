@@ -1302,6 +1302,13 @@ def test_harvest_target_token_accepts_backticks_and_trailing_prose() -> None:
     assert _harvest_target_token(prior) is None
     assert _harvest_target_token(land) is None
     assert _harvest_target_token(notes) is None
+    dated = "NEXT_ADMIT: harvest 2026-10-03 results\nstop: ROW_HOP\n"
+    two = (
+        "NEXT_ADMIT: harvest 64b84918-f552-47a1-bf7e-ab634fcf9673 "
+        "and harvest 940600a3-fc7e-421c-bc63-5971620900bd\n"
+    )
+    assert _harvest_target_token(dated) is None
+    assert _harvest_target_token(two) is None
 
 
 @pytest.mark.asyncio

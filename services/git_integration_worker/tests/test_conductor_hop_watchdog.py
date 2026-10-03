@@ -967,6 +967,128 @@ async def test_no_progress_park_terminal_nest_admits_producer_harvest_once() -> 
 
 
 @pytest.mark.asyncio
+async def test_operator_released_no_progress_park_does_not_admit() -> None:
+    """A hop_park_release re-admit leaves no second producer_harvest."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-released"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+            "hop_park_released_at": 1.0,
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="nest-done-released",
+        nest_under=dispatch_id,
+        status="completed",
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-should-not"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        fired = await sweep_conductor_hop_watchdog(ledger)
+    assert fired == 0
+    post_mock.assert_not_called()
+    assert "hop_successor" not in _record(ledger, dispatch_id)
+
+
+@pytest.mark.asyncio
+async def test_second_open_crash_cap_blocks_producer_continue() -> None:
+    """Another open budget park in scope stays open and blocks the harvest."""
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        dispatch_id="crash-open",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={"closeout_stop_tokens": ["ROW_HOP"]},
+        terminal_at_offset_s=-200.0,
+        thread_id="9966",
+    )
+    dispatch_id = "pred-watchdog-with-crash"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    ledger.merge_record_json(
+        dispatch_id="crash-open",
+        patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_crash_cap",
+        },
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="nest-done-crash",
+        nest_under=dispatch_id,
+        status="completed",
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-should-not"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        fired = await sweep_conductor_hop_watchdog(ledger)
+    assert fired == 0
+    post_mock.assert_not_called()
+    crash = _record(ledger, "crash-open")
+    assert crash.get("hop_park_reason") == "hop_budget_crash_cap"
+    assert "hop_park_released_at" not in crash
+
+
+@pytest.mark.asyncio
+async def test_claimed_successor_backfill_does_not_post_again() -> None:
+    """A committed admit whose follow-up write was lost is recorded, not re-posted."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-backfill"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="succ-already-landed",
+        nest_under=dispatch_id,
+        status="completed",
+    )
+    assert ledger.claim_stop_service(dispatch_id, "succ-already-landed") is True
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-second"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        fired = await sweep_conductor_hop_watchdog(ledger)
+        again = await sweep_conductor_hop_watchdog(ledger)
+    assert fired == 1
+    assert again == 0
+    post_mock.assert_not_called()
+    record = _record(ledger, dispatch_id)
+    assert record.get("hop_successor") == "succ-already-landed"
+    assert isinstance(record.get("hop_no_progress_producer_continued_at"), (int, float))
+
+
+@pytest.mark.asyncio
 async def test_no_progress_park_in_flight_nest_stays_parked() -> None:
     ledger = CursorDispatchLedger.instance()
     dispatch_id = "pred-watchdog-1"
