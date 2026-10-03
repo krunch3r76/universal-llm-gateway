@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-_MISSION_CAP = "hop_budget_mission_cap"
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+    PARK_REASON_MISSION_CAP,
+)
 
 
 def arm_hop_park_release(body: dict[str, Any], work_key: str) -> bool:
@@ -37,7 +39,7 @@ def arm_hop_park_release(body: dict[str, Any], work_key: str) -> bool:
         )
         if not parks:
             return False
-        if any(p.reason != _MISSION_CAP for p in parks):
+        if any(p.reason != PARK_REASON_MISSION_CAP for p in parks):
             return False
     finally:
         conn.close()
