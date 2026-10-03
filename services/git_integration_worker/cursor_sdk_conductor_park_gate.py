@@ -15,10 +15,10 @@ from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
-    _PARK_REASON_MISSION_CAP,
     HOP_MISSION_CAP_RELEASE_BASELINE_KEY,
     HOP_PARK_REASON_KEY,
     HOP_PARKED_KEY,
+    PARK_REASON_MISSION_CAP,
     count_hop_attempts,
     list_mission_terminal_chain,
 )
@@ -320,6 +320,7 @@ def release_mission_parks(
         conn, work_key=work_key, thread_id=thread_id, kinds=frozenset({"budget"})
     )
     released: list[ParkState] = []
+    baseline_by_work_key: dict[str, int] = {}
     for p in parks:
         row = conn.execute(
             "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -329,9 +330,17 @@ def release_mission_parks(
             continue
         data = _record_dict(str(row["record_json"] or ""))
         data[HOP_PARK_RELEASED_AT_KEY] = time.time()
-        if p.reason == _PARK_REASON_MISSION_CAP and work_key:
-            chain = list_mission_terminal_chain(work_key=work_key)
-            data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] = count_hop_attempts(chain)
+        park_work_key = str(p.work_key or "").strip()
+        if p.reason == PARK_REASON_MISSION_CAP and park_work_key:
+            if park_work_key not in baseline_by_work_key:
+                chain = list_mission_terminal_chain(
+                    work_key=park_work_key,
+                    conn=conn,
+                )
+                baseline_by_work_key[park_work_key] = count_hop_attempts(chain)
+            data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] = baseline_by_work_key[
+                park_work_key
+            ]
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
             (

@@ -13,11 +13,11 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     _PARK_REASON_CRASH_CAP,
-    _PARK_REASON_MISSION_CAP,
     _PARK_REASON_NO_PROGRESS_CAP,
     HOP_MISSION_CAP_RELEASE_BASELINE_KEY,
     HOP_PARK_REASON_KEY,
     HOP_PARKED_KEY,
+    PARK_REASON_MISSION_CAP,
     HopBudgetConfig,
     count_hop_attempts,
     evaluate_hop_budget,
@@ -28,6 +28,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park impo
     build_parked_transport_body,
 )
 from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+    HOP_PARK_RELEASED_AT_KEY,
     release_mission_parks,
 )
 from services.git_integration_worker.models.cursor_api import (
@@ -208,7 +209,7 @@ def test_mission_cap_parks() -> None:
         config=_tight_config(mission_cap=3),
     )
     assert verdict.park is True
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_crash_cap_parks() -> None:
@@ -949,7 +950,7 @@ def test_mission_cap_still_parks_continue_owed_stops(token: str) -> None:
     )
     assert verdict.park is True
     assert verdict.ok is False
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_mission_cap_parks_consult_pending_with_row_pinned() -> None:
@@ -969,7 +970,7 @@ def test_mission_cap_parks_consult_pending_with_row_pinned() -> None:
     )
     assert verdict.park is True
     assert verdict.ok is False
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_mission_cap_parks_parked_transport_with_operator_gate() -> None:
@@ -989,7 +990,7 @@ def test_mission_cap_parks_parked_transport_with_operator_gate() -> None:
     )
     assert verdict.park is True
     assert verdict.ok is False
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_mission_cap_row_pinned_alone_still_exits_early() -> None:
@@ -1016,7 +1017,7 @@ def test_mission_cap_still_parks_a_planned_hop_at_cap() -> None:
         config=_tight_config(mission_cap=3),
     )
     assert verdict.park is True
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_mission_cap_skips_restart_park_rows() -> None:
@@ -1060,7 +1061,7 @@ def test_mission_cap_counts_cancel_discard_rows() -> None:
         config=_tight_config(mission_cap=3),
     )
     assert verdict.park is True
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_cancel_discard_row_refuses_budget_without_park() -> None:
@@ -1114,7 +1115,7 @@ def _release_mission_cap_park(ledger: CursorDispatchLedger, *, parked_id: str) -
         dispatch_id=parked_id,
         patch={
             HOP_PARKED_KEY: True,
-            HOP_PARK_REASON_KEY: _PARK_REASON_MISSION_CAP,
+            HOP_PARK_REASON_KEY: PARK_REASON_MISSION_CAP,
         },
     )
     with ledger._connect() as conn:
@@ -1188,7 +1189,7 @@ def test_mission_cap_release_allows_hops_until_window_exhausted() -> None:
         config=_tight_config(mission_cap=cap),
     )
     assert verdict.park is True
-    assert verdict.reason == _PARK_REASON_MISSION_CAP
+    assert verdict.reason == PARK_REASON_MISSION_CAP
 
 
 def test_mission_cap_second_release_restarts_window() -> None:
@@ -1230,3 +1231,74 @@ def test_mission_cap_second_release_restarts_window() -> None:
         config=_tight_config(mission_cap=cap),
     )
     assert verdict.park is False
+
+
+def test_mission_cap_release_baseline_uses_park_work_key_not_caller() -> None:
+    """Thread-scoped release must stamp baseline from the parked row's work_key."""
+    ledger = CursorDispatchLedger.instance()
+    cap = 3
+    for idx in range(1, cap + 2):
+        _planned_hop_row(
+            ledger,
+            dispatch_id=f"wk-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"wk-{idx - 1}",
+        )
+    parked_id = f"wk-{cap + 1}"
+    ledger.merge_record_json(
+        dispatch_id=parked_id,
+        patch={
+            HOP_PARKED_KEY: True,
+            HOP_PARK_REASON_KEY: PARK_REASON_MISSION_CAP,
+        },
+    )
+    with ledger._connect() as conn:
+        release_mission_parks(
+            conn,
+            work_key=None,
+            thread_id="9964",
+            caller_agent="liaison",
+            post_commit_emits=[],
+        )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parked_id,),
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data[HOP_MISSION_CAP_RELEASE_BASELINE_KEY] == cap + 1
+
+
+def test_crash_cap_release_does_not_stamp_mission_baseline() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit_and_terminal(
+        ledger,
+        dispatch_id="crash-park",
+        hop_seq=1,
+        hop_from="spawn",
+        hop_reason="crash",
+        terminal_status="failed",
+        record_patch=dict(_PROVABLE_CRASH_ROW),
+    )
+    ledger.merge_record_json(
+        dispatch_id="crash-park",
+        patch={
+            HOP_PARKED_KEY: True,
+            HOP_PARK_REASON_KEY: _PARK_REASON_CRASH_CAP,
+        },
+    )
+    with ledger._connect() as conn:
+        release_mission_parks(
+            conn,
+            work_key=_WORK_KEY,
+            thread_id="9964",
+            caller_agent="liaison",
+            post_commit_emits=[],
+        )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='crash-park'"
+        ).fetchone()
+    data = json.loads(refreshed["record_json"])
+    assert HOP_MISSION_CAP_RELEASE_BASELINE_KEY not in data
+    assert HOP_PARK_RELEASED_AT_KEY in data

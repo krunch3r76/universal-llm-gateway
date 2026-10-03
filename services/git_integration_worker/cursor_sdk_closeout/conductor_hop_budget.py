@@ -28,6 +28,7 @@ attempts, not substrate churn: a row GIW parked for a service restart
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -73,7 +74,7 @@ _DEFAULT_MISSION_CAP = 24
 _DEFAULT_BACKOFF_S = (30.0, 120.0, 300.0)
 _DEFAULT_REACTOR_GRACE_S = 120.0
 
-_PARK_REASON_MISSION_CAP = "hop_budget_mission_cap"
+PARK_REASON_MISSION_CAP = "hop_budget_mission_cap"
 _PARK_REASON_CRASH_CAP = "hop_budget_crash_cap"
 _PARK_REASON_NO_PROGRESS_CAP = "hop_budget_no_progress_cap"
 PARK_REASON_ADMIT_RETRY_CAP = "hop_budget_admit_retry_cap"
@@ -147,22 +148,30 @@ def list_mission_terminal_chain(
     *,
     work_key: str,
     exclude_dispatch_id: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> list[dict[str, Any]]:
     """Terminal conductor rows for one mission, oldest hop_seq first."""
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
 
-    ledger = CursorDispatchLedger.instance()
-    with ledger._connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches "
-            "WHERE work_key=? AND status IN ('completed','failed','cancelled') "
-            "ORDER BY CASE WHEN json_extract(record_json, '$.hop_seq') IS NULL "
-            "THEN 0 ELSE 1 END, json_extract(record_json, '$.hop_seq'), "
-            "COALESCE(terminal_at, queued_at)",
-            (work_key,),
-        ).fetchall()
+    sql = (
+        "SELECT * FROM cursor_sdk_dispatches "
+        "WHERE work_key=? AND status IN ('completed','failed','cancelled') "
+        "ORDER BY CASE WHEN json_extract(record_json, '$.hop_seq') IS NULL "
+        "THEN 0 ELSE 1 END, json_extract(record_json, '$.hop_seq'), "
+        "COALESCE(terminal_at, queued_at)"
+    )
+
+    def _rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+        return connection.execute(sql, (work_key,)).fetchall()
+
+    if conn is not None:
+        rows = _rows(conn)
+    else:
+        ledger = CursorDispatchLedger.instance()
+        with ledger._connect() as owned:
+            rows = _rows(owned)
     out: list[dict[str, Any]] = []
     for row in rows:
         mapped = {k: row[k] for k in row.keys()}
@@ -235,7 +244,10 @@ def _no_progress_verdict(
 
 
 def mission_cap_baseline(chain: list[dict[str, Any]]) -> int:
-    """Largest hop-attempt count recorded at a mission-cap park release."""
+    """Largest hop-attempt count recorded at a mission-cap park release.
+
+    Returns 0 when the mission has never had a mission-cap release baseline stamped.
+    """
     baseline = 0
     for prior in chain:
         record = record_data(str(prior.get("record_json") or ""))
@@ -328,10 +340,11 @@ def evaluate_hop_budget(
         return HopBudgetVerdict(
             ok=False,
             park=True,
-            reason=_PARK_REASON_MISSION_CAP,
+            reason=PARK_REASON_MISSION_CAP,
         )
 
     if planned:
+        # A mission-cap release resets the hop window only; no-progress is unchanged.
         return _no_progress_verdict(
             row, chain=chain, dispatch_id=dispatch_id, config=cfg
         )
@@ -430,8 +443,9 @@ __all__ = [
     "count_hop_attempts",
     "evaluate_hop_budget",
     "HOP_MISSION_CAP_RELEASE_BASELINE_KEY",
-    "mission_cap_baseline",
     "list_mission_terminal_chain",
+    "mission_cap_baseline",
+    "PARK_REASON_MISSION_CAP",
     "load_hop_budget_config",
     "prior_record_tokens",
 ]
