@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from cortex_store.dispatch_ops._thread_sidecar import SidecarWriteError
+from cortex_store.dispatch_ops.ops_misc import _op_thread_sidecar_write
 from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
@@ -15,8 +16,6 @@ from agent_bus_store.turns_models import (
     MAX_SIDECAR_CONTENT_CHARS,
     sidecar_content_is_unexpanded_shell,
 )
-from cortex_store.dispatch_ops._thread_sidecar import SidecarWriteError
-from cortex_store.dispatch_ops.ops_misc import _op_thread_sidecar_write
 
 
 def _app(tmp_path, monkeypatch):
