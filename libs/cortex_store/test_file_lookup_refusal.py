@@ -61,6 +61,34 @@ def test_colon_slash_without_file_stays_entity_lookup(tmp_path: Path) -> None:
     )
 
 
+def test_scheme_missing_file_stays_entity_lookup(tmp_path: Path) -> None:
+    (tmp_path / "notes" / "system" / "threads").mkdir(parents=True)
+    assert (
+        file_lookup_refusal(
+            "cortex://notes/system/threads/missing.md", cortex_root=tmp_path
+        )
+        is None
+    )
+
+
+def test_entity_type_matching_folder_is_not_a_file(tmp_path: Path) -> None:
+    """agent-bus/ exists as a directory; cortex://agent-bus/7182 is an entity."""
+    (tmp_path / "agent-bus" / "attachments").mkdir(parents=True)
+    assert file_lookup_refusal("cortex://agent-bus/7182", cortex_root=tmp_path) is None
+
+
+def test_traversal_is_not_refused(tmp_path: Path) -> None:
+    (tmp_path / "notes").mkdir()
+    assert file_lookup_refusal("cortex://notes/../../x", cortex_root=tmp_path) is None
+
+
+def test_empty_files_root_does_not_refuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    assert file_lookup_refusal(_URI) is None
+
+
 def test_resolve_entity_reference_refuses_before_lookup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -83,3 +111,31 @@ def test_resolve_uri_refuses_before_entity_query(
         resolve_cortex_uri(uri=_URI)
     assert exc.value.status_code == FILE_LOOKUP_STATUS
     assert _READ in str(exc.value.detail)
+
+
+def test_resolve_entity_whose_type_matches_a_files_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folder agent-bus/ exists; the entity row still resolves."""
+    (tmp_path / "agent-bus").mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT, name TEXT)")
+    conn.execute(
+        "INSERT INTO entities (id, type, name) VALUES (?, ?, ?)",
+        ("agent-bus:7182", "agent-bus", "7182"),
+    )
+
+    class _Conn:
+        def __enter__(self) -> sqlite3.Connection:
+            return conn
+
+        def __exit__(self, *_exc: object) -> bool:
+            return False
+
+    monkeypatch.setattr("cortex_store.routes.resolve.cortex_conn", lambda: _Conn())
+    result = resolve_cortex_uri(uri="cortex://agent-bus/7182", tag=None)
+    assert result["resolved"] == "entity"
+    assert result["entity"]["id"] == "agent-bus:7182"
+    conn.close()
