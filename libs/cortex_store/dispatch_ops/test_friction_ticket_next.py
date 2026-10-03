@@ -43,6 +43,7 @@ def _parse_dispatch_kwargs(inner: str) -> dict[str, str]:
 def _assert_copied_leg_admits(kwargs: dict[str, str]) -> None:
     assert kwargs.get("op") == "generate"
     assert kwargs.get("seat") == "cursor-sdk"
+    assert kwargs.get("lane") == "B"
     assert kwargs.get("contract") in GENERATE_ADMITTED_JOBS
     require_cursor_sdk_checkout_lane(
         request_id="friction-ticket-next",
