@@ -7,11 +7,15 @@ generator_version: "1.0.0"
 
 # Overhaul Program
 
-Self-onboarding for any MCP seat running a per-directory quality pass. The executable
-spec is the `overhaul` skill. This doc is orientation only; do not duplicate the
-step order or the architecture-doc shape here.
+Self-onboarding for any MCP seat running a per-directory quality pass. The **executable
+12-step spec** lives in `.cursor/commands/overhaul.md` — this doc is orientation only;
+do not duplicate step-by-step instructions here.
 
-**Deep-tier CDP wait:** poll follows the `modularize-path` skill. ¬ abort a live CDP leg on wall-clock alone.
+**Deep-tier CDP wait budget:** §2.1 binds a **lead wall-clock budget** (`N=420` s,
+provisional-v0, separate from satellite `timeout_s`) on `project_ask` harvest polling;
+on expiry the lead runs in-seat fallback (minimal audit + runtime import smoke, re-poll
+`archive_uri` once before abort, 24911 hygiene). Full sequence, CHECKPOINT fields, and
+dogfood calibration trigger live in `.cursor/commands/overhaul.md` §2.1 steps 5–7 only.
 
 ## Surface gate (life vs code)
 
@@ -52,9 +56,13 @@ is clean.
 | **Gradual** (default) | `/overhaul {directory}` | **Grok 4.7 High** Cursor lead orchestrates; web-claude (Opus) for deep splits / cross-subsystem review / arch-doc; Fable on F1–F4 only | User approves each Stargate call |
 | **Frontier** | `/overhaul frontier {directory}` | team-generate / Stargate E2E | Automated when frontier dispatch is verified |
 
-**Stops:** the `overhaul` skill tier table. Green proceeds. Yellow and red stop as that table says.
+**Checkpoint gates** (gradual): stop after scan/vulture, split plans, applied splits,
+review findings, pre-doc-generate, and pre-commit — summarize and await operator
+confirmation before advancing. Pointer-only `agent_bus` posts (≤25 lines); packets
+live under `tmp/`.
 
-**Model routing:** the `overhaul` skill § Posture, plus `decision:overhaul-model-routing-grok-fable-2026-07`. Knobs: `consult-routing`.
+**Model routing SOT:** `.cursor/commands/overhaul.md` § Model routing +
+`decision:overhaul-model-routing-grok-fable-2026-07`. Knobs: `consult-routing`, `lean-context-dispatch-first`.
 
 ## Program state pointers
 
@@ -136,8 +144,8 @@ Post-submission: full `libs/cortex_store` `/overhaul`, then Wave 0 order above.
 
 | Topic | Source |
 |---|---|
-| Executable steps | `overhaul` skill |
+| Executable steps | `.cursor/commands/overhaul.md` |
 | Arch doc write policy | `arch-docs-maintenance_ws.mdc`, `docs-write-guard_ws.mdc` |
 | Handoff transport | `architecture-handoff-protocol.mdc`, `handoff-dispatchers.mdc` |
 | Pre-submission scope | `decision:overhaul-presubmission-scope` (assertion 13696) |
-| Gradual model/seat matrix | `decision:overhaul-model-routing-grok-fable-2026-07`; `overhaul` skill § Posture |
+| Gradual model/seat matrix | `decision:overhaul-model-routing-grok-fable-2026-07`; command § Model routing |
