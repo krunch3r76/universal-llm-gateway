@@ -112,7 +112,7 @@ Multi-round is expected: a round-1 `REJECT` naming a decisive falsifier is the g
 
 Thread-consolidation preflight first: pre-stage a pending+empty shell thread, verify (`bus_lifecycle_state=pending`, `turn_count=0`), THEN `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug}, dispatch_thread_id=<shell>)`. On spine default this fires after Gate 6 check pass; on attended/non-spine paths, after the operator prompt.
 
-`contract=implement` is correct here regardless of `density_triage` — a `mechanical`-triaged todo does NOT mean `contract=mechanical`; that contract admits `prompt` / `packet_path` / `sidecar_ref` or `dispatch_thread_id` context with no packet, and rejects `source_ref` (friction 23525; see § 2 Triage).
+`contract=implement` is correct here regardless of `density_triage` — a `mechanical`-triaged todo does NOT mean `contract=mechanical`; that contract admits `prompt` / `packet_path` / `sidecar_ref` or `dispatch_thread_id` context when none of those is supplied, and rejects `source_ref` (friction 23525; see § 2 Triage).
 
 ### 8. Verify
 
