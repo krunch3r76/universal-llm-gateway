@@ -5,6 +5,8 @@ type: rag_search
 description: >
   RAG search pipeline (v2 home). Retrieval and rerank handlers are copied from
   rag_context_v1; request step enablement uses step_overrides / skip_steps.
+  output is emit_context, which copies a completed rerank or formats retrieve
+  chunks when rerank is skipped.
 output: emit_context
 
 options:

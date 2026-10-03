@@ -70,12 +70,17 @@ async def test_retrieve_posts_rag_search_with_prefixes_and_response_shape() -> N
 
 def test_removed_register_fails_closed_with_known_names() -> None:
     """Break: letters/oratory/travel have no prefix directory and returned empty context."""
-    with pytest.raises(PipelineExecutionError, match="Unknown writing_exemplar register 'letters'") as exc:
+    with pytest.raises(
+        PipelineExecutionError,
+        match="Unknown writing_exemplar register 'letters'",
+    ) as exc:
         prefixes_for_register("letters")
     message = str(exc.value)
     assert "familiar" in message
     assert "humor" in message
     assert "civic" in message
-    for gone in ("oratory", "travel", "letter", "speech"):
-        with pytest.raises(PipelineExecutionError, match="Unknown writing_exemplar register"):
+    for gone in ("oratory", "travel", "letter", "speech", "speeches"):
+        with pytest.raises(
+            PipelineExecutionError, match="Unknown writing_exemplar register"
+        ):
             prefixes_for_register(gone)
