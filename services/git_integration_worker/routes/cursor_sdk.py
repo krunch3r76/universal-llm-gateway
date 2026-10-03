@@ -641,9 +641,9 @@ def _stamp_model_knobs_from_outcome(
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
 
 _NEST_UNDER_DISPATCH_ID_HINT = (
-    "nest_under must be a ledger dispatch_id "
-    "(12 hex chars, hyphen, 12 hex chars — e.g. 97d53fe54ef3-71669093), "
-    "not an execution_id UUID."
+    "nest_under must be the dispatch_id that team_dispatch returned for the "
+    "parent (for example 97d53fe54ef3-71669093; inside a cursor-sdk seat it "
+    "is $CURSOR_SDK_DISPATCH_ID), not the execution_id UUID."
 )
 
 

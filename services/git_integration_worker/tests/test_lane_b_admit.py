@@ -554,9 +554,9 @@ def test_nest_under_execution_uuid_is_422(
     payload = resp.json()
     assert payload["code"] == "nest_under_not_dispatch_id"
     hint = payload["data"]["fix_hint"]
-    assert "dispatch_id" in hint
-    assert "execution_id" in hint
-    assert "12" in hint
+    assert "dispatch_id" in hint.lower()
+    assert "execution_id" in hint.lower()
+    assert "12 hex chars, hyphen, 12" not in hint
 
 
 @patch(
