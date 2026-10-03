@@ -1,10 +1,9 @@
 {
   "schema_version": 1,
-  "measured_commit": "ea0c06dbf4073b0b289858ed8976e94228c2322d",
-  "failure_digest": "6ea4ea972a8e941d2bfcac7994aac94573d38ebeb9e040b6d2ccc75def7b47b5",
+  "measured_commit": "723cbbb25b5bb14e538b5d6aba947204d6f0f386",
+  "failure_digest": "c395f7f44d8c38f344fea668e41590c14a79b4e07a5b267ffe3aed8cc4169bb1",
   "failed_nodeids": [
     "services/git_integration_worker/tests/test_conductor_census.py::test_ac3_restart_resume_child_not_counted",
-    "services/git_integration_worker/tests/test_conductor_lane_retention.py::test_packet_reference_forbids_land_disposition_before_done",
     "services/git_integration_worker/tests/test_cursor_sdk_deliverable_truth.py::TestContractGate::test_non_residual_never_degrades",
     "services/git_integration_worker/tests/test_cursor_sdk_deliverables.py::test_pinning_absent_both_uses_write_if_absent",
     "services/git_integration_worker/tests/test_cursor_sdk_deliverables.py::test_pinning_reads_from_cortex_mount",
@@ -22,7 +21,7 @@
     "services/git_integration_worker/tests/test_seat_write_ledger_isolation.py::test_seat_write_ledger_path_refuses_the_live_gateway_dir",
     "services/git_integration_worker/tests/test_trigger_act_receipt.py::test_missing_receipt_unverified_no_second_submit"
   ],
-  "summary_line": "18 failed, 2546 passed, 2 skipped, 135 warnings in 1204.43s (0:20:04)",
+  "summary_line": "17 failed, 2561 passed, 2 skipped, 137 warnings in 1267.50s (0:21:07)",
   "ledger": [
     {
       "measured_commit": "896da5ae37a36e6f068b044b3db1ac16995387cc",
@@ -202,6 +201,35 @@
         "services/git_integration_worker/tests/test_trigger_act_receipt.py::test_missing_receipt_unverified_no_second_submit"
       ],
       "summary_line": "18 failed, 2546 passed, 2 skipped, 135 warnings in 1204.43s (0:20:04)"
+    },
+    {
+      "measured_commit": "723cbbb25b5bb14e538b5d6aba947204d6f0f386",
+      "from_digest": "6ea4ea972a8e941d2bfcac7994aac94573d38ebeb9e040b6d2ccc75def7b47b5",
+      "to_digest": "c395f7f44d8c38f344fea668e41590c14a79b4e07a5b267ffe3aed8cc4169bb1",
+      "added": [],
+      "removed": [
+        "services/git_integration_worker/tests/test_conductor_lane_retention.py::test_packet_reference_forbids_land_disposition_before_done"
+      ],
+      "failed_nodeids": [
+        "services/git_integration_worker/tests/test_conductor_census.py::test_ac3_restart_resume_child_not_counted",
+        "services/git_integration_worker/tests/test_cursor_sdk_deliverable_truth.py::TestContractGate::test_non_residual_never_degrades",
+        "services/git_integration_worker/tests/test_cursor_sdk_deliverables.py::test_pinning_absent_both_uses_write_if_absent",
+        "services/git_integration_worker/tests/test_cursor_sdk_deliverables.py::test_pinning_reads_from_cortex_mount",
+        "services/git_integration_worker/tests/test_cursor_sdk_ledger_hop.py::test_merge_hop_patch_preserves_non_hop_keys",
+        "services/git_integration_worker/tests/test_cursor_sdk_ledger_hop.py::test_stamp_and_read_round_trip_all_six_keys",
+        "services/git_integration_worker/tests/test_cursor_sdk_manifest.py::test_resolve_repo_change_set_unions_git_and_manifest_paths",
+        "services/git_integration_worker/tests/test_cursor_sdk_park_resume.py::test_peer_ignores_park_already_named_by_resume_of",
+        "services/git_integration_worker/tests/test_cursor_sdk_pre_arm_lease.py::test_slot_acquire_is_idempotent_for_existing_holder",
+        "services/git_integration_worker/tests/test_cursor_sdk_pre_arm_lease.py::test_slot_acquire_timeout_raises_and_leaves_no_holder",
+        "services/git_integration_worker/tests/test_giw_stargate_proxy_path_coverage.py::test_giw_api_v1_routes_have_stargate_proxy_coverage",
+        "services/git_integration_worker/tests/test_lane_b_capture_binding.py::test_ac_s0_2_lane_a_closeout_byte_identical_with_binding",
+        "services/git_integration_worker/tests/test_lane_b_capture_binding.py::test_ac_s0_3_write_tree_vs_receipt_tree_split",
+        "services/git_integration_worker/tests/test_lane_b_gate_stats.py::test_ac_s4_4_active_by_lane_matches_ledger",
+        "services/git_integration_worker/tests/test_propagation_descriptor_drift.py::test_descriptor_drift_warning_when_served_above_expected",
+        "services/git_integration_worker/tests/test_seat_write_ledger_isolation.py::test_seat_write_ledger_path_refuses_the_live_gateway_dir",
+        "services/git_integration_worker/tests/test_trigger_act_receipt.py::test_missing_receipt_unverified_no_second_submit"
+      ],
+      "summary_line": "17 failed, 2561 passed, 2 skipped, 137 warnings in 1267.50s (0:21:07)"
     }
   ]
 }

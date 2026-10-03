@@ -35,8 +35,8 @@ def map_search_tool_options(
 ) -> dict[str, Any]:
     """Map ``rag(op=search)`` arguments onto Stargate ``pipeline_options``.
 
-    ``scope`` is already normalized to ``scope_override``. ``top_k`` becomes
-    ``rag_max_chunks`` only when it differs from the pipeline default (20).
+    ``scope`` is already normalized to ``scope_override``. ``top_k`` always
+    becomes ``rag_max_chunks`` (including the pipeline default 20).
     Passing ``scope`` or ``top_k`` as those raw keys is not this mapping.
     Legacy enable flags stay raw here; ``finalize_relay_pipeline_options``
     folds them once the relay target is ``rag-search``.
@@ -46,8 +46,7 @@ def map_search_tool_options(
         options["scope_override"] = scope_override
     if prefixes is not None:
         options["rag_source_prefixes"] = prefixes
-    if top_k != DEFAULT_TOP_K:
-        options["rag_max_chunks"] = top_k
+    options["rag_max_chunks"] = top_k
     if hyde_enabled is not None:
         options["hyde_enabled"] = hyde_enabled
     if rerank_enabled is not None:

@@ -15,7 +15,7 @@ import pytest
 
 _MCP = Path(__file__).resolve().parents[1]
 _REPO = Path(__file__).resolve().parents[3]
-_HANDLERS = _REPO / "pipelines/rag/rag_context_v1/handlers"
+_HANDLERS = _REPO / "pipelines/rag_search/v1/handlers"
 _RAG_V1 = _HANDLERS.parent
 
 if str(_MCP) not in sys.path:
@@ -177,7 +177,7 @@ def _build_stargate_body(
     monkeypatch.setattr(rq, "resolve_rag_base_url", lambda: "http://rag.test")
 
     pipeline = MagicMock()
-    pipeline.id = "rag-context"
+    pipeline.id = "rag-search"
     pipeline.domain = "rag"
     pipeline.options.to_context_dict.return_value = {
         "rewrite_enabled": False,
