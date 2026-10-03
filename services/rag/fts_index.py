@@ -168,6 +168,24 @@ class FtsIndex:
         ).fetchall()
         return [(row[0], row[2]) for row in rows]
 
+    def sources_for_prefixes(self, source_prefixes: list[str]) -> list[str]:
+        """Distinct indexed paths under any prefix, for Chroma ``source`` ``$in``.
+
+        Same ``LIKE prefix%`` predicate as ``search_scoped``. Empty prefixes
+        return no paths. Callers use the list as a metadata prefilter so ANN
+        runs inside the scope instead of on the global neighbor list.
+        """
+        conn, _ = self._ensure()
+        if not source_prefixes:
+            return []
+        source_clause = " OR ".join("source LIKE ?" for _ in source_prefixes)
+        params = tuple(f"{prefix}%" for prefix in source_prefixes)
+        rows = conn.execute(
+            f"SELECT DISTINCT source FROM chunks_fts WHERE {source_clause}",
+            params,
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def get_count(self) -> int:
         """Return total number of rows in the FTS5 table."""
         conn, _ = self._ensure()
