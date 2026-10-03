@@ -678,6 +678,39 @@ def test_preamble_and_request_builder_shapes(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_legacy_lane_a_park_row_strips_before_admit(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """a:37434 — parent record_json.lane A must not re-hit CURSOR_LANE_A_REFUSED."""
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    _seed_parked("p-lane-a", thread_id="37434", tmp_path=tmp_path)
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id="p-lane-a", patch={"lane": "A"}
+    )
+    row = load_park_row(dispatch_id="p-lane-a")
+    assert row is not None and row.record.get("lane") == "A"
+    cfg = load_config()
+    controller = _controller()
+    unstripped = build_park_resume_request(
+        row, attempt=1, code_version="v"
+    ).model_copy(update={"lane": "A", "dispatch_id": "p-lane-a-probe"})
+    blocked = await admit_cursor_dispatch(unstripped, cfg=cfg, controller=controller)
+    assert blocked.status_code == 422
+    body = json.loads(bytes(blocked.body).decode())
+    assert body["code"] == "CURSOR_LANE_A_REFUSED"
+
+    child = build_park_resume_request(row, attempt=1, code_version="v")
+    assert child.lane is None
+    summary = await resume_parked_dispatches(
+        cfg=cfg, controller=controller, code_version="v", bus=_bus()
+    )
+    assert summary.admitted == [("p-lane-a", "p-lane-a-r1")]
+    assert summary.refused == []
+    assert _row("p-lane-a-r1") is not None
+
+
+@pytest.mark.asyncio
 async def test_park_eligible_resumes_execution_id_ineligible_not_parked(
     tmp_path: Path, _admit_stubs: MagicMock
 ) -> None:
