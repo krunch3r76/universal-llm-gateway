@@ -1,0 +1,47 @@
+# cursor-paste-resolve — compose a friction/assertion prompt, then launch.
+#
+# Compose is identical for launch_target ∈ {glass, ide, cursor_sdk}.
+# Launch is a second step: Glass/IDE shells scripts/cursor-bridge-launch.py
+# open-tab (the paste chord). cursor_sdk POSTs /api/v1/team/dispatch.
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="cursor-paste-resolve",
+#            messages=[{"role":"user","content":"compose"}],
+#            options={
+#              "kind": "friction"|"assertion",
+#              "assertion_id": <int>,
+#              "window": "glass"|"ide",          # Glass/IDE; default glass
+#              "host": "orion-node"|"jupiter",   # required for glass/ide launch
+#              "notify": "maestro"|absent,
+#              "launch_target": "glass"|"ide"|"cursor_sdk"|absent,
+#              "dispatch_thread_id": "<minted>", # cursor_sdk; mint if absent
+#            })
+
+schema_version: 6
+id: cursor-paste-resolve
+version: "1.0"
+type: cursor_paste_resolve
+description: >
+  assertion_get + read implementer + write tmp/prompts/cursor-paste-<kind>-<id>.md,
+  then optional Glass/IDE script launch or cursor_sdk team_dispatch admit.
+output: launch
+
+options:
+  timeout_seconds: 120
+  launch_target:
+    type: string
+    description: glass | ide | cursor_sdk; empty = compose only
+    default: ""
+
+steps:
+  - name: compose
+    type: cursor_paste_resolve_compose_v1
+    handler_outputs:
+      message_path: compose.json.message_path
+      kind: compose.json.kind
+      assertion_id: compose.json.assertion_id
+
+  - name: launch
+    type: cursor_paste_resolve_launch_v1
+    handler_inputs:
+      message_path: compose.json.message_path
