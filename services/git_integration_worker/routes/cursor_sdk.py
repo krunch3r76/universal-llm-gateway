@@ -267,6 +267,7 @@ from services.git_integration_worker.cursor_sdk_resume import (
 from services.git_integration_worker.cursor_sdk_satellite_workspace import (
     CursorWorkspaceError,
     recorded_workspace,
+    refuse_parent_workspace_mismatch,
     resolve_dispatch_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_skills_mount import (
@@ -2312,33 +2313,34 @@ async def _deliver_sdk_closeout(
             **association_fields,
         )
         turn_number = extract_turn_number(bus_result.body)
-        await emit_implement_closeout_trigger(
-            body_json=delivery.body,
-            source_ref=normalize_closeout_source_ref(
-                work_item_ref or delivery.sidecar_ref
-            ),
-            idempotency_key=build_closeout_idempotency_key(
-                execution_id=req.execution_id,
-                thread_id=req.thread_id,
-                turn_number=turn_number,
-            ),
-        )
-        hop_terminal = "failed" if refusal is not None else "completed"
-        # friction 37404: hop merge can raise (DB); a non-terminal dispatch is
-        # worse than a missing hop token. Same locality as 34156 F1.
+        # friction 37490: trigger can raise (json.loads before its inner try);
+        # a non-terminal dispatch is worse than a missed Stargate POST.
         try:
-            await asyncio.to_thread(
-                merge_conductor_closeout_hop_authority,
-                dispatch_id=req.dispatch_id,
-                closeout_body=outcome.body,
-                thread_id=req.thread_id,
-                closeout_turn=turn_number,
+            await emit_implement_closeout_trigger(
+                body_json=delivery.body,
+                source_ref=normalize_closeout_source_ref(
+                    work_item_ref or delivery.sidecar_ref
+                ),
+                idempotency_key=build_closeout_idempotency_key(
+                    execution_id=req.execution_id,
+                    thread_id=req.thread_id,
+                    turn_number=turn_number,
+                ),
             )
         except Exception:  # noqa: BLE001 — closeout always marks terminal
             logger.exception(
-                "merge_conductor_closeout_hop_authority raised dispatch=%s",
+                "emit_implement_closeout_trigger raised dispatch=%s",
                 req.dispatch_id,
             )
+        hop_terminal = "failed" if refusal is not None else "completed"
+        # friction 37488: Exception swallow lives inside the merge function.
+        await asyncio.to_thread(
+            merge_conductor_closeout_hop_authority,
+            dispatch_id=req.dispatch_id,
+            closeout_body=outcome.body,
+            thread_id=req.thread_id,
+            closeout_turn=turn_number,
+        )
         # friction 34156: park columns before terminal mark so resume_retain is
         # stamped and the bus link can stay open (D3). Import + hook are inside
         # the try so an ImportError cannot skip the terminal mark (1c / F1).
@@ -3738,20 +3740,23 @@ async def admit_cursor_dispatch(
             identity_class = "derived"
     files_expected = _files_from_packet(packet_text) if packet_text else []
     source_repo_str = str(cfg.source_repo.resolve())
-    if not (req.workspace and str(req.workspace).strip()):
-        parent_id = req.resume_of or req.nest_under
-        if parent_id:
-            parent = load_parent_row(
-                CursorDispatchLedger.instance(), parent_id=parent_id
+    parent_id = req.resume_of or req.nest_under
+    inherited: str | None = None
+    parent_row = None
+    if parent_id:
+        parent_row = load_parent_row(
+            CursorDispatchLedger.instance(), parent_id=parent_id
+        )
+        if parent_row is not None:
+            inherited = recorded_workspace(
+                record_json=parent_row.record_json,
+                source_repo=parent_row.source_repo,
             )
-            if parent is not None:
-                inherited = recorded_workspace(
-                    record_json=parent.record_json,
-                    source_repo=parent.source_repo,
-                )
-                if inherited:
-                    req.workspace = inherited
     try:
+        if parent_id and parent_row is not None:
+            refuse_parent_workspace_mismatch(explicit=req.workspace, recorded=inherited)
+        if inherited and not (req.workspace and str(req.workspace).strip()):
+            req.workspace = inherited
         resolved_source_repo = resolve_dispatch_source_repo(
             req.workspace,
             hub=cfg.source_repo,

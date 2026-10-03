@@ -13,6 +13,7 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
 )
 from services.git_integration_worker.cursor_sdk_worktree_lock import (
     ForeignLockError,
+    SourceRepoMismatchError,
     list_locked_worktrees,
     lock_lane_worktree,
     parse_lock_reason,
@@ -209,7 +210,7 @@ def test_unlock_lane_worktree(git_repo: Path, tmp_path: Path) -> None:
 def test_lock_hub_repo_against_satellite_worktree_fails(
     git_repo: Path, tmp_path: Path
 ) -> None:
-    """a:37504 — git -C hub lock of a satellite tree is not a working tree."""
+    """a:37531 — hub git-common-dir vs satellite worktree is a named mismatch."""
     sat = tmp_path / "cryptax"
     sat.mkdir()
     _git("init", "-b", "master", cwd=sat)
@@ -220,7 +221,22 @@ def test_lock_hub_repo_against_satellite_worktree_fails(
     _git("commit", "-m", "init", cwd=sat)
     wt = tmp_path / "lane-14724"
     _add_worktree(sat, wt)
-    with pytest.raises(RuntimeError, match="not a working tree"):
+    with pytest.raises(
+        SourceRepoMismatchError, match="does not own worktree"
+    ) as caught:
         lock_lane_worktree(git_repo, wt, dispatch_id="d1", thread_id="t1")
+    assert caught.value.code == "CURSOR_WORKTREE_SOURCE_REPO_MISMATCH"
+    assert "not a working tree" not in str(caught.value)
     lock_lane_worktree(sat, wt, dispatch_id="d1", thread_id="t1")
     assert list_locked_worktrees(sat)
+
+
+def test_lock_non_git_path_is_not_source_repo_mismatch(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    """Probe miss falls through to git lock; mismatch is disagreement only."""
+    wt = tmp_path / "not-a-repo"
+    wt.mkdir()
+    with pytest.raises(RuntimeError) as caught:
+        lock_lane_worktree(git_repo, wt, dispatch_id="d1", thread_id="t1")
+    assert type(caught.value) is RuntimeError

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_closeout import conductor_hop as hop_mod
 from services.git_integration_worker.routes import cursor_sdk as route_mod
 from services.git_integration_worker.tests.test_conductor_closeout_terminate_order import (
     _admit_running_conductor,
@@ -19,6 +20,22 @@ from services.git_integration_worker.tests.test_conductor_closeout_terminate_ord
 )
 
 pytestmark = pytest.mark.offline
+
+
+def test_public_merge_swallows_inner_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A third caller of the public name needs no call-site try/except."""
+    raise_calls: list[str] = []
+    monkeypatch.setattr(
+        hop_mod,
+        "_merge_conductor_closeout_hop_authority",
+        _counting_raise(raise_calls),
+    )
+    hop_mod.merge_conductor_closeout_hop_authority(
+        dispatch_id="merge-raise-direct",
+        closeout_body="",
+        thread_id="1",
+    )
+    assert raise_calls == ["merge-raise"]
 
 
 def _status(dispatch_id: str) -> str:
@@ -47,17 +64,21 @@ async def test_deliver_sdk_closeout_merge_raise_still_terminal(
     _admit_running_conductor(req, tmp_path)
     call_order: list[str] = []
     _install_closeout_stubs(
-        monkeypatch, closeout_body="status: complete\n", call_order=call_order
+        monkeypatch,
+        closeout_body="status: complete\n",
+        call_order=call_order,
     )
     raise_calls: list[str] = []
     monkeypatch.setattr(
-        route_mod,
-        "merge_conductor_closeout_hop_authority",
+        hop_mod,
+        "_merge_conductor_closeout_hop_authority",
         _counting_raise(raise_calls),
     )
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     bus = MagicMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=201, body={"turn_number": 2}))
+    bus.reply = AsyncMock(
+        return_value=MagicMock(status_code=201, body={"turn_number": 2})
+    )
 
     await route_mod._deliver_sdk_closeout(
         req=req,
@@ -72,7 +93,7 @@ async def test_deliver_sdk_closeout_merge_raise_still_terminal(
     )
 
     assert raise_calls == ["merge-raise"]
-    assert "promote" in call_order
+    assert call_order[:2] == ["merge", "promote"]
     assert _status(req.dispatch_id) == "completed"
 
 
@@ -85,7 +106,11 @@ async def test_finalize_parked_merge_raise_still_terminal(
     )
     from services.git_integration_worker.cursor_sdk_park_for_restart import ParkMark
 
-    req = _req(dispatch_id="merge-raise-park", execution_id="exec-merge-raise-p", thread_id="9011")
+    req = _req(
+        dispatch_id="merge-raise-park",
+        execution_id="exec-merge-raise-p",
+        thread_id="9011",
+    )
     _admit_running_conductor(req, tmp_path)
     mark = ParkMark(
         dispatch_id=req.dispatch_id,
@@ -107,8 +132,8 @@ async def test_finalize_parked_merge_raise_still_terminal(
     # cancelled alone cannot prove _mark_terminal_and_promote ran.
     raise_calls: list[str] = []
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.park_finalize."
-        "merge_conductor_closeout_hop_authority",
+        hop_mod,
+        "_merge_conductor_closeout_hop_authority",
         _counting_raise(raise_calls),
     )
     monkeypatch.setattr(
@@ -126,10 +151,14 @@ async def test_finalize_parked_merge_raise_still_terminal(
     )
     promote_lease = AsyncMock()
     monkeypatch.setattr(route_mod, "_promote_queued_for_lease", promote_lease)
-    monkeypatch.setattr(route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None)
+    monkeypatch.setattr(
+        route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None
+    )
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     bus = MagicMock()
-    bus.reply = AsyncMock(return_value=MagicMock(status_code=201, body={"turn_number": 3}))
+    bus.reply = AsyncMock(
+        return_value=MagicMock(status_code=201, body={"turn_number": 3})
+    )
 
     await finalize_parked(
         req=req,

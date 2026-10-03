@@ -30,7 +30,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_bus import BusReplyResult, CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -384,29 +384,41 @@ async def finalize_parked(
     del source_repo  # the park never touches the tree; retention keeps it pinned
     dispatch_id = req.dispatch_id
     tool_call_count, last_tools = _tool_summary(outcome, exc)
-    harvest = await asyncio.to_thread(
-        emit_partial_harvest_on_park,
-        dispatch_id,
-        thread_id=req.thread_id,
-        intent_id=mark.intent_id,
-        method=mark.method,
-        tool_call_count=tool_call_count,
-        last_tools=last_tools,
-    )
+    # friction 37490: harvest / mark_parked / bus.reply sit before promote;
+    # a raise must not leave the dispatch non-terminal (same locality as 37404).
+    harvest: dict[str, Any] = {}
+    try:
+        harvest = await asyncio.to_thread(
+            emit_partial_harvest_on_park,
+            dispatch_id,
+            thread_id=req.thread_id,
+            intent_id=mark.intent_id,
+            method=mark.method,
+            tool_call_count=tool_call_count,
+            last_tools=last_tools,
+        )
+    except Exception:  # noqa: BLE001 — park closeout always marks terminal
+        logger.exception(
+            "emit_partial_harvest_on_park raised dispatch=%s", dispatch_id
+        )
     sidecar_uri = harvest.get("sidecar_uri")
-    park_row = await asyncio.to_thread(
-        mark_parked,
-        dispatch_id=dispatch_id,
-        intent_id=mark.intent_id,
-        drain_epoch=mark.drain_epoch,
-        actor=mark.actor,
-        reason=mark.reason,
-        requested_at=mark.requested_at,
-        method=mark.method,
-        tool_call_count=tool_call_count,
-        last_tool_calls=last_tools,
-        sidecar_uri=sidecar_uri,
-    )
+    park_row = None
+    try:
+        park_row = await asyncio.to_thread(
+            mark_parked,
+            dispatch_id=dispatch_id,
+            intent_id=mark.intent_id,
+            drain_epoch=mark.drain_epoch,
+            actor=mark.actor,
+            reason=mark.reason,
+            requested_at=mark.requested_at,
+            method=mark.method,
+            tool_call_count=tool_call_count,
+            last_tool_calls=last_tools,
+            sidecar_uri=sidecar_uri,
+        )
+    except Exception:  # noqa: BLE001 — park closeout always marks terminal
+        logger.exception("mark_parked raised dispatch=%s", dispatch_id)
     park = park_row.park if park_row is not None else {}
     conductor = await asyncio.to_thread(_is_conductor_row, dispatch_id)
     body = build_parked_body(
@@ -416,16 +428,20 @@ async def finalize_parked(
         sidecar_uri=sidecar_uri,
         conductor=conductor,
     )
-    bus_result = await bus.reply(
-        thread_id=req.thread_id,
-        to_agent=reply_to,
-        from_agent="cursor-sdk",
-        subject=(
-            f"cursor-sdk dispatch {dispatch_id} PARKED "
-            f"(for GIW restart {mark.intent_id or 'none'})"
-        ),
-        body=body,
-    )
+    try:
+        bus_result = await bus.reply(
+            thread_id=req.thread_id,
+            to_agent=reply_to,
+            from_agent="cursor-sdk",
+            subject=(
+                f"cursor-sdk dispatch {dispatch_id} PARKED "
+                f"(for GIW restart {mark.intent_id or 'none'})"
+            ),
+            body=body,
+        )
+    except Exception:  # noqa: BLE001 — park closeout always marks terminal
+        logger.exception("bus.reply raised dispatch=%s", dispatch_id)
+        bus_result = BusReplyResult(status_code=599, body="")
     if bus_result.status_code >= 400:
         logger.error(
             "cursor-sdk PARKED turn post failed dispatch_id=%s status=%s body=%s",
@@ -434,20 +450,14 @@ async def finalize_parked(
             bus_result.body,
         )
     if conductor:
-        # friction 37404: hop merge can raise; still mark terminal (34156 F1).
-        try:
-            await asyncio.to_thread(
-                merge_conductor_closeout_hop_authority,
-                dispatch_id=dispatch_id,
-                closeout_body=body,
-                thread_id=req.thread_id,
-                closeout_turn=extract_turn_number(bus_result.body),
-            )
-        except Exception:  # noqa: BLE001 — park closeout always marks terminal
-            logger.exception(
-                "merge_conductor_closeout_hop_authority raised dispatch=%s",
-                dispatch_id,
-            )
+        # friction 37488: Exception swallow lives inside the merge function.
+        await asyncio.to_thread(
+            merge_conductor_closeout_hop_authority,
+            dispatch_id=dispatch_id,
+            closeout_body=body,
+            thread_id=req.thread_id,
+            closeout_turn=extract_turn_number(bus_result.body),
+        )
     emit_sdk_park_parked(
         dispatch_id=dispatch_id,
         thread_id=req.thread_id,

@@ -195,6 +195,7 @@ def _install_closeout_stubs(
     *,
     closeout_body: str,
     call_order: list[str],
+    merge_raises: BaseException | None = None,
 ) -> None:
     async def _prep(**_kw: Any) -> CloseoutDelivery:
         return _delivery(closeout_body)
@@ -211,8 +212,12 @@ def _install_closeout_stubs(
         "read_wt_baseline",
         lambda self, **_kw: {"files": {}, "codes": {}},
     )
-    monkeypatch.setattr(route_mod, "release_or_restore_for_child", AsyncMock(return_value="released"))
-    monkeypatch.setattr(route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None)
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child", AsyncMock(return_value="released")
+    )
+    monkeypatch.setattr(
+        route_mod, "maybe_prune_worktree_on_terminal", lambda **_kw: None
+    )
     monkeypatch.setattr(route_mod, "_promote_queued_for_lease", AsyncMock())
 
     orig_merge = route_mod.merge_conductor_closeout_hop_authority
@@ -221,7 +226,19 @@ def _install_closeout_stubs(
         call_order.append("merge")
         return orig_merge(**kw)
 
-    monkeypatch.setattr(route_mod, "merge_conductor_closeout_hop_authority", _track_merge)
+    monkeypatch.setattr(
+        route_mod, "merge_conductor_closeout_hop_authority", _track_merge
+    )
+    if merge_raises is not None:
+        boom = merge_raises
+
+        def _raise_inner(**_kw: Any) -> None:
+            raise boom
+
+        monkeypatch.setattr(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._merge_conductor_closeout_hop_authority",
+            _raise_inner,
+        )
 
     orig_promote = route_mod._mark_terminal_and_promote
 
@@ -250,7 +267,9 @@ async def test_row_hop_thread_active_before_hop_merge(
     req = _req(thread_id=thread_id)
     _admit_running_conductor(req, tmp_path)
     call_order: list[str] = []
-    _install_closeout_stubs(monkeypatch, closeout_body=_ROW_HOP_BODY, call_order=call_order)
+    _install_closeout_stubs(
+        monkeypatch, closeout_body=_ROW_HOP_BODY, call_order=call_order
+    )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop."
         "post_conductor_hop_team_dispatch",
@@ -327,7 +346,9 @@ async def test_successor_admitted_then_terminates(
     )
     _admit_running_conductor(req, tmp_path)
     call_order: list[str] = []
-    _install_closeout_stubs(monkeypatch, closeout_body=_ROW_HOP_BODY, call_order=call_order)
+    _install_closeout_stubs(
+        monkeypatch, closeout_body=_ROW_HOP_BODY, call_order=call_order
+    )
 
     async def _stamp_successor(*, dispatch_id: str) -> None:
         CursorDispatchLedger.instance().merge_record_json(
@@ -396,6 +417,47 @@ async def test_ordinary_completion_still_terminates(
         packet_text="---\ncontract: conductor\n---\n",
     )
 
+    assert call_order == ["merge", "promote", "terminate"]
+
+
+@pytest.mark.asyncio
+async def test_merge_raise_still_records_merge_then_promote(
+    tmp_path: Path,
+    bus_db: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """friction 37489: raise-path still records merge before promote."""
+    thread_id = _seed_ephemeral_bus_thread(
+        bus_db, execution_id="exec-merge-raise-order"
+    )
+    req = _req(
+        dispatch_id="cond-merge-raise-order",
+        execution_id="exec-merge-raise-order",
+        thread_id=thread_id,
+    )
+    _admit_running_conductor(req, tmp_path)
+    call_order: list[str] = []
+    _install_closeout_stubs(
+        monkeypatch,
+        closeout_body=_ORDINARY_BODY,
+        call_order=call_order,
+        merge_raises=RuntimeError("hop merge boom"),
+    )
+    bus = await _real_bus_client(bus_db, monkeypatch)
+
+    await route_mod._deliver_sdk_closeout(
+        req=req,
+        source_repo=tmp_path / "repo",
+        outcome=_outcome(_ORDINARY_BODY),
+        degraded_reason=None,
+        bus=bus,
+        reply_to="dispatch",
+        work_item_ref="todo:conductor-closeout-completes-open-mission",
+        controller=_controller(),
+        packet_text="---\ncontract: conductor\n---\n",
+    )
+
+    assert call_order[:2] == ["merge", "promote"]
     assert call_order == ["merge", "promote", "terminate"]
 
 
