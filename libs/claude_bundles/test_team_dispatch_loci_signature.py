@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,48 @@ def test_frontier_team_dispatch_descriptor_uses_contract_and_purpose() -> None:
     )
     assert "`purpose` forwards as body `purpose` on generate only." in text, (
         "team_dispatch docstring missing generate-only purpose wire note"
+    )
+
+
+# a:37328 — canonical fol + orientation tips. Call syntax is the substring
+# ``job=`` (bare or backticked). The cited pre-fix lines were bare
+# ``job=freeform`` inside team_dispatch examples; a backtick-only scan stays
+# green on that specimen. Stargate body ``job`` and ``job_vocab`` have no
+# ``job=`` and stay.
+_TEACHING_SURFACES_REL = (
+    "config/mcp/canonical.yaml",
+    "services/mcp-server/tools/_oc_surface_templates.py",
+    "services/mcp-server/tools/continuity.py",
+)
+_JOB_CALL_SYNTAX = re.compile(r"job=")
+
+
+def _job_call_syntax_hits(label: str, text: str) -> list[str]:
+    return [
+        f"{label}:{lineno}"
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if _JOB_CALL_SYNTAX.search(line)
+    ]
+
+
+def test_mcp_teaching_surfaces_omit_job_call_syntax() -> None:
+    bare = (
+        "team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7,\n"
+        "job=freeform, dispatch_thread_id=…, lane=B)\n"
+    )
+    assert _job_call_syntax_hits("specimen", bare)
+    assert _job_call_syntax_hits("specimen", "still shows `job=freeform`")
+    assert not _job_call_syntax_hits(
+        "specimen",
+        "explicit job → source_ref; (job_vocab); body `job`; when job omitted",
+    )
+    hits: list[str] = []
+    for rel in _TEACHING_SURFACES_REL:
+        path = _REPO / rel
+        assert path.is_file(), f"missing teaching surface {rel}"
+        hits.extend(_job_call_syntax_hits(rel, path.read_text(encoding="utf-8")))
+    assert not hits, "MCP teaching surfaces still use job= call syntax: " + ", ".join(
+        hits
     )
 
 
