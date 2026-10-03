@@ -23,6 +23,7 @@ from ._message import (
     ALLOWED_HOSTS,
     LAUNCH_TARGETS,
     MAESTRO_MEMO_THREAD,
+    cursor_sdk_dispatch_body,
     parse_compose_options,
     team_dispatch_admit_shape,
 )
@@ -232,7 +233,9 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
     ) as bus:
         if not thread_id:
             slug = f"cursor-paste-{kind}-{assertion_id}"
-            mint = await _post_json(bus, "/threads", {"slug": slug})
+            mint = await _post_json(
+                bus, "/threads", {"slug": slug, "idempotency_key": slug}
+            )
             if "error" in mint:
                 payload = cursor_sdk_refuse_payload(
                     reason=f"create_thread failed: {mint['error']}",
@@ -248,16 +251,12 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
                 return _step(payload, error=payload["error"])
             admit["dispatch_thread_id"] = thread_id
 
-    body = {
-        "op": "generate",
-        "seat": "cursor-sdk",
-        "lane": "B",
-        "job": "freeform",
-        "prompt": prompt,
-        "dispatch_thread_id": thread_id,
-        "work_key": f"{kind}:{assertion_id}",
-        "caller_agent": "pipeline:cursor-paste-resolve",
-    }
+    body = cursor_sdk_dispatch_body(
+        kind=kind,
+        assertion_id=assertion_id,
+        prompt=prompt,
+        dispatch_thread_id=thread_id,
+    )
     async with make_async_client(
         DEFAULT_STARGATE_URL, timeout=_REQUEST_TIMEOUT
     ) as stargate:

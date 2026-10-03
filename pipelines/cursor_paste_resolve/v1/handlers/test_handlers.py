@@ -8,8 +8,15 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from systems.pipeline.core.pipeline_config import PipelineSpec
+from work_key_grammar import is_valid_work_key_scheme
 
-from ._message import compose_message, parse_compose_options, team_dispatch_admit_shape
+from ._message import (
+    compose_message,
+    cursor_sdk_dispatch_body,
+    parse_compose_options,
+    team_dispatch_admit_shape,
+    work_key_for,
+)
 from .launch import CursorPasteLaunchHandler, bridge_argv, paste_thread_name
 
 pytestmark = pytest.mark.offline
@@ -133,6 +140,24 @@ async def test_glass_launch_uses_script_argv(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_glass_omitted_host_refuses(tmp_path: Path) -> None:
+    msg = tmp_path / "msg.md"
+    msg.write_text("prompt", encoding="utf-8")
+    handler = CursorPasteLaunchHandler()
+    ctx = SimpleNamespace(
+        options={
+            "kind": "friction",
+            "assertion_id": 1,
+            "launch_target": "glass",
+        },
+        outputs={"compose": SimpleNamespace(json={"message_path": str(msg)})},
+    )
+    out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
+    assert out.json["ok"] is False
+    assert "host" in out.error
+
+
+@pytest.mark.asyncio
 async def test_missing_message_file_refuses() -> None:
     handler = CursorPasteLaunchHandler()
     ctx = SimpleNamespace(
@@ -157,8 +182,22 @@ def test_admit_shape_names_generate() -> None:
         message_path="tmp/prompts/cursor-paste-assertion-7.md",
         dispatch_thread_id="999",
     )
-    assert shape["work_key"] == "assertion:7"
+    assert shape["model"] == "cursor/grok-4.7"
+    assert shape["work_key"] == "adhoc:cursor-paste-assertion-7"
+    assert is_valid_work_key_scheme(shape["work_key"])
     assert shape["dispatch_thread_id"] == "999"
+    friction = work_key_for("friction", 7)
+    assert friction == "friction:7"
+    assert is_valid_work_key_scheme(friction)
+    body = cursor_sdk_dispatch_body(
+        kind="friction",
+        assertion_id=7,
+        prompt="prompt",
+        dispatch_thread_id="999",
+    )
+    assert body["model"] == "cursor/grok-4.7"
+    assert body["job"] == "freeform"
+    assert body["work_key"] == "friction:7"
 
 
 def test_paste_thread_prefix() -> None:

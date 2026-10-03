@@ -89,6 +89,16 @@ def compose_message(kind: str, assertion_id: int, notify: str, implementer: str)
     return "".join(parts)
 
 
+CURSOR_SDK_MODEL = "cursor/grok-4.7"
+
+
+def work_key_for(kind: str, assertion_id: int) -> str:
+    """D4 work key. ``assertion:`` is not a scheme; friction ids use ``friction:``."""
+    if kind == "friction":
+        return f"friction:{assertion_id}"
+    return f"adhoc:cursor-paste-assertion-{assertion_id}"
+
+
 def team_dispatch_admit_shape(
     *,
     kind: str,
@@ -99,9 +109,31 @@ def team_dispatch_admit_shape(
     return {
         "op": "generate",
         "seat": "cursor-sdk",
+        "model": CURSOR_SDK_MODEL,
         "lane": "B",
         "contract": "freeform",
         "prompt": message_path,
         "dispatch_thread_id": dispatch_thread_id,
-        "work_key": f"{kind}:{assertion_id}",
+        "work_key": work_key_for(kind, assertion_id),
+    }
+
+
+def cursor_sdk_dispatch_body(
+    *,
+    kind: str,
+    assertion_id: int,
+    prompt: str,
+    dispatch_thread_id: str,
+) -> dict[str, Any]:
+    """Stargate ``/api/v1/team/dispatch`` body. MCP's omitted-model default does not apply."""
+    return {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "model": CURSOR_SDK_MODEL,
+        "lane": "B",
+        "job": "freeform",
+        "prompt": prompt,
+        "dispatch_thread_id": dispatch_thread_id,
+        "work_key": work_key_for(kind, assertion_id),
+        "caller_agent": "pipeline:cursor-paste-resolve",
     }
