@@ -9,6 +9,7 @@ master (see ``cursor_sdk_land_dirty``); releases on terminal.
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
@@ -37,9 +38,14 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_land_leases (
 );
 """
 
+_LAND_LEASE_COLUMN_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("holder_pid", "INTEGER"),
+)
+
 _DEFAULT_POLL_S = 0.02
 _DEFAULT_ACQUIRE_TIMEOUT_S = 600.0
-_STALE_LAND_LEASE_S = 900.0
+_UNCHECKABLE_HOLDER_BACKSTOP_S = 7200.0
+_HEARTBEAT_INTERVAL_S = 300.0
 
 # Re-export for callers/tests that imported the predicate from this module.
 __all__ = (
@@ -55,6 +61,7 @@ __all__ = (
     "master_land_guard",
     "master_land_lease_key",
     "reap_stale_land_leases",
+    "refresh_land_lease_heartbeat",
     "release_land_lease",
     "try_acquire_land_lease",
 )
@@ -103,6 +110,29 @@ def master_land_lease_key(source_repo: str | Path) -> str:
 def ensure_land_lease_schema(conn: sqlite3.Connection) -> None:
     """Create the land-lease table when missing (shares dispatch ledger DB)."""
     conn.executescript(_LAND_LEASE_DDL)
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(cursor_sdk_land_leases)")
+    }
+    for name, decl in _LAND_LEASE_COLUMN_MIGRATIONS:
+        if cols and name not in cols:
+            conn.execute(
+                f"ALTER TABLE cursor_sdk_land_leases ADD COLUMN {name} {decl}"
+            )
+
+
+def _holder_pid_alive(pid: int | None) -> bool | None:
+    """Return True/False when pid is checkable on this host, else None."""
+    if pid is None:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
 
 
 def _now() -> str:
@@ -115,17 +145,26 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
         ensure_land_lease_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT holder_op_id FROM cursor_sdk_land_leases WHERE lease_key=?",
+            "SELECT holder_op_id, holder_pid FROM cursor_sdk_land_leases WHERE lease_key=?",
             (lease_key,),
         ).fetchone()
         if row is None:
             conn.execute(
-                "INSERT INTO cursor_sdk_land_leases (lease_key, holder_op_id, acquired_at) "
-                "VALUES (?, ?, ?)",
-                (lease_key, holder_op_id, _now()),
+                "INSERT INTO cursor_sdk_land_leases "
+                "(lease_key, holder_op_id, acquired_at, holder_pid) "
+                "VALUES (?, ?, ?, ?)",
+                (lease_key, holder_op_id, _now(), os.getpid()),
             )
             return True
-        return row["holder_op_id"] == holder_op_id
+        if row["holder_op_id"] == holder_op_id:
+            if row["holder_pid"] is None:
+                conn.execute(
+                    "UPDATE cursor_sdk_land_leases SET holder_pid=? "
+                    "WHERE lease_key=? AND holder_op_id=?",
+                    (os.getpid(), lease_key, holder_op_id),
+                )
+            return True
+        return False
 
 
 def land_lease_holder(lease_key: str) -> str | None:
@@ -186,21 +225,62 @@ def release_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
         return deleted.rowcount == 1
 
 
-def reap_stale_land_leases(*, threshold_s: float = _STALE_LAND_LEASE_S) -> int:
-    """Drop orphaned land leases past ``threshold_s`` (worker restart recovery)."""
-    cutoff = datetime.now(UTC).timestamp() - threshold_s
+def refresh_land_lease_heartbeat(*, lease_key: str, holder_op_id: str) -> bool:
+    """Refresh ``acquired_at`` for holders without a recorded pid.
+
+    Callers that cannot record ``holder_pid`` must invoke this at least every
+    :data:`_HEARTBEAT_INTERVAL_S` while the lease is held.
+    """
+    with _connect() as conn:
+        ensure_land_lease_schema(conn)
+        row = conn.execute(
+            "SELECT holder_op_id, holder_pid FROM cursor_sdk_land_leases "
+            "WHERE lease_key=?",
+            (lease_key,),
+        ).fetchone()
+        if row is None or str(row["holder_op_id"]) != holder_op_id:
+            return False
+        if row["holder_pid"] is not None:
+            return True
+        updated = conn.execute(
+            "UPDATE cursor_sdk_land_leases SET acquired_at=? "
+            "WHERE lease_key=? AND holder_op_id=? AND holder_pid IS NULL",
+            (_now(), lease_key, holder_op_id),
+        )
+        return updated.rowcount == 1
+
+
+def reap_stale_land_leases(
+    *,
+    backstop_s: float = _UNCHECKABLE_HOLDER_BACKSTOP_S,
+) -> int:
+    """Drop orphaned master land leases when the holder process is dead.
+
+    Rows with a live ``holder_pid`` are never reaped by age. Rows whose pid
+    cannot be checked are reaped only after ``backstop_s`` without a heartbeat.
+    """
+    now_ts = datetime.now(UTC).timestamp()
+    cutoff = now_ts - backstop_s
     reaped = 0
     with _connect() as conn:
         ensure_land_lease_schema(conn)
         rows = conn.execute(
-            "SELECT lease_key, acquired_at FROM cursor_sdk_land_leases"
+            "SELECT lease_key, acquired_at, holder_pid FROM cursor_sdk_land_leases"
         ).fetchall()
         for row in rows:
-            try:
-                seen = datetime.fromisoformat(row["acquired_at"]).timestamp()
-            except ValueError:
-                seen = 0.0
-            if seen < cutoff:
+            pid = row["holder_pid"]
+            alive = _holder_pid_alive(int(pid) if pid is not None else None)
+            if alive is True:
+                continue
+            if alive is False:
+                should_reap = True
+            else:
+                try:
+                    seen = datetime.fromisoformat(row["acquired_at"]).timestamp()
+                except ValueError:
+                    seen = 0.0
+                should_reap = seen < cutoff
+            if should_reap:
                 conn.execute(
                     "DELETE FROM cursor_sdk_land_leases WHERE lease_key=?",
                     (row["lease_key"],),
