@@ -345,7 +345,7 @@ Report to the user: thread ID, packet path, artifact path
 ```python
 EXEC = team_dispatch(
     op="generate",
-    job="code-review",
+    contract="code-review",
     dispatch_thread_id=f"review-plan-{PLAN_NAME}",
     messages=[{"role": "user", "content": <user message — corpus + scope metadata>}],
     model=<resolved model or None>,  # default from reviewer role (openai/gpt-5.5)

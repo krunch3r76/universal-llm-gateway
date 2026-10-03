@@ -19,7 +19,7 @@ Load on demand for templates, web priming checklists, and block-by-block primers
 2. **Seed stub spec** — `doc_template(implement_dense_spec)`; layer verdict + forks; `entity_update(source_uri)`.
 3. **Author consult brief** — `tmp/reviews/{slug}-harden-web-consult-packet.md`; `job: confer`; scaffold
    non-authoritative.
-4. **Dispatch** — `team_dispatch(op=handoff, seat=web-anthropic, job=confer, packet_path=…)`; ¬ `job=confer` param (422).
+4. **Dispatch** — `team_dispatch(op=handoff, seat=web-anthropic, contract=confer, packet_path=…)`; ¬ legacy `job=` MCP param (422 — use `contract=`).
 5. **Hand back** thread + `push_reminder`.
 6. **Gate-2 close distillation** — `files_expected`, `acceptance_criteria`, `required_skills` (catalog-registered only).
 7. **Entity hygiene** — implement-ready assertion + `spec_sha256`.
@@ -57,7 +57,7 @@ Plus `<reasoning_trace>` with literal `no fork remains open`.
 | No implement-ready | not ready | return Gate 2 |
 | Open fork | not ready | resolve first |
 | Spec/attrs drift | `implement_spec_drifted_since_ready` | refresh assertion |
-| Inspect artifact | W4 `job=wrap` | materialize only |
+| Inspect artifact | W4 `contract=wrap` | materialize only |
 | Manual transport | W1 `packet_path`/handoff | exception |
 
 Wrap triggers: W4 inspection; W1 manual/alternate; W1 non-projectable corpus; break-glass materializer incident.
@@ -68,7 +68,7 @@ NOT wrap: missing attrs, open fork, no assertion, batch without plan route.
 - **W1** lifecycle Gate-3 wrap: hand-authored packet, no dispatch.
 - **W2** act split: artifact-gen vs implement dispatch.
 - **W3** `prepare_implement_packet`: server gate+materialize.
-- **W4** `job=wrap`: materialize without Composer.
+- **W4** `contract=wrap`: materialize without Composer.
 
 Legacy inline wrap: read todo + assertion → verify spec → write `tmp/reviews/{slug}-implement-packet.md` → dispatch.
 ¬ dispatch wrap step to cursor-sdk.
@@ -84,11 +84,11 @@ Blocked until N≥5 runs.
 
 ```text
 # top-level generate, including implement, recon, bind-only, and read-only
-team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, job=mechanical)
-team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, job=freeform)
+team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, contract=mechanical)
+team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, contract=freeform)
 ```
 
-Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `job=investigate`**; implement → Composer.
+Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `contract=investigate`**; implement → Composer.
 
 ## Friction-ticket packet preflight
 
@@ -104,7 +104,7 @@ See `friction-review` § Friction ID preflight.
 
 ## Web-receiver priming checklist
 
-For `team_dispatch(op=handoff, seat=web-anthropic, job=confer|web-implement)`: web attaches **life only** — no workspaces fs,
+For `team_dispatch(op=handoff, seat=web-anthropic, contract=confer|web-implement)`: web attaches **life only** — no workspaces fs,
 no IDE rules/skills/terminals.
 
 ### Web-anthropic skill-inline gate (binding)

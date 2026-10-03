@@ -231,7 +231,7 @@ Per `projects/.cursor/rules/handoff-dispatchers.mdc` § "team-generate" / "Dispa
 ```
 EXEC = team_dispatch(
     op="generate",
-    job="code-review",
+    contract="code-review",
     dispatch_thread_id=f"diff-review-mcp-{BRANCH}",
     messages=[{"role": "user", "content": <user message>}],
     model=PASS_MODEL,

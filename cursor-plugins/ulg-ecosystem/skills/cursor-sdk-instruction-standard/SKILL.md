@@ -3,7 +3,7 @@ name: cursor-sdk-instruction-standard
 description: "Before authoring cursor-sdk dispatch turns — none, pure-mechanical, or implement contracts; ensures Composer executors get verifiable instructions."
 skill_category: dispatch-delegation
 trigger_short: cursor-sdk ∨ none ∨ pure-mechanical ∨ self-check ∨ acceptance_criteria
-trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "job=implement", "lane"]
+trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "job=implement", "contract=implement", "lane"]
 canonical: workspaces://universal-llm-gateway/.cursor/skills/cursor-sdk-instruction-standard/SKILL.md
 ---
 
@@ -13,7 +13,7 @@ Composer 2.5 is a capable mechanical executor; self-reports are usually reliable
 
 `cursor-sdk dispatch ⇒ explicit determinate instructions ∧ repeated output contract ∧ worker self-check ∧ lead verification for irreversible writes`.
 
-Light execution: `team_dispatch(op=generate, seat=cursor-sdk)` invokes Composer without IDE handoff. Prefer `job=implement` when implement-ready; use narrower contracts only when appropriate. On `op=generate`, `subject` is ignored; use `op=to_thread` to set thread subject.
+Light execution: `team_dispatch(op=generate, seat=cursor-sdk)` invokes Composer without IDE handoff. Prefer `contract=implement` when implement-ready; use narrower contracts only when appropriate. On `op=generate`, `subject` is ignored; use `op=to_thread` to set thread subject.
 
 ## D1 — Determinate steps
 
@@ -63,7 +63,7 @@ Reporting "done" without a passing self-check is a contract violation.
 ```
 
 - `none ∨ pure-mechanical` ⇒ embed final inline block.
-- `job=implement` ⇒ embed in `acceptance_criteria` during Gate-2 distillation.
+- `contract=implement` ⇒ embed in `acceptance_criteria` during Gate-2 distillation.
 - **Public Python surface touched** ⇒ self-check row: `docstring-quality check|scan` on touched files → **criticals=0** (or FAIL + path). Lead still re-gates at closeout (`docstring-quality` § Ship gate · `implement-todo` §5) — worker self-check does not replace lead scan citation.
 - **Named `todo:` land** ⇒ self-check row: `todo-close` or a LANDED assertion on that entity (`workflow_state=done` or an active LANDED claim citing the path SHA). A git commit of the locus without stamping the matter entity is incomplete. Lead `entity_get`s after harvest. Specimen: T14 `4a9246a` in tree, card left `open`.
 - **Propagation surface touched** ⇒ self-check row naming what makes the change live, because `landed ≠ live`. `services/{dir}/**.py` ⇒ `manage(action="sync_restart", service="{slug}")`; `cursor-plugins/ulg-ecosystem/{skills,commands,rules}/**` ∨ a census file ⇒ `HOME="$(getent passwd "$(id -un)" | cut -d: -f6)" scripts/cursor/install-ecosystem-plugin.sh` (bare `scripts/cursor/install-ecosystem-plugin.sh` is REFUSED under cursor-sdk dispatch HOME — `dispatch_home_host_guard`) + Developer → Reload Window. A changed skill whose catalog `surface_class` is `shared_sync` or `life_local` also gets `scripts/cortex/claude-ai-sync-jupiter upload --slugs <slug> --replace` for that slug. For `live@<sha>`, report the path-explicit commit SHA, restart action, observed code-ref relation, identity movement, and dirty-path disclosure; a headless seat reports `landed` when it cannot run the post-restart probe. State `propagation: none` explicitly when nothing is required. The packet author owns this: the operator seat disposes on closeout fields only, so a surface the closeout never names is a question it cannot ask. Doctrine: `decision:closeout-propagation-residue` (friction 26340).
@@ -119,7 +119,7 @@ Packet prose does not select a lane. SOT: `consult-routing` § cursor-sdk checko
 | `nest_under` / `resume_of` | omit (inherit) |
 
 Omit on a **top-level** generate is not “no preference”: MCP + Stargate 422
-`lane_required`. `job=wrap` is exempt. GIW empty-scope omit still selects
+`lane_required`. `contract=wrap` is exempt. GIW empty-scope omit still selects
 Lane A inside `select_lane` (`opt_out`) even when the Lane-B regime is on —
 that is inference, not a license to omit or to pass `lane="A"`. Explicit wire
 `lane="A"` is 422 `CURSOR_LANE_A_REFUSED` at admit. After admit, quote
@@ -152,7 +152,7 @@ Before marking a `judgment_required` todo implement-ready, verify ALL:
 
 ## Materializer preconditions
 
-`team_dispatch(op=generate, seat=cursor-sdk, job=implement, lane="B", source_ref=todo:{slug})` reads entity state, not dispatch params. Required:
+`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})` reads entity state, not dispatch params. Required:
 
 1. `todo.attributes.density_triage ∈ {judgment_required, mechanical}`. `mechanical` bypasses spec; any other value rejects (`implement_triage_unknown`).
 2. Todo entity `source_uri` points at `cortex://notes/system/specs/{slug}.md` or `notes/system/specs/{slug}.md`; `attributes.spec_path` is ignored.
@@ -160,7 +160,7 @@ Before marking a `judgment_required` todo implement-ready, verify ALL:
 
 First-failure order: `implement_triage_unknown` → `implement_not_ready_judgment_required` → `implement_ready_assertion_missing` → `implement_ready_assertion_entity_mismatch` → `implement_ready_assertion_inactive` → `implement_not_ready_no_dense_spec` → `implement_ready_assertion_spec_uncited` → `implement_spec_unreadable` → `implement_spec_not_dense` → `implement_spec_drifted_since_ready` → `implement_attrs_unpopulated`.
 
-Dry-run before declaring ready: `team_dispatch(op=generate, seat=cursor-sdk, job=wrap, source_ref=todo:{slug})`. `wrap` runs the same `require_implement_ready` gate then materializes a packet without SDK worker. `422` names the missing precondition; `200 + packet_path` means execute will admit.
+Dry-run before declaring ready: `team_dispatch(op=generate, seat=cursor-sdk, contract=wrap, source_ref=todo:{slug})`. `wrap` runs the same `require_implement_ready` gate then materializes a packet without SDK worker. `422` names the missing precondition; `200 + packet_path` means execute will admit.
 
 Re-versioned / previously done todo: stale `implement_ready_assertion_id` may be reused by source-ref materialization. Supersede old assertion, re-pin, re-distill attrs, or use `packet_path` until verified.
 

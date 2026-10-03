@@ -5,7 +5,7 @@
 
 
 Six-block handoff packet (`architecture-handoff-protocol`), **materialized by
-Stargate from the todo** on `job=conductor` + `source_ref` (front-matter
+Stargate from the todo** on `contract=conductor` + `source_ref` (front-matter
 `role_name: conductor`, the Use-line, entry gate, `summon_mode`, pins). The lead
 shapes the **todo**, not the file; `packet_kind` is retired on the wire (the
 contract carries it). The list below is what the materialized packet must end up
@@ -18,7 +18,7 @@ todo (`scope`, `problem`, attrs), not in a hand-edited copy.
 |---|---|---|
 | *(omit)* | resolves **`agent`** | Standing conductor admit — orchestrates, nests, may land |
 | `sdk_mode: agent` | explicit agent | Same; use when documenting intent in the packet file |
-| `sdk_mode: plan` | **forbidden** on `job=conductor` | Plan mode is for **nested** G3 recon/bind legs only — worker 422 |
+| `sdk_mode: plan` | **forbidden** on `contract=conductor` | Plan mode is for **nested** G3 recon/bind legs only — worker 422 |
 
 Nested G3 packets (not the top-level conductor admit) MAY carry `sdk_mode: plan`
 when the row is sparse recon before `implement_ready`. SoT:

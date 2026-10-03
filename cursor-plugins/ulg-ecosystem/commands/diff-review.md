@@ -3,7 +3,7 @@ requested file/range, against workspace invariants and shared rules.
 
 **Code review request (binding):** in this tab, apply `review-task-guidance`
 Code Review Dimension and do not dispatch. A review that leaves the tab is
-`team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`.
+`team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`.
 `cdp/opus-5` is the same class. Do not call model `code-review`. Later sections
 that name a `web-claude` handoff as the default are not this request.
 
@@ -34,7 +34,7 @@ Override scope is also supported: if the user supplies a file/path and/or
 `since <git-ref>`, review that explicit selection even if the change has
 already been committed and no longer appears in `git status`.
 
-Default dispatch is **`job=code-review`**: `team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`.
+Default dispatch is **`contract=code-review`**: `team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`.
 `cdp/opus-5` is the same class. In this tab, apply `review-task-guidance` and do not dispatch.
 A `web-anthropic` handoff is not the code-review request.
 
@@ -43,12 +43,12 @@ A `web-anthropic` handoff is not the code-review request.
 Other dispatch modes:
 - `team-reviewer` — select via any resolved model token (`gpt-5.5`, `gemini`,
   `provider/model`, etc.) or explicit `team-reviewer`. Synchronous
-  `team_dispatch(op=generate, job=code-review, …)` with MCP tools (`fs`, `cortex`,
+  `team_dispatch(op=generate, contract=code-review, …)` with MCP tools (`fs`, `cortex`,
   `observability`, `rag`). Optional `model=` override within role `allowed_models`.
   Runs manifest expansion before dispatch; claude-web is the cognitive fallback
   when Critical/Warning findings reference files outside the manifest. Requires
   Stargate to be running.
-- `team-inline` / `raw` — `team_dispatch(op=generate, job=code-review)` —
+- `team-inline` / `raw` — `team_dispatch(op=generate, contract=code-review)` —
   inline-only (no MCP writes); corpus inlined in the prompt. Use when MCP catalog
   is unavailable or you want a single-shot read of a small diff only.
 - `--grok` — grok-build as primary dispatcher with manifest expansion.
@@ -74,7 +74,7 @@ Other dispatch modes:
 ```
 
 `model` — optional. Omitted means the code-review request:
-`team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`.
+`team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`.
 
 `path` — optional file or directory path to review. If present, it overrides
 the default `git status` file discovery and narrows the review to that path.
@@ -256,7 +256,7 @@ else:
 ```
 
 **Model resolution invariant:** omitted args → **`purpose-review`**. Fire
-`team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`
+`team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`
 and stop. Do not continue into a `web-claude` handoff. `cdp/opus-5` is the same
 class. An explicit `web-claude` / `claude-web` / `--grok` / `team-reviewer` token
 is not the code-review request; say so and use `purpose-review` unless the
@@ -636,13 +636,13 @@ ESCALATE_TO_WEB gap predicate after primary dispatch.
 | `web-claude` / `cursor-claude` | 4w | `team_dispatch(op=handoff)` → manual seat (default web) |
 | `team-reviewer` | 4m | `team_dispatch` reviewer role + MCP tools + expansion; claude-web fallback (gap-triggered) |
 | `grok-build` | 4g | grok-build dispatch + expansion; claude-web fallback (truncation / `--ab`) |
-| `team-inline` / `frontier` | 4f | `job=code-review`, no MCP tools, packet inlined |
+| `team-inline` / `frontier` | 4f | `contract=code-review`, no MCP tools, packet inlined |
 | `agent:orion` / `agent:bard` | 4x | reserved stubs |
 
 ### 4f. Inline Team Review (`team-inline`)
 
 Call `team_dispatch` with:
-- `op="generate"`, `job="code-review"`
+- `op="generate"`, `contract="code-review"`
 - `dispatch_thread_id=<stable arc id>`
 - `model=REVIEW_MODEL` (optional override within synthesizer `allowed_models`)
 - `reasoning_effort="high"`, `caller_agent="cursor"`
@@ -812,7 +812,7 @@ Dispatch:
 ```
 EXEC = team_dispatch(
     op="generate",
-    job="code-review",
+    contract="code-review",
     dispatch_thread_id=f"diff-review-{BRANCH}",
     messages=[{"role": "user", "content": <packet body — manifest + metadata>}],
     model=REVIEW_MODEL,            # optional; default from reviewer role
@@ -1058,7 +1058,7 @@ grok-build findings only. No `agent_bus` close needed (no thread).
 ### 4w. Manual-seat handoff (`claude-web` | `claude-cursor`)
 
 This section is not the code-review request. That request is
-`team_dispatch(op=generate, model=cdp/opus-5.5, job=code-review)`.
+`team_dispatch(op=generate, model=cdp/opus-5.5, contract=code-review)`.
 Continue here only when the operator named this seat for a handoff that is
 not the code review.
 

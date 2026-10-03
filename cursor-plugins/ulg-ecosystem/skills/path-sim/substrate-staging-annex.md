@@ -48,7 +48,7 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 |---|---|
 | Path-sim **A** (L1+L2) / closed-detent light consult | **Composer enumerate → `cdp/fable` bind** |
 | Path-sim bundled **Q** (L0) | ACTIVE — `team_dispatch(model=<ACTIVE.model>, reasoning_effort=<ACTIVE.reasoning_effort>)` |
-| `team_dispatch` `job=freeform, model=xai/grok-4.7` for checkout-present coding consult | **PROHIBITED** |
+| `team_dispatch` `contract=freeform, model=xai/grok-4.7` for checkout-present coding consult | **PROHIBITED** |
 
 | Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.7` |
 | Writing / correspondence / outbound prose | **PROHIBITED** for Grok — Terra+Gemini (or lead/web); `openai/gpt-5.5` operator-gated (`consult-routing` § Writing consult substrate) |
