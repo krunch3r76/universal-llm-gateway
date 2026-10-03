@@ -34,8 +34,9 @@ _KEEP_LIST = frozenset(
         "scripts/model_manager/ui/controller/charter_runner/window_terminal_contract.py",
         "libs/claude_bundles/induction_reply_baseline.py",
         "cursor-plugins/ulg-ecosystem/skills/reasoning-posture/reference.md",
-        # MCP ulg-code team_dispatch parameter names; frontier.py maps
-        # contract->job and purpose->session on the Stargate wire.
+        # MCP ulg-code team_dispatch parameter names. frontier.py writes
+        # contract to body job and purpose to body purpose on generate only
+        # (services/mcp-server/tools/frontier.py).
         "libs/claude_bundles/operator_proxy_mission.py",
         "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md",
         "cursor-plugins/ulg-ecosystem/rules/cdp-operator-proxy_ulg.mdc",
@@ -131,6 +132,21 @@ def _rg(pattern: str) -> list[tuple[str, str, str]]:
     return hits
 
 
+def test_keep_list_wire_comment_maps_purpose_to_body_purpose() -> None:
+    """a:37329 — the keep-list note matches generate, where purpose stays purpose."""
+    text = Path(__file__).read_text(encoding="utf-8")
+    start = text.index("# MCP ulg-code team_dispatch parameter names")
+    end = text.index('"libs/claude_bundles/operator_proxy_mission.py"')
+    note = text[start:end]
+    # Assembled so this file never contains the retired false map as one string.
+    false_map = "purpose" + "->" + "session"
+    assert false_map not in note
+    assert "purpose to session" not in note
+    assert "contract to body job" in note
+    assert "purpose to body purpose on generate only" in note
+    assert "services/mcp-server/tools/frontier.py" in note
+
+
 def test_retired_token_hits_stay_inside_keep_list() -> None:
     outside: list[str] = []
     for name, pattern in _PATTERNS:
@@ -146,6 +162,4 @@ def test_retired_token_hits_stay_inside_keep_list() -> None:
         extra = ""
         if len(outside) > 80:
             extra = f"\n... {len(outside) - 80} more"
-        pytest.fail(
-            f"{len(outside)} hit(s) outside the keep-list:\n{preview}{extra}"
-        )
+        pytest.fail(f"{len(outside)} hit(s) outside the keep-list:\n{preview}{extra}")
