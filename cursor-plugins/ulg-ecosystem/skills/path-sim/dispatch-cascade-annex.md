@@ -258,7 +258,7 @@ scripts/cortex/claude-ai-sync-jupiter project-ask \
 
 ```
 team_dispatch(
-  op=generate, model=cdp/fable, contract=freeform, effort=low,
+  op=generate, model=cdp/fable, contract=freeform, reasoning_effort="low",
 
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-fable-q-packet.md

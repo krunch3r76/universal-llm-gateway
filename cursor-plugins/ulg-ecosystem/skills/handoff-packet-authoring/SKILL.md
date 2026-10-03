@@ -98,29 +98,29 @@ Web-anthropic: `inline_authoritative` (full body + sha256) **or** verified serve
 | # | Block | Holds |
 |---|---|---|
 | 1 | `<scope>` | target, path, selection mode |
-| 2 | `<invariants>` | rules; skill refs + ≤15 task lines. Consult / none: include `reasoning-posture` (enrich auto-inserts if omitted). |
+| 2 | `<invariants>` | rules; skill refs + ≤15 task lines. Confer / freeform: include `reasoning-posture` (enrich auto-inserts if omitted). |
 | 3 | `<task_guidance>` | work; **acceptance** for implement |
 | 4 | `<corpus>` | pointers |
 | 5 | `<mcp_capabilities>` | life-on/code-off or code plan |
 | 6 | `<output_format>` | closeout shape |
 
 Implement needs `acceptance` in `<task_guidance>`. Frontmatter `contract:` is **required**
-on consult/none packets (checked AC — missing ⇒ dispatch reject at enrich).
+on confer/freeform packets (checked AC — missing ⇒ dispatch reject at enrich).
 
 Materialized cursor-sdk packets (conductor/sketch/wrap) must include a `---` block with
 `work_key:`, `packet_kind:`, and `contract:` — GIW Gate 1 refuses write-class admits
 without identity when these are absent on the wire and in frontmatter.
 
 **`sdk_mode:` on recon / bind packets (cursor-sdk plan mode):** optional frontmatter
-on `job: freeform|consult|ask|recon|seed` packets. Omitted + `read_only=true`
+on `contract: freeform|confer` packets. Omitted + `read_only=true`
 defaults to **`plan`** at admit unless `sdk_mode: agent` overrides. Forbidden on
-`implement|pure-mechanical|conductor` (422). SoT: `cursor_sdk_mode.py`.
+`implement|mechanical|conductor` (422). SoT: `cursor_sdk_mode.py`.
 
 Example — sparse recon before implement:
 
 ```yaml
 ---
-contract: recon
+contract: freeform
 sdk_mode: plan
 work_key: todo:{slug}
 read_only: true

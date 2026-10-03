@@ -75,7 +75,7 @@ Legacy inline wrap: read todo + assertion → verify spec → write `tmp/reviews
 
 ## CONFORM / CONVERSE lanes
 
-**CONFORM:** loose intent → conforming todo → wrap. Envelope fields + `none` generate; Layer 1+2 verify.
+**CONFORM:** loose intent → conforming todo → wrap. Envelope fields + `freeform` generate; Layer 1+2 verify.
 Blocked until N≥5 runs.
 
 **CONVERSE:** latent forks → dialogue → envelope → CONFORM. 3-round budget; lead-run only. Blocked until N≥8 episodes.
@@ -104,7 +104,7 @@ See `friction-review` § Friction ID preflight.
 
 ## Web-receiver priming checklist
 
-For `team_dispatch(op=handoff, seat=web-anthropic, contract=confer|web-implement)`: web attaches **life only** — no workspaces fs,
+For `team_dispatch(op=handoff, seat=web-anthropic, contract=confer|implement)`: web attaches **life only** — no workspaces fs,
 no IDE rules/skills/terminals.
 
 ### Web-anthropic skill-inline gate (binding)
@@ -193,7 +193,7 @@ Skeptic packets: `<output_format>` MUST demand `FILE_EVIDENCE_PATHS:` in bus rep
 
 ```markdown
 ---
-job: confer   # required on consult/none; implement uses implement
+contract: confer
 ---
 <scope>
 Goal: <one-line>. Selection mode: <targeted|branch|path>.

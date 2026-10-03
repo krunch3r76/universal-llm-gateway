@@ -64,7 +64,7 @@ M0 Intake → M-Arch? → M-Densify → audit+approve → M-Implement → M-Veri
 | **M0 Intake** | Cursor | Target file, SLOC, intended `target_package_dir`, consumer grep, `git rev-parse HEAD` |
 | **M-Arch** | `cdp/opus-5` (default) · `cdp/fable` when outside check / Opus-unsure | Architecture verdict sidecar: package cuts, `__init__` public surface, consumer graph |
 | **M-Densify** | Composer enumerate → **`cdp/fable` bind** (`seat=cursor-sdk` + `contract=freeform`) | `tmp/modularize-plans/{name}.md` — MODULES + IMPLEMENTATION GUIDE + `files_expected` |
-| **M-Implement** | `seat=cursor-sdk` Composer (`contract=implement` \| `pure-mechanical`) | Package dir + modules + re-exports + consumer updates |
+| **M-Implement** | `seat=cursor-sdk` Composer (`contract=implement` \| `mechanical`) | Package dir + modules + re-exports + consumer updates |
 | **M-Verify** | Cursor | `compileall` · `ruff` · `scripts/modularize scan` green on new package |
 
 ### Mode skip (M-Arch)
@@ -193,7 +193,7 @@ team_dispatch(
   op="generate",
   seat="cursor-sdk",
   # omit model= → Composer
-  contract="implement",  # or pure-mechanical when plan fully pinned
+  contract="implement",  # or mechanical when the plan is fully pinned (packet_path lane)
   lane="B",  # in-repo implement uses lane B; nest_under inherits if parent isolated
   packet_path="tmp/modularize-plans/{name}-implement.md",
   nest_under="{parent}" if cursor_sdk_gate held,
