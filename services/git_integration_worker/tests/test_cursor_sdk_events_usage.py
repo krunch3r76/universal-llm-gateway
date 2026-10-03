@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from services.git_integration_worker.cursor_sdk_events import (
     FrontierSdkWorkerCompleted,
     FrontierSdkWorkerDispatched,
+    FrontierSdkWorkerQueued,
     FrontierSdkWorkerResumed,
 )
 
@@ -88,3 +91,151 @@ def test_resumed_event_factory() -> None:
     assert event.signal == "frontier.sdk.worker.resumed"
     assert event.payload["resume_of"] == "parent"
     assert event.role == "observation"
+    assert "workspace_inherited_from" not in event.payload
+
+
+def test_resumed_event_records_inherited_workspace() -> None:
+    """a:37533 — omitted workspace filled from parent must be visible on resume."""
+    event = FrontierSdkWorkerResumed(
+        dispatch_id="child",
+        resume_of="parent",
+        sdk_agent_id="agent-1",
+        state_root="/tmp/state",
+        thread_id="t1",
+        execution_id="e1",
+        workspace_inherited_from="parent",
+    )
+    assert event.payload["workspace_inherited_from"] == "parent"
+
+
+def test_queued_event_records_inherited_workspace() -> None:
+    omitted = FrontierSdkWorkerQueued(
+        dispatch_id="d1",
+        thread_id="t1",
+        source_repo="/tmp/hub",
+        queue_position=0,
+    )
+    assert "workspace_inherited_from" not in omitted.payload
+    inherited = FrontierSdkWorkerQueued(
+        dispatch_id="d1",
+        thread_id="t1",
+        source_repo="/mnt/torus/projects/cryptax",
+        queue_position=0,
+        workspace_inherited_from="parent",
+    )
+    assert inherited.payload["workspace_inherited_from"] == "parent"
+
+
+def test_lane_selected_records_inherited_workspace() -> None:
+    from services.git_integration_worker.cursor_sdk_events import SdkLaneSelected
+
+    omitted = SdkLaneSelected(
+        dispatch_id="d1",
+        thread_id="t1",
+        lane="B",
+        reason="explicit",
+        regime_active=True,
+        contract="conductor",
+        selecting_predicate="lane=B",
+    )
+    assert "workspace_inherited_from" not in omitted.payload
+    inherited = SdkLaneSelected(
+        dispatch_id="d1",
+        thread_id="t1",
+        lane="B",
+        reason="explicit",
+        regime_active=True,
+        contract="conductor",
+        selecting_predicate="lane=B",
+        workspace_inherited_from="parent",
+    )
+    assert inherited.payload["workspace_inherited_from"] == "parent"
+
+
+def test_emit_wrappers_forward_inherit_and_packet_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wrapper kwargs must reach the factory — packet_kind used to be dropped."""
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_selected,
+        emit_sdk_worker_queued,
+        emit_sdk_worker_resumed,
+    )
+    from services.git_integration_worker.cursor_sdk_park_events import (
+        emit_sdk_park_resume_admitted,
+    )
+
+    captured: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events._emit",
+        captured.append,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_park_events.emit_frontier_event",
+        captured.append,
+    )
+    emit_sdk_worker_queued(
+        dispatch_id="d1",
+        thread_id="t1",
+        source_repo="/hub",
+        queue_position=0,
+        packet_kind="conductor",
+        workspace_inherited_from="parent",
+    )
+    emit_sdk_worker_resumed(
+        dispatch_id="d1",
+        resume_of="parent",
+        sdk_agent_id="agent-1",
+        state_root="/tmp/state",
+        thread_id="t1",
+        execution_id="e1",
+        workspace_inherited_from="parent",
+    )
+    emit_sdk_lane_selected(
+        dispatch_id="d1",
+        thread_id="t1",
+        lane="B",
+        reason="explicit",
+        regime_active=True,
+        contract="conductor",
+        selecting_predicate="lane=B",
+        workspace_inherited_from="parent",
+    )
+    emit_sdk_park_resume_admitted(
+        parent_dispatch_id="parent",
+        child_dispatch_id="d1",
+        thread_id="t1",
+        intent_id="i",
+        code_version="v",
+        attempt=1,
+        workspace_inherited_from="parent",
+    )
+    payloads = [ev.payload for ev in captured]
+    assert payloads[0]["packet_kind"] == "conductor"
+    assert all(p["workspace_inherited_from"] == "parent" for p in payloads)
+
+
+def test_park_resume_admitted_records_inherited_workspace() -> None:
+    from services.git_integration_worker.cursor_sdk_park_events import (
+        SdkParkResumeAdmitted,
+    )
+
+    hub = SdkParkResumeAdmitted(
+        parent_dispatch_id="p",
+        child_dispatch_id="c",
+        thread_id="t",
+        intent_id="i",
+        code_version="v",
+        attempt=1,
+    )
+    assert "workspace_inherited_from" not in hub.payload
+    sat = SdkParkResumeAdmitted(
+        parent_dispatch_id="p",
+        child_dispatch_id="c",
+        thread_id="t",
+        intent_id="i",
+        code_version="v",
+        attempt=1,
+        workspace_inherited_from="p",
+    )
+    assert sat.payload["workspace_inherited_from"] == "p"

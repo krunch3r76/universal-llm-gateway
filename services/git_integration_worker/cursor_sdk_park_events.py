@@ -163,6 +163,7 @@ def SdkParkResumeAdmitted(  # noqa: N802
     intent_id: str | None,
     code_version: str,
     attempt: int,
+    workspace_inherited_from: str | None = None,
 ) -> Event:
     """GIW admitted a ``resume_of`` child for a parked row (lineage continues)."""
     payload = _optional(
@@ -174,6 +175,7 @@ def SdkParkResumeAdmitted(  # noqa: N802
             "attempt": attempt,
         },
         intent_id=intent_id,
+        workspace_inherited_from=workspace_inherited_from,
     )
     return Event(signal="sdk.park.resume_admitted", payload=payload, scope="node")
 
@@ -344,6 +346,7 @@ def emit_sdk_park_resume_admitted(
     intent_id: str | None,
     code_version: str,
     attempt: int,
+    workspace_inherited_from: str | None = None,
 ) -> None:
     emit_frontier_event(
         SdkParkResumeAdmitted(
@@ -353,6 +356,7 @@ def emit_sdk_park_resume_admitted(
             intent_id=intent_id,
             code_version=code_version,
             attempt=attempt,
+            workspace_inherited_from=workspace_inherited_from,
         )
     )
 

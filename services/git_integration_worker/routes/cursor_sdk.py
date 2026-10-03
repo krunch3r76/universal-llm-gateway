@@ -590,6 +590,7 @@ def _emit_enriched_queued(
             cached.model_id, req.model_knobs
         ),
         queued_on=f"write_lease:{lease_key}",
+        workspace_inherited_from=req.workspace_inherited_from,
     )
 
 
@@ -3756,7 +3757,7 @@ async def admit_cursor_dispatch(
         if parent_id and parent_row is not None:
             refuse_parent_workspace_mismatch(explicit=req.workspace, recorded=inherited)
         if inherited and not (req.workspace and str(req.workspace).strip()):
-            req.workspace = inherited
+            req.stamp_inherited_workspace(parent_id, inherited)
         resolved_source_repo = resolve_dispatch_source_repo(
             req.workspace,
             hub=cfg.source_repo,
@@ -4367,6 +4368,7 @@ async def admit_cursor_dispatch(
                 execution_id=req.execution_id,
                 parent_terminal_status=getattr(parent_row, "terminal_status", None)
                 or parent_row.status,
+                workspace_inherited_from=req.workspace_inherited_from,
             )
 
     if not effective_read_only and concurrency_posture is not None:
@@ -4387,6 +4389,7 @@ async def admit_cursor_dispatch(
             contract=contract,
             regime_active=lane_b_regime_active(),
         ),
+        workspace_inherited_from=req.workspace_inherited_from,
     )
 
     # Nest park: ledger already moved parent → parked_waiting; transfer capacity

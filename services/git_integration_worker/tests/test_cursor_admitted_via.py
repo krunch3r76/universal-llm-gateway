@@ -65,6 +65,32 @@ def test_record_json_persists_workspace() -> None:
     assert data["workspace"] == "cryptax"
 
 
+def test_stamp_inherited_workspace_stays_off_record_and_wire() -> None:
+    """a:37533 — inherit provenance is admit-event only, not a spoofable wire field."""
+    req = CursorDispatchRequest(
+        thread_id="37533",
+        model="cursor/composer-2.5",
+        dispatch_id="child-ws",
+        execution_id="exec-child-ws",
+        message="hello",
+    )
+    req.stamp_inherited_workspace("parent-ws", "cryptax")
+    assert req.workspace == "cryptax"
+    assert req.workspace_inherited_from == "parent-ws"
+    data = json.loads(_dispatch_record_json(req))
+    assert data["workspace"] == "cryptax"
+    assert "workspace_inherited_from" not in data
+    with pytest.raises(ValidationError):
+        CursorDispatchRequest(
+            thread_id="37533",
+            model="cursor/composer-2.5",
+            dispatch_id="spoof-ws",
+            execution_id="exec-spoof-ws",
+            message="hello",
+            workspace_inherited_from="parent-ws",  # type: ignore[call-arg]
+        )
+
+
 def test_load_promoted_request_recovers_admitted_via(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

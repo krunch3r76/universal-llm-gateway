@@ -602,7 +602,7 @@ def build_await_resume_request(
     if lane == "A":
         worktree_path = None
         worktree_isolated = False
-    return CursorDispatchRequest(
+    req = CursorDispatchRequest(
         thread_id=row.thread_id,
         model=str(record.get("model") or row.resolved_model),
         dispatch_id=child_dispatch_id(row.dispatch_id, attempt=attempt),
@@ -628,6 +628,8 @@ def build_await_resume_request(
         source_ref=row.source_ref,
         resume_of=row.dispatch_id,
     )
+    req.stamp_inherited_workspace(row.dispatch_id)
+    return req
 
 
 async def _post_awaiting_turn(

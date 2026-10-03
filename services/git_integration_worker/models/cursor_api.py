@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    model_validator,
+)
 
 
 class CursorDispatchRequest(BaseModel):
@@ -115,6 +122,35 @@ class CursorDispatchRequest(BaseModel):
         | None
     ) = None
     hop_park_release: bool = False
+    _workspace_inherited_from: str | None = PrivateAttr(default=None)
+
+    @property
+    def workspace_inherited_from(self) -> str | None:
+        """Parent dispatch id when ``workspace`` was filled from that row.
+
+        Present on an event means this admit inherited. Absence is evidence of
+        explicit or hub-omitted workspace only on ``sdk.lane.selected``,
+        ``frontier.sdk.worker.resumed``, write-lease
+        ``frontier.sdk.worker.queued``, and ``sdk.park.resume_admitted``.
+        Capacity-wait ``queued`` (``queued_on=capacity:…``) rebuilds the
+        request from the ledger without this stamp, so absence there is not
+        that evidence.
+        """
+        return self._workspace_inherited_from
+
+    def stamp_inherited_workspace(
+        self, parent_id: str, token: str | None = None
+    ) -> None:
+        """Mark ``workspace`` as filled from a parent row, not the admit wire.
+
+        Private so a caller cannot spoof it (``extra=forbid``). Omitted from
+        ``record_json`` — per-admit provenance for the events named on the
+        property; not restored by ``load_promoted_request``.
+        """
+        if token is not None:
+            self.workspace = token
+        if self.workspace:
+            self._workspace_inherited_from = parent_id
 
     @model_validator(mode="after")
     def _hop_triplet_consistency(self) -> CursorDispatchRequest:
