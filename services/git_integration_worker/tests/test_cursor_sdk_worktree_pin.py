@@ -204,3 +204,23 @@ def test_unlock_lane_worktree(git_repo: Path, tmp_path: Path) -> None:
     lock_lane_worktree(git_repo, wt, dispatch_id="d1", thread_id="t1")
     assert unlock_lane_worktree(git_repo, wt, thread_id="t1")
     assert not list_locked_worktrees(git_repo)
+
+
+def test_lock_hub_repo_against_satellite_worktree_fails(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    """a:37504 — git -C hub lock of a satellite tree is not a working tree."""
+    sat = tmp_path / "cryptax"
+    sat.mkdir()
+    _git("init", "-b", "master", cwd=sat)
+    _git("config", "user.email", "t@example.com", cwd=sat)
+    _git("config", "user.name", "t", cwd=sat)
+    (sat / "f").write_text("x\n")
+    _git("add", "f", cwd=sat)
+    _git("commit", "-m", "init", cwd=sat)
+    wt = tmp_path / "lane-14724"
+    _add_worktree(sat, wt)
+    with pytest.raises(RuntimeError, match="not a working tree"):
+        lock_lane_worktree(git_repo, wt, dispatch_id="d1", thread_id="t1")
+    lock_lane_worktree(sat, wt, dispatch_id="d1", thread_id="t1")
+    assert list_locked_worktrees(sat)

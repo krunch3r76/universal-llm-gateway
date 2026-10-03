@@ -54,6 +54,9 @@ from services.git_integration_worker.cursor_sdk_park_ledger import (
 from services.git_integration_worker.cursor_sdk_resume import (
     resume_eligibility_reason,
 )
+from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+    recorded_workspace,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 logger = get_logger(__name__)
@@ -184,6 +187,7 @@ def build_park_resume_request(
         model_knobs=record.get("model_knobs"),
         read_only=bool(record.get("read_only", False)),
         lane=lane if lane in ("A", "B") else None,
+        workspace=recorded_workspace(record=record, source_repo=row.source_repo),
         worktree_isolated=worktree_isolated,
         worktree_path=worktree_path,
         admitted_via=ADMITTED_VIA_PARK_RESUME,

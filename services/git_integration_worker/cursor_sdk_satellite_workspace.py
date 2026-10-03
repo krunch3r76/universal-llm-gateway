@@ -6,7 +6,9 @@ Gate D use the named satellite git while control-plane paths stay on hub ULG.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 _HUB_REPO_NAME = "universal-llm-gateway"
 _SATELLITES_REL = Path("cursor-plugins/ulg-ecosystem/SATELLITES.txt")
@@ -64,6 +66,36 @@ def load_satellite_allowlist(*, hub: Path) -> frozenset[str]:
     return frozenset(names)
 
 
+def recorded_workspace(
+    *,
+    record: dict[str, Any] | None = None,
+    record_json: str | None = None,
+    source_repo: str | None = None,
+) -> str | None:
+    """Satellite ``workspace=`` token stored on a parent, or derived from its git.
+
+    Hub ULG is omitted (``None``): passing ``workspace=universal-llm-gateway``
+    is a 422. Legacy park rows may lack ``record_json.workspace`` and still
+    carry a satellite ``source_repo`` column — use the path basename then.
+    """
+    data = record
+    if data is None:
+        try:
+            parsed = json.loads(record_json or "{}")
+        except json.JSONDecodeError:
+            parsed = {}
+        data = parsed if isinstance(parsed, dict) else {}
+    raw = data.get("workspace")
+    if isinstance(raw, str) and raw.strip() and raw.strip() != _HUB_REPO_NAME:
+        return raw.strip()
+    if not source_repo:
+        return None
+    name = Path(str(source_repo)).name
+    if not name or name == _HUB_REPO_NAME:
+        return None
+    return name
+
+
 def resolve_dispatch_source_repo(
     workspace: str | None,
     *,
@@ -113,5 +145,6 @@ __all__ = [
     "CursorWorkspaceNotGit",
     "CursorWorkspaceUnknown",
     "load_satellite_allowlist",
+    "recorded_workspace",
     "resolve_dispatch_source_repo",
 ]

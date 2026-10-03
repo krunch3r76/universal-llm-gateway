@@ -642,6 +642,64 @@ def test_resume_request_builder_inherits_identity(tmp_path: Path) -> None:
     )
 
 
+def _await_park_row(
+    *,
+    dispatch_id: str,
+    record: dict[str, Any],
+    source_repo: str | None = None,
+) -> Any:
+    from services.git_integration_worker.cursor_sdk_park_ledger import ParkRow
+
+    return ParkRow(
+        dispatch_id=dispatch_id,
+        thread_id=_WORKER_THREAD,
+        execution_id=f"exec-{dispatch_id}",
+        caller_agent="cursor",
+        resolved_model="cursor/grok-4.7",
+        status="completed",
+        terminal_status="completed",
+        sdk_agent_id="agent-x",
+        state_root=None,
+        source_ref=_WORK_KEY,
+        work_key=_WORK_KEY,
+        contract="freeform",
+        packet_path=None,
+        park_kind=PARK_KIND_AWAIT_REPLY,
+        park_intent_id=None,
+        parked_at="2026-10-03T00:00:00+00:00",
+        park_resumed_by=None,
+        park_expires_at=None,
+        record_json=json.dumps(record),
+        source_repo=source_repo,
+    )
+
+
+def test_await_resume_builder_copies_record_workspace() -> None:
+    row = _await_park_row(
+        dispatch_id="d-ws",
+        record={
+            "workspace": "cryptax",
+            "model": "cursor/grok-4.7",
+            "message": "continue",
+            "handoff_contract": "freeform",
+            "park": {},
+        },
+        source_repo="/mnt/torus/projects/universal-llm-gateway",
+    )
+    req = build_await_resume_request(row, replies=[], attempt=1, code_version="v")
+    assert req.workspace == "cryptax"
+
+
+def test_await_resume_builder_derives_workspace_from_source_repo() -> None:
+    row = _await_park_row(
+        dispatch_id="d-legacy-ws",
+        record={"model": "cursor/grok-4.7", "message": "continue", "park": {}},
+        source_repo="/mnt/torus/projects/cryptax",
+    )
+    req = build_await_resume_request(row, replies=[], attempt=1, code_version="v")
+    assert req.workspace == "cryptax"
+
+
 # ------------------------------------------------------------- done item 3
 
 

@@ -29,6 +29,7 @@ from services.git_integration_worker.cursor_sdk_satellite_workspace import (
     CursorWorkspaceHubUseOmit,
     CursorWorkspaceNotGit,
     CursorWorkspaceUnknown,
+    recorded_workspace,
     resolve_dispatch_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
@@ -76,6 +77,36 @@ def projects_layout(tmp_path: Path) -> tuple[Path, Path, Path, frozenset[str]]:
     roster_file.parent.mkdir(parents=True)
     roster_file.write_text("sat-bot\n", encoding="utf-8")
     return hub, satellite, projects_root, roster
+
+
+def test_recorded_workspace_prefers_record_token() -> None:
+    assert (
+        recorded_workspace(
+            record={"workspace": "cryptax"},
+            source_repo="/mnt/torus/projects/universal-llm-gateway",
+        )
+        == "cryptax"
+    )
+
+
+def test_recorded_workspace_derives_legacy_source_repo() -> None:
+    assert (
+        recorded_workspace(
+            record={},
+            source_repo="/mnt/torus/projects/cryptax",
+        )
+        == "cryptax"
+    )
+
+
+def test_recorded_workspace_omits_hub() -> None:
+    assert (
+        recorded_workspace(
+            record={"workspace": "universal-llm-gateway"},
+            source_repo="/mnt/torus/projects/universal-llm-gateway",
+        )
+        is None
+    )
 
 
 def test_omit_workspace_resolves_hub(
