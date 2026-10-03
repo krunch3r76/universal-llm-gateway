@@ -89,6 +89,7 @@ class ParkRow:
     park_resumed_by: str | None
     park_expires_at: str | None
     record_json: str
+    source_repo: str | None = None
 
     @property
     def record(self) -> dict[str, Any]:
@@ -112,7 +113,7 @@ _ROW_COLUMNS = (
     "dispatch_id, thread_id, execution_id, caller_agent, resolved_model, status, "
     "terminal_status, sdk_agent_id, state_root, source_ref, work_key, contract, "
     "packet_path, park_kind, park_intent_id, parked_at, park_resumed_by, "
-    "park_expires_at, record_json"
+    "park_expires_at, record_json, source_repo"
 )
 
 

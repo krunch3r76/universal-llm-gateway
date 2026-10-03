@@ -52,12 +52,17 @@ def test_record_json_persists_admitted_via() -> None:
     assert data["admitted_via"] == "cursor-auto"
 
 
-
-
-
-
-
-
+def test_record_json_persists_workspace() -> None:
+    req = CursorDispatchRequest(
+        thread_id="37504",
+        model="cursor/composer-2.5",
+        dispatch_id="auto-ws",
+        execution_id="exec-auto-ws",
+        message="hello",
+        workspace="cryptax",
+    )
+    data = json.loads(_dispatch_record_json(req))
+    assert data["workspace"] == "cryptax"
 
 
 def test_load_promoted_request_recovers_admitted_via(

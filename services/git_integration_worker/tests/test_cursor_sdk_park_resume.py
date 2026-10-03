@@ -675,6 +675,57 @@ def test_preamble_and_request_builder_shapes(tmp_path: Path) -> None:
         "ORIGINAL PREAMBLE"
     )
     assert req.lane is None and req.worktree_path is None
+    assert req.workspace is None
+
+
+def test_park_resume_builder_copies_record_workspace(tmp_path: Path) -> None:
+    _seed_parked("p-ws", thread_id="37504", tmp_path=tmp_path)
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id="p-ws", patch={"workspace": "cryptax"}
+    )
+    row = load_park_row(dispatch_id="p-ws")
+    assert row is not None
+    req = build_park_resume_request(row, attempt=1, code_version="v")
+    assert req.workspace == "cryptax"
+
+
+def test_park_resume_builder_derives_workspace_from_source_repo(
+    tmp_path: Path,
+) -> None:
+    """Legacy park rows omit record_json.workspace; pin still needs the satellite."""
+    _seed_parked("p-legacy", thread_id="37504b", tmp_path=tmp_path)
+    sat = tmp_path / "cryptax"
+    sat.mkdir()
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET source_repo=? WHERE dispatch_id='p-legacy'",
+            (str(sat),),
+        )
+    row = load_park_row(dispatch_id="p-legacy")
+    assert row is not None
+    assert row.source_repo == str(sat)
+    req = build_park_resume_request(row, attempt=1, code_version="v")
+    assert req.workspace == "cryptax"
+
+
+def test_parent_row_recorded_workspace_is_what_admit_inherits(tmp_path: Path) -> None:
+    from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+        recorded_workspace,
+    )
+    from services.git_integration_worker.cursor_sdk_store_locus import load_parent_row
+
+    _seed_parked("p-inherit", thread_id="37504c", tmp_path=tmp_path)
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id="p-inherit", patch={"workspace": "cryptax"}
+    )
+    parent = load_parent_row(CursorDispatchLedger.instance(), parent_id="p-inherit")
+    assert parent is not None
+    assert (
+        recorded_workspace(
+            record_json=parent.record_json, source_repo=parent.source_repo
+        )
+        == "cryptax"
+    )
 
 
 @pytest.mark.asyncio
@@ -692,9 +743,9 @@ async def test_legacy_lane_a_park_row_strips_before_admit(
     assert row is not None and row.record.get("lane") == "A"
     cfg = load_config()
     controller = _controller()
-    unstripped = build_park_resume_request(
-        row, attempt=1, code_version="v"
-    ).model_copy(update={"lane": "A", "dispatch_id": "p-lane-a-probe"})
+    unstripped = build_park_resume_request(row, attempt=1, code_version="v").model_copy(
+        update={"lane": "A", "dispatch_id": "p-lane-a-probe"}
+    )
     blocked = await admit_cursor_dispatch(unstripped, cfg=cfg, controller=controller)
     assert blocked.status_code == 422
     body = json.loads(bytes(blocked.body).decode())
