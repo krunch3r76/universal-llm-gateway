@@ -196,3 +196,10 @@ def test_strip_chrome_drops_37508_badges_and_timestamp() -> None:
     assert "Claude responded:" not in cleaned
     assert "VERDICT: Change" in cleaned
     assert "$ULG_REPO" in cleaned
+
+
+def test_strip_chrome_keeps_code_punctuation_lines() -> None:
+    text = "```python\ndef f():\n    return 1\n}\n```\n---\n"
+    cleaned = strip_chrome(text)
+    assert "}" in cleaned
+    assert "---" in cleaned

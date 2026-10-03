@@ -103,6 +103,23 @@ def test_finalize_scrape_body_drops_37508_chrome_keeps_command() -> None:
     assert "install-ecosystem-plugin.sh" in cleaned
 
 
+def test_finalize_scrape_body_keeps_code_block_brace_lines() -> None:
+    raw = (
+        "Here is the patch:\n"
+        "```python\n"
+        "def f(x):\n"
+        "    return x\n"
+        "}\n"
+        "```\n"
+        "---\n"
+        "done\n"
+    )
+    cleaned = finalize_scrape_body(raw)
+    assert "}\n```" in cleaned.replace("\r", "")
+    assert "---" in cleaned
+    assert "def f(x):" in cleaned
+
+
 def test_submit_control_names_cowork_before_chat() -> None:
     """Friction 24609 — Cowork Start task precedes Chat Send message."""
     names = submit_control_names()
