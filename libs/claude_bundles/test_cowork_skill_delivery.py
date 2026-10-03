@@ -10,6 +10,8 @@ from claude_bundles.catalog import get_skill_catalog
 from claude_bundles.cdp_inline_read_cue import READ_BLOCK_HEADING
 from claude_bundles.cowork_skill_delivery import (
     SkillDeliveryError,
+    check_delivery_channels_before_submit,
+    combine_induction_with_body,
     attest_delivery_channels,
     attest_injected_slugs,
     attest_skills_chip_enabled,
@@ -153,6 +155,24 @@ def test_render_skill_induction_single_slug() -> None:
     assert render_skill_induction(["consult-posture"]) == (
         "Use the consult-posture skill"
     )
+
+
+def test_combine_induction_with_body_cases() -> None:
+    assert combine_induction_with_body("", "body") == "body"
+    assert combine_induction_with_body("Use the x skill", "") == "Use the x skill"
+    assert combine_induction_with_body("Use the x skill", "\r\nhop\n") == (
+        "Use the x skill\n\nhop\n"
+    )
+
+
+def test_check_delivery_channels_before_submit_wrong_channel_raises() -> None:
+    with pytest.raises(SkillDeliveryError, match="wrong_channel"):
+        check_delivery_channels_before_submit(
+            ["reasoning-posture"],
+            attached=[],
+            inlined=["reasoning-posture"],
+            induction=[],
+        )
 
 
 def test_induction_panel_ready_matches_observed_slugs() -> None:
