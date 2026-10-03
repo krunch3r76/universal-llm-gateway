@@ -3,10 +3,10 @@ Open a Cursor agent, via `/cursor-paste`, to resolve one friction or assertion.
 ## Invocation
 
 ```
-/cursor-paste-resolve <friction|assertion> <id> [<glass|ide>] [<orion-node|jupiter>]
+/cursor-paste-resolve <friction|assertion> <id> [<glass|ide>] [<orion-node|jupiter>] [maestro]
 ```
 
-After kind and id, zero, one, or two target tokens. The sets do not overlap, so order does not matter. Classify each token by its set.
+After kind and id, zero to three target tokens. The sets do not overlap, so order does not matter. Classify each token by its set.
 
 | Arg | Allowed | When omitted |
 |---|---|---|
@@ -14,8 +14,11 @@ After kind and id, zero, one, or two target tokens. The sets do not overlap, so 
 | id | positive integer | required |
 | window | `glass` or `ide` | `glass` — Cursor Glass, not the IDE |
 | host | `orion-node` or `jupiter` | the one host this request's context names |
+| notify | `maestro` | no maestro memo — preamble stays kind/id only |
 
 A missing window focuses Cursor Glass. A missing host is never filled with `jupiter` or `orion-node` by default. The launch script's unset-host default is `jupiter`. Attended Glass living on `orion-node` is not a host for this command. Use a host only when this invocation names it, or this request's context names exactly one of the two.
+
+`maestro` is a notify token. It does not choose window or host. When present, the prompt preamble (before the inline general prompt) tells the resolving agent to memo maestro on agent-bus thread `12286` after the item is closed.
 
 ## Refuse
 
@@ -27,7 +30,7 @@ A missing window focuses Cursor Glass. A missing host is never filled with `jupi
 
 ## Steps
 
-1. Parse kind and id. Bind window to the window token, or `glass` when that token is absent. Bind host to the host token, or to the single host named in this request's context when that token is absent. Write the four values down before any file write. An unresolved host is a stop.
+1. Parse kind and id. Bind window to the window token, or `glass` when that token is absent. Bind host to the host token, or to the single host named in this request's context when that token is absent. Bind notify to `maestro` when that token is present, else absent. Write the five values down before any file write. An unresolved host is a stop.
 2. Confirm the id:
 
 ```
@@ -36,12 +39,19 @@ cortex(tool="assertion_get", arguments='{"assertion_id": <id>}')
 
 Friction rows are assertions. A missing row is a stop.
 3. Read `cortex://notes/system/prompts/work-item-implementer-friction.md` at this moment (`fs` `op=read`). Do not use a copy stored in this command.
-4. Write `tmp/prompts/cursor-paste-<kind>-<id>.md`. The file is the full prompt `/cursor-paste` will send. First lines, then the prompt bytes unchanged:
+4. Write `tmp/prompts/cursor-paste-<kind>-<id>.md`. The file is the full prompt `/cursor-paste` will send. First lines, then — only when notify is `maestro` — the maestro line, then the prompt bytes unchanged:
 
 ```
 Rename this chat tab to <kind>:<id>.
 
 You are resolving <kind>:<id>.
+
+```
+
+When notify is `maestro`, insert this paragraph after those two sentences and before the general prompt:
+
+```
+When this <kind> is closed, inform maestro: send a memo on agent-bus thread 12286 reporting the closure (kind, id, and outcome). Do this after closure, before you stop.
 
 ```
 
@@ -51,4 +61,4 @@ You are resolving <kind>:<id>.
 /cursor-paste <window> <host> tmp/prompts/cursor-paste-<kind>-<id>.md
 ```
 
-6. Report with the fields `/cursor-paste` requires, plus kind, id, window, and host. Say whether the host was explicit or taken from this request's context.
+6. Report with the fields `/cursor-paste` requires, plus kind, id, window, host, and whether maestro was on the invocation. Say whether the host was explicit or taken from this request's context.
