@@ -98,37 +98,6 @@ from urllib.parse import urlparse
 from systems.pipeline.core.constants import (
     RAG_NO_RESULTS_SENTINEL as _NO_RESULTS_SENTINEL,
 )
-
-_SCOPE_SOURCE_PREFIX_OVERRIDE = "prefix_override"
-_SCOPE_SOURCE_USER_OVERRIDE = "user_override"
-_SCOPE_SOURCE_DEFAULT_SCOPE = "default_scope"
-_SCOPE_SOURCE_CLASSIFIER = "classifier"
-
-
-def _scope_value_from_rewrite_data(rewrite_data: dict[str, Any]) -> str | list[str]:
-    scopes = rewrite_data.get("scopes", ["unknown"])
-    if not isinstance(scopes, list) or not scopes:
-        return "unknown"
-    if len(scopes) == 1:
-        return scopes[0]
-    return scopes
-
-
-def _scope_source_for_retrieval(
-    *,
-    has_scope_override: bool,
-    has_prefix_override: bool,
-    rewrite_enabled: bool,
-) -> str:
-    if has_prefix_override:
-        return _SCOPE_SOURCE_PREFIX_OVERRIDE
-    if has_scope_override:
-        return _SCOPE_SOURCE_USER_OVERRIDE
-    if not rewrite_enabled:
-        return _SCOPE_SOURCE_DEFAULT_SCOPE
-    return _SCOPE_SOURCE_CLASSIFIER
-
-
 from systems.pipeline.core.constants import (
     RAG_NO_RETRIEVAL_SENTINEL as _NO_RETRIEVAL_SENTINEL,
 )
@@ -177,6 +146,35 @@ from .scope_catalog import (
     fetch_valid_scopes,
     resolve_child_scopes,
 )
+
+_SCOPE_SOURCE_PREFIX_OVERRIDE = "prefix_override"
+_SCOPE_SOURCE_USER_OVERRIDE = "user_override"
+_SCOPE_SOURCE_DEFAULT_SCOPE = "default_scope"
+_SCOPE_SOURCE_CLASSIFIER = "classifier"
+
+
+def _scope_value_from_rewrite_data(rewrite_data: dict[str, Any]) -> str | list[str]:
+    scopes = rewrite_data.get("scopes", ["unknown"])
+    if not isinstance(scopes, list) or not scopes:
+        return "unknown"
+    if len(scopes) == 1:
+        return scopes[0]
+    return scopes
+
+
+def _scope_source_for_retrieval(
+    *,
+    has_scope_override: bool,
+    has_prefix_override: bool,
+    rewrite_enabled: bool,
+) -> str:
+    if has_prefix_override:
+        return _SCOPE_SOURCE_PREFIX_OVERRIDE
+    if has_scope_override:
+        return _SCOPE_SOURCE_USER_OVERRIDE
+    if not rewrite_enabled:
+        return _SCOPE_SOURCE_DEFAULT_SCOPE
+    return _SCOPE_SOURCE_CLASSIFIER
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext

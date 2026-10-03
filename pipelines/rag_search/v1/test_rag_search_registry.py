@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from systems.pipeline.core.handlers.registry import HandlerRegistry
 from systems.pipeline.registry.core import PipelineRegistry
 from systems.pipeline.registry.validator import PipelineValidator
