@@ -3748,6 +3748,7 @@ async def admit_cursor_dispatch(
                 inherited = recorded_workspace(
                     record_json=parent.record_json,
                     source_repo=parent.source_repo,
+                    hub=cfg.source_repo,
                 )
                 if inherited:
                     req.workspace = inherited

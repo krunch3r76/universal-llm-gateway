@@ -26,11 +26,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.config import WorkerConfig
+from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -146,7 +147,11 @@ def child_dispatch_id(row: ParkRow, *, attempt: int) -> str:
 
 
 def build_park_resume_request(
-    row: ParkRow, *, attempt: int, code_version: str
+    row: ParkRow,
+    *,
+    attempt: int,
+    code_version: str,
+    hub: Path | None = None,
 ) -> CursorDispatchRequest:
     """Mint the ``resume_of`` child request from the parent's durable record.
 
@@ -187,7 +192,11 @@ def build_park_resume_request(
         model_knobs=record.get("model_knobs"),
         read_only=bool(record.get("read_only", False)),
         lane=lane if lane in ("A", "B") else None,
-        workspace=recorded_workspace(record=record, source_repo=row.source_repo),
+        workspace=recorded_workspace(
+            record=record,
+            source_repo=row.source_repo,
+            hub=hub if hub is not None else load_config().source_repo,
+        ),
         worktree_isolated=worktree_isolated,
         worktree_path=worktree_path,
         admitted_via=ADMITTED_VIA_PARK_RESUME,
@@ -371,7 +380,9 @@ async def resume_parked_dispatches(
             summary.refused.append((row.dispatch_id, reason))
             continue
         attempt = bump_resume_attempt(parent_id=row.dispatch_id)
-        req = build_park_resume_request(row, attempt=attempt, code_version=code_version)
+        req = build_park_resume_request(
+            row, attempt=attempt, code_version=code_version, hub=cfg.source_repo
+        )
         response = await admit_cursor_dispatch(req, cfg=cfg, controller=controller)
         if response.status_code not in (200, 202):
             code = _response_code(response)

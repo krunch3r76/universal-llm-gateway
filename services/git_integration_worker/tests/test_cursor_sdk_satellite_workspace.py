@@ -80,32 +80,86 @@ def projects_layout(tmp_path: Path) -> tuple[Path, Path, Path, frozenset[str]]:
 
 
 def test_recorded_workspace_prefers_record_token() -> None:
+    hub = Path("/mnt/torus/projects/universal-llm-gateway")
     assert (
         recorded_workspace(
             record={"workspace": "cryptax"},
-            source_repo="/mnt/torus/projects/universal-llm-gateway",
+            source_repo=str(hub),
+            hub=hub,
         )
         == "cryptax"
     )
 
 
 def test_recorded_workspace_derives_legacy_source_repo() -> None:
+    hub = Path("/mnt/torus/projects/universal-llm-gateway")
     assert (
         recorded_workspace(
             record={},
             source_repo="/mnt/torus/projects/cryptax",
+            hub=hub,
         )
         == "cryptax"
     )
 
 
 def test_recorded_workspace_omits_hub() -> None:
+    hub = Path("/mnt/torus/projects/universal-llm-gateway")
     assert (
         recorded_workspace(
             record={"workspace": "universal-llm-gateway"},
-            source_repo="/mnt/torus/projects/universal-llm-gateway",
+            source_repo=str(hub),
+            hub=hub,
         )
         is None
+    )
+
+
+def test_recorded_workspace_omits_renamed_hub_by_resolved_path(tmp_path: Path) -> None:
+    """a:37530 — hub identity is resolve() equality, not the stock directory name."""
+    hub = tmp_path / "ulg-install"
+    hub.mkdir()
+    assert (
+        recorded_workspace(
+            record={},
+            source_repo=str(hub),
+            hub=hub,
+        )
+        is None
+    )
+    assert (
+        recorded_workspace(
+            record={"workspace": "ulg-install"},
+            source_repo=str(hub),
+            hub=hub,
+        )
+        is None
+    )
+
+
+def test_recorded_workspace_omits_hub_through_symlink(tmp_path: Path) -> None:
+    real = tmp_path / "real-hub"
+    real.mkdir()
+    link = tmp_path / "ulg-link"
+    link.symlink_to(real)
+    assert recorded_workspace(record={}, source_repo=str(real), hub=link) is None
+    assert recorded_workspace(record={}, source_repo=str(link), hub=real) is None
+
+
+def test_recorded_workspace_derives_satellite_when_hub_name_differs(
+    tmp_path: Path,
+) -> None:
+    hub = tmp_path / "ulg-install"
+    hub.mkdir()
+    satellite = tmp_path / "cryptax"
+    satellite.mkdir()
+    assert (
+        recorded_workspace(
+            record={},
+            source_repo=str(satellite),
+            hub=hub,
+        )
+        == "cryptax"
     )
 
 

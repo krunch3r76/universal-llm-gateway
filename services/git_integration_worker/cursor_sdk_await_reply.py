@@ -27,7 +27,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.config import WorkerConfig
+from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -575,6 +575,7 @@ def build_await_resume_request(
     code_version: str,
     ttl_s: int | None = None,
     bus_unreachable: bool = False,
+    hub: Path | None = None,
 ) -> CursorDispatchRequest:
     """Mint the ``resume_of`` child carrying every awaited reply body."""
     awaited = _awaited_from_row(row)
@@ -615,7 +616,11 @@ def build_await_resume_request(
         model_knobs=record.get("model_knobs"),
         read_only=bool(record.get("read_only", False)),
         lane=lane if lane in ("A", "B") else None,
-        workspace=recorded_workspace(record=record, source_repo=row.source_repo),
+        workspace=recorded_workspace(
+            record=record,
+            source_repo=row.source_repo,
+            hub=hub if hub is not None else load_config().source_repo,
+        ),
         worktree_isolated=worktree_isolated,
         worktree_path=worktree_path,
         admitted_via=ADMITTED_VIA_AWAIT_RESUME,
@@ -931,6 +936,7 @@ async def resume_await_parked_dispatches(
             code_version=code_version,
             ttl_s=ttl,
             bus_unreachable=bool(fetch_failed and not all_landed),
+            hub=cfg.source_repo,
         )
         response = await admit_cursor_dispatch(req, cfg=cfg, controller=controller)
         if response.status_code not in (200, 202):
