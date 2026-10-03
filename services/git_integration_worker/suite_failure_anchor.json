@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "measured_commit": "0f26009f1c247c332302a4f4265ab38351538327",
+  "measured_commit": "723cbbb25b5bb14e538b5d6aba947204d6f0f386",
   "failure_digest": "c395f7f44d8c38f344fea668e41590c14a79b4e07a5b267ffe3aed8cc4169bb1",
   "failed_nodeids": [
     "services/git_integration_worker/tests/test_conductor_census.py::test_ac3_restart_resume_child_not_counted",
@@ -203,7 +203,7 @@
       "summary_line": "18 failed, 2546 passed, 2 skipped, 135 warnings in 1204.43s (0:20:04)"
     },
     {
-      "measured_commit": "0f26009f1c247c332302a4f4265ab38351538327",
+      "measured_commit": "723cbbb25b5bb14e538b5d6aba947204d6f0f386",
       "from_digest": "6ea4ea972a8e941d2bfcac7994aac94573d38ebeb9e040b6d2ccc75def7b47b5",
       "to_digest": "c395f7f44d8c38f344fea668e41590c14a79b4e07a5b267ffe3aed8cc4169bb1",
       "added": [],
@@ -229,7 +229,7 @@
         "services/git_integration_worker/tests/test_seat_write_ledger_isolation.py::test_seat_write_ledger_path_refuses_the_live_gateway_dir",
         "services/git_integration_worker/tests/test_trigger_act_receipt.py::test_missing_receipt_unverified_no_second_submit"
       ],
-      "summary_line": "17 failed, 2547 passed, 2 skipped, 135 warnings in 1204.43s (0:20:04)"
+      "summary_line": "17 failed, 2561 passed, 2 skipped, 137 warnings in 1267.50s (0:21:07)"
     }
   ]
 }
