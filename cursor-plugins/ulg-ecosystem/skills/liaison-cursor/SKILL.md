@@ -28,7 +28,7 @@ Gear-3 `goal_escalation` admits a conductor for repo-write and design. Life seat
 
 A watcher line `closeout turn=` is the harvest, once. `conductor_live ⇒ ¬arm(turn_watcher)`. When a conductor tail is armed, use `watch-supervise.sh tail --until-finish`: it returns on `closeout turn=` or `stall-pop:` and does not surface ordinary turns. Turn-by-turn watch only when the operator names that run. Arm `--loop --heartbeat 1200` only while a finish watcher is already live or a row is playable. No playable row and no live watcher ⇒ SIGTERM this root's `--loop`. An `AGENT_LOOP_TICK_liaison` that only repeats this tab's CHECKPOINT is not an instruction to play.
 
-A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished. `watch-supervise.sh stop --label <label>`. That tail is not a watcher and not a close. After the harvest is relayed, IDE `task_finished` / Shell exit for that same label is **not** a wake — silence (a:37152; `runbook:bus-consult-watcher` § Steps 5.1).
+A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished. `watch-supervise.sh stop --label <label>`. That tail is not a watcher and not a close. Arm the finish tail with no `notify_on_output`. Its shell completion is the one harvest turn. A pattern notify plus that exit is two turns, and the second covers the relay (friction 37400; `runbook:bus-consult-watcher` step 4).
 
 ## Bad / good
 

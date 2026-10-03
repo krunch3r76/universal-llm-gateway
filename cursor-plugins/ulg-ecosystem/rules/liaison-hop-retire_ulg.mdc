@@ -31,11 +31,11 @@ same turn — **before** the `RETIRED → <transcript_id>` line. Skip `CreateGoa
 `libs/bus_watch/ide_hop_retire.GOAL_RELEASE`).
 
 **Successor:** attach each ARM label (`watch-supervise.sh tail --label L`, background Shell,
-`block_until_ms 0`, notify on wake lines) + `liaison-tick.py --loop --heartbeat 1200`
+`block_until_ms 0`, no `notify_on_output`) + `liaison-tick.py --loop --heartbeat 1200`
 (20 min backup to re-arm / check watcher health). Do not `CreateGoal`. House pollers survive
-retire; tab tails die with the departing tab.
+retire; tab tails die with the departing tab. The tail's shell completion is the harvest turn.
 
 **Anti-pattern:** Minting `CreateGoal` so the Goals panel is non-empty — Cursor then injects unthrottled
-continuation wakes. Primary house wake is watcher `notify_on_output`.
+continuation wakes. Primary house wake is the watcher tail's shell completion, not a pattern notify (friction 37400).
 
 Playbook: Use the `liaison` skill § Wakes · command `.cursor/commands/liaison.md` Hop section.

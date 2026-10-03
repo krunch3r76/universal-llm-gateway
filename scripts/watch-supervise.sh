@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Detached supervisor for agent-bus watchers (a:32280).
 # Owns poller lifetime outside Cursor Shell; IDE seat tails the log.
-# Attended wake: notify_on_output on ``stall-pop:`` (see runbook:bus-consult-watcher).
+# Attended wake: the IDE shell that runs ``tail`` exits on complete. That
+# completion is the one harvest turn. Do not also set notify_on_output
+# (friction 37400; runbook:bus-consult-watcher).
 #
 # IDE harness (operator 2026-09-07): background tail (leg 2) is required for
 # autoadvance — fire it every arm; IDE terminal slots have no practical limit.

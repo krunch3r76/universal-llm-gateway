@@ -91,7 +91,9 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
 
 TAIL_RECIPE = (
     "tail {label}: watch-supervise.sh tail --label {label} (background Shell, "
-    "block_until_ms 0, notify_on_output: closeout turn=|consult complete|stall-pop:)"
+    "block_until_ms 0, no notify_on_output). The shell completion is the one "
+    "harvest turn. A pattern notify on this exit-on-complete tail opens a "
+    "second turn that covers the reply (friction 37400)."
 )
 LOOP_REBUILD = (
     "LOOP: rebuild `scripts/liaison-tick.py --root {root} --loop --heartbeat 1200 "

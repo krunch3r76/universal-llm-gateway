@@ -209,7 +209,7 @@ def build_park_harvest_arm_recipe(
     lines.append(f"  --label {label}")
     lines.extend(
         [
-            "Leg 2 — same turn (before close): background tail + notify_on_output on consult complete|stall-pop:",
+            "Leg 2 — same turn (before close): background tail, no notify_on_output. Shell completion is the one harvest turn (friction 37400).",
             f"scripts/watch-supervise.sh tail --label {label}  # block_until_ms: 0; exits when state.json status=complete",
             "Leg 3 — on wake: get qualifying turn + relay in chat.",
         ]

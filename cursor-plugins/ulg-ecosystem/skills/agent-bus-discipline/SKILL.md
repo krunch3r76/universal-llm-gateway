@@ -82,7 +82,8 @@ When a bus-consult / dispatch-closeout arm misfires:
 
 | Class | Specimen |
 |---|---|
-| **Arm-only** | `watch-supervise.sh start` without same-turn `tail` + `notify_on_output` (a:32280) |
+| **Arm-only** | `watch-supervise.sh start` without a same-turn background `tail` (a:32280) |
+| **Double wake** | `notify_on_output` on that exit-on-complete tail. Pattern match and shell exit are two turns; the second covers the harvest (friction 37400) |
 | **Tail-skipped** | Poller only — skipped leg 2 to "save an IDE terminal"; autoadvance stalls (IDE slots unlimited; always background tail same turn) |
 | **Hold-turn** | Foreground `wait`/`Await`/`tail \| grep` instead of background tail + exit |
 | **Hang-tail** | `tail --forever`, raw `tail -F` on watcher log, or tail still running **after** `state.json status=complete` — **not** tail waiting while `status=polling` |
@@ -101,8 +102,8 @@ On any class — **same turn** before close:
 **Killed-tail recovery (binding — a:36552):** `poller_alive ⇏ wake_armed`. When the
 IDE tail dies (Shell abort, kill, elapsed fail) and `state.json` is still
 `polling`/`predicate_unmet`, **same turn** re-arm leg 2:
-`watch-supervise.sh tail --label L` + `notify_on_output` on
-`closeout turn=|consult complete|stall-pop:`. Do not wait for a later chat
+`watch-supervise.sh tail --label L` background, no `notify_on_output`.
+The shell completion is the wake. Do not wait for a later chat
 question to discover `consult complete` in the log. If complete already
 printed with no tail attached: `get` the qualifying turn + relay now (leg 3);
 do not keep reporting the dispatch/densify as `in_flight`.
@@ -115,8 +116,8 @@ fields left in `state.json` after the complete write.
 
 **Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 `tail --label L` background
 (exit-on-complete default; ¬ `--forever`; **always leg 2** — IDE terminal slots
-unlimited ghosts) + `notify_on_output` on
-`closeout turn=|consult complete|stall-pop:` → exit → leg 3 on wake.
+unlimited ghosts). No `notify_on_output`: the shell completion is the one
+harvest turn (friction 37400) → exit the admit turn → leg 3 on that completion.
 SoT: `runbook:bus-consult-watcher` · `runbook:bus-consult-watcher-terminal-harness` · posture: `operator-posture` Rule 2.
 
 ## Pre-flight before reply
