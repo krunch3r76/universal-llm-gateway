@@ -126,7 +126,16 @@ class CursorDispatchRequest(BaseModel):
 
     @property
     def workspace_inherited_from(self) -> str | None:
-        """Parent dispatch id when ``workspace`` was filled from that row."""
+        """Parent dispatch id when ``workspace`` was filled from that row.
+
+        Present on an event means this admit inherited. Absence is evidence of
+        explicit or hub-omitted workspace only on ``sdk.lane.selected``,
+        ``frontier.sdk.worker.resumed``, write-lease
+        ``frontier.sdk.worker.queued``, and ``sdk.park.resume_admitted``.
+        Capacity-wait ``queued`` (``queued_on=capacity:…``) rebuilds the
+        request from the ledger without this stamp, so absence there is not
+        that evidence.
+        """
         return self._workspace_inherited_from
 
     def stamp_inherited_workspace(
@@ -135,7 +144,8 @@ class CursorDispatchRequest(BaseModel):
         """Mark ``workspace`` as filled from a parent row, not the admit wire.
 
         Private so a caller cannot spoof it (``extra=forbid``). Omitted from
-        ``record_json`` — the stamp is per-admit provenance for events.
+        ``record_json`` — per-admit provenance for the events named on the
+        property; not restored by ``load_promoted_request``.
         """
         if token is not None:
             self.workspace = token

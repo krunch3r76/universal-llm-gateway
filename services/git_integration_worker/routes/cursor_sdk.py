@@ -2560,7 +2560,6 @@ async def _run_sdk_dispatch_gated(
             purpose=association["purpose"],
             story_id=association["story_id"],
             queued_on=f"capacity:{capacity_lane}",
-            workspace_inherited_from=req.workspace_inherited_from,
         )
 
     # Acquire slot before spawning — released inside _run_sdk_sync finally block.

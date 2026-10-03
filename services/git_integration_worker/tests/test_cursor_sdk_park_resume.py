@@ -1224,6 +1224,7 @@ def _seed_satellite_parent(
     thread_id: str,
     lane: str,
     lease_key: str,
+    park: bool = True,
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     parent = CursorDispatchRequest(
@@ -1266,18 +1267,19 @@ def _seed_satellite_parent(
         dispatch_id=dispatch_id, agent_id=f"agent-{dispatch_id}", run_id="r"
     )
     ledger.mark_running(dispatch_id=dispatch_id)
-    mark_parked(
-        dispatch_id=dispatch_id,
-        intent_id="intent-37534",
-        drain_epoch=1,
-        actor="manage",
-        reason="deploy",
-        requested_at="x",
-        method="run_cancel",
-        tool_call_count=1,
-        last_tool_calls=[],
-        sidecar_uri=None,
-    )
+    if park:
+        mark_parked(
+            dispatch_id=dispatch_id,
+            intent_id="intent-37534",
+            drain_epoch=1,
+            actor="manage",
+            reason="deploy",
+            requested_at="x",
+            method="run_cancel",
+            tool_call_count=1,
+            last_tool_calls=[],
+            sidecar_uri=None,
+        )
 
 
 def _add_satellite_worktree(tmp_path: Path, satellite: Path) -> Path:
@@ -1383,3 +1385,170 @@ async def test_satellite_resume_parent_isolated_uses_dispatch_git_not_hub(
     assert captured["parent_isolated"] is expect_isolated
     assert child.lane == expect_child_lane
     assert resp.status_code == 200, bytes(resp.body).decode()
+
+
+def _stub_pin_and_lane(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    selected: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree.pin_lane_worktree_on_admit",
+        lambda **_k: "ulg:lock",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_concurrency_posture."
+        "b_worktree_materialized",
+        lambda **_k: True,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_sdk.emit_sdk_lane_selected",
+        lambda **kw: selected.append(kw),
+    )
+    return selected
+
+
+@pytest.mark.asyncio
+async def test_resume_of_explicit_matching_workspace_omits_inherit_stamp(
+    tmp_path: Path, _admit_stubs: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37533 — explicit workspace equal to the parent is not stamped inherited."""
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    _hub, satellite, cfg = _satellite_layout(tmp_path)
+    wt = _add_satellite_worktree(tmp_path, satellite)
+    _seed_satellite_parent(
+        tmp_path=tmp_path,
+        satellite=satellite,
+        dispatch_id="p-37533-explicit",
+        thread_id="37533e",
+        lane="B",
+        lease_key=str(wt.resolve()),
+    )
+    selected = _stub_pin_and_lane(monkeypatch)
+    child = CursorDispatchRequest(
+        thread_id="37533e",
+        model="cursor/composer-2.5",
+        dispatch_id="c-37533-explicit",
+        execution_id="exec-c-37533-explicit",
+        caller_agent="cursor",
+        message="resume with explicit matching workspace",
+        handoff_contract="conductor",
+        resume_of="p-37533-explicit",
+        workspace="cryptax",
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    resp = await admit_cursor_dispatch(child, cfg=cfg, controller=_controller())
+    assert resp.status_code == 200, bytes(resp.body).decode()
+    assert selected and selected[0].get("workspace_inherited_from") is None
+
+
+@pytest.mark.asyncio
+async def test_resume_of_hub_parent_omits_inherit_stamp(
+    tmp_path: Path, _admit_stubs: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37533 — hub parent with omitted workspace must not emit the field."""
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    hub, _satellite, cfg = _satellite_layout(tmp_path)
+    ledger = CursorDispatchLedger.instance()
+    parent = CursorDispatchRequest(
+        thread_id="37533h",
+        model="cursor/composer-2.5",
+        dispatch_id="p-37533-hub",
+        execution_id="exec-p-37533-hub",
+        caller_agent="cursor",
+        message="hub parent",
+        handoff_contract="conductor",
+        work_key="todo:hub-37533",
+    )
+    ledger.admit(
+        req=parent,
+        fingerprint=ledger.fingerprint(parent),
+        execution_id=parent.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=parent.dispatch_id,
+            thread_id=parent.thread_id,
+            model_id="m",
+        ),
+        contract="conductor",
+        source_repo=str(hub.resolve()),
+        lease_key=str(hub.resolve()),
+        work_key=parent.work_key,
+        source_ref=parent.work_key,
+        identity_class="declared",
+    )
+    store = tmp_path / "store-p-37533-hub"
+    store.mkdir(parents=True)
+    (store / "index.db").write_text("x")
+    ledger.record_state_root(dispatch_id=parent.dispatch_id, state_root=str(store))
+    ledger.record_sdk_identity(
+        dispatch_id=parent.dispatch_id, agent_id="agent-p-37533-hub", run_id="r"
+    )
+    ledger.mark_running(dispatch_id=parent.dispatch_id)
+    mark_parked(
+        dispatch_id=parent.dispatch_id,
+        intent_id="intent-37533-hub",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="x",
+        method="run_cancel",
+        tool_call_count=1,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+    selected = _stub_pin_and_lane(monkeypatch)
+    child = CursorDispatchRequest(
+        thread_id="37533h",
+        model="cursor/composer-2.5",
+        dispatch_id="c-37533-hub",
+        execution_id="exec-c-37533-hub",
+        caller_agent="cursor",
+        message="resume hub omit workspace",
+        handoff_contract="conductor",
+        resume_of="p-37533-hub",
+        work_key="todo:hub-37533",
+    )
+    resp = await admit_cursor_dispatch(child, cfg=cfg, controller=_controller())
+    assert resp.status_code == 200, bytes(resp.body).decode()
+    assert selected and selected[0].get("workspace_inherited_from") is None
+
+
+@pytest.mark.asyncio
+async def test_nest_under_satellite_stamps_inherit_on_lane_selected(
+    tmp_path: Path, _admit_stubs: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37533 — nest_under uses the same inherit stamp as resume_of."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    monkeypatch.setattr(
+        route_mod, "transfer_capacity_after_park", AsyncMock(return_value=None)
+    )
+    _hub, satellite, cfg = _satellite_layout(tmp_path)
+    wt = _add_satellite_worktree(tmp_path, satellite)
+    _seed_satellite_parent(
+        tmp_path=tmp_path,
+        satellite=satellite,
+        dispatch_id="p-37533-nest",
+        thread_id="37533n",
+        lane="B",
+        lease_key=str(wt.resolve()),
+        park=False,
+    )
+    selected = _stub_pin_and_lane(monkeypatch)
+    child = CursorDispatchRequest(
+        thread_id="37533n",
+        model="cursor/composer-2.5",
+        dispatch_id="c-37533-nest",
+        execution_id="exec-c-37533-nest",
+        caller_agent="cursor",
+        message="nest without workspace",
+        handoff_contract="conductor",
+        nest_under="p-37533-nest",
+        work_key="todo:cryptax-nest-37533",
+    )
+    resp = await admit_cursor_dispatch(child, cfg=cfg, controller=_controller())
+    assert resp.status_code == 200, bytes(resp.body).decode()
+    assert selected and selected[0]["workspace_inherited_from"] == "p-37533-nest"
