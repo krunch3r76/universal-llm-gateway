@@ -371,6 +371,7 @@ async def test_startup_resume_admits_open_rows_in_order_and_expires_stale(
         ev.payload for ev in events if ev.signal == "sdk.park.resume_admitted"
     ]
     assert admitted_payloads[0]["code_version"] == "abc1234"
+    assert all("workspace_inherited_from" not in p for p in admitted_payloads)
     assert open_park_rows() == [] or all(
         r.dispatch_id == "p-exp" for r in open_park_rows()
     )
@@ -676,6 +677,7 @@ def test_preamble_and_request_builder_shapes(tmp_path: Path) -> None:
     )
     assert req.lane is None and req.worktree_path is None
     assert req.workspace is None
+    assert req.workspace_inherited_from is None
 
 
 def test_park_resume_builder_copies_record_workspace(tmp_path: Path) -> None:
@@ -687,6 +689,7 @@ def test_park_resume_builder_copies_record_workspace(tmp_path: Path) -> None:
     assert row is not None
     req = build_park_resume_request(row, attempt=1, code_version="v")
     assert req.workspace == "cryptax"
+    assert req.workspace_inherited_from == "p-ws"
 
 
 def test_park_resume_builder_derives_workspace_from_source_repo(
@@ -706,6 +709,7 @@ def test_park_resume_builder_derives_workspace_from_source_repo(
     assert row.source_repo == str(sat)
     req = build_park_resume_request(row, attempt=1, code_version="v")
     assert req.workspace == "cryptax"
+    assert req.workspace_inherited_from == "p-legacy"
 
 
 def test_park_resume_builder_omits_renamed_hub(tmp_path: Path) -> None:
@@ -830,6 +834,11 @@ async def test_resume_of_omitted_workspace_pins_satellite(
         "b_worktree_materialized",
         lambda **_k: True,
     )
+    selected: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.routes.cursor_sdk.emit_sdk_lane_selected",
+        lambda **kw: selected.append(kw),
+    )
 
     ledger = CursorDispatchLedger.instance()
     parent = CursorDispatchRequest(
@@ -906,6 +915,8 @@ async def test_resume_of_omitted_workspace_pins_satellite(
     child_row = _row("p-sat-child")
     assert child_row is not None
     assert json.loads(child_row["record_json"])["workspace"] == "cryptax"
+    assert "workspace_inherited_from" not in json.loads(child_row["record_json"])
+    assert selected and selected[0]["workspace_inherited_from"] == "p-sat-parent"
 
 
 @pytest.mark.asyncio

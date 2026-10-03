@@ -178,7 +178,7 @@ def build_park_resume_request(
         worktree_path = None
         worktree_isolated = False
         lane = None
-    return CursorDispatchRequest(
+    req = CursorDispatchRequest(
         thread_id=row.thread_id,
         model=str(record.get("model") or row.resolved_model),
         dispatch_id=child_dispatch_id(row, attempt=attempt),
@@ -204,6 +204,8 @@ def build_park_resume_request(
         source_ref=row.source_ref,
         resume_of=row.dispatch_id,
     )
+    req.stamp_inherited_workspace(row.dispatch_id)
+    return req
 
 
 @dataclass(slots=True)
@@ -409,6 +411,7 @@ async def resume_parked_dispatches(
             intent_id=row.park_intent_id,
             code_version=code_version,
             attempt=attempt,
+            workspace_inherited_from=req.workspace_inherited_from,
         )
         await _post_resumed_turn(
             bus, row=row, child_id=req.dispatch_id, attempt=attempt

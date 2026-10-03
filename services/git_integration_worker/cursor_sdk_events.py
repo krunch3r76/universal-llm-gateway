@@ -739,6 +739,7 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     nest_under: str | None = None,
     packet_kind: str | None = None,
     model_knobs_requested: dict[str, str] | None = None,
+    workspace_inherited_from: str | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -776,6 +777,8 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["packet_kind"] = packet_kind
     if model_knobs_requested is not None:
         payload["model_knobs_requested"] = model_knobs_requested
+    if workspace_inherited_from is not None:
+        payload["workspace_inherited_from"] = workspace_inherited_from
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,
@@ -1161,19 +1164,23 @@ def SdkLaneSelected(  # noqa: N802
     regime_active: bool,
     contract: str,
     selecting_predicate: str,
+    workspace_inherited_from: str | None = None,
 ) -> Event:
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "lane": lane,
+        "reason": reason,
+        "regime_active": regime_active,
+        "regime_state": "on" if regime_active else "off",
+        "contract": contract,
+        "selecting_predicate": selecting_predicate,
+    }
+    if workspace_inherited_from is not None:
+        payload["workspace_inherited_from"] = workspace_inherited_from
     return Event(
         signal="sdk.lane.selected",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "lane": lane,
-            "reason": reason,
-            "regime_active": regime_active,
-            "regime_state": "on" if regime_active else "off",
-            "contract": contract,
-            "selecting_predicate": selecting_predicate,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -1187,6 +1194,7 @@ def emit_sdk_lane_selected(
     regime_active: bool,
     contract: str,
     selecting_predicate: str,
+    workspace_inherited_from: str | None = None,
 ) -> None:
     """Emit on every admit with resolved lane, contract, and selecting predicate (S7/D6)."""
     _emit(
@@ -1198,6 +1206,7 @@ def emit_sdk_lane_selected(
             regime_active=regime_active,
             contract=contract,
             selecting_predicate=selecting_predicate,
+            workspace_inherited_from=workspace_inherited_from,
         )
     )
     logger.info(
@@ -2595,6 +2604,7 @@ def emit_sdk_worker_queued(
     nest_under: str | None = None,
     packet_kind: str | None = None,
     model_knobs_requested: dict[str, str] | None = None,
+    workspace_inherited_from: str | None = None,
 ) -> None:
     """Publish FIFO queue placement while another dispatch holds the write lease."""
     _emit(
@@ -2616,7 +2626,9 @@ def emit_sdk_worker_queued(
             queued_on=queued_on,
             topic=topic,
             nest_under=nest_under,
+            packet_kind=packet_kind,
             model_knobs_requested=model_knobs_requested,
+            workspace_inherited_from=workspace_inherited_from,
         )
     )
 
@@ -2761,6 +2773,7 @@ def FrontierSdkWorkerResumed(  # noqa: N802
     thread_id: str,
     execution_id: str,
     parent_terminal_status: str | None = None,
+    workspace_inherited_from: str | None = None,
 ) -> Event:
     payload: dict[str, Any] = {
         "dispatch_id": dispatch_id,
@@ -2772,6 +2785,8 @@ def FrontierSdkWorkerResumed(  # noqa: N802
     }
     if parent_terminal_status is not None:
         payload["parent_terminal_status"] = parent_terminal_status
+    if workspace_inherited_from is not None:
+        payload["workspace_inherited_from"] = workspace_inherited_from
     return Event(
         signal="frontier.sdk.worker.resumed",
         payload=payload,
@@ -2789,6 +2804,7 @@ def emit_sdk_worker_resumed(
     thread_id: str,
     execution_id: str,
     parent_terminal_status: str | None = None,
+    workspace_inherited_from: str | None = None,
 ) -> None:
     """Publish child resume admission — lineage authority transition (advisory)."""
     _emit(
@@ -2800,6 +2816,7 @@ def emit_sdk_worker_resumed(
             thread_id=thread_id,
             execution_id=execution_id,
             parent_terminal_status=parent_terminal_status,
+            workspace_inherited_from=workspace_inherited_from,
         )
     )
     logger.info(

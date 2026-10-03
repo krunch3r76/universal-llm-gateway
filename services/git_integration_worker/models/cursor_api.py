@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    model_validator,
+)
 
 
 class CursorDispatchRequest(BaseModel):
@@ -115,6 +122,25 @@ class CursorDispatchRequest(BaseModel):
         | None
     ) = None
     hop_park_release: bool = False
+    _workspace_inherited_from: str | None = PrivateAttr(default=None)
+
+    @property
+    def workspace_inherited_from(self) -> str | None:
+        """Parent dispatch id when ``workspace`` was filled from that row."""
+        return self._workspace_inherited_from
+
+    def stamp_inherited_workspace(
+        self, parent_id: str, token: str | None = None
+    ) -> None:
+        """Mark ``workspace`` as filled from a parent row, not the admit wire.
+
+        Private so a caller cannot spoof it (``extra=forbid``). Omitted from
+        ``record_json`` — the stamp is per-admit provenance for events.
+        """
+        if token is not None:
+            self.workspace = token
+        if self.workspace:
+            self._workspace_inherited_from = parent_id
 
     @model_validator(mode="after")
     def _hop_triplet_consistency(self) -> CursorDispatchRequest:

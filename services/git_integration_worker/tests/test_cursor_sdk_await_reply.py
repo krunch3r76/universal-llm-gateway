@@ -688,6 +688,7 @@ def test_await_resume_builder_copies_record_workspace() -> None:
     )
     req = build_await_resume_request(row, replies=[], attempt=1, code_version="v")
     assert req.workspace == "cryptax"
+    assert req.workspace_inherited_from == "d-ws"
 
 
 def test_await_resume_builder_derives_workspace_from_source_repo() -> None:
@@ -698,6 +699,7 @@ def test_await_resume_builder_derives_workspace_from_source_repo() -> None:
     )
     req = build_await_resume_request(row, replies=[], attempt=1, code_version="v")
     assert req.workspace == "cryptax"
+    assert req.workspace_inherited_from == "d-legacy-ws"
 
 
 def test_await_resume_builder_omits_renamed_hub(tmp_path: Path) -> None:
