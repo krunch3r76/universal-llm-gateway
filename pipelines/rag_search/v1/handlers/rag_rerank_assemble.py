@@ -125,7 +125,12 @@ class RagRerankAssembleHandler(BaseHandler):
                 )
 
         effective = context.options
-        rerank_enabled = bool(effective.get("rerank_enabled", False))
+        # rag-search bans rerank_enabled in YAML options (validator.py).
+        # The step enabled flag is the default when the key is absent.
+        if "rerank_enabled" in effective:
+            rerank_enabled = bool(effective.get("rerank_enabled"))
+        else:
+            rerank_enabled = bool(step.get_domain_field("enabled", True))
         rerank_mode = resolve_rerank_mode(effective)
         include_section_headings = bool(
             effective.get("rag_include_section_headings", False)

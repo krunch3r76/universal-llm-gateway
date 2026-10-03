@@ -29,7 +29,6 @@ options:
   neighbor_expansion_n: 1
   neighbor_expansion_max_chunks: 30
   neighbor_expansion_score_discount: 1.0
-  rerank_enabled: true
   rerank_mode: cross_encoder
   rerank_model: qwen3_9b
   rerank_cross_encoder_model: cross_encoder
