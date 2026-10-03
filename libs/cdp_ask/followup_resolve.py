@@ -283,10 +283,14 @@ def _lane_seat_followup_gate(
         return req, None
     try:
         snap = read_cdp_lane_snapshot()
-    except Exception:
+    except Exception as exc:
+        # identity_supplied short-circuit is below the GET. A thrown snapshot
+        # must not block a named CSE paste (a:37604); mismatch still needs a snap.
+        if identity_supplied(req):
+            return req, None
         return req, fail_followup(
             "seat_unavailable",
-            detail="active-work seat projection unreachable",
+            detail=(f"active-work seat projection unreachable ({type(exc).__name__})"),
         )
     holder = lane_seat_holder(snap, lane)
     holder_reg = str(holder.get("registration_id") or "").strip() or None
@@ -302,8 +306,7 @@ def _lane_seat_followup_gate(
         return req, fail_followup(
             "operator_seat_mismatch",
             detail=(
-                f"registration_id {reg_id!r} does not match lane holder "
-                f"{holder_reg!r}"
+                f"registration_id {reg_id!r} does not match lane holder {holder_reg!r}"
             ),
         )
     if identity_supplied(req):

@@ -412,6 +412,62 @@ async def test_followup_parent_thread_mismatch_refuses(
 
 
 @pytest.mark.asyncio
+async def test_followup_parent_thread_snapshot_throw_proceeds_when_identity_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+
+    def _boom() -> dict:
+        raise RuntimeError("active-work down")
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
+        _boom,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-held")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    _patch_attachment(monkeypatch, _reg("reg-held"))
+    req = FollowupProjectAskRequest(
+        parent_thread="6655",
+        chat_url=CSE_A,
+        registration_id="reg-held",
+        prompt_text="x",
+    )
+    target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is None
+    assert target is not None
+    assert target.registration_id == "reg-held"
+    assert path == "chat_url"
+
+
+@pytest.mark.asyncio
+async def test_followup_parent_thread_snapshot_throw_names_exception_without_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+
+    def _boom() -> dict:
+        raise ConnectionError("active-work down")
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
+        _boom,
+    )
+    req = FollowupProjectAskRequest(parent_thread="6655", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "seat_unavailable"
+    assert "ConnectionError" in (err.detail or "")
+    assert path == "parent_thread"
+
+
+@pytest.mark.asyncio
 async def test_lane_not_attached_detail_mentions_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
