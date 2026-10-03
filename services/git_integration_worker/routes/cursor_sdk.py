@@ -3751,6 +3751,7 @@ async def admit_cursor_dispatch(
             inherited = recorded_workspace(
                 record_json=parent_row.record_json,
                 source_repo=parent_row.source_repo,
+                hub=cfg.source_repo,
             )
     try:
         if parent_id and parent_row is not None:

@@ -708,6 +708,23 @@ def test_park_resume_builder_derives_workspace_from_source_repo(
     assert req.workspace == "cryptax"
 
 
+def test_park_resume_builder_omits_renamed_hub(tmp_path: Path) -> None:
+    """a:37530 — hub-parent auto-resume must not yield the install directory name."""
+    hub = tmp_path / "ulg-install"
+    hub.mkdir()
+    _seed_parked("p-renamed-hub", thread_id="37530", tmp_path=tmp_path)
+    with CursorDispatchLedger.instance()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET source_repo=? "
+            "WHERE dispatch_id='p-renamed-hub'",
+            (str(hub),),
+        )
+    row = load_park_row(dispatch_id="p-renamed-hub")
+    assert row is not None
+    req = build_park_resume_request(row, attempt=1, code_version="v", hub=hub)
+    assert req.workspace is None
+
+
 def test_parent_row_recorded_workspace_is_what_admit_inherits(tmp_path: Path) -> None:
     from services.git_integration_worker.cursor_sdk_satellite_workspace import (
         recorded_workspace,
@@ -722,7 +739,9 @@ def test_parent_row_recorded_workspace_is_what_admit_inherits(tmp_path: Path) ->
     assert parent is not None
     assert (
         recorded_workspace(
-            record_json=parent.record_json, source_repo=parent.source_repo
+            record_json=parent.record_json,
+            source_repo=parent.source_repo,
+            hub=load_config().source_repo,
         )
         == "cryptax"
     )

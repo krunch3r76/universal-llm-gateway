@@ -72,18 +72,49 @@ def load_satellite_allowlist(*, hub: Path) -> frozenset[str]:
     return frozenset(names)
 
 
+def _hub_resolved(hub: Path) -> Path:
+    return Path(hub).resolve()
+
+
+def _source_is_hub(source_repo: str | None, hub: Path) -> bool:
+    """True when *source_repo* is this GIW install's hub, including via symlink."""
+    if not source_repo:
+        return False
+    return Path(str(source_repo)).resolve() == _hub_resolved(hub)
+
+
+def _hub_identity_names(hub: Path) -> frozenset[str]:
+    """Names that identify hub, including a stock-path row after the folder moved.
+
+    ``resolve_dispatch_source_repo`` rejects ``_HUB_REPO_NAME`` unconditionally,
+    so that token can never be a satellite. ``Path(hub).name`` covers a hub
+    configured through a symlink whose own name differs from the target.
+    """
+    resolved = _hub_resolved(hub)
+    return frozenset(
+        name for name in (resolved.name, Path(hub).name, _HUB_REPO_NAME) if name
+    )
+
+
 def recorded_workspace(
     *,
     record: dict[str, Any] | None = None,
     record_json: str | None = None,
     source_repo: str | None = None,
+    hub: Path,
 ) -> str | None:
     """Satellite ``workspace=`` token stored on a parent, or derived from its git.
 
-    Hub ULG is omitted (``None``): passing ``workspace=universal-llm-gateway``
-    is a 422. Legacy park rows may lack ``record_json.workspace`` and still
-    carry a satellite ``source_repo`` column — use the path basename then.
+    Hub ULG is omitted (``None``): identity is ``Path(source_repo).resolve()
+    == hub.resolve()``, not the directory name ``universal-llm-gateway``.
+    A stored token or basename equal to the hub's resolved name, the
+    configured path's name, or the stock hub name is also omitted so a
+    persisted pre-rename row does not inherit into HubUseOmit.
+    Legacy park rows may lack ``record_json.workspace`` and still carry a
+    satellite ``source_repo`` column — use the path basename then.
     """
+    hub_resolved = _hub_resolved(hub)
+    hub_names = _hub_identity_names(hub)
     data = record
     if data is None:
         try:
@@ -92,12 +123,15 @@ def recorded_workspace(
             parsed = {}
         data = parsed if isinstance(parsed, dict) else {}
     raw = data.get("workspace")
-    if isinstance(raw, str) and raw.strip() and raw.strip() != _HUB_REPO_NAME:
-        return raw.strip()
+    token = raw.strip() if isinstance(raw, str) else ""
+    if token and token not in hub_names:
+        return token
+    if _source_is_hub(source_repo, hub_resolved):
+        return None
     if not source_repo:
         return None
     name = Path(str(source_repo)).name
-    if not name or name == _HUB_REPO_NAME:
+    if not name or name in hub_names:
         return None
     return name
 

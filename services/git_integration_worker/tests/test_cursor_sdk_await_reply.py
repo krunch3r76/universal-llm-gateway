@@ -700,6 +700,21 @@ def test_await_resume_builder_derives_workspace_from_source_repo() -> None:
     assert req.workspace == "cryptax"
 
 
+def test_await_resume_builder_omits_renamed_hub(tmp_path: Path) -> None:
+    """a:37530 — await-resume of a hub parent must omit workspace, not the dir name."""
+    hub = tmp_path / "ulg-install"
+    hub.mkdir()
+    row = _await_park_row(
+        dispatch_id="d-renamed-hub",
+        record={"model": "cursor/grok-4.7", "message": "continue", "park": {}},
+        source_repo=str(hub),
+    )
+    req = build_await_resume_request(
+        row, replies=[], attempt=1, code_version="v", hub=hub
+    )
+    assert req.workspace is None
+
+
 # ------------------------------------------------------------- done item 3
 
 
