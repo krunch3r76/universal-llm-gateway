@@ -261,9 +261,10 @@ team_dispatch(
   op=generate, model=cdp/fable, contract=freeform, effort=low,
 
   dispatch_thread_id=<bus thread id>,
-  packet_path=tmp/prompts/path-sim-{slug}-fable-q-packet.md,
-  skills=[path-sim, reasoning-posture, cursor-sdk-instruction-standard]
+  packet_path=tmp/prompts/path-sim-{slug}-fable-q-packet.md
 )
+# Do not pass skills=path-sim on CDP (422 cdp_skills_path_sim_rejected).
+# Cascade legs seal path-sim into the prompt URI.
 ```
 
 Write sidecar to `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md`; log path-sim conformance checklist **and the `Q-CASCADE` footer** (§ Q-cascade) in sidecar footer.

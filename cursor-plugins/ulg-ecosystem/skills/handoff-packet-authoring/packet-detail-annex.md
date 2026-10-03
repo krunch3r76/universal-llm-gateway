@@ -9,7 +9,7 @@ Load on demand for templates, web priming checklists, and block-by-block primers
 3. `grant(fix_authority) ⇒ bind(scope ∧ no-bc ∧ live-verify ∧ no-repro ∧ provenance)`.
 4. `output_body > 8000_chars ⇒ sidecar_first`.
 5. **Corpus posture** — web/life: cortex pointers; code seats: pointer_first when MCP-on.
-6. Match ceremony to leg: full six blocks for implement/consult; trimmed none; 7-part kickoff via
+6. Match ceremony to leg: full six blocks for implement/confer; trimmed freeform; 7-part kickoff via
    `handoff-prompt-authoring`.
 7. `refer_to_skill ⇒ canonical_name`; web-anthropic exception: skill-inline gate (full bodies).
 
@@ -17,7 +17,7 @@ Load on demand for templates, web priming checklists, and block-by-block primers
 
 1. **Verify lane** — `dispatch_lane ∈ {web-spec, web-implement-packet}`; wrong lane ⇒ stop.
 2. **Seed stub spec** — `doc_template(implement_dense_spec)`; layer verdict + forks; `entity_update(source_uri)`.
-3. **Author consult brief** — `tmp/reviews/{slug}-harden-web-consult-packet.md`; `job: confer`; scaffold
+3. **Author consult brief** — `tmp/reviews/{slug}-harden-web-consult-packet.md`; `contract: confer`; scaffold
    non-authoritative.
 4. **Dispatch** — `team_dispatch(op=handoff, seat=web-anthropic, contract=confer, packet_path=…)`; ¬ legacy `job=` MCP param (422 — use `contract=`).
 5. **Hand back** thread + `push_reminder`.

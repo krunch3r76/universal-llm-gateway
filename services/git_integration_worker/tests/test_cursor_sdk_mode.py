@@ -66,7 +66,9 @@ def test_resolve_sdk_mode_implement_class_defaults_agent() -> None:
     )
 
 
-@pytest.mark.parametrize("contract", ["implement", "pure-mechanical", "conductor"])
+@pytest.mark.parametrize(
+    "contract", ["implement", "mechanical", "pure-mechanical", "conductor"]
+)
 def test_validate_plan_implement_conflict(contract: str) -> None:
     detail = validate_sdk_mode_at_admit("plan", contract=contract)
     assert detail is not None

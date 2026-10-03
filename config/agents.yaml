@@ -31,7 +31,7 @@ skill_delivery:
 profiles:
 
   claude/cursor:
-    # Manual IDE seat — team_dispatch(op="handoff", seat="claude-cursor", job="confer"|"implement", ...)
+    # Manual IDE seat — team_dispatch(op="handoff", seat="claude-cursor", contract="confer"|"implement", ...)
     # creates an agent-bus thread for a dedicated Cursor session (e.g. Opus). Not a
     # team_dispatch generate target (manual_handoff: true), same admission as claude/web.
     provider: anthropic
@@ -314,13 +314,13 @@ profiles:
 #   Contract is derived server-side (source_ref dispatch_lane → packet front-matter → default consult).
 #   The four roster slugs below remain accepted shorthands encoding (seat, contract):
 #   web-consult / web-implement → web-anthropic; cursor-consult / cursor-implement → cursor.
-#   Web consult shorthand: team_dispatch(op="handoff", seat="web-anthropic", job="confer") → web-anthropic + operator push.
+#   Web consult shorthand: team_dispatch(op="handoff", seat="web-anthropic", contract="confer") → web-anthropic + operator push.
 #   Cursor consult: team_dispatch(op="handoff", seat="cursor") → cursor IDE mailbox.
 #   Omit-model (Stargate generate): contract=implement or mechanical →
 #     workflows.mechanical_implement (cursor/composer-2.5). Every other
 #     omit-model contract → workflows.auto_judgment (cursor/grok-4.7).
 #     Judgment contracts (answer, confer, ask, verify, execute, propagate,
-#     conductor, none, sketch, …) stay on grok; omit-effort follows
+#     conductor, freeform, sketch, …) stay on grok; omit-effort follows
 #     contract_effort (high for those judgment jobs except conductor/seed/
 #     freeform). Omitted knobs, including fast, follow the grok-4.7 card.
 #   Bound implement (Auto lane): same Composer slot as mechanical_implement;
@@ -334,16 +334,16 @@ profiles:
 #   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", seat="cursor", contract="implement") →
 #     cursor from any dispatching seat; packet + acceptance criteria required. Use only
 #     when SDK worker unavailable or attended IDE execution is explicitly wanted.
-#   Bound implement (Web): team_dispatch(op="handoff", seat="web-anthropic", job="implement") →
+#   Bound implement (Web): team_dispatch(op="handoff", seat="web-anthropic", contract="implement") →
 #     web-anthropic + operator push; packet + acceptance criteria required. Symmetric
 #     with cursor-implement — web's path to the implement contract (web-consult is
 #     consult-only; it cannot raise the implement guardrails).
 #   Review / MCP writes (automated code-lane): seat=cursor-sdk +
 #     model from route_policy.yaml workflows.check_review.model
-#     (decision:code-review-panel-cursor-substrate). job=freeform omit-model
+#     (decision:code-review-panel-cursor-substrate). contract=freeform omit-model
 #     coerces to that seat. Explicit model=openai/* keeps API. Judgment /
 #     path-sim R-admit → CDP (cdp/opus-5 / Fable), not this default.
-#   Analysis (no substrate writes): job=freeform → gemini-3.1-pro-preview (MCP tool loop).
+#   Analysis (no substrate writes): contract=freeform → gemini-3.1-pro-preview (MCP tool loop).
 #   Reliable MCP writers (automated generate): cursor/gpt-5.6-terra (code),
 #     openai/gpt-5.6-terra (API override), anthropic API (last — cost).
 #   web-anthropic: /mcp/life is ON and /mcp/code is OFF. Handoff packets must name
@@ -378,7 +378,7 @@ roles:
     default_model: null
 
   reviewer:
-    description: "Review and audit with reliable MCP writes. Code-lane standing default: cursor/grok-4.7 via route_policy.yaml workflows.check_review (decision:code-review-panel-cursor-substrate); job=freeform omit-model coerces to seat=cursor-sdk. Explicit model=openai/* keeps API (life / checkout-free). Judgment / path-sim R-admit → CDP. Life/writing: Terra standing, or google/gemini-3.6-flash as MCP-capable peer. Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 OPERATOR-GATED (explicit auth; not standing default)."
+    description: "Review and audit with reliable MCP writes. Code-lane standing default: cursor/grok-4.7 via route_policy.yaml workflows.check_review (decision:code-review-panel-cursor-substrate); contract=freeform omit-model coerces to seat=cursor-sdk. Explicit model=openai/* keeps API (life / checkout-free). Judgment / path-sim R-admit → CDP. Life/writing: Terra standing, or google/gemini-3.6-flash as MCP-capable peer. Anthropic API last resort (cost). web-anthropic via agent-bus is a life/Cortex MCP writer with code/workspaces MCP off. gpt-5.5 OPERATOR-GATED (explicit auth; not standing default)."
     default_family: gpt
     default_platform: api
     default_model: openai/gpt-5.6-terra

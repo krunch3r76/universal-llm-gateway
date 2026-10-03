@@ -2,7 +2,7 @@
 
 Cursor checkpoint callers pass ``pre_consolidate=false`` explicitly, then fire the
 **tip author** via ``team_dispatch(op=generate, seat=cursor-sdk,
-model=cursor/grok-4.7, job=freeform, dispatch_thread_id=…, lane=A)`` — not
+model=cursor/grok-4.7, contract=freeform, dispatch_thread_id=…, lane=A)`` — not
 ``seat=cursor`` (handoff-only) and not model-only without ``lane=`` (422
 ``lane_required``). See skill ``checkpoint-discipline`` § Pipeline CHECKPOINT step 2.
 Consolidate ops still exist; they are not the checkpoint happy path.
@@ -316,7 +316,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
           ``channel=hop``). ``transcript_id`` names a Cursor tab; without
           it, stop — do not guess. Tip author is external
           ``team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7,
-          job=freeform, dispatch_thread_id=…, lane=A)`` — not the pre_consolidate
+          contract=freeform, dispatch_thread_id=…, lane=A)`` — not the pre_consolidate
           worker and not ``seat=cursor`` on generate.
 
         - ``resume`` — sync relay to
