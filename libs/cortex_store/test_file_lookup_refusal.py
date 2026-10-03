@@ -77,6 +77,16 @@ def test_entity_type_matching_folder_is_not_a_file(tmp_path: Path) -> None:
     assert file_lookup_refusal("cortex://agent-bus/7182", cortex_root=tmp_path) is None
 
 
+def test_overlong_component_does_not_raise(tmp_path: Path) -> None:
+    """A 300-byte path component must not become HTTP 500."""
+    (tmp_path / "notes" / "system" / "threads").mkdir(parents=True)
+    detail = file_lookup_refusal(
+        "notes:system/threads/" + ("A" * 300) + ".md",
+        cortex_root=tmp_path,
+    )
+    assert detail is None
+
+
 def test_traversal_is_not_refused(tmp_path: Path) -> None:
     (tmp_path / "notes").mkdir()
     assert file_lookup_refusal("cortex://notes/../../x", cortex_root=tmp_path) is None

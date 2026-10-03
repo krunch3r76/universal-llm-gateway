@@ -64,7 +64,14 @@ def _existing_cortex_file(rel: str, root: Path) -> Path | None:
     if not rel or not first or ":" in first:
         return None
     root = root.resolve()
-    candidate = (root / rel).resolve()
-    if not candidate.is_relative_to(root) or not candidate.is_file():
+    try:
+        candidate = (root / rel).resolve()
+        inside = candidate.is_relative_to(root)
+        is_file = candidate.is_file()
+    except OSError:
+        # ENAMETOOLONG and similar stat failures are not a file hit.
+        # Before this check, entity lookup returned 404 for the same ref.
+        return None
+    if not inside or not is_file:
         return None
     return candidate
