@@ -226,3 +226,39 @@ def test_reload_drops_pipeline_on_catalog_skip_not_unregistered_type(
     registry.reload_pipelines()
     assert "ok-pipe" not in registry.pipelines
     assert any(row["pipeline_id"] == "ok-pipe" for row in registry.catalog_skips)
+
+
+def test_reload_drops_when_handler_and_catalog_errors_mixed(tmp_path: Path) -> None:
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = _registry(root, tmp_path)
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+
+    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}").replace(
+        "model_ref: ok", "model_ref: expand"
+    )
+    _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
+    registry.reload_pipelines()
+    assert "ok-pipe" not in registry.pipelines
+
+
+def test_reload_does_not_restore_when_prior_models_unavailable(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = PipelineRegistry(
+        search_paths=[str(root)],
+        config_base_dir=root.parent,
+        snapshot_dir=tmp_path / "snap",
+        is_model_available=lambda _model_id: True,
+    )
+    registry.load()
+    assert "ok-pipe" in registry.pipelines
+
+    bad_yaml = _OK_YAML.replace("type: generate", f"type: {_BOGUS_STEP_TYPE}")
+    _write(root / "ok_domain" / "ok-v1.yaml", bad_yaml)
+    registry._is_model_available = lambda _model_id: False
+    registry.reload_pipelines()
+    assert "ok-pipe" not in registry.pipelines

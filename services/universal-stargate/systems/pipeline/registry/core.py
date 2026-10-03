@@ -69,8 +69,15 @@ def _apply_keep_last_good_on_reload(
         )
         if not _only_unregistered_handler_errors(pipeline_errors):
             continue
+        prior = previous_pipelines[pipeline_id]
+        should_filter, _ = fresh._should_filter_pipeline(prior)
+        if should_filter:
+            continue
+        revalidation_errors = fresh._validator._validate_pipeline(prior)
+        if revalidation_errors:
+            continue
         unknown_type = _extract_unknown_step_type(pipeline_errors) or "unknown"
-        fresh.pipelines[pipeline_id] = previous_pipelines[pipeline_id]
+        fresh.pipelines[pipeline_id] = prior
         error_prefix = f"[{pipeline_id}] "
         fresh._validation_errors = [
             err
