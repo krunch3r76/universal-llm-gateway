@@ -647,12 +647,55 @@ _NEST_UNDER_DISPATCH_ID_HINT = (
 )
 
 
-def _nest_under_is_execution_uuid(value: str) -> bool:
+def _is_canonical_uuid(value: str) -> bool:
     try:
         parsed = uuid.UUID(value)
     except ValueError:
         return False
     return str(parsed) == value.lower()
+
+
+def _dispatch_id_for_execution_id(execution_id: str) -> str | None:
+    conn = CursorDispatchLedger.instance()._connect()
+    rows = conn.execute(
+        "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE execution_id=? "
+        "ORDER BY started_at DESC",
+        (execution_id,),
+    ).fetchall()
+    if not rows:
+        return None
+    return str(rows[0]["dispatch_id"])
+
+
+def _reject_nest_under_uuid_misconfiguration(
+    req: CursorDispatchRequest,
+) -> JSONResponse | None:
+    """422 when ``nest_under`` is UUID-shaped but not a ledger dispatch_id."""
+    nest_under = req.nest_under
+    if not nest_under or not _is_canonical_uuid(nest_under):
+        return None
+    ledger = CursorDispatchLedger.instance()
+    if ledger.dispatch_status_by_id(dispatch_id=nest_under) is not None:
+        return None
+    resolved = _dispatch_id_for_execution_id(nest_under)
+    hint = _NEST_UNDER_DISPATCH_ID_HINT
+    if resolved:
+        hint = (
+            f"{hint} For this execution_id use dispatch_id {resolved!r} in nest_under."
+        )
+    return _reject_pre_admission(
+        req,
+        worker_error_code="nest_under_not_dispatch_id",
+        failure_layer="validation",
+        http_status=422,
+        detail_summary=(
+            "nest_under is an execution_id UUID; pass the ledger dispatch_id"
+        ),
+        invalid_fields=["nest_under"],
+        retryable=False,
+        validation_stage="nest_under",
+        extra_data={"fix_hint": hint},
+    )
 
 
 def _stamp_cursor_auth(
@@ -3645,23 +3688,11 @@ async def admit_cursor_dispatch(
     resume_reject = reject_resume_if_ineligible(req)
     if resume_reject is not None:
         return resume_reject
-    # Breaks when nest_under is an execution_id UUID: lookup misses and mint
-    # returns 503 CURSOR_WORKTREE_MINT_FAILED. A non-UUID missing parent still
-    # falls through to that 503.
-    if req.nest_under and _nest_under_is_execution_uuid(req.nest_under):
-        return _reject_pre_admission(
-            req,
-            worker_error_code="nest_under_not_dispatch_id",
-            failure_layer="validation",
-            http_status=422,
-            detail_summary=(
-                "nest_under is an execution_id UUID; pass the ledger dispatch_id"
-            ),
-            invalid_fields=["nest_under"],
-            retryable=False,
-            validation_stage="nest_under",
-            extra_data={"fix_hint": _NEST_UNDER_DISPATCH_ID_HINT},
-        )
+    # UUID-shaped nest_under: allow hop successors whose dispatch_id is a bare
+    # uuid4(); 422 when the value is an execution_id (with dispatch_id in hint).
+    nest_uuid_reject = _reject_nest_under_uuid_misconfiguration(req)
+    if nest_uuid_reject is not None:
+        return nest_uuid_reject
     minted_lane_b = False
     mint_wait_ms = 0.0
     try:

@@ -563,6 +563,113 @@ def test_nest_under_execution_uuid_is_422(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_nest_under_execution_uuid_maps_dispatch_id_in_fix_hint(
+    _mock_task: MagicMock, client: TestClient, git_repo: Path
+) -> None:
+    """Breaks when execution_id nest_under omits the ledger dispatch_id from fix_hint."""
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    exec_uuid = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    parent_id = "parent-exec-map"
+    ledger = CursorDispatchLedger.instance()
+    parent_req = CursorDispatchRequest(
+        thread_id="6703",
+        model="cursor/composer-2.5",
+        dispatch_id=parent_id,
+        execution_id=exec_uuid,
+        message="parent",
+        lane="B",
+    )
+    ledger.admit(
+        req=parent_req,
+        fingerprint=ledger.fingerprint(parent_req),
+        execution_id=exec_uuid,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=parent_id,
+            thread_id="6703",
+            model_id="composer-2.5",
+        ),
+        source_repo=str(git_repo.resolve()),
+        lease_key=str(git_repo.resolve()),
+        contract="implement",
+        worker_instance="worker-a",
+    )
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="B",
+            nest_under=exec_uuid,
+            dispatch_id="child-exec-map",
+            execution_id="exec-child-exec-map",
+            thread_id="6704",
+            source_ref="todo:child-exec-map",
+        ),
+    )
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["code"] == "nest_under_not_dispatch_id"
+    assert parent_id in payload["data"]["fix_hint"]
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_nest_under_uuid_shaped_dispatch_id_in_ledger_not_422(
+    _mock_task: MagicMock, client: TestClient, git_repo: Path
+) -> None:
+    """Hop successors use bare uuid4 dispatch_ids; nest_under must not 422 them."""
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    hop_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    ledger = CursorDispatchLedger.instance()
+    parent_req = CursorDispatchRequest(
+        thread_id="6705",
+        model="cursor/composer-2.5",
+        dispatch_id=hop_uuid,
+        execution_id="exec-hop-uuid",
+        message="parent",
+        lane="B",
+    )
+    ledger.admit(
+        req=parent_req,
+        fingerprint=ledger.fingerprint(parent_req),
+        execution_id="exec-hop-uuid",
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=hop_uuid,
+            thread_id="6705",
+            model_id="composer-2.5",
+        ),
+        source_repo=str(git_repo.resolve()),
+        lease_key=str(git_repo.resolve()),
+        contract="implement",
+        worker_instance="worker-a",
+    )
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="B",
+            nest_under=hop_uuid,
+            dispatch_id="child-hop-uuid",
+            execution_id="exec-child-hop-uuid",
+            thread_id="6706",
+            source_ref="todo:child-hop-uuid",
+        ),
+    )
+    if resp.status_code == 422:
+        assert resp.json().get("code") != "nest_under_not_dispatch_id"
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_explicit_lane_b_nest_under_lane_a_parent_is_422(
     _mock_task: MagicMock,
     client: TestClient,
