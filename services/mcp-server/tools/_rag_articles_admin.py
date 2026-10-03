@@ -32,7 +32,7 @@ def register_article_inventory_tools(mcp: FastMCP) -> None:
         Use this when you need corpus inventory or citation-level coverage,
         such as checking what papers already exist before deciding whether to
         ingest more. For semantic retrieval over chunk text, use `rag(op="search")`
-        or `rag(op="answer")` instead of article listing.
+        instead of article listing.
 
         Args:
             scope: Comma-separated scope names to filter by. Omit to list all

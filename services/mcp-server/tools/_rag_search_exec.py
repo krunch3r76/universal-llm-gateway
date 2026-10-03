@@ -1,11 +1,11 @@
-"""Stargate pipeline call helpers and the ``rag-context`` search execution body.
+"""Stargate pipeline call helpers and the ``rag-search`` search execution body.
 
 Who calls: ``tools/rag.py`` (``rag_search`` runs ``run_rag_search`` through the
-in-flight registry in ``_rag_inflight``; ``rag_answer`` uses the call/error
-helpers directly) and ``tools/_rag_recon.py`` (per-theme recon searches).
+in-flight registry in ``_rag_inflight``) and ``tools/_rag_recon.py`` (per-theme
+recon searches, which still POST ``rag-context``).
 
 ``run_rag_search`` is the unit of work the registry executes once per identical
-request: it POSTs ``model=rag-context`` to Stargate ``/v1/chat/completions``,
+request: it POSTs ``model=rag-search`` to Stargate ``/v1/chat/completions``,
 records ``mcp.rag.pipeline.called`` / ``.completed`` / ``.failed``, and returns
 the caller-facing envelope — ``status: ok`` with ``context`` + ``retrieval``
 metadata, or ``{"error": ...}``. Transport failures also set ``retryable: true``
@@ -30,6 +30,10 @@ from mcp_events import monotonic_now, record
 from provider_model_limits import rag_pipeline_timeout
 from transport_utils import make_sync_client
 
+from ._rag_relay_options import (
+    SEARCH_RELAY_PIPELINE,
+    finalize_relay_pipeline_options,
+)
 from ._rag_retrieval_metadata import (
     envelope_retrieval_fields,
     retrieval_metadata_from_response,
@@ -69,7 +73,7 @@ def pipeline_call(
 ) -> dict[str, Any]:
     """POST a chat completion to Stargate and return the parsed JSON body.
 
-    *model* names a pipeline (``rag-context``, ``rag-answer*``); *pipeline_options*
+    *model* names a pipeline (``rag-search``, ``rag-context``); *pipeline_options*
     ride in the request body. Raises the httpx error on transport or HTTP
     failure — callers map those through ``handle_pipeline_error``.
     """
@@ -192,7 +196,7 @@ def _catalog_transport_failure(envelope: dict[str, Any]) -> dict[str, Any]:
             "Scope catalog unavailable (RAG /scopes). "
             "This is a transport failure, not an empty corpus."
         ),
-        "pipeline": envelope.get("pipeline", "rag-context"),
+        "pipeline": envelope.get("pipeline", SEARCH_RELAY_PIPELINE),
         "retrieval": retrieval if isinstance(retrieval, dict) else {},
     }
     if "duration_s" in envelope:
@@ -250,7 +254,7 @@ def _retrieval_transport_failure(envelope: dict[str, Any]) -> dict[str, Any]:
             "Retrieval unavailable (RAG /search). "
             "This is a transport failure, not an empty corpus."
         ),
-        "pipeline": envelope.get("pipeline", "rag-context"),
+        "pipeline": envelope.get("pipeline", SEARCH_RELAY_PIPELINE),
         "retrieval": retrieval if isinstance(retrieval, dict) else {},
     }
     if "duration_s" in envelope:
@@ -266,7 +270,7 @@ def run_rag_search(
     pipeline_options: dict[str, Any],
     unscoped: bool,
 ) -> dict[str, Any]:
-    """Execute one ``rag-context`` search and return its envelope.
+    """Execute one ``rag-search`` search and return its envelope.
 
     *pipeline_options* must already carry the normalized scope/prefix/chunk-cap
     options; the inner call adds ``timeout_seconds``. Returns ``status: ok``
@@ -310,9 +314,17 @@ def _rag_search_once(
     pipeline_options: dict[str, Any],
     unscoped: bool,
 ) -> dict[str, Any]:
-    """One Stargate ``rag-context`` call, without the catalog-outage retry."""
+    """One Stargate ``rag-search`` call, without the catalog-outage retry."""
+    prepared, relay_error = finalize_relay_pipeline_options(
+        SEARCH_RELAY_PIPELINE,
+        pipeline_options,
+    )
+    if relay_error or prepared is None:
+        return {"error": relay_error or "relay options rejected"}
+    pipeline_options = prepared
+
     record_args: dict[str, Any] = {
-        "pipeline": "rag-context",
+        "pipeline": SEARCH_RELAY_PIPELINE,
         "query": query,
         "scope": scope,
     }
@@ -327,25 +339,25 @@ def _rag_search_once(
 
     try:
         result = pipeline_call(
-            "rag-context",
+            SEARCH_RELAY_PIPELINE,
             [{"role": "user", "content": query}],
             pipeline_options=pipeline_options,
             timeout=pipeline_timeout + HTTP_BUFFER_S,
         )
     except httpx.TimeoutException as e:
         user_message = "Pipeline timed out. The query may be too complex."
-        return handle_pipeline_error(e, "rag-context", t0, user_message)
+        return handle_pipeline_error(e, SEARCH_RELAY_PIPELINE, t0, user_message)
     except httpx.ConnectError as e:
         user_message = "Pipeline not available. Stargate may not be running."
-        return handle_pipeline_error(e, "rag-context", t0, user_message)
+        return handle_pipeline_error(e, SEARCH_RELAY_PIPELINE, t0, user_message)
     except httpx.HTTPStatusError as e:
         user_message = (
             f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
         )
-        return handle_pipeline_error(e, "rag-context", t0, user_message)
+        return handle_pipeline_error(e, SEARCH_RELAY_PIPELINE, t0, user_message)
     except httpx.RequestError as e:
         user_message = f"Pipeline request failed: {e}"
-        return handle_pipeline_error(e, "rag-context", t0, user_message)
+        return handle_pipeline_error(e, SEARCH_RELAY_PIPELINE, t0, user_message)
 
     content = extract_content(result) if result else ""
     duration = monotonic_now() - t0
@@ -357,7 +369,7 @@ def _rag_search_once(
     if _retrieval_unavailable(retrieval_fields):
         record(
             "mcp.rag.pipeline.completed",
-            pipeline="rag-context",
+            pipeline=SEARCH_RELAY_PIPELINE,
             duration_s=round(duration, 3),
             empty=True,
             query=query,
@@ -367,7 +379,7 @@ def _rag_search_once(
         )
         return _retrieval_transport_failure(
             {
-                "pipeline": "rag-context",
+                "pipeline": SEARCH_RELAY_PIPELINE,
                 "duration_s": round(duration, 3),
                 **retrieval_fields,
             }
@@ -376,7 +388,7 @@ def _rag_search_once(
     if not content:
         record(
             "mcp.rag.pipeline.completed",
-            pipeline="rag-context",
+            pipeline=SEARCH_RELAY_PIPELINE,
             duration_s=round(duration, 3),
             empty=True,
             query=query,
@@ -404,7 +416,7 @@ def _rag_search_once(
     )
     record(
         "mcp.rag.pipeline.completed",
-        pipeline="rag-context",
+        pipeline=SEARCH_RELAY_PIPELINE,
         duration_s=round(duration, 3),
         content_length=len(content),
         scope=scope,
@@ -413,7 +425,7 @@ def _rag_search_once(
     return _annotate_accepted_scope_empty(
         {
             "status": "ok",
-            "pipeline": "rag-context",
+            "pipeline": SEARCH_RELAY_PIPELINE,
             "content_length": len(content),
             "duration_s": round(duration, 3),
             "context": content,

@@ -92,7 +92,6 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "web_fetch",
         "web_search",
         # RAG extended ops beyond canonical rag_* flat shapes
-        "rag_answer",
         "rag_delete_directory",
         "rag_delete_source",
         "rag_get_chunks",

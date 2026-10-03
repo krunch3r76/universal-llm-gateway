@@ -27,7 +27,8 @@ Modes (``rerank_mode`` pipeline option):
         confidence + reason per chunk.  ~4-7 s for 14 chunks.  Same weighted
         fusion and bounded-movement cap applied after score aggregation.
 
-When ``rerank_enabled`` is false, chunks pass straight to formatting.
+When the step ``enabled`` flag is false (it defaults to true), chunks pass
+straight to formatting.
 """
 
 from __future__ import annotations
@@ -125,7 +126,7 @@ class RagRerankAssembleHandler(BaseHandler):
                 )
 
         effective = context.options
-        rerank_enabled = bool(effective.get("rerank_enabled", False))
+        rerank_enabled = bool(step.get_domain_field("enabled", True))
         rerank_mode = resolve_rerank_mode(effective)
         include_section_headings = bool(
             effective.get("rag_include_section_headings", False)

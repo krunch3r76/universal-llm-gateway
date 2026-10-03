@@ -481,10 +481,8 @@ See `agent_skill:claude-ai-cdp-navigation` for call-time doctrine.
 
 **Sole primary MCP/agent surface** for RAG. Returns raw context chunks with
 source labels for the agent to cite, gate (lawyer-stance), reason over, and
-synthesize. **Agents must use this exclusively**; `rag_answer` (and `rag(op="answer")`)
-is buried in MCP and reserved exclusively for debugging the rag-answer* pipelines
-(via direct dispatch or Stargate /v1/chat/completions). `rag_search_preview` provides
-bounded snippets for Cursor UIs.
+synthesize. `rag_search_preview` provides bounded snippets for Cursor UIs.
+`rag(op="search")` relays to pipeline `rag-search`.
 
 ### Surface hierarchy
 - `rag_search` / `rag(op="search")`: only agent surface.
@@ -515,7 +513,12 @@ muddled average that degrades the primary retrieval signal.
 | `limit` | int\|None | Alias for `top_k` (ergonomics for MCP/dispatch paths; error on conflict) |
 | `scope` | str\|list\|None | Named scope filter: single string, comma-separated string, or list. Call `rag_list_scopes()` for valid names. |
 | `prefix` | str\|list\|None | Source path prefix filter. Mutually exclusive with `scope`. |
-| `mapped` | bool | Default `false`. When `true`, exact `(scope, query)` lookup against `config/mcp/rag_mapped_index.yaml` serves a durable pack body through the identical search envelope; miss (or multi/missing scope) falls through to live `rag-context`. |
+| `mapped` | bool | Default `false`. When `true`, exact `(scope, query)` lookup against `config/mcp/rag_mapped_index.yaml` serves a durable pack body through the identical search envelope; miss (or multi/missing scope) falls through to live `rag-search`. |
+| `hyde_enabled` | bool\|None | Folded into `step_overrides.generate_hyde.enabled` on the `rag-search` relay. |
+| `rerank_enabled` | bool\|None | Folded into `step_overrides.rerank.enabled`. |
+| `catalog_retry_enabled` | bool\|None | Folded into `step_overrides.fetch_scope_catalog_retry.enabled`. |
+| `step_overrides` | object\|None | Request step enablement for `rag-search` (`{step: {enabled: bool}}`). |
+| `skip_steps` | list\|None | Step names to disable on `rag-search`. |
 | `search_id` | str\|None | Poll handle from an earlier `in_flight` envelope. When given, every other argument is ignored and the call attaches to that search. |
 
 ### Parallel calls and the `in_flight` handle
@@ -525,7 +528,7 @@ concepts (see Query language). Each call is admitted to an in-flight registry on
 the MCP server (`tools/_rag_inflight.py`):
 
 - **Identical requests share one backend search.** Same normalized `query` +
-  `scope`/`prefix` + `top_k` ⇒ one `rag-context` run; later callers attach
+  `scope`/`prefix` + `top_k` ⇒ one `rag-search` run; later callers attach
   (`attached: true`) and receive the same result. Re-issuing a search is
   therefore harmless — it never starts a second backend run.
 - **Every envelope carries `search_id`** (`"rs-…"`), including errors.
@@ -534,7 +537,7 @@ the MCP server (`tools/_rag_inflight.py`):
   returns, with no `error` key:
 
   ```
-  {"status": "in_flight", "pipeline": "rag-context", "search_id": "rs-…",
+  {"status": "in_flight", "pipeline": "rag-search", "search_id": "rs-…",
    "elapsed_s": 90.2, "wait_budget_s": 90.0, "poll": "<recipe>"}
   ```
 
@@ -582,7 +585,7 @@ exactly (`status`, `pipeline`, `content_length`, `duration_s`, `context`,
 On success:
 
 ```
-{"status": "ok", "pipeline": "rag-context", "content_length": <int>,
+{"status": "ok", "pipeline": "rag-search", "content_length": <int>,
  "duration_s": <float>, "context": "<assembled context with source labels>",
  "search_id": "rs-…", ["attached": true], ["cache_hit": true],
  "retrieval": {
@@ -622,7 +625,10 @@ On success:
   or `error`. `rerank_error` is set on the mismatch and on a cross-encoder
   request failure (`rerank_request_failed`). A request failure returns the
   prior order with `rerank_status: error` instead of failing the whole search.
-- **`retrieval`** (scope fields): compact scope metadata from the rag-context retrieve step.
+- **`retrieval`** (scope fields): compact scope metadata from the rag-search retrieve step.
+  Tool `scope` maps to `pipeline_options.scope_override`. Tool `top_k` maps to
+  `pipeline_options.rag_max_chunks` when it is not 20 (the pipeline default).
+  Raw `scope` / `top_k` keys are not the pipeline contract.
   `auto_classified` is `true` only when `scope_source=classifier` (LLM scope
   prediction ran). The MCP primary path uses the direct pipeline
   (`scope_source=default_scope` for unscoped calls). Mapped hits use
@@ -659,37 +665,11 @@ empty-content shape.
 
 ### Direct pipeline callers
 
-When calling Stargate `/v1/chat/completions` with `model=rag-context`, pass
+When calling Stargate `/v1/chat/completions` with `model=rag-search`, pass
 `pipeline_options.include_retrieval_metadata: true` to receive the same fields
 under top-level `pipeline.retrieval` (MCP `rag_search` maps this to
-top-level `retrieval`).
-
-## rag_answer
-
-**DEBUG ONLY** — buried MCP surface for exercising the `rag-answer` /
-`rag-answer-deep` pipelines. Agents must use `rag_search` for retrieval work.
-
-Delegates retrieval to `rag-context` via an internal `pipeline_call_v1` step,
-then runs relevance gating and answer generation.
-
-### Args
-
-| Arg | Type | Description |
-|---|---|---|
-| `question` | str | Natural language question — REQUIRED |
-| `scope` | str\|list\|None | Same semantics as `rag_search` |
-| `prefix` | str\|list\|None | Source path prefix; mutually exclusive with `scope` |
-| `deep` | bool | Use `rag-answer-deep` iterative retrieval (default false) |
-
-### Returns
-
-On success: same `retrieval` + optional `scope_note` shape as `rag_search`,
-with grounded text in `answer` instead of raw `context`:
-
-```
-{"status": "ok", "pipeline": "rag-answer", "content_length": <int>,
- "duration_s": <float>, "answer": "<grounded answer>", "retrieval": {...}}
-```
+top-level `retrieval`). `scope` on the tool is `scope_override` on the
+pipeline; `top_k` other than 20 is `rag_max_chunks`.
 
 ## rag_recon
 
