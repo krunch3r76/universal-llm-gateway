@@ -132,7 +132,9 @@ def _probe_client_visible_row(row: PropagationRow) -> dict[str, Any] | None:
         close_surfaces=row.close_surfaces,
         proof_payload=None,
     )
-    mcp_health = _fetch_json(resolve_mcp_health_probe_url()) if "mcp_health" in owed else None
+    mcp_health = (
+        _fetch_json(resolve_mcp_health_probe_url()) if "mcp_health" in owed else None
+    )
     cortex_health = _fetch_cortex_api_health() if "cortex_api" in owed else None
     if mcp_health is None and cortex_health is None:
         return None
@@ -192,16 +194,16 @@ def _build_proof_probe_registry() -> dict[tuple[str, str], ProbeCallable]:
     return registry
 
 
-PROOF_PROBE_REGISTRY: dict[tuple[str, str], ProbeCallable] = _build_proof_probe_registry()
+PROOF_PROBE_REGISTRY: dict[tuple[str, str], ProbeCallable] = (
+    _build_proof_probe_registry()
+)
 
 
 def registered_proof_classes(service: str) -> frozenset[str]:
     """Return proof classes with a registered probe for *service*."""
     slug = service.strip().lower()
     return frozenset(
-        proof_class
-        for (svc, proof_class) in PROOF_PROBE_REGISTRY
-        if svc == slug
+        proof_class for (svc, proof_class) in PROOF_PROBE_REGISTRY if svc == slug
     )
 
 
@@ -359,17 +361,23 @@ def plan_propagation(worker_turns: list[dict[str, Any]]) -> PropagationPlan | No
         raw_residue = payload.get("propagation_residue")
         lines: list[str] = []
         if isinstance(raw_residue, list):
-            lines = [str(item) for item in raw_residue if isinstance(item, str) and item]
+            lines = [
+                str(item) for item in raw_residue if isinstance(item, str) and item
+            ]
         services, skipped = _slugs_from_residue_lines(lines)
         if not services:
             lib_paths = [
-                path for path in paths if path.startswith("libs/") and path.endswith(".py")
+                path
+                for path in paths
+                if path.startswith("libs/") and path.endswith(".py")
             ]
             for line in lines:
                 match = _SYNC_RESTART_SLUG_RE.match(str(line or "").strip())
                 if not match:
                     continue
-                for audit_line in audit_sync_restart_slug(match.group(1).lower(), lib_paths):
+                for audit_line in audit_sync_restart_slug(
+                    match.group(1).lower(), lib_paths
+                ):
                     if audit_line not in skipped:
                         skipped.append(audit_line)
             for path in paths:
@@ -584,7 +592,10 @@ async def execute_propagation_plan(
         if bound is not None:
             return True
         try:
-            return pending_unbound_validation_for_ref(row.service, row.code_ref) is not None
+            return (
+                pending_unbound_validation_for_ref(row.service, row.code_ref)
+                is not None
+            )
         except Exception:
             return False
 
@@ -672,9 +683,7 @@ async def execute_propagation_plan(
                 }
             )
             if row.age_in_harvests >= 2:
-                escalated.append(
-                    {**projection, "defer_reason": dispatch_before.error}
-                )
+                escalated.append({**projection, "defer_reason": dispatch_before.error})
             continue
 
         before = dispatch_before.payload
@@ -793,22 +802,31 @@ async def execute_propagation_plan(
 
         snap_gw: list[str] | None = None
         snap_pipes: list[str] | None = None
+        resume_from: int | None = None
+        settling_held = False
         if row.proof_class == "functional_settle":
             from charter_runner_store.propagation_ledger import mark_settling
+
             from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+                capture_event_resume_from,
                 request_pre_restart_gateway_membership,
+            )
+            from scripts.model_manager.ui.controller.charter_runner.wake_hub import (
+                default_events_query_socket,
             )
             from scripts.model_manager.ui.controller.restart_drain import (
                 STARGATE_PROBE_URL,
             )
 
             mark_settling(row.row_id)
+            settling_held = True
             pre_snapshot = await request_pre_restart_gateway_membership(
                 base_url=STARGATE_PROBE_URL,
             )
             snap_gw, snap_pipes = (None, None)
             if pre_snapshot is not None:
                 snap_gw, snap_pipes = pre_snapshot
+            resume_from = await capture_event_resume_from(default_events_query_socket())
 
         try:
             outcome = await sync_restart_charter_harvest(
@@ -823,6 +841,11 @@ async def execute_propagation_plan(
                 window_index,
             )
             defer = f"sync_restart_error:{type(exc).__name__}"
+            if settling_held:
+                from charter_runner_store.propagation_ledger import release_settling
+
+                release_settling(row.row_id)
+                settling_held = False
             set_defer_reason(row.row_id, defer)
             remaining.append(
                 {
@@ -866,10 +889,13 @@ async def execute_propagation_plan(
                 record_settle_verdict,
             )
             from git_integrate.revert import revert_op
+
             from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
                 apply_verdict,
+                emit_settle_verdict,
             )
             from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+                capture_event_resume_from,
                 op_run_affected_pipelines,
                 wait_functional_settle,
             )
@@ -886,21 +912,35 @@ async def execute_propagation_plan(
 
             cfg = load_config()
             land_paths = land_paths_from_merge_sha(cfg.source_repo, row.code_ref)
-            async def _run_op_run(ids: Iterable[str]) -> list[str]:
-                return await op_run_affected_pipelines(
-                    ids, base_url=STARGATE_PROBE_URL
-                )
 
-            settle_result = await wait_functional_settle(
-                query_sock=default_events_query_socket(),
-                resume_from=None,
-                snapshot_gateway_ids=snap_gw,
-                snapshot_pipeline_ids=snap_pipes,
-                land_paths=land_paths,
-                run_op_run=_run_op_run,
-            )
+            async def _run_op_run(ids: Iterable[str]) -> list[str]:
+                return await op_run_affected_pipelines(ids, base_url=STARGATE_PROBE_URL)
+
+            try:
+                settle_result = await wait_functional_settle(
+                    query_sock=default_events_query_socket(),
+                    resume_from=resume_from,
+                    snapshot_gateway_ids=snap_gw,
+                    snapshot_pipeline_ids=snap_pipes,
+                    land_paths=land_paths,
+                    run_op_run=_run_op_run,
+                )
+            except Exception:
+                if settling_held:
+                    from charter_runner_store.propagation_ledger import release_settling
+
+                    release_settling(row.row_id)
+                    settling_held = False
+                raise
             verdict = settle_result.verdict
             record_settle_verdict(row.row_id, verdict)
+            settling_held = False
+            emit_settle_verdict(
+                service=row.service,
+                land_sha=row.code_ref,
+                verdict=verdict,
+                detail="functional_settle",
+            )
             disposition: dict[str, Any] = {
                 **projection,
                 "defer_reason": (
@@ -916,11 +956,29 @@ async def execute_propagation_plan(
             if verdict == "indeterminate":
                 escalated.append(disposition)
             elif verdict == "fail_attributable":
+
                 async def _revert(**_kwargs: Any) -> dict[str, Any]:
-                    return await revert_op(
+                    result = await revert_op(
                         source_repo=str(cfg.source_repo),
                         merge_sha=row.code_ref,
                     )
+                    if result.get("status") != "landed":
+                        return result
+                    await sync_restart_charter_harvest(
+                        ctl, row.service, event_bus=event_bus
+                    )
+                    reprobe_from = await capture_event_resume_from(
+                        default_events_query_socket()
+                    )
+                    reprobe = await wait_functional_settle(
+                        query_sock=default_events_query_socket(),
+                        resume_from=reprobe_from,
+                        snapshot_gateway_ids=snap_gw,
+                        snapshot_pipeline_ids=snap_pipes,
+                        land_paths=land_paths,
+                        run_op_run=_run_op_run,
+                    )
+                    return {**result, "reprobe": reprobe.verdict}
 
                 applied = await apply_verdict(
                     verdict,
@@ -928,42 +986,82 @@ async def execute_propagation_plan(
                     already_reverted=False,
                     revert_kwargs={},
                 )
-                if applied.get("revert_calls"):
-                    await sync_restart_charter_harvest(
-                        ctl, row.service, event_bus=event_bus
+                if applied.get("escalated"):
+                    reprobe_verdict = applied.get("reprobe")
+                    escalated.append(
+                        {
+                            **projection,
+                            "defer_reason": f"settle_reprobe_{reprobe_verdict}",
+                            "disposition": "settle_reprobe_escalated",
+                            "verdict": reprobe_verdict,
+                        }
                     )
-                    reprobe = await wait_functional_settle(
-                        query_sock=default_events_query_socket(),
-                        resume_from=None,
-                        snapshot_gateway_ids=snap_gw,
-                        snapshot_pipeline_ids=snap_pipes,
-                        land_paths=land_paths,
-                        run_op_run=_run_op_run,
-                    )
-                    reprobe_verdict = reprobe.verdict
-                    if reprobe_verdict != "pass":
-                        escalated.append(
-                            {
-                                **projection,
-                                "defer_reason": f"settle_reprobe_{reprobe_verdict}",
-                                "disposition": "settle_reprobe_escalated",
-                                "verdict": reprobe_verdict,
-                            }
-                        )
             continue
+
+        if (
+            row.service == "git_integration_worker"
+            and outcome.get("status") == "ok"
+            and getattr(row, "revert_on_fail", False)
+        ):
+            from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
+                apply_verdict,
+                emit_settle_verdict,
+                giw_ready_join_verdict,
+            )
+            from scripts.model_manager.ui.controller.propagation_ready_join import (
+                ready_join_for_settle,
+            )
+
+            join = ready_join_for_settle(row.service)
+            giw_verdict = giw_ready_join_verdict(join.outcome)
+            emit_settle_verdict(
+                service=row.service,
+                land_sha=row.code_ref,
+                verdict=giw_verdict,
+                detail=join.outcome,
+            )
+            if giw_verdict == "fail_attributable":
+                from charter_runner_store.propagation_ledger import (
+                    record_settle_verdict,
+                )
+                from git_integrate.revert import revert_op
+
+                from services.git_integration_worker.config import load_config
+
+                cfg = load_config()
+
+                async def _giw_revert(**_kwargs: Any) -> dict[str, Any]:
+                    return await revert_op(
+                        source_repo=str(cfg.source_repo),
+                        merge_sha=row.code_ref,
+                    )
+
+                await apply_verdict(
+                    giw_verdict,
+                    revert=_giw_revert,
+                    already_reverted=False,
+                )
+                record_settle_verdict(row.row_id, giw_verdict)
+                remaining.append(
+                    {
+                        **projection,
+                        "defer_reason": "settle_fail_attributable",
+                        "proof_class_executed": dispatch_after.proof_class_executed,
+                        "disposition": "giw_ready_join",
+                        "verdict": giw_verdict,
+                    }
+                )
+                continue
 
         live_after = dispatch_after.payload
         executed_class = dispatch_after.proof_class_executed
         class_diverged = executed_class != requested_class
         authority_identity = outcome.get("authority_identity")
-        proof_ok = (
-            not class_diverged
-            and proof_matches(
-                row,
-                live_after,
-                before=before,
-                authority_identity=authority_identity,
-            )
+        proof_ok = not class_diverged and proof_matches(
+            row,
+            live_after,
+            before=before,
+            authority_identity=authority_identity,
         )
         close_payload = {
             **(live_after or {}),

@@ -73,6 +73,7 @@ DEFER_HARVEST_WANTED = "harvest_wanted"
 # re-fire is what runs the probe again.
 DEFER_PROBE_UNDETERMINED = "probe_undetermined"
 DEFER_SETTLE_INDETERMINATE = "settle_indeterminate"
+DEFER_SETTLE_FAIL_ATTRIBUTABLE = "settle_fail_attributable"
 # Terminal defer on a seat-retracted obligation (status=failed, not open).
 DEFER_OPERATOR_RETRACTED = "operator_retracted"
 STALE_CONSUMPTION_CLAIM_S = 600.0
@@ -90,6 +91,7 @@ def open_row_in_harvest_fire_set(defer_reason: str | None) -> bool:
         DEFER_HARVEST_WANTED,
         DEFER_PROBE_UNDETERMINED,
         DEFER_SETTLE_INDETERMINATE,
+        DEFER_SETTLE_FAIL_ATTRIBUTABLE,
     }
 
 
@@ -835,6 +837,27 @@ def mark_settling(row_id: str, *, conn: sqlite3.Connection | None = None) -> boo
             db.close()
 
 
+def release_settling(row_id: str, *, conn: sqlite3.Connection | None = None) -> bool:
+    """Return a ``settling`` row to ``open`` when the probe raises before a verdict."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='open', updated_at=?
+            WHERE row_id=? AND status='settling'
+            """,
+            (now, row_id),
+        )
+        return cur.rowcount == 1
+    finally:
+        if own_conn:
+            db.close()
+
+
 def service_is_settling(
     service: str, *, conn: sqlite3.Connection | None = None
 ) -> bool:
@@ -900,6 +923,8 @@ def record_settle_verdict(
         defer = None
     elif verdict == "indeterminate":
         defer = DEFER_SETTLE_INDETERMINATE
+    elif verdict == "fail_attributable":
+        defer = DEFER_SETTLE_FAIL_ATTRIBUTABLE
     else:
         defer = f"settle_{verdict}"
     try:
@@ -925,6 +950,7 @@ __all__ = [
     "DEFER_HARVEST_WANTED",
     "DEFER_OPERATOR_RETRACTED",
     "DEFER_PROBE_UNDETERMINED",
+    "DEFER_SETTLE_FAIL_ATTRIBUTABLE",
     "DEFER_SETTLE_INDETERMINATE",
     "open_row_in_harvest_fire_set",
     "OpenPropagationProjection",
@@ -936,6 +962,7 @@ __all__ = [
     "list_harvest_wanted_rows",
     "list_open_rows",
     "mark_settling",
+    "release_settling",
     "provider_settle_verdicts",
     "record_settle_verdict",
     "service_is_settling",

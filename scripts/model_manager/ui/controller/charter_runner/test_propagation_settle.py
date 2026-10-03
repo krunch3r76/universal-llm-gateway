@@ -62,6 +62,7 @@ async def test_reprobe_not_pass_does_not_revert_twice():
 
 def test_giw_ready_join_timeout_is_fail_attributable():
     assert giw_ready_join_verdict("timeout") == "fail_attributable"
+    assert giw_ready_join_verdict("probe_down") == "fail_attributable"
     assert giw_ready_join_verdict("ready") == "pass"
 
 

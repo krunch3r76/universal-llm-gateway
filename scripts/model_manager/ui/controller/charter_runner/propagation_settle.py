@@ -26,10 +26,14 @@ def restart_blocked_by_order(
     not an older provider verdict from a different merge on the same service.
     """
     for provider in ORDER_AFTER.get(service, ()):
-        key = provider
         if land_code_ref:
             key = f"{provider}:{land_code_ref}"
-        if provider_verdicts.get(key, provider_verdicts.get(provider)) != "pass":
+            if key not in provider_verdicts:
+                continue
+            if provider_verdicts[key] != "pass":
+                return True
+            continue
+        if provider_verdicts.get(provider) != "pass":
             return True
     return False
 
@@ -58,14 +62,16 @@ async def apply_verdict(
             "escalated": False,
         }
     outcome = await revert(**(revert_kwargs or {}))
-    calls = 1
-    escalated = reprobe is not None and reprobe != "pass"
+    landed = outcome.get("status") == "landed"
+    calls = 1 if landed else 0
+    recorded = reprobe if reprobe is not None else outcome.get("reprobe")
+    escalated = bool(calls) and recorded is not None and recorded != "pass"
     return {
         "verdict": verdict,
         "revert_calls": calls,
         "revert": outcome,
         "escalated": escalated,
-        "reprobe": reprobe,
+        "reprobe": recorded,
     }
 
 
@@ -76,6 +82,27 @@ def giw_ready_join_verdict(outcome: str) -> SettleVerdict:
     """
     if outcome == "ready":
         return "pass"
-    if outcome == "timeout":
-        return "fail_attributable"
-    return "indeterminate"
+    if outcome == "skipped":
+        return "indeterminate"
+    return "fail_attributable"
+
+
+def emit_settle_verdict(
+    *,
+    service: str,
+    land_sha: str,
+    verdict: str,
+    detail: str = "",
+) -> None:
+    """Emit ``propagation.settle.verdict``. The verdict is a field, not the signal."""
+    payload = {
+        "service": service,
+        "land_sha": land_sha,
+        "verdict": verdict,
+        "detail": detail,
+    }
+    try:
+        from mcp_events import record
+    except ImportError:
+        return
+    record("propagation.settle.verdict", **payload)
