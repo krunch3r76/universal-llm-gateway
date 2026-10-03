@@ -434,13 +434,20 @@ async def finalize_parked(
             bus_result.body,
         )
     if conductor:
-        await asyncio.to_thread(
-            merge_conductor_closeout_hop_authority,
-            dispatch_id=dispatch_id,
-            closeout_body=body,
-            thread_id=req.thread_id,
-            closeout_turn=extract_turn_number(bus_result.body),
-        )
+        # friction 37404: hop merge can raise; still mark terminal (34156 F1).
+        try:
+            await asyncio.to_thread(
+                merge_conductor_closeout_hop_authority,
+                dispatch_id=dispatch_id,
+                closeout_body=body,
+                thread_id=req.thread_id,
+                closeout_turn=extract_turn_number(bus_result.body),
+            )
+        except Exception:  # noqa: BLE001 — park closeout always marks terminal
+            logger.exception(
+                "merge_conductor_closeout_hop_authority raised dispatch=%s",
+                dispatch_id,
+            )
     emit_sdk_park_parked(
         dispatch_id=dispatch_id,
         thread_id=req.thread_id,
