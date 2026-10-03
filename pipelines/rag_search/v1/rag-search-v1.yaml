@@ -1,0 +1,41 @@
+schema_version: 6
+id: rag-search
+version: "1.0"
+type: rag_search
+description: >
+  RAG search pipeline home. YAML enabled is the base. Requests flip
+  generate_hyde, rerank, and fetch_scope_catalog_retry only through
+  step_overrides.
+output: retrieval_metadata
+
+options:
+  timeout_seconds: 250
+
+steps:
+  - name: generate_hyde
+    type: generate
+    enabled: false
+    allow_disable: true
+    model_ref: qwen3_9b
+    prompt_ref: rag_search.v1.generate_hyde
+    condition: scope_scoped
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 256
+
+  - name: fetch_scope_catalog_retry
+    type: fetch_scope_catalog_retry_v1
+    enabled: true
+    allow_disable: true
+    condition: catalog_unavailable
+
+  - name: rerank
+    type: rerank_v1
+    enabled: true
+    allow_disable: true
+    condition: chunks_present
+
+  - name: retrieval_metadata
+    type: retrieval_metadata_step
+    enabled: true
+    allow_disable: false

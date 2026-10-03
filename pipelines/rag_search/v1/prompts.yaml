@@ -1,0 +1,5 @@
+prompts:
+  generate_hyde:
+    description: Hypothetical document passage for vocabulary bridging.
+    system_prompt: Write one short hypothetical passage that would answer the query.
+    template: "{text}"

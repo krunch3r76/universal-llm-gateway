@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from mcp_events import monotonic_now, record
-from provider_model_limits import local_model_inference_timeout, rag_pipeline_timeout
 from transport_utils import make_sync_client
 
 from ._rag_http import (
@@ -40,19 +39,9 @@ from ._rag_mapped import (
 from ._rag_mapped import (
     resolve as resolve_mapped_pack,
 )
-from ._rag_retrieval_metadata import (
-    envelope_retrieval_fields,
-    retrieval_metadata_from_response,
-)
 from ._rag_search_exec import (
-    HTTP_BUFFER_S,
-    RERANK_MODEL_DEFAULT,
     STARGATE_URL,
-    extract_content,
-    handle_pipeline_error,
-    pipeline_call,
     run_rag_search,
-    unscoped_scope_note,
 )
 
 if TYPE_CHECKING:
@@ -62,7 +51,6 @@ logger = logging.getLogger(__name__)
 
 # Default answer model used by the rag-answer pipelines; override via env when
 # the pipelines are reconfigured to use a different model.
-_ANSWER_MODEL_DEFAULT = os.environ.get("RAG_ANSWER_MODEL", "phi4")
 _SCOPES_TIMEOUT = 15.0
 # Direct RAG REST API calls (no model inference — retrieval + ranking only).
 _RAG_API_TIMEOUT = 30.0
@@ -333,12 +321,15 @@ def register_rag_tools(mcp: FastMCP) -> None:
         prefix: str | list[str] | None = None,
         mapped: bool = False,
         search_id: str | None = None,
+        step_overrides: dict[str, Any] | None = None,
+        skip_steps: list[str] | None = None,
+        hyde_enabled: bool | None = None,
+        rerank_enabled: bool | None = None,
+        catalog_retry_enabled: bool | None = None,
     ) -> dict[str, Any]:
         """PRIMARY (and only) agent surface for MCP RAG retrieval. Returns raw
         context chunks with source labels for the agent to cite, gate (lawyer-stance),
-        and reason over. Use by default. The rag_answer pipeline is buried in MCP
-        and should not be used by agents (only for debugging the pipeline itself
-        via direct dispatch or /v1/chat/completions with model=rag-answer*).
+        and reason over. Use by default.
 
         Uses multi-query rewriting, reciprocal rank fusion, entity/relation
         merging, and property index boost. `limit` accepted as alias for
@@ -430,6 +421,19 @@ def register_rag_tools(mcp: FastMCP) -> None:
         if top_k != 20:
             pipeline_options["rag_max_chunks"] = top_k
         pipeline_options["include_retrieval_metadata"] = True
+        if step_overrides:
+            pipeline_options["step_overrides"] = step_overrides
+        if skip_steps:
+            pipeline_options["skip_steps"] = skip_steps
+        if hyde_enabled is not None:
+            pipeline_options["hyde_enabled"] = hyde_enabled
+        if rerank_enabled is not None:
+            pipeline_options["rerank_enabled"] = rerank_enabled
+        if catalog_retry_enabled is not None:
+            pipeline_options["catalog_retry_enabled"] = catalog_retry_enabled
+        from systems.pipeline.core.step_controls import fold_legacy_enable_flags
+
+        pipeline_options = fold_legacy_enable_flags(pipeline_options)
 
         def _start() -> dict[str, Any]:
             return run_rag_search(
@@ -445,153 +449,6 @@ def register_rag_tools(mcp: FastMCP) -> None:
             return ticket.stamp(ticket.wait())
         except SearchInFlightError as pending:
             return pending.envelope()
-
-    @mcp.tool(title="RAG: Answer (DEBUG ONLY)")
-    def rag_answer(
-        question: str,
-        scope: str | list[str] | None = None,
-        prefix: str | list[str] | None = None,
-        deep: bool = False,
-    ) -> dict[str, Any]:
-        """DEBUG-ONLY: Calls the buried rag-answer / rag-answer-deep pipeline.
-
-        Agents MUST NOT use this (or rag(op="answer")). The only legitimate
-        use is debugging the RAG answer pipeline itself via MCP (e.g. to call
-        the underlying /v1/chat/completions endpoint with model=rag-answer*).
-        For all agent work, use rag_search / rag(op="search") exclusively.
-
-        Has relevance gate and optional deep=True iterative retrieval.
-        See rag_search docstring and tool-reference.md for agent policy.
-
-        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_answer")
-
-        Args:
-            question: Natural language question.
-            scope: Named scope filter as single string, comma-separated string,
-                or list of scope strings (e.g. "research",
-                "research, knowledge_systems",
-                ["research", "research_small_llm"]).
-            prefix: Source path prefix filter as a comma-separated string or
-                list. Mutually exclusive with scope.
-            deep: Use iterative retrieval for complex questions (default False).
-
-        Returns:
-            On success: {"status": "ok", "pipeline": "<pipeline used>",
-                         "content_length": <int>, "duration_s": <float>,
-                         "answer": "<grounded answer>",
-                         "retrieval": {resolved_scope, scope_confidence, ...}}
-            Unscoped calls also include ``scope_note`` when scope_source is
-            ``default_scope`` or ``classifier``.
-            On error:   {"error": "<message>"} (+ ``scope_note`` / ``retrieval`` when available)
-        """
-        pipeline = "rag-answer-deep" if deep else "rag-answer"
-        pipeline_options: dict[str, Any] = {}
-        scope_override, scope_error = _normalize_scope_override(scope)
-        prefixes, prefix_error = _normalize_prefix_override(prefix)
-        if scope_error:
-            return {"error": scope_error}
-        if prefix_error:
-            return {"error": prefix_error}
-        if scope_override is not None and prefixes is not None:
-            return {"error": "scope and prefix are mutually exclusive; set only one."}
-        unscoped = scope_override is None and prefixes is None
-        if scope_override is not None:
-            pipeline_options["scope_override"] = scope_override
-        if prefixes is not None:
-            pipeline_options["rag_source_prefixes"] = prefixes
-        pipeline_options["include_retrieval_metadata"] = True
-
-        t0 = monotonic_now()
-        record_args: dict[str, Any] = {
-            "pipeline": pipeline,
-            "query": question,
-            "scope": scope,
-            "deep": deep,
-        }
-        if prefixes is not None:
-            record_args["prefix"] = prefixes
-        record("mcp.rag.pipeline.called", **record_args)
-
-        rerank_model = pipeline_options.get("rerank_model", RERANK_MODEL_DEFAULT)
-        answer_model = pipeline_options.get("model", _ANSWER_MODEL_DEFAULT)
-        pipeline_timeout = rag_pipeline_timeout(
-            rerank_model
-        ) + local_model_inference_timeout(answer_model)
-        pipeline_options["timeout_seconds"] = pipeline_timeout
-
-        try:
-            result = pipeline_call(
-                pipeline,
-                [{"role": "user", "content": question}],
-                pipeline_options=pipeline_options,
-                timeout=pipeline_timeout + HTTP_BUFFER_S,
-            )
-        except httpx.TimeoutException as e:
-            user_message = "Pipeline timed out. The question may be too complex — try without deep=True."
-            return handle_pipeline_error(e, pipeline, t0, user_message)
-        except httpx.ConnectError as e:
-            user_message = "Pipeline not available. Stargate may not be running."
-            return handle_pipeline_error(e, pipeline, t0, user_message)
-        except httpx.HTTPStatusError as e:
-            user_message = (
-                f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            )
-            return handle_pipeline_error(e, pipeline, t0, user_message)
-        except httpx.RequestError as e:
-            user_message = f"Pipeline request failed: {e}"
-            return handle_pipeline_error(e, pipeline, t0, user_message)
-
-        content = extract_content(result) if result else ""
-        duration = monotonic_now() - t0
-        retrieval_fields = envelope_retrieval_fields(
-            retrieval_metadata_from_response(result),
-        )
-        scope_note = unscoped_scope_note(retrieval_fields) if unscoped else None
-
-        if not content:
-            record(
-                "mcp.rag.pipeline.completed",
-                pipeline=pipeline,
-                duration_s=round(duration, 3),
-                empty=True,
-                query=question,
-                scope=scope,
-                prefix=prefixes,
-                deep=deep,
-            )
-            return {
-                "error": "Pipeline returned empty results.",
-                **({"scope_note": scope_note} if scope_note else {}),
-                **retrieval_fields,
-            }
-
-        logger.info(
-            "rag_answer: question=%r pipeline=%s scope=%s prefix=%s → %d chars in %.1fs",
-            question,
-            pipeline,
-            scope,
-            prefixes,
-            len(content),
-            duration,
-        )
-        record(
-            "mcp.rag.pipeline.completed",
-            pipeline=pipeline,
-            duration_s=round(duration, 3),
-            content_length=len(content),
-            scope=scope,
-            prefix=prefixes,
-            deep=deep,
-        )
-        return {
-            "status": "ok",
-            "pipeline": pipeline,
-            "content_length": len(content),
-            "duration_s": round(duration, 3),
-            "answer": content,
-            **({"scope_note": scope_note} if scope_note else {}),
-            **retrieval_fields,
-        }
 
     @mcp.tool(title="RAG: Search Preview")
     def rag_search_preview(
