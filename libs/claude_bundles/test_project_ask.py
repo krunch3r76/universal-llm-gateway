@@ -15,6 +15,7 @@ from claude_bundles.chat_reply_wait import HarvestIncompleteError
 from claude_bundles.chat_session_hygiene import _page_score
 from claude_bundles.project_ask import (
     archive_harvest,
+    finalize_scrape_body,
     project_ask_on_page,
     read_archive_execution_id,
     strip_thinking_prefix,
@@ -78,6 +79,28 @@ def test_strip_thinking_prefix() -> None:
     cleaned = strip_thinking_prefix(raw)
     assert cleaned.startswith("ASK_HARNESS_OK")
     assert "Thinking about" not in cleaned
+
+
+def test_finalize_scrape_body_drops_37508_chrome_keeps_command() -> None:
+    raw = (
+        "Claude responded: VERDICT: Change\n"
+        "Used toys integration, loaded tools, loaded a skill\n"
+        "\ue027\n"
+        "Used toys integration, loaded tools, loaded a skill\n"
+        "\n"
+        "VERDICT: Change\n"
+        "not `$ULG_REPO`: HOME=\"$(getent passwd \"$(id -un)\" | cut -d: -f6)\" "
+        "/mnt/torus/projects/universal-llm-gateway/scripts/cursor/"
+        "install-ecosystem-plugin.sh\n"
+        "3 minutes ago"
+    )
+    cleaned = finalize_scrape_body(raw)
+    assert "Used toys integration" not in cleaned
+    assert "3 minutes ago" not in cleaned
+    assert "Claude responded:" not in cleaned
+    assert "VERDICT: Change" in cleaned
+    assert "$ULG_REPO" in cleaned
+    assert "install-ecosystem-plugin.sh" in cleaned
 
 
 def test_submit_control_names_cowork_before_chat() -> None:

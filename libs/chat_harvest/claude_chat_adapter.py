@@ -23,6 +23,7 @@ from chat_harvest.archive import (
     ArchiveRefusalError,
     archive_chat_transcript,
 )
+from chat_harvest.assistant_source_text import with_assistant_source_text
 from chat_harvest.chrome import strip_chrome
 from chat_harvest.grok_adapter import scroll_stabilize
 from chat_harvest.messages import turns_to_messages
@@ -82,7 +83,7 @@ def _strip_claude_dom_chrome(text: str) -> str:
 
 
 # fmt: off
-FULL_TRANSCRIPT_JS = "()=>{const url=location.href;const loginWall=/\\/login/i.test(url)||/\\/logout/i.test(url);const stop=[...document.querySelectorAll('button')].some(b=>/^(stop|stop generating)$/i.test(((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')).trim()));const streaming=stop||!!document.querySelector(\"[aria-busy='true']\");const seen=new Set();const nodes=[];for(const sel of [\"[data-testid='user-message']\",\"[data-testid='assistant-message']\",\"div[class*='font-claude']\"]){for(const el of document.querySelectorAll(sel)){if(!seen.has(el)){seen.add(el);nodes.push(el);}}}nodes.sort((a,b)=>(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING)?-1:1);let ordinal=0;const turns=nodes.map(el=>{const testid=el.getAttribute('data-testid')||'';ordinal+=1;return{author:testid==='user-message'?'user':'assistant',ordinal,text:(el.innerText||'').trim()};});return{url,login_wall:loginWall,streaming,stop,turns};}"
+FULL_TRANSCRIPT_JS = with_assistant_source_text("()=>{const url=location.href;const loginWall=/\\/login/i.test(url)||/\\/logout/i.test(url);const stop=[...document.querySelectorAll('button')].some(b=>/^(stop|stop generating)$/i.test(((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')).trim()));const streaming=stop||!!document.querySelector(\"[aria-busy='true']\");const seen=new Set();const nodes=[];for(const sel of [\"[data-testid='user-message']\",\"[data-testid='assistant-message']\",\"div[class*='font-claude']\"]){for(const el of document.querySelectorAll(sel)){if(!seen.has(el)){seen.add(el);nodes.push(el);}}}nodes.sort((a,b)=>(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING)?-1:1);let ordinal=0;const turns=nodes.map(el=>{const testid=el.getAttribute('data-testid')||'';ordinal+=1;return{author:testid==='user-message'?'user':'assistant',ordinal,text:assistantSourceText(el)};});return{url,login_wall:loginWall,streaming,stop,turns};}")
 # fmt: on
 
 

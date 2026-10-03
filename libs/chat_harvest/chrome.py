@@ -14,7 +14,8 @@ import re
 # "Ran a command, loaded tools" is a progress badge, not the reply (12887 turn 27).
 _TOOL_BADGE_SEGMENT = (
     r"(searched the web|used toys integration|used a skill|used \d+ skills?|"
-    r"used \d+ tools?|loaded tools|ran a command|ran \d+ commands?)"
+    r"used \d+ tools?|loaded tools|loaded a skill|loaded \d+ skills?|"
+    r"ran a command|ran \d+ commands?)"
 )
 TOOL_BADGE_LINE_RE = re.compile(
     rf"^{_TOOL_BADGE_SEGMENT}(,\s*{_TOOL_BADGE_SEGMENT})*\.?$",
@@ -103,7 +104,9 @@ def strip_chrome(text: str) -> str:
     ]
     while lines and not lines[0].strip():
         lines.pop(0)
-    while lines and _TRAILING_TIMESTAMP_RE.match(lines[-1].strip()):
+    while lines and (
+        not lines[-1].strip() or _TRAILING_TIMESTAMP_RE.match(lines[-1].strip())
+    ):
         lines.pop()
     return "\n".join(lines).strip()
 

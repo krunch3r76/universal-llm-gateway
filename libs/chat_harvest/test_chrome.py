@@ -172,3 +172,27 @@ def test_is_failed_relay_envelope_subject() -> None:
     assert is_failed_relay_envelope_subject("cdp UNVERIFIED — abc12345")
     assert not is_failed_relay_envelope_subject("cdp reply — abc12345")
     assert is_relay_envelope_subject("cdp reply — abc12345")
+
+
+# a:37508 — doubled Cowork badges + timestamp around a dollar-sign command.
+SPECIMEN_37508_CHROME = """\
+Claude responded: VERDICT: Change
+Used toys integration, loaded tools, loaded a skill
+\ue027
+Used toys integration, loaded tools, loaded a skill
+
+VERDICT: Change
+
+not `$ULG_REPO`: HOME="$(getent passwd)
+
+3 minutes ago
+"""
+
+
+def test_strip_chrome_drops_37508_badges_and_timestamp() -> None:
+    cleaned = strip_chrome(SPECIMEN_37508_CHROME)
+    assert "Used toys integration" not in cleaned
+    assert "3 minutes ago" not in cleaned
+    assert "Claude responded:" not in cleaned
+    assert "VERDICT: Change" in cleaned
+    assert "$ULG_REPO" in cleaned
