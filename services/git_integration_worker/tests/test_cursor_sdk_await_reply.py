@@ -1453,7 +1453,6 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
     )
 
     resume_mock = AsyncMock(return_value=AwaitResumeSummary())
-    announce_mock = AsyncMock()
 
     async def _track_announce(**kw: Any) -> None:
         order.append("announce")

@@ -439,7 +439,6 @@ def test_1a_stale_qualifying_reply_turn_does_not_credit(
     path = generate_ledger_path(tmp_path, "bb28fae31960-dd251b78")
     path.write_text("")
     observer.on_request(_request(3, "team_dispatch", {"op": "generate"}))
-    payload = _cdp_admit_payload()
     # Force a fire row without after_turn by writing manually.
     import json as _json
     from datetime import UTC, datetime
