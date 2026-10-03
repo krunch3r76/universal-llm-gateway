@@ -883,6 +883,250 @@ async def test_sweep_consult_pending_continue_once() -> None:
     assert post_mock.await_count == 1
 
 
+def _admit_nested(
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str,
+    nest_under: str,
+    status: str,
+) -> None:
+    req = _req(
+        dispatch_id=dispatch_id,
+        thread_id="9965",
+        execution_id=f"exec-{dispatch_id}",
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="implement",
+        source_repo="/repo",
+        lease_key="/repo",
+        work_key=_WORK_KEY,
+        source_ref=_WORK_KEY,
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"contract": "implement", "lane": "B", "nest_under": nest_under},
+    )
+    if status in ("queued", "admitted", "running", "parked_waiting"):
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=? WHERE dispatch_id=?",
+                (status, dispatch_id),
+            )
+    else:
+        ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status=status)
+
+
+@pytest.mark.asyncio
+async def test_no_progress_park_terminal_nest_admits_producer_harvest_once() -> None:
+    """Parked for no progress while a nest was in flight; terminal nest admits once."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="nest-done-1",
+        nest_under=dispatch_id,
+        status="completed",
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-producer-1"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        fired = await sweep_conductor_hop_watchdog(ledger)
+        again = await sweep_conductor_hop_watchdog(ledger)
+    assert fired == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+    assert post_mock.await_args.args[0]["hop_reason"] == "producer_harvest"
+    record = _record(ledger, dispatch_id)
+    assert record.get("hop_successor") == "succ-producer-1"
+    assert record.get("hop_park_reason") == "hop_budget_no_progress_cap"
+    assert isinstance(record.get("hop_park_released_at"), (int, float))
+    assert isinstance(record.get("hop_no_progress_producer_continued_at"), (int, float))
+
+
+@pytest.mark.asyncio
+async def test_no_progress_park_in_flight_nest_stays_parked() -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="nest-live-1",
+        nest_under=dispatch_id,
+        status="running",
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-should-not"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert ok is False
+    post_mock.assert_not_called()
+    assert "hop_park_released_at" not in _record(ledger, dispatch_id)
+
+
+@pytest.mark.asyncio
+async def test_no_progress_park_backtick_harvest_reply_admits_once() -> None:
+    """14902 shape: NEXT_ADMIT harvest `<uuid>` while the review is still live."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    harvest_id = "64b84918-f552-47a1-bf7e-ab634fcf9673"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+            "closeout_stop_tokens": ["ROW_HOP"],
+            "closeout_body": f"NEXT_ADMIT: harvest `{harvest_id}`\nstop: ROW_HOP\n",
+            "closeout_turn": 90,
+            "summoning_thread_id": "14902",
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-harvest-reply"}))
+
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if thread_id == "14902" and closeout_instant.startswith("2023-11-14"):
+            return 90
+        return None
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return (
+            thread_id == "14902" and after_turn == 90 and from_agent == "web-anthropic"
+        )
+
+    registry = {
+        "live": {
+            "execution_id": harvest_id,
+            "execution_state": {
+                "execution_id": harvest_id,
+                "state": "streaming",
+                "started_at": 1_700_000_000.0,
+            },
+        }
+    }
+    with (
+        patch("claude_bundles.cdp_registry_store.load_active", return_value=registry),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        fired = await sweep_conductor_hop_watchdog(ledger)
+        again = await sweep_conductor_hop_watchdog(ledger)
+    assert fired == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+    assert post_mock.await_args.args[0]["hop_reason"] == "producer_harvest"
+    record = _record(ledger, dispatch_id)
+    assert record.get("hop_successor") == "succ-harvest-reply"
+    assert isinstance(record.get("hop_park_released_at"), (int, float))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason",
+    ["hop_budget_mission_cap", "hop_budget_crash_cap"],
+)
+async def test_other_park_reasons_ignore_terminal_producer(reason: str) -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-watchdog-1"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": reason,
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="nest-done-other",
+        nest_under=dispatch_id,
+        status="completed",
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-other"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=dispatch_id)
+    assert ok is False
+    post_mock.assert_not_called()
+    record = _record(ledger, dispatch_id)
+    assert record.get("hop_park_reason") == reason
+    assert "hop_park_released_at" not in record
+
+
+def test_admit_retry_park_is_not_a_producer_continue() -> None:
+    """Admit-retry keeps its own service hop; this path must not claim it."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        no_progress_producer_continue_owed,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_admit_retry_cap",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    _admit_nested(
+        ledger,
+        dispatch_id="nest-done-retry",
+        nest_under="pred-watchdog-1",
+        status="completed",
+    )
+    assert no_progress_producer_continue_owed(row) is False
+
+
 def test_watchdog_hops_owed_off_event_loop() -> None:
     """hop_owed does sync CDP HTTP — must not run on the GIW asyncio thread."""
     from pathlib import Path

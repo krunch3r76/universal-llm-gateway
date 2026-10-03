@@ -42,8 +42,10 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park impo
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
     consult_pending_continue_owed,
     fire_consult_pending_continue,
+    fire_no_progress_producer_continue,
     fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
+    no_progress_producer_continue_owed,
     park_harvest_continue_owed,
     park_harvest_owed,
 )
@@ -59,6 +61,7 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
 from services.git_integration_worker.cursor_sdk_park import (
     conductor_consult_pending_continue_candidates,
     conductor_hop_watchdog_candidates,
+    conductor_no_progress_producer_continue_candidates,
     conductor_park_harvest_continue_candidates,
     conductor_park_harvest_watchdog_candidates,
 )
@@ -177,6 +180,11 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     if await _service_admit_retry_park(row):
         return True
     closeout_tokens = _closeout_tokens_from_row(row)
+    # Before the mission-park short-circuit: a no-progress park with a
+    # finished linked producer owes one harvest admit. Other park reasons
+    # still stop here.
+    if no_progress_producer_continue_owed(row, closeout_tokens=closeout_tokens):
+        return await fire_no_progress_producer_continue(row)
     if _mission_park_blocks_hop(row):
         return False
     if consult_pending_continue_owed(row, closeout_tokens=closeout_tokens):
@@ -381,6 +389,9 @@ async def sweep_conductor_hop_watchdog(
     consult_candidates = await asyncio.to_thread(
         conductor_consult_pending_continue_candidates, ledger
     )
+    producer_candidates = await asyncio.to_thread(
+        conductor_no_progress_producer_continue_candidates, ledger
+    )
     hop_candidates = await asyncio.to_thread(conductor_hop_watchdog_candidates, ledger)
     park_candidates = await asyncio.to_thread(
         conductor_park_harvest_watchdog_candidates, ledger
@@ -390,6 +401,7 @@ async def sweep_conductor_hop_watchdog(
             [
                 *continue_candidates,
                 *consult_candidates,
+                *producer_candidates,
                 *park_candidates,
                 *hop_candidates,
             ]

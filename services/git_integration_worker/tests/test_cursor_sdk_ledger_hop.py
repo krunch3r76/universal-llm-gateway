@@ -74,6 +74,7 @@ def test_hop_reasons_reexport_matches_events_vocabulary() -> None:
             "watchdog",
             "park_harvest",
             "cdp_probe_indeterminate",
+            "producer_harvest",
         }
     )
     assert validate_hop_reason("spawn") is True

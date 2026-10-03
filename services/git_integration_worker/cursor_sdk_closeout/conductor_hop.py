@@ -242,6 +242,10 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
 
 _TERMINAL_EXECUTION_STATES = frozenset({"finished", "failed", "aborted"})
 _HARVEST_ID_TOKEN_RE = re.compile(r"^[0-9a-fA-F-]{8,}$")
+# Anchored to the payload start so ``none — prior harvest <id>`` and
+# ``land after harvest <id>`` stay unrecognized (a:37748 review).
+_HARVEST_NONE_RE = re.compile(r"(?i)none\b")
+_HARVEST_ID_IN_ADMIT_RE = re.compile(r"(?i)harvest\s+`?([0-9a-fA-F-]{8,})`?(?:\s.*)?\Z")
 
 
 def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
@@ -254,13 +258,22 @@ def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
 
 
 def _harvest_target_token(guard: str) -> str | None:
+    """Harvest id from the last NEXT_ADMIT line.
+
+    Accepts a bare id, a backtick-wrapped id, and an id followed by
+    parenthetical instructions. ``NEXT_ADMIT: none`` and non-hex targets
+    stay unrecognized so they cannot lift a deferral.
+    """
     admit = last_next_admit_payload(guard)
     if not admit:
         return None
-    parts = admit.strip().split()
-    if len(parts) != 2 or parts[0].lower() != "harvest":
+    stripped = admit.strip()
+    if _HARVEST_NONE_RE.match(stripped):
         return None
-    token = parts[1]
+    match = _HARVEST_ID_IN_ADMIT_RE.match(stripped)
+    if match is None:
+        return None
+    token = match.group(1)
     if not _HARVEST_ID_TOKEN_RE.fullmatch(token):
         return None
     hex_digits = sum(1 for ch in token if ch in "0123456789abcdefABCDEF")
@@ -440,6 +453,64 @@ def hop_body_build_refused(
     return False
 
 
+def linked_producer_disposition(row: dict[str, Any]) -> str:
+    """``none``, ``in_flight``, or ``ready`` for a nest or NEXT_ADMIT harvest.
+
+    ``none`` is a hop with no linked producer (a true no-progress loop).
+    ``in_flight`` keeps a no-progress park in place. ``ready`` means every
+    nested child is terminal, and the harvest id is terminal or already has
+    its web-anthropic reply. A ledger or registry error stays ``in_flight``
+    when a link might exist, so a park is not released on a failed read.
+    """
+    dispatch_id = str(row.get("dispatch_id") or "")
+    rec = _record_data(row)
+    token = _harvest_target_token(_next_admit_guard_text(row, rec))
+    if dispatch_id:
+        try:
+            children = CursorDispatchLedger.instance().list_nested_children(
+                parent_dispatch_id=dispatch_id
+            )
+        except Exception:
+            logger.warning(
+                "linked producer child list failed dispatch_id=%s",
+                dispatch_id,
+                exc_info=True,
+            )
+            return "in_flight"
+    else:
+        children = []
+    if not children and token is None:
+        return "none"
+    if dispatch_id and conductor_has_live_nested(dispatch_id=dispatch_id):
+        return "in_flight"
+    if token is not None:
+        absent = (
+            str(rec.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
+        )
+        try:
+            terminal = _named_target_is_terminal(token, absent_counts_terminal=absent)
+        except Exception:
+            logger.warning(
+                "linked producer terminal check failed dispatch_id=%s",
+                dispatch_id,
+                exc_info=True,
+            )
+            return "in_flight"
+        if not terminal:
+            try:
+                replied = _expected_harvest_reply_present(row, rec, token)
+            except Exception:
+                logger.warning(
+                    "linked producer reply check failed dispatch_id=%s",
+                    dispatch_id,
+                    exc_info=True,
+                )
+                return "in_flight"
+            if not replied:
+                return "in_flight"
+    return "ready"
+
+
 def _harvest_execution_started_at_iso(token: str) -> str | None:
     """ISO instant of the one live registry row for this harvest id.
 
@@ -459,8 +530,7 @@ def _harvest_execution_started_at_iso(token: str) -> str | None:
         entry = execution_state_of(row)
         nested = str(entry.get("execution_id") or "").strip() if entry else ""
         if not (
-            _prefix_match_id(top, token)
-            or (nested and _prefix_match_id(nested, token))
+            _prefix_match_id(top, token) or (nested and _prefix_match_id(nested, token))
         ):
             continue
         started = entry.get("started_at") if entry else None
@@ -1276,9 +1346,7 @@ def _release_backoff_blocks(row: dict[str, Any]) -> bool:
     fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if not isinstance(fields.get("hop_admit_error"), dict):
         return False
-    verdict = evaluate_hop_budget(
-        row, closeout_tokens=_closeout_tokens_from_row(row)
-    )
+    verdict = evaluate_hop_budget(row, closeout_tokens=_closeout_tokens_from_row(row))
     return not _backoff_elapsed(row, backoff_s=verdict.backoff_s)
 
 
@@ -1439,6 +1507,7 @@ __all__ = [
     "budget_ok_for_hop",
     "hop_body_build_refused",
     "hop_owed",
+    "linked_producer_disposition",
     "live_conductor_row_on_thread",
     "merge_conductor_closeout_hop_authority",
     "maybe_fire_conductor_hop_reactor",

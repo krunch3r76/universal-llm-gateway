@@ -1291,6 +1291,7 @@ class CursorDispatchLedger:
             OPEN_RESTART_PARK_SQL,
             emit_after_commit,
             refuse_parked_conductor_mission,
+            release_linked_no_progress_park,
             release_mission_parks,
         )
 
@@ -1590,6 +1591,18 @@ class CursorDispatchLedger:
                     caller_agent=str(caller_agent or ""),
                     post_commit_emits=park_emits,
                 )
+            # a:37748: producer_harvest releases only the hop_from no-progress
+            # row. hop_park_release stays false. A remaining park of another
+            # reason still raises, and this stamp rolls back with the admit.
+            release_linked_no_progress_park(
+                conn,
+                hop_from=hop_from,
+                hop_reason=hop_reason,
+                thread_id=req.thread_id,
+                work_key=effective_work_key,
+                caller_agent=str(caller_agent or ""),
+                post_commit_emits=park_emits,
+            )
             refuse_parked_conductor_mission(
                 conn,
                 work_key=effective_work_key,
