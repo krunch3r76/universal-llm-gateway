@@ -1195,6 +1195,252 @@ async def test_next_admit_blocked_releases_when_harvest_execution_is_gone() -> N
     assert record.get("hop_deferral_gate") == SKIP_GATE_NEXT_ADMIT_BLOCKED
 
 
+def _live_harvest_registry(harvest_id: str) -> dict:
+    return {
+        "live": {
+            "execution_id": harvest_id,
+            "execution_state": {
+                "execution_id": harvest_id,
+                "state": "streaming",
+                "started_at": 1_700_000_000.0,
+            },
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_next_admit_blocked_releases_when_reply_on_summoning_thread() -> None:
+    """Harvest row still live; web-anthropic reply on the summoning thread admits once."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-reply"
+    harvest_id = "4858cfb2-c6e9-4157-ba43-f12f3584685d"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="9638",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": "9638",
+            "closeout_turn": 9,
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-reply-present"}))
+    state = {"after_harvest": False}
+
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if thread_id != "9638" or not closeout_instant.startswith("2023-11-14"):
+            return None
+        return 7
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return (
+            state["after_harvest"]
+            and thread_id == "9638"
+            and after_turn == 7
+            and from_agent == "web-anthropic"
+        )
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry_store.load_active",
+            return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        post_mock.assert_not_called()
+        held = await release_deferred_conductor_hops()
+        assert held == 0
+        post_mock.assert_not_called()
+        state["after_harvest"] = True
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
+def test_harvest_target_token_accepts_backticks_and_trailing_prose() -> None:
+    """14902 backticks and 14915 parenthetical must both yield the harvest id."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _harvest_target_token,
+    )
+
+    backtick = (
+        "NEXT_ADMIT: harvest `64b84918-f552-47a1-bf7e-ab634fcf9673`\nstop: ROW_HOP\n"
+    )
+    prose = (
+        "NEXT_ADMIT: harvest 940600a3-fc7e-421c-bc63-5971620900bd "
+        "(poll thread 14915 after_turn 57 from web-anthropic). Do not re-fire.\n"
+        "stop: ROW_HOP\n"
+    )
+    assert _harvest_target_token(backtick) == "64b84918-f552-47a1-bf7e-ab634fcf9673"
+    assert _harvest_target_token(prose) == "940600a3-fc7e-421c-bc63-5971620900bd"
+    assert _harvest_target_token("NEXT_ADMIT: none\nstop: ROW_HOP\n") is None
+    prior = (
+        "NEXT_ADMIT: none — prior harvest "
+        "64b84918-f552-47a1-bf7e-ab634fcf9673 already answered\n"
+    )
+    land = "NEXT_ADMIT: land after harvest 64b84918-f552-47a1-bf7e-ab634fcf9673\n"
+    notes = "NEXT_ADMIT: see notes then harvest deadbeef\n"
+    assert _harvest_target_token(prior) is None
+    assert _harvest_target_token(land) is None
+    assert _harvest_target_token(notes) is None
+    dated = "NEXT_ADMIT: harvest 2026-10-03 results\nstop: ROW_HOP\n"
+    two = (
+        "NEXT_ADMIT: harvest 64b84918-f552-47a1-bf7e-ab634fcf9673 "
+        "and harvest 940600a3-fc7e-421c-bc63-5971620900bd\n"
+    )
+    assert _harvest_target_token(dated) is None
+    assert _harvest_target_token(two) is None
+
+
+@pytest.mark.asyncio
+async def test_row_hop_backtick_harvest_reply_admits_one_successor() -> None:
+    """14902#90/#91: ROW_HOP, backtick harvest id, reply after closeout, one admit."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-14902"
+    harvest_id = "64b84918-f552-47a1-bf7e-ab634fcf9673"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="14902",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": "14902",
+            "closeout_turn": 90,
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest `{harvest_id}`\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-14902"}))
+
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if thread_id != "14902" or not closeout_instant.startswith("2023-11-14"):
+            return None
+        return 90
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return (
+            thread_id == "14902" and after_turn == 90 and from_agent == "web-anthropic"
+        )
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry_store.load_active",
+            return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        post_mock.assert_not_called()
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+    with ledger._connect() as conn:
+        stored = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    record = json.loads(stored["record_json"])
+    assert record.get("hop_deferral_gate") == SKIP_GATE_NEXT_ADMIT_BLOCKED
+    assert record.get("hop_successor") == "succ-14902"
+
+
+@pytest.mark.asyncio
+async def test_next_admit_blocked_releases_when_reply_precedes_closeout() -> None:
+    """A reply before closeout_turn still clears next_admit_blocked once."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-early-reply"
+    harvest_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="14901",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": "14901",
+            "closeout_turn": 12,
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-early-reply"}))
+    state = {"reply": False}
+
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if not closeout_instant.startswith("2023-11-14"):
+            return None
+        return 2
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        # closeout_turn is 12. A reply after the harvest watermark (2) and
+        # before that closeout must count. after_turn=0 must not.
+        return state["reply"] and after_turn == 2 and from_agent == "web-anthropic"
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry_store.load_active",
+            return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        post_mock.assert_not_called()
+        state["reply"] = True
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
 @pytest.mark.asyncio
 async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
     ledger = CursorDispatchLedger.instance()
@@ -1316,11 +1562,7 @@ def test_ac7_none_fold_entry_gate_does_not_fall_through_to_tip_table(
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     scoreboards = tmp_path / "notes/system/scoreboards"
     scoreboards.mkdir(parents=True)
-    body = (
-        "# Scoreboard\n\n"
-        "- **NEXT_ADMIT:** harvest G1\n\n"
-        "| G8 | Land | OPEN |\n"
-    )
+    body = "# Scoreboard\n\n- **NEXT_ADMIT:** harvest G1\n\n| G8 | Land | OPEN |\n"
     (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
         body, encoding="utf-8"
     )
@@ -1553,11 +1795,7 @@ _FINISHED_REGISTRY = {
 
 
 def _g2_harvest_closeout(harvest_id: str) -> str:
-    return (
-        "status: complete\n"
-        "stop: ROW_HOP\n"
-        f"NEXT_ADMIT: harvest {harvest_id}\n"
-    )
+    return f"status: complete\nstop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n"
 
 
 def _stamp_g2_row(
@@ -1942,20 +2180,26 @@ def test_g2_empty_snap_or_health_red_not_terminal(
     )
     ledger = CursorDispatchLedger.instance()
     row = _stamp_g2_row(ledger)
-    with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
-        return_value={},
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
-        return_value=False,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value={},
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
+            return_value=False,
+        ),
     ):
         assert build_hop_team_dispatch_body(row) is None
-    with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
-        return_value=_TRUTHY_SNAP,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
-        return_value=True,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.cdp_ask_health_red",
+            return_value=True,
+        ),
     ):
         assert build_hop_team_dispatch_body(row) is None
 
@@ -2019,6 +2263,7 @@ def _refresh_row(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
         (None, "planned"),
         ("watchdog", "watchdog"),
         ("park_harvest", "park_harvest"),
+        ("producer_harvest", "producer_harvest"),
     ],
 )
 def test_ac10_hop_body_conforms_to_team_dispatch_generate(

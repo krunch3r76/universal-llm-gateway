@@ -12,6 +12,11 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from implement_admission.conductor_no_restart import (
+    G7_RESTART_OWED_RULE,
+    NESTED_PROMPT_RULE,
+    NO_RESTART_LINE,
+)
 from implement_admission.conductor_width_seat import g3_g5_score_ratify_clause
 from reasoning_posture_contracts import (
     HYPOTHESIZE_ON_JOBS,
@@ -810,6 +815,9 @@ def resolve_prompt_preamble(
                     width_clause=g3_g5_score_ratify_clause(),
                 )
             )
+        parts.append(NESTED_PROMPT_RULE)
+        parts.append(NO_RESTART_LINE)
+        parts.append(G7_RESTART_OWED_RULE)
         if thread_id:
             effective_hop_seq = hop_seq if hop_seq is not None else 1
             if hop_from:

@@ -62,8 +62,8 @@ def test_health_includes_query_path(client: TestClient) -> None:
 def test_query_updates_query_completed_age_ms(client: TestClient) -> None:
     before = client.get("/health").json()["query_path"]["query_completed_age_ms"]
     client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "SELECT signal FROM events LIMIT 1"},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT signal FROM events LIMIT 1"},
     )
     after = client.get("/health").json()["query_path"]
     assert after["query_completed_age_ms"] is not None
@@ -78,12 +78,13 @@ def test_raw_sql_lock_wait_returns_503(client: TestClient, monkeypatch: pytest.M
     monkeypatch.setattr(EventStore, "query", _busy)
 
     resp = client.post(
-        "/v1/query",
-        json={"type": "sql", "sql": "SELECT 1"},
+        "/api/v1/observability/sql",
+        json={"sql": "SELECT 1"},
     )
     assert resp.status_code == 503
     body = resp.json()
-    assert body["error_class"] == ERROR_CLASS_LOCK_WAIT
+    assert body["code"] == "LOCK_WAIT"
+    assert body["data"]["error_class"] == ERROR_CLASS_LOCK_WAIT
 
 
 def test_operation_lock_wait_returns_503(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,12 +97,9 @@ def test_operation_lock_wait_returns_503(client: TestClient, monkeypatch: pytest
             }
         ),
     )
-    resp = client.post(
-        "/v1/query",
-        json={"type": "operation", "name": "stack-last-started", "params": {}},
-    )
+    resp = client.get("/api/v1/observability/stack-last-started")
     assert resp.status_code == 503
-    assert resp.json()["error_class"] == ERROR_CLASS_LOCK_WAIT
+    assert resp.json()["data"]["error_class"] == ERROR_CLASS_LOCK_WAIT
 
 
 def test_record_query_completed_snapshot() -> None:

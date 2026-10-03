@@ -8,7 +8,6 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from transport_utils import make_sync_client
 from universal_logging import get_logger
 
 from .._boot_helpers import safe_list
@@ -51,13 +50,14 @@ def _fetch_async_dispatches_from_events(agent: str) -> list[dict[str, Any]]:
         " LIMIT 10"
     )
     try:
-        with make_sync_client(f"unix://{_EVENTS_QUERY_SOCKET}", timeout=5.0) as client:
-            resp = client.post(
-                "/v1/query",
-                json={"type": "sql", "sql": sql, "params": [agent, cutoff_ms]},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        from event_store.query_client import query_sql
+
+        data = query_sql(
+            sql,
+            params=[agent, cutoff_ms],
+            url=f"unix://{_EVENTS_QUERY_SOCKET}",
+            timeout=5.0,
+        )
     except (httpx.HTTPError, ValueError) as exc:
         logger.debug("async dispatch event query failed: %s", exc)
         return []

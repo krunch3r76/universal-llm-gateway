@@ -205,7 +205,9 @@ def test_admit_with_hop_park_release_and_flag_succeeds() -> None:
     )
 
 
-def test_ac7_set_release_stamps_all_parks_after_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ac7_set_release_stamps_all_parks_after_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """AC7: hop_park_release clears every open budget park; emits after commit."""
     ledger = CursorDispatchLedger.instance()
     for dispatch_id, hop_seq in (("park-a", 1), ("park-b", 2)):
@@ -268,7 +270,9 @@ def test_ac7_set_release_stamps_all_parks_after_commit(monkeypatch: pytest.Monke
             assert HOP_PARK_RELEASED_AT_KEY in json.loads(row["record_json"])
 
 
-def test_ac8_rollback_skips_emit_on_thread_occupied(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ac8_rollback_skips_emit_on_thread_occupied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """AC8: failed admit rolls back park stamps and emits nothing."""
     ledger = CursorDispatchLedger.instance()
     _admit_terminal(ledger, dispatch_id="parked-only")
@@ -388,3 +392,123 @@ def test_ac10_mixed_cap_reasons_do_not_arm() -> None:
     body: dict = {}
     assert arm_hop_park_release(body, _WORK_KEY) is False
     assert "generation_options" not in body
+
+
+def _record(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    return json.loads(row["record_json"])
+
+
+def test_producer_harvest_admit_releases_only_no_progress_hop_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:37748: producer_harvest releases the hop_from no-progress row inside admit.
+
+    A second open park of another reason still 409s and rolls the stamp back.
+    hop_park_release stays false.
+    """
+    ledger = CursorDispatchLedger.instance()
+    _admit_terminal(ledger, dispatch_id="np-open", hop_seq=1, parked=False)
+    _admit_terminal(ledger, dispatch_id="mc-open", hop_seq=2, parked=False)
+    ledger.merge_record_json(
+        dispatch_id="np-open",
+        patch={
+            HOP_PARKED_KEY: True,
+            HOP_PARK_REASON_KEY: "hop_budget_no_progress_cap",
+        },
+    )
+    ledger.merge_record_json(
+        dispatch_id="mc-open",
+        patch={
+            HOP_PARKED_KEY: True,
+            HOP_PARK_REASON_KEY: "hop_budget_mission_cap",
+        },
+    )
+    emits: list[str] = []
+
+    def _recorder(**kwargs: object) -> None:
+        emits.append(str(kwargs.get("parked_dispatch_id")))
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_hop_events.emit_frontier_sdk_conductor_hop_park_released",
+        _recorder,
+    )
+
+    blocked = _req(
+        dispatch_id="succ-blocked",
+        thread_id="9965",
+        execution_id="exec-succ-blocked",
+    )
+    with pytest.raises(ConductorMissionParked) as exc_info:
+        ledger.admit(
+            req=blocked,
+            fingerprint=ledger.fingerprint(blocked),
+            execution_id=blocked.execution_id,
+            caller_agent="conductor-hop",
+            resolved_model="composer-2.5",
+            admission=CursorDispatchResponse(
+                admitted=True,
+                dispatch_id=blocked.dispatch_id,
+                thread_id=blocked.thread_id,
+                model_id="composer-2.5",
+            ),
+            contract="conductor",
+            source_repo="/repo",
+            lease_key="/repo-other",
+            work_key=_WORK_KEY,
+            source_ref=_WORK_KEY,
+            hop_seq=3,
+            hop_from="np-open",
+            hop_reason="producer_harvest",
+            hop_park_release=False,
+        )
+    assert exc_info.value.park_state.reason == "hop_budget_mission_cap"
+    assert emits == []
+    assert HOP_PARK_RELEASED_AT_KEY not in _record(ledger, "np-open")
+    assert HOP_PARK_RELEASED_AT_KEY not in _record(ledger, "mc-open")
+
+    ledger.merge_record_json(
+        dispatch_id="mc-open",
+        patch={HOP_PARK_RELEASED_AT_KEY: 1.0},
+    )
+    mission_stamp = _record(ledger, "mc-open")[HOP_PARK_RELEASED_AT_KEY]
+    admitted = _req(
+        dispatch_id="succ-harvest",
+        thread_id="9966",
+        execution_id="exec-succ-harvest",
+    )
+    ledger.admit(
+        req=admitted,
+        fingerprint=ledger.fingerprint(admitted),
+        execution_id=admitted.execution_id,
+        caller_agent="conductor-hop",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=admitted.dispatch_id,
+            thread_id=admitted.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="conductor",
+        source_repo="/repo",
+        lease_key="/repo-other",
+        work_key=_WORK_KEY,
+        source_ref=_WORK_KEY,
+        hop_seq=4,
+        hop_from="np-open",
+        hop_reason="producer_harvest",
+        hop_park_release=False,
+    )
+    assert emits == ["np-open"]
+    assert isinstance(_record(ledger, "np-open").get(HOP_PARK_RELEASED_AT_KEY), float)
+    assert _record(ledger, "mc-open")[HOP_PARK_RELEASED_AT_KEY] == mission_stamp
+    with ledger._connect() as conn:
+        successor = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("succ-harvest",),
+        ).fetchone()
+    assert successor is not None

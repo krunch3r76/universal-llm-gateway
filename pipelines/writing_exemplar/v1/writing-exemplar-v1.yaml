@@ -5,10 +5,10 @@ type: writing_exemplar
 category: writing_exemplar
 description: >
   Poetry-pipeline twin for English register. Retrieves writing_exemplars via
-  rag-context, then rewrites sourceNs.text with that block bound as
+  rag-search, then rewrites sourceNs.text with that block bound as
   {writing_context}. Steal rhythm, not period diction. Not the 4917
   external_prose judge stack. pipeline_options.register selects a prefix
-  well (humor, oratory, familiar, letters, civic, travel) or all.
+  well (humor, familiar, civic) or all.
 
 output: rewrite
 
@@ -23,8 +23,11 @@ steps:
     timeout_seconds: 90
     pipeline_options:
       scope_override: writing_exemplars
-      hyde_enabled: false
-      rerank_enabled: false
+      step_overrides:
+        generate_hyde:
+          enabled: false
+        rerank:
+          enabled: false
       rag_top_k_per_query: 5
       rag_max_chunks: 5
       noise_filter_disable: true

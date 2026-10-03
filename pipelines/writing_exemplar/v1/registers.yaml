@@ -8,15 +8,9 @@ root: /mnt/torus/mcp-data/files/writing-exemplars
 aliases:
   essay: familiar
   essays: familiar
-  speech: oratory
-  speeches: oratory
-  letter: letters
 
 registers:
   all: null
   familiar: familiar
   humor: humor
-  oratory: oratory
-  letters: letters
   civic: civic
-  travel: travel

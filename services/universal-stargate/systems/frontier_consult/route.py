@@ -264,6 +264,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
             "watchdog",
             "park_harvest",
             "cdp_probe_indeterminate",
+            "producer_harvest",
         ]
         | None
     ) = None

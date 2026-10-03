@@ -12,13 +12,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import httpx
-from event_store.query_client_errors import (
-    envelope_client_deadline,
-    envelope_from_http_status_error,
-)
 from mcp_events import monotonic_now, record
-from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -44,34 +38,7 @@ _CURSOR_PREVIEW_BLOCKED = frozenset(
     }
 )
 
-_VALID_OPERATIONS = frozenset(
-    {
-        "recent-failures",
-        "noise-profile",
-        "coordination-audit",
-        "model-timeline",
-        "request-trace",
-        "request-lifecycle",
-        "request-summary",
-        "pipeline-trace",
-        "compare-runs",
-        "federation-health",
-        "provider-health",
-        "capacity-snapshot",
-        "signal-events",
-        "stack-last-started",
-        "realtime-snapshot",
-        "delivery-audit-parent",
-        "delivery-audit-artifacts",
-        "delivery-audit-token-rollup",
-        "delivery-audit-baseline-campaign",
-        "delivery-audit-selfassess",
-        "dispatch-economics-token-rollup",
-        "dispatch-economics-dollar-equivalents",
-        "operations",
-        "raw_sql",
-    }
-)
+_ORIGIN_PREFIX = "/api/v1/observability"
 
 
 @dataclass(frozen=True)
@@ -95,14 +62,21 @@ def _resolve_target(target: str) -> _EventQueryTarget | None:
     return None
 
 
-def _query_event_service(
-    body: dict[str, Any], *, target: str = "ulg"
-) -> dict[str, Any]:
-    """POST a structured query payload to the selected event service instance.
+def _query_path(operation: str) -> str:
+    if operation == "operations":
+        return _ORIGIN_PREFIX
+    return f"{_ORIGIN_PREFIX}/{operation}"
 
-    Returns the decoded response body. On transport/query failures, returns an
-    error envelope with a human-readable `error` field for MCP callers.
-    """
+
+def _query_event_service(
+    operation: str,
+    params: dict[str, Any] | None = None,
+    *,
+    target: str = "ulg",
+) -> dict[str, Any]:
+    """Call the origin resource for one observability member."""
+    from event_store.query_client import list_members, query_member, query_sql
+
     resolved_target = _resolve_target(target)
     if resolved_target is None:
         return {
@@ -111,15 +85,22 @@ def _query_event_service(
                 f"Valid targets: {', '.join(_VALID_TARGETS)}"
             )
         }
+    url = resolved_target.url
     try:
-        client_ctx = make_sync_client(
-            resolved_target.url,
-            timeout=_QUERY_TIMEOUT,
+        if operation == "operations":
+            return list_members(url=url, timeout=_QUERY_TIMEOUT)
+        if operation == "raw_sql":
+            params_dict = params or {}
+            return query_sql(
+                str(params_dict.get("sql") or ""),
+                params=params_dict.get("params") or None,
+                limit=int(params_dict.get("limit", 100)),
+                url=url,
+                timeout=_QUERY_TIMEOUT,
+            )
+        return query_member(
+            operation, params or {}, url=url, timeout=_QUERY_TIMEOUT
         )
-        with client_ctx as client:
-            resp = client.post("/v1/query", json=body)
-            resp.raise_for_status()
-            return resp.json()
     except FileNotFoundError as e:
         logger.error("Event service UDS socket not found: %s", e)
         return {
@@ -128,27 +109,6 @@ def _query_event_service(
                 "Start the event service via ./manage or docker compose."
             )
         }
-    except httpx.ReadTimeout:
-        return envelope_client_deadline()
-    except httpx.ConnectError as e:
-        logger.error("Event service not reachable: %s", e, exc_info=True)
-        return {"error": f"Event service not reachable: {e}"}
-    except httpx.HTTPStatusError as e:
-        busy = envelope_from_http_status_error(e)
-        if busy is not None:
-            return busy
-        logger.error(
-            "Event service returned error status: %s, response: %s",
-            e.response.status_code,
-            e.response.text,
-            exc_info=True,
-        )
-        return {
-            "error": f"Event service error: {e.response.status_code} - {e.response.text}"
-        }
-    except Exception as e:
-        logger.error("Event query failed: %s", e, exc_info=True)
-        return {"error": f"Event query failed: {e}"}
 
 
 def register_event_tools(mcp: FastMCP) -> None:
@@ -167,44 +127,8 @@ def register_event_tools(mcp: FastMCP) -> None:
         target: event service target — "ulg" (default fleet) or "claudeburst"
                  (perps embedded event store on claudeburst-events-query.sock)
 
-        Operations:
-          recent-failures      (limit?)              — failures/errors in current session
-          noise-profile        (minutes?)            — signal frequency histogram
-          coordination-audit   ()                    — recent role=coordination events
-          model-timeline       (model_id)            — load/execute/unload for a model
-          request-trace        (request_id)          — all events for a request
-          request-lifecycle    (request_id)          — snapshot phases for a request
-          request-summary      ()                    — aggregate request stats
-          pipeline-trace       (execution_id)        — step-by-step execution trace;
-                                                       empty traces include
-                                                       pipeline_trace_not_found or
-                                                       pipeline_trace_aged_out
-          compare-runs         (run_a, run_b)        — side-by-side metrics
-          federation-health    ()                    — latest relay telemetry
-          provider-health      (provider?)           — frontier generate health per provider
-          capacity-snapshot    ()                    — current slot usage
-          signal-events        (signal?)             — recent events for a signal pattern;
-                                                       signal supports `*` glob (literal `_`
-                                                       matched verbatim), `%`/`_` raw SQL LIKE,
-                                                       or exact match when no wildcard present
-          stack-last-started   ()                    — per-service last startup timestamp
-          realtime-snapshot    ()                    — last N from in-memory ring buffer
-          delivery-audit-parent (audit_id? | execution_id? | request_id? | dispatch_id?)
-                                                      — one B3 delivery-audit parent row
-          delivery-audit-artifacts (audit_id)         — child artifact rows for a parent
-          delivery-audit-token-rollup (audit_id)      — token-locality rollup for a parent
-          delivery-audit-baseline-campaign (campaign_id)
-                                                      — p50/p95 baseline campaign report
-          delivery-audit-selfassess (campaign_id)     — §6 rubric self-assessment report
-          dispatch-economics-token-rollup (since_ts?, until_ts?, minutes?, seat_substrate?, dispatch_id?, execution_id?, request_id?)
-                                                      — cross-substrate seat token rollup
-          dispatch-economics-dollar-equivalents (since_ts?, until_ts?, minutes?, seat_substrate?, dispatch_id?, execution_id?, request_id?)
-                                                      — G2 rollup + cost_usd / cost_source join
-          operations           ()                    — list all available operations
-          raw_sql              (sql, params?, limit?) — raw SQL SELECT query
-
-        Default time window: since most recent event.service.started (session boundary).
-        Override with params={"since_ts": <unix_ms>} or params={"minutes": N}.
+        operation is any member name. operation="operations" returns every
+        member with its declared params. operation="raw_sql" posts the sql member.
 
         Example:
           observability(operation="recent-failures", params={"limit": 20})
@@ -217,29 +141,15 @@ def register_event_tools(mcp: FastMCP) -> None:
         - `mcp-tool-loop-trace-matrix` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/mcp-tool-loop-trace-matrix/SKILL.md")
         «/verb-orientation:observability»
         """
-        if operation not in _VALID_OPERATIONS:
-            return {
-                "error": f"Unknown operation: {operation}. "
-                f"Valid: {', '.join(sorted(_VALID_OPERATIONS))}"
-            }
-
+        path = _query_path(operation)
         t0 = monotonic_now()
-        record("mcp.events.query.called", operation=operation, target=target)
-
-        body: dict[str, Any]
-        if operation == "operations":
-            body = {"type": "operations"}
-        elif operation == "raw_sql":
-            params_dict = params or {}
-            body = {
-                "type": "sql",
-                "sql": params_dict.get("sql", ""),
-                "params": params_dict.get("params", []),
-                "limit": params_dict.get("limit", 100),
-            }
-        else:
-            body = {"type": "operation", "name": operation, "params": params or {}}
-        result = _query_event_service(body, target=target)
+        record(
+            "mcp.events.query.called",
+            operation=operation,
+            target=target,
+            path=path,
+        )
+        result = _query_event_service(operation, params, target=target)
 
         duration = monotonic_now() - t0
         if "error" in result:
@@ -247,6 +157,7 @@ def register_event_tools(mcp: FastMCP) -> None:
                 "mcp.events.query.failed",
                 operation=operation,
                 target=target,
+                path=path,
                 error=result["error"],
                 duration_s=round(duration, 3),
             )
@@ -255,6 +166,7 @@ def register_event_tools(mcp: FastMCP) -> None:
                 "mcp.events.query.completed",
                 operation=operation,
                 target=target,
+                path=path,
                 duration_s=round(duration, 3),
             )
             result["_next"] = (
@@ -269,7 +181,7 @@ def register_event_tools(mcp: FastMCP) -> None:
     def query_observability_preview(
         operation: str,
         params: dict[str, Any] | None = None,
-        limit: int = 50,
+        limit: int | None = None,
         target: str = "ulg",
     ) -> dict[str, Any]:
         """Run bounded observability queries suitable for cursor_safe profile.
@@ -278,21 +190,17 @@ def register_event_tools(mcp: FastMCP) -> None:
         telemetry. Use `target="ulg"` for fleet events or `target="claudeburst"`
         for claudeburst.perps.* signals on the embedded perps event store.
         """
-        if operation not in _VALID_OPERATIONS:
-            return {
-                "error": f"Unknown operation: {operation}. "
-                f"Valid: {', '.join(sorted(_VALID_OPERATIONS))}"
-            }
         if operation in _CURSOR_PREVIEW_BLOCKED:
             return {"error": f"Operation '{operation}' is not allowed in preview mode."}
 
-        safe_limit = max(1, min(limit, _CURSOR_PREVIEW_LIMIT))
         params_dict = dict(params or {})
-        try:
-            requested_limit = int(params_dict.get("limit", safe_limit))
-        except (TypeError, ValueError):
-            requested_limit = safe_limit
-        params_dict["limit"] = min(requested_limit, safe_limit)
+        if limit is not None or "limit" in params_dict:
+            raw_limit = params_dict.get("limit", limit)
+            try:
+                requested_limit = int(raw_limit)
+            except (TypeError, ValueError):
+                requested_limit = _CURSOR_PREVIEW_LIMIT
+            params_dict["limit"] = max(1, min(requested_limit, _CURSOR_PREVIEW_LIMIT))
 
         t0 = monotonic_now()
         record(
@@ -301,8 +209,7 @@ def register_event_tools(mcp: FastMCP) -> None:
             target=target,
             limit=params_dict["limit"],
         )
-        body = {"type": "operation", "name": operation, "params": params_dict}
-        result = _query_event_service(body, target=target)
+        result = _query_event_service(operation, params_dict, target=target)
         duration = monotonic_now() - t0
         if "error" in result:
             record(

@@ -273,8 +273,6 @@ def summarize(event: dict[str, Any]) -> str | None:
 
 
 def _seed_rows(*, minutes: int, limit: int) -> list[dict[str, Any]]:
-    import httpx
-
     placeholders = ",".join("?" for _ in _SEED_SIGNALS)
     sql = (
         "SELECT seq, signal, ts_unix_ms, payload FROM events "
@@ -284,12 +282,15 @@ def _seed_rows(*, minutes: int, limit: int) -> list[dict[str, Any]]:
     )
     since_ms = int((time.time() - minutes * 60) * 1000)
     params = list(_SEED_SIGNALS) + [str(since_ms), str(limit)]
-    body = {"type": "sql", "sql": sql, "params": params, "limit": limit}
-    transport = httpx.HTTPTransport(uds=_sock())
-    with httpx.Client(transport=transport, timeout=30.0) as client:
-        resp = client.post("http://localhost/v1/query", json=body)
-        resp.raise_for_status()
-        data = resp.json()
+    from event_store.query_client import query_sql
+
+    data = query_sql(
+        sql,
+        params=params,
+        limit=limit,
+        url=f"unix://{_sock()}",
+        timeout=30.0,
+    )
     rows = data.get("rows")
     return list(rows) if isinstance(rows, list) else []
 

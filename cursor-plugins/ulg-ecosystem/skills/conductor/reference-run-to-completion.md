@@ -7,6 +7,7 @@
 The packet admit is a **standing** authorization for the whole mission, not a
 per-G-row one. Default posture once running:
 
+- **Nested implement and land prompts** include this line verbatim: No manage restart, stop, start, rebuild, or force, and no propagate: a restart from this seat kills work it cannot see on other lanes; the operator seat restarts after G7 land using restart_owed:. The G7 land closeout names `restart_owed:` from the landed diff. The nest does not call `manage` or `propagate`.
 - **¬ pause between G-rows for a "continue?" ack.** Drive from the first OPEN
   G-row to the last in one continuous commission. CHECKPOINT is a progress
   report, not a waypoint that blocks on a reply before the next G-row starts.

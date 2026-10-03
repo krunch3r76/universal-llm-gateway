@@ -58,8 +58,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Subscription filter as key=value (repeatable)",
     )
-    p.add_argument("--limit", type=int, default=100, help="Max rows (default 100)")
-    p.add_argument("--socket", default=_QUERY_SOCKET, help="Query UDS socket path")
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max rows (forwarded on --op only when given; --sql defaults to 100)",
+    )
+    p.add_argument(
+        "--socket",
+        default=None,
+        help="Origin UDS socket. Default authority is the Stargate capability URL.",
+    )
     p.add_argument("--compact", action="store_true", help="Compact JSON output")
     return p
 
@@ -75,27 +84,123 @@ def _parse_kv(items: list[str]) -> dict[str, str]:
     return result
 
 
-def _query(socket_path: str, body: dict[str, Any]) -> dict[str, Any]:
-    """Synchronous HTTP POST to event service over UDS."""
-    import httpx
-    from event_store.query_client_errors import (
-        envelope_client_deadline,
-        envelope_from_http_status_error,
-    )
+def _authority(socket_path: str | None) -> tuple[str, str]:
+    from transport_utils import DEFAULT_STARGATE_URL
 
-    transport = httpx.HTTPTransport(uds=socket_path)
+    if socket_path:
+        return f"unix://{socket_path}", "/api/v1/observability"
+    return DEFAULT_STARGATE_URL, "/api/v1/capabilities/observability"
+
+
+def _forward_unknown(tokens: list[str]) -> dict[str, str]:
+    """Turn ``--key value`` and ``--key=value`` into params. Other tokens exit 2."""
+    params: dict[str, str] = {}
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.startswith("--") or token == "--":
+            print(f"Unexpected argument: {token}", file=sys.stderr)
+            sys.exit(2)
+        body = token[2:]
+        if "=" in body:
+            key, value = body.split("=", 1)
+            index += 1
+        else:
+            if index + 1 >= len(tokens) or tokens[index + 1].startswith("-"):
+                print(f"Missing value for --{body}", file=sys.stderr)
+                sys.exit(2)
+            key, value = body, tokens[index + 1]
+            index += 2
+        params[key.replace("-", "_")] = value
+    return params
+
+
+def _query(
+    socket_path: str | None,
+    *,
+    op: str | None,
+    params: dict[str, str],
+    sql: str | None,
+    sql_params: list[str],
+    limit: int | None,
+) -> dict[str, Any]:
+    """Call the canonical capability URL, or the origin when --socket is set."""
+    url, prefix = _authority(socket_path)
+    follow = socket_path is None
+    if sql:
+        return _sql(url, prefix, sql, sql_params, limit, follow)
+    if op == "operations" or op is None:
+        return _listing(url, prefix, follow)
+    forwarded = dict(params)
+    if limit is not None:
+        forwarded["limit"] = str(limit)
+    return _member(url, prefix, op, forwarded, follow)
+
+
+def _client(url: str, follow: bool) -> Any:
+    from transport_utils import make_sync_client
+
+    return make_sync_client(url, timeout=10.0, follow_redirects=follow)
+
+
+def _interpret(resp: Any) -> dict[str, Any]:
+    from event_store.query_client import _from_response
+
+    return _from_response(resp)
+
+
+def _listing(url: str, prefix: str, follow: bool) -> dict[str, Any]:
+    import httpx
+
     try:
-        with httpx.Client(transport=transport, timeout=10.0) as client:
-            resp = client.post("http://localhost/v1/query", json=body)
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.ReadTimeout:
-        return envelope_client_deadline()
+        with _client(url, follow) as client:
+            return _interpret(client.get(prefix))
     except httpx.HTTPStatusError as exc:
-        busy = envelope_from_http_status_error(exc)
-        if busy is not None:
-            return busy
-        raise
+        return _interpret(exc.response)
+    except httpx.HTTPError as exc:
+        from event_store.query_client import _transport_error
+
+        return _transport_error(exc)
+
+
+def _member(
+    url: str, prefix: str, name: str, params: dict[str, str], follow: bool
+) -> dict[str, Any]:
+    import httpx
+
+    try:
+        with _client(url, follow) as client:
+            return _interpret(client.get(f"{prefix}/{name}", params=params))
+    except httpx.HTTPStatusError as exc:
+        return _interpret(exc.response)
+    except httpx.HTTPError as exc:
+        from event_store.query_client import _transport_error
+
+        return _transport_error(exc)
+
+
+def _sql(
+    url: str,
+    prefix: str,
+    sql: str,
+    sql_params: list[str],
+    limit: int | None,
+    follow: bool,
+) -> dict[str, Any]:
+    import httpx
+
+    body: dict[str, Any] = {"sql": sql, "limit": 100 if limit is None else limit}
+    if sql_params:
+        body["params"] = sql_params
+    try:
+        with _client(url, follow) as client:
+            return _interpret(client.post(f"{prefix}/sql", json=body))
+    except httpx.HTTPStatusError as exc:
+        return _interpret(exc.response)
+    except httpx.HTTPError as exc:
+        from event_store.query_client import _transport_error
+
+        return _transport_error(exc)
 
 
 async def _subscribe(
@@ -121,66 +226,48 @@ async def _subscribe(
                     break
 
 
+def _emit_failure(result: dict[str, Any], indent: int | None, socket_path: str | None) -> None:
+    message = str(result.get("error") or "")
+    if socket_path is None and result.get("status") is None:
+        message = f"{message} Break glass with --socket."
+        result = {**result, "error": message}
+    print(json.dumps(result, indent=indent, default=str), file=sys.stderr)
+    sys.exit(1)
+
+
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args, unknown = parser.parse_known_args()
     indent = None if args.compact else 2
 
     if args.subscribe:
         event_filter = _parse_kv(args.filter)
+        socket_path = args.socket or _QUERY_SOCKET
         try:
-            asyncio.run(_subscribe(args.socket, event_filter, args.compact))
+            asyncio.run(_subscribe(socket_path, event_filter, args.compact))
         except KeyboardInterrupt:
             pass
         return
 
-    if args.op:
-        params = _parse_kv(args.param)
-        if args.op == "operations":
-            body: dict[str, Any] = {"type": "operations"}
-        else:
-            for k, v in params.items():
-                try:
-                    params[k] = int(v)
-                except ValueError:
-                    pass
-            body = {"type": "operation", "name": args.op, "params": params}
-    elif args.sql:
-        body = {"type": "sql", "sql": args.sql, "limit": args.limit}
-        if args.sql_param:
-            body["params"] = args.sql_param
-    else:
-        body = {"type": "operations"}
-
+    extra = _forward_unknown(unknown) if args.op else {}
+    if unknown and not args.op:
+        _forward_unknown(unknown)
+    params = {**_parse_kv(args.param), **extra}
     try:
-        result = _query(args.socket, body)
-        if result.get("error_class") in ("lock_wait", "client_deadline"):
-            print(json.dumps(result, indent=indent, default=str), file=sys.stderr)
-            sys.exit(1)
-    except FileNotFoundError:
-        print(
-            "Event service socket not found. Is the event service running?",
-            file=sys.stderr,
+        result = _query(
+            args.socket,
+            op=args.op,
+            params=params,
+            sql=args.sql,
+            sql_params=list(args.sql_param or []),
+            limit=args.limit,
         )
+    except Exception as exc:
+        print(f"Query failed: {exc}", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
-        # Surface the server's structured error body when present (e.g. a 400
-        # from raw_sql with the sqlite error message) so the user sees the
-        # actual cause, not just the HTTP status line.
-        import httpx
-
-        if isinstance(e, httpx.HTTPStatusError):
-            try:
-                body_json = e.response.json()
-                print(
-                    json.dumps(body_json, indent=indent, default=str),
-                    file=sys.stderr,
-                )
-            except Exception:
-                print(e.response.text, file=sys.stderr)
-            sys.exit(1)
-        print(f"Query failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
+    status = result.get("status")
+    if result.get("error") and (status is None or (isinstance(status, int) and status >= 400)):
+        _emit_failure(result, indent, args.socket)
     print(json.dumps(result, indent=indent, default=str))
 
 

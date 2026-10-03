@@ -190,6 +190,68 @@ def _copy_upstream(
                 write_framed_message(downstream, message)
 
 
+def refuse_conductor_descended_manage(
+    message: dict[str, Any],
+    *,
+    dispatch_id: str,
+    lookup: Any | None = None,
+) -> dict[str, Any] | None:
+    """Refuse state-changing ``manage`` before it is forwarded.
+
+    *dispatch_id* is the GIW-stamped bridge env, not the tool argument. Omitting
+    ``caller_dispatch_id`` does not skip this gate. An empty stamp (no
+    cursor-sdk dispatch context) is forwarded.
+    """
+    stamp = (dispatch_id or "").strip()
+    if not stamp or message.get("method") != "tools/call":
+        return None
+    params = message.get("params")
+    if not isinstance(params, dict) or params.get("name") != "manage":
+        return None
+    arguments = params.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            arguments = {}
+    if not isinstance(arguments, dict):
+        arguments = {}
+    action = str(arguments.get("action") or "")
+    from implement_admission.conductor_descent import (
+        READ_ONLY_MANAGE_ACTIONS,
+        descends_from_conductor,
+        ledger_lineage_lookup,
+        refusal_body,
+    )
+
+    if action in READ_ONLY_MANAGE_ACTIONS:
+        return None
+
+    reader = lookup if lookup is not None else ledger_lineage_lookup
+    try:
+        descended = descends_from_conductor(stamp, reader)
+    except Exception as exc:
+        print(
+            "mcp-bridge: conductor descent lookup failed "
+            f"dispatch_id={stamp}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+    if not descended:
+        return None
+    body = refusal_body()
+    return {
+        "jsonrpc": "2.0",
+        "id": message.get("id"),
+        "error": {
+            "code": -32602,
+            "message": body["error"],
+            "data": {"reason": body["reason"]},
+        },
+    }
+
+
 def _copy_downstream(
     downstream: BinaryIO,
     upstream: BinaryIO,
@@ -201,11 +263,27 @@ def _copy_downstream(
     client_out: BinaryIO | None = None,
     client_out_lock: threading.Lock | None = None,
     observer: GenerateObserver | None = None,
+    conductor_dispatch_id: str = "",
+    conductor_lookup: Any | None = None,
 ) -> None:
     while True:
         message = read_framed_message(upstream)
         if message is None:
             break
+        descent_refusal = refuse_conductor_descended_manage(
+            message,
+            dispatch_id=conductor_dispatch_id,
+            lookup=conductor_lookup,
+        )
+        if descent_refusal is not None:
+            if client_out is None:
+                raise RuntimeError("conductor manage refusal requires client_out")
+            if client_out_lock is None:
+                write_framed_message(client_out, descent_refusal)
+            else:
+                with client_out_lock:
+                    write_framed_message(client_out, descent_refusal)
+            continue
         if review_gate and allow is not None:
             refusal = refuse_filtered_tools_call(
                 message, allow=allow, seat_thread=seat_thread
@@ -284,6 +362,9 @@ def run_filtered_stdio_proxy(
             client_out=sys.stdout.buffer,
             client_out_lock=client_out_lock,
             observer=observer,
+            conductor_dispatch_id=(
+                child_env.get(CURSOR_SDK_DISPATCH_ID_ENV) or ""
+            ).strip(),
         )
     finally:
         try:

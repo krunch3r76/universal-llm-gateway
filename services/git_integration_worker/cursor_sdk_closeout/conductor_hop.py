@@ -241,7 +241,17 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
 
 
 _TERMINAL_EXECUTION_STATES = frozenset({"finished", "failed", "aborted"})
-_HARVEST_ID_TOKEN_RE = re.compile(r"^[0-9a-fA-F-]{8,}$")
+# One harvest id, anchored at the payload start. A date (``2026-10-03``),
+# a second id, and ``none`` / ``land`` prose stay unrecognized.
+_HARVEST_NONE_RE = re.compile(r"(?i)none\b")
+_HARVEST_ID_COUNT_RE = re.compile(r"(?i)\bharvest\s+`?[0-9a-f]")
+_HARVEST_ID_IN_ADMIT_RE = re.compile(
+    r"(?i)^\W*harvest\s+`?"
+    r"(?P<id>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    r"|[0-9a-f]{12}-[0-9a-f]{8}"
+    r"|[0-9a-f]{8,32})"
+    r"`?(?![0-9a-z_-])"
+)
 
 
 def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
@@ -254,19 +264,24 @@ def _row_hop_tokens_allow_lift(row: dict[str, Any]) -> bool:
 
 
 def _harvest_target_token(guard: str) -> str | None:
+    """Harvest id from the last NEXT_ADMIT line.
+
+    Accepts a bare id, a backtick-wrapped id, and an id followed by
+    parenthetical instructions. ``NEXT_ADMIT: none`` and non-hex targets
+    stay unrecognized so they cannot lift a deferral.
+    """
     admit = last_next_admit_payload(guard)
     if not admit:
         return None
-    parts = admit.strip().split()
-    if len(parts) != 2 or parts[0].lower() != "harvest":
+    stripped = admit.strip()
+    if _HARVEST_NONE_RE.match(stripped):
         return None
-    token = parts[1]
-    if not _HARVEST_ID_TOKEN_RE.fullmatch(token):
+    if len(_HARVEST_ID_COUNT_RE.findall(stripped)) != 1:
         return None
-    hex_digits = sum(1 for ch in token if ch in "0123456789abcdefABCDEF")
-    if hex_digits < 8:
+    match = _HARVEST_ID_IN_ADMIT_RE.match(stripped)
+    if match is None:
         return None
-    return token
+    return match.group("id")
 
 
 def _inflight_db_path() -> Path:
@@ -431,9 +446,137 @@ def hop_body_build_refused(
         return True
     absent = str(data.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
     if not _named_target_is_terminal(token, absent_counts_terminal=absent):
-        return True
+        # Reply lift only after the deferral is stamped. Before that, an
+        # early reply must not skip the stamp, and a bus read must not run.
+        if not (absent and _expected_harvest_reply_present(row, data, token)):
+            return True
     if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
         return True
+    return False
+
+
+def linked_producer_disposition(row: dict[str, Any]) -> str:
+    """``none``, ``in_flight``, or ``ready`` for a nest or NEXT_ADMIT harvest.
+
+    ``none`` is a hop with no linked producer (a true no-progress loop).
+    ``in_flight`` keeps a no-progress park in place. ``ready`` means every
+    nested child is terminal, and the harvest id is terminal or already has
+    its web-anthropic reply. A ledger or registry error stays ``in_flight``
+    when a link might exist, so a park is not released on a failed read.
+    """
+    dispatch_id = str(row.get("dispatch_id") or "")
+    rec = _record_data(row)
+    token = _harvest_target_token(_next_admit_guard_text(row, rec))
+    if dispatch_id:
+        try:
+            children = CursorDispatchLedger.instance().list_nested_children(
+                parent_dispatch_id=dispatch_id
+            )
+        except Exception:
+            logger.warning(
+                "linked producer child list failed dispatch_id=%s",
+                dispatch_id,
+                exc_info=True,
+            )
+            return "in_flight"
+    else:
+        children = []
+    if not children and token is None:
+        return "none"
+    if dispatch_id and conductor_has_live_nested(dispatch_id=dispatch_id):
+        return "in_flight"
+    if token is not None:
+        absent = (
+            str(rec.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
+        )
+        try:
+            terminal = _named_target_is_terminal(token, absent_counts_terminal=absent)
+        except Exception:
+            logger.warning(
+                "linked producer terminal check failed dispatch_id=%s",
+                dispatch_id,
+                exc_info=True,
+            )
+            return "in_flight"
+        if not terminal:
+            try:
+                replied = _expected_harvest_reply_present(row, rec, token)
+            except Exception:
+                logger.warning(
+                    "linked producer reply check failed dispatch_id=%s",
+                    dispatch_id,
+                    exc_info=True,
+                )
+                return "in_flight"
+            if not replied:
+                return "in_flight"
+    return "ready"
+
+
+def _harvest_execution_started_at_iso(token: str) -> str | None:
+    """ISO instant of the one live registry row for this harvest id.
+
+    Fail closed on a missing row, a transport error, or more than one match.
+    """
+    from claude_bundles.cdp_registry_store import load_active
+
+    try:
+        active = load_active()
+    except Exception:
+        return None
+    started_at: list[float] = []
+    for row in active.values():
+        if not isinstance(row, dict):
+            continue
+        top = str(row.get("execution_id") or "").strip()
+        entry = execution_state_of(row)
+        nested = str(entry.get("execution_id") or "").strip() if entry else ""
+        if not (
+            _prefix_match_id(top, token) or (nested and _prefix_match_id(nested, token))
+        ):
+            continue
+        started = entry.get("started_at") if entry else None
+        if isinstance(started, (int, float)):
+            started_at.append(float(started))
+    if len(started_at) != 1:
+        return None
+    return datetime.fromtimestamp(started_at[0], UTC).isoformat()
+
+
+def _expected_harvest_reply_present(
+    row: dict[str, Any], rec: dict[str, Any], token: str
+) -> bool:
+    """Web-anthropic reply after the harvest execution started.
+
+    The watermark is the latest bus turn at or before the registry
+    ``started_at``. A reply before the conductor closeout still counts when
+    the harvest started earlier. The summon itself is excluded. Unresolved
+    watermark fails closed.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        reply_arrived_on_thread,
+        resolve_consult_summoning_watermark_at_instant,
+    )
+
+    started_iso = _harvest_execution_started_at_iso(token)
+    if started_iso is None:
+        return False
+    thread_ids: list[str] = []
+    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
+    worker_id = str(row.get("thread_id") or "").strip()
+    for thread_id in (summoning_id, worker_id):
+        if thread_id and thread_id not in thread_ids:
+            thread_ids.append(thread_id)
+    for thread_id in thread_ids:
+        watermark = resolve_consult_summoning_watermark_at_instant(
+            thread_id=thread_id, closeout_instant=started_iso
+        )
+        if not isinstance(watermark, int):
+            continue
+        if reply_arrived_on_thread(
+            thread_id=thread_id, after_turn=watermark, from_agent="web-anthropic"
+        ):
+            return True
     return False
 
 
@@ -1186,6 +1329,9 @@ def _deferral_cleared(row: dict[str, Any]) -> bool:
         verdict, _skip = external_gate_hop_verdict(row)
         return verdict != "live"
     if gate == SKIP_GATE_NEXT_ADMIT_BLOCKED:
+        # Cleared when the harvest left the registry, or a web-anthropic
+        # reply is already on the summoning or worker thread (including
+        # a reply that landed before this row's closeout).
         return not hop_body_build_refused(row, rec)
     return False
 
@@ -1202,9 +1348,7 @@ def _release_backoff_blocks(row: dict[str, Any]) -> bool:
     fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if not isinstance(fields.get("hop_admit_error"), dict):
         return False
-    verdict = evaluate_hop_budget(
-        row, closeout_tokens=_closeout_tokens_from_row(row)
-    )
+    verdict = evaluate_hop_budget(row, closeout_tokens=_closeout_tokens_from_row(row))
     return not _backoff_elapsed(row, backoff_s=verdict.backoff_s)
 
 
@@ -1365,6 +1509,7 @@ __all__ = [
     "budget_ok_for_hop",
     "hop_body_build_refused",
     "hop_owed",
+    "linked_producer_disposition",
     "live_conductor_row_on_thread",
     "merge_conductor_closeout_hop_authority",
     "maybe_fire_conductor_hop_reactor",

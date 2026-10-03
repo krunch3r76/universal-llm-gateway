@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from implement_admission.consumer_import_verify import verify_consumer_import
+from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
+from implement_admission.consumer_import_verify import (
+    _entrypoint_seeds,
+    verify_consumer_import,
+)
+from implement_admission.restart_owed import restart_owed_line
 from implement_admission.service_lib_ownership import (
     declared_services_for_lib,
     declared_services_for_lib_path,
@@ -130,6 +136,60 @@ def test_wait_status_serving_slug_is_agent_bus_not_owned_libs_blast() -> None:
         "stargate",
     }
     assert not owned <= set(serving)
+
+
+@pytest.mark.offline
+def test_event_service_runtime_entrypoint_verifies_event_store() -> None:
+    """Empty services/event-service/ tree; reach comes from runtime_entrypoint.
+
+    Package __init__ is reached whenever a submodule is. store.py is loaded by
+    event_store.server, so a broken walk from __main__ fails this assertion.
+    query_client.py is not on that walk: serves_libs is package-granular, so
+    the closeout still restarts event_service (operator S3) while file verify
+    stays contradicted.
+    """
+    assert (
+        verify_consumer_import("event_service", "libs/event_store/__init__.py")
+        == "verified"
+    )
+    assert (
+        verify_consumer_import("event_service", "libs/event_store/store.py")
+        == "verified"
+    )
+    assert (
+        verify_consumer_import("event_service", "libs/event_store/query_client.py")
+        == "contradicted"
+    )
+    assert (
+        restart_owed_line(["libs/event_store/query_client.py"])
+        == "restart_owed: event_service"
+    )
+
+
+@pytest.mark.offline
+def test_missing_runtime_entrypoint_seeds_nothing(tmp_path: Path) -> None:
+    """A runtime_entrypoint path that is not on disk adds no modules."""
+    assert _entrypoint_seeds(tmp_path, "libs/missing_pkg/__main__.py") == set()
+
+
+@pytest.mark.offline
+def test_directory_entrypoint_seeds_imports_not_every_file(tmp_path: Path) -> None:
+    """Directory entrypoints must not mark unused siblings reached."""
+    pkg = tmp_path / "libs" / "sample_pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "used.py").write_text("import event_store.store\n", encoding="utf-8")
+    (pkg / "unused.py").write_text("x = 1\n", encoding="utf-8")
+    seeds = _entrypoint_seeds(tmp_path, "libs/sample_pkg")
+    assert "event_store.store" in seeds
+    assert "sample_pkg.unused" not in seeds
+    assert "sample_pkg.used" not in seeds
+
+
+@pytest.mark.offline
+def test_event_service_entrypoint_is_measured_for_blinds() -> None:
+    """Relative imports in __main__.py are a blind, not an empty measurement."""
+    blinds = measure_import_grammar_blinds("event_service", str(repo_root()))
+    assert "service_relative" in blinds
 
 
 @pytest.mark.offline

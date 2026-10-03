@@ -60,6 +60,33 @@ _GIW_FORCE_REFUSED_REASON = "giw_force_refused"
 _GIW_LIFECYCLE_FORCE_ACTIONS = frozenset({"stop", "restart", "sync_restart"})
 
 
+def _conductor_descended_manage_refused(dispatch_id: str, action: str) -> bool:
+    """True when a state-changing action must not reach manage.sock.
+
+    Lineage is the ledger walk in ``conductor_descent``. An empty dispatch id
+    never reaches this helper. Lookup errors fail open so a seat the ledger
+    cannot see is not refused here; the stdio bridge refuses before forward
+    using the GIW-stamped dispatch id.
+    """
+    from implement_admission.conductor_descent import (
+        READ_ONLY_MANAGE_ACTIONS,
+        descends_from_conductor,
+        ledger_lineage_lookup,
+    )
+
+    if action in READ_ONLY_MANAGE_ACTIONS:
+        return False
+    try:
+        return descends_from_conductor(dispatch_id, ledger_lineage_lookup)
+    except Exception:
+        logger.warning(
+            "conductor descent lookup failed for %s; manage gate fail-open",
+            dispatch_id,
+            exc_info=True,
+        )
+        return False
+
+
 def _refuse_giw_force() -> dict[str, str]:
     return {
         "error": (
@@ -429,6 +456,16 @@ def register_manage_tools(mcp: FastMCP) -> None:
         - `mcp-surface-change` — fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/mcp-surface-change/SKILL.md")
         «/verb-orientation:manage»
         """
+        effective_caller = (
+            caller_dispatch_id or os.environ.get("CURSOR_SDK_DISPATCH_ID", "")
+        ).strip()
+        if effective_caller and _conductor_descended_manage_refused(
+            effective_caller, action
+        ):
+            from implement_admission.conductor_descent import refusal_body
+
+            return refusal_body()
+
         if action == "rebuild" and service in {"gateway", "mcp"}:
             heavy = (
                 " (recompiles vLLM CUDA kernels from source, 60-90 minutes)"
@@ -484,9 +521,6 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["wait_for_boundary"] = bool(wait_for_boundary)
             if float(intent_ttl_s or 0.0) > 0.0:
                 params["intent_ttl_s"] = float(intent_ttl_s)
-        effective_caller = (
-            caller_dispatch_id or os.environ.get("CURSOR_SDK_DISPATCH_ID", "")
-        ).strip()
         if effective_caller and action in {"stop", "restart", "sync_restart"}:
             params["caller_dispatch_id"] = effective_caller
         if action == "cancel_restart_intent":

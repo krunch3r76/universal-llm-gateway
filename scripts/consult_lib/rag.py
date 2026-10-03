@@ -85,7 +85,7 @@ def fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
 def fetch_rag_pipeline(
     query: str,
     *,
-    pipeline_id: str = "rag-context",
+    pipeline_id: str = "rag-search",
     stargate_url: str = DEFAULT_STARGATE_URL,
     rag_url: str = DEFAULT_RAG_URL,
     timeout: float = 70.0,

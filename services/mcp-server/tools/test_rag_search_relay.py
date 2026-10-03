@@ -32,7 +32,7 @@ def test_scope_and_top_k_map_onto_pipeline_options() -> None:
         prefixes=None,
         top_k=20,
     )
-    assert "rag_max_chunks" not in default_k
+    assert default_k["rag_max_chunks"] == 20
 
 
 def test_rag_context_rejects_step_controls_and_keeps_raw_flags() -> None:

@@ -103,6 +103,7 @@ def derive_hop_lineage(
         "watchdog",
         "park_harvest",
         "cdp_probe_indeterminate",
+        "producer_harvest",
     }:
         hop_reason = "planned"
     admitted_by = derive_hop_admitted_by(

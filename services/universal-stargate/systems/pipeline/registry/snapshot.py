@@ -100,6 +100,10 @@ def source_fingerprint(registry: PipelineRegistry) -> str:
             lines.append(f"empty:{resolved}")
         for yaml_path in files:
             rel = yaml_path.relative_to(resolved).as_posix()
+            # Accepted residual (cortex a:37721, CARRY 5): fingerprint uses
+            # size+mtime_ns only — a file edited mid-walk then restored with
+            # identical bytes and mtime_ns (e.g. touch -r) still matches.
+            # Content hashing would require one read per YAML per boot.
             stat = yaml_path.stat()
             lines.append(f"{resolved}:{rel}:{stat.st_size}:{stat.st_mtime_ns}")
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()

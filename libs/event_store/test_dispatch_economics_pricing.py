@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -585,25 +584,7 @@ def test_g2_token_rollup_schema_unchanged() -> None:
     assert "cost_source" not in row
 
 
-def test_mcp_events_allowlist_accepts_dollar_equivalents() -> None:
-    events_path = (
-        Path(__file__).resolve().parents[2]
-        / "services"
-        / "mcp-server"
-        / "tools"
-        / "events.py"
-    )
-    tree = ast.parse(events_path.read_text(encoding="utf-8"))
-    valid_operations: set[str] | None = None
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "_VALID_OPERATIONS":
-                value = node.value
-                if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
-                    if value.func.id == "frozenset" and value.args:
-                        valid_operations = set(ast.literal_eval(value.args[0]))
-                break
-    assert isinstance(valid_operations, set)
-    assert "dispatch-economics-dollar-equivalents" in valid_operations
+def test_catalog_includes_dollar_equivalents() -> None:
+    from event_store.operation_catalog import get_operation
+
+    assert get_operation("dispatch-economics-dollar-equivalents") is not None

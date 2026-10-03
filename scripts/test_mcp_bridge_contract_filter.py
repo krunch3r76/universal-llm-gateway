@@ -13,12 +13,18 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from implement_admission.conductor_descent import (  # noqa: E402
+    CONDUCTOR_DESCENDED_MANAGE_REASON,
+    LineageView,
+)
+
 from scripts.mcp_bridge_contract_filter import (  # noqa: E402
     FILTERED_CONTRACTS,
     ULG_MCP_CONTRACT_ENV,
     _copy_downstream,
     filter_tools_list_payload,
     read_framed_message,
+    refuse_conductor_descended_manage,
     should_filter_stdio,
     write_framed_message,
 )
@@ -208,6 +214,106 @@ def test_filtered_non_team_dispatch_forwards_without_seat_thread() -> None:
     )
     assert forwarded == tools_list
     assert refused is None
+
+
+def _manage_call(action: str, *, force: bool = False) -> dict:
+    arguments: dict = {"action": action, "service": "mcp"}
+    if force:
+        arguments["force"] = True
+    return {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "tools/call",
+        "params": {"name": "manage", "arguments": arguments},
+    }
+
+
+def _drive_manage(message: dict, *, dispatch_id: str, rows: dict) -> tuple:
+    client_in = io.BytesIO()
+    write_framed_message(client_in, message)
+    client_in.seek(0)
+    child_in = io.BytesIO()
+    client_out = io.BytesIO()
+    _copy_downstream(
+        child_in,
+        client_in,
+        pending_methods={},
+        review_gate=False,
+        client_out=client_out,
+        conductor_dispatch_id=dispatch_id,
+        conductor_lookup=lambda dispatch: rows.get(dispatch),
+    )
+    child_in.seek(0)
+    client_out.seek(0)
+    return read_framed_message(child_in), read_framed_message(client_out)
+
+
+def test_bridge_refuses_conductor_manage_without_forwarding_omitted_arg() -> None:
+    """Breaks when the seat omits caller_dispatch_id and the call still forwards."""
+    rows = {
+        "leaf": LineageView(contract="implement", nest_under="cond"),
+        "cond": LineageView(contract="conductor"),
+    }
+    message = _manage_call("sync_restart", force=True)
+    assert "caller_dispatch_id" not in message["params"]["arguments"]
+    forwarded, refused = _drive_manage(message, dispatch_id="leaf", rows=rows)
+    assert forwarded is None
+    assert refused["error"]["data"]["reason"] == CONDUCTOR_DESCENDED_MANAGE_REASON
+
+
+def test_bridge_refuses_recycle_giw_and_cancel_restart_intent() -> None:
+    """A deny-list of restart verbs lets recycle_giw through. Allow-list refuses it."""
+    rows = {"cond": LineageView(contract="conductor")}
+    for action in ("recycle_giw", "cancel_restart_intent"):
+        message = _manage_call(action)
+        forwarded, refused = _drive_manage(message, dispatch_id="cond", rows=rows)
+        assert forwarded is None
+        assert refused["error"]["data"]["reason"] == CONDUCTOR_DESCENDED_MANAGE_REASON
+
+
+def test_bridge_real_ledger_lookup_refuses_conductor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production lookup, not a stub. Breaks when the ledger import fails open."""
+    import sqlite3
+
+    db = tmp_path / "dispatch.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE cursor_sdk_dispatches ("
+        "dispatch_id TEXT, contract TEXT, nest_under TEXT, "
+        "hop_from TEXT, resume_of TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO cursor_sdk_dispatches VALUES (?, ?, NULL, NULL, NULL)",
+        ("cond-real", "conductor"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER", str(db))
+    refused = refuse_conductor_descended_manage(
+        _manage_call("sync_restart"),
+        dispatch_id="cond-real",
+        lookup=None,
+    )
+    assert refused is not None
+    assert refused["error"]["data"]["reason"] == CONDUCTOR_DESCENDED_MANAGE_REASON
+
+
+def test_bridge_forwards_status_and_non_conductor_restart() -> None:
+    rows = {"plain": LineageView(contract="implement")}
+    status = _manage_call("status")
+    forwarded, refused = _drive_manage(status, dispatch_id="plain", rows=rows)
+    assert forwarded == status
+    assert refused is None
+    restart = _manage_call("sync_restart")
+    forwarded, refused = _drive_manage(restart, dispatch_id="plain", rows=rows)
+    assert forwarded == restart
+    assert refused is None
+    no_stamp = refuse_conductor_descended_manage(
+        restart, dispatch_id="", lookup=lambda _i: rows["plain"]
+    )
+    assert no_stamp is None
 
 
 def test_top_level_unfiltered_forwards_arbitrary_team_dispatch() -> None:

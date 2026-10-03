@@ -74,11 +74,15 @@ def test_ac8_read_timeout_does_not_print_query_failed(
         def __exit__(self, *_a: object) -> bool:
             return False
 
+        def get(self, *_a: object, **_k: object) -> None:
+            raise httpx.ReadTimeout("read timed out")
+
         def post(self, *_a: object, **_k: object) -> None:
             raise httpx.ReadTimeout("read timed out")
 
-    monkeypatch.setattr(httpx, "HTTPTransport", lambda *a, **k: object())
-    monkeypatch.setattr(httpx, "Client", lambda *a, **k: _TimeoutClient())
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client", lambda *a, **k: _TimeoutClient()
+    )
     monkeypatch.setattr(sys, "argv", ["query-events", "--op", "operations"])
     with pytest.raises(SystemExit) as exc:
         cli.main()
@@ -92,18 +96,14 @@ def test_ac8_other_http_error_prints_server_json_body(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cli = _load_cli()
-    request = httpx.Request("POST", "http://localhost/v1/query")
-    response = httpx.Response(
-        400,
-        json={"error": "SQL error: no such column: ts"},
-        request=request,
+    monkeypatch.setattr(
+        cli,
+        "_query",
+        lambda *_a, **_k: {
+            "error": "SQL error: no such column: ts",
+            "status": 400,
+        },
     )
-    exc = httpx.HTTPStatusError("bad", request=request, response=response)
-
-    def _raise(*_a, **_k):  # type: ignore[no-untyped-def]
-        raise exc
-
-    monkeypatch.setattr(cli, "_query", _raise)
     monkeypatch.setattr(sys, "argv", ["query-events", "--sql", "SELECT ts FROM events"])
     with pytest.raises(SystemExit) as exc_info:
         cli.main()

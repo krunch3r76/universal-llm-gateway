@@ -90,16 +90,12 @@ async def execute_operation(
 ) -> dict[str, Any]:
     """Execute a registered named operation against ``store``.
 
-    Unknown operation names produce the JSON-RPC-compatible ``-32601`` error
-    payload expected by existing callers. Handler exceptions are logged and
-    converted to a stable error envelope so the HTTP query layer stays thin.
+    Unknown names return an error string. The HTTP layer maps that to 404.
+    Handler exceptions are logged and converted to a stable error envelope.
     """
     op = get_operation(name)
     if not op:
-        return {
-            "error": f"Unknown operation: {name}. Use 'operations' to list available.",
-            "code": -32601,
-        }
+        return {"error": f"Unknown operation: {name}", "code": "UNKNOWN_MEMBER"}
 
     try:
         return await _DISPATCH[name](params, store)

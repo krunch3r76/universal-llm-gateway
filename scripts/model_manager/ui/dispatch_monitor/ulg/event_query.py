@@ -7,8 +7,6 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-import httpx
-
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 
 _DEFAULT_QUERY_SOCK = "/tmp/universal-protocol/events-query.sock"
@@ -21,13 +19,24 @@ def query_sock() -> str:
 def post_query(
     body: dict[str, Any], *, sock: str | None = None, timeout: float = 30.0
 ) -> dict[str, Any]:
-    """POST ``body`` to ``/v1/query`` and return the JSON response."""
-    path = sock or query_sock()
-    transport = httpx.HTTPTransport(uds=path)
-    with httpx.Client(transport=transport, timeout=timeout) as client:
-        resp = client.post("http://localhost/v1/query", json=body)
-        resp.raise_for_status()
-        return resp.json()
+    """Call the origin resource described by a legacy operation or sql body."""
+    from event_store.query_client import query_member, query_sql
+
+    url = f"unix://{sock or query_sock()}"
+    if body.get("type") == "sql":
+        return query_sql(
+            str(body.get("sql") or ""),
+            params=body.get("params") or None,
+            limit=int(body.get("limit", 100)),
+            url=url,
+            timeout=timeout,
+        )
+    return query_member(
+        str(body.get("name") or ""),
+        body.get("params") or {},
+        url=url,
+        timeout=timeout,
+    )
 
 
 def _operation(
@@ -37,9 +46,12 @@ def _operation(
     sock: str | None = None,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    return post_query(
-        {"type": "operation", "name": name, "params": params},
-        sock=sock,
+    from event_store.query_client import query_member
+
+    return query_member(
+        name,
+        params,
+        url=f"unix://{sock or query_sock()}",
         timeout=timeout,
     )
 
