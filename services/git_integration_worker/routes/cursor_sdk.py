@@ -2323,13 +2323,21 @@ async def _deliver_sdk_closeout(
             ),
         )
         hop_terminal = "failed" if refusal is not None else "completed"
-        await asyncio.to_thread(
-            merge_conductor_closeout_hop_authority,
-            dispatch_id=req.dispatch_id,
-            closeout_body=outcome.body,
-            thread_id=req.thread_id,
-            closeout_turn=turn_number,
-        )
+        # friction 37404: hop merge can raise (DB); a non-terminal dispatch is
+        # worse than a missing hop token. Same locality as 34156 F1.
+        try:
+            await asyncio.to_thread(
+                merge_conductor_closeout_hop_authority,
+                dispatch_id=req.dispatch_id,
+                closeout_body=outcome.body,
+                thread_id=req.thread_id,
+                closeout_turn=turn_number,
+            )
+        except Exception:  # noqa: BLE001 — closeout always marks terminal
+            logger.exception(
+                "merge_conductor_closeout_hop_authority raised dispatch=%s",
+                req.dispatch_id,
+            )
         # friction 34156: park columns before terminal mark so resume_retain is
         # stamped and the bus link can stay open (D3). Import + hook are inside
         # the try so an ImportError cannot skip the terminal mark (1c / F1).
