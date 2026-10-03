@@ -74,7 +74,9 @@ def test_missing_category_records_skip_and_keeps_sibling(tmp_path: Path) -> None
     (root / "categories.yaml").write_text(
         "categories:\n  demo:\n    description: d\n", encoding="utf-8"
     )
-    (root / "demo" / "good.yaml").write_text(_spec("good-pipe", "demo"), encoding="utf-8")
+    (root / "demo" / "good.yaml").write_text(
+        _spec("good-pipe", "demo"), encoding="utf-8"
+    )
     (root / "demo" / "bad.yaml").write_text(_spec("bad-pipe", None), encoding="utf-8")
     registry = PipelineRegistry(
         search_paths=[str(root)],
@@ -83,8 +85,14 @@ def test_missing_category_records_skip_and_keeps_sibling(tmp_path: Path) -> None
     registry.load()
     assert "good-pipe" in registry.pipelines
     assert "bad-pipe" not in registry.pipelines
-    row = next(item for item in registry.catalog_skips if item["pipeline_id"] == "bad-pipe")
-    assert row == {"pipeline_id": "bad-pipe", "reason": "missing_category", "category": ""}
+    row = next(
+        item for item in registry.catalog_skips if item["pipeline_id"] == "bad-pipe"
+    )
+    assert row == {
+        "pipeline_id": "bad-pipe",
+        "reason": "missing_category",
+        "category": "",
+    }
 
 
 def test_unknown_category_records_skip(tmp_path: Path) -> None:
@@ -100,7 +108,9 @@ def test_unknown_category_records_skip(tmp_path: Path) -> None:
     )
     registry.load()
     assert "odd-pipe" not in registry.pipelines
-    row = next(item for item in registry.catalog_skips if item["pipeline_id"] == "odd-pipe")
+    row = next(
+        item for item in registry.catalog_skips if item["pipeline_id"] == "odd-pipe"
+    )
     assert row["reason"] == "unknown_category"
     assert row["category"] == "nope"
     assert "alias" not in row

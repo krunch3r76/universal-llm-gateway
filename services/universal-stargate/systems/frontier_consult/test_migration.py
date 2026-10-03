@@ -11,7 +11,8 @@ path.  No legacy_field_use signals are emitted.  Stragglers surface as 404s.
 
 M5 (pipeline(op="async", result_delivery=...) escape hatch) is an integration
 test requiring a running pipeline.
-Manual verification: POST /api/v1/capabilities/{category}/{id} with result_delivery={...};
+Manual verification: POST /api/v1/capabilities/{category}/{id}
+with result_delivery={...};
 assert execution_id returned; assert pipeline completes with status="completed";
 assert agent-bus thread received ≥1 turn (envelope or agent reply).
 """

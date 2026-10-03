@@ -82,7 +82,8 @@ def test_missing_domain_models_yaml_records_structured_skip(tmp_path: Path) -> N
 
     _write(
         tmp_path / "categories.yaml",
-        "categories:\n  ghost_domain:\n    description: g\n  ok_domain:\n    description: o\n",
+        "categories:\n  ghost_domain:\n    description: g\n"
+        "  ok_domain:\n    description: o\n",
     )
     registry = PipelineRegistry(search_paths=[str(tmp_path)], config_base_dir=tmp_path)
     registry.load()
