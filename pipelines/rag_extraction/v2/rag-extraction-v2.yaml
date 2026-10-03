@@ -2,6 +2,7 @@ schema_version: 6
 id: rag-extraction
 version: "2.1"
 type: rag_extraction
+category: rag_extraction
 description: >
   Extract structured knowledge (entities, topics, facets) from multiple text chunks
   in parallel. Called by the RAG service at index time via virtual model ID.

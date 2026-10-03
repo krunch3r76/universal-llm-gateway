@@ -11,6 +11,7 @@ schema_version: 6
 id: rag-contextualize
 version: "1.0"
 type: rag_contextualize
+category: rag_contextualize
 description: >
   Per-chunk context prefix generation for RAG contextual retrieval.
   Maps a generate step over all chunks in one pipeline call;

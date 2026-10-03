@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
+from capability_tree.vocabulary import CategoryVocabulary
 from universal_logging import get_logger
 
 from ..core.schemas import PipelineSpec
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 _MAX_AVAILABILITY_ENTRIES = 4
 _ENV_SNAPSHOT_DIR = "STARGATE_PIPELINE_REGISTRY_SNAPSHOT_DIR"
 _EXCLUDED_PIPELINE_YAML = frozenset({"prompts.yaml", "models.yaml", "categories.yaml"})
@@ -473,6 +474,7 @@ def _encode_state(registry: PipelineRegistry) -> dict[str, Any]:
         },
         "validation_errors": list(registry._validation_errors),
         "catalog_skips": list(registry._catalog_skips),
+        "category_vocabulary": registry._category_vocabulary.to_state(),
         "permanently_unavailable": [
             [pipeline_id, list(missing)]
             for pipeline_id, missing in registry._permanently_unavailable
@@ -508,6 +510,7 @@ def _decode_state(raw: object) -> dict[str, Any] | None:
             (pipeline_id, list(missing))
             for pipeline_id, missing in raw["permanently_unavailable"]
         ]
+        vocabulary = CategoryVocabulary.from_state(raw["category_vocabulary"])
     except (KeyError, TypeError, ValueError) as exc:
         logger.warning("pipeline registry snapshot state rejected: %s", exc)
         return None
@@ -519,6 +522,7 @@ def _decode_state(raw: object) -> dict[str, Any] | None:
         "domain_models": domain_models,
         "validation_errors": list(raw.get("validation_errors") or []),
         "catalog_skips": list(raw.get("catalog_skips") or []),
+        "category_vocabulary": vocabulary,
         "permanently_unavailable": unavailable,
     }
 
@@ -537,5 +541,6 @@ def _apply_state(registry: PipelineRegistry, state: dict[str, Any]) -> None:
     registry._domain_models = state["domain_models"]
     registry._validation_errors = state["validation_errors"]
     registry._catalog_skips = state["catalog_skips"]
+    registry._category_vocabulary = state["category_vocabulary"]
     registry._permanently_unavailable = state["permanently_unavailable"]
     registry._deferred_pipelines = []

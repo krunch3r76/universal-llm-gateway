@@ -18,6 +18,7 @@ schema_version: 6
 id: ghost-pipe
 version: "1.0"
 type: ghost_domain
+category: ghost_domain
 output: author
 steps:
   - name: author
@@ -31,6 +32,7 @@ schema_version: 6
 id: ok-pipe
 version: "1.0"
 type: ok_domain
+category: ok_domain
 output: author
 steps:
   - name: author
@@ -78,6 +80,10 @@ def test_missing_domain_models_yaml_records_structured_skip(tmp_path: Path) -> N
     _write(ok / "models.yaml", _OK_MODELS)
     _write(ok / "prompts.yaml", _OK_PROMPTS)
 
+    _write(
+        tmp_path / "categories.yaml",
+        "categories:\n  ghost_domain:\n    description: g\n  ok_domain:\n    description: o\n",
+    )
     registry = PipelineRegistry(search_paths=[str(tmp_path)], config_base_dir=tmp_path)
     registry.load()
 
@@ -103,6 +109,10 @@ def test_present_models_yaml_unknown_alias_is_not_missing_file(tmp_path: Path) -
     _write(domain / "models.yaml", _ALIAS_MISS_MODELS)
     _write(domain / "prompts.yaml", _OK_PROMPTS)
 
+    _write(
+        tmp_path / "categories.yaml",
+        "categories:\n  ghost_domain:\n    description: g\n",
+    )
     registry = PipelineRegistry(search_paths=[str(tmp_path)], config_base_dir=tmp_path)
     registry.load()
 

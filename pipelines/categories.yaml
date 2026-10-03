@@ -1,0 +1,29 @@
+categories:
+  assertion_enrichment:
+    description: assertion_enrichment
+  conductor_census:
+    description: conductor_census
+  continuity_checkpoint:
+    description: continuity_checkpoint
+  continuity_consolidate:
+    description: continuity_consolidate
+  cursor_paste_resolve:
+    description: cursor_paste_resolve
+  implement_closeout:
+    description: implement_closeout
+  predicate_extract:
+    description: predicate_extract
+  rag:
+    description: rag
+  rag_contextualize:
+    description: rag_contextualize
+  rag_extraction:
+    description: rag_extraction
+  rag_search:
+    description: rag_search
+  todo_close:
+    description: todo_close
+  vocab_classify:
+    description: vocab_classify
+  writing_exemplar:
+    description: writing_exemplar

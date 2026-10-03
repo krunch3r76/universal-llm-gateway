@@ -1,7 +1,7 @@
 """Async pipeline execution tracker.
 
 In-process record store for pipelines dispatched via
-``POST /api/v1/pipelines/dispatch``. The tracker is the sole writer of
+``POST /api/v1/capabilities/{category}/{id}``. The tracker is the sole writer of
 dispatch-lifecycle signals — route handlers and the background wrapper drive
 transitions, but the signal emission is centralized here so observability
 is independent of the caller.

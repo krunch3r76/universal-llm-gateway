@@ -123,7 +123,7 @@ def confer_steer_judgment(*, stargate_base: str, fable_thread: str, reason: str,
                 return None
             deadline = datetime.now(UTC).timestamp() + wait_s
             while datetime.now(UTC).timestamp() < deadline:
-                poll = client.get(f"{stargate_base.rstrip('/')}/api/v1/pipelines/executions/{exec_id}",
+                poll = client.get(f"{stargate_base.rstrip('/')}/api/v1/executions/{exec_id}",
                                   params={"wait": min(30.0, wait_s)}, timeout=45.0)
                 penv = http_json_status(poll.status_code, poll.text, parsed=poll.json() if poll.status_code < 400 else None)
                 if poll.status_code >= 400:

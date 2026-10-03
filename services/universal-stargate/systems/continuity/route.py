@@ -153,7 +153,7 @@ async def continuity_checkpoint(
 
     async with make_async_client(DEFAULT_STARGATE_URL, timeout=15.0) as client:
         resp = await client.post(
-            "/api/v1/pipelines/dispatch",
+            "/api/v1/capabilities/continuity_checkpoint/continuity-checkpoint-v1",
             json=dispatch.model_dump(exclude_none=True),
         )
 

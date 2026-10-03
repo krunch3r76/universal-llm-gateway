@@ -89,7 +89,7 @@ async def run_prepared_execution_inner(
     a client-disconnection poller on ``pipeline_context.http_request``.
     Sync ``/v1/chat/completions`` callers hold a live connection for the
     duration of execution and want the cancel-on-disconnect ergonomics.
-    Async ``/api/v1/pipelines/dispatch`` callers close the connection
+    Async ``/api/v1/capabilities/{category}/{id}`` callers close the connection
     right after the 202 response — execution lifecycle is detached from
     the caller, so the monitor must be disabled (otherwise every
     non-trivial async run is cancelled at the first poll tick).

@@ -35,6 +35,7 @@ schema_version: 6
 id: todo-close
 version: "1.0"
 type: todo_close
+category: todo_close
 description: >
   Atomic todo audit-trail closure. Orchestrates assertion + relationships +
   reasoning edges + workflow_state update against cortex-api in one call.

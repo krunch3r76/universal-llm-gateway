@@ -111,7 +111,7 @@ def _continuity_async_dispatch(
     *,
     dispatch_thread_id: str,
 ) -> dict[str, Any]:
-    """POST ``/api/v1/pipelines/dispatch`` for consolidate-continuity."""
+    """POST ``/api/v1/capabilities/{category}/{id}`` for consolidate-continuity."""
     t0 = monotonic_now()
     record("mcp.continuity.async.called", pipeline=PIPELINE_ID)
 
@@ -133,7 +133,7 @@ def _continuity_async_dispatch(
         "caller_agent": CALLER_AGENT,
     }
 
-    url = "/api/v1/pipelines/dispatch"
+    url = "/api/v1/capabilities/continuity_consolidate/consolidate-continuity"
     stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)
     try:
         with make_sync_client(stargate_url, timeout=_DISPATCH_TIMEOUT) as client:

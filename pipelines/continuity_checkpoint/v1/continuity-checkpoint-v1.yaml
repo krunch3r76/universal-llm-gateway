@@ -9,6 +9,7 @@ schema_version: 6
 id: continuity-checkpoint-v1
 version: "1.0"
 type: continuity_checkpoint
+category: continuity_checkpoint
 description: >
   Seal an idle transcript window, optionally pre-consolidate via cursor-sdk,
   and post a CHECKPOINT turn with machine anchors on a continuity root lane.

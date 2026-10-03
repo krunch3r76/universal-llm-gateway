@@ -2,6 +2,7 @@ schema_version: 6
 id: rag-search
 version: "1.0"
 type: rag_search
+category: rag_search
 description: >
   RAG search pipeline (v2 home). Retrieval and rerank handlers are copied from
   rag_context_v1; request step enablement uses step_overrides / skip_steps.

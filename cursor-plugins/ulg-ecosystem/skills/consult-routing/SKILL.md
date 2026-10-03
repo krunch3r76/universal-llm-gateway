@@ -499,7 +499,7 @@ operator ratify
 **Happy-path composition (advisory until operator ratify).** Mechanical work is
 three layers. Satellites serve HTTP resources (`[universal:satellite]`). **Pipelines
 are the composer for any compound, inference-bearing, or replayable step** —
-`pipeline(op="run"|"async")` / `POST :9999/api/v1/pipelines/dispatch` against hub
+`pipeline(op="run"|"async")` / `POST :9999/api/v1/capabilities/{category}/{id}` against hub
 `pipelines/{domain}/v1/` or personal `pipelines.local/` — and are addressed as
 one more `:9999` resource. **Scripts, ticks, and circles are thin clients**:
 trigger + reach + SHA/JSON gate + friction on failure (O2′). A script never

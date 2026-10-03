@@ -19,6 +19,7 @@ schema_version: 6
 id: implement-closeout
 version: "1.0"
 type: implement_closeout
+category: implement_closeout
 description: >
   Apply ImplementCloseout source-specific lifecycle adapters. Resolves
   source_ref via parse_source_ref, runs run_adapters, reconciles status.

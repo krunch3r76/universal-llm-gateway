@@ -169,9 +169,35 @@ class PipelineValidator:
             step_id,
         )
 
+    def _record_unknown_category(self, pipeline: PipelineSpec) -> None:
+        existing = next(
+            (
+                row
+                for row in self._registry._catalog_skips
+                if row.get("pipeline_id") == pipeline.id
+                and row.get("reason") == "unknown_category"
+            ),
+            None,
+        )
+        if existing is not None:
+            return
+        self._registry._catalog_skips.append(
+            {
+                "pipeline_id": pipeline.id,
+                "reason": "unknown_category",
+                "category": pipeline.category,
+            }
+        )
+
     def _validate_pipeline(self, pipeline: PipelineSpec) -> list[str]:
         """Validate a single pipeline configuration."""
         errors = []
+        if pipeline.category not in self._registry._category_vocabulary:
+            self._record_unknown_category(pipeline)
+            errors.append(
+                f"Pipeline '{pipeline.id}': category {pipeline.category!r} "
+                "is not in the vocabulary"
+            )
         step_ids = {step.id for step in pipeline.steps}
 
         if pipeline.id == "rag-search":

@@ -1,7 +1,7 @@
 """Persistent journal for terminal async-dispatch tracker records.
 
 The in-memory tracker is the hot path. This module provides a cold-path
-sqlite journal for terminal records so ``GET /api/v1/pipelines/executions/{id}``
+sqlite journal for terminal records so ``GET /api/v1/executions/{id}``
 can survive Stargate restarts.
 """
 

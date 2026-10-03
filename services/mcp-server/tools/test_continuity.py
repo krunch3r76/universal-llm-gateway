@@ -120,7 +120,7 @@ def test_consolidate_dispatches_with_execution_id(continuity_fn) -> None:
         result = continuity_fn(op="consolidate", trigger_thread="10303", turn=54)
 
     assert result["execution_id"] == "exec-consolidate-9"
-    assert posted["url"] == "/api/v1/pipelines/dispatch"
+    assert posted["url"] == "/api/v1/capabilities/continuity_consolidate/consolidate-continuity"
     body = posted["body"]
     assert body["model"] == "consolidate-continuity"
     assert body["dispatch_thread_id"] == "10223"

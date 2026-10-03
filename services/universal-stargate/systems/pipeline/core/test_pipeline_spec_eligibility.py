@@ -53,6 +53,7 @@ def _pipeline(
         id="test-pipeline",
         version="1",
         type="test",
+        category="test",
         options=options,
         steps=steps,
         output=output,
@@ -68,7 +69,9 @@ def test_ineligible_when_zero_steps() -> None:
     # Defensive: malformed pipeline must not accidentally stream.
     # Zero-step pipelines are rejected upstream by other validation; the
     # predicate must still return False on that branch independently.
-    pipeline = PipelineSpec(id="x", version="1", type="test", steps=[], output="reply")
+    pipeline = PipelineSpec(
+        id="x", version="1", type="test", category="test", steps=[], output="reply"
+    )
     assert pipeline.is_stream_passthrough_eligible is False
 
 

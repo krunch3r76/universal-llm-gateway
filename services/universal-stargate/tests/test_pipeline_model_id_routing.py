@@ -82,6 +82,7 @@ def _make_context(registry: object) -> PipelineContext:
         id="p",
         version="1",
         type="answer_v1",
+        category="answer_v1",
         steps=[],
         output="out",
         options=PipelineOptions(skip_token_counting=False),

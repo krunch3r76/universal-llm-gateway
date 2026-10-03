@@ -181,7 +181,7 @@ def test_get_pipeline_execution_passes_wait_to_recovery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from systems.proxy.dependencies import get_auth_dependency, get_proxy
-    from systems.proxy.routers.api import pipelines_dispatch as mod
+    from systems.proxy.routers.api import executions as mod
 
     tracker = MagicMock()
     tracker.wait_for_terminal = AsyncMock(return_value=None)
@@ -209,7 +209,7 @@ def test_get_pipeline_execution_passes_wait_to_recovery(
     app.dependency_overrides[get_auth_dependency] = lambda: {}
 
     response = TestClient(app).get(
-        "/pipelines/executions/exec-route-wait",
+        "/executions/exec-route-wait",
         params={"wait": 15},
     )
     assert response.status_code == 200, response.text

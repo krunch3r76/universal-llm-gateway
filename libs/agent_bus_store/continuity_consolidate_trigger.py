@@ -226,7 +226,7 @@ def _schedule_debounced(root: str, trigger_thread: str, turn_number: int) -> Non
 
 
 def enqueue_consolidate(options: dict[str, Any]) -> str | None:
-    """Fire-and-forget ``POST /api/v1/pipelines/dispatch``; returns the execution id."""
+    """Fire-and-forget ``POST /api/v1/capabilities/{category}/{id}``; returns the execution id."""
     from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 
     root = options["root_thread"]
@@ -244,7 +244,10 @@ def enqueue_consolidate(options: dict[str, Any]) -> str | None:
         "caller_agent": CALLER_AGENT,
     }
     with make_sync_client(DEFAULT_STARGATE_URL, timeout=_DISPATCH_TIMEOUT_S) as client:
-        resp = client.post("/api/v1/pipelines/dispatch", json=body)
+        resp = client.post(
+            "/api/v1/capabilities/continuity_consolidate/consolidate-continuity",
+            json=body,
+        )
     resp.raise_for_status()
     execution_id = resp.json().get("execution_id")
     log.info(

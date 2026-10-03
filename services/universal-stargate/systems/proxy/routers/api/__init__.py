@@ -11,8 +11,8 @@ from systems.continuity import continuity_router
 from .model_availability_watch import router as model_availability_watch_router
 from .model_capacity import router as model_capacity_router
 from .model_status import router as model_status_router
-from .pipelines import router as pipelines_router
-from .pipelines_dispatch import router as pipelines_dispatch_router
+from .capabilities import router as capabilities_router
+from .executions import router as executions_router
 from .profiles import router as profiles_router
 from .providers_cdp import router as providers_cdp_router
 from .providers_cursor import router as providers_cursor_router
@@ -36,8 +36,8 @@ router.include_router(providers_cursor_router)
 router.include_router(gateways_router)
 router.include_router(model_status_router)
 router.include_router(model_availability_watch_router)
-router.include_router(pipelines_router)
-router.include_router(pipelines_dispatch_router)
+router.include_router(capabilities_router)
+router.include_router(executions_router)
 router.include_router(report_model_router)
 router.include_router(cancel_router)
 router.include_router(rag_scopes_router)

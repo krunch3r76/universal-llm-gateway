@@ -100,7 +100,7 @@ class PipelineRegistry:
     Registry for pipeline configurations.
 
     Loads pipelines, models, and prompts from YAML configuration.
-    Validates all configurations at load time (fail-fast).
+    Invalid specs are skipped; the registry continues with the rest.
 
     Filtering: Pipeline p loaded ⟺ each required model passes *is_model_available*.
     """
@@ -139,6 +139,9 @@ class PipelineRegistry:
         self.prompts: dict[str, Any] = {}
         self._validation_errors: list[str] = []
         self._catalog_skips: list[dict[str, str]] = []
+        from capability_tree.vocabulary import CategoryVocabulary
+
+        self._category_vocabulary = CategoryVocabulary.empty()
         self._deferred_pipelines: list[tuple[Path, str, Path | None]] = []
         self._permanently_unavailable: list[tuple[str, list[str]]] = []
 
@@ -178,10 +181,7 @@ class PipelineRegistry:
         ``last_load_was_full`` is True only for the YAML walk.
 
         Pre: search_paths ≠ ∅
-        Post: pipelines ∪ models ∪ prompts loaded ∧ validated
-
-        Raises:
-            PipelineConfigError: If validation errors found
+        Post: pipelines ∪ models ∪ prompts loaded; invalid specs skipped
         """
         from .snapshot import (
             definition_fingerprint,
@@ -234,6 +234,7 @@ class PipelineRegistry:
         self._validation_errors = []
         self._catalog_skips = []
         self._permanently_unavailable = []
+        self._load_category_vocabulary()
 
         for search_path in self._search_paths:
             try:
@@ -327,6 +328,7 @@ class PipelineRegistry:
         self.prompts = fresh.prompts
         self._validation_errors = fresh._validation_errors
         self._catalog_skips = fresh._catalog_skips
+        self._category_vocabulary = fresh._category_vocabulary
         self._permanently_unavailable = fresh._permanently_unavailable
 
         new_pipeline_count = len(self.pipelines)
@@ -346,6 +348,22 @@ class PipelineRegistry:
             )
 
         return (old_pipeline_count, new_pipeline_count)
+
+    def _resolved_search_roots(self) -> list[Path]:
+        roots: list[Path] = []
+        for search_path in self._search_paths:
+            expanded = Path(search_path).expanduser()
+            if not expanded.is_absolute():
+                roots.append((self._config_base_dir / expanded).resolve())
+            else:
+                roots.append(expanded.resolve())
+        return roots
+
+    def _load_category_vocabulary(self) -> None:
+        from capability_tree.vocabulary import CategoryVocabulary
+
+        paths = [root / "categories.yaml" for root in self._resolved_search_roots()]
+        self._category_vocabulary = CategoryVocabulary.load(paths)
 
     def _should_filter_pipeline(self, pipeline: PipelineSpec) -> tuple[bool, set[str]]:
         """

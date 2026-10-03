@@ -28,7 +28,7 @@ def _poll_result(client, execution_id: str, *, timeout_s: int = 600) -> dict:
 
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        resp = client.get(f"/api/v1/pipelines/executions/{execution_id}")
+        resp = client.get(f"/api/v1/executions/{execution_id}")
         resp.raise_for_status()
         payload = resp.json()
         status = str(payload.get("status") or "")

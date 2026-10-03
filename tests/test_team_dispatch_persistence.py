@@ -1,7 +1,7 @@
 """End-to-end persistence tests for team-dispatch (Phase D).
 
 Live-service integration: ``POST /api/v1/team/dispatch`` with
-``dispatch_thread_id`` and poll ``GET /api/v1/pipelines/executions/{id}``.
+``dispatch_thread_id`` and poll ``GET /api/v1/executions/{id}``.
 
 Mirrors ``tests/test_cortex_chat_openai_persistence.py`` (11-turn archive
 parity, recall, thread isolation).
@@ -83,7 +83,7 @@ async def _poll_terminal(
 ) -> dict[str, Any]:
     for _ in range(_MAX_POLLS):
         resp = await client.get(
-            f"/api/v1/pipelines/executions/{execution_id}",
+            f"/api/v1/executions/{execution_id}",
             params={"wait": _POLL_WAIT},
         )
         assert resp.status_code == 200, resp.text

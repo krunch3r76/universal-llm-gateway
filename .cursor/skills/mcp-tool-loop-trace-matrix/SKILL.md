@@ -112,7 +112,7 @@ POST http://localhost:9999/api/v1/frontier/dispatch
 }
 ```
 
-Poll frontier: `GET /api/v1/pipelines/executions/{execution_id}?wait=55`  
+Poll frontier: `GET /api/v1/executions/{execution_id}?wait=55`  
 If using `team_dispatch` instead of raw frontier: `job=freeform|skeptic`, never `reviewer`.
 
 ### L1 — two read-only tools (replay fidelity)

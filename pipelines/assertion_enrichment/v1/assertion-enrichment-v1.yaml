@@ -19,6 +19,7 @@ schema_version: 6
 id: assertion-enrichment
 version: "1.0"
 type: assertion_enrichment
+category: assertion_enrichment
 description: >
   Generate prospective_summary and events_json for an assertion and write
   them back via cortex-api assertion_update. Idempotent per field

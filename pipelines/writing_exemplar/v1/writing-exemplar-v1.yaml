@@ -2,6 +2,7 @@ schema_version: 6
 id: en-en-writing-exemplar-v1
 version: "1.0"
 type: writing_exemplar
+category: writing_exemplar
 description: >
   Poetry-pipeline twin for English register. Retrieves writing_exemplars via
   rag-context, then rewrites sourceNs.text with that block bound as

@@ -111,6 +111,7 @@ class PipelineSpec(BaseModel):
     id: str
     version: str
     type: str  # Open - "translation", "code_review", "multimodal", etc.
+    category: str = Field(min_length=1)
     options: PipelineOptions = Field(default_factory=PipelineOptions)
     steps: list[StepConfig]
     output: str

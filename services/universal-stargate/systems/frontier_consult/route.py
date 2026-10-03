@@ -548,7 +548,15 @@ async def _dispatch(
     async with make_async_client(
         DEFAULT_STARGATE_URL, timeout=_FORWARD_TIMEOUT
     ) as client:
-        forward = await client.post("/api/v1/pipelines/dispatch", json=dispatch_body)
+        from systems.pipeline.registry.capability_source import build_tree
+
+        tree = build_tree(proxy)
+        member = tree.resolve(dispatch_body["model"])
+        if member is None:
+            from systems.proxy.routers.api.capabilities import _not_found
+
+            return _not_found(tree, dispatch_body["model"])
+        forward = await client.post(member.canonical_url, json=dispatch_body)
 
     response.status_code = forward.status_code
     try:

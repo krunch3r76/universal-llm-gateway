@@ -63,7 +63,7 @@ _CDP_ASK = os.environ.get("CDP_HOP_CDP_ASK", "http://jupiter:8770").rstrip("/")
 _DISPATCH = f"{_STARGATE}/api/v1/team/dispatch"
 _ACTIVE_WORK = f"{_CDP_ASK}/v1/project-ask/active-work"
 _HARVEST_URL = f"{_CDP_ASK}/v1/cse-session/harvest"
-_EXECUTION = f"{_STARGATE}/api/v1/pipelines/executions"
+_EXECUTION = f"{_STARGATE}/api/v1/capabilities/executions"
 
 _EMAIL_BRIDGE_SOCK = os.environ.get("EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock")
 

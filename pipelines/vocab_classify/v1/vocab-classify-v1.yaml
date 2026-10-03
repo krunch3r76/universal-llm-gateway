@@ -17,6 +17,7 @@ schema_version: 6
 id: vocab-classify-v1
 version: "2.0"
 type: vocab_classify
+category: vocab_classify
 description: >
   Per-scope RAG-grounded vocabulary classification into registers with SQLite persist.
   Maps classify over scopes for fault isolation and parallelism.

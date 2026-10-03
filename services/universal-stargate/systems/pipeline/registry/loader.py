@@ -327,6 +327,19 @@ class PipelineLoader:
         except (yaml.YAMLError, OSError) as e:
             logger.error(f"Failed to load pipeline from {path}: {e}")
         except ValidationError as e:
+            if any(tuple(err.get("loc") or ()) == ("category",) for err in e.errors()):
+                raw_id = (
+                    pipeline_data.get("id")
+                    if isinstance(pipeline_data, dict)
+                    else None
+                )
+                self._registry._catalog_skips.append(
+                    {
+                        "pipeline_id": str(raw_id or path.stem),
+                        "reason": "missing_category",
+                        "category": "",
+                    }
+                )
             logger.error(f"Pipeline schema validation failed for {path}: {e}")
         except PipelineConfigError as e:
             logger.error(f"Pipeline config error for {path}: {e}")

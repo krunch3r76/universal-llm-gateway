@@ -3,7 +3,7 @@
 ``PipelineExecutionResult`` / ``PipelineExecutionError`` are the canonical
 success / failure payloads; ``PipelineExecutionRecord`` is the per-execution row
 the tracker retains, with ``to_dict`` producing the
-``GET /api/v1/pipelines/executions/{id}`` response shape. All three are part of
+``GET /api/v1/executions/{id}`` response shape. All three are part of
 the package public surface (re-exported from ``__init__``).
 """
 
@@ -159,7 +159,7 @@ class PipelineExecutionRecord:
     delivery: DeliveryState | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to the shape returned by ``GET /api/v1/pipelines/executions/{id}``."""  # noqa: E501
+        """Serialize to the shape returned by ``GET /api/v1/executions/{id}``."""  # noqa: E501
         result_payload: dict[str, Any] | None = None
         if self.result is not None:
             result_payload = {

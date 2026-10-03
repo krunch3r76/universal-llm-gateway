@@ -167,7 +167,7 @@ async def _poll_execution(
 ) -> dict[str, Any]:
     for _ in range(_MAX_POLLS):
         resp = await stargate.get(
-            f"/api/v1/pipelines/executions/{execution_id}",
+            f"/api/v1/executions/{execution_id}",
             params={"wait": wait},
         )
         assert resp.status_code == 200, resp.text
@@ -199,7 +199,7 @@ async def _wait_for_thread_delivery(
             break
         await asyncio.sleep(0.25)
         peek = await stargate.get(
-            f"/api/v1/pipelines/executions/{execution_id}",
+            f"/api/v1/executions/{execution_id}",
             params={"wait": 0},
         )
         if peek.status_code == 200:
@@ -292,7 +292,7 @@ async def test_d1_tracker_running_before_completion_live() -> None:
                 model="openai/gpt-5.4",
             )
             running = await stargate.get(
-                f"/api/v1/pipelines/executions/{admit['execution_id']}",
+                f"/api/v1/executions/{admit['execution_id']}",
                 params={"wait": 0},
             )
             assert running.status_code == 200, running.text
@@ -329,7 +329,7 @@ async def test_d5_cancel_mid_flight_live() -> None:
 
             await asyncio.sleep(0.05)
             cancel_resp = await stargate.delete(
-                f"/api/v1/pipelines/executions/{execution_id}"
+                f"/api/v1/executions/{execution_id}"
             )
             assert cancel_resp.status_code == 200, cancel_resp.text
             payload = cancel_resp.json()

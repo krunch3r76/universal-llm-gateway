@@ -303,7 +303,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
         )
 
         # Async dispatch tracker (phase 1: in-process, TTL-pruned records).
-        # Shared by POST /api/v1/pipelines/dispatch + GET .../executions/{id}.
+        # Shared by POST /api/v1/capabilities/{category}/{id} + GET .../executions/{id}.
         from functools import partial
 
         from systems.pipeline.core.execution.async_tracker import (

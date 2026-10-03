@@ -489,7 +489,7 @@ def test_get_pipeline_execution_returns_recovered_200(
     from fastapi import FastAPI
 
     from systems.proxy.dependencies import get_auth_dependency, get_proxy
-    from systems.proxy.routers.api import pipelines_dispatch as mod
+    from systems.proxy.routers.api import executions as mod
 
     tracker = MagicMock()
     tracker.wait_for_terminal = AsyncMock(return_value=None)
@@ -517,7 +517,7 @@ def test_get_pipeline_execution_returns_recovered_200(
     app.dependency_overrides[get_proxy] = lambda: MagicMock()
     app.dependency_overrides[get_auth_dependency] = lambda: {}
 
-    response = TestClient(app).get("/pipelines/executions/exec-route")
+    response = TestClient(app).get("/executions/exec-route")
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["recovered_from"] == "bus_thread"
@@ -530,7 +530,7 @@ def test_get_pipeline_execution_still_404_when_no_signal(
     from fastapi import FastAPI
 
     from systems.proxy.dependencies import get_auth_dependency, get_proxy
-    from systems.proxy.routers.api import pipelines_dispatch as mod
+    from systems.proxy.routers.api import executions as mod
 
     tracker = MagicMock()
     tracker.wait_for_terminal = AsyncMock(return_value=None)
@@ -548,6 +548,6 @@ def test_get_pipeline_execution_still_404_when_no_signal(
     app.dependency_overrides[get_proxy] = lambda: MagicMock()
     app.dependency_overrides[get_auth_dependency] = lambda: {}
 
-    response = TestClient(app).get("/pipelines/executions/unknown-exec")
+    response = TestClient(app).get("/executions/unknown-exec")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "execution_id_expired_or_unknown"

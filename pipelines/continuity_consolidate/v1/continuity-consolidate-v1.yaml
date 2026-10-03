@@ -2,7 +2,7 @@
 #
 # Trigger: agent_bus_store.continuity_consolidate_trigger fires one async run
 # per CLOSEOUT-subject turn that lands on (or in a lane of) a `role:root`
-# house: POST /api/v1/pipelines/dispatch with dispatch_thread_id=<root>.
+# house: POST /api/v1/capabilities/{category}/{id} with dispatch_thread_id=<root>.
 # The bus is transport only — the gateway container carries no bus token, so
 # the hook pre-fetches thread row, tip CHECKPOINT residue and the trigger
 # turn and ships them as pipeline_options. Nothing here reads the bus.
@@ -25,7 +25,7 @@
 # no-op (`skip: superseded_by_watermark`).
 #
 # Manual / P6 replay (same path the hook uses):
-#   POST /api/v1/pipelines/dispatch
+#   POST /api/v1/capabilities/{category}/{id}
 #     {"model": "consolidate-continuity", "messages": [{"role":"user","content":"consolidate"}],
 #      "dispatch_thread_id": "10223",
 #      "pipeline_options": {"root_thread": "10223", "root": {...}, "tip_checkpoint": {...},
@@ -39,6 +39,7 @@ schema_version: 6
 id: consolidate-continuity
 version: "1.0"
 type: continuity_consolidate
+category: continuity_consolidate
 description: >
   Fold one CLOSEOUT into the Cortex graph of its root continuity house —
   watermark, mission line, resume state, claims and relationships — so a

@@ -3,8 +3,8 @@
 Stargate's async pipeline dispatch surface decouples pipeline execution from
 the request/response lifecycle. Clients (MCP tools, agent automation) that
 cannot tolerate multi-minute synchronous waits spawn pipelines via
-`POST /api/v1/pipelines/dispatch` and poll results via
-`GET /api/v1/pipelines/executions/{execution_id}`.
+`POST /api/v1/capabilities/{category}/{id}` and poll results via
+`GET /api/v1/executions/{execution_id}`.
 
 Phase 1 introduced the **transport boundary**: admission, in-process tracker,
 polling endpoint, and MCP tool pair. Push delivery is shipped: the tracker
@@ -20,7 +20,7 @@ MCP client ──► :9999 host Stargate ─UDS─► edge Stargate ──► Pi
   │                                           ├── async: execute_async() (bg task)
   │                                           │         └─► tracker.complete/fail
   │                                           │
-  └── GET /api/v1/pipelines/executions/{id} ◄─┘
+  └── GET /api/v1/executions/{id} ◄─┘
           └─► tracker.wait_for_terminal(wait)
 ```
 
@@ -29,7 +29,7 @@ new ingress. All client interaction is HTTP against Stargate's existing port.
 
 ## Endpoints
 
-### `POST /api/v1/pipelines/dispatch` → `202 Accepted`
+### `POST /api/v1/capabilities/{category}/{id}` → `202 Accepted`
 
 Admission-only. Validates the pipeline exists, reserves a tracker slot, spawns
 an `asyncio.Task` running `PipelineExecutor.execute_async(...)`, and returns
@@ -62,7 +62,7 @@ Response:
 }
 ```
 
-Error envelope (all `/api/v1/pipelines/*` errors):
+Error envelope (all `/api/v1/capabilities and /api/v1/executions` errors):
 
 ```json
 { "error": { "code": "...", "message": "..." } }
@@ -74,7 +74,7 @@ Error envelope (all `/api/v1/pipelines/*` errors):
 | 404 | `pipeline_not_found` | unknown pipeline id |
 | 503 | `capacity_exhausted` | tracker saturated with running executions |
 
-### `GET /api/v1/pipelines/executions/{execution_id}`
+### `GET /api/v1/executions/{execution_id}`
 
 Returns the tracker record. Supports `?wait=<seconds>` (server-clamped to 60s)
 for short-poll semantics — well under the MCP 300s read timeout.
@@ -124,7 +124,7 @@ Callers that need a uniform reasoning-presence check should use
 
 404 with `code="execution_not_found"` if unknown or evicted by TTL.
 
-### `GET /api/v1/pipelines/dispatch/stats`
+### `GET /api/v1/executions/stats`
 
 Returns a tracker occupancy snapshot:
 
@@ -144,7 +144,7 @@ Returns a tracker occupancy snapshot:
 Useful for dashboards and admission-aware dispatchers that want to inspect load
 before enqueueing more async runs.
 
-### `DELETE /api/v1/pipelines/executions/{execution_id}`
+### `DELETE /api/v1/executions/{execution_id}`
 
 Cancels an in-flight async-dispatched execution by cancelling its retained
 background task. Response is the terminal tracker record (status `failed`,
@@ -171,7 +171,7 @@ lives in `asyncio.Event` per record.
 ## PipelineExecutor Refactor
 
 `PipelineExecutor.execute()` was decomposed to support both the sync
-(`/v1/chat/completions`) and async (`/api/v1/pipelines/dispatch`) surfaces
+(`/v1/chat/completions`) and async (`/api/v1/capabilities/{category}/{id}`) surfaces
 without duplicating setup or DAG-execution logic:
 
 ```
@@ -196,9 +196,9 @@ The `X-Pipeline-Execution-Id` response header invariant is preserved via
 The unified `pipeline` MCP tool dispatches by `op`:
 
 - `pipeline(op="async", pipeline_id=…, messages=…, options=?, result_delivery=?)` —
-  relay to `POST /api/v1/pipelines/dispatch`; returns `execution_id` immediately
+  relay to `POST /api/v1/capabilities/{category}/{id}`; returns `execution_id` immediately
 - `pipeline(op="result", execution_id=…, wait_seconds=0.0)` — relay to
-  `GET /api/v1/pipelines/executions/{id}?wait=…`; short-polls with server-side
+  `GET /api/v1/executions/{id}?wait=…`; short-polls with server-side
   wait clamped to 60s
 - `pipeline(op="run", pipeline_id=…, messages=…, options=?)` — synchronous execution
 - `pipeline(op="validate", pipeline_id=…)` — validate YAML + handler registration
@@ -276,7 +276,7 @@ All three signals are `role: observation`, `scope: node`:
   `result_delivery`, or no delivery config on a record when a sender is
   wired (`reason ∈ {incomplete_delivery_config, no_delivery_config}`)
 - `pipeline.dispatch.cancelled` — explicit operator cancellation (`DELETE
-  /api/v1/pipelines/executions/{id}`), payload `{pipeline_id, execution_id, source}`
+  /api/v1/executions/{id}`), payload `{pipeline_id, execution_id, source}`
 
 ### Failure model
 
@@ -293,7 +293,7 @@ identities.
 
 Terminal tracker records are journaled to `~/.gateway/pipeline-dispatch.db`
 (`$DATA_DIR/pipeline-dispatch.db` when `DATA_DIR` is set) and survive Stargate
-restart. `GET /api/v1/pipelines/executions/{id}` checks the in-memory tracker
+restart. `GET /api/v1/executions/{id}` checks the in-memory tracker
 first, then falls back to this sqlite journal on tracker miss.
 
 Running records are not durable. In-flight dispatches are cancelled on restart

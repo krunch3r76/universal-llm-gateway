@@ -5,7 +5,7 @@ from here. Owns:
 
 - ``PreparedPipelineExecution`` — dataclass that carries resolved DAG
   state between sync and async entry points so both
-  ``/v1/chat/completions`` and ``/api/v1/pipelines/dispatch`` execute
+  ``/v1/chat/completions`` and ``/api/v1/capabilities/{category}/{id}`` execute
   the same DAG without re-preparation.
 - ``_RequestExecutorProtocol`` / ``_PipelineRequestContextProtocol`` —
   minimal duck-typed contracts so helper modules can type-annotate
@@ -62,7 +62,7 @@ class PreparedPipelineExecution:
 
     Holds the resolved pipeline spec, DAG context, node map, extracted input
     text, and DAG executor so both ``/v1/chat/completions`` and
-    ``/api/v1/pipelines/dispatch`` execute the same DAG without duplicating
+    ``/api/v1/capabilities/{category}/{id}`` execute the same DAG without duplicating
     setup or re-parsing results.
     """
 

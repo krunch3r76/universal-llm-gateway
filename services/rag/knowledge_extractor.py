@@ -305,8 +305,15 @@ async def submit_extraction_pipeline(
         {"id": cid, "text": text}
         for cid, text in zip(chunk_ids, chunk_texts, strict=True)
     ]
+    listed = await _client.get(
+        f"{STARGATE_URL}/api/v1/capabilities",
+        params={"id": config.pipeline},
+        timeout=30.0,
+    )
+    listed.raise_for_status()
+    target = listed.json()["url"]
     response = await _client.post(
-        f"{STARGATE_URL}/api/v1/pipelines/dispatch",
+        f"{STARGATE_URL}{target}",
         json={
             "model": config.pipeline,
             "messages": [{"role": "user", "content": "extract"}],
@@ -339,7 +346,7 @@ async def poll_extraction_result(
             )
         wait = min(_POLL_WAIT_S, remaining)
         response = await _client.get(
-            f"{STARGATE_URL}/api/v1/pipelines/executions/{execution_id}",
+            f"{STARGATE_URL}/api/v1/executions/{execution_id}",
             params={"wait": wait},
             timeout=wait + 10.0,
         )
@@ -371,7 +378,7 @@ async def cancel_extraction_execution(execution_id: str) -> None:
     """
     try:
         response = await _client.delete(
-            f"{STARGATE_URL}/api/v1/pipelines/executions/{execution_id}",
+            f"{STARGATE_URL}/api/v1/executions/{execution_id}",
             timeout=10.0,
         )
         response.raise_for_status()

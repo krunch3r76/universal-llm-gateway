@@ -2,6 +2,7 @@ schema_version: 6
 id: en-en-writing-exemplar-v2
 version: "2.0"
 type: writing_exemplar
+category: writing_exemplar
 description: >
   Professional speech. Three same-language drafts of the source, then a
   judge that copies one. No retrieved corpus. Written note, spoken note,

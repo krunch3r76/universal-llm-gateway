@@ -21,6 +21,7 @@ schema_version: 6
 id: cursor-paste-resolve
 version: "1.0"
 type: cursor_paste_resolve
+category: cursor_paste_resolve
 description: >
   assertion_get + read implementer + write tmp/prompts/cursor-paste-<kind>-<id>.md,
   then optional Glass/IDE script launch or cursor_sdk team_dispatch admit.

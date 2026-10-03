@@ -43,7 +43,7 @@ def _build_envelope(
         "pipeline": record.pipeline,
         "status": record.status,
         "completed_at": record.completed_at,
-        "poll": f"GET /api/v1/pipelines/executions/{record.execution_id}",
+        "poll": f"GET /api/v1/executions/{record.execution_id}",
     }
     if result is not None:
         envelope["usage"] = result.usage

@@ -22,6 +22,7 @@ schema_version: 6
 id: predicate-extract
 version: "1.0"
 type: predicate_extract
+category: predicate_extract
 description: >
   Extract a predicate-form (subject-predicate-object) projection for an
   assertion's claim and write it back to cortex-api. Idempotent on

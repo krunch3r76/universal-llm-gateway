@@ -1,7 +1,7 @@
 """Pipeline tool — unified ``pipeline(op, …)`` primary MCP surface.
 
 Single primary tool dispatching by
-``op ∈ {run, async, result, validate, stats, cancel}``
+``op ∈ {run, async, result, validate, stats, cancel, list}``
 to per-op private handlers. Enables agents to run pipelines synchronously,
 dispatch async jobs, fetch results, and validate configs — all through
 one first-class schema.
@@ -46,9 +46,9 @@ def _fetch_pipelines_metadata() -> dict[str, Any]:
     """Fetch pipeline registry metadata from Stargate.
 
     Returns:
-        Decoded JSON payload from ``/api/v1/pipelines``.
+        Decoded JSON payload from ``/api/v1/capabilities``.
     """
-    url = "/api/v1/pipelines"
+    url = "/api/v1/capabilities"
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
@@ -85,7 +85,7 @@ def _refresh_pipeline_timeouts() -> None:
         )
         return
 
-    pipelines = data.get("pipelines", {})
+    pipelines = data.get("members", data.get("pipelines", {}))
     if not isinstance(pipelines, dict):
         logger.warning(
             "Pipeline metadata fetch returned unexpected payload shape: %r",
@@ -273,9 +273,20 @@ def _pipeline_async(
     if caller_agent:
         body["caller_agent"] = caller_agent
 
-    url = "/api/v1/pipelines/dispatch"
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
+            listed = client.get("/api/v1/capabilities", params={"id": pipeline_id})
+            if listed.status_code >= 400:
+                try:
+                    return listed.json()
+                except ValueError:
+                    return {
+                        "error": {
+                            "code": f"http_{listed.status_code}",
+                            "message": listed.text[:500],
+                        }
+                    }
+            url = listed.json()["url"]
             resp = client.post(url, json=body)
         if resp.status_code >= 400:
             try:
@@ -316,7 +327,7 @@ def _pipeline_async(
 
 def _pipeline_stats() -> dict[str, Any]:
     """Fetch tracker occupancy snapshot from Stargate."""
-    url = "/api/v1/pipelines/dispatch/stats"
+    url = "/api/v1/executions/stats"
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
@@ -331,7 +342,7 @@ def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
     giw_body = _giw_cancel_dispatch(execution_id)
     if giw_body is not None:
         return giw_body
-    url = f"/api/v1/pipelines/executions/{execution_id}"
+    url = f"/api/v1/executions/{execution_id}"
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
             resp = client.delete(url)
@@ -372,7 +383,7 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     wait_clamped = max(0.0, min(wait_seconds, _RESULT_MAX_WAIT))
     http_timeout = wait_clamped + _RESULT_POLL_BUFFER
 
-    url = f"/api/v1/pipelines/executions/{execution_id}"
+    url = f"/api/v1/executions/{execution_id}"
     try:
         with make_sync_client(STARGATE_URL, timeout=http_timeout) as client:
             resp = client.get(url, params={"wait": wait_clamped})
@@ -397,72 +408,58 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
         return {"error": {"code": "http_error", "message": str(exc)}}
 
 
+def _pipeline_list(category: str | None = None) -> dict[str, Any]:
+    """Relay ``GET /api/v1/capabilities`` with an optional category filter."""
+    params = {"category": category} if category else None
+    try:
+        with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
+            resp = client.get("/api/v1/capabilities", params=params)
+        if resp.status_code >= 400:
+            try:
+                return resp.json()
+            except ValueError:
+                return {
+                    "error": {
+                        "code": f"http_{resp.status_code}",
+                        "message": resp.text[:500],
+                    }
+                }
+        return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": {"code": "stargate_http_error", "message": str(exc)}}
+
+
 def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
     t0 = monotonic_now()
     record("mcp.pipeline.validate.called", pipeline=pipeline_id)
 
     try:
-        pipelines_data = _fetch_pipelines_metadata()
+        with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
+            resp = client.get("/api/v1/capabilities", params={"id": pipeline_id})
     except httpx.ConnectError as e:
-        logger.warning(
-            "Stargate connection failed during pipeline validation for %s: %s",
-            pipeline_id,
-            e,
-        )
         return _validate_error(pipeline_id, f"Stargate not reachable: {e}")
-    except httpx.HTTPStatusError as e:
-        logger.warning(
-            "HTTP status error during pipeline validation for %s: %s",
-            pipeline_id,
-            e.response.status_code,
-        )
-        return _validate_error(
-            pipeline_id,
-            f"Pipeline API error: {e.response.status_code}",
-        )
-    except Exception as e:
-        logger.exception(
-            "Unexpected error during pipeline validation for %s", pipeline_id
-        )
+    except httpx.HTTPError as e:
         return _validate_error(pipeline_id, f"Validation failed: {e}")
 
-    pipelines = pipelines_data.get("pipelines", {})
-    if not isinstance(pipelines, dict):
-        logger.error(
-            "Pipeline metadata endpoint returned invalid pipelines payload: %r",
-            type(pipelines).__name__,
-        )
-        return _validate_error(
-            pipeline_id,
-            "Pipeline API returned invalid metadata payload.",
-        )
+    if resp.status_code == 404:
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = {
+                "error": {
+                    "code": "capability_not_found",
+                    "message": resp.text[:500],
+                    "data": {"near_matches": []},
+                }
+            }
+        return payload if isinstance(payload, dict) else {"error": payload}
+    if resp.status_code >= 400:
+        return _validate_error(pipeline_id, f"Pipeline API error: {resp.status_code}")
 
-    _cache_pipeline_timeouts(pipelines)
-
-    if pipeline_id not in pipelines:
-        skips = pipelines_data.get("catalog_skips") or []
-        hit = next(
-            (
-                row
-                for row in skips
-                if isinstance(row, dict) and row.get("pipeline_id") == pipeline_id
-            ),
-            None,
-        )
-        if hit is not None:
-            return _validate_error(
-                pipeline_id,
-                f"Pipeline '{pipeline_id}' skipped: alias '{hit.get('alias')}' "
-                f"unresolved ({hit.get('reason')}); "
-                f"expected {hit.get('expected_models_yaml')}",
-            )
-        available = sorted(pipelines.keys())
-        return _validate_error(
-            pipeline_id,
-            f"Pipeline '{pipeline_id}' not found. Available: {available}",
-        )
-
-    info = pipelines[pipeline_id]
+    info = resp.json()
+    if not isinstance(info, dict):
+        return _validate_error(pipeline_id, "Pipeline API returned invalid metadata payload.")
+    _cache_pipeline_timeouts({pipeline_id: info})
     duration = monotonic_now() - t0
     record(
         "mcp.pipeline.validate.completed",
@@ -486,7 +483,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Pipeline")
     def pipeline(
-        op: Literal["run", "async", "result", "validate", "stats", "cancel"],
+        op: Literal["run", "async", "result", "validate", "stats", "cancel", "list"],
         pipeline_id: str | None = None,
         messages: list[dict[str, str]] | None = None,
         execution_id: str | None = None,
@@ -495,6 +492,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         result_delivery: dict[str, Any] | None = None,
         caller_agent: str | None = None,
         wait_seconds: float = 0.0,
+        category: str | None = None,
     ) -> dict[str, Any]:
         """Pipeline execution and inspection — dispatches by ``op``.
 
@@ -577,6 +575,8 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                     }
                 }
             return _pipeline_result(execution_id, wait_seconds)
+        if op == "list":
+            return _pipeline_list(category)
         if op == "validate":
             if not pipeline_id:
                 return {
