@@ -506,12 +506,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           ``options.include_retrieval_metadata`` is set). Required:
           ``pipeline_id``, ``messages``. Optional: ``options``, ``timeout``
           (auto-detected from pipeline config when omitted). Hot-reload:
-          YAML/prompts/models reload on file change. An operator TASK that
-          does not name a contract uses ``pipeline_id="prompt-expand"`` with
-          ``options`` ``job="freeform"``, ``stage="none"``,
-          ``executor_tier="frontier"``, ``delivery="prompt"`` (target stays
-          ``cdp`` or ``cursor``); a TASK that already names a contract is
-          not that door.
+          YAML/prompts/models reload on file change.
 
         - ``"async"`` — async dispatch; returns ``execution_id`` immediately.
           Required: ``pipeline_id``, ``messages``. Optional: ``options``,
