@@ -94,8 +94,8 @@ async def test_f22100_api_role_generate_pointer_is_reference_not_truncation() ->
     dispatch_payload = {
         "execution_id": "exec-f22100",
         "status": "running",
-        "knob_resolution": {},
-        "capabilities": {},
+        "knob_resolution": {"resolved_model": "anthropic/claude-sonnet-4-6"},
+        "capabilities": {"resolved_model": "anthropic/claude-sonnet-4-6"},
     }
     mock_profile = type("Profile", (), {"tool_surface": "mcp"})()
 

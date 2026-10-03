@@ -92,27 +92,37 @@ def test_grok_max_lists_supported_no_forward(
         )
     details = exc_info.value.details
     assert details is not None
-    assert details["supported"] == ["low", "medium", "high"]
+    assert details["supported"] == ["low", "medium", "high", "xhigh"]
     assert details["suggested_model_knobs"] == {}
     assert "effort" not in details["suggested_model_knobs"]
     assert captured_rejects[0]["requested"] == "max"
 
 
-def test_composer_and_gemini_empty_suggested(
+def test_composer_has_no_knob_gemini_suggests_effort(
     captured_rejects: list[dict[str, Any]],
 ) -> None:
-    for model in ("cursor/composer-2.5", "cursor/gemini-3.6-flash"):
-        with pytest.raises(FrontierEndpointError) as exc_info:
-            reject_nonempty_reasoning_effort(
-                request_id="r1",
-                resolved_model=model,
-                reasoning_effort="low",
-            )
-        details = exc_info.value.details
-        assert details is not None
-        assert details["suggested_model_knobs"] == {}
-        assert details["knob"] is None
-        assert "no effort-like knob" in exc_info.value.reason
+    with pytest.raises(FrontierEndpointError) as composer_info:
+        reject_nonempty_reasoning_effort(
+            request_id="r1",
+            resolved_model="cursor/composer-2.5",
+            reasoning_effort="low",
+        )
+    composer = composer_info.value.details
+    assert composer is not None
+    assert composer["suggested_model_knobs"] == {}
+    assert composer["knob"] is None
+    assert "no effort-like knob" in composer_info.value.reason
+
+    with pytest.raises(FrontierEndpointError) as gemini_info:
+        reject_nonempty_reasoning_effort(
+            request_id="r1",
+            resolved_model="cursor/gemini-3.6-flash",
+            reasoning_effort="low",
+        )
+    gemini = gemini_info.value.details
+    assert gemini is not None
+    assert gemini["suggested_model_knobs"] == {"effort": "low"}
+    assert gemini["knob"] == "effort"
     assert len(captured_rejects) == 2
 
 

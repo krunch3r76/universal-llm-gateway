@@ -82,6 +82,10 @@ def test_life_dispatch_prompt_runs_cdp_generate_path(client: TestClient) -> None
             return_value=None,
         ),
         patch(
+            "systems.frontier_consult.cdp_generate.refuse_second_external_gate_at_fire",
+            return_value=None,
+        ),
+        patch(
             "systems.frontier_consult.cdp_generate.run_cdp_worker",
             new=AsyncMock(return_value=None),
         ),
@@ -172,6 +176,10 @@ def test_life_dispatch_thread_runs_cdp_generate_path(client: TestClient) -> None
         ),
         patch(
             "systems.frontier_consult.cdp_generate.observe_mission_binding",
+            return_value=None,
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.refuse_second_external_gate_at_fire",
             return_value=None,
         ),
         patch(

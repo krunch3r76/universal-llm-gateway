@@ -42,7 +42,10 @@ async def test_role_path_caller_overflow_returns_skills_422(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.7"),
+            agent_meta=AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+            ),
             inline_only=True,
             required_body_unresolved=True,
             required_body_dropped=_layer_c_budget_drop("architecture-invariants"),
@@ -52,13 +55,17 @@ async def test_role_path_caller_overflow_returns_skills_422(
         "systems.frontier_consult.service.hydrate_agent",
         fake_hydrate,
     )
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.caller_skill_ids_for_layer_c",
+        lambda skills, layer_c: ("architecture-invariants",),
+    )
 
     events: list[Any] = []
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="grok-api-multi",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.7",
+        model="openai/gpt-5.5",
         skills=["architecture-invariants"],
     )
     with pytest.raises(FrontierEndpointError) as exc_info:
@@ -88,7 +95,10 @@ async def test_role_path_coding_bundle_overflow_keeps_infra_error(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.7"),
+            agent_meta=AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+            ),
             inline_only=True,
             required_body_unresolved=True,
             required_body_dropped=[
@@ -107,8 +117,9 @@ async def test_role_path_coding_bundle_overflow_keeps_infra_error(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="grok-api-multi",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
+        model="openai/gpt-5.5",
         resolved_contract="implement",
     )
     with pytest.raises(FrontierEndpointError) as exc_info:
@@ -126,7 +137,10 @@ async def test_role_path_critical_drop_keeps_infra_error(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.7"),
+            agent_meta=AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+            ),
             inline_only=True,
             required_body_unresolved=True,
             required_body_dropped=[
@@ -141,10 +155,10 @@ async def test_role_path_critical_drop_keeps_infra_error(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="grok-api-multi",
+        role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
         skills=["architecture-invariants"],
-        model="xai/grok-4.7",
+        model="openai/gpt-5.5",
     )
     with pytest.raises(FrontierEndpointError) as exc_info:
         await build_dispatch_body(req)

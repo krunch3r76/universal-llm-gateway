@@ -1819,7 +1819,8 @@ def test_run_cdp_generate_store_miss_recovers_on_poll(
         "status": "completed",
         "completion_phase": "terminal",
         "archive_uri": archive,
-        "body": "## Bind record\n\nBOUND: F1 = A",
+        # purpose=review keeps polling until a parseable verdict (a:37156).
+        "body": "## Bind record\n\nVERDICT: ship\n\nBOUND: F1 = A",
         "attested_model": "Fable 5 High",
         "harvest_provenance": "chat",
     }
@@ -1842,6 +1843,7 @@ def test_run_cdp_generate_store_miss_recovers_on_poll(
     )
     assert result.ok is True
     assert result.body.startswith("## Bind record")
+    assert "VERDICT: ship" in result.body
     assert result.archive_uri == archive
 
 

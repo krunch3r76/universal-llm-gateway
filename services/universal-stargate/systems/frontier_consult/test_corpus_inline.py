@@ -174,6 +174,10 @@ async def test_mcp_capable_skips_corpus_inline(
         )
 
     monkeypatch.setattr("systems.frontier_consult.service.hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.resolve_skill_bundles",
+        lambda *_a, **_k: [],
+    )
 
     events: list[Any] = []
     req = FrontierGenerateRequest(

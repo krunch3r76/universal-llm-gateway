@@ -64,7 +64,7 @@ async def test_worker_refusal_rolls_back_worker_and_parent_links() -> None:
             new=AsyncMock(return_value=(False, worker_detail)),
         ),
         patch(
-            "systems.frontier_consult.handoff.rollback_admitted_dispatch_links",
+            "systems.frontier_consult.cursor_sdk_generate.rollback_admitted_dispatch_links",
             new=AsyncMock(),
         ) as rollback,
         patch(
