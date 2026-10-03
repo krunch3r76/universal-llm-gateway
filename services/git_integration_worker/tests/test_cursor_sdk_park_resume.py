@@ -1180,3 +1180,195 @@ async def test_park_eligible_resumes_execution_id_ineligible_not_parked(
         for did in ("elig", "young", "nostore"):
             unregister_live_run(dispatch_id=did)
         reset_park_marks()
+
+
+def _satellite_layout(tmp_path: Path):
+    """Hub + allowlisted cryptax satellite under a shared projects root."""
+    from services.git_integration_worker.config import WorkerConfig
+
+    projects = tmp_path / "projects"
+    hub = projects / "hub"
+    satellite = projects / "cryptax"
+    _init_git(hub)
+    _init_git(satellite)
+    roster = hub / "cursor-plugins/ulg-ecosystem/SATELLITES.txt"
+    roster.parent.mkdir(parents=True)
+    roster.write_text("cryptax\n", encoding="utf-8")
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=hub,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace=projects,
+        green_gate_cmd=["true"],
+    )
+    return hub, satellite, cfg
+
+
+def _seed_satellite_parent(
+    *,
+    tmp_path: Path,
+    satellite: Path,
+    dispatch_id: str,
+    thread_id: str,
+    lane: str,
+    lease_key: str,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent = CursorDispatchRequest(
+        thread_id=thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        caller_agent="cursor",
+        message="satellite parent",
+        handoff_contract="conductor",
+        workspace="cryptax",
+        lane=lane,
+        worktree_isolated=lane == "B",
+        worktree_path=lease_key if lane == "B" else None,
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    ledger.admit(
+        req=parent,
+        fingerprint=ledger.fingerprint(parent),
+        execution_id=parent.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=parent.dispatch_id,
+            thread_id=parent.thread_id,
+            model_id="m",
+        ),
+        contract="conductor",
+        source_repo=str(satellite.resolve()),
+        lease_key=lease_key,
+        work_key=parent.work_key,
+        source_ref=parent.work_key,
+    )
+    store = tmp_path / f"store-{dispatch_id}"
+    store.mkdir(parents=True)
+    (store / "index.db").write_text("x")
+    ledger.record_state_root(dispatch_id=dispatch_id, state_root=str(store))
+    ledger.record_sdk_identity(
+        dispatch_id=dispatch_id, agent_id=f"agent-{dispatch_id}", run_id="r"
+    )
+    ledger.mark_running(dispatch_id=dispatch_id)
+    mark_parked(
+        dispatch_id=dispatch_id,
+        intent_id="intent-37534",
+        drain_epoch=1,
+        actor="manage",
+        reason="deploy",
+        requested_at="x",
+        method="run_cancel",
+        tool_call_count=1,
+        last_tool_calls=[],
+        sidecar_uri=None,
+    )
+
+
+def _add_satellite_worktree(tmp_path: Path, satellite: Path) -> Path:
+    import subprocess
+
+    wt = tmp_path / "lane-37534"
+    tip = subprocess.run(
+        ["git", "-C", str(satellite), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(satellite), "branch", "lane-37534", tip],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(satellite), "worktree", "add", str(wt), "lane-37534"],
+        check=True,
+        capture_output=True,
+    )
+    return wt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "parent_lane,expect_isolated,expect_child_lane",
+    [
+        ("A", False, "A"),
+        ("B", True, "B"),
+    ],
+)
+async def test_satellite_resume_parent_isolated_uses_dispatch_git_not_hub(
+    tmp_path: Path,
+    _admit_stubs: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    parent_lane: str,
+    expect_isolated: bool,
+    expect_child_lane: str,
+) -> None:
+    """a:37534 — parent_isolated compares lease_key to satellite git, not hub."""
+    from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+        lease_is_isolated_worktree as real_iso,
+    )
+    from services.git_integration_worker.cursor_sdk_lane_select import (
+        select_lane as real_select,
+    )
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.routes.cursor_sdk import admit_cursor_dispatch
+
+    hub, satellite, cfg = _satellite_layout(tmp_path)
+    lease_key = str(satellite.resolve())
+    if parent_lane == "B":
+        lease_key = str(_add_satellite_worktree(tmp_path, satellite).resolve())
+    _seed_satellite_parent(
+        tmp_path=tmp_path,
+        satellite=satellite,
+        dispatch_id="p-37534",
+        thread_id="37534",
+        lane=parent_lane,
+        lease_key=lease_key,
+    )
+
+    iso_repos: list[str] = []
+    captured: dict[str, object] = {}
+
+    def _iso(**kwargs: object) -> bool:
+        iso_repos.append(str(kwargs["source_repo"]))
+        return real_iso(**kwargs)
+
+    def _select(**kwargs: object):
+        captured["parent_isolated"] = kwargs.get("parent_isolated")
+        return real_select(**kwargs)
+
+    monkeypatch.setattr(route_mod, "lease_is_isolated_worktree", _iso)
+    monkeypatch.setattr(route_mod, "select_lane", _select)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree.pin_lane_worktree_on_admit",
+        lambda **_k: "ulg:lock",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_concurrency_posture."
+        "b_worktree_materialized",
+        lambda **_k: True,
+    )
+
+    child = CursorDispatchRequest(
+        thread_id="37534",
+        model="cursor/composer-2.5",
+        dispatch_id="c-37534",
+        execution_id="exec-c-37534",
+        caller_agent="cursor",
+        message="resume without lane or workspace",
+        handoff_contract="conductor",
+        resume_of="p-37534",
+        work_key="todo:cryptax-p5-csv-refresh",
+    )
+    resp = await admit_cursor_dispatch(child, cfg=cfg, controller=_controller())
+    assert iso_repos, "parent_isolated lookup must run"
+    assert Path(iso_repos[0]).resolve() == satellite.resolve()
+    assert Path(iso_repos[0]).resolve() != hub.resolve()
+    assert captured["parent_isolated"] is expect_isolated
+    assert child.lane == expect_child_lane
+    assert resp.status_code == 200, bytes(resp.body).decode()
