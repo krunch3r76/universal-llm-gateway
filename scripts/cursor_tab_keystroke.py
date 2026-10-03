@@ -10,7 +10,8 @@ device). Two ops the io-side watcher drives over SSH:
          No model pick unless ``CURSOR_BRIDGE_MODEL_QUERY`` is set. IDE
          (``--window ide``): raise Cursor → Ctrl+T → optional Ctrl+/ model →
          paste → Enter.
-  paste  raise Cursor → [focus tab by title] → focus chat input → paste → Enter
+  paste  Glass (default): focus the Glass toplevel → [ctrl+k chat title] →
+         paste → Ctrl+Enter. IDE (``--window ide``): ``cursor -r`` → paste → Enter.
 
 ``paste`` is the per-turn wake: the in-tab agent has ended its turn, so a fresh
 user message is the only thing that makes it read the bus again.
@@ -347,6 +348,21 @@ def open_tab(
     }
 
 
+def _focus_paste_surface(surface: str, repo: str) -> dict[str, object]:
+    """Glass and the IDE are different toplevels. ``cursor -r`` raises the IDE."""
+    if surface == "glass":
+        mod = _glass_launcher()
+        chosen = mod._pick_agents_window(repo)
+        focused = mod._focus_window(str(chosen["title"]), "cursor")
+        return {
+            "window_title": chosen.get("title"),
+            "focused": focused.get("activated"),
+        }
+    _raise_cursor(repo)
+    time.sleep(0.9)
+    return {}
+
+
 def paste_message(
     message: str,
     *,
@@ -355,38 +371,41 @@ def paste_message(
     focus_opener: str,
     input_focus: str,
     dry_run: bool,
+    window: str = "",
 ) -> dict[str, object]:
-    """Paste into an existing Cursor chat. Does not open a new IDE tab.
+    """Paste into an existing chat. Glass is the default; IDE is ``--window ide``.
 
-    ``focus_opener`` selects ``focus_title`` first. ``input_focus=ctrl_l``
+    ``focus_opener`` selects ``focus_title`` first. On the IDE, ``input_focus=ctrl_l``
     moves the caret to the composer so the paste does not land in an editor
-    buffer. Returns the step plan; uinput stays off until the bridge is armed.
+    buffer. Glass submit is Ctrl+Enter — Enter is a newline there.
     """
+    surface = (window or _WINDOW).strip().lower() or "glass"
+    glass = surface == "glass"
     _require_display()
-    plan = ["raise"]
+    plan = ["focus_glass" if glass else "raise"]
     if focus_title and focus_opener != "none":
         plan.append(f"{focus_opener}:{focus_title}")
-    if input_focus == "ctrl_l":
+    if input_focus == "ctrl_l" and not glass:
         plan.append("ctrl+l")
-    plan += ["paste:message", "enter"]
+    plan += ["paste:message", "ctrl_enter" if glass else "enter"]
     if dry_run:
         return {
             "dry_run": True,
             "op": "paste",
+            "window": surface,
             "steps": plan,
             "message_len": len(message),
         }
     if not _uinput_enabled():
         return _uinput_refused("paste", steps=plan)
-    _raise_cursor(repo)
-    time.sleep(0.9)
+    focused_meta = _focus_paste_surface(surface, repo)
     ui = _ui()
     try:
         if focus_title and focus_opener != "none":
             _focus_run(ui, focus_title, opener=focus_opener)
-        if input_focus == "ctrl_l":
-            # Ctrl+L focuses the chat input regardless of where the caret sits;
-            # without it a paste can land in an editor buffer.
+        if input_focus == "ctrl_l" and not glass:
+            # Ctrl+L focuses the IDE chat input. Glass has no editor buffer
+            # on this toplevel; the same chord is not the Glass composer.
             _chord(ui, e.KEY_LEFTCTRL, e.KEY_L)
             time.sleep(0.4)
         focus_check: dict[str, object] = {}
@@ -396,18 +415,28 @@ def paste_message(
                 return {
                     "ok": False,
                     "op": "paste",
+                    "window": surface,
                     "steps": plan,
                     "message_len": 0,
                     **focus_check,
                 }
-        _paste_text_enter(ui, message)
+        if glass:
+            _wl_copy(message)
+            time.sleep(0.08)
+            _paste(ui)
+            time.sleep(0.25)
+            _chord(ui, e.KEY_LEFTCTRL, e.KEY_ENTER)
+        else:
+            _paste_text_enter(ui, message)
     finally:
         ui.close()
     out: dict[str, object] = {
         "ok": True,
         "op": "paste",
+        "window": surface,
         "steps": plan,
         "message_len": len(message),
+        **focused_meta,
     }
     if focus_title and focus_opener != "none":
         out.update(focus_check)
@@ -462,6 +491,12 @@ def main() -> int:
     pm.add_argument("--message-file")
     pm.add_argument("--repo", default=_DEFAULT_REPO)
     pm.add_argument(
+        "--window",
+        choices=("glass", "ide"),
+        default=_WINDOW,
+        help="glass focuses the Glass toplevel. ide runs cursor -r (the IDE window).",
+    )
+    pm.add_argument(
         "--focus-title", default="", help="Chat title to select via palette (probe)"
     )
     pm.add_argument(
@@ -501,6 +536,7 @@ def main() -> int:
             focus_opener=args.focus_opener,
             input_focus=args.input_focus,
             dry_run=args.dry_run,
+            window=args.window,
         )
     print(json.dumps(out, indent=2))
     return 0

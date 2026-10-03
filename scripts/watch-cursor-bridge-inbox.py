@@ -333,6 +333,8 @@ class Lane:
                 )
                 return
             wake = f"BRIDGE_WAKE thread={self.thread} turn={n}"
+            # Both toplevels are open. paste follows CURSOR_BRIDGE_WINDOW.
+            # cursor -r raises the IDE and the wake lands in the wrong window.
             res = self.launch.paste(
                 thread=self.thread,
                 message=wake,

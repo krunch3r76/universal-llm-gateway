@@ -12,6 +12,8 @@ Ops delegate to ``cursor_tab_keystroke.py`` (Glass default):
             No model pick unless ``CURSOR_BRIDGE_MODEL_QUERY`` is set.
             ``CURSOR_BRIDGE_WINDOW=ide`` keeps the IDE Ctrl+T path.
   paste     --thread T --message M | --message-file F [--focus-title "T S"]
+            Glass (default): focus that toplevel, not ``cursor -r``. IDE only
+            when ``CURSOR_BRIDGE_WINDOW=ide``.
   status
 
 Remote env (``CURSOR_BRIDGE_REMOTE_ENV``) must include ``CURSOR_BRIDGE_UINPUT_ENABLED=1``
@@ -213,7 +215,8 @@ def paste(
 ) -> dict:
     holder = f"bridge-paste-{thread}-{uuid.uuid4().hex[:8]}"
     path = _stage_message(message, holder)
-    argv = ["paste", "--message-file", str(path)]
+    window = os.environ.get("CURSOR_BRIDGE_WINDOW", "glass")
+    argv = ["paste", "--window", window, "--message-file", str(path)]
     if focus_title:
         argv += ["--focus-title", focus_title]
     if focus_opener:
