@@ -28,8 +28,10 @@ class SourceRepoMismatchError(RuntimeError):
     """``source_repo`` is not the git that owns ``worktree_path``.
 
     Raised before ``git worktree lock`` so a hub-vs-satellite pin surfaces as
-    ``CURSOR_WORKTREE_SOURCE_REPO_MISMATCH`` instead of git's retryable
-    ``is not a working tree``. Callers map ``.code`` at the admit boundary.
+    ``CURSOR_WORKTREE_SOURCE_REPO_MISMATCH`` instead of git's
+    ``is not a working tree``. The code lives on ``.code`` and as the
+    message prefix. Admit currently folds this into retryable 503
+    ``CURSOR_LANE_PIN_FAILED``.
     """
 
     code = "CURSOR_WORKTREE_SOURCE_REPO_MISMATCH"
