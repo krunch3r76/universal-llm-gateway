@@ -142,7 +142,6 @@ def _seed_parked(
         handoff_contract="conductor" if conductor else "none",
         prompt_preamble="ORIGINAL PREAMBLE",
         skills=["reasoning-posture"],
-        lane="A",
     )
     ledger.admit(
         req=req,
@@ -313,10 +312,12 @@ async def test_startup_resume_admits_open_rows_in_order_and_expires_stale(
         assert child_row["execution_id"] == f"exec-{parent}"
         assert child_row["thread_id"] == _row(parent)["thread_id"]
         assert child_row["work_key"] == f"{_WORK_KEY}-{parent}"
-        # Same Lane-A lease: the second child queues behind the first (FIFO cap).
+        # Same lease key: the second child queues behind the first (FIFO cap).
         assert child_row["status"] in ("admitted", "running", "queued")
         record = json.loads(child_row["record_json"])
         assert record["admitted_via"] == "giw_park_resume"
+        # Omitted parent lane is not replayed; select_lane assigns A after the
+        # explicit-lane gate (nest_inherit when the parent lease is not isolated).
         assert record["lane"] == "A"
         assert record["skills"] == ["reasoning-posture"]
         assert record["prompt_preamble"].startswith("PARK-RESUME v1")
@@ -648,7 +649,7 @@ def test_preamble_and_request_builder_shapes(tmp_path: Path) -> None:
     assert req.prompt_preamble is not None and req.prompt_preamble.endswith(
         "ORIGINAL PREAMBLE"
     )
-    assert req.lane == "A" and req.worktree_path is None
+    assert req.lane is None and req.worktree_path is None
 
 
 @pytest.mark.asyncio
