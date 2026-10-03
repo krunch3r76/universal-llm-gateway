@@ -108,7 +108,7 @@ async def _run_contextualization_phase(
                 file=source,
                 chunk_count=plan.cache_misses_count,
                 model=context_model,
-                max_concurrency=32,  # pipeline-controlled; see rag-contextualize-v1.yaml
+                max_concurrency=32,  # pipeline-controlled; see pipelines/rag_contextualize/v1/rag-contextualize-v1.yaml
                 operation_id=correlation_id,
                 operation=operation,
             )
@@ -167,7 +167,7 @@ async def _run_contextualization_phase(
                 failed=plan.cache_misses_count - successful_misses,
                 duration_seconds=time.monotonic() - context_start,
                 model=context_model,
-                max_concurrency=32,  # pipeline-controlled; see rag-contextualize-v1.yaml
+                max_concurrency=32,  # pipeline-controlled; see pipelines/rag_contextualize/v1/rag-contextualize-v1.yaml
                 operation_id=correlation_id,
                 operation=operation,
             )
