@@ -3737,7 +3737,6 @@ async def admit_cursor_dispatch(
         if identity_class == "missing":
             identity_class = "derived"
     files_expected = _files_from_packet(packet_text) if packet_text else []
-    source_repo_str = str(cfg.source_repo.resolve())
     if not (req.workspace and str(req.workspace).strip()):
         parent_id = req.resume_of or req.nest_under
         if parent_id:
@@ -3781,9 +3780,11 @@ async def admit_cursor_dispatch(
     if inherit_parent:
         parent_key = lookup_parent_lease_key(inherit_parent)
         if parent_key is not None:
+            # Isolation is lease_key ≠ this admit's git identity. Hub would
+            # make a satellite Lane-A checkout look isolated (a:37534).
             parent_isolated = lease_is_isolated_worktree(
                 lease_key=parent_key,
-                source_repo=source_repo_str,
+                source_repo=dispatch_git_str,
             )
     try:
         selected_lane, lane_advisories, lane_reason = select_lane(
