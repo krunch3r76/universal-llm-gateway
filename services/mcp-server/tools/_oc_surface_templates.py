@@ -185,8 +185,8 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 ```
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
-- API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="none", prompt="<brief>"|sidecar_ref="cortex://…", model="provider/model"?)`; latest bus turn is fallback only
-- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=none|pure-mechanical|implement, packet_path?=…)
+- API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="freeform", prompt="<brief>"|sidecar_ref="cortex://…", model="provider/model"?)`; latest bus turn is fallback only
+- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=freeform|mechanical|implement, packet_path?=…)
 - auto seat on handoff → 422 `seat_not_manual` (use op=generate, seat=cursor-sdk)
 
 On the code surface (`/mcp/code`) `team_dispatch` is primary — call directly.
@@ -220,7 +220,7 @@ natural part of how you work, not an exceptional event. **Surface gate first**: 
 
 **Pick by capability** (same axis as the boot briefing — not "always team first"):
 - Consult via **API role** (`reviewer`, `artisan`, `skeptic`, `gatherer`, …) →
-  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=none|pure-mechanical, prompt=<brief>|sidecar_ref=cortex://…, …)`.
+  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=freeform|mechanical, prompt=<brief>|sidecar_ref=cortex://…, …)`.
   The role-gated latest thread turn remains fallback for legacy callers.
 - Override model within role `allowed_models` → add `model="provider/model"`.
   **Not** seat slugs (`claude-web`) — web seats have no `default_model` on `generate`.
@@ -288,11 +288,11 @@ agent bus — the next session picks it up.
 | Situation | Transport | Role / target | Tier | Notes |
 |---|---|---|---|---|
 | Lead dialectic + adjudication | agent-bus + operator push | `web-anthropic` (`web-consult`) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
-| Automated review, closes w/o push | `team_dispatch(op=generate, contract=none)` | gpt-5.5 | full MCP | reviewer family MUST be gpt/claude — never gemini (Guard 1) |
-| Adversarial panel member | `team_dispatch` or `panel_dispatch` | `contract=none` | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
-| Analysis / RAG, NO writes | `team_dispatch(contract=none)` | gemini | inline-only (enforced) | lead-adjudicated input only |
+| Automated review, closes w/o push | `team_dispatch(op=generate, contract=freeform)` | gpt-5.5 | full MCP | reviewer family MUST be gpt/claude — never gemini (Guard 1) |
+| Adversarial panel member | `team_dispatch` or `panel_dispatch` | `contract=freeform` | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
+| Analysis / RAG, NO writes | `team_dispatch(contract=freeform)` | gemini | inline-only (enforced) | lead-adjudicated input only |
 | ≥2-family panel (hard triggers) | `panel_dispatch(disposition=panel, ...)` | skeptic + reviewer (+synthesizer tiebreaker) | mixed | returns `panel_executions`; lead artifact still required |
-| Provider-specific inline | `team_dispatch(contract=none, model=xai/…)` | grok | inline | role + model override |
+| Provider-specific inline | `team_dispatch(contract=freeform, model=xai/…)` | grok | inline | role + model override |
 
 **Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + adjudicating-caller review of panelist writes + `panel_adjudication_artifact` NON-offloadable. The **adjudicating caller** (any seat invoking the panel) is distinct from the `web-consult` handoff role. (3) **Audit binding (landed)** — session-close gate runs `panel_disposition_incomplete` on scoped session entities; `validate_panel_assert_attributes` / `build_panel_assert_attributes` remain helper-only schema checks ahead of assert.
 
@@ -304,7 +304,7 @@ Code-MCP only — on `/mcp/life` these are shapes you ASK a code seat to run, no
 
 **Consult by API role** — `team_dispatch`:
 ```
-team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="none", model=..., generation_options=..., caller_agent=...)
+team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="freeform", model=..., generation_options=..., caller_agent=...)
 ```
 then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Role contract:
 `default_model` when model omitted, `allowed_models` when `model=` supplied,
@@ -313,7 +313,7 @@ with `field` and `request_id` BEFORE dispatch.
 
 **Durable bus artifacts** (`op="to_thread"`):
 ```
-team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="none", thread="<id>", subject=...)
+team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="freeform", thread="<id>", subject=...)
 ```
 then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`. Stargate posts
 on the callee's behalf — no `agent_bus.reply` required from the dispatched model.

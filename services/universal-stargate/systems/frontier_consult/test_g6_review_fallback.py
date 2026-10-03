@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
@@ -55,7 +55,7 @@ def test_rebase_review_fallback_keeps_original_execution_id() -> None:
 async def test_cdp_worker_delivery_review_high_triggers_fable_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Effort-suffixed Opus on delivery-review must pass contract into review_fallback_model."""
+    """Opus-high delivery-review passes contract into review_fallback_model."""
     from systems.frontier_consult import cdp_generate_worker as worker
 
     finalize = AsyncMock()

@@ -55,7 +55,10 @@ def _present(value: Any) -> bool:
 
 def _primary_review_family(model_id: str | None) -> str | None:
     """Effort-stripped picker family for Opus primary detection (e.g. opus-5.5-high → opus-5.5)."""
-    from claude_bundles.chat_model_match import normalize_picker_request, parse_model_request
+    from claude_bundles.chat_model_match import (
+        normalize_picker_request,
+        parse_model_request,
+    )
 
     picker = normalize_picker_request((model_id or "").strip())
     if not picker:

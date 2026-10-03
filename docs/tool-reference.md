@@ -92,9 +92,9 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   `contract=implement`, auto Composer, no IDE pickup) — the `cursor-implement`
   handoff is the operator-attended fallback. Materialization reads todo attributes;
   the implement materialized packet MUST be dense (Composer executes mechanically);
-  a determinate, pre-authored task may instead run via `contract=none` or
+  a determinate, pre-authored task may instead run via `contract=freeform` or
   `contract=sketch` (judgment / recon scaffold) or
-  `contract=pure-mechanical` with context on `dispatch_thread_id` (no packet, still
+  `contract=mechanical` with context on `dispatch_thread_id` (no packet, still
   explicit + bounded — § General execution lane). Legacy: `packet_path` +
   `contract=implement`. See skill `consult-routing` § Implement lane — source_ref.
 - `"to_thread"` — bus mode when caller already owns `thread`; Stargate posts the
@@ -129,13 +129,13 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `server_tools` | `bool\|None` | Provider server-side built-ins. Omit = ALL card-derived built-ins; `False` suppresses card-derived provider built-ins. Independent of `mcp`. |
 | `source_ref` | `str\|None` | Admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). On `op="generate"` with `seat=cursor-sdk`: drives `contract=implement` and `contract=wrap` — Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys); the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. On `op="handoff"`: same normalize/materialize path; **preferred for the implement lane** (`cursor-implement` / `web-implement`). `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). Relay pass-through — the MCP client does NOT resolve it. |
 | `sdk_mode` | `"agent"\|"plan"\|None` | **cursor-sdk generate only** (`seat=cursor-sdk`). Cursor SDK conversation mode forwarded to GIW `POST /api/v1/cursor/dispatch`. Wire alias: `conversation_mode`. `plan` = read-only plan-first (no land claims); omit or `agent` = default implement/recon executor. Incompatible with `contract=implement\|pure-mechanical\|conductor` (422). See `docs/agent-guides/cursor-sdk-conversation-mode.md`. |
-| `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=none`, `sketch`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
+| `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=freeform`, `sketch`, `mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
 | `prompt` | `str\|None` | Atomic inline brief for `op="generate"`/`op="to_thread"` consult contracts. Preferred for short self-contained briefs because it cannot desynchronize from the dispatch call. Mutually exclusive with `packet_path`, `sidecar_ref`, and `source_ref`; rejected on `implement`, `wrap`, and `handoff`. |
 | `sidecar_ref` | `str\|None` | Atomic file-backed brief reference (`cortex://` or `workspaces://`) for `op="generate"`/`op="to_thread"` consult contracts. Preferred for long briefs. Same exclusivity/contract rules as `prompt`. |
 | `purpose` | `str\|None` | **CDP generate only** (`model=cdp/…`). Registry/mission tag forwarded to the satellite (default `ask` when omitted). Set `operator-proxy` or `mission` for operator-proxy skill-chip + seat-map inject (`operator_proxy_mission.py`). Ignored on non-CDP models. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=none|sketch|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
+| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=freeform|sketch|mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
 | `op=handoff, seat=cursor-sdk` | — | **Rejected** — 422 `seat_not_manual` (use `op=generate, seat=cursor-sdk`) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
@@ -262,7 +262,7 @@ Examples:
 # Generate — pre-stage context on dispatch_thread_id, then dispatch
 team_dispatch(
     op="generate",
-    contract="none",
+    contract="freeform",
     dispatch_thread_id="cursor-2026-06-02-design-review",
     reasoning_effort="high",
     max_tool_turns=25,
@@ -272,7 +272,7 @@ team_dispatch(
 # Bus mode — agent posts reply to thread 123
 team_dispatch(
     op="to_thread",
-    contract="none",
+    contract="freeform",
     dispatch_thread_id="cursor-2026-06-02-design-review",
     thread="123",
     subject="Design review",
@@ -329,10 +329,10 @@ on dispatch. Use `pipeline(op="run"|"async", pipeline_id="chat-dispatch", …)` 
 
 ```python
 # GPT review (default reviewer model) — pre-stage context on dispatch_thread_id
-team_dispatch(op="generate", contract="none", dispatch_thread_id="arc-123")
+team_dispatch(op="generate", contract="freeform", dispatch_thread_id="arc-123")
 
 # Grok consult
-team_dispatch(op="generate", contract="none", model="xai/grok-4.7",
+team_dispatch(op="generate", contract="freeform", model="xai/grok-4.7",
               dispatch_thread_id="arc-123")
 ```
 
@@ -826,7 +826,7 @@ Continuity consolidation and CHECKPOINT pipeline relays (code MCP `/mcp/code`).
 
 ```
 continuity(op="checkpoint", thread="<house resolved this turn>", surface="cursor", transcript_id="<tab UUID>", from_agent="cursor", pre_consolidate=false)
-team_dispatch(op="generate", seat="cursor-sdk", model="cursor/grok-4.7", contract="none", dispatch_thread_id="<house>", lane="A", model_knobs={"fast":"true"})
+team_dispatch(op="generate", seat="cursor-sdk", model="cursor/grok-4.7", contract="freeform", dispatch_thread_id="<house>", lane="A", model_knobs={"fast":"true"})
 continuity(op="tape_read", thread="10223", budget_bytes=512000)
 ```
 
