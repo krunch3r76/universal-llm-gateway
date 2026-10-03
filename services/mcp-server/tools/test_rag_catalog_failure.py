@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import httpx
+
 _MCP = Path(__file__).resolve().parents[1]
 if str(_MCP) not in sys.path:
     sys.path.insert(0, str(_MCP))
@@ -96,7 +98,9 @@ def test_invalid_scope_is_not_retried_or_rewritten(monkeypatch) -> None:
     def fake_pipeline_call(*args, **kwargs):
         calls["n"] += 1
         body = _catalog_response()
-        body["pipeline"]["retrieval"]["scope_rejection_reason"] = "invalid_scope_override"
+        body["pipeline"]["retrieval"]["scope_rejection_reason"] = (
+            "invalid_scope_override"
+        )
         return body
 
     monkeypatch.setattr(_rag_search_exec, "pipeline_call", fake_pipeline_call)
@@ -117,6 +121,42 @@ def _clear_registry() -> None:
     with _rag_inflight._lock:
         _rag_inflight._by_key.clear()
         _rag_inflight._by_id.clear()
+
+
+def test_stargate_post_timeout_is_not_served_as_a_cache_hit(monkeypatch) -> None:
+    """A timed-out rag-context POST is retryable; the next identical search re-POSTs."""
+    _clear_registry()
+    posts = {"n": 0}
+
+    def timeout_post(*args, **kwargs):
+        posts["n"] += 1
+        raise httpx.TimeoutException("rag-context POST timed out")
+
+    monkeypatch.setattr(_rag_search_exec, "pipeline_call", timeout_post)
+
+    def start() -> dict:
+        return _rag_search_exec.run_rag_search(
+            "stargate timeout probe",
+            scope="code_retrieval",
+            prefixes=None,
+            pipeline_options={
+                "scope_override": "code_retrieval",
+                "include_retrieval_metadata": True,
+            },
+            unscoped=False,
+        )
+
+    try:
+        first = _rag_inflight.admit_search("timeout-key", start)
+        env = first.wait()
+        assert env["retryable"] is True
+        assert "error" in env
+        second = _rag_inflight.admit_search("timeout-key", start)
+        assert second.cache_hit is False
+        assert second.wait()["retryable"] is True
+        assert posts["n"] == 2
+    finally:
+        _clear_registry()
 
 
 def test_retryable_catalog_envelope_is_not_served_as_a_cache_hit() -> None:
