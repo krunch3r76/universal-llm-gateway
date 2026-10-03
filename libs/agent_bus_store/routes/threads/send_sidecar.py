@@ -17,7 +17,9 @@ from ...turns_models import (
     TurnSendCreate,
     TurnSendCreated,
     post_mint_detail,
+    sidecar_content_is_unexpanded_shell,
     sidecar_content_limit_error,
+    sidecar_unexpanded_shell_envelope,
     sidecar_write_failed_envelope,
     slug_exists_detail,
     turn_body_limit_error,
@@ -50,7 +52,13 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         emit_thread_orphaned,
     )
 
-    if error_detail := sidecar_content_limit_error(body.sidecar_content or ""):
+    sidecar_content = body.sidecar_content or ""
+    if sidecar_content_is_unexpanded_shell(sidecar_content):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=sidecar_unexpanded_shell_envelope(),
+        )
+    if error_detail := sidecar_content_limit_error(sidecar_content):
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=error_detail,
