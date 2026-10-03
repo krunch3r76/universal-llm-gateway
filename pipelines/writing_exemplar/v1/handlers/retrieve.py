@@ -25,7 +25,7 @@ def _call_step(parent: Any, pipeline_options: dict[str, Any]) -> Any:
         @staticmethod
         def get_domain_field(key: str, default: Any = None) -> Any:
             if key == "pipeline_id":
-                return "rag-context"
+                return "rag-search"
             if key == "pipeline_options":
                 return pipeline_options
             if key == "consumer_model_ref":

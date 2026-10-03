@@ -110,10 +110,10 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
     rag_mode_group.add_argument(
         "--rag-pipeline",
         nargs="?",
-        const="rag-context",
-        default="rag-context",
+        const="rag-search",
+        default="rag-search",
         metavar="PIPELINE",
-        help="RAG pipeline to use (default: rag-context). Use --no-rag-pipeline for direct search.",
+        help="RAG pipeline to use (default: rag-search). Use --no-rag-pipeline for direct search.",
     )
     rag_mode_group.add_argument(
         "--no-rag-pipeline",

@@ -154,7 +154,7 @@ def _inject_scope_options(
     variables: dict[str, Any],
 ) -> None:
     """If pipeline YAML has options.scope_options, inject into variables for template render."""
-    pipeline_id = getattr(snapshot, "pipeline_id", None) or "rag-context"
+    pipeline_id = getattr(snapshot, "pipeline_id", None) or "rag-search"
     root = _find_pipeline_root(pipeline_dir, pipeline_id)
     if root is None:
         return
