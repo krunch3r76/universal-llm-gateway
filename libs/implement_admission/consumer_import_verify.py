@@ -154,7 +154,10 @@ def _entrypoint_seeds(root: Path, entry: str) -> set[str]:
     for path in files:
         rel = path.relative_to(root).as_posix()
         module = module_for_lib_path(rel)
-        if module:
+        # A file entrypoint is loaded (``python -m``). A directory entrypoint
+        # is a search root: counting every file as reached marks tests and
+        # unused modules verified (cdp_ask).
+        if module and ep.is_file():
             seeds.add(module)
         seeds.update(_imports_in_file(path, module=module))
     return seeds
