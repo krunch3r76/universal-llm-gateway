@@ -9,9 +9,12 @@ never treat as catalog extras.
 from __future__ import annotations
 
 import hashlib
+import re
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+_DOWNLOAD_WORD = re.compile(r"\bdownload\b")
 
 TREES = ("public", "examples", "user")
 
@@ -83,8 +86,12 @@ def compare_user_zip(
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
         user = tree_slugs(names, "user")
-        stock = {s.lower() for t in ("public", "examples") for s in tree_slugs(names, t)}
-        extra = sorted(s for s in user if s.lower() not in catalog_l and s.lower() not in stock)
+        stock = {
+            s.lower() for t in ("public", "examples") for s in tree_slugs(names, t)
+        }
+        extra = sorted(
+            s for s in user if s.lower() not in catalog_l and s.lower() not in stock
+        )
         missing = sorted(s for s in catalog_l if s not in user)
         match: list[str] = []
         stale: list[str] = []
@@ -116,12 +123,27 @@ def compare_user_zip(
 
 
 def pick_download_label(labels: list[str]) -> str | None:
-    """Prefer the in-chat ``Download Claude skills`` card over a generic Download."""
-    lowered = [(label, label.lower()) for label in labels if label and label.strip()]
-    for label, low in lowered:
-        if "claude skills" in low and "download" in low:
+    """Prefer the in-chat ``Download Claude skills`` control over a generic Download.
+
+    A chat title such as ``Compress skills directory into downloadable zip``
+    contains the letters of "download" but is not a download action. The
+    sidebar More options button for that title opens Pin/Rename/Delete.
+    """
+    usable: list[tuple[str, str]] = []
+    for label in labels:
+        if not label or not label.strip():
+            continue
+        low = " ".join(label.lower().split())
+        if low.startswith("more options"):
+            continue
+        usable.append((label.strip(), low))
+    for label, low in usable:
+        if "claude skills" in low and _DOWNLOAD_WORD.search(low):
             return label
-    for label, low in lowered:
-        if "download" in low and "skill" in low:
+    for label, low in usable:
+        if _DOWNLOAD_WORD.search(low) and "skill" in low:
+            return label
+    for label, low in usable:
+        if low == "download":
             return label
     return None
