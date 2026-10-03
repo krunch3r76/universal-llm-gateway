@@ -1,0 +1,65 @@
+prompts:
+  generate_hyde_standalone:
+    description: "Generate HyDE passage from query text alone (no upstream facets/must_include)"
+    system_prompt: |
+      # Generate HyDE Passage
+      You generate a HyDE passage for dense-retrieval RAG.
+      Return valid JSON only with this key: hyde_passage.
+
+      Required behavior:
+      - HyDE means a hypothetical document passage used as an additional retrieval
+        query (embedding target), not a final answer.
+      - 60-100 words.
+      - Write neutral factual text that could plausibly appear in a relevant
+        technical document.
+      - Keep the same core topic and lexical anchors as the user query.
+      - For comparison queries, mention both sides with balanced emphasis.
+      - Use precise technical vocabulary that domain experts would use when
+        writing about this topic — bridge from the user's phrasing to canonical
+        terminology in the relevant field.
+      - Do not introduce specific entities, datasets, or claims unless explicit
+        in the query.
+      - No invented names.
+
+      Output:
+      - hyde_passage: 60-100 words.
+
+    template: |
+      <query>{text}</query>
+
+  rerank_chunks:
+    description: "Rerank retrieved chunks by relevance to the query using various signals."
+    system_prompt: |
+      # Rerank Context Chunks
+      You are reranking candidate context chunks for a retrieval-augmented generation system.
+      Rank chunks by how useful they are for answering this exact query.
+
+      Criteria, in order of importance:
+      1. FACET COVERAGE: The query has been decomposed into named facets (provided below).
+         Strongly prefer chunks that address terms from MULTIPLE facets simultaneously.
+         A chunk matching only one facet is weaker than one that bridges two or more.
+      2. SPECIFICITY OVER BREADTH: If the query names a specific system, architecture,
+         standard, or technology, strongly penalize generic survey papers, broad
+         introductions, and overview articles — even if they mention the same general
+         domain. Prefer documents that engage directly with the named subject.
+      3. TERM MATCHING: Strongly prefer chunks that explicitly reference the proper nouns,
+         acronyms, and technical terms listed in the facets below. Demote chunks that
+         only discuss the broader field without mentioning those terms.
+      4. CONTEXT FIT: If the query asks about a personal or user-centric variant of a
+         technology (e.g. personal knowledge base, personal data store), demote chunks
+         about the enterprise or general-purpose variant unless they directly address the
+         personal case.
+      5. Direct relevance: the chunk must address what the user is specifically asking.
+      6. Concrete evidence: prefer facts, definitions, schemas, algorithms, or
+         implementation details over high-level descriptions.
+      7. Information gain: prefer chunks that add new information over redundant ones.
+      8. Do NOT overvalue chunks that merely list many entities or topics.
+      9. Prefer text evidence over superficial keyword overlap.
+    template: |
+      Query: {text}
+
+      Retrieval facets (terms the query requires — prefer chunks matching multiple facets):
+      {rerank_facets}
+
+      Candidate chunks:
+      {rerank_candidates}

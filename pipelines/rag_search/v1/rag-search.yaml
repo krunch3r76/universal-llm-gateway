@@ -1,0 +1,113 @@
+schema_version: 6
+id: rag-search
+version: "1.0"
+type: rag_search
+description: >
+  RAG search pipeline (v2 home). Retrieval and rerank handlers are copied from
+  rag_context_v1; request step enablement uses step_overrides / skip_steps.
+output: rerank
+
+options:
+  timeout_seconds: 250
+  rewrite_enabled: false
+  rag_top_k_per_query: 15
+  rag_max_chunks: 20
+  rag_rrf_k: 35
+  rag_recency_weight: 0.2
+  scope_confidence_threshold: 0.7
+  rag_scope_chunk_caps: {}
+  noise_filter_threshold: 0.35
+  noise_filter_disable: false
+  synthetic_scope: ""
+  synthetic_scope_demotion: 0.6
+  retrieval_path: general
+  source_diversity_max: 3
+  metadata_boost_enabled: true
+  metadata_boost_weight: 0.20
+  coverage_selection_enabled: false
+  neighbor_expansion_enabled: false
+  neighbor_expansion_n: 1
+  neighbor_expansion_max_chunks: 30
+  neighbor_expansion_score_discount: 1.0
+  rerank_mode: cross_encoder
+  rerank_model: qwen3_9b
+  rerank_cross_encoder_model: cross_encoder
+  rerank_window_size: 5
+  rerank_overlap: 1
+  rerank_max_candidates: 14
+  rerank_max_movement: 3
+  rerank_prior_weight: 0.70
+  scope_options: []
+  scope_aliases: {}
+  max_expansion_terms: 10
+  max_idf_terms: 8
+  max_discriminative: 4
+
+steps:
+  - name: direct_scope
+    type: rag_direct_scope_v1
+    default_scope: "all"
+
+  - name: generate_hyde
+    type: generate
+    enabled: false
+    allow_disable: true
+    model_ref: qwen3_9b
+    prompt_ref: rag_search.v1.generate_hyde_standalone
+    condition: scope_scoped
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 256
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            hyde_passage:
+              type: string
+              description: "A hypothetical document passage used as an additional retrieval query"
+          required: ["hyde_passage"]
+
+  - name: retrieve
+    type: rag_multi_retrieve_v1
+    endpoint: "/search"
+    handler_inputs:
+      scope_result: "direct_scope.json"
+      rewrite_result: "direct_scope.json"
+      hyde_result: "generate_hyde.json"
+
+  - name: rerank
+    type: rag_rerank_assemble_v1
+    enabled: true
+    allow_disable: true
+    condition: chunks_present
+    model_ref: optionsNs.rerank_model
+    prompt_ref: rag_search.v1.rerank_chunks
+    handler_inputs:
+      chunks_data: "retrieve.json.chunks"
+      facet_result: "retrieve.json.facets"
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 8192
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            ranking:
+              type: array
+              items:
+                type: object
+                properties:
+                  chunk_id:
+                    type: string
+                  rank:
+                    type: integer
+                  confidence:
+                    type: string
+                    enum: ["high", "medium", "low"]
+                    description: "Confidence in the chunk's relevance to the query after reranking."
+                  reason:
+                    type: string
+                required: ["chunk_id", "rank", "confidence", "reason"]
+          required: ["ranking"]
