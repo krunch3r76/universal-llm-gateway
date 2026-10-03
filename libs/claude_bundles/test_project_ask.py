@@ -482,6 +482,10 @@ def _induction_patches(page_composer, report, *, extra=()):
             "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
             return_value=["reasoning-posture", "hypothesize-simulate"],
         ),
+        patch(
+            "claude_bundles.cowork_skill_delivery.check_delivery_channels_before_submit",
+            return_value=[],
+        ),
         *extra,
     )
 
@@ -786,12 +790,12 @@ async def test_send_prompt_returns_idle_induction_before_work_paste() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_prompt_does_not_paste_work_when_induction_never_idles() -> None:
-    """Panel failure after the combined submit still fails closed (a:37716).
+async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> None:
+    """Panel failure after combined submit → SkillReceiptUnverifiedError (a:37716).
 
-    The message is already submitted; the grid wait cannot unsend it, and
-    channel attest does not run.
+    The message is already submitted; channel attest does not run.
     """
+    from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
     from claude_bundles.project_ask import send_prompt
 
     page, composer = _induction_page()
@@ -811,10 +815,14 @@ async def test_send_prompt_does_not_paste_work_when_induction_never_idles() -> N
                     "claude_bundles.cowork_skill_delivery.attest_delivery_channels",
                     new=attest,
                 ),
+                patch(
+                    "claude_bundles.cowork_skill_delivery.check_delivery_channels_before_submit",
+                    return_value=[],
+                ),
             ),
         ):
             stack.enter_context(ctx)
-        with pytest.raises(RuntimeError, match="panel closed"):
+        with pytest.raises(SkillReceiptUnverifiedError, match="panel closed"):
             await send_prompt(page, _SEALED, await_induction_reply=True)
     assert submit.await_count == 1
     draft = submit.await_args.kwargs["draft_text"]

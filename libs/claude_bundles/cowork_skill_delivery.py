@@ -86,6 +86,14 @@ class SkillDeliveryError(RuntimeError):
     """Fail-closed when a consult claims skills that were not delivered."""
 
 
+class SkillReceiptUnverifiedError(SkillDeliveryError):
+    """Composer message was submitted but the skill receipt could not be verified."""
+
+    def __init__(self, message: str, *, submitted: bool = True) -> None:
+        super().__init__(message)
+        self.submitted = submitted
+
+
 def is_claude_slug(slug: str) -> bool:
     """True when ``slug`` is a Customize→Skills / shared_sync Claude slug."""
     catalog = get_skill_catalog()
@@ -464,6 +472,70 @@ def _attach_only_surface(surface_class: str) -> bool:
     return surface_class == "shared_sync"
 
 
+def classify_delivery_channel_gaps(
+    required: list[str],
+    *,
+    attached: list[str],
+    inlined: list[str],
+    induction: list[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Return ``(missing, wrong_channel)`` without telemetry or raise."""
+    if not required:
+        return [], []
+    catalog = get_skill_catalog()
+    attached_set = {str(s).strip() for s in attached if str(s).strip()}
+    inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
+    induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
+    missing: list[str] = []
+    wrong_channel: list[str] = []
+    for raw in required:
+        entry = catalog.get(raw)
+        slug = entry.slug
+        if _attach_only_surface(entry.surface_class):
+            if slug in attached_set or slug in induction_set:
+                continue
+            if slug in inlined_set:
+                wrong_channel.append(slug)
+            else:
+                missing.append(slug)
+        else:
+            if slug in inlined_set:
+                continue
+            if slug in attached_set:
+                wrong_channel.append(slug)
+            else:
+                missing.append(slug)
+    return missing, wrong_channel
+
+
+def check_delivery_channels_before_submit(
+    required: list[str],
+    *,
+    attached: list[str],
+    inlined: list[str],
+    induction: list[str] | None = None,
+) -> list[str]:
+    """Panel-independent channel check before a combined submit.
+
+    ``wrong_channel`` fails closed. ``undelivered`` returns soft missing slugs
+    (legacy ``_insert_prompt_text`` behavior).
+    """
+    missing, wrong_channel = classify_delivery_channel_gaps(
+        required,
+        attached=attached,
+        inlined=inlined,
+        induction=induction,
+    )
+    if wrong_channel:
+        raise SkillDeliveryError(
+            "required skills fail channel attest before submit: "
+            f"wrong_channel={wrong_channel} (attached={attached}, "
+            f"inlined={inlined}, induction={list(induction or [])}) "
+            "— fail closed (friction a:27142)"
+        )
+    return missing
+
+
 def attest_delivery_channels(
     required: list[str],
     *,
@@ -500,29 +572,15 @@ def attest_delivery_channels(
     """
     if not required:
         return []
-    catalog = get_skill_catalog()
+    missing, wrong_channel = classify_delivery_channel_gaps(
+        required,
+        attached=attached,
+        inlined=inlined,
+        induction=induction,
+    )
     attached_set = {str(s).strip() for s in attached if str(s).strip()}
     inlined_set = {str(s).strip() for s in inlined if str(s).strip()}
     induction_set = {str(s).strip() for s in (induction or []) if str(s).strip()}
-    missing: list[str] = []
-    wrong_channel: list[str] = []
-    for raw in required:
-        entry = catalog.get(raw)
-        slug = entry.slug
-        if _attach_only_surface(entry.surface_class):
-            if slug in attached_set or slug in induction_set:
-                continue
-            if slug in inlined_set:
-                wrong_channel.append(slug)
-            else:
-                missing.append(slug)
-        else:
-            if slug in inlined_set:
-                continue
-            if slug in attached_set:
-                wrong_channel.append(slug)
-            else:
-                missing.append(slug)
     attached_sorted = sorted(attached_set)
     inlined_sorted = sorted(inlined_set)
     induction_sorted = sorted(induction_set)

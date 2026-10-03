@@ -40,6 +40,7 @@ from claude_bundles.chat_reply_wait import (
     harvest_assistant,
     wait_assistant_reply,
 )
+from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     goto_fresh_compose,
@@ -508,7 +509,10 @@ async def send_prompt(
     """
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
+        SkillDeliveryError,
+        SkillReceiptUnverifiedError,
         attest_delivery_channels,
+        check_delivery_channels_before_submit,
         combine_induction_with_body,
         extract_cdp_required_authority,
         parse_cdp_sealed_skill_channels,
@@ -546,11 +550,10 @@ async def send_prompt(
     marked = required_authority is not None
     if induction_slugs and marked:
         # One submitted message so the first turn has Use-lines and the work
-        # body. Panel, attest, and receipt run after that submit: a panel
-        # timeout cannot unsend the message (a:37716).
+        # body. Panel wait runs after submit (a:37716); receipt failures become
+        # SkillReceiptUnverifiedError so callers still harvest the work reply.
         induction_text = render_skill_induction(induction_slugs)
-        _attach, inline_slugs, rest = parse_cdp_sealed_skill_channels(text)
-        draft = combine_induction_with_body(induction_text, rest)
+        draft = combine_induction_with_body(induction_text, _rest)
         attached_out: list[str] = []
         missing, attach_notes = await _insert_prompt_text(
             page,
@@ -562,19 +565,27 @@ async def send_prompt(
             defer_attest=True,
             attached_out=attached_out,
         )
-        await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=draft)
-        panel = await wait_for_induction_panel(page, induction_slugs)
-        induction_observed = list(panel.skills)
-        attest_delivery_channels(
+        check_delivery_channels_before_submit(
             required_for_induction,
             attached=attached_out,
             inlined=inline_slugs,
-            induction=induction_observed,
-            execution_id=str(stargate_execution_id or ""),
-            satellite_execution_id=str(satellite_execution_id or ""),
+            induction=induction_slugs,
         )
-        del _attach
+        await page.wait_for_timeout(600)
+        await _submit_composer_draft(page, composer=composer, draft_text=draft)
+        try:
+            panel = await wait_for_induction_panel(page, induction_slugs)
+            induction_observed = list(panel.skills)
+            attest_delivery_channels(
+                required_for_induction,
+                attached=attached_out,
+                inlined=inline_slugs,
+                induction=induction_observed,
+                execution_id=str(stargate_execution_id or ""),
+                satellite_execution_id=str(satellite_execution_id or ""),
+            )
+        except (SkillDeliveryError, RuntimeError) as exc:
+            raise SkillReceiptUnverifiedError(str(exc), submitted=True) from exc
     else:
         if induction_slugs:
             # Unmarked prompts keep the split turn (attach path unchanged).
@@ -692,6 +703,55 @@ async def _compose_model_selected(
     return model_info
 
 
+async def _harvest_after_skill_receipt_unverified(
+    page: Page,
+    *,
+    exc: SkillReceiptUnverifiedError,
+    caller_before: dict,
+    induction_baseline: dict | None,
+    project_uuid: str,
+    project_url: str,
+    model_info: dict,
+    model: str,
+    timeout_s: int,
+    min_growth: int,
+    min_body: int,
+    on_harvest: Callable[[dict], Awaitable[None]] | None,
+    purpose: str,
+) -> ProjectAskResult:
+    """Collect the work reply when the message submitted but receipt failed (a:37716)."""
+    from claude_bundles.induction_reply_baseline import work_reply_before
+
+    before = work_reply_before(caller_before, induction_baseline)
+    state = await wait_assistant_reply(
+        page,
+        before=before,
+        timeout_s=timeout_s,
+        poll_ms=500,
+        min_growth=min_growth,
+        min_body=min_body,
+        on_harvest=on_harvest,
+        require_review_verdict=(purpose or "").strip().lower() == "review",
+    )
+    body = finalize_scrape_body(state.get("body") or "")
+    attested = _attest_model(model, state, model_info)
+    err = f"skill_receipt_unverified: {exc}"
+    if not getattr(exc, "submitted", True):
+        err = str(exc)
+    return ProjectAskResult(
+        ok=False,
+        body=body,
+        url=str(state.get("url") or page.url),
+        project_uuid=project_uuid,
+        project_url=project_url,
+        model=model_info,
+        body_len=len(body),
+        delete_after=None,
+        error=err,
+        attested_model=attested,
+    )
+
+
 async def project_ask_on_page(
     page: Page,
     prompt: str,
@@ -720,6 +780,9 @@ async def project_ask_on_page(
     (a:37156 skill-induction seal).
     """
     dest = project_url(project_uuid)
+    caller_before: dict = {}
+    induction_baseline: dict | None = None
+    model_info: dict = {}
     try:
         model_info = await _compose_model_selected(
             page,
@@ -869,6 +932,24 @@ async def project_ask_on_page(
             body_len=len(partial),
             delete_after=None,
             error=str(exc),
+        )
+    except SkillReceiptUnverifiedError as exc:
+        if not exc.submitted:
+            raise
+        return await _harvest_after_skill_receipt_unverified(
+            page,
+            exc=exc,
+            caller_before=caller_before,
+            induction_baseline=induction_baseline,
+            project_uuid=project_uuid,
+            project_url=dest,
+            model_info=model_info,
+            model=model,
+            timeout_s=timeout_s,
+            min_growth=min_growth,
+            min_body=min_body,
+            on_harvest=on_harvest,
+            purpose=purpose,
         )
     except Exception as exc:  # noqa: BLE001 — surface to CLI ledger; ¬delete
         return ProjectAskResult(
