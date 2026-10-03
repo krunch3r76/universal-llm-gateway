@@ -147,3 +147,37 @@ def test_availability_change_pays_another_full_build(
 
     assert builds["n"] == 2
     assert "ok-pipe" not in second.pipelines
+
+
+def test_reload_after_yaml_delete_drops_pipeline_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hot-reload rebuild must drop ids whose source YAML is gone (a:37652)."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root)
+    registry = _start(root)
+    assert "ok-pipe" in registry.pipelines
+
+    (root / "ok_domain" / "ok-v1.yaml").unlink()
+    old_count, new_count = registry.reload_pipelines()
+
+    assert old_count == 1
+    assert new_count == 0
+    assert "ok-pipe" not in registry.pipelines
+
+
+def test_reload_after_prompt_edit_updates_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prompt YAML edits must land on the next reload without a process restart."""
+    _enable_snapshot(monkeypatch, tmp_path)
+    root = tmp_path / "pipelines"
+    _write_tree(root, template="hello")
+    registry = _start(root)
+    assert registry.prompts["ok_domain"]["dummy"]["template"] == "hello"
+
+    _write_tree(root, template="hello-edited")
+    registry.reload_pipelines()
+
+    assert registry.prompts["ok_domain"]["dummy"]["template"] == "hello-edited"
