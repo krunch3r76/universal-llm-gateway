@@ -133,6 +133,15 @@ def test_wait_status_serving_slug_is_agent_bus_not_owned_libs_blast() -> None:
 
 
 @pytest.mark.offline
+def test_event_service_runtime_entrypoint_verifies_event_store() -> None:
+    """Empty services/event-service/ tree; reach comes from runtime_entrypoint."""
+    assert (
+        verify_consumer_import("event_service", "libs/event_store/__init__.py")
+        == "verified"
+    )
+
+
+@pytest.mark.offline
 def test_serves_libs_entries_reach_their_package() -> None:
     """Authorship gate: every serves_libs pair must import-verify the package."""
     root = repo_root()

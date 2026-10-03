@@ -136,6 +136,30 @@ def _imports_in_file(path: Path, *, module: str | None = None) -> frozenset[str]
     return frozenset(found)
 
 
+def _entrypoint_seeds(root: Path, entry: str) -> set[str]:
+    """Modules the process loads from ``runtime_entrypoint`` (file or package dir).
+
+    An empty ``path_prefix`` tree does not mean the process never loads the lib
+    (``python -m event_store`` vs ``services/event-service/``).
+    """
+    ep = root / entry
+    seeds: set[str] = set()
+    files: list[Path]
+    if ep.is_file() and ep.suffix == ".py":
+        files = [ep]
+    elif ep.is_dir():
+        files = _tree_files(ep)
+    else:
+        return seeds
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        module = module_for_lib_path(rel)
+        if module:
+            seeds.add(module)
+        seeds.update(_imports_in_file(path, module=module))
+    return seeds
+
+
 def _tree_files(base: Path) -> list[Path]:
     if not base.is_dir():
         return []
@@ -156,16 +180,19 @@ def _service_dir(root_str: str, slug: str) -> str | None:
 @lru_cache(maxsize=128)
 def _reachable_modules(slug: str, root_str: str) -> frozenset[str] | None:
     """Modules reachable from *slug*'s service tree via libs imports (file-granular)."""
-    service_dir = _service_dir(root_str, slug)
-    if service_dir is None:
-        return None
-    base = Path(service_dir)
-    if not base.is_dir():
-        return None
     root = Path(root_str)
     seeds: set[str] = set()
-    for path in _tree_files(base):
-        seeds.update(_imports_in_file(path))
+    service_dir = _service_dir(root_str, slug)
+    if service_dir is not None:
+        base = Path(service_dir)
+        if base.is_dir():
+            for path in _tree_files(base):
+                seeds.update(_imports_in_file(path))
+    own = service_ownership().get(slug)
+    if own is not None and own.runtime_entrypoint:
+        seeds.update(_entrypoint_seeds(root, own.runtime_entrypoint))
+    if not seeds and (service_dir is None or not Path(service_dir).is_dir()):
+        return None
 
     seen: set[str] = set()
     reach: set[str] = set()
