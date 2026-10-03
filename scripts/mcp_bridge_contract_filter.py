@@ -30,6 +30,7 @@ for _path in (_LIBS_DIR, _MCP_SERVER_DIR):
 from endpoint_surface import derive_contract_primary_tools  # noqa: E402
 from g6_review_class import refuse_filtered_tools_call  # noqa: E402
 
+from scripts.mcp_bridge_generate_ledger import GenerateObserver  # noqa: E402
 from scripts.mcp_bridge_steer_inject import (  # noqa: E402
     CURSOR_SDK_DISPATCH_ID_ENV,
     append_directive,
@@ -171,6 +172,7 @@ def _copy_upstream(
     allow: frozenset[str] | None,
     pending_methods: dict[Any, str],
     client_out_lock: threading.Lock | None = None,
+    observer: GenerateObserver | None = None,
 ) -> None:
     while True:
         message = read_framed_message(upstream)
@@ -178,6 +180,8 @@ def _copy_upstream(
             break
         if allow is not None:
             message = filter_tools_list_payload(message, allow)
+        if observer is not None:
+            observer.on_result(message)
         message = _maybe_inject_steer(message, pending_methods)
         if client_out_lock is None:
             write_framed_message(downstream, message)
@@ -196,6 +200,7 @@ def _copy_downstream(
     seat_thread: str | None = None,
     client_out: BinaryIO | None = None,
     client_out_lock: threading.Lock | None = None,
+    observer: GenerateObserver | None = None,
 ) -> None:
     while True:
         message = read_framed_message(upstream)
@@ -218,6 +223,8 @@ def _copy_downstream(
         method = message.get("method")
         if msg_id is not None and isinstance(method, str):
             pending_methods[msg_id] = method
+        if observer is not None:
+            observer.on_request(message)
         write_framed_message(downstream, message)
 
 
@@ -242,6 +249,9 @@ def run_filtered_stdio_proxy(
     pending_methods: dict[Any, str] = {}
     upstream_err: list[BaseException] = []
     client_out_lock = threading.Lock()
+    # Records the CDP generates this dispatch fires (friction 34156); the
+    # bridge env carries both the dispatch id and the shared steer spool.
+    observer = GenerateObserver.from_env(child_env)
 
     def _upstream_worker() -> None:
         try:
@@ -251,6 +261,7 @@ def run_filtered_stdio_proxy(
                 allow=allow,
                 pending_methods=pending_methods,
                 client_out_lock=client_out_lock,
+                observer=observer,
             )
         except BaseException as exc:  # noqa: BLE001
             upstream_err.append(exc)
@@ -272,6 +283,7 @@ def run_filtered_stdio_proxy(
             seat_thread=(child_env.get(ULG_DISPATCH_THREAD_ENV) or "").strip() or None,
             client_out=sys.stdout.buffer,
             client_out_lock=client_out_lock,
+            observer=observer,
         )
     finally:
         try:
