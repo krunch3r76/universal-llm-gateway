@@ -38,6 +38,8 @@ _KEEP_LIST = frozenset(
         # contract->job and purpose->session on the Stargate wire.
         "libs/claude_bundles/operator_proxy_mission.py",
         "cursor-plugins/ulg-ecosystem/skills/cdp-operator-proxy/SKILL.md",
+        "cursor-plugins/ulg-ecosystem/rules/cdp-operator-proxy_ulg.mdc",
+        "cursor-plugins/ulg-ecosystem/skills/claude-ai-cdp-navigation/SKILL.md",
     }
 )
 
