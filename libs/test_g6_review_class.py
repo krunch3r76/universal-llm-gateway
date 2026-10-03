@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "libs"))
 
 from g6_review_class import (  # noqa: E402
+    ALLOWED_ARGUMENT_KEYS,
     FALLBACK_MODEL,
     REVIEW_CONTRACT,
     adopt_review_fallback,
@@ -149,6 +150,12 @@ def test_review_class_refuses_nest_lane_and_packet() -> None:
         {**_REVIEW, "op": "handoff", "subject": "s"}, seat_thread="12988"
     )
     assert not is_review_class_call({**_REVIEW, "purpose": "ask"}, seat_thread="12988")
+
+
+def test_purpose_key_not_in_allowed_argument_keys() -> None:
+    """purpose is refused as an unknown key, not only via the explicit purpose check."""
+    assert "purpose" not in ALLOWED_ARGUMENT_KEYS
+    assert not is_review_class_call({**_REVIEW, "purpose": "review"}, seat_thread="12988")
 
 
 def test_non_team_dispatch_is_not_refused() -> None:
