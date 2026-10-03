@@ -147,14 +147,30 @@ def partition_cdp_skills(slugs: list[str]) -> tuple[list[str], list[str]]:
 
 
 def render_skill_induction(slugs: list[str]) -> str:
-    """Build the pre-work induction turn — only ``Use the {slug} skill`` lines.
+    """Build ``Use the {slug} skill`` lines for a marked CDP prompt.
 
-    Customize loads skill bodies on that verb; the Context → Skills panel is the
-    receipt that must land before the sealed work prompt is pasted
-    (``decision:web-seat-skill-body-delivery`` / friction a:36580).
+    Customize loads skill bodies on that verb. The Context → Skills panel is
+    the receipt (``decision:web-seat-skill-body-delivery`` / friction a:36580).
+    On a marked prompt those lines share one submitted message with the peeled
+    body (a:37716); the panel wait runs on that message.
     """
     lines = [f"Use the {str(s).strip()} skill" for s in slugs if str(s).strip()]
     return "\n".join(lines)
+
+
+def combine_induction_with_body(induction_text: str, body: str) -> str:
+    """One composer draft: Use-lines, a blank line, then the peeled work body.
+
+    Empty induction returns ``body`` unchanged. Empty body returns the
+    Use-lines alone.
+    """
+    induction = induction_text.strip("\n")
+    if not induction:
+        return body
+    peeled = body.lstrip("\r\n")
+    if not peeled:
+        return induction
+    return f"{induction}\n\n{peeled}"
 
 
 def induction_panel_ready(required: list[str], observed: list[str]) -> bool:

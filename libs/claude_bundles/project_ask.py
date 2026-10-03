@@ -312,6 +312,9 @@ async def _insert_prompt_text(
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
     induction_observed: list[str] | None = None,
+    leading_induction: str = "",
+    defer_attest: bool = False,
+    attached_out: list[str] | None = None,
 ) -> tuple[list[str], tuple[str, ...]]:
     """Fill the composer: attach Claude skills via + menu, then paste body.
 
@@ -344,6 +347,7 @@ async def _insert_prompt_text(
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
         attest_delivery_channels,
+        combine_induction_with_body,
         extract_cdp_required_authority,
         parse_cdp_sealed_skill_channels,
     )
@@ -356,7 +360,12 @@ async def _insert_prompt_text(
         # Legacy / non-staged prompts: no authority marker — channel union only.
         required = attach_slugs + inline_slugs
     if not required and not attach_slugs and not inline_slugs:
-        await page.keyboard.insert_text(text)
+        payload = (
+            combine_induction_with_body(leading_induction, text)
+            if leading_induction
+            else text
+        )
+        await page.keyboard.insert_text(payload)
         return [], ()
 
     attached: list[str] = []
@@ -367,25 +376,30 @@ async def _insert_prompt_text(
         )
         attached = list(observation.observed)
         click_errors = observation.click_errors
+    if attached_out is not None:
+        attached_out.extend(attached)
     missing: list[str] = []
-    try:
-        attest_delivery_channels(
-            required,
-            attached=attached,
-            inlined=inline_slugs,
-            induction=list(induction_observed or []),
-            execution_id=str(stargate_execution_id or ""),
-            satellite_execution_id=str(satellite_execution_id or ""),
-        )
-    except SkillDeliveryError as exc:
-        err = str(exc)
-        if "wrong_channel" in err or "undelivered=" not in err:
-            raise
-        missing = _undelivered_slugs(err)
-    if rest:
-        body = rest
-        if not body.startswith(("\n", "\r")):
-            body = f"\n\n{body}"
+    if not defer_attest:
+        try:
+            attest_delivery_channels(
+                required,
+                attached=attached,
+                inlined=inline_slugs,
+                induction=list(induction_observed or []),
+                execution_id=str(stargate_execution_id or ""),
+                satellite_execution_id=str(satellite_execution_id or ""),
+            )
+        except SkillDeliveryError as exc:
+            err = str(exc)
+            if "wrong_channel" in err or "undelivered=" not in err:
+                raise
+            missing = _undelivered_slugs(err)
+    body = rest
+    if leading_induction:
+        body = combine_induction_with_body(leading_induction, rest)
+    elif body and not body.startswith(("\n", "\r")):
+        body = f"\n\n{body}"
+    if body:
         await composer.click(force=True)
         await page.wait_for_timeout(200)
         await page.keyboard.insert_text(body)
@@ -473,22 +487,29 @@ async def send_prompt(
     Correlation ids optional: threaded into channel-attest telemetry only;
     empty strings are valid for non-seating harness callers.
 
-    When required authority includes ``shared_sync`` slugs, sends a prior turn
-    containing only ``Use the {slug} skill`` lines, then polls the open
-    Context grid until those slugs are listed. A still-closed header aborts
-    on the first read. An open grid that stays empty through the wait aborts
-    before the work body (``decision:web-seat-skill-body-delivery``).
+    When the staged prompt carries ``<!--cdp-required-skills:…-->`` and the
+    induction list is non-empty, submits one message: the Use-lines, a blank
+    line, then the peeled body (a:37716). The Context grid wait, channel
+    attest, and post-submit skills receipt run on that message. A still-closed
+    header aborts on the first read. An open grid that stays empty aborts
+    after that single submit (the message is already in the thread).
 
-    After a successful work-prompt click, records a non-gating Context → Skills
-    receipt (``cdp.skill.context_loaded``) — chips gate submit; the rail is the
+    A prompt with no marker keeps the prior split: a Use-line turn, then the
+    body, so attach count and submit count stay as they were.
+
+    After a successful submit, records a non-gating Context → Skills receipt
+    (``cdp.skill.context_loaded``) — chips gate submit; the rail is the
     receipt.
 
-    ``await_induction_reply`` waits out the skill-load turn and returns its
-    harvest so reply-wait callers do not seal that ack as the ask (a:37267).
-    Paste-half leaves it false. None when no induction turn was sent.
+    ``await_induction_reply`` waits out a split skill-load turn and returns
+    its harvest so reply-wait callers do not seal that ack as the ask
+    (a:37267). On the combined message it returns None: the reply to that
+    message is the work reply. Paste-half leaves it false.
     """
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
+        attest_delivery_channels,
+        combine_induction_with_body,
         extract_cdp_required_authority,
         parse_cdp_sealed_skill_channels,
         partition_cdp_skills,
@@ -522,44 +543,77 @@ async def send_prompt(
 
     induction_observed: list[str] = []
     reply_baseline: dict | None = None
-    if induction_slugs:
-        # Same floor as wait_assistant_reply polls (10). The harvest default of 40
-        # drops a short prior turn from base_n, so the first poll looks like a new turn.
-        pre_induction = (
-            await harvest_assistant(page, min_msg_chars=10)
-            if await_induction_reply
-            else None
-        )
+    marked = required_authority is not None
+    if induction_slugs and marked:
+        # One submitted message so the first turn has Use-lines and the work
+        # body. Panel, attest, and receipt run after that submit: a panel
+        # timeout cannot unsend the message (a:37716).
         induction_text = render_skill_induction(induction_slugs)
-        await composer.click(force=True)
-        await page.wait_for_timeout(200)
-        await page.keyboard.insert_text(induction_text)
+        _attach, inline_slugs, rest = parse_cdp_sealed_skill_channels(text)
+        draft = combine_induction_with_body(induction_text, rest)
+        attached_out: list[str] = []
+        missing, attach_notes = await _insert_prompt_text(
+            page,
+            text,
+            composer=composer,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=satellite_execution_id,
+            leading_induction=induction_text,
+            defer_attest=True,
+            attached_out=attached_out,
+        )
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(page, composer=composer, draft_text=induction_text)
+        await _submit_composer_draft(page, composer=composer, draft_text=draft)
         panel = await wait_for_induction_panel(page, induction_slugs)
         induction_observed = list(panel.skills)
-        if await_induction_reply:
-            from claude_bundles.induction_reply_baseline import (
-                capture_induction_reply_baseline,
+        attest_delivery_channels(
+            required_for_induction,
+            attached=attached_out,
+            inlined=inline_slugs,
+            induction=induction_observed,
+            execution_id=str(stargate_execution_id or ""),
+            satellite_execution_id=str(satellite_execution_id or ""),
+        )
+        del _attach
+    else:
+        if induction_slugs:
+            # Unmarked prompts keep the split turn (attach path unchanged).
+            pre_induction = (
+                await harvest_assistant(page, min_msg_chars=10)
+                if await_induction_reply
+                else None
             )
-
-            reply_baseline = await capture_induction_reply_baseline(
-                page, before=pre_induction or {}
+            induction_text = render_skill_induction(induction_slugs)
+            await composer.click(force=True)
+            await page.wait_for_timeout(200)
+            await page.keyboard.insert_text(induction_text)
+            await page.wait_for_timeout(600)
+            await _submit_composer_draft(
+                page, composer=composer, draft_text=induction_text
             )
-        await clear_composer_verified(page, composer)
-        await page.wait_for_timeout(180)
+            panel = await wait_for_induction_panel(page, induction_slugs)
+            induction_observed = list(panel.skills)
+            if await_induction_reply:
+                from claude_bundles.induction_reply_baseline import (
+                    capture_induction_reply_baseline,
+                )
 
-    missing, attach_notes = await _insert_prompt_text(
-        page,
-        text,
-        composer=composer,
-        stargate_execution_id=stargate_execution_id,
-        satellite_execution_id=satellite_execution_id,
-        induction_observed=induction_observed,
-    )
-    await page.wait_for_timeout(600)
+                reply_baseline = await capture_induction_reply_baseline(
+                    page, before=pre_induction or {}
+                )
+            await clear_composer_verified(page, composer)
+            await page.wait_for_timeout(180)
 
-    await _submit_composer_draft(page, composer=composer, draft_text=text)
+        missing, attach_notes = await _insert_prompt_text(
+            page,
+            text,
+            composer=composer,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=satellite_execution_id,
+            induction_observed=induction_observed,
+        )
+        await page.wait_for_timeout(600)
+        await _submit_composer_draft(page, composer=composer, draft_text=text)
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
