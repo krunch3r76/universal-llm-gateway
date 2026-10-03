@@ -354,6 +354,7 @@ def _insert_thread_row(
     dispatch_id: str,
     thread_id: str,
     nest_under: str | None = None,
+    resume_of: str | None = None,
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     req = CursorDispatchRequest(
@@ -367,8 +368,8 @@ def _insert_thread_row(
         conn.execute(
             "INSERT INTO cursor_sdk_dispatches "
             "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
-            "message_present, status, terminal_status, nest_under) "
-            "VALUES (?, ?, ?, ?, ?, 1, 'completed', 'completed', ?)",
+            "message_present, status, terminal_status, nest_under, resume_of) "
+            "VALUES (?, ?, ?, ?, ?, 1, 'completed', 'completed', ?, ?)",
             (
                 dispatch_id,
                 ledger.fingerprint(req),
@@ -376,6 +377,7 @@ def _insert_thread_row(
                 req.execution_id,
                 "composer-2.5",
                 nest_under,
+                resume_of,
             ),
         )
 
@@ -482,3 +484,69 @@ def test_resume_inherit_refuses_unrelated_foreign_lock(
             worktree_path=parent_binding.workspace,
             inherit_lane_thread_id=inherit,
         )
+
+
+def test_resume_of_resume_child_of_nested_child_inherits_parent_lane_lock(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Breaks when the second resume in a nest line 503s CURSOR_LANE_PIN_FAILED.
+
+    GIW restart while nested-child-c1 is the live row re-admits resume_of=c1.
+    c1 has nest_under NULL; the lock still belongs to the nest parent thread.
+    """
+    parent_thread = "14714"
+    child_thread = "14716"
+    parent_req = CursorDispatchRequest(
+        thread_id=parent_thread,
+        model="cursor/composer-2.5",
+        dispatch_id="nest-parent-r2",
+        execution_id="exec-nest-parent-r2",
+        message="nest parent",
+        lane="B",
+    )
+    parent_binding = resolve_admit_binding(
+        req=parent_req,
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    parent_lock = lock_lane_worktree(
+        source_repo,
+        parent_binding.workspace,
+        dispatch_id="nest-parent-r2",
+        thread_id=parent_thread,
+    )
+    _insert_thread_row(dispatch_id="nest-parent-r2", thread_id=parent_thread)
+    _insert_thread_row(
+        dispatch_id="nested-child-r2",
+        thread_id=child_thread,
+        nest_under="nest-parent-r2",
+    )
+    _insert_thread_row(
+        dispatch_id="nested-child-r2-c1",
+        thread_id=child_thread,
+        resume_of="nested-child-r2",
+    )
+    inherit = lookup_resume_inherit_lane_thread_id("nested-child-r2-c1")
+    assert inherit == parent_thread
+    pin_lane_worktree_on_admit(
+        source_repo=source_repo,
+        thread_id=child_thread,
+        dispatch_id="nested-child-r2-c2",
+        worktree_path=parent_binding.workspace,
+        inherit_lane_thread_id=inherit,
+    )
+    locked = list_locked_worktrees(source_repo)
+    assert len(locked) == 1
+    assert locked[0].parsed is not None
+    assert locked[0].parsed.thread_id == parent_thread
+    assert locked[0].reason == parent_lock.lock_reason
+
+
+def test_resume_inherit_walk_stops_on_cycle() -> None:
+    """Breaks when a resume_of cycle walks until the lookup hangs or errors."""
+    _insert_thread_row(dispatch_id="cycle-a", thread_id="14716", resume_of="cycle-b")
+    _insert_thread_row(dispatch_id="cycle-b", thread_id="14716", resume_of="cycle-a")
+    assert lookup_resume_inherit_lane_thread_id("cycle-a") is None

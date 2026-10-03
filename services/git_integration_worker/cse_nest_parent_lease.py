@@ -73,39 +73,61 @@ def lookup_cse_nest_inherit_lane_thread_id(nest_under: str) -> str | None:
     return lane or None
 
 
+# Resume chains are short (one -cN per attempt). The cap stops a cycle
+# from walking the ledger forever; 16 is above the nest-depth limit.
+_RESUME_INHERIT_WALK_MAX = 16
+
+
 def lookup_resume_inherit_lane_thread_id(resume_of: str) -> str | None:
     """Lane thread whose pin a ``resume_of`` child may inherit.
 
     A nested child runs on its own worker thread while the nest parent
     (SDK dispatch or ``cse:`` holder) keeps the lane worktree lock.
-    Resume on the child thread inherits that lock. Same-thread resumes
-    return None so the ordinary relock path runs. The returned id is only
-    the nest parent's thread, so an unrelated lock still fails.
+    A later resume of that resume child has ``nest_under`` NULL, so the
+    walk follows ``resume_of`` to the first row that still names the nest.
+    Same-thread resumes return None so the ordinary relock path runs.
+    The returned id is only the nest parent's thread, so an unrelated
+    lock still fails.
     """
-    with ledger_connection() as conn:
-        row = conn.execute(
-            "SELECT thread_id, nest_under FROM cursor_sdk_dispatches "
-            "WHERE dispatch_id=?",
-            (resume_of,),
-        ).fetchone()
-    if row is None:
+    current = resume_of.strip()
+    seen: set[str] = set()
+    nest_under = ""
+    nested_thread = ""
+    for _ in range(_RESUME_INHERIT_WALK_MAX):
+        if not current or current in seen:
+            return None
+        seen.add(current)
+        with ledger_connection() as conn:
+            row = conn.execute(
+                "SELECT thread_id, nest_under, resume_of "
+                "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (current,),
+            ).fetchone()
+        if row is None:
+            return None
+        found = str(row["nest_under"] or "").strip()
+        if found:
+            nest_under = found
+            nested_thread = str(row["thread_id"] or "").strip()
+            break
+        current = str(row["resume_of"] or "").strip()
+    else:
         return None
-    nest_under = str(row["nest_under"] or "").strip()
     if not nest_under:
         return None
     holder = lookup_cse_nest_inherit_lane_thread_id(nest_under)
     if holder:
-        return holder
-    with ledger_connection() as conn:
-        parent = conn.execute(
-            "SELECT thread_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (nest_under,),
-        ).fetchone()
-    if parent is None:
-        return None
-    lane = str(parent["thread_id"] or "").strip()
-    child = str(row["thread_id"] or "").strip()
-    if not lane or lane == child:
+        lane = holder
+    else:
+        with ledger_connection() as conn:
+            parent = conn.execute(
+                "SELECT thread_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (nest_under,),
+            ).fetchone()
+        if parent is None:
+            return None
+        lane = str(parent["thread_id"] or "").strip()
+    if not lane or lane == nested_thread:
         return None
     return lane
 
