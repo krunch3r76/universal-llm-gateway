@@ -9,7 +9,9 @@ Provenance classes and the write ledger live in ``_plan``.
 Boundaries kept deliberately narrow for v1: stale flags are *reported*, not
 applied (superseding another author's claim is an attended call); the hub is
 never renamed unless ``allow_retitle`` is set; targets of new relationships
-must be quoted from the payload and already exist. ``dry_run`` validates the
+must be quoted from the payload and already exist. Mission/resume/claims that
+are not grounded in the trigger CLOSEOUT or tip CHECKPOINT are skipped (hub
+assertion copies are not evidence — friction:37643). ``dry_run`` validates the
 assertion writes server-side and performs none.
 """
 
@@ -33,6 +35,14 @@ from ._cortex import (
     cortex_client,
     dispatch,
 )
+from ._grounding import (
+    closeout_source_text,
+    fold_evidence_uris,
+    grounded_in_closeout,
+    select_mission,
+    select_resume,
+    stamp_watermark_on_description,
+)
 from ._plan import (
     CLAIM_KIND_CAPS,
     WritePlan,
@@ -42,7 +52,6 @@ from ._plan import (
     matching_prior_id,
     norm,
     prior_ids_by_prefix,
-    quoted_mission,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,6 +117,15 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
             f"consolidate-continuity v1: copied from bus turn {trigger_ref}{tip_note}"
         )
         folded_evidence = f"consolidate-continuity v1: model fold of CLOSEOUT {trigger_ref} against hub {hub_id}{tip_note}"
+        sources = closeout_source_text(trigger, tip)
+        trigger_body = str(trigger.get("body") or "")
+        tip_residue = str(tip.get("residue") or "")
+        mission_text, mission_source = select_mission(
+            tip_residue=tip.get("residue"),
+            fold_mission=str(fold.get("mission") or ""),
+            sources=sources,
+        )
+        resume = select_resume(fold.get("resume"), sources)
 
         async with cortex_client() as client:
             live_rows = await active_assertions(client, hub_id)
@@ -138,16 +156,15 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 prior_ids=prior_ids_by_prefix(prior_rows, WATERMARK_PREFIX),
             )
 
-            # 2. Mission — quoted from the tip CHECKPOINT when it states one; the
-            #    model's line is the fallback and is tagged as a fold.
-            mission_quote = quoted_mission(tip.get("residue"))
-            mission_text = mission_quote or str(fold.get("mission") or "").strip()
-            if mission_text:
+            # 2. Mission — tip CHECKPOINT quote, or a fold line the CLOSEOUT
+            #    actually states. Ungrounded distill copies of hub rows are skipped.
+            if not mission_text:
+                plan.skip("mission", "ungrounded_in_closeout")
+            else:
                 mission_claim = f"{MISSION_PREFIX}{mission_text}"
                 keep_id = matching_prior_id(prior_rows, mission_claim)
+                mission_quoted = mission_source == "checkpoint"
                 if keep_id is not None:
-                    # Unchanged mission: keep the matching row, fold any other
-                    # live MISSION rows (earlier failed runs) into it.
                     plan.skip("mission", "unchanged", id=keep_id)
                     await plan.chain_stale(
                         client,
@@ -158,38 +175,60 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 elif norm(mission_claim) in existing_claims:
                     plan.skip("mission", "stated_by_other_author")
                 else:
+                    mission_uris = fold_evidence_uris(
+                        text=mission_text,
+                        trigger_ref=trigger_ref,
+                        trigger_body=trigger_body,
+                        tip_ref=tip_ref,
+                        tip_residue=tip_residue,
+                        quoted=mission_quoted,
+                    )
+                    if not mission_uris:
+                        plan.skip("mission", "no_closeout_evidence_uri")
+                    else:
+                        await plan.write_singleton(
+                            client,
+                            "mission",
+                            hub_id=hub_id,
+                            claim=mission_claim,
+                            quoted=mission_quoted,
+                            evidence=quoted_evidence
+                            if mission_quoted
+                            else folded_evidence,
+                            evidence_uris=mission_uris,
+                            prior_ids=prior_ids_by_prefix(prior_rows, MISSION_PREFIX),
+                        )
+
+            # 3. Resume — only fields the CLOSEOUT or tip residue support.
+            if not resume:
+                plan.skip("resume", "ungrounded_in_closeout")
+            else:
+                resume_claim_text = (
+                    f"{RESUME_PREFIX}settled={resume.get('settled') or ''} | "
+                    f"live={resume.get('live') or ''} | "
+                    f"next={resume.get('next') or ''} (after {trigger_ref})"
+                )
+                resume_uris = fold_evidence_uris(
+                    text=" ".join(resume.values()),
+                    trigger_ref=trigger_ref,
+                    trigger_body=trigger_body,
+                    tip_ref=tip_ref,
+                    tip_residue=tip_residue,
+                    quoted=False,
+                )
+                if not resume_uris:
+                    plan.skip("resume", "no_closeout_evidence_uri")
+                else:
                     await plan.write_singleton(
                         client,
-                        "mission",
+                        "resume",
                         hub_id=hub_id,
-                        claim=mission_claim,
-                        quoted=mission_quote is not None,
-                        evidence=quoted_evidence if mission_quote else folded_evidence,
-                        evidence_uris=[tip_ref]
-                        if mission_quote and tip_ref
-                        else [trigger_ref],
-                        prior_ids=prior_ids_by_prefix(prior_rows, MISSION_PREFIX),
+                        claim=resume_claim_text,
+                        quoted=False,
+                        evidence=folded_evidence,
+                        evidence_uris=resume_uris,
+                        prior_ids=prior_ids_by_prefix(prior_rows, RESUME_PREFIX),
                     )
-
-            # 3. Resume line — settled | live | next, always model-authored.
-            resume = fold.get("resume") or {}
-            if isinstance(resume, dict) and any(
-                resume.get(k) for k in ("settled", "live", "next")
-            ):
-                await plan.write_singleton(
-                    client,
-                    "resume",
-                    hub_id=hub_id,
-                    claim=(
-                        f"{RESUME_PREFIX}settled={str(resume.get('settled') or '').strip()} | "
-                        f"live={str(resume.get('live') or '').strip()} | "
-                        f"next={str(resume.get('next') or '').strip()} (after {trigger_ref})"
-                    ),
-                    quoted=False,
-                    evidence=folded_evidence,
-                    evidence_uris=[trigger_ref],
-                    prior_ids=prior_ids_by_prefix(prior_rows, RESUME_PREFIX),
-                )
 
             # 4. Claims — S4-A per-kind caps, then dedup + payload evidence.
             # options.max_claims>0 is an emergency overall slice AFTER the
@@ -227,11 +266,24 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 if norm(claim) in existing_claims:
                     plan.skip("claim", "duplicate", claim=claim)
                     continue
+                if not grounded_in_closeout(text, sources):
+                    plan.skip("claim", "ungrounded_in_closeout", claim=claim)
+                    continue
                 uris = [
                     u
                     for u in item.get("evidence_uris") or []
-                    if isinstance(u, str) and u in payload_text
-                ]
+                    if isinstance(u, str) and u in payload_text and u in sources
+                ] or fold_evidence_uris(
+                    text=text,
+                    trigger_ref=trigger_ref,
+                    trigger_body=trigger_body,
+                    tip_ref=tip_ref,
+                    tip_residue=tip_residue,
+                    quoted=False,
+                )
+                if not uris:
+                    plan.skip("claim", "no_closeout_evidence_uri", claim=claim)
+                    continue
                 await plan.run(
                     client,
                     "claim",
@@ -241,7 +293,7 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                         claim,
                         quoted=False,
                         evidence=folded_evidence,
-                        evidence_uris=uris or [trigger_ref],
+                        evidence_uris=uris,
                     ),
                 )
                 existing_claims.add(norm(claim))
@@ -279,17 +331,25 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 )
                 existing_targets.add(target)
 
-            # 6. Hub description — the card's summary_row, the first thing a cold
-            #    seat reads. Owned by this pipeline as a projection of the current
-            #    fold; `name` stays opt-in (a rename is visible everywhere).
-            entity_args: dict[str, Any] = {
-                "entity_id": hub_id,
-                "description": describe_hub(
+            # 6. Hub description — card summary_row. Ungrounded folds must
+            #    not rewrite mission/resume (stamp watermark only).
+            prior_description = str(
+                (ingest_json.get("hub") or {}).get("description") or ""
+            )
+            if mission_source == "none" and not resume:
+                description = stamp_watermark_on_description(
+                    prior_description, trigger_ref, stamp
+                )
+            else:
+                description = describe_hub(
                     mission=mission_text,
-                    resume=resume if isinstance(resume, dict) else {},
+                    resume=resume,
                     trigger_ref=trigger_ref,
                     stamp=stamp,
-                ),
+                )
+            entity_args: dict[str, Any] = {
+                "entity_id": hub_id,
+                "description": description,
             }
             retitle = fold.get("retitle")
             if isinstance(retitle, dict) and retitle.get("name"):
@@ -305,9 +365,7 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
             "dry_run": plan.dry_run,
             "hub_id": hub_id,
             "trigger": trigger_ref,
-            "mission_source": "checkpoint"
-            if mission_quote
-            else ("model" if mission_text else "none"),
+            "mission_source": mission_source,
             "singleton_repair": singleton_repair,
             "claims_dropped_by_cap": claims_dropped,
             "counts": {

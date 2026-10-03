@@ -87,7 +87,13 @@ def resolve_root(thread_id: str) -> str | None:
 
 
 def _tip_checkpoint(root: str) -> dict[str, Any] | None:
-    """Newest CHECKPOINT-subject turn on the root, authored residue only."""
+    """Newest CHECKPOINT-subject turn on the root, authored residue only.
+
+    Window is the last ``_TIP_SCAN_WINDOW`` root turns. A busy house can have
+    no CHECKPOINT in that window (12286's last CP was #138 while the tip is
+    2000+). Apply must not treat a missing tip as license to copy hub mission
+    rows onto the trigger CLOSEOUT's evidence URI.
+    """
     turns = get_turns(thread=root, last=_TIP_SCAN_WINDOW)
     for turn in reversed(turns):
         if is_checkpoint_subject(turn.get("subject")):

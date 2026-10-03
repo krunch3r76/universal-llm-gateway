@@ -40,5 +40,9 @@ prompts:
 
       Rules: no prose outside the JSON; no markdown fences; no speculation; when in
       doubt leave a list empty. Do not restate the whole CLOSEOUT — fold it.
+      Current hub assertions are prior graph state. Do not copy them into
+      mission or resume unless the same fact appears in the Trigger CLOSEOUT
+      body or the Tip CHECKPOINT residue. An empty mission/resume is correct
+      when the CLOSEOUT does not speak to the house's live work.
     template: |
       {payload}
