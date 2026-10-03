@@ -8,7 +8,9 @@ chromadb 1.5.1 rejects a metadata prefix: ``where`` ``$regex`` is invalid, and
 ``$gte`` accepts only numbers, so an anchored path regex cannot be pushed down.
 ``source`` ``$in`` of the exact indexed paths for those prefixes does prefilter
 ANN (nearer out-of-scope neighbors are dropped). ``execute_search`` supplies
-that path list from the FTS index when it is loaded.
+that path list from the FTS index when it is loaded. Path lists longer than
+``SCOPED_IN_MAX_SOURCES`` use over-fetch instead. A rejected ``$in`` call
+counts against the trip budget.
 
 When the path list is missing, the window falls back to geometric over-fetch:
 start at ``top_k * SCOPED_FETCH_MULTIPLIER`` and double ``n_results`` until
@@ -49,6 +51,10 @@ SCOPED_N_RESULTS_CEILING = 2000
 # Doubling from the minimum start (top_k * 5 >= 5) reaches 2000 in 10 queries:
 # 5, 10, 20, 40, 80, 160, 320, 640, 1280, 2000.
 MAX_SCOPED_CHROMA_ROUND_TRIPS = 10
+# Above this many exact paths, skip the source $in push-down and over-fetch.
+# A scope this wide is dense among global neighbors, and one where clause of
+# this size risks backend parameter or payload limits (untested on 1.5.1).
+SCOPED_IN_MAX_SOURCES = 10_000
 
 _QUERY_INCLUDE = ["documents", "metadatas", "distances"]
 
@@ -72,8 +78,10 @@ class VectorCollection(Protocol):
 class VectorWindowResult:
     """One vector-stage window plus the bound that produced it.
 
-    ``cap_hit`` is true when a scoped query stopped at the cap with fewer than
-    ``top_k`` non-noise in-scope rows. Unscoped queries never set it.
+    ``cap_hit`` is true when a scoped query returned fewer than ``top_k``
+    non-noise in-scope rows, for any reason: the cap or trip budget was
+    reached, or (on the ``$in`` path) the filtered scope holds fewer rows.
+    Unscoped queries never set it.
     """
 
     ids: list[str]
@@ -95,6 +103,7 @@ def query_vector_window(
     indexed_sources: list[str] | None = None,
     n_results_ceiling: int = SCOPED_N_RESULTS_CEILING,
     max_round_trips: int = MAX_SCOPED_CHROMA_ROUND_TRIPS,
+    max_in_sources: int = SCOPED_IN_MAX_SOURCES,
 ) -> VectorWindowResult:
     """Return the Chroma neighbor window for one query embedding.
 
@@ -120,6 +129,14 @@ def query_vector_window(
             cap_hit=False,
         )
 
+    if indexed_sources is not None and len(indexed_sources) > max_in_sources:
+        logger.info(
+            "scoped source list has %s paths (> %s); using over-fetch",
+            len(indexed_sources),
+            max_in_sources,
+        )
+        indexed_sources = None
+
     if indexed_sources is not None:
         if not indexed_sources:
             return _empty_window(cap=0, cap_hit=False)
@@ -135,10 +152,13 @@ def query_vector_window(
                 max_round_trips=max_round_trips,
             )
         except ValueError as exc:
+            # The where is identical on every trip, so validation rejects it on
+            # trip 1. Charge that call so the total stays <= max_round_trips.
             logger.warning(
                 "scoped source $in where failed (%s); falling back to over-fetch",
                 exc,
             )
+            max_round_trips = max(max_round_trips - 1, 1)
 
     return _scoped_grow(
         collection,

@@ -42,11 +42,18 @@ def _indexed_sources_for_scope(source_prefixes: list[str] | None) -> list[str] |
 
     None selects geometric over-fetch. An empty list means the scope has no
     indexed paths, so the vector window does not scan the global neighbor list.
+    An empty FTS table returns None, not [].
     """
     if not source_prefixes or state._property_index is None:
         return None
     try:
-        return state._property_index.fts.sources_for_prefixes(source_prefixes)
+        fts = state._property_index.fts
+        sources = fts.sources_for_prefixes(source_prefixes)
+        if not sources and fts.get_count() == 0:
+            # FTS is empty (cleared or not yet built); the list says nothing
+            # about Chroma, so use over-fetch instead of returning no hits.
+            return None
+        return sources
     except Exception as exc:
         logger.warning(
             "scoped source list failed; falling back to over-fetch: %s",

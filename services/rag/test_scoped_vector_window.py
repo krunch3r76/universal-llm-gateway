@@ -330,8 +330,103 @@ def test_where_rejection_falls_back_to_over_fetch() -> None:
     assert window.cap_hit is False
 
 
+class _CountingRejectWhereCollection(_RejectWhereCollection):
+    def __init__(self, rows: list[tuple[str, str, dict[str, Any], float]]) -> None:
+        super().__init__(rows)
+        self.attempts = 0
+
+    def query(self, **kwargs: Any) -> dict[str, Any]:
+        self.attempts += 1
+        return super().query(**kwargs)
+
+
+def test_where_rejection_fallback_stays_within_trip_budget() -> None:
+    rows = [
+        _row(f"out-{index}", f"/other/{index}.md", float(index))
+        for index in range(3000)
+    ]
+    rows.append(_row("far", f"{_PREFIX}/far.md", 9999.0))
+    collection = _CountingRejectWhereCollection(rows)
+    window = query_vector_window(
+        collection,
+        [1.0, 0.0],
+        top_k=1,
+        source_prefixes=[_PREFIX],
+        indexed_sources=[f"{_PREFIX}/far.md"],
+    )
+    assert collection.attempts == 10
+    assert collection.queries[-1] == SCOPED_N_RESULTS_CEILING
+    assert max(collection.queries) <= SCOPED_N_RESULTS_CEILING
+    assert window.round_trips == 9
+    assert window.cap_hit is True
+
+
+def test_oversized_indexed_sources_use_over_fetch() -> None:
+    collection = _RecordingCollection(_scoped_rows())
+
+    window = query_vector_window(
+        collection,
+        [1.0, 0.0],
+        top_k=3,
+        source_prefixes=[_PREFIX],
+        indexed_sources=[f"{_PREFIX}/{index}.md" for index in range(3)],
+        max_in_sources=2,
+    )
+    assert all("where" not in passed for passed in collection.kwargs)
+    assert collection.count_calls == 1
+    assert window.ids[-3:] == ["in-0", "in-1", "in-2"]
+    assert window.cap_hit is False
+
+
+class _FakeFts:
+    def __init__(self, sources: list[str], count: int, *, fail: bool = False) -> None:
+        self.sources = sources
+        self.count = count
+        self.fail = fail
+        self.calls = 0
+
+    def sources_for_prefixes(self, prefixes: list[str]) -> list[str]:
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("fts down")
+        return list(self.sources)
+
+    def get_count(self) -> int:
+        return self.count
+
+
+class _FakePropertyIndex:
+    def __init__(self, fts: _FakeFts) -> None:
+        self.fts = fts
+
+
+@pytest.mark.parametrize(
+    ("fts", "prefixes", "expected"),
+    [
+        (_FakeFts([], 0), [_PREFIX], None),
+        (_FakeFts([], 5), [_PREFIX], []),
+        (_FakeFts([f"{_PREFIX}/a.md"], 5), [_PREFIX], [f"{_PREFIX}/a.md"]),
+        (_FakeFts([], 5, fail=True), [_PREFIX], None),
+        (_FakeFts([f"{_PREFIX}/a.md"], 5), None, None),
+    ],
+)
+def test_indexed_sources_for_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    fts: _FakeFts,
+    prefixes: list[str] | None,
+    expected: list[str] | None,
+) -> None:
+    from services.rag.rag_service import search as search_mod
+    from services.rag.rag_service import state
+
+    monkeypatch.setattr(state, "_property_index", _FakePropertyIndex(fts))
+    assert search_mod._indexed_sources_for_scope(prefixes) == expected
+    if prefixes is None:
+        assert fts.calls == 0
+
+
 def test_installed_chromadb_rejects_metadata_prefix_operators() -> None:
-    """Prefix push-down is unavailable; adaptive over-fetch is the scoped path.
+    """Prefix push-down is unavailable; source $in of FTS paths is the scoped path.
 
     If a future chromadb accepts metadata ``$regex`` or string ``$gte``, this
     test fails so the window can move to a ``where`` predicate.
