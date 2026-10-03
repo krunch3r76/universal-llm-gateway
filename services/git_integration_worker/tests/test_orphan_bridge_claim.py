@@ -149,9 +149,12 @@ def test_grace_boundary_is_the_documented_window() -> None:
 def test_live_status_set_matches_the_ledger_filter() -> None:
     """Both guard paths must agree on what 'live' means.
 
-    ``live_ledger_worktree_paths`` already filtered on this set; the process
-    path did not, which is the entire defect. If they ever diverge, one path
-    would strand branches while the other reaps live work.
+    ``live_ledger_worktree_paths`` filters on this set *plus* an open
+    ``park_for_restart`` clause (a:37507). The process-path stale-claim
+    check uses this tuple only: a cancelled park is terminal, but its
+    directory stays occupied via the ledger scan until a resume child
+    exists. If the live-status tuple diverges from the process path,
+    one path would strand branches while the other reaps live work.
     """
     assert guard._LIVE_LEDGER_STATUSES == (
         "admitted",

@@ -325,12 +325,12 @@ def _hold_hyphen_prefixed_siblings(held: set[str]) -> None:
 
 
 def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
-    """Worktree paths claimed by non-terminal ledger rows, via lease key or lane row.
+    """Worktree paths claimed by live rows or an open park_for_restart.
 
-    The lease-key scan alone misses a live dispatch whose lane registry row
-    holds the real path while its lease key points elsewhere, and it misses
-    rows whose registry status lags behind the ledger. Joining the lane
-    registry on ``thread_id`` and ``last_dispatch_id`` closes both.
+    Live statuses are ``_LIVE_LEDGER_STATUSES``. An open restart park is
+    ``status=cancelled`` by design (mark_parked) while ``park_resumed_by``
+    is still NULL — boot reaps cancelled lanes before ``_resume_parked_rows``
+    (a:37507). Occupancy must hold that tree until a resume child exists.
     """
     from services.git_integration_worker.cursor_sdk_worktree_registry import (
         ensure_worktree_schema,
@@ -338,6 +338,14 @@ def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
 
     active: set[str] = set()
     placeholders = ", ".join("?" for _ in _LIVE_LEDGER_STATUSES)
+    open_restart_park = (
+        "(d.park_kind='park_for_restart' AND d.park_resumed_by IS NULL "
+        "AND (d.park_expires_at IS NULL OR d.park_expires_at > ?) "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM cursor_sdk_dispatches AS c "
+        "WHERE c.resume_of = d.dispatch_id))"
+    )
+    now = datetime.now(UTC).isoformat()
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         rows = conn.execute(
@@ -345,8 +353,8 @@ def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
             "FROM cursor_sdk_dispatches d "
             "LEFT JOIN cursor_sdk_lane_worktrees w "
             "  ON w.thread_id = d.thread_id OR w.last_dispatch_id = d.dispatch_id "
-            f"WHERE d.status IN ({placeholders})",
-            _LIVE_LEDGER_STATUSES,
+            f"WHERE d.status IN ({placeholders}) OR {open_restart_park}",
+            (*_LIVE_LEDGER_STATUSES, now),
         ).fetchall()
     for row in rows:
         for key in (row["lease_key"] or row["source_repo"], row["worktree_path"]):
