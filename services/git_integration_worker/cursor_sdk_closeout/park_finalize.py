@@ -398,9 +398,7 @@ async def finalize_parked(
             last_tools=last_tools,
         )
     except Exception:  # noqa: BLE001 — park closeout always marks terminal
-        logger.exception(
-            "emit_partial_harvest_on_park raised dispatch=%s", dispatch_id
-        )
+        logger.exception("emit_partial_harvest_on_park raised dispatch=%s", dispatch_id)
     sidecar_uri = harvest.get("sidecar_uri")
     park_row = None
     try:
@@ -449,55 +447,74 @@ async def finalize_parked(
             bus_result.status_code,
             bus_result.body,
         )
-    if conductor:
-        # friction 37488: Exception swallow lives inside the merge function.
-        await asyncio.to_thread(
-            merge_conductor_closeout_hop_authority,
+
+    async def _closeout_tail() -> None:
+        if conductor:
+            # friction 37488: Exception swallow lives inside the merge function.
+            await asyncio.to_thread(
+                merge_conductor_closeout_hop_authority,
+                dispatch_id=dispatch_id,
+                closeout_body=body,
+                thread_id=req.thread_id,
+                closeout_turn=extract_turn_number(bus_result.body),
+            )
+        emit_sdk_park_parked(
             dispatch_id=dispatch_id,
-            closeout_body=body,
             thread_id=req.thread_id,
-            closeout_turn=extract_turn_number(bus_result.body),
-        )
-    emit_sdk_park_parked(
-        dispatch_id=dispatch_id,
-        thread_id=req.thread_id,
-        intent_id=mark.intent_id,
-        method=mark.method,
-        tool_call_count=tool_call_count,
-        sidecar_uri=sidecar_uri,
-        sdk_agent_id_present=bool(park_row is not None and park_row.sdk_agent_id),
-    )
-    if not terminal_emitted(dispatch_id):
-        # signal_park normally emitted worker.cancelled; guarantee the foldable
-        # terminal is cancelled so the terminal path never synthesizes failed
-        # for a park (I-SR-3).
-        emit_sdk_worker_cancelled(
-            dispatch_id=dispatch_id,
+            intent_id=mark.intent_id,
             method=mark.method,
-            reason=(
-                f"park_for_restart:{mark.intent_id}"
-                if mark.intent_id
-                else "park_for_restart"
-            ),
-            thread_id=req.thread_id,
-            terminal_status="cancelled",
+            tool_call_count=tool_call_count,
+            sidecar_uri=sidecar_uri,
+            sdk_agent_id_present=bool(park_row is not None and park_row.sdk_agent_id),
         )
-    logger.warning(
-        "cursor-sdk dispatch parked dispatch_id=%s intent_id=%s method=%s "
-        "tool_calls=%s sidecar=%s",
-        dispatch_id,
-        mark.intent_id,
-        mark.method,
-        tool_call_count,
-        sidecar_uri,
-    )
-    try:
+        if not terminal_emitted(dispatch_id):
+            # signal_park normally emitted worker.cancelled; guarantee the foldable
+            # terminal is cancelled so the terminal path never synthesizes failed
+            # for a park (I-SR-3).
+            emit_sdk_worker_cancelled(
+                dispatch_id=dispatch_id,
+                method=mark.method,
+                reason=(
+                    f"park_for_restart:{mark.intent_id}"
+                    if mark.intent_id
+                    else "park_for_restart"
+                ),
+                thread_id=req.thread_id,
+                terminal_status="cancelled",
+            )
+        logger.warning(
+            "cursor-sdk dispatch parked dispatch_id=%s intent_id=%s method=%s "
+            "tool_calls=%s sidecar=%s",
+            dispatch_id,
+            mark.intent_id,
+            mark.method,
+            tool_call_count,
+            sidecar_uri,
+        )
         await _mark_terminal_and_promote(
             dispatch_id=dispatch_id,
             terminal_status="cancelled",
             controller=controller,
             emit_tag=PARKED_EMIT_TAG,
         )
+
+    # friction 37491: keep merge → cancelled emit → promote as one task so a
+    # shutdown cancel cannot promote (and hop) while the merge thread still
+    # runs, and cannot skip the I-SR-3 cancelled emit. Shield the tail; on
+    # CancelledError uncancel and await the same task. Swallow so
+    # _close_ticket_after does not emergency-terminate a parked link.
+    tail = asyncio.create_task(_closeout_tail())
+    try:
+        await asyncio.shield(tail)
+    except asyncio.CancelledError:
+        logger.exception(
+            "finalize_parked cancelled dispatch=%s; still finishing closeout",
+            dispatch_id,
+        )
+        _task = asyncio.current_task()
+        if _task is not None and _task.cancelling():
+            _task.uncancel()
+        await tail
     finally:
         clear_park_mark(dispatch_id)
 

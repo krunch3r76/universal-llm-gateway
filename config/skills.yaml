@@ -416,6 +416,11 @@ skills:
   over-refusal-prompt-framing:
     surface_class: cursor_only
     mcp_surface_required: none
+  overhaul:
+    # Command wrapper is /overhaul. cursor-sdk and claude.ai enter by this slug.
+    # shared_sync + mcp_surface none so Customize upload is in the Claude target set.
+    surface_class: shared_sync
+    mcp_surface_required: none
   overhaul-program:
     surface_class: cursor_only
     mcp_surface_required: life
