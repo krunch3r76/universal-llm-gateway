@@ -348,6 +348,38 @@ def conductor_hop_watchdog_candidates(
     return candidates
 
 
+def conductor_consult_pending_continue_candidates(
+    ledger: CursorDispatchLedger,
+) -> list[str]:
+    """Terminal bare CONSULT_PENDING rows with no successor that owe a continue.
+
+    ``consult_pending_continue_owed`` re-enters the ledger, so rows are copied
+    out of the scan connection before the predicate runs.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        consult_pending_continue_owed,
+    )
+
+    pending: list[dict] = []
+    with ledger._connect() as conn:
+        for row in _latest_terminal_conductor_rows(conn):
+            mapped = {k: row[k] for k in row.keys()}
+            dispatch_id = str(mapped.get("dispatch_id") or "")
+            if not dispatch_id:
+                continue
+            record_json = str(mapped.get("record_json") or "")
+            if _successor_admitted(
+                conn, predecessor_id=dispatch_id, record_json=record_json
+            ):
+                continue
+            pending.append(mapped)
+    candidates: list[str] = []
+    for mapped in pending:
+        if consult_pending_continue_owed(mapped):
+            candidates.append(str(mapped.get("dispatch_id") or ""))
+    return candidates
+
+
 def conductor_park_harvest_continue_candidates(
     ledger: CursorDispatchLedger,
 ) -> list[str]:

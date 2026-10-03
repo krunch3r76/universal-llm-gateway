@@ -848,6 +848,41 @@ async def test_watchdog_does_not_budget_park_cancel_discard() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_sweep_consult_pending_continue_once() -> None:
+    """Bare CONSULT_PENDING enters the sweep union and admits once."""
+    ledger = CursorDispatchLedger.instance()
+    closeout = "stop: CONSULT_PENDING\nstatus: blocked\n"
+    dispatch_id = "pred-consult-sweep-1"
+    _terminal_row(
+        ledger,
+        dispatch_id=dispatch_id,
+        closeout_tokens=["CONSULT_PENDING"],
+        record_patch={
+            "closeout_body": closeout,
+            "closeout_turn": 3,
+            "closeout_stop_tokens": ["CONSULT_PENDING"],
+        },
+        thread_id="12291",
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-consult-sweep"}))
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        fired = await sweep_conductor_hop_watchdog(ledger)
+        again = await sweep_conductor_hop_watchdog(ledger)
+    assert fired == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
 def test_watchdog_hops_owed_off_event_loop() -> None:
     """hop_owed does sync CDP HTTP — must not run on the GIW asyncio thread."""
     from pathlib import Path

@@ -431,9 +431,38 @@ def hop_body_build_refused(
         return True
     absent = str(data.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
     if not _named_target_is_terminal(token, absent_counts_terminal=absent):
-        return True
+        # Reply lift only after the deferral is stamped. Before that, an
+        # early reply must not skip the stamp, and a bus read must not run.
+        if not (absent and _expected_harvest_reply_present(row, data)):
+            return True
     if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
         return True
+    return False
+
+
+def _expected_harvest_reply_present(
+    row: dict[str, Any], rec: dict[str, Any]
+) -> bool:
+    """Web-anthropic reply on the summoning or worker thread for this harvest.
+
+    ``after_turn=0`` counts a reply that landed before the row's closeout.
+    The bus read fails closed.
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        reply_arrived_on_thread,
+    )
+
+    thread_ids: list[str] = []
+    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
+    worker_id = str(row.get("thread_id") or "").strip()
+    for thread_id in (summoning_id, worker_id):
+        if thread_id and thread_id not in thread_ids:
+            thread_ids.append(thread_id)
+    for thread_id in thread_ids:
+        if reply_arrived_on_thread(
+            thread_id=thread_id, after_turn=0, from_agent="web-anthropic"
+        ):
+            return True
     return False
 
 
@@ -1186,6 +1215,9 @@ def _deferral_cleared(row: dict[str, Any]) -> bool:
         verdict, _skip = external_gate_hop_verdict(row)
         return verdict != "live"
     if gate == SKIP_GATE_NEXT_ADMIT_BLOCKED:
+        # Cleared when the harvest left the registry, or a web-anthropic
+        # reply is already on the summoning or worker thread (including
+        # a reply that landed before this row's closeout).
         return not hop_body_build_refused(row, rec)
     return False
 

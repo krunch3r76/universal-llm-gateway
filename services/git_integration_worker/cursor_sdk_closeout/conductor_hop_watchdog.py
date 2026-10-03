@@ -57,6 +57,7 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
     merge_hop_patch,
 )
 from services.git_integration_worker.cursor_sdk_park import (
+    conductor_consult_pending_continue_candidates,
     conductor_hop_watchdog_candidates,
     conductor_park_harvest_continue_candidates,
     conductor_park_harvest_watchdog_candidates,
@@ -377,12 +378,22 @@ async def sweep_conductor_hop_watchdog(
     continue_candidates = await asyncio.to_thread(
         conductor_park_harvest_continue_candidates, ledger
     )
+    consult_candidates = await asyncio.to_thread(
+        conductor_consult_pending_continue_candidates, ledger
+    )
     hop_candidates = await asyncio.to_thread(conductor_hop_watchdog_candidates, ledger)
     park_candidates = await asyncio.to_thread(
         conductor_park_harvest_watchdog_candidates, ledger
     )
     candidates = list(
-        dict.fromkeys([*continue_candidates, *park_candidates, *hop_candidates])
+        dict.fromkeys(
+            [
+                *continue_candidates,
+                *consult_candidates,
+                *park_candidates,
+                *hop_candidates,
+            ]
+        )
     )
     fired = 0
     for dispatch_id in candidates:

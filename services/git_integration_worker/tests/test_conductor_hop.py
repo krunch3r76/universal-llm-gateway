@@ -1195,6 +1195,126 @@ async def test_next_admit_blocked_releases_when_harvest_execution_is_gone() -> N
     assert record.get("hop_deferral_gate") == SKIP_GATE_NEXT_ADMIT_BLOCKED
 
 
+def _live_harvest_registry(harvest_id: str) -> dict:
+    return {
+        "live": {
+            "execution_id": harvest_id,
+            "execution_state": {
+                "execution_id": harvest_id,
+                "state": "streaming",
+                "started_at": 1_700_000_000.0,
+            },
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_next_admit_blocked_releases_when_reply_on_summoning_thread() -> None:
+    """Harvest row still live; web-anthropic reply on the summoning thread admits once."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-reply"
+    harvest_id = "4858cfb2-c6e9-4157-ba43-f12f3584685d"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="9638",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": "9638",
+            "closeout_turn": 9,
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-reply-present"}))
+    state = {"reply": False}
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return (
+            state["reply"]
+            and thread_id == "9638"
+            and after_turn == 0
+            and from_agent == "web-anthropic"
+        )
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry_store.load_active",
+            return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        post_mock.assert_not_called()
+        state["reply"] = True
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_next_admit_blocked_releases_when_reply_precedes_closeout() -> None:
+    """A reply before closeout_turn still clears next_admit_blocked once."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-early-reply"
+    harvest_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        dispatch_id=dispatch_id,
+        summoning_thread_id="14901",
+    )
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": "14901",
+            "closeout_turn": 12,
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+        },
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-early-reply"}))
+    state = {"reply": False}
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return state["reply"] and after_turn == 0 and from_agent == "web-anthropic"
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry_store.load_active",
+            return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+        post_mock.assert_not_called()
+        state["reply"] = True
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
 @pytest.mark.asyncio
 async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
     ledger = CursorDispatchLedger.instance()
