@@ -528,6 +528,62 @@ async def test_execute_defers_giw_without_relay_loss_hazard(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_execute_defers_mcp_when_stargate_settle_verdict_missing(
+    tmp_path, monkeypatch
+):
+    """One land: open stargate row without settle verdict blocks mcp restart."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+
+    from charter_runner_store.propagation_ledger import upsert_open_rows
+
+    upsert_open_rows(
+        [
+            PropagationRow(
+                service="mcp",
+                code_ref=_SHA,
+                proof_class="process_live",
+            ),
+            PropagationRow(
+                service="stargate",
+                code_ref=_SHA,
+                proof_class="process_live",
+            ),
+        ]
+    )
+
+    before = {"code_version": _SHA_OTHER, "pid": 10}
+
+    plan = PropagationPlan(rows=[], sync_restart_services=[])
+    ctl = MagicMock()
+    install_propagation_context(ctl, event_bus=None)
+
+    def _dispatch(_row, *_args, **_kwargs):
+        return _dispatch_result(before, requested="process_live")
+
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute.dispatch_for_projection",
+            side_effect=_dispatch,
+        ),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute._fetch_drain_state",
+            return_value={"active_ops": []},
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch.sync_restart_charter_harvest",
+            new=AsyncMock(return_value={"status": "ok"}),
+        ) as restart,
+    ):
+        results = await execute_propagation_plan(plan, root_id="root", window_index=1)
+
+    services = [call.args[1] for call in restart.call_args_list]
+    assert "mcp" not in services
+    mcp_remaining = [r for r in results["remaining"] if r["service"] == "mcp"]
+    assert mcp_remaining
+    assert mcp_remaining[0]["defer_reason"] == "order_after_unsatisfied"
+
+
+@pytest.mark.asyncio
 async def test_age_two_escalates(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
 
