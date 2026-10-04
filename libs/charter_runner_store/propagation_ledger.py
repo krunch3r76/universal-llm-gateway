@@ -884,9 +884,10 @@ def provider_settle_verdicts(
 ) -> dict[str, str]:
     """Latest recorded settle verdict per service and per (service, land) pair.
 
-    Land keys for rows still settling (``settle_verdict IS NULL``) appear as
-    ``pending`` when no verdict was recorded yet. Unscoped service keys use only
-    non-null verdicts (latest by ``updated_at``).
+    Land keys are ``pending`` only for ``open`` or ``settling`` rows whose
+    ``settle_verdict`` is still NULL. A closed row with no verdict is omitted.
+    Unscoped service keys use only non-null verdicts (latest by ``updated_at``),
+    including a verdict recorded on a row that later closed.
     """
     own_conn = conn is None
     db = conn or open_ledger_db()
@@ -911,6 +912,7 @@ def provider_settle_verdicts(
             """
             SELECT service, code_ref FROM propagation_ledger
             WHERE settle_verdict IS NULL
+              AND status IN ('open', 'settling')
             """
         )
         for row in pending_cur.fetchall():

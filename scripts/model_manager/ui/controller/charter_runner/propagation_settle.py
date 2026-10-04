@@ -8,7 +8,10 @@ from typing import Any
 
 from implement_admission.propagation_row import ORDER_AFTER
 from implement_admission.settle_gate import SettleVerdict
-from implement_admission.settle_pipeline_maps import provider_land_in_scope
+from implement_admission.settle_pipeline_maps import (
+    newest_in_scope_verdict,
+    provider_land_in_scope,
+)
 
 RevertFn = Callable[..., Awaitable[dict[str, Any]]]
 
