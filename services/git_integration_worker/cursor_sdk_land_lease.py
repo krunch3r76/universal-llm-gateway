@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# holder_op_ids this process acquired and has not released. A live pid whose
+# op is absent here is a failed release, and the reaper may drop that row.
+_local_holds: set[tuple[str, str]] = set()
+
 _LAND_LEASE_DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_land_leases (
     lease_key     TEXT PRIMARY KEY,
@@ -161,6 +165,7 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
                 "VALUES (?, ?, ?, ?)",
                 (lease_key, holder_op_id, _now(), os.getpid()),
             )
+            _local_holds.add((lease_key, holder_op_id))
             return True
         if row["holder_op_id"] == holder_op_id:
             conn.execute(
@@ -168,19 +173,31 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
                 "WHERE lease_key=? AND holder_op_id=?",
                 (os.getpid(), _now(), lease_key, holder_op_id),
             )
+            _local_holds.add((lease_key, holder_op_id))
             return True
         return False
 
 
 def process_holds_master_land_lease(source_repo: str | Path) -> bool:
-    """True when this process's pid is the holder of the hub master land lease."""
+    """True when this process's pid is the holder of the hub master land lease.
+
+    A ledger error returns False. Refusing the merge is safer than raising
+    into a closeout that has not moved master yet.
+    """
     lease_key = master_land_lease_key(source_repo)
-    with _connect() as conn:
-        ensure_land_lease_schema(conn)
-        row = conn.execute(
-            "SELECT holder_pid FROM cursor_sdk_land_leases WHERE lease_key=?",
-            (lease_key,),
-        ).fetchone()
+    try:
+        with _connect() as conn:
+            ensure_land_lease_schema(conn)
+            row = conn.execute(
+                "SELECT holder_pid FROM cursor_sdk_land_leases WHERE lease_key=?",
+                (lease_key,),
+            ).fetchone()
+    except Exception:
+        logger.warning(
+            "master land lease unreadable; refusing hub master move lease_key=%s",
+            lease_key,
+        )
+        return False
     if row is None or row["holder_pid"] is None:
         return False
     return int(row["holder_pid"]) == os.getpid()
@@ -241,7 +258,31 @@ def release_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
             "DELETE FROM cursor_sdk_land_leases WHERE lease_key=? AND holder_op_id=?",
             (lease_key, holder_op_id),
         )
-        return deleted.rowcount == 1
+        released = deleted.rowcount == 1
+    if released:
+        _local_holds.discard((lease_key, holder_op_id))
+    return released
+
+
+def release_land_lease_best_effort(*, lease_key: str, holder_op_id: str) -> None:
+    """Release the lease. A failure retries once, then drops the local hold.
+
+    The return value of the land is unchanged. The next reap drops a row whose
+    pid is this process when the op is no longer locally held, so a failed
+    release cannot wedge later lands until process restart.
+    """
+    for _attempt in (1, 2):
+        try:
+            release_land_lease(lease_key=lease_key, holder_op_id=holder_op_id)
+            return
+        except Exception:
+            logger.error(
+                "land_lease_release_failed lease_key=%s holder=%s",
+                lease_key,
+                holder_op_id,
+            )
+    _local_holds.discard((lease_key, holder_op_id))
+    reap_stale_land_leases()
 
 
 def refresh_land_lease_heartbeat(*, lease_key: str, holder_op_id: str) -> bool:
@@ -291,6 +332,12 @@ def reap_stale_land_leases(
         for row in rows:
             pid = row["holder_pid"]
             alive = _holder_pid_alive(int(pid) if pid is not None else None)
+            if (
+                alive is True
+                and int(pid) == os.getpid()
+                and (row["lease_key"], str(row["holder_op_id"])) not in _local_holds
+            ):
+                alive = False
             if alive is True:
                 continue
             if alive is False:
