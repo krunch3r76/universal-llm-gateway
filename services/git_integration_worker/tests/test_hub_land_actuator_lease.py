@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from services.git_integration_worker import cursor_sdk_land_lease as land_lease
 from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_sdk_branch_terminal import (
     maybe_ff_land_silent_lane,
@@ -29,6 +30,7 @@ from services.git_integration_worker.cursor_sdk_hub_land_scope import (
     land_lane_branch_onto_hub_master,
 )
 from services.git_integration_worker.cursor_sdk_land_lease import (
+    land_lease_holder,
     master_land_lease_key,
     release_land_lease,
     try_acquire_land_lease,
@@ -358,3 +360,129 @@ def test_silent_land_acquire_raise_returns_false_and_closeout_assembles(
     )
     assert fields is not None
     assert _master(repo) == before
+
+
+def test_land_lane_branch_ledger_down_on_release_returns_landed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(repo, "cursor-sdk/lane-reap", "lane\n")
+    real = land_lease._connect
+    calls = {"n": 0}
+
+    def _connect_then_down():
+        calls["n"] += 1
+        if calls["n"] > 2:
+            raise sqlite3.OperationalError("ledger down")
+        return real()
+
+    monkeypatch.setattr(land_lease, "_connect", _connect_then_down)
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name="cursor-sdk/lane-reap", holder_op_id="d-reap"
+    )
+    assert result.landed is True
+    assert result.after_sha == _master(repo)
+
+
+def test_land_lane_branch_merge_timeout_returns_unlanded_and_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_hub(tmp_path)
+    assert _git(repo, "checkout", "-b", "cursor-sdk/lane-timeout").returncode == 0
+    (repo / "peer.md").write_text("peer\n", encoding="utf-8")
+    assert _git(repo, "add", "peer.md").returncode == 0
+    assert _git(repo, "commit", "-m", "peer").returncode == 0
+    assert _git(repo, "checkout", "master").returncode == 0
+    (repo / "hub.md").write_text("hub\n", encoding="utf-8")
+    assert _git(repo, "add", "hub.md").returncode == 0
+    assert _git(repo, "commit", "-m", "hub").returncode == 0
+    before = _master(repo)
+    import services.git_integration_worker.cursor_sdk_hub_land_scope as scope
+
+    real = scope._git_capture
+
+    def _timeout(repo_path: Path, *args: str, **kwargs: object):
+        if args and args[0] == "merge" and "--no-edit" in args:
+            raise subprocess.TimeoutExpired(cmd="git", timeout=10)
+        return real(repo_path, *args, **kwargs)
+
+    monkeypatch.setattr(scope, "_git_capture", _timeout)
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name="cursor-sdk/lane-timeout", holder_op_id="d-timeout"
+    )
+    assert result.landed is False
+    assert _master(repo) == before
+    assert _git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 0
+    assert land_lease_holder(master_land_lease_key(repo)) is None
+
+
+def test_reacquire_same_op_id_refused_when_other_pid_alive(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(repo, "cursor-sdk/lane-reacq", "lane\n")
+    before = _master(repo)
+    key = master_land_lease_key(repo)
+    assert try_acquire_land_lease(lease_key=key, holder_op_id="d-x")
+    with land_lease._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_land_leases SET holder_pid=? WHERE lease_key=?",
+            (os.getppid(), key),
+        )
+    land_lease._local_holds.discard((key, "d-x"))
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name="cursor-sdk/lane-reacq", holder_op_id="d-x"
+    )
+    assert result.landed is False
+    assert _master(repo) == before
+    release_land_lease(lease_key=key, holder_op_id="d-x")
+
+
+def test_land_lane_branch_empty_holder_refused(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(repo, "cursor-sdk/lane-empty", "lane\n")
+    before = _master(repo)
+    for holder in ("", "  "):
+        result = land_lane_branch_onto_hub_master(
+            repo, branch_name="cursor-sdk/lane-empty", holder_op_id=holder
+        )
+        assert result.landed is False
+        assert _master(repo) == before
+        assert land_lease_holder(master_land_lease_key(repo)) is None
+
+
+def test_land_lane_branch_clean_merge_conflict_unlanded(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    assert _git(repo, "checkout", "-b", "cursor-sdk/lane-conflict").returncode == 0
+    (repo / "README.md").write_text("lane\n", encoding="utf-8")
+    assert _git(repo, "add", "README.md").returncode == 0
+    assert _git(repo, "commit", "-m", "lane").returncode == 0
+    assert _git(repo, "checkout", "master").returncode == 0
+    (repo / "README.md").write_text("hub\n", encoding="utf-8")
+    assert _git(repo, "add", "README.md").returncode == 0
+    assert _git(repo, "commit", "-m", "hub").returncode == 0
+    before = _master(repo)
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name="cursor-sdk/lane-conflict", holder_op_id="d-conflict"
+    )
+    assert result.landed is False
+    assert _master(repo) == before
+    assert _git(repo, "status", "--porcelain").stdout == ""
+    assert _git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode != 0
+    assert land_lease_holder(master_land_lease_key(repo)) is None
+
+
+def test_land_lane_branch_clean_merge_fallback_lands(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    assert _git(repo, "checkout", "-b", "cursor-sdk/lane-merge").returncode == 0
+    (repo / "peer.md").write_text("peer\n", encoding="utf-8")
+    assert _git(repo, "add", "peer.md").returncode == 0
+    assert _git(repo, "commit", "-m", "peer").returncode == 0
+    tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert _git(repo, "checkout", "master").returncode == 0
+    (repo / "hub.md").write_text("hub\n", encoding="utf-8")
+    assert _git(repo, "add", "hub.md").returncode == 0
+    assert _git(repo, "commit", "-m", "hub").returncode == 0
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name="cursor-sdk/lane-merge", holder_op_id="d-merge"
+    )
+    assert result.landed is True
+    assert _git(repo, "rev-parse", "HEAD^2").stdout.strip() == tip

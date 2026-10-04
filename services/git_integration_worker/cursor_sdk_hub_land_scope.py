@@ -82,9 +82,19 @@ def land_lane_branch_onto_hub_master(
         )
         return LaneBranchLandResult(False, before, before)
     try:
-        moved = ff_only_onto_hub_master(repo, branch_name=branch_name)
-        if not moved:
-            moved = clean_merge_onto_hub_master(repo, branch_name=branch_name)
+        try:
+            moved = ff_only_onto_hub_master(repo, branch_name=branch_name)
+            if not moved:
+                moved = clean_merge_onto_hub_master(repo, branch_name=branch_name)
+        except Exception:
+            logger.error(
+                "lane land actuator failed lease_key=%s branch=%s holder=%s",
+                lease_key,
+                branch_name,
+                holder,
+            )
+            _abort_merge_if_started(hub)
+            moved = False
         after = _master_sha(hub)
         return LaneBranchLandResult(bool(moved) and after != before, before, after)
     finally:

@@ -168,6 +168,13 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
             _local_holds.add((lease_key, holder_op_id))
             return True
         if row["holder_op_id"] == holder_op_id:
+            other = row["holder_pid"]
+            if (
+                other is not None
+                and int(other) != os.getpid()
+                and _holder_pid_alive(int(other)) is True
+            ):
+                return False
             conn.execute(
                 "UPDATE cursor_sdk_land_leases SET holder_pid=?, acquired_at=? "
                 "WHERE lease_key=? AND holder_op_id=?",
@@ -282,7 +289,14 @@ def release_land_lease_best_effort(*, lease_key: str, holder_op_id: str) -> None
                 holder_op_id,
             )
     _local_holds.discard((lease_key, holder_op_id))
-    reap_stale_land_leases()
+    try:
+        reap_stale_land_leases()
+    except Exception:
+        logger.error(
+            "land_lease_reap_failed lease_key=%s holder=%s",
+            lease_key,
+            holder_op_id,
+        )
 
 
 def refresh_land_lease_heartbeat(*, lease_key: str, holder_op_id: str) -> bool:
