@@ -654,13 +654,21 @@ def _resolve_source_ref(row: dict[str, Any], rec: dict[str, Any]) -> str:
 
 
 def _successor_hop_seq(row: dict[str, Any], rec: dict[str, Any]) -> int:
-    """Closeout ``hop_seq`` is this row's seq; successor is +1."""
-    closeout_seq = rec.get("closeout_hop_seq")
-    if isinstance(closeout_seq, int):
-        return closeout_seq + 1
+    """Successor seq is one past the later of closeout and ledger hop_seq.
+
+    A hand admit can restate ``closeout_hop_seq`` at 1 while the ledger
+    ``hop_seq`` is the chain length. Taking only the closeout number hides
+    that length from hop-budget accounting. One value present still wins;
+    neither present stays 1.
+    """
+    closeout_seq = _int_watermark(rec.get("closeout_hop_seq"))
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
-    prior_seq = hop_fields.get("hop_seq")
-    if isinstance(prior_seq, int):
+    prior_seq = _int_watermark(hop_fields.get("hop_seq"))
+    if closeout_seq is not None and prior_seq is not None:
+        return max(closeout_seq, prior_seq) + 1
+    if closeout_seq is not None:
+        return closeout_seq + 1
+    if prior_seq is not None:
         return prior_seq + 1
     return 1
 

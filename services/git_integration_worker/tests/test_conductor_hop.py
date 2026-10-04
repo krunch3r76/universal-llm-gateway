@@ -1637,6 +1637,28 @@ async def test_busy_summoning_thread_closeout_turn_does_not_release() -> None:
     post_mock.assert_not_called()
 
 
+def test_successor_hop_seq_uses_max_of_closeout_and_ledger() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _successor_hop_seq,
+    )
+
+    def _row(*, closeout: int | None, ledger_seq: int | None) -> tuple[dict, dict]:
+        rec: dict[str, Any] = {}
+        if closeout is not None:
+            rec["closeout_hop_seq"] = closeout
+        record: dict[str, Any] = {}
+        if ledger_seq is not None:
+            record["hop_seq"] = ledger_seq
+        row = {"record_json": json.dumps(record)}
+        return row, rec
+
+    assert _successor_hop_seq(*_row(closeout=1, ledger_seq=24)) == 25
+    assert _successor_hop_seq(*_row(closeout=28, ledger_seq=28)) == 29
+    assert _successor_hop_seq(*_row(closeout=1, ledger_seq=None)) == 2
+    assert _successor_hop_seq(*_row(closeout=None, ledger_seq=24)) == 25
+    assert _successor_hop_seq(*_row(closeout=None, ledger_seq=None)) == 1
+
+
 @pytest.mark.asyncio
 async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
     ledger = CursorDispatchLedger.instance()
