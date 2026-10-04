@@ -114,7 +114,16 @@ def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
     """G1 §7 census: GIW job set is not a drop-in of owned_libs."""
     own = service_ownership()["git_integration_worker"]
     assert own.serves_libs == frozenset(
-        {"charter_runner_store", "git_integrate", "implement_admission"}
+        {
+            "charter_runner_store",
+            "consult_substrate_notice",
+            "git_integrate",
+            "implement_admission",
+            "job_grammar",
+            "job_vocab",
+            "prompt_expand_consume",
+            "work_key_grammar",
+        }
     )
     assert own.serves_libs < own.owned_libs
     assert "agent_bus_store" not in own.serves_libs

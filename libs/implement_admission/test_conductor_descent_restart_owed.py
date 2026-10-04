@@ -69,6 +69,45 @@ def test_restart_owed_capability_tree_is_stargate() -> None:
     assert text == "restart_owed: stargate"
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (
+            "libs/consult_substrate_notice.py",
+            "restart_owed: git_integration_worker, stargate",
+        ),
+        (
+            "libs/continuity_tape/__init__.py",
+            "restart_owed: mcp, stargate",
+        ),
+        ("libs/cursor_bridge/__init__.py", "restart_owed: mcp"),
+        ("libs/g6_review_class.py", "restart_owed: stargate"),
+        (
+            "libs/job_grammar.py",
+            "restart_owed: git_integration_worker, mcp, stargate",
+        ),
+        (
+            "libs/job_vocab/__init__.py",
+            "restart_owed: git_integration_worker, mcp, stargate",
+        ),
+        (
+            "libs/prompt_expand_consume/__init__.py",
+            "restart_owed: git_integration_worker, stargate",
+        ),
+        ("libs/stargate_chat/__init__.py", "restart_owed: mcp"),
+        (
+            "libs/work_key_grammar.py",
+            "restart_owed: git_integration_worker, mcp",
+        ),
+    ],
+)
+def test_restart_owed_import_gap_libs_name_nominated_services(
+    path: str, expected: str
+) -> None:
+    """a:37769: verified runtime importers are the restart set."""
+    assert restart_owed_line([path]) == expected
+
+
 def test_restart_owed_stargate_service_tree_is_stargate_only() -> None:
     """S2 a:37748: a stargate tree edit restarts stargate via path prefix."""
     text = restart_owed_line(

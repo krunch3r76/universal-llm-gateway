@@ -111,6 +111,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "cdp_ask",
                 "charter_runner_store",
                 "claude_bundles",
+                "consult_substrate_notice",
                 "contract_vocab",
                 "cortex_store",
                 "cursor_capabilities",
@@ -121,6 +122,8 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "gen_rules",
                 "git_integrate",
                 "implement_admission",
+                "job_grammar",
+                "job_vocab",
                 "llm_adapters",
                 "markdown_fence",
                 "markdown_sections",
@@ -131,6 +134,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "pager_notify",
                 "predicate_form",
                 "process_ipc",
+                "prompt_expand_consume",
                 "role_lint",
                 "sse",
                 "stargate_chat",
@@ -141,10 +145,20 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_protocol",
                 "universal_transport",
                 "universal_workspace",
+                "work_key_grammar",
             }
         ),
         serves_libs=frozenset(
-            {"charter_runner_store", "git_integrate", "implement_admission"}
+            {
+                "charter_runner_store",
+                "consult_substrate_notice",
+                "git_integrate",
+                "implement_admission",
+                "job_grammar",
+                "job_vocab",
+                "prompt_expand_consume",
+                "work_key_grammar",
+            }
         ),
     ),
     "mcp": ServiceOwnership(
@@ -183,6 +197,16 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_event_bus",
                 "universal_logging",
                 "universal_workspace",
+            }
+        ),
+        serves_libs=frozenset(
+            {
+                "continuity_tape",
+                "cursor_bridge",
+                "job_grammar",
+                "job_vocab",
+                "stargate_chat",
+                "work_key_grammar",
             }
         ),
     ),
@@ -335,7 +359,18 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_transport",
             }
         ),
-        serves_libs=frozenset({"capability_tree", "implement_admission"}),
+        serves_libs=frozenset(
+            {
+                "capability_tree",
+                "consult_substrate_notice",
+                "continuity_tape",
+                "g6_review_class",
+                "implement_admission",
+                "job_grammar",
+                "job_vocab",
+                "prompt_expand_consume",
+            }
+        ),
     ),
 }
 
