@@ -106,6 +106,63 @@ def test_clean_merge_records_receipt(tmp_path: Path) -> None:
     assert "land_path: clean_merge_onto_hub_master" in text
 
 
+def test_ff_records_when_ancestor_probe_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Merge returned 0 and master moved; a None ancestor probe still receipts."""
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(
+        repo,
+        "cursor-sdk/lane-probe",
+        {"libs/capability_tree/vocabulary.py": "# vocab\n"},
+        "vocab",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_hub_land_scope."
+        "commit_is_ancestor_of_hub_master",
+        lambda *_a, **_k: None,
+    )
+    assert ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-probe") is False
+    text = _receipt(repo)
+    assert "land_path: ff_only_onto_hub_master" in text
+    assert text.splitlines()[0].startswith("before: ")
+    assert "before: " + ("a" * 40) not in text
+
+
+def test_ff_before_comes_from_updating_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_hub(tmp_path)
+    parent = _git(repo, "rev-parse", "refs/heads/master").stdout.strip()
+    _commit_on_branch(
+        repo,
+        "cursor-sdk/lane-updating",
+        {"libs/capability_tree/vocabulary.py": "# vocab\n"},
+        "vocab",
+    )
+    real = __import__(
+        "services.git_integration_worker.cursor_sdk_hub_land_scope",
+        fromlist=["_master_sha"],
+    )._master_sha
+    calls = {"n": 0}
+
+    def _lie(hub: Path) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "a" * 40
+        return real(hub)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_hub_land_scope._master_sha",
+        _lie,
+    )
+    assert (
+        ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-updating") is True
+    )
+    text = _receipt(repo)
+    assert f"before: {parent}" in text
+
+
 def test_ff_diff_failure_still_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
