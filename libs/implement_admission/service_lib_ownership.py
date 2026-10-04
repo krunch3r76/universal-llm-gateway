@@ -335,7 +335,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
                 "universal_transport",
             }
         ),
-        serves_libs=frozenset({"implement_admission"}),
+        serves_libs=frozenset({"capability_tree", "implement_admission"}),
     ),
 }
 

@@ -63,6 +63,12 @@ def test_restart_owed_implement_admission_includes_stargate() -> None:
     assert text == "restart_owed: git_integration_worker, stargate"
 
 
+def test_restart_owed_capability_tree_is_stargate() -> None:
+    """a:37769: stargate is the sole runtime importer of capability_tree."""
+    text = restart_owed_line(["libs/capability_tree/vocabulary.py"])
+    assert text == "restart_owed: stargate"
+
+
 def test_restart_owed_stargate_service_tree_is_stargate_only() -> None:
     """S2 a:37748: a stargate tree edit restarts stargate via path prefix."""
     text = restart_owed_line(
