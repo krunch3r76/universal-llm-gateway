@@ -3918,6 +3918,34 @@ def test_closeout_seal_accepts_propagation_revert_on_fail() -> None:
     assert sealed["propagation"][0]["revert_on_fail"] is True
 
 
+def test_closeout_seal_accepts_open_fork_and_usage_raw() -> None:
+    """OPEN: forks and unmappable usage publish without a 16th plain slot.
+
+    Breaks when a spec line ``OPEN:`` emits blocks_implement with no siblings,
+    or when usage.usage_raw keeps nested SDK ints: seal raises at
+    $.open_forks[0].blocks_implement or $.usage.usage_raw.*.
+    """
+    from implement_admission.plan_closeout_fields import open_fork_entries_from_spec
+
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    forks = open_fork_entries_from_spec("OPEN: keep the census at the halt\n")
+    assert forks[0]["blocks_implement"] is True
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "open_forks": forks,
+        "usage": {"usage_raw": {"promptTokenCount": 12}},
+    }
+    sealed = seal_closeout_payload(payload)
+    assert sealed["open_forks"][0]["blocks_implement"] is True
+    assert sealed["open_forks"][0]["blocks_implement_authority"] == "derived"
+    assert sealed["usage"]["usage_raw"]["promptTokenCount"] == 12
+    assert "promptTokenCount_scope" not in sealed["usage"]["usage_raw"]
+
+
 def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:
     """Behavioural: an unqualified bare scalar cannot publish.
 

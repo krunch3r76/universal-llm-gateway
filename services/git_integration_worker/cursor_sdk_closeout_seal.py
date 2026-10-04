@@ -96,6 +96,13 @@ def closeout_surface_decl() -> SurfaceDecl:
         reason="captured tool-argument transcript, not a published claim",
         under="effects_manifest",
     )
+    # Unmappable SDK usage is a captured dict, not a claim. Nested ints
+    # (promptTokenCount) would otherwise fail seal; the census is full.
+    decl.transcript(
+        "usage_raw",
+        reason="unmappable SDK usage capture, not a published claim",
+        under="usage",
+    )
     return decl
 
 
@@ -134,6 +141,27 @@ def _qualify_dense_spec_valid(payload: dict[str, Any]) -> None:
         "plan closeout spec density bit",
     )
     payload.setdefault("dense_spec_valid_authority", "derived")
+
+
+def _qualify_open_forks(payload: dict[str, Any]) -> None:
+    """Qualify blocks_implement on each open_forks row.
+
+    Spec OPEN: lines emit a bare bool. The plain census is at the halt, so
+    the bit carries scope and authority siblings on the fork dict.
+    """
+    forks = payload.get("open_forks")
+    if not isinstance(forks, list):
+        return
+    for item in forks:
+        if not isinstance(item, dict):
+            continue
+        if not isinstance(item.get("blocks_implement"), bool):
+            continue
+        item.setdefault(
+            "blocks_implement_scope",
+            "open_forks blocks_implement bit",
+        )
+        item.setdefault("blocks_implement_authority", "derived")
 
 
 def _qualify_authority_fork(payload: dict[str, Any]) -> None:
@@ -237,6 +265,7 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     _qualify_files_attribution_lists(payload)
     _qualify_effects_movement_list(payload)
     _qualify_authority_fork(payload)
+    _qualify_open_forks(payload)
     _qualify_dense_spec_valid(payload)
     try:
         return seal(payload, closeout_surface_decl())
