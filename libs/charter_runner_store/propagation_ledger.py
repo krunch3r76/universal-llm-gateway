@@ -882,7 +882,12 @@ def service_is_settling(
 def provider_settle_verdicts(
     *, conn: sqlite3.Connection | None = None
 ) -> dict[str, str]:
-    """Latest recorded settle verdict per service and per (service, land) pair."""
+    """Latest recorded settle verdict per service and per (service, land) pair.
+
+    Land keys for rows still settling (``settle_verdict IS NULL``) appear as
+    ``pending`` when no verdict was recorded yet. Unscoped service keys use only
+    non-null verdicts (latest by ``updated_at``).
+    """
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -902,6 +907,16 @@ def provider_settle_verdicts(
             land_key = f"{service}:{row['code_ref']}"
             if land_key not in out:
                 out[land_key] = verdict
+        pending_cur = db.execute(
+            """
+            SELECT service, code_ref FROM propagation_ledger
+            WHERE settle_verdict IS NULL
+            """
+        )
+        for row in pending_cur.fetchall():
+            land_key = f"{row['service']}:{row['code_ref']}"
+            if land_key not in out:
+                out[land_key] = "pending"
         return out
     finally:
         if own_conn:

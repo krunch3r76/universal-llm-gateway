@@ -19,19 +19,24 @@ def restart_blocked_by_order(
 ) -> bool:
     """True when an ``after`` provider has not reached verdict ``pass``.
 
-    Missing, ``indeterminate``, and ``fail_attributable`` all block. Harvest
-    uses the same predicate so a re-fire cannot bypass the edge.
+    Missing, ``indeterminate``, ``pending``, and ``fail_attributable`` all block
+    when a verdict is in scope. Harvest uses the same predicate so a re-fire
+    cannot bypass the edge.
 
     When *land_code_ref* is set, only the provider row for that land counts —
     not an older provider verdict from a different merge on the same service.
-    A missing land-scoped key blocks: an open provider row with no recorded
-    verdict is omitted from ``provider_settle_verdicts`` and must not fail open.
+    A missing land-scoped key means no provider row for that land (e.g. mcp-only
+    lands mint no stargate row) and does **not** block. A present key other than
+    ``pass`` blocks, including ``pending`` from an open settling row.
+
+    When *land_code_ref* is ``None``, unscoped service keys apply: a missing or
+    non-``pass`` provider verdict blocks.
     """
     for provider in ORDER_AFTER.get(service, ()):
         if land_code_ref:
             key = f"{provider}:{land_code_ref}"
             if key not in provider_verdicts:
-                return True
+                continue
             if provider_verdicts[key] != "pass":
                 return True
             continue

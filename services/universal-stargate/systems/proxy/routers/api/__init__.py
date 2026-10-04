@@ -5,9 +5,6 @@ from fastapi import APIRouter
 from systems.continuity import continuity_router
 
 from .admin_active_work import router as admin_active_work_router
-from .admin_emit_gateway_membership import (
-    router as admin_emit_gateway_membership_router,
-)
 from .admission_state import router as admission_state_router
 from .capabilities import router as capabilities_router
 from .executions import router as executions_router
@@ -50,7 +47,6 @@ router.include_router(rag_chunks_by_index_router)
 router.include_router(rag_articles_router)
 router.include_router(rerank_router)
 router.include_router(admin_active_work_router)
-router.include_router(admin_emit_gateway_membership_router)
 router.include_router(admission_state_router)
 router.include_router(model_capacity_router)
 router.include_router(git_router)

@@ -84,19 +84,23 @@ async def test_pre_restart_membership_request():
     assert captured[0]["params"]["signal"] == "federation.gateway.membership"
 
 
-def test_after_edge_missing_land_scoped_verdict_blocks_mcp():
-    """Open stargate row (no settle verdict) must block mcp for the same land."""
-    assert restart_blocked_by_order(
+def test_after_edge_mcp_only_land_not_blocked_without_provider_row():
+    """No stargate row for this land ⇒ missing land key must not block mcp."""
+    assert not restart_blocked_by_order("mcp", {}, land_code_ref="mcp-only-land")
+    assert not restart_blocked_by_order(
         "mcp",
         {"stargate": "pass", "stargate:other": "pass"},
         land_code_ref="this-land",
     )
+
+
+def test_after_edge_pending_land_scoped_verdict_blocks_mcp():
+    """Open settling stargate row surfaces as pending and blocks the same land."""
     assert restart_blocked_by_order(
         "mcp",
-        {"stargate": "indeterminate"},
-        land_code_ref="mcp-only",
+        {"stargate:shared-land": "pending"},
+        land_code_ref="shared-land",
     )
-    assert restart_blocked_by_order("mcp", {}, land_code_ref="shared-land")
 
 
 def test_after_edge_scoped_to_same_land_code_ref():
