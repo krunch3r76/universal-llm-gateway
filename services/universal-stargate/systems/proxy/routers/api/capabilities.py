@@ -223,7 +223,11 @@ def _local_list(
             found_id: member.summary
             for found_id, member in tree.by_category(category).items()
         }
-        return JSONResponse(status_code=200, content={"members": members})
+        description = registry._category_vocabulary.descriptions.get(category, "")
+        return JSONResponse(
+            status_code=200,
+            content={"description": description, "members": members},
+        )
     if member_id is not None:
         member = tree.resolve(member_id)
         if member is None:
@@ -304,26 +308,39 @@ async def list_capabilities(
     id: str | None = Query(default=None),
     category: str | None = Query(default=None),
 ) -> JSONResponse:
-    """Local member lookup when id or category is set; otherwise the satellite index."""
+    """Local member lookup when id or category is set; otherwise category links."""
     if id is not None or category is not None:
         return _local_list(_proxy(request), id, category)
     reset_vocabulary_cache()
     categories, skips = _categories()
     await _emit_skips(request, skips)
-    return JSONResponse(
+    listed = [
         {
-            "categories": [
-                {
-                    "name": cat.name,
-                    "description": cat.description,
-                    "implementation": cat.implementation,
-                    "href": f"/api/v1/capabilities/{cat.name}",
-                }
-                for cat in categories
-            ],
-            "catalog_skips": skips,
+            "name": cat.name,
+            "description": cat.description,
+            "implementation": cat.implementation,
+            "href": f"/api/v1/capabilities/{cat.name}",
         }
-    )
+        for cat in categories
+    ]
+    seen = {cat.name for cat in categories}
+    proxy = _proxy(request)
+    if _local_ready(proxy):
+        tree = build_tree(proxy)
+        descriptions = proxy.pipeline_registry._category_vocabulary.descriptions
+        for name in sorted({member.category for member in tree.members.values()}):
+            if name in seen:
+                continue
+            seen.add(name)
+            listed.append(
+                {
+                    "name": name,
+                    "description": descriptions.get(name, ""),
+                    "implementation": "pipeline",
+                    "href": f"/api/v1/capabilities/{name}",
+                }
+            )
+    return JSONResponse({"categories": listed, "catalog_skips": skips})
 
 
 @router.api_route("/capabilities/{first}", methods=["GET", "POST"])
@@ -332,7 +349,7 @@ async def capability_first(
     request: Request,
     _user: dict[str, object] = Depends(get_auth_dependency),
 ) -> Response:
-    """Relay a category listing, or 308 a bare member id."""
+    """Relay a satellite category, list a pipeline category, or 308 a bare id."""
     categories, skips = _categories()
     by_name = {cat.name: cat for cat in categories}
     if first in by_name:
@@ -352,6 +369,20 @@ async def capability_first(
                     )
             return JSONResponse(body, status_code=upstream.status_code)
         return upstream
+    proxy = _proxy(request)
+    if _local_ready(proxy):
+        tree = build_tree(proxy)
+        if first in proxy.pipeline_registry._category_vocabulary and tree.by_category(
+            first
+        ):
+            return _local_list(proxy, None, first)
+        member = tree.resolve(first)
+        if member is not None:
+            query = urlencode(list(request.query_params.multi_items()))
+            location = member.canonical_url
+            if query:
+                location = f"{location}?{query}"
+            return RedirectResponse(url=location, status_code=308)
     owners: list[tuple[Category, str]] = []
     for category in categories:
         listing = await _origin_listing(category)

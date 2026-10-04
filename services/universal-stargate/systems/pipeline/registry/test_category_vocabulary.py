@@ -91,6 +91,62 @@ def test_derived_category_registers_under_domain_directory(tmp_path: Path) -> No
     assert "demo" in registry._category_vocabulary
 
 
+def test_domain_field_wins_over_version_directory(tmp_path: Path) -> None:
+    """A version segment (v + digits) must not become the category."""
+    root = tmp_path / "root"
+    _support(root / "demo")
+    version = root / "demo" / "v1"
+    version.mkdir()
+    (version / "prompts.yaml").write_text(
+        "prompts:\n  dummy:\n    description: fixture\n    template: hello\n",
+        encoding="utf-8",
+    )
+    body = _spec("chat-dispatch", None).replace(
+        "prompt_ref: demo.dummy", "prompt_ref: demo.v1.dummy"
+    )
+    (version / "chat.yaml").write_text(
+        body + "domain: frontier_dispatch\n",
+        encoding="utf-8",
+    )
+    (version / "team.yaml").write_text(
+        body.replace("id: chat-dispatch", "id: team-dispatch")
+        + "domain: frontier_dispatch\n",
+        encoding="utf-8",
+    )
+    registry = PipelineRegistry(
+        search_paths=[str(root)],
+        config_base_dir=tmp_path,
+    )
+    registry.load()
+    assert registry.pipelines["chat-dispatch"].category == "frontier_dispatch"
+    assert registry.pipelines["team-dispatch"].category == "frontier_dispatch"
+    assert "v1" not in registry._category_vocabulary
+
+
+def test_overlay_without_domain_uses_top_directory_not_tone(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    _support(root / "transformation")
+    tone = root / "transformation" / "neutral"
+    tone.mkdir()
+    (tone / "prompts.yaml").write_text(
+        "prompts:\n  dummy:\n    description: fixture\n    template: hello\n",
+        encoding="utf-8",
+    )
+    body = (
+        _spec("tone-overlay", None)
+        .replace("type: demo", "type: transformation")
+        .replace("prompt_ref: demo.dummy", "prompt_ref: transformation.neutral.dummy")
+    )
+    (tone / "overlay.yaml").write_text(body, encoding="utf-8")
+    registry = PipelineRegistry(
+        search_paths=[str(root)],
+        config_base_dir=tmp_path,
+    )
+    registry.load()
+    assert registry.pipelines["tone-overlay"].category == "transformation"
+    assert "neutral" not in registry._category_vocabulary
+
+
 def test_unknown_category_records_skip(tmp_path: Path) -> None:
     root = tmp_path / "root"
     _support(root / "demo")
