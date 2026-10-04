@@ -8,6 +8,7 @@ Part of the pipeline registry package.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
@@ -25,6 +26,33 @@ if TYPE_CHECKING:
     from .core import PipelineRegistry
 
 logger = get_logger(__name__)
+
+_UNCATEGORIZED = "uncategorized"
+
+
+def _derive_category(path: Path, domain_dir: Path | None) -> str:
+    """Parent directory name, or ``uncategorized`` when the file sits at search root."""
+    search_root = domain_dir.parent if domain_dir is not None else path.parent
+    if path.parent.resolve() == search_root.resolve():
+        return _UNCATEGORIZED
+    return path.parent.name
+
+
+def _category_from_yaml(
+    pipeline_data: dict,
+    path: Path,
+    domain_dir: Path | None,
+    registry: PipelineRegistry,
+) -> None:
+    """Fill ``category`` when omitted/blank; admit derived names into vocabulary."""
+    raw = pipeline_data.get("category")
+    if raw is not None and isinstance(raw, str) and raw.strip():
+        pipeline_data["category"] = raw.strip()
+        return
+    derived = _derive_category(path, domain_dir)
+    pipeline_data["category"] = derived
+    if derived not in registry._category_vocabulary:
+        registry._category_vocabulary = registry._category_vocabulary.admit(derived)
 
 
 class PipelineLoader:
@@ -287,6 +315,10 @@ class PipelineLoader:
                 except ValueError:
                     pass
             pipeline_data["source_variant"] = source_variant
+
+            _category_from_yaml(
+                pipeline_data, path, domain_dir, self._registry
+            )
 
             pipeline = PipelineSpec(**pipeline_data)
 

@@ -26,13 +26,16 @@ def _handlers() -> None:
     HandlerRegistry._ensure_initialized()
 
 
-def _spec(pipeline_id: str, category: str) -> str:
+def _spec(pipeline_id: str, category: str | None = "demo") -> str:
+    category_line = (
+        f"category: {category}\n" if category is not None else ""
+    )
     return (
         "schema_version: 6\n"
         f"id: {pipeline_id}\n"
         'version: "1.0"\n'
         "type: demo\n"
-        f"category: {category}\n"
+        f"{category_line}"
         "output: author\n"
         "steps:\n"
         "  - name: author\n"
@@ -221,6 +224,48 @@ def test_unknown_id_near_matches_cap_and_no_full_dump(
     assert len(matches) == 5
     assert len(ids) > 5
     assert "members" not in response.json()
+
+
+def test_derived_category_pipeline_invocable_by_id_and_category_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    domain = root / "demo"
+    domain.mkdir(parents=True)
+    (domain / "bare.yaml").write_text(_spec("bare-pipe", None), encoding="utf-8")
+    (domain / "models.yaml").write_text(
+        f"models:\n  ok:\n    model: {_MODEL}\n",
+        encoding="utf-8",
+    )
+    (domain / "prompts.yaml").write_text(
+        "prompts:\n  dummy:\n    description: fixture\n    template: hello\n",
+        encoding="utf-8",
+    )
+    registry = _registry(root)
+    assert registry.pipelines["bare-pipe"].category == "demo"
+
+    async def _admit(_request: Any, _proxy: Any, _dispatch: Any) -> JSONResponse:
+        return JSONResponse(
+            status_code=202,
+            content={"execution_id": "exec-bare"},
+            headers={"Location": "/api/v1/executions/exec-bare"},
+        )
+
+    monkeypatch.setattr(capabilities, "admit_dispatch", _admit)
+    client = _client(_ready_proxy(registry), monkeypatch)
+    by_id = client.get("/api/v1/capabilities", params={"id": "bare-pipe"})
+    assert by_id.status_code == 200, by_id.text
+    assert 'rel="canonical"' in by_id.headers["link"]
+    assert "/api/v1/capabilities/demo/bare-pipe" in by_id.headers["link"]
+    canonical = "/api/v1/capabilities/demo/bare-pipe"
+    by_category = client.get(canonical)
+    assert by_category.status_code == 200, by_category.text
+    assert by_category.json()["url"] == canonical
+    response = client.post(
+        canonical, json={"model": "bare-pipe", "messages": []}
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["execution_id"] == "exec-bare"
 
 
 def test_hot_reload_new_yaml_is_invocable_at_canonical_url(

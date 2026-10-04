@@ -21,6 +21,17 @@ class CategoryVocabulary:
     def __contains__(self, name: object) -> bool:
         return isinstance(name, str) and name in self.names
 
+    def admit(self, name: str, description: str = "") -> CategoryVocabulary:
+        """Return vocabulary including ``name`` (derived categories not in YAML)."""
+        if name in self.names:
+            return self
+        descriptions = dict(self.descriptions)
+        descriptions.setdefault(name, description)
+        return CategoryVocabulary(
+            names=self.names | frozenset({name}),
+            descriptions=descriptions,
+        )
+
     @classmethod
     def empty(cls) -> CategoryVocabulary:
         return cls(names=frozenset(), descriptions={})

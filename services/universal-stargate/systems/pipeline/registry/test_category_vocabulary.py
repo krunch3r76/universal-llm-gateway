@@ -68,31 +68,27 @@ def test_union_loads_member_from_second_root(tmp_path: Path) -> None:
     assert "other" in registry._category_vocabulary
 
 
-def test_missing_category_records_skip_and_keeps_sibling(tmp_path: Path) -> None:
+def test_derived_category_registers_under_domain_directory(tmp_path: Path) -> None:
     root = tmp_path / "root"
     _support(root / "demo")
     (root / "categories.yaml").write_text(
-        "categories:\n  demo:\n    description: d\n", encoding="utf-8"
+        "categories:\n  other:\n    description: d\n", encoding="utf-8"
     )
     (root / "demo" / "good.yaml").write_text(
-        _spec("good-pipe", "demo"), encoding="utf-8"
+        _spec("good-pipe", "other"), encoding="utf-8"
     )
-    (root / "demo" / "bad.yaml").write_text(_spec("bad-pipe", None), encoding="utf-8")
+    (root / "demo" / "bare.yaml").write_text(
+        _spec("bare-pipe", None), encoding="utf-8"
+    )
     registry = PipelineRegistry(
         search_paths=[str(root)],
         config_base_dir=tmp_path,
     )
     registry.load()
     assert "good-pipe" in registry.pipelines
-    assert "bad-pipe" not in registry.pipelines
-    row = next(
-        item for item in registry.catalog_skips if item["pipeline_id"] == "bad-pipe"
-    )
-    assert row == {
-        "pipeline_id": "bad-pipe",
-        "reason": "missing_category",
-        "category": "",
-    }
+    assert "bare-pipe" in registry.pipelines
+    assert registry.pipelines["bare-pipe"].category == "demo"
+    assert "demo" in registry._category_vocabulary
 
 
 def test_unknown_category_records_skip(tmp_path: Path) -> None:
