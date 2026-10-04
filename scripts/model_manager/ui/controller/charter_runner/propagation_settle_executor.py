@@ -194,12 +194,19 @@ async def op_run_affected_pipelines(
 def _membership_window_ready(
     events: Iterable[dict[str, Any]],
     snapshot_gateway_ids: Iterable[str] | None,
+    *,
+    snapshot_pipeline_ids: Iterable[str] | None = None,
+    land_paths: Iterable[str] = (),
+    pipeline_sources: Mapping[str, Iterable[str]] | None = None,
+    step_type_modules: Mapping[str, str] | None = None,
+    pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
 ) -> bool:
-    """True when a post-restart membership set matches and follows any catalog event."""
+    """True when membership matches gateways, follows catalog, and lists every unaffected pipeline."""
     snap = list(snapshot_gateway_ids or ())
     if not snap:
         return False
     post: list[str] | None = None
+    post_pipes: list[str] | None = None
     membership_seq: int | None = None
     latest_catalog: int | None = None
     for event in events:
@@ -212,6 +219,9 @@ def _membership_window_ready(
             ids = payload.get("gateway_ids")
             if isinstance(ids, list):
                 post = [str(item) for item in ids]
+            pipes = payload.get("pipeline_ids")
+            if isinstance(pipes, list):
+                post_pipes = [str(item) for item in pipes]
             if isinstance(seq, int):
                 membership_seq = seq
     if post is None or not gateway_id_sets_equal(snap, post):
@@ -219,6 +229,18 @@ def _membership_window_ready(
     if latest_catalog is not None and (
         membership_seq is None or membership_seq <= latest_catalog
     ):
+        return False
+    snap_pipes = set(snapshot_pipeline_ids or ())
+    affected = affected_pipeline_ids(
+        snap_pipes,
+        land_paths,
+        pipeline_sources=pipeline_sources or {},
+        step_type_modules=step_type_modules or {},
+        pipeline_step_types=pipeline_step_types or {},
+    )
+    unrelated = snap_pipes - affected
+    present = set(post_pipes or ())
+    if unrelated - present:
         return False
     return True
 
@@ -228,6 +250,11 @@ async def _collect_events_until(
     *,
     deadline_mono: float,
     snapshot_gateway_ids: Iterable[str] | None = None,
+    snapshot_pipeline_ids: Iterable[str] | None = None,
+    land_paths: Iterable[str] = (),
+    pipeline_sources: Mapping[str, Iterable[str]] | None = None,
+    step_type_modules: Mapping[str, str] | None = None,
+    pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Stop on a matching membership event, the cap, or a finite iterator.
 
@@ -247,7 +274,15 @@ async def _collect_events_until(
             except StopAsyncIteration:
                 break
             events.append(event)
-            if _membership_window_ready(events, snapshot_gateway_ids):
+            if _membership_window_ready(
+                events,
+                snapshot_gateway_ids,
+                snapshot_pipeline_ids=snapshot_pipeline_ids,
+                land_paths=land_paths,
+                pipeline_sources=pipeline_sources,
+                step_type_modules=step_type_modules,
+                pipeline_step_types=pipeline_step_types,
+            ):
                 break
     finally:
         aclose = getattr(agen, "aclose", None)
@@ -286,10 +321,21 @@ async def wait_functional_settle(
         agen,
         deadline_mono=deadline,
         snapshot_gateway_ids=snap_gw,
+        snapshot_pipeline_ids=snap_pipes,
+        land_paths=paths,
+        pipeline_sources=pipeline_sources,
+        step_type_modules=step_type_modules,
+        pipeline_step_types=pipeline_step_types,
     )
-    timed_out = not _membership_window_ready(events, snap_gw) and (
-        time.monotonic() >= deadline
-    )
+    timed_out = not _membership_window_ready(
+        events,
+        snap_gw,
+        snapshot_pipeline_ids=snap_pipes,
+        land_paths=paths,
+        pipeline_sources=pipeline_sources,
+        step_type_modules=step_type_modules,
+        pipeline_step_types=pipeline_step_types,
+    ) and (time.monotonic() >= deadline)
 
     affected = affected_pipeline_ids(
         snap_pipes,

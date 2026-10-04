@@ -832,31 +832,33 @@ async def execute_propagation_plan(
         snap_pipes: list[str] | None = None
         resume_from: int | None = None
         settling_held = False
-        if row.proof_class == "functional_settle":
-            from charter_runner_store.propagation_ledger import mark_settling
-
-            from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
-                capture_event_resume_from,
-                request_pre_restart_gateway_membership,
-            )
-            from scripts.model_manager.ui.controller.charter_runner.wake_hub import (
-                default_events_query_socket,
-            )
-            from scripts.model_manager.ui.controller.restart_drain import (
-                STARGATE_PROBE_URL,
-            )
-
-            mark_settling(row.row_id)
-            settling_held = True
-            pre_snapshot = await request_pre_restart_gateway_membership(
-                base_url=STARGATE_PROBE_URL,
-            )
-            snap_gw, snap_pipes = (None, None)
-            if pre_snapshot is not None:
-                snap_gw, snap_pipes = pre_snapshot
-            resume_from = await capture_event_resume_from(default_events_query_socket())
-
         try:
+            if row.proof_class == "functional_settle":
+                from charter_runner_store.propagation_ledger import mark_settling
+
+                from scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor import (
+                    capture_event_resume_from,
+                    request_pre_restart_gateway_membership,
+                )
+                from scripts.model_manager.ui.controller.charter_runner.wake_hub import (
+                    default_events_query_socket,
+                )
+                from scripts.model_manager.ui.controller.restart_drain import (
+                    STARGATE_PROBE_URL,
+                )
+
+                mark_settling(row.row_id)
+                settling_held = True
+                pre_snapshot = await request_pre_restart_gateway_membership(
+                    base_url=STARGATE_PROBE_URL,
+                )
+                snap_gw, snap_pipes = (None, None)
+                if pre_snapshot is not None:
+                    snap_gw, snap_pipes = pre_snapshot
+                resume_from = await capture_event_resume_from(
+                    default_events_query_socket()
+                )
+
             try:
                 outcome = await sync_restart_charter_harvest(
                     ctl, row.service, event_bus=event_bus

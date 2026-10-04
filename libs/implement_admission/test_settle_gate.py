@@ -119,6 +119,26 @@ def test_unrelated_absent_pipeline_is_not_fail_attributable():
     assert verdict == "indeterminate"
 
 
+def test_partial_membership_missing_unaffected_is_indeterminate_even_if_affected_absent():
+    """Snapshot {A,B,C}, post {C}, land touches A → indeterminate."""
+    verdict = judge_settle(
+        snapshot_gateway_ids=["g1"],
+        snapshot_pipeline_ids=["A", "B", "C"],
+        post_gateway_ids=["g1"],
+        post_pipeline_ids=["C"],
+        membership_seq=4,
+        latest_catalog_seq=3,
+        timed_out=False,
+        land_paths=["pipelines/A.yaml"],
+        pipeline_sources={
+            "A": ["pipelines/A.yaml"],
+            "B": ["pipelines/B.yaml"],
+            "C": ["pipelines/C.yaml"],
+        },
+    )
+    assert verdict == "indeterminate"
+
+
 def test_absent_pipeline_whose_source_is_in_the_diff_is_fail_attributable():
     verdict = judge_settle(
         snapshot_gateway_ids=["g1"],

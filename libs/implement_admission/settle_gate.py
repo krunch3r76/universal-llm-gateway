@@ -83,12 +83,12 @@ def judge_settle(
         pipeline_step_types=pipeline_step_types or {},
     )
     failures = set(op_run_failures)
-    for pipeline_id in affected:
-        if pipeline_id not in post_pipes or pipeline_id in failures:
-            return "fail_attributable"
     missing_unrelated = (snap_pipes - post_pipes) - affected
     if missing_unrelated:
         return "indeterminate"
+    for pipeline_id in affected:
+        if pipeline_id not in post_pipes or pipeline_id in failures:
+            return "fail_attributable"
     return "pass"
 
 

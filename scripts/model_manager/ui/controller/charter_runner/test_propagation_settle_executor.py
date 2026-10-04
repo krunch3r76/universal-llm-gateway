@@ -56,6 +56,51 @@ def test_subscribe_events_wires_stargate_settle_with_cap_and_op_run():
     asyncio.run(_run())
 
 
+def test_partial_pipeline_membership_does_not_stop_the_wait():
+    """Full gateway set with a short pipeline list keeps the wait open until every unaffected pipeline is present."""
+
+    gateways = [f"g{i}" for i in range(8)]
+    unaffected = [f"p{i:02d}" for i in range(24)]
+    pipelines = unaffected + ["en-en-csc"]
+    partial = unaffected[:12]
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        yield {
+            "seq": 10,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": partial},
+        }
+        yield {
+            "seq": 20,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
+        }
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                query_sock="/dev/null",
+                resume_from=1,
+                snapshot_gateway_ids=gateways,
+                snapshot_pipeline_ids=pipelines,
+                land_paths=("pipelines/en-en-csc.yaml",),
+                cap_s=5.0,
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                pipeline_sources={"en-en-csc": ("pipelines/en-en-csc.yaml",)},
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert not result.timed_out
+        assert result.events_seen == 2
+
+    asyncio.run(_run())
+
+
 @pytest.mark.asyncio
 async def test_pre_restart_membership_request():
     """Production path reads the latest membership event from Event Service."""

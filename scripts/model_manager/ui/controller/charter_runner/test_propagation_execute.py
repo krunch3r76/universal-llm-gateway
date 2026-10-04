@@ -679,3 +679,44 @@ async def test_age_two_escalates(tmp_path, monkeypatch):
 
     assert results["escalated"]
     set_probe_client_for_tests(None)
+
+
+@pytest.mark.asyncio
+async def test_failure_between_mark_settling_and_snapshot_releases_row(
+    tmp_path, monkeypatch
+):
+    """A raise after mark_settling and before the snapshot still releases the row."""
+    from charter_runner_store.propagation_ledger import (
+        service_is_settling,
+        upsert_open_rows,
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows(
+        [
+            PropagationRow(
+                service="stargate",
+                code_ref=_SHA,
+                proof_class="functional_settle",
+            )
+        ]
+    )
+    plan = PropagationPlan(rows=[], sync_restart_services=[])
+    ctl = MagicMock()
+    install_propagation_context(ctl, event_bus=None)
+
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute._fetch_drain_state",
+            return_value={"active_ops": []},
+        ),
+        patch("services.git_integration_worker.config.load_config", return_value=MagicMock(source_repo=tmp_path)),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor.request_pre_restart_gateway_membership",
+            new=AsyncMock(side_effect=RuntimeError("snapshot failed")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="snapshot failed"):
+            await execute_propagation_plan(plan, root_id="root", window_index=1)
+
+    assert service_is_settling("stargate") is False
