@@ -53,6 +53,7 @@ from .frontier_tools import (
     PipelineFrontierDispatchToolSuppressed,
     PipelineFrontierDispatchToolsWire,
 )
+from .authority import PipelineExecutionAuthorityUnreachable
 from .journal import (
     PipelineDispatchJournalPruned,
     PipelineDispatchJournalRead,
@@ -70,6 +71,7 @@ __all__ = [
     "PipelineDispatchJournalWritten",
     "PipelineDispatchJournalRead",
     "PipelineDispatchJournalPruned",
+    "PipelineExecutionAuthorityUnreachable",
     # Frontier lifecycle
     "PipelineFrontierDispatchHydrated",
     "PipelineFrontierDispatchStarted",

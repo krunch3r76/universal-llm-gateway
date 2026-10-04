@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import os
 from agent_bus_store.cursor_sdk_dispatch_turn import (
     infer_cursor_sdk_terminal_status,
     sdk_terminal_closeout_turn,
@@ -24,6 +25,7 @@ from agent_bus_store.producer_projection import nonterminal_link_state
 from agent_bus_store.sdk_liveness import reader_liveness_witness
 from transport_utils import make_async_client
 from universal_logging import get_logger
+from universal_protocol.status_basis import SOURCE_THREAD_DISPATCH_LINKS, status_basis
 
 logger = get_logger(__name__)
 
@@ -40,23 +42,39 @@ def _build_recovered_record(
     status: str,
     completed_at: str | None,
     result: str | None = None,
+    liveness_reason: str | None = None,
+    degraded: bool = False,
 ) -> dict[str, Any]:
-    return {
-        "execution_id": execution_id,
-        "pipeline": pipeline_id,
-        "status": status,
-        "started_at": None,
-        "completed_at": completed_at,
-        "result": result,
-        "error": None,
-        "caller_agent": None,
-        "output_contract": "thread",
-        "target_thread": thread_id,
-        "op": "generate",
-        "thread_reply_observed_at": completed_at,
-        "delivery": None,
+    as_of = completed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    recovery: dict[str, Any] = {
+        "consulted": ["thread_dispatch_links"],
         "recovered_from": "bus_thread",
     }
+    if degraded:
+        recovery["degraded"] = True
+    if liveness_reason:
+        recovery["liveness_reason"] = liveness_reason
+    return status_basis(
+        "status",
+        status,
+        as_of=as_of,
+        source=SOURCE_THREAD_DISPATCH_LINKS,
+        scope=f"execution:{execution_id}",
+        epoch={"stargate_pid": os.getpid()},
+        recovery=recovery,
+        execution_id=execution_id,
+        pipeline=pipeline_id,
+        started_at=None,
+        completed_at=completed_at,
+        result=result,
+        error=None,
+        caller_agent=None,
+        output_contract="thread",
+        target_thread=thread_id,
+        op="generate",
+        thread_reply_observed_at=completed_at,
+        delivery=None,
+    )
 
 
 async def _fetch_turn_body(
@@ -265,16 +283,17 @@ async def recover_execution_from_bus_thread(
                     now=clock,
                     liveness_witness=witness,
                 )
-                record = _build_recovered_record(
+                if state != "in_flight":
+                    return None
+                return _build_recovered_record(
                     execution_id=execution_id,
                     pipeline_id=pipeline_id,
                     thread_id=thread_id,
-                    status="running" if state == "in_flight" else "unknown",
+                    status="running",
                     completed_at=None,
+                    liveness_reason=reason,
+                    degraded=True,
                 )
-                if state != "in_flight":
-                    record["liveness_reason"] = reason
-                return record
             status = infer_cursor_sdk_terminal_status(
                 str(closeout.get("subject") or "")
             )

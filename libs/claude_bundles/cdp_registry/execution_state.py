@@ -71,20 +71,73 @@ EXECUTION_IN_FLIGHT_TTL_S = 7200.0
 # busy while Cowork streams the reply. Bounded like the operator idle grace.
 FOLLOWUP_IN_FLIGHT_TTL_S = 1800.0
 
+ExecutionFreshness = Literal["live", "expired_by_ttl"]
+
 __all__ = [
     "EXECUTION_IN_FLIGHT_TTL_S",
     "FIELD",
     "FOLLOWUP_IN_FLIGHT_TTL_S",
     "IN_FLIGHT_STATES",
     "SETTLED_STATES",
+    "ExecutionFreshness",
     "ExecutionKind",
     "ExecutionState",
+    "execution_state_for_execution_id",
     "execution_state_of",
     "expire_stale_in_flight",
     "in_flight_rows",
     "row_execution_in_flight",
+    "row_for_execution_id",
     "set_execution_state",
 ]
+
+
+def row_for_execution_id(
+    active: dict[str, dict[str, Any]], execution_id: str
+) -> tuple[str, dict[str, Any]] | None:
+    """Return ``(registration_id, row)`` when *execution_id* matches a row field."""
+    eid = str(execution_id or "").strip()
+    if not eid:
+        return None
+    for rid, row in active.items():
+        if not isinstance(row, dict):
+            continue
+        entry = execution_state_of(row)
+        if entry is not None and str(entry.get("execution_id") or "") == eid:
+            return rid, row
+    return None
+
+
+def execution_state_for_execution_id(
+    execution_id: str,
+    *,
+    now: float | None = None,
+    active: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str, dict[str, Any], ExecutionFreshness] | None:
+    """Look up authority ``execution_state`` by execution id.
+
+    Returns ``(registration_id, entry, freshness)`` or ``None`` when absent.
+    TTL-expired in-flight entries report ``freshness=expired_by_ttl`` with the
+    raw entry still attached so callers can render ``expired`` honestly.
+    """
+    eid = str(execution_id or "").strip()
+    if not eid:
+        return None
+    if active is None:
+        active = _store.load_active()
+    match = row_for_execution_id(active, eid)
+    if match is None:
+        return None
+    rid, row = match
+    entry = execution_state_of(row)
+    if entry is None:
+        return None
+    ts = time.time() if now is None else now
+    if entry["state"] in IN_FLIGHT_STATES:
+        started = entry.get("started_at")
+        if isinstance(started, (int, float)) and ts - float(started) >= _ttl_for(entry):
+            return rid, entry, "expired_by_ttl"
+    return rid, entry, "live"
 
 
 def execution_state_of(row: dict[str, Any]) -> dict[str, Any] | None:

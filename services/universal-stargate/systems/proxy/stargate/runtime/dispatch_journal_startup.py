@@ -9,6 +9,7 @@ from universal_logging import get_logger
 from systems.pipeline.core.execution.dispatch_journal import (
     initialize_schema,
     journal_terminal,
+    journal_transition,
     prune_expired,
 )
 
@@ -59,6 +60,12 @@ async def initialize_dispatch_journal(proxy: StargateProxy) -> None:
         tracker.set_journal_writer(
             partial(
                 journal_terminal,
+                event_bus=proxy.event_bus,
+            )
+        )
+        tracker.set_transition_writer(
+            partial(
+                journal_transition,
                 event_bus=proxy.event_bus,
             )
         )

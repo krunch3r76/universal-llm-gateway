@@ -10,9 +10,11 @@ from systems.pipeline.core.execution.async_tracker import (
     PipelineExecutionResult,
 )
 from systems.pipeline.core.execution.dispatch_journal import (
+    fetch_record,
     fetch_terminal,
     initialize_schema,
     journal_terminal,
+    journal_transition,
     prune_expired,
 )
 
@@ -94,6 +96,26 @@ async def test_concurrent_writes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> N
 
     assert await fetch_terminal("exec-a") is not None
     assert await fetch_terminal("exec-b") is not None
+
+
+@pytest.mark.asyncio
+async def test_started_transition_survives_restart_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    await initialize_schema()
+    record = PipelineExecutionRecord(
+        execution_id="exec-started",
+        pipeline="frontier-dispatch",
+        status="running",
+        started_at="2026-04-19T00:00:00Z",
+        started_at_monotonic=0.0,
+    )
+    await journal_transition(record)
+    fetched = await fetch_record("exec-started")
+    assert fetched is not None
+    assert fetched["status"] == "started"
+    assert fetched["source"] == "pipeline_dispatch_journal"
 
 
 @pytest.mark.asyncio

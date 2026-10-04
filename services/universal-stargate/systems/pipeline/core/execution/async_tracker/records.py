@@ -185,6 +185,7 @@ class PipelineExecutionRecord:
             "execution_id": self.execution_id,
             "pipeline": self.pipeline,
             "status": self.status,
+            "state": self.status,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "result": result_payload,

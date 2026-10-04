@@ -54,6 +54,9 @@ class PipelineExecutionTracker:
         self.records: dict[str, PipelineExecutionRecord] = {}
         self._delivery_sender = delivery_sender
         self._journal_writer = journal_writer
+        self._transition_writer: (
+            Callable[[PipelineExecutionRecord], Awaitable[None]] | None
+        ) = None
         self._pending_tasks: set[asyncio.Task[Any]] = set()
         self._agent_bus_url = agent_bus_url
         self._agent_bus_token = agent_bus_token
@@ -64,6 +67,13 @@ class PipelineExecutionTracker:
     ) -> None:
         """Set/replace the terminal journal writer hook."""
         self._journal_writer = journal_writer
+
+    def set_transition_writer(
+        self,
+        transition_writer: Callable[[PipelineExecutionRecord], Awaitable[None]] | None,
+    ) -> None:
+        """Set/replace the ``started`` journal transition writer hook."""
+        self._transition_writer = transition_writer
 
     def register_execution(
         self,
