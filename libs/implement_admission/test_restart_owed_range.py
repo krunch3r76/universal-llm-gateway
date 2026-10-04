@@ -76,6 +76,13 @@ def test_range_covers_every_commit_and_keeps_unmapped(tmp_path: Path) -> None:
     assert "unmapped: services/not-a-fleet-service/app.py" in text
 
 
+def test_empty_before_raises(tmp_path: Path) -> None:
+    """An empty before is not ``git diff ..after`` (HEAD..after on the hub)."""
+    repo = _init(tmp_path)
+    with pytest.raises(ValueError):
+        restart_owed_for_range(repo, "", _sha(repo))
+
+
 def test_bad_sha_raises(tmp_path: Path) -> None:
     repo = _init(tmp_path)
     with pytest.raises(subprocess.CalledProcessError):
@@ -102,20 +109,39 @@ def test_write_failure_rewrites_unavailable(
 ) -> None:
     repo = _init(tmp_path)
     tip = _sha(repo)
-    real = Path.write_text
+    from implement_admission import restart_owed as owed
+
+    real = owed._publish_receipt
     calls = {"n": 0}
 
-    def _fail_once(self: Path, *args: object, **kwargs: object) -> int:
-        if self.parent.name == "land-receipts":
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise OSError("disk full")
-        return real(self, *args, **kwargs)
+    def _fail_once(path: Path, body: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk full")
+        return real(path, body)
 
-    monkeypatch.setattr(Path, "write_text", _fail_once)
+    monkeypatch.setattr(owed, "_publish_receipt", _fail_once)
     block = record_land_restart_receipt(repo, tip, tip, "advance_master_cas")
     assert block == "restart_owed: unavailable (OSError)"
     text = (repo / "tmp/reviews/land-receipts" / f"{tip}.md").read_text(
         encoding="utf-8"
     )
     assert "restart_owed: unavailable (OSError)" in text
+
+
+def test_second_publish_failure_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init(tmp_path)
+    tip = _sha(repo)
+    from implement_admission import restart_owed as owed
+
+    def _always(path: Path, body: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("restart_owed: trunc", encoding="utf-8")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(owed, "_publish_receipt", _always)
+    block = record_land_restart_receipt(repo, tip, tip, "advance_master_cas")
+    assert block == "restart_owed: unavailable (OSError)"
+    assert not (repo / "tmp/reviews/land-receipts" / f"{tip}.md").exists()

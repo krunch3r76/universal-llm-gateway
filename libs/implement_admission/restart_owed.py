@@ -9,8 +9,10 @@ as ``unmapped:`` rather than dropped.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -114,12 +116,22 @@ def restart_owed_for_range(repo: str | Path, before_sha: str, after_sha: str) ->
     A failed diff raises; callers that record a land catch that and keep
     the land success.
     """
-    before = before_sha.strip()
-    after = after_sha.strip()
+    before = _require_sha(before_sha)
+    after = _require_sha(after_sha)
     if before == after:
         return "restart_owed: none"
     paths = _diff_name_only(Path(repo), before, after)
     return restart_owed_line(paths)
+
+
+def _require_sha(value: str) -> str:
+    """Hex SHA, or ValueError. An empty before must not become ``git diff ..after``."""
+    if not isinstance(value, str):
+        raise TypeError("sha must be str")
+    text = value.strip().lower()
+    if _SHA_FILE_RE.fullmatch(text) is None:
+        raise ValueError(f"not a hex sha: {value!r}")
+    return text
 
 
 def _diff_name_only(repo: Path, before: str, after: str) -> list[str]:
@@ -167,9 +179,12 @@ def record_land_restart_receipt(
     """Write ``tmp/reviews/land-receipts/<after>.md`` and return the block.
 
     Diff or write failure becomes ``restart_owed: unavailable (<class>)``.
-    Never raises. Call only after the master ref has moved.
+    Raises when ``before_sha`` or ``after_sha`` is not a string. Diff and
+    write failures do not raise. Call only after the master ref has moved.
     """
     root = Path(repo)
+    if not isinstance(before_sha, str) or not isinstance(after_sha, str):
+        raise TypeError("sha must be str")
     before = before_sha.strip()
     after = after_sha.strip()
     try:
@@ -178,20 +193,30 @@ def record_land_restart_receipt(
         block = _unavailable(exc)
     path = _receipt_path(root, after)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            _receipt_body(before, after, land_path, block),
-            encoding="utf-8",
-        )
+        _publish_receipt(path, _receipt_body(before, after, land_path, block))
         return block
     except Exception as exc:
         unavailable = _unavailable(exc)
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                _receipt_body(before, after, land_path, unavailable),
-                encoding="utf-8",
+            _publish_receipt(
+                path, _receipt_body(before, after, land_path, unavailable)
             )
         except Exception:
-            pass
+            path.unlink(missing_ok=True)
         return unavailable
+
+
+def _publish_receipt(path: Path, body: str) -> None:
+    """Atomic replace. A failed publish does not leave a truncated target."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".receipt-", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
