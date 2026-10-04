@@ -15,9 +15,14 @@ from implement_admission.propagation_row import (
     proof_claims_performed_ancestry,
 )
 
+from implement_admission.settle_gate import SETTLE_CAP_S
+
 from .db import execute_with_retry, open_ledger_db
 from .propagation_attempt_status import STATUS_CLAIM_KIND
 from .propagation_code_ref_mint import mint_row_with_resolved_code_ref
+
+# Settle wait cap plus charter harvest ``wait_healthy`` budget (api_dispatch).
+STALE_SETTLING_AFTER_S = SETTLE_CAP_S + 120.0
 
 # Open-row proof is always an unperformed obligation (row-17 bind B).
 PROOF_KIND_OBLIGATION = "obligation"
@@ -406,6 +411,7 @@ def retract_row(
                 closed_at=?,
                 defer_reason=?,
                 reason=?,
+                settle_verdict=NULL,
                 updated_at=?
             WHERE row_id=? AND status='open'
             """,
@@ -837,6 +843,32 @@ def mark_settling(row_id: str, *, conn: sqlite3.Connection | None = None) -> boo
             db.close()
 
 
+def reclaim_stale_settling_rows(
+    *,
+    stale_after_s: float = STALE_SETTLING_AFTER_S,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    """Release ``settling`` rows stuck past settle cap plus restart budget."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    cutoff = time.time() - stale_after_s
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='open', updated_at=?
+            WHERE status='settling' AND updated_at < ?
+            """,
+            (now, cutoff),
+        )
+        return int(cur.rowcount)
+    finally:
+        if own_conn:
+            db.close()
+
+
 def release_settling(row_id: str, *, conn: sqlite3.Connection | None = None) -> bool:
     """Return a ``settling`` row to ``open`` when the probe raises before a verdict."""
     own_conn = conn is None
@@ -896,8 +928,10 @@ def provider_settle_verdicts(
             """
             SELECT service, code_ref, settle_verdict FROM propagation_ledger
             WHERE settle_verdict IS NOT NULL
+              AND (defer_reason IS NULL OR defer_reason != ?)
             ORDER BY updated_at DESC
-            """
+            """,
+            (DEFER_OPERATOR_RETRACTED,),
         )
         out: dict[str, str] = {}
         for row in cur.fetchall():
@@ -986,6 +1020,8 @@ __all__ = [
     "mark_harvest_wanted",
     "mint_row_id",
     "reclaim_stale_consumption_claims",
+    "reclaim_stale_settling_rows",
+    "STALE_SETTLING_AFTER_S",
     "release_consumption_claim",
     "reopen_closed_row",
     "retract_row",

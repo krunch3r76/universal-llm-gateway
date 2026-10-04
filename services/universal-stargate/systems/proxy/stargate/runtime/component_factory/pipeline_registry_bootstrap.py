@@ -298,12 +298,18 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
 
         proxy.pipeline_registry.load()
         await _emit_pipeline_unavailable_events(proxy)
-        await emit_gateway_membership(proxy)
 
         # Reload pipelines if local gateway is already connected
         # (handles case where gateway connected before pipeline system initialized)
+        healthy_gateway = (
+            proxy.gateway_manager.get_gateway()
+            if proxy.gateway_manager is not None
+            else None
+        )
+        if healthy_gateway is None:
+            await emit_gateway_membership(proxy)
+
         if proxy.gateway_manager is not None:
-            healthy_gateway = proxy.gateway_manager.get_gateway()
             if healthy_gateway:
                 _old, _new = proxy.pipeline_registry.reload_pipelines()
                 proxy.pipeline_catalog_synced = True
