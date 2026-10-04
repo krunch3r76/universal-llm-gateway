@@ -920,7 +920,9 @@ async def execute_propagation_plan(
 
             cfg = load_config()
             land_paths = land_paths_from_merge_sha(cfg.source_repo, row.code_ref)
-            settle_maps = functional_settle_pipeline_maps(cfg.source_repo)
+            settle_maps = functional_settle_pipeline_maps(
+                cfg.source_repo, merge_sha=row.code_ref
+            )
 
             async def _run_op_run(ids: Iterable[str]) -> list[str]:
                 return await op_run_affected_pipelines(ids, base_url=STARGATE_PROBE_URL)

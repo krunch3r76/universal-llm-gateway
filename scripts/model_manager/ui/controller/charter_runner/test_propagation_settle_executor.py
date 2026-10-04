@@ -103,6 +103,80 @@ def test_after_edge_pending_land_scoped_verdict_blocks_mcp():
     )
 
 
+def test_closed_null_ancestor_does_not_block_descendant_mcp(tmp_path, monkeypatch):
+    """Closed stargate row with no verdict must not defer a descendant mcp restart."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    from charter_runner_store.db import open_ledger_db
+    from charter_runner_store.propagation_ledger import provider_settle_verdicts
+    from universal_workspace import get_workspace_root
+
+    ancestor = "a1225745f97b1cdd0b4467ac0c0e71d7c66cd28b"
+    descendant = "e92cdf077253210a89296318de0a24d3946947c3"
+    repo = get_workspace_root()
+    conn = open_ledger_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO propagation_ledger (
+              row_id, service, action, code_ref, safe_window, proof, proof_class,
+              status, age_in_harvests, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'closed', 0, 1.0, 1.0)
+            """,
+            (
+                "stargate-closed-null",
+                "stargate",
+                "sync_restart",
+                ancestor,
+                "harvest",
+                "probe",
+                "functional_settle",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO propagation_ledger (
+              row_id, service, action, code_ref, safe_window, proof, proof_class,
+              status, age_in_harvests, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 2.0, 2.0)
+            """,
+            (
+                "mcp-descendant",
+                "mcp",
+                "sync_restart",
+                descendant,
+                "harvest",
+                "probe",
+                "process_live",
+            ),
+        )
+        conn.commit()
+        verdicts = provider_settle_verdicts(conn=conn)
+    finally:
+        conn.close()
+    assert f"stargate:{ancestor}" not in verdicts
+    assert not restart_blocked_by_order(
+        "mcp", verdicts, land_code_ref=descendant, source_repo=repo
+    )
+
+
+def test_newer_stargate_pass_supersedes_older_non_pass():
+    """A newer in-scope pass governs; an older non-pass does not deadlock mcp."""
+    from universal_workspace import get_workspace_root
+
+    ancestor = "a1225745f97b1cdd0b4467ac0c0e71d7c66cd28b"
+    descendant = "e92cdf077253210a89296318de0a24d3946947c3"
+    repo = get_workspace_root()
+    assert not restart_blocked_by_order(
+        "mcp",
+        {
+            f"stargate:{ancestor}": "fail_attributable",
+            f"stargate:{descendant}": "pass",
+        },
+        land_code_ref=descendant,
+        source_repo=repo,
+    )
+
+
 def test_after_edge_ancestor_stargate_pending_blocks_later_mcp_land():
     """B2: unsettled ancestor stargate land blocks mcp on a descendant-only land."""
     from universal_workspace import get_workspace_root

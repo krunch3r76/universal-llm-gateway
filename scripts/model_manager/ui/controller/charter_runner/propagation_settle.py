@@ -29,10 +29,11 @@ def restart_blocked_by_order(
     when a verdict is in scope. Harvest uses the same predicate so a re-fire
     cannot bypass the edge.
 
-    When *land_code_ref* is set, a provider row counts when its land equals
-    *land_code_ref* or is a git ancestor of it (unsettled ancestor stargate
-    blocks a later mcp-only land). A missing in-scope key does not block.
-    A present in-scope key other than ``pass`` blocks, including ``pending``.
+    When *land_code_ref* is set, a provider row is in scope when its land
+    equals *land_code_ref* or is a git ancestor of it. Only the newest
+    in-scope land governs: a newer ``pass`` supersedes an older non-pass.
+    A missing in-scope key does not block. The governing verdict blocks
+    when it is not ``pass``, including ``pending``.
 
     When *land_code_ref* is ``None``, unscoped service keys apply: a missing or
     non-``pass`` provider verdict blocks.
@@ -43,6 +44,7 @@ def restart_blocked_by_order(
     for provider in ORDER_AFTER.get(service, ()):
         if land_code_ref:
             scoped_prefix = f"{provider}:"
+            in_scope: list[tuple[str, str]] = []
             for key, verdict in provider_verdicts.items():
                 if not key.startswith(scoped_prefix):
                     continue
@@ -51,8 +53,10 @@ def restart_blocked_by_order(
                     provider_land, land_code_ref, source_repo=repo
                 ):
                     continue
-                if verdict != "pass":
-                    return True
+                in_scope.append((provider_land, verdict))
+            governing = newest_in_scope_verdict(in_scope, source_repo=repo)
+            if governing is not None and governing != "pass":
+                return True
             continue
         if provider_verdicts.get(provider) != "pass":
             return True
