@@ -60,6 +60,7 @@ __all__ = (
     "land_lease_waiter_report",
     "master_land_guard",
     "master_land_lease_key",
+    "process_holds_master_land_lease",
     "reap_stale_land_leases",
     "refresh_land_lease_heartbeat",
     "release_land_lease",
@@ -169,6 +170,20 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
             )
             return True
         return False
+
+
+def process_holds_master_land_lease(source_repo: str | Path) -> bool:
+    """True when this process's pid is the holder of the hub master land lease."""
+    lease_key = master_land_lease_key(source_repo)
+    with _connect() as conn:
+        ensure_land_lease_schema(conn)
+        row = conn.execute(
+            "SELECT holder_pid FROM cursor_sdk_land_leases WHERE lease_key=?",
+            (lease_key,),
+        ).fetchone()
+    if row is None or row["holder_pid"] is None:
+        return False
+    return int(row["holder_pid"]) == os.getpid()
 
 
 def land_lease_holder(lease_key: str) -> str | None:

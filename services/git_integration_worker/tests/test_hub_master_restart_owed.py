@@ -11,8 +11,30 @@ from services.git_integration_worker.cursor_sdk_hub_land_scope import (
     clean_merge_onto_hub_master,
     ff_only_onto_hub_master,
 )
+from services.git_integration_worker.cursor_sdk_land_lease import (
+    master_land_lease_key,
+    release_land_lease,
+    try_acquire_land_lease,
+)
 
 pytestmark = pytest.mark.offline
+
+_LEASE_HOLDER = "test-hub-master-restart-owed"
+
+
+@pytest.fixture
+def hold_master_land_lease():
+    """Hold the master land lease for repos this test merges, then release."""
+    held: list[str] = []
+
+    def _hold(repo: Path) -> None:
+        key = master_land_lease_key(repo)
+        assert try_acquire_land_lease(lease_key=key, holder_op_id=_LEASE_HOLDER)
+        held.append(key)
+
+    yield _hold
+    for key in held:
+        release_land_lease(lease_key=key, holder_op_id=_LEASE_HOLDER)
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -55,7 +77,9 @@ def _receipt(repo: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_ff_only_specimen_receipt_names_stargate(tmp_path: Path) -> None:
+def test_ff_only_specimen_receipt_names_stargate(
+    tmp_path: Path, hold_master_land_lease
+) -> None:
     """a:37771: full stargate paths, not a hand-built list with the prefix dropped."""
     repo = _init_hub(tmp_path)
     _commit_on_branch(
@@ -69,6 +93,7 @@ def test_ff_only_specimen_receipt_names_stargate(tmp_path: Path) -> None:
         },
         "specimen paths",
     )
+    hold_master_land_lease(repo)
     assert ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-specimen") is True
     text = _receipt(repo)
     assert "restart_owed: stargate" in text
@@ -82,7 +107,7 @@ def test_ff_only_refusal_writes_no_receipt(tmp_path: Path) -> None:
     assert not (repo / "tmp" / "reviews" / "land-receipts").exists()
 
 
-def test_clean_merge_records_receipt(tmp_path: Path) -> None:
+def test_clean_merge_records_receipt(tmp_path: Path, hold_master_land_lease) -> None:
     repo = _init_hub(tmp_path)
     assert _git(repo, "checkout", "-b", "peer").returncode == 0
     (repo / "peer.md").write_text("peer\n", encoding="utf-8")
@@ -100,6 +125,7 @@ def test_clean_merge_records_receipt(tmp_path: Path) -> None:
     assert _git(repo, "add", "services/universal-stargate/peer_only.py").returncode == 0
     assert _git(repo, "commit", "-m", "peer stargate").returncode == 0
     assert _git(repo, "checkout", "master").returncode == 0
+    hold_master_land_lease(repo)
     assert clean_merge_onto_hub_master(repo, branch_name="peer") is True
     text = _receipt(repo)
     assert "restart_owed: stargate" in text
@@ -107,7 +133,7 @@ def test_clean_merge_records_receipt(tmp_path: Path) -> None:
 
 
 def test_ff_records_when_ancestor_probe_is_unknown(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hold_master_land_lease
 ) -> None:
     """Merge returned 0 and master moved; a None ancestor probe still receipts."""
     repo = _init_hub(tmp_path)
@@ -122,6 +148,7 @@ def test_ff_records_when_ancestor_probe_is_unknown(
         "commit_is_ancestor_of_hub_master",
         lambda *_a, **_k: None,
     )
+    hold_master_land_lease(repo)
     assert ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-probe") is False
     text = _receipt(repo)
     assert "land_path: ff_only_onto_hub_master" in text
@@ -130,7 +157,7 @@ def test_ff_records_when_ancestor_probe_is_unknown(
 
 
 def test_ff_before_comes_from_updating_line(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hold_master_land_lease
 ) -> None:
     repo = _init_hub(tmp_path)
     parent = _git(repo, "rev-parse", "refs/heads/master").stdout.strip()
@@ -156,6 +183,7 @@ def test_ff_before_comes_from_updating_line(
         "services.git_integration_worker.cursor_sdk_hub_land_scope._master_sha",
         _lie,
     )
+    hold_master_land_lease(repo)
     assert (
         ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-updating") is True
     )
@@ -164,7 +192,7 @@ def test_ff_before_comes_from_updating_line(
 
 
 def test_ff_diff_failure_still_lands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hold_master_land_lease
 ) -> None:
     repo = _init_hub(tmp_path)
     _commit_on_branch(
@@ -178,6 +206,7 @@ def test_ff_diff_failure_still_lands(
         raise OSError("unreadable repo")
 
     monkeypatch.setattr("implement_admission.restart_owed._diff_name_only", _boom)
+    hold_master_land_lease(repo)
     assert (
         ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-unreadable") is True
     )

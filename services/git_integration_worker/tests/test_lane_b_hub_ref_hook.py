@@ -11,6 +11,11 @@ import pytest
 from services.git_integration_worker.cursor_sdk_hub_land_scope import (
     ff_only_onto_hub_master,
 )
+from services.git_integration_worker.cursor_sdk_land_lease import (
+    master_land_lease_key,
+    release_land_lease,
+    try_acquire_land_lease,
+)
 from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
 from services.git_integration_worker.lane_b_reference_transaction_hook import (
     HOOK_POLICY_REFUSE_EXIT,
@@ -57,6 +62,23 @@ def _clean_env() -> dict[str, str]:
     return env
 
 
+_LEASE_HOLDER = "test-lane-b-hub-ref-hook"
+
+
+@pytest.fixture
+def hold_master_land_lease():
+    held: list[str] = []
+
+    def _hold(repo: Path) -> None:
+        key = master_land_lease_key(repo)
+        assert try_acquire_land_lease(lease_key=key, holder_op_id=_LEASE_HOLDER)
+        held.append(key)
+
+    yield _hold
+    for key in held:
+        release_land_lease(lease_key=key, holder_op_id=_LEASE_HOLDER)
+
+
 @pytest.fixture(autouse=True)
 def _clear_dispatch_stamp(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CURSOR_SDK_DISPATCH_ID", raising=False)
@@ -96,7 +118,7 @@ def test_lane_worktree_commit_with_dispatch_id_allowed(
 
 
 def test_worker_ff_land_without_dispatch_id_allowed(
-    source_repo: Path, tmp_path: Path
+    source_repo: Path, tmp_path: Path, hold_master_land_lease
 ) -> None:
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "hook-ff"
@@ -109,6 +131,7 @@ def test_worker_ff_land_without_dispatch_id_allowed(
     (wt / "ff.py").write_text("ff\n", encoding="utf-8")
     _git(wt, "add", "ff.py")
     _git(wt, "commit", "-m", "ff branch")
+    hold_master_land_lease(source_repo)
     assert ff_only_onto_hub_master(source_repo, branch_name=branch) is True
     assert _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "master"
 

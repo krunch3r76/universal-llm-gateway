@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _GIT_TIMEOUT_S = 10.0
 CURSOR_SDK_HUB_MASTER_REF_ENV = "CURSOR_SDK_HUB_MASTER_REF"
@@ -26,6 +29,62 @@ _HUB_LAND_SCOPED_OUT_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+def can_ff_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
+    """True when a fast-forward of hub master onto ``branch_name`` would be admitted.
+
+    Same preconditions as ``ff_only_onto_hub_master`` before it merges, plus
+    ``merge-base --is-ancestor`` of hub master into the branch tip. Never runs
+    ``git merge`` and never writes refs, the index, or the worktree.
+    """
+    ready = _ff_ready(repo, branch_name=branch_name)
+    if ready is None:
+        return False
+    hub, _tip_sha = ready
+    ancestor = _git_capture(
+        hub, "merge-base", "--is-ancestor", "refs/heads/master", branch_name.strip()
+    )
+    return ancestor.returncode == 0
+
+
+def _ff_ready(repo: Path, *, branch_name: str) -> tuple[Path, str] | None:
+    """Hub and branch tip when the fast-forward actuator's pre-merge checks pass."""
+    branch = (branch_name or "").strip()
+    if not branch or branch == "master":
+        return None
+    hub = resolve_hub_git_repo(repo)
+    head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != "master":
+        return None
+    porcelain = _git_capture(hub, "status", "--porcelain=v1")
+    if porcelain.returncode != 0 or porcelain.stdout.strip():
+        return None
+    ahead = _git_capture(hub, "rev-list", "--count", f"master..{branch}")
+    if ahead.returncode != 0 or not ahead.stdout.strip().isdigit():
+        return None
+    if int(ahead.stdout.strip()) < 1:
+        return None
+    tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
+    if tip.returncode != 0 or not tip.stdout.strip():
+        return None
+    return hub, tip.stdout.strip()
+
+
+def _refuse_without_land_lease(hub: Path, actuator: str) -> bool:
+    """True when this process must not move hub master."""
+    from services.git_integration_worker.cursor_sdk_land_lease import (
+        process_holds_master_land_lease,
+    )
+
+    if process_holds_master_land_lease(hub):
+        return False
+    logger.warning(
+        "%s refused; this process does not hold the master land lease hub=%s",
+        actuator,
+        hub,
+    )
+    return True
+
+
 def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     """Fast-forward the hub ``master`` checkout to ``branch_name``.
 
@@ -36,25 +95,13 @@ def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     preconditions hold.
     """
     branch = (branch_name or "").strip()
-    if not branch or branch == "master":
+    ready = _ff_ready(repo, branch_name=branch)
+    if ready is None:
         return False
-    hub = resolve_hub_git_repo(repo)
-    head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
-    if head.returncode != 0 or head.stdout.strip() != "master":
-        return False
-    porcelain = _git_capture(hub, "status", "--porcelain=v1")
-    if porcelain.returncode != 0 or porcelain.stdout.strip():
-        return False
-    ahead = _git_capture(hub, "rev-list", "--count", f"master..{branch}")
-    if ahead.returncode != 0 or not ahead.stdout.strip().isdigit():
-        return False
-    if int(ahead.stdout.strip()) < 1:
-        return False
-    tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
-    if tip.returncode != 0 or not tip.stdout.strip():
+    hub, tip_sha = ready
+    if _refuse_without_land_lease(hub, "ff_only_onto_hub_master"):
         return False
     pre_sha = _master_sha(hub)
-    tip_sha = tip.stdout.strip()
     merged = _git_capture(hub, "merge", "--ff-only", branch)
     if merged.returncode != 0:
         return False
@@ -86,6 +133,8 @@ def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     if not branch or branch == "master":
         return False
     hub = resolve_hub_git_repo(repo)
+    if _refuse_without_land_lease(hub, "clean_merge_onto_hub_master"):
+        return False
     head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
     if head.returncode != 0 or head.stdout.strip() != "master":
         return False

@@ -235,9 +235,33 @@ def maybe_ff_land_silent_lane(
         return False
     if not packet_requests_silent_land(packet_text):
         return False
-    if ff_only_onto_hub_master(repo, branch_name=branch_name):
-        return True
-    return clean_merge_onto_hub_master(repo, branch_name=branch_name)
+    from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+        resolve_hub_git_repo,
+    )
+    from services.git_integration_worker.cursor_sdk_land_lease import (
+        master_land_lease_key,
+        release_land_lease,
+        try_acquire_land_lease,
+    )
+
+    hub = resolve_hub_git_repo(repo)
+    lease_key = master_land_lease_key(hub)
+    holder_op_id = f"silent-land:{dispatch_id}"
+    if not try_acquire_land_lease(lease_key=lease_key, holder_op_id=holder_op_id):
+        logger.warning(
+            "silent land left unlanded; master land lease held "
+            "lease_key=%s branch=%s dispatch_id=%s",
+            lease_key,
+            branch_name,
+            dispatch_id,
+        )
+        return False
+    try:
+        if ff_only_onto_hub_master(repo, branch_name=branch_name):
+            return True
+        return clean_merge_onto_hub_master(repo, branch_name=branch_name)
+    finally:
+        release_land_lease(lease_key=lease_key, holder_op_id=holder_op_id)
 
 
 def _dispatch_read_only(dispatch_id: str) -> bool:
