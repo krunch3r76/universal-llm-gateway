@@ -8,6 +8,7 @@ Part of the pipeline registry package.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,14 +29,24 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _UNCATEGORIZED = "uncategorized"
+_VERSION_SEGMENT = re.compile(r"^v\d+$")
 
 
-def _derive_category(path: Path, domain_dir: Path | None) -> str:
-    """Parent directory name, or ``uncategorized`` when the file sits at search root."""
+def _derive_category(path: Path, domain_dir: Path | None, pipeline_data: dict) -> str:
+    """Domain field, else the first non-version directory under the search root."""
+    domain = pipeline_data.get("domain")
+    if isinstance(domain, str) and domain.strip():
+        return domain.strip()
     search_root = domain_dir.parent if domain_dir is not None else path.parent
-    if path.parent.resolve() == search_root.resolve():
+    try:
+        relative = path.resolve().relative_to(search_root.resolve())
+    except ValueError:
         return _UNCATEGORIZED
-    return path.parent.name
+    for part in relative.parts[:-1]:
+        if _VERSION_SEGMENT.fullmatch(part):
+            continue
+        return part
+    return _UNCATEGORIZED
 
 
 def _category_from_yaml(
@@ -49,7 +60,7 @@ def _category_from_yaml(
     if raw is not None and isinstance(raw, str) and raw.strip():
         pipeline_data["category"] = raw.strip()
         return
-    derived = _derive_category(path, domain_dir)
+    derived = _derive_category(path, domain_dir, pipeline_data)
     pipeline_data["category"] = derived
     if derived not in registry._category_vocabulary:
         registry._category_vocabulary = registry._category_vocabulary.admit(derived)

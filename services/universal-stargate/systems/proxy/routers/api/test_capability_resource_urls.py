@@ -268,6 +268,98 @@ def test_derived_category_pipeline_invocable_by_id_and_category_url(
     assert response.json()["execution_id"] == "exec-bare"
 
 
+def test_domain_category_filter_and_bare_id_post(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Version-directory yaml with a domain field is filterable and invocable."""
+    root = tmp_path / "pipelines"
+    dispatch = root / "demo"
+    dispatch.mkdir(parents=True)
+    nested = dispatch / "v1"
+    nested.mkdir()
+    (nested / "prompts.yaml").write_text(
+        "prompts:\n  dummy:\n    description: fixture\n    template: hello\n",
+        encoding="utf-8",
+    )
+    chat = _spec("chat-dispatch", None).replace(
+        "prompt_ref: demo.dummy", "prompt_ref: demo.v1.dummy"
+    )
+    (nested / "chat.yaml").write_text(
+        chat + "domain: frontier_dispatch\n",
+        encoding="utf-8",
+    )
+    (nested / "team.yaml").write_text(
+        chat.replace("id: chat-dispatch", "id: team-dispatch")
+        + "domain: frontier_dispatch\n",
+        encoding="utf-8",
+    )
+    overlay_root = root / "transformation"
+    overlay_root.mkdir()
+    romantic = overlay_root / "romantic"
+    romantic.mkdir()
+    (romantic / "prompts.yaml").write_text(
+        "prompts:\n  dummy:\n    description: fixture\n    template: hello\n",
+        encoding="utf-8",
+    )
+    overlay = (
+        _spec("tone-overlay", None)
+        .replace("type: demo", "type: transformation")
+        .replace(
+            "prompt_ref: demo.dummy",
+            "prompt_ref: transformation.romantic.dummy",
+        )
+    )
+    (romantic / "overlay.yaml").write_text(overlay, encoding="utf-8")
+    for folder in (dispatch, overlay_root):
+        (folder / "models.yaml").write_text(
+            f"models:\n  ok:\n    model: {_MODEL}\n",
+            encoding="utf-8",
+        )
+    registry = _registry(root)
+    assert registry.pipelines["chat-dispatch"].category == "frontier_dispatch"
+    assert registry.pipelines["tone-overlay"].category == "transformation"
+
+    async def _admit(_request: Any, _proxy: Any, dispatch: Any) -> JSONResponse:
+        return JSONResponse(
+            status_code=202,
+            content={"execution_id": dispatch.model},
+        )
+
+    monkeypatch.setattr(capabilities, "admit_dispatch", _admit)
+    client = _client(_ready_proxy(registry), monkeypatch)
+    listed = client.get(
+        "/api/v1/capabilities", params={"category": "frontier_dispatch"}
+    )
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert "chat-dispatch" in body["members"]
+    assert "team-dispatch" in body["members"]
+    assert body["members"]["chat-dispatch"]["version"] == "1.0"
+    assert "description" in body
+    index = client.get("/api/v1/capabilities")
+    assert index.status_code == 200, index.text
+    names = {row["name"]: row for row in index.json()["categories"]}
+    assert names["frontier_dispatch"]["href"] == "/api/v1/capabilities/frontier_dispatch"
+    assert "description" in names["frontier_dispatch"]
+    assert names["transformation"]["href"] == "/api/v1/capabilities/transformation"
+    canonical = "/api/v1/capabilities/frontier_dispatch/chat-dispatch"
+    posted = client.post(canonical, json={"model": "chat-dispatch", "messages": []})
+    assert posted.status_code == 202, posted.text
+    bare = client.post(
+        "/api/v1/capabilities/chat-dispatch",
+        json={"model": "chat-dispatch", "messages": []},
+        follow_redirects=False,
+    )
+    assert bare.status_code == 308, bare.text
+    assert bare.headers["location"].endswith(canonical)
+    followed = client.post(
+        "/api/v1/capabilities/team-dispatch",
+        json={"model": "team-dispatch", "messages": []},
+    )
+    assert followed.status_code == 202, followed.text
+    assert followed.json()["execution_id"] == "team-dispatch"
+
+
 def test_hot_reload_new_yaml_is_invocable_at_canonical_url(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
