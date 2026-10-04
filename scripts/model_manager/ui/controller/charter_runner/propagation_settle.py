@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from implement_admission.propagation_row import ORDER_AFTER
 from implement_admission.settle_gate import SettleVerdict
+from implement_admission.settle_pipeline_maps import provider_land_in_scope
 
 RevertFn = Callable[..., Awaitable[dict[str, Any]]]
 
@@ -16,6 +18,7 @@ def restart_blocked_by_order(
     provider_verdicts: Mapping[str, str],
     *,
     land_code_ref: str | None = None,
+    source_repo: Path | str | None = None,
 ) -> bool:
     """True when an ``after`` provider has not reached verdict ``pass``.
 
@@ -23,22 +26,30 @@ def restart_blocked_by_order(
     when a verdict is in scope. Harvest uses the same predicate so a re-fire
     cannot bypass the edge.
 
-    When *land_code_ref* is set, only the provider row for that land counts —
-    not an older provider verdict from a different merge on the same service.
-    A missing land-scoped key means no provider row for that land (e.g. mcp-only
-    lands mint no stargate row) and does **not** block. A present key other than
-    ``pass`` blocks, including ``pending`` from an open settling row.
+    When *land_code_ref* is set, a provider row counts when its land equals
+    *land_code_ref* or is a git ancestor of it (unsettled ancestor stargate
+    blocks a later mcp-only land). A missing in-scope key does not block.
+    A present in-scope key other than ``pass`` blocks, including ``pending``.
 
     When *land_code_ref* is ``None``, unscoped service keys apply: a missing or
     non-``pass`` provider verdict blocks.
     """
+    repo: Path | None = None
+    if source_repo is not None:
+        repo = Path(source_repo).expanduser()
     for provider in ORDER_AFTER.get(service, ()):
         if land_code_ref:
-            key = f"{provider}:{land_code_ref}"
-            if key not in provider_verdicts:
-                continue
-            if provider_verdicts[key] != "pass":
-                return True
+            scoped_prefix = f"{provider}:"
+            for key, verdict in provider_verdicts.items():
+                if not key.startswith(scoped_prefix):
+                    continue
+                provider_land = key[len(scoped_prefix) :]
+                if not provider_land_in_scope(
+                    provider_land, land_code_ref, source_repo=repo
+                ):
+                    continue
+                if verdict != "pass":
+                    return True
             continue
         if provider_verdicts.get(provider) != "pass":
             return True

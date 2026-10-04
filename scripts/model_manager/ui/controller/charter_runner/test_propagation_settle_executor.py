@@ -103,6 +103,28 @@ def test_after_edge_pending_land_scoped_verdict_blocks_mcp():
     )
 
 
+def test_after_edge_ancestor_stargate_pending_blocks_later_mcp_land():
+    """B2: unsettled ancestor stargate land blocks mcp on a descendant-only land."""
+    from universal_workspace import get_workspace_root
+
+    ancestor = "a1225745f97b1cdd0b4467ac0c0e71d7c66cd28b"
+    descendant = "e92cdf077253210a89296318de0a24d3946947c3"
+    repo = get_workspace_root()
+    verdicts = {f"stargate:{ancestor}": "pending"}
+    assert restart_blocked_by_order(
+        "mcp", verdicts, land_code_ref=descendant, source_repo=repo
+    )
+    assert not restart_blocked_by_order(
+        "mcp", {}, land_code_ref=descendant, source_repo=repo
+    )
+    assert restart_blocked_by_order(
+        "mcp",
+        {f"stargate:{ancestor}": "indeterminate"},
+        land_code_ref=descendant,
+        source_repo=repo,
+    )
+
+
 def test_after_edge_scoped_to_same_land_code_ref():
     """Item 3: order edge reads provider verdict for the same land only."""
     assert (
@@ -255,6 +277,125 @@ async def test_revert_conflict_aborts_and_does_not_count(
         already_reverted=False,
     )
     assert applied["revert_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_functional_settle_missing_pipeline_fail_attributable_reverts(
+    tmp_path, monkeypatch
+):
+    """B1: land pipeline YAML absent after restart → fail_attributable and one revert."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from implement_admission.propagation_row import PropagationRow
+    from implement_admission.settle_pipeline_maps import FunctionalSettlePipelineMaps
+
+    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+        PropagationPlan,
+        execute_propagation_plan,
+        install_propagation_context,
+    )
+
+    land_sha = "deadbeef1234567890abcdef1234567890abcdef"
+    yaml_path = "pipelines/settle-missing-test.yaml"
+    pipeline_id = "settle-missing-test"
+    maps = FunctionalSettlePipelineMaps(
+        pipeline_sources={pipeline_id: (yaml_path,)},
+        step_type_modules={},
+        pipeline_step_types={pipeline_id: ()},
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    from charter_runner_store.propagation_ledger import upsert_open_rows
+
+    upsert_open_rows(
+        [
+            PropagationRow(
+                service="stargate",
+                code_ref=land_sha,
+                proof_class="functional_settle",
+            )
+        ]
+    )
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        yield {
+            "seq": 2,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": ["gw-a"], "pipeline_ids": []},
+        }
+        await asyncio.Event().wait()
+
+    revert_calls = {"n": 0}
+
+    async def _revert_op(**_kwargs: Any) -> dict[str, Any]:
+        revert_calls["n"] += 1
+        return {"status": "landed", "revert_sha": "abc"}
+
+    real_wait = wait_functional_settle
+    captured_maps: list[dict[str, Any]] = []
+
+    async def _wait_with_feed(**kwargs: Any):
+        captured_maps.append(
+            {
+                "pipeline_sources": kwargs.get("pipeline_sources"),
+                "land_paths": kwargs.get("land_paths"),
+            }
+        )
+        return await real_wait(
+            subscribe_factory=_feed,
+            run_op_run=AsyncMock(return_value=[]),
+            **kwargs,
+        )
+
+    cfg = MagicMock(source_repo=Path("/tmp/repo"))
+    plan = PropagationPlan(rows=[], sync_restart_services=[])
+    ctl = MagicMock()
+    install_propagation_context(ctl, event_bus=None)
+
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute._fetch_drain_state",
+            return_value={"active_ops": []},
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch.sync_restart_charter_harvest",
+            new=AsyncMock(return_value={"status": "ok"}),
+        ),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute.load_config",
+            return_value=cfg,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_git_head.land_paths_from_merge_sha",
+            return_value=(yaml_path,),
+        ),
+        patch(
+            "implement_admission.settle_pipeline_maps.functional_settle_pipeline_maps",
+            return_value=maps,
+        ),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor.wait_functional_settle",
+            side_effect=_wait_with_feed,
+        ),
+        patch("git_integrate.revert.revert_op", side_effect=_revert_op),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor.request_pre_restart_gateway_membership",
+            new=AsyncMock(return_value=(["gw-a"], [pipeline_id])),
+        ),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_settle_executor.capture_event_resume_from",
+            new=AsyncMock(return_value=1),
+        ),
+    ):
+        results = await execute_propagation_plan(plan, root_id="root", window_index=1)
+
+    assert captured_maps
+    assert captured_maps[0]["pipeline_sources"] == maps.pipeline_sources
+    assert yaml_path in captured_maps[0]["land_paths"]
+    assert revert_calls["n"] == 1
+    remaining = results["remaining"]
+    assert any(r.get("verdict") == "fail_attributable" for r in remaining)
 
 
 def test_executor_module_has_tests_for_all_seven_g5_items():
