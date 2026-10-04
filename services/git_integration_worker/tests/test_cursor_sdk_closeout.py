@@ -3878,11 +3878,44 @@ def test_dispatch_6a9f673785c0_d7982bf6_self_contradiction_grades_checks_failed(
     assert work_outcome != WorkOutcome.SHIPPED
 
 
-def test_closeout_plain_census_stays_at_fourteen() -> None:
-    """Transcript carve-out must not consume the slice-2 ~15 plain halt."""
+def test_closeout_plain_census_stays_at_fifteen() -> None:
+    """Transcript carve-out must not exceed the slice-2 halt (len > 15)."""
     from services.git_integration_worker.cursor_sdk_closeout_seal import _PLAIN
 
-    assert len(_PLAIN) == 14
+    assert len(_PLAIN) == 15
+
+
+def test_closeout_seal_accepts_propagation_revert_on_fail() -> None:
+    """PropagationRow.revert_on_fail is a declared plain bool on the closeout surface.
+
+    Breaks when the seal census omits the field: seal raises UnqualifiedScalarError
+    at $.propagation[0].revert_on_fail after a landed closeout (friction a:37801).
+    """
+    from implement_admission.closeout_models import ImplementCloseout
+    from implement_admission.spec import CloseoutStatus
+
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    closeout = ImplementCloseout.model_validate(
+        {
+            "status": CloseoutStatus.COMPLETE.value,
+            "summary": "landed; seal must publish revert_on_fail",
+            "source_ref": "friction:37801",
+            "propagation": [
+                {
+                    "service": "mcp",
+                    "code_ref": "abc123",
+                    "revert_on_fail": True,
+                }
+            ],
+        }
+    )
+    payload = closeout.model_dump(mode="json")
+    assert payload["propagation"][0]["revert_on_fail"] is True
+    sealed = seal_closeout_payload(payload)
+    assert sealed["propagation"][0]["revert_on_fail"] is True
 
 
 def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:

@@ -76,6 +76,7 @@ _PLAIN: tuple[tuple[str, str], ...] = (
     ("mint_turn", "PropagationRow bus turn stamp"),
     ("force", "PropagationRow restart-drain narrowing"),
     ("allow_self_preempt", "PropagationRow restart-drain default"),
+    ("revert_on_fail", "PropagationRow restart-drain fail-revert bit"),
 )
 
 
@@ -122,8 +123,8 @@ def _qualify_dense_spec_valid(payload: dict[str, Any]) -> None:
     """Qualify the plan-mode density bit. A bare bool is not a plain-census slot.
 
     Plan closeouts attach ``dense_spec_valid`` after model_dump. The plain list
-    stays at 14, so the bit carries scope and authority siblings, same as
-    ``authority_fork``.
+    is at the slice-2 halt (15), so the bit carries scope and authority
+    siblings, same as ``authority_fork``.
     """
     value = payload.get("dense_spec_valid")
     if not isinstance(value, bool):
@@ -138,7 +139,7 @@ def _qualify_dense_spec_valid(payload: dict[str, Any]) -> None:
 def _qualify_authority_fork(payload: dict[str, Any]) -> None:
     """Qualify the authority-fork bit. A bare bool is not a plain-census slot.
 
-    The plain list is held at 14 (slice-2 halt ~15). This flag is derived from
+    The plain list is at the slice-2 halt (15). This flag is derived from
     open_forks, so it carries scope and authority siblings instead of a census row.
     """
     value = payload.get("authority_fork")
