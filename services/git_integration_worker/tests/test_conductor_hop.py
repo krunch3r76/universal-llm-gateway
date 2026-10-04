@@ -2699,7 +2699,7 @@ async def test_ac_b5_evaluate_hop_budget_at_most_once_on_announce_path() -> None
             return_value=HopBudgetConfig(
                 crash_cap_per_row=3,
                 no_progress_cap=2,
-                mission_cap=24,
+                mission_cap=48,
                 crash_backoff_s=(30.0, 120.0, 300.0),
                 reactor_grace_s=120.0,
             ),

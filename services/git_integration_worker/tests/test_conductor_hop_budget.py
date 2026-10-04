@@ -127,7 +127,7 @@ def _tight_config(**overrides: object) -> HopBudgetConfig:
     base = {
         "crash_cap_per_row": 3,
         "no_progress_cap": 2,
-        "mission_cap": 24,
+        "mission_cap": 48,
         "crash_backoff_s": (30.0, 120.0, 300.0),
         "reactor_grace_s": 120.0,
     }
@@ -142,7 +142,7 @@ def test_load_hop_budget_config_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     cfg = load_hop_budget_config()
     assert cfg.crash_cap_per_row == 3
     assert cfg.no_progress_cap == 2
-    assert cfg.mission_cap == 24
+    assert cfg.mission_cap == 48
     assert cfg.crash_backoff_s == (30.0, 120.0, 300.0)
     assert cfg.reactor_grace_s == 120.0
 
@@ -1456,7 +1456,7 @@ def test_second_hop_park_release_without_park_moves_baseline() -> None:
     verdict = evaluate_hop_budget(
         row,
         closeout_tokens=frozenset({"ROW_HOP"}),
-        config=_tight_config(mission_cap=24, no_progress_cap=0),
+        config=_tight_config(mission_cap=48, no_progress_cap=0),
     )
     assert verdict.park is False
 
