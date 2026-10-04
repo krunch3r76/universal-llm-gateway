@@ -31,3 +31,18 @@ def _schedule_journal(
         task.add_done_callback(tracker._pending_tasks.discard)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to schedule dispatch journaling: %s", exc)
+
+
+def _schedule_journal_transition(
+    tracker: PipelineExecutionTracker, record: PipelineExecutionRecord
+) -> None:
+    """Schedule a ``started`` journal fold on admission."""
+    writer = getattr(tracker, "_transition_writer", None)
+    if writer is None:
+        return
+    try:
+        task = asyncio.create_task(writer(record))
+        tracker._pending_tasks.add(task)
+        task.add_done_callback(tracker._pending_tasks.discard)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to schedule started journal transition: %s", exc)

@@ -25,6 +25,7 @@ from .async_tracker import (
     PipelineDispatchRejected,
     PipelineDispatchTrackerExpired,
 )
+from .authority import PipelineExecutionAuthorityUnreachable
 from .capability import (
     PipelineFrontierCapabilityCatalogMiss,
     PipelineFrontierCapabilityKnobRejected,
@@ -70,6 +71,7 @@ __all__ = [
     "PipelineDispatchJournalWritten",
     "PipelineDispatchJournalRead",
     "PipelineDispatchJournalPruned",
+    "PipelineExecutionAuthorityUnreachable",
     # Frontier lifecycle
     "PipelineFrontierDispatchHydrated",
     "PipelineFrontierDispatchStarted",

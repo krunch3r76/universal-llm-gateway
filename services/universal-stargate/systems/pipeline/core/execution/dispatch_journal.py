@@ -23,6 +23,12 @@ from ..events.dispatch import (
     PipelineDispatchJournalRead,
     PipelineDispatchJournalWritten,
 )
+from .dispatch_journal_transitions import (
+    fetch_record_sync,
+    migrate_schema_sync,
+    prune_started_sync,
+    write_transition_sync,
+)
 
 if TYPE_CHECKING:
     from universal_event_bus import Event
@@ -35,19 +41,6 @@ logger = get_logger(__name__)
 class _EventBusProtocol(Protocol):
     async def publish_nowait(self, event: Event) -> Any: ...
 
-
-_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS dispatch_records (
-    execution_id TEXT PRIMARY KEY,
-    pipeline TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
-    caller_agent TEXT,
-    started_at TEXT NOT NULL,
-    completed_at TEXT NOT NULL,
-    completed_at_epoch REAL NOT NULL,
-    record_json TEXT NOT NULL
-);
-"""
 
 _INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_dispatch_records_completed_at
@@ -86,38 +79,29 @@ def _emit(event_bus: _EventBusProtocol | None, event: Event) -> None:
 
 def _initialize_schema_sync(path: Path) -> None:
     with _open_connection(path) as connection:
-        connection.execute(_TABLE_SQL)
+        migrate_schema_sync(connection)
         connection.execute(_INDEX_SQL)
 
 
-def _write_terminal_sync(path: Path, record: PipelineExecutionRecord) -> int:
+def _write_terminal_sync(
+    path: Path,
+    record: PipelineExecutionRecord,
+    payload: dict[str, Any] | None = None,
+) -> int:
     if record.completed_at is None:
         raise ValueError("Terminal record must include completed_at")
-    payload = record.to_dict()
-    payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
-    with _open_connection(path) as connection:
-        connection.execute(_TABLE_SQL)
-        connection.execute(_INDEX_SQL)
-        connection.execute(
-            """
-            INSERT OR REPLACE INTO dispatch_records(
-                execution_id, pipeline, status, caller_agent,
-                started_at, completed_at, completed_at_epoch, record_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.execution_id,
-                record.pipeline,
-                record.status,
-                record.caller_agent,
-                record.started_at,
-                record.completed_at,
-                _completed_epoch(record.completed_at),
-                payload_json,
-            ),
-        )
-        connection.commit()
-    return len(payload_json.encode("utf-8"))
+    body = payload if payload is not None else record.to_dict()
+    payload_bytes = write_transition_sync(
+        path,
+        execution_id=record.execution_id,
+        pipeline=record.pipeline,
+        status=record.status,
+        caller_agent=record.caller_agent,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        record_json=body,
+    )
+    return payload_bytes
 
 
 def _fetch_terminal_sync(
@@ -125,38 +109,45 @@ def _fetch_terminal_sync(
     execution_id: str,
 ) -> tuple[dict[str, Any], float] | None:
     with _open_connection(path) as connection:
-        connection.execute(_TABLE_SQL)
-        connection.execute(_INDEX_SQL)
+        migrate_schema_sync(connection)
         row = connection.execute(
             """
             SELECT record_json, completed_at_epoch
             FROM dispatch_records
-            WHERE execution_id = ?
+            WHERE execution_id = ? AND status IN ('completed', 'failed')
             """,
             (execution_id,),
         ).fetchone()
     if row is None:
         return None
     payload_json, completed_at_epoch = row
+    if completed_at_epoch is None:
+        return None
     return json.loads(payload_json), float(completed_at_epoch)
 
 
-def _prune_sync(path: Path, retention_seconds: float) -> tuple[int, float | None]:
+def _prune_sync(
+    path: Path, retention_seconds: float
+) -> tuple[int, float | None, int]:
     now = time.time()
     cutoff = now - retention_seconds
+    started_deleted = prune_started_sync(path, retention_seconds)
     with _open_connection(path) as connection:
-        connection.execute(_TABLE_SQL)
+        migrate_schema_sync(connection)
         connection.execute(_INDEX_SQL)
         oldest_epoch_row = connection.execute(
             """
             SELECT MIN(completed_at_epoch)
             FROM dispatch_records
-            WHERE completed_at_epoch < ?
+            WHERE completed_at_epoch IS NOT NULL AND completed_at_epoch < ?
             """,
             (cutoff,),
         ).fetchone()
         deleted = connection.execute(
-            "DELETE FROM dispatch_records WHERE completed_at_epoch < ?",
+            """
+            DELETE FROM dispatch_records
+            WHERE completed_at_epoch IS NOT NULL AND completed_at_epoch < ?
+            """,
             (cutoff,),
         ).rowcount
         connection.commit()
@@ -164,7 +155,7 @@ def _prune_sync(path: Path, retention_seconds: float) -> tuple[int, float | None
     if oldest_epoch_row and oldest_epoch_row[0] is not None:
         oldest_epoch = float(oldest_epoch_row[0])
     oldest_age_seconds = (now - oldest_epoch) if oldest_epoch is not None else None
-    return max(0, deleted), oldest_age_seconds
+    return max(0, deleted), oldest_age_seconds, started_deleted
 
 
 async def initialize_schema() -> None:
@@ -196,10 +187,28 @@ async def journal_terminal(
         return
     if record.completed_at is None:
         return
+    from universal_protocol.status_basis import (
+        SOURCE_PIPELINE_DISPATCH_JOURNAL,
+        status_basis,
+    )
+
+    base = record.to_dict()
+    enriched = status_basis(
+        "status",
+        record.status,
+        as_of=record.completed_at,
+        source=SOURCE_PIPELINE_DISPATCH_JOURNAL,
+        scope=f"execution:{record.execution_id}",
+        epoch={"writer": "pipeline_dispatch_journal"},
+        recovery={"consulted": ["pipeline_tracker", "pipeline_dispatch_journal"]},
+        state=record.status,
+        **{k: v for k, v in base.items() if k not in {"status", "state"}},
+    )
     payload_bytes = await asyncio.to_thread(
         _write_terminal_sync,
         _journal_path(),
         record,
+        enriched,
     )
     _emit(
         event_bus,
@@ -209,6 +218,81 @@ async def journal_terminal(
             bytes_written=payload_bytes,
         ),
     )
+
+
+async def journal_transition(
+    record: PipelineExecutionRecord,
+    *,
+    status: str = "started",
+    event_bus: _EventBusProtocol | None = None,
+) -> None:
+    """Persist a non-terminal ``started`` fold row (fire-and-forget safe)."""
+    if status != "started":
+        return
+    payload = record.to_dict()
+    from universal_protocol.status_basis import (
+        SOURCE_PIPELINE_DISPATCH_JOURNAL,
+        status_basis,
+    )
+
+    payload = status_basis(
+        "status",
+        "started",
+        as_of=record.started_at,
+        source=SOURCE_PIPELINE_DISPATCH_JOURNAL,
+        scope=f"execution:{record.execution_id}",
+        epoch={"writer": "pipeline_dispatch_journal"},
+        recovery={"consulted": ["pipeline_tracker", "pipeline_dispatch_journal"]},
+        **{k: v for k, v in payload.items() if k not in {"status", "state"}},
+    )
+    try:
+        payload_bytes = await asyncio.to_thread(
+            write_transition_sync,
+            _journal_path(),
+            execution_id=record.execution_id,
+            pipeline=record.pipeline,
+            status="started",
+            caller_agent=record.caller_agent,
+            started_at=record.started_at,
+            completed_at=None,
+            record_json=payload,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to journal started transition: %s", exc)
+        return
+    _emit(
+        event_bus,
+        PipelineDispatchJournalWritten(
+            execution_id=record.execution_id,
+            status="started",
+            bytes_written=payload_bytes,
+        ),
+    )
+
+
+async def fetch_record(
+    execution_id: str,
+    *,
+    event_bus: _EventBusProtocol | None = None,
+) -> dict[str, Any] | None:
+    """Fetch any-status record from the sqlite journal."""
+    result = await asyncio.to_thread(
+        fetch_record_sync,
+        _journal_path(),
+        execution_id,
+    )
+    if result is None:
+        return None
+    payload, _status, updated_epoch = result
+    age_seconds = max(0.0, time.time() - updated_epoch)
+    _emit(
+        event_bus,
+        PipelineDispatchJournalRead(
+            execution_id=execution_id,
+            age_seconds=age_seconds,
+        ),
+    )
+    return payload
 
 
 async def fetch_terminal(
@@ -248,7 +332,7 @@ async def prune_expired(
     returns a dict with ``records_deleted`` and ``oldest_deleted_age_seconds`` (None if
     nothing was deleted). Invoked hourly by the Stargate dispatch-journal prune loop.
     """
-    deleted, oldest_age_seconds = await asyncio.to_thread(
+    deleted, oldest_age_seconds, started_deleted = await asyncio.to_thread(
         _prune_sync,
         _journal_path(),
         retention_seconds,
@@ -258,9 +342,11 @@ async def prune_expired(
         PipelineDispatchJournalPruned(
             records_deleted=deleted,
             oldest_deleted_age_seconds=oldest_age_seconds,
+            started_records_deleted=started_deleted,
         ),
     )
     return {
         "records_deleted": deleted,
         "oldest_deleted_age_seconds": oldest_age_seconds,
+        "started_records_deleted": started_deleted,
     }

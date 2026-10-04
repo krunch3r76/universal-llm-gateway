@@ -13,11 +13,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
-from systems.pipeline.core.execution.dispatch_journal import fetch_terminal
-
 from ...dependencies import get_auth_dependency, get_proxy
 from ...stargate_core import StargateProxy
-from .dispatch_bus_recovery import recover_execution_from_bus_thread
+from .execution_monitor import resolve_execution_monitor, tracker_monitor_payload
 from .pipelines_dispatch import _error_response, _get_tracker
 
 router = APIRouter(tags=["executions"])
@@ -95,29 +93,21 @@ async def get_pipeline_execution(
         )
 
     wait_clamped = min(max(0.0, wait), _MAX_WAIT_SECONDS)
-    record = await tracker.wait_for_terminal(execution_id, wait_clamped)
-    if record is None:
-        journal_record = await fetch_terminal(
-            execution_id,
-            event_bus=getattr(proxy, "event_bus", None),
-        )
-        if journal_record is not None:
-            return JSONResponse(status_code=200, content=journal_record)
-        recovered = await recover_execution_from_bus_thread(
-            execution_id,
-            url=tracker._agent_bus_url,
-            auth_token=tracker._agent_bus_token,
-            wait_seconds=wait_clamped,
-        )
-        if recovered is not None:
-            return JSONResponse(status_code=200, content=recovered)
+    status_code, body = await resolve_execution_monitor(
+        execution_id,
+        tracker=tracker,
+        wait_seconds=wait_clamped,
+        event_bus=getattr(proxy, "event_bus", None),
+    )
+    if status_code == 404 and body is not None:
+        data = body.get("data")
         return _error_response(
             404,
-            "execution_id_expired_or_unknown",
-            f"Unknown or expired execution_id '{execution_id}'.",
+            str(body.get("code") or "execution_id_expired_or_unknown"),
+            str(body.get("message") or ""),
+            data=data if isinstance(data, dict) else None,
         )
-
-    return JSONResponse(status_code=200, content=record.to_dict())
+    return JSONResponse(status_code=status_code, content=body or {})
 
 
 @router.delete("/executions/{execution_id}")
@@ -175,9 +165,12 @@ async def cancel_pipeline_execution(
         )
 
     terminal_record = await tracker.wait_for_terminal(execution_id, timeout_seconds=5.0)
-    payload = (
-        terminal_record.to_dict()
-        if terminal_record is not None
-        else {"execution_id": execution_id, "status": "unknown"}
+    if terminal_record is None:
+        return _error_response(
+            404,
+            "execution_id_expired_or_unknown",
+            f"Unknown or expired execution_id '{execution_id}'.",
+        )
+    return JSONResponse(
+        status_code=200, content=tracker_monitor_payload(terminal_record)
     )
-    return JSONResponse(status_code=200, content=payload)

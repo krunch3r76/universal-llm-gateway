@@ -24,7 +24,7 @@ from .constants import _utc_now_iso
 from .delivery_hooks import _schedule_delivery
 from .dispatch_admit import _schedule_dispatch_admit
 from .errors import TrackerCapacityError
-from .journal import _schedule_journal
+from .journal import _schedule_journal, _schedule_journal_transition
 from .prune import _prune_terminal_records
 from .records import (
     PipelineExecutionError,
@@ -121,6 +121,8 @@ def register_execution(
 
     if result_delivery and result_delivery.get("bus_thread"):
         _schedule_dispatch_admit(tracker, record)
+
+    _schedule_journal_transition(tracker, record)
 
     return record
 

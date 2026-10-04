@@ -178,7 +178,7 @@ async def test_recover_from_terminal_dispatch_link() -> None:
     assert recovered["execution_id"] == "exec-recover"
     assert recovered["status"] == "completed"
     assert recovered["target_thread"] == "042"
-    assert recovered["recovered_from"] == "bus_thread"
+    assert recovered["recovery"]["recovered_from"] == "bus_thread"
 
 
 @pytest.mark.asyncio
@@ -306,10 +306,7 @@ async def test_resolver_unknown_when_stream_died_without_terminal_write(
             auth_token="test-token",
         )
 
-    assert recovered is not None
-    assert recovered["status"] == "unknown"
-    assert recovered["liveness_reason"] == "no_liveness_signal"
-    assert recovered["completed_at"] is None
+    assert recovered is None
 
 
 @pytest.mark.asyncio
@@ -387,11 +384,7 @@ async def test_recover_unknown_when_past_grace_heartbeat_stale(
             auth_token="test-token",
         )
 
-    assert recovered is not None
-    assert recovered["status"] == "unknown"
-    assert recovered["liveness_reason"] == "stream_dead_no_terminal"
-    assert recovered["completed_at"] is None
-    assert "terminal_status" not in recovered
+    assert recovered is None
 
 
 @pytest.mark.asyncio
@@ -497,18 +490,20 @@ def test_get_pipeline_execution_returns_recovered_200(
     tracker._agent_bus_token = "test-token"
 
     monkeypatch.setattr(mod, "_get_tracker", lambda _proxy: tracker)
-    monkeypatch.setattr(mod, "fetch_terminal", AsyncMock(return_value=None))
     monkeypatch.setattr(
         mod,
-        "recover_execution_from_bus_thread",
+        "resolve_execution_monitor",
         AsyncMock(
-            return_value={
-                "execution_id": "exec-route",
-                "pipeline": "cursor-sdk-generate",
-                "status": "completed",
-                "recovered_from": "bus_thread",
-                "target_thread": "044",
-            }
+            return_value=(
+                200,
+                {
+                    "execution_id": "exec-route",
+                    "pipeline": "cursor-sdk-generate",
+                    "status": "completed",
+                    "recovery": {"recovered_from": "bus_thread"},
+                    "target_thread": "044",
+                },
+            )
         ),
     )
 
@@ -520,7 +515,7 @@ def test_get_pipeline_execution_returns_recovered_200(
     response = TestClient(app).get("/executions/exec-route")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["recovered_from"] == "bus_thread"
+    assert body["recovery"]["recovered_from"] == "bus_thread"
     assert body["status"] == "completed"
 
 
@@ -538,9 +533,19 @@ def test_get_pipeline_execution_still_404_when_no_signal(
     tracker._agent_bus_token = "test-token"
 
     monkeypatch.setattr(mod, "_get_tracker", lambda _proxy: tracker)
-    monkeypatch.setattr(mod, "fetch_terminal", AsyncMock(return_value=None))
     monkeypatch.setattr(
-        mod, "recover_execution_from_bus_thread", AsyncMock(return_value=None)
+        mod,
+        "resolve_execution_monitor",
+        AsyncMock(
+            return_value=(
+                404,
+                {
+                    "code": "execution_id_expired_or_unknown",
+                    "message": "Unknown or expired execution_id 'unknown-exec'.",
+                    "data": {"sources_consulted": []},
+                },
+            )
+        ),
     )
 
     app = FastAPI()

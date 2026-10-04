@@ -51,6 +51,7 @@ def PipelineDispatchJournalRead(  # noqa: N802
 def PipelineDispatchJournalPruned(  # noqa: N802
     records_deleted: int,
     oldest_deleted_age_seconds: float | None,
+    started_records_deleted: int = 0,
 ) -> Event:
     """Emitted once per prune round for dispatch journal retention."""
     return Event(
@@ -58,6 +59,7 @@ def PipelineDispatchJournalPruned(  # noqa: N802
         payload={
             "records_deleted": records_deleted,
             "oldest_deleted_age_seconds": oldest_deleted_age_seconds,
+            "started_records_deleted": started_records_deleted,
         },
         scope="node",
     )

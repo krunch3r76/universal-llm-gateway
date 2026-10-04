@@ -613,6 +613,19 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             handoff_status="awaiting_first_reply",
         )
 
+    @app.get("/v1/project-ask/executions/{execution_id}/state")
+    async def execution_state(
+        execution_id: str,
+        satellite_execution_id: str | None = None,
+    ) -> dict[str, object]:
+        from cdp_ask.execution_authority import read_execution_authority
+
+        return await read_execution_authority(
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
+            execution_store=execution_store,
+        )
+
     @app.get(
         "/v1/project-ask/executions/{execution_id}",
         response_model=ExecutionPollResponse,
