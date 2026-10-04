@@ -50,46 +50,79 @@ def membership_snapshot_from_event(
     )
 
 
-async def _emit_membership_in_process() -> tuple[list[str], list[str]] | None:
-    """Call stargate's emit function in this process. No second HTTP route.
+async def latest_gateway_membership_snapshot(
+    query_sock: str = DEFAULT_QUERY_SOCK,
+    *,
+    query_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> tuple[list[str], list[str]] | None:
+    """Latest persisted ``federation.gateway.membership`` in Event Service.
 
-    ``get_auth_dependency`` rejects an unauthenticated manage POST. When the
-    proxy is not initialized here, the snapshot is missing and the restart
-    still proceeds.
+    Manage and stargate are separate processes; the live proxy is not available
+    here. The last recorded membership event is the pre-restart baseline.
     """
-    from systems.proxy.dependencies import get_proxy
-    from systems.proxy.stargate.runtime.component_factory.pipeline_registry_bootstrap import (
-        emit_gateway_membership,
-        membership_payload,
-    )
 
-    proxy = get_proxy()
-    payload = membership_payload(proxy)
-    await emit_gateway_membership(proxy)
-    gw = payload.get("gateway_ids")
-    pipes = payload.get("pipeline_ids")
-    if not isinstance(gw, list) or not isinstance(pipes, list):
+    def _default(body: dict[str, Any]) -> dict[str, Any]:
+        from scripts.model_manager.ui.dispatch_monitor.ulg.event_query import post_query
+
+        return post_query(body, sock=query_sock, timeout=5.0)
+
+    post = query_fn or _default
+    try:
+        body = await asyncio.to_thread(
+            post,
+            {
+                "type": "operation",
+                "name": "signal-events",
+                "params": {
+                    "signal": MEMBERSHIP_SIGNAL,
+                    "limit": 100,
+                    "minutes": 60 * 24 * 30,
+                },
+            },
+        )
+    except Exception:
         return None
-    return ([str(x) for x in gw], [str(x) for x in pipes])
+    rows = body.get("rows") if isinstance(body, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    best_seq = -1
+    best: tuple[list[str], list[str]] | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        seq = row.get("seq")
+        if not isinstance(seq, int) or seq <= best_seq:
+            continue
+        snap = membership_snapshot_from_event(row)
+        if snap is None:
+            continue
+        best_seq = seq
+        best = snap
+    return best
 
 
 async def request_pre_restart_gateway_membership(
     *,
     base_url: str = "",
     client: httpx.AsyncClient | None = None,
+    query_sock: str = DEFAULT_QUERY_SOCK,
     emit_in_process: Callable[[], Awaitable[tuple[list[str], list[str]] | None]]
     | None = None,
+    query_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]] | None:
-    """Supervised pre-restart snapshot via in-process ``emit_gateway_membership``.
+    """Pre-restart snapshot from the last Event Service membership event.
 
     *base_url* and *client* are unused. The authed admin POST is not this path.
     """
     del base_url, client
-    emit = emit_in_process or _emit_membership_in_process
-    try:
-        return await emit()
-    except Exception:
-        return None
+    if emit_in_process is not None:
+        try:
+            return await emit_in_process()
+        except Exception:
+            return None
+    return await latest_gateway_membership_snapshot(
+        query_sock, query_fn=query_fn
+    )
 
 
 async def capture_event_resume_from(
@@ -291,6 +324,7 @@ async def wait_functional_settle(
 __all__ = [
     "FunctionalSettleResult",
     "membership_snapshot_from_event",
+    "latest_gateway_membership_snapshot",
     "op_run_affected_pipelines",
     "capture_event_resume_from",
     "request_pre_restart_gateway_membership",

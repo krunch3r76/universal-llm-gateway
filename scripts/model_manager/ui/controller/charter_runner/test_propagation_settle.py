@@ -20,6 +20,11 @@ def test_mcp_blocked_until_stargate_pass():
     assert restart_blocked_by_order("mcp", {"stargate": "indeterminate"})
     assert restart_blocked_by_order("mcp", {"stargate": "fail_attributable"})
     assert not restart_blocked_by_order("mcp", {"stargate": "pass"})
+    assert restart_blocked_by_order(
+        "mcp",
+        {"stargate:other-land": "indeterminate"},
+        land_code_ref="land-a",
+    )
     assert not restart_blocked_by_order(
         "mcp",
         {"stargate:other-land": "indeterminate", "stargate:land-a": "pass"},

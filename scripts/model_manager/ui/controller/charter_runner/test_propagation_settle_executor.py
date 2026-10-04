@@ -58,36 +58,45 @@ def test_subscribe_events_wires_stargate_settle_with_cap_and_op_run():
 
 @pytest.mark.asyncio
 async def test_pre_restart_membership_request():
-    """In-process emit supplies the snapshot. No second HTTP route."""
-    called = {"n": 0}
+    """Production path reads the latest membership event from Event Service."""
+    captured: list[dict[str, Any]] = []
 
-    async def _emit() -> tuple[list[str], list[str]]:
-        called["n"] += 1
-        return (["g1"], ["p1"])
+    def _query(body: dict[str, Any]) -> dict[str, Any]:
+        captured.append(body)
+        return {
+            "rows": [
+                {
+                    "seq": 10,
+                    "signal": "federation.gateway.membership",
+                    "payload": {"gateway_ids": ["g-old"], "pipeline_ids": ["p-old"]},
+                },
+                {
+                    "seq": 42,
+                    "signal": "federation.gateway.membership",
+                    "payload": {"gateway_ids": ["g1"], "pipeline_ids": ["p1"]},
+                },
+            ]
+        }
 
-    snap = await request_pre_restart_gateway_membership(emit_in_process=_emit)
+    snap = await request_pre_restart_gateway_membership(query_fn=_query)
     assert snap == (["g1"], ["p1"])
-    assert called["n"] == 1
+    assert captured[0]["name"] == "signal-events"
+    assert captured[0]["params"]["signal"] == "federation.gateway.membership"
 
 
-def test_after_edge_missing_land_scoped_key_does_not_inherit():
-    """A missing land key does not copy another land's pass or indeterminate."""
-    assert (
-        restart_blocked_by_order(
-            "mcp",
-            {"stargate": "pass", "stargate:other": "pass"},
-            land_code_ref="this-land",
-        )
-        is False
+def test_after_edge_missing_land_scoped_verdict_blocks_mcp():
+    """Open stargate row (no settle verdict) must block mcp for the same land."""
+    assert restart_blocked_by_order(
+        "mcp",
+        {"stargate": "pass", "stargate:other": "pass"},
+        land_code_ref="this-land",
     )
-    assert (
-        restart_blocked_by_order(
-            "mcp",
-            {"stargate": "indeterminate"},
-            land_code_ref="mcp-only",
-        )
-        is False
+    assert restart_blocked_by_order(
+        "mcp",
+        {"stargate": "indeterminate"},
+        land_code_ref="mcp-only",
     )
+    assert restart_blocked_by_order("mcp", {}, land_code_ref="shared-land")
 
 
 def test_after_edge_scoped_to_same_land_code_ref():

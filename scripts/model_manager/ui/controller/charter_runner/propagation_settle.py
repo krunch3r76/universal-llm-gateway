@@ -24,12 +24,14 @@ def restart_blocked_by_order(
 
     When *land_code_ref* is set, only the provider row for that land counts —
     not an older provider verdict from a different merge on the same service.
+    A missing land-scoped key blocks: an open provider row with no recorded
+    verdict is omitted from ``provider_settle_verdicts`` and must not fail open.
     """
     for provider in ORDER_AFTER.get(service, ()):
         if land_code_ref:
             key = f"{provider}:{land_code_ref}"
             if key not in provider_verdicts:
-                continue
+                return True
             if provider_verdicts[key] != "pass":
                 return True
             continue
