@@ -82,6 +82,43 @@ async def test_land_envelope_matches_range_helper(
 
 
 @pytest.mark.asyncio
+async def test_cas_receipt_is_written_in_master_worktree(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CAS source_repo can differ from the checkout that has master."""
+    checkout = tmp_path / "master-checkout"
+    monkeypatch.setattr(
+        "git_integrate.hub_tree_sync.master_worktree",
+        lambda _src: str(checkout),
+    )
+    wt = tmp_path / "worktrees" / "owed-wt"
+    wt.parent.mkdir(parents=True)
+    _git("worktree", "add", "-b", "arc/owed-wt", str(wt), "master", cwd=source_repo)
+    _git("config", "user.email", "test@example.com", cwd=wt)
+    _git("config", "user.name", "Test", cwd=wt)
+    vocab = wt / "libs/capability_tree/vocabulary.py"
+    vocab.parent.mkdir(parents=True)
+    vocab.write_text("# vocab\n", encoding="utf-8")
+    from git_integrate.git_cas import land_fingerprint
+
+    out = await land_op(
+        arc="owed-wt",
+        phase="phase-3",
+        worktree_path=str(wt),
+        approval="approved",
+        expected_diff_sha256=land_fingerprint(str(wt)),
+        commit_message="receipt in master worktree",
+        source_repo=str(source_repo),
+        green_gate_cmd=["true"],
+        remove_worktree=False,
+    )
+    assert out["status"] == "completed", out
+    receipt = checkout / "tmp/reviews/land-receipts" / f"{out['master_after_sha']}.md"
+    assert receipt.is_file()
+    assert not (_receipt_dir(source_repo) / f"{out['master_after_sha']}.md").exists()
+
+
+@pytest.mark.asyncio
 async def test_gate_refusal_writes_no_receipt(
     source_repo: Path, arc_worktree: Path
 ) -> None:

@@ -423,13 +423,17 @@ async def advance_master_cas(
     )
     if proc.returncode != 0:
         return CasResult(non_ff=True)
-    # Ref has moved. The diff is the only extra work before the caller
-    # drops the master land lease.
+    # Ref has moved. Diff and receipt run off the event loop. The caller
+    # still holds the master land lease until this returns.
     try:
         from implement_admission.restart_owed import record_land_restart_receipt
 
-        block = record_land_restart_receipt(
-            source_repo,
+        from git_integrate.hub_tree_sync import master_worktree
+
+        receipt_repo = master_worktree(source_repo) or source_repo
+        block = await asyncio.to_thread(
+            record_land_restart_receipt,
+            receipt_repo,
             expected,
             new_sha,
             "advance_master_cas",
