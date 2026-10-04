@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from git_integrate import git_cas, revert as revert_mod
+from git_integrate import revert as revert_mod
 from git_integrate.revert import revert_op
 from git_integrate.schema import CasResult
 
