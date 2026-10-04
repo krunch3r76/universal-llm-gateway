@@ -158,7 +158,7 @@ def test_deleted_yaml_pipeline_absent_is_pass():
     assert verdict == "pass"
 
 
-def test_deleted_yaml_pipeline_still_present_is_pass():
+def test_deleted_yaml_pipeline_still_present_failing_op_run_is_fail_attributable():
     verdict = judge_settle(
         snapshot_gateway_ids=["g1"],
         snapshot_pipeline_ids=["gone"],
@@ -170,8 +170,25 @@ def test_deleted_yaml_pipeline_still_present_is_pass():
         land_paths=["pipelines/gone.yaml"],
         land_deleted_paths=["pipelines/gone.yaml"],
         pipeline_sources={"gone": ["pipelines/gone.yaml"]},
+        op_run_failures=["gone"],
     )
-    assert verdict == "pass"
+    assert verdict == "fail_attributable"
+
+
+def test_empty_source_list_is_not_expected_absent():
+    verdict = judge_settle(
+        snapshot_gateway_ids=["g1"],
+        snapshot_pipeline_ids=["ghost", "keep"],
+        post_gateway_ids=["g1"],
+        post_pipeline_ids=["keep"],
+        membership_seq=4,
+        latest_catalog_seq=3,
+        timed_out=False,
+        land_paths=["pipelines/other.yaml"],
+        land_deleted_paths=["pipelines/other.yaml"],
+        pipeline_sources={"ghost": [], "keep": ["pipelines/keep.yaml"]},
+    )
+    assert verdict == "indeterminate"
 
 
 def test_partial_delete_plus_modify_absent_is_fail_attributable():

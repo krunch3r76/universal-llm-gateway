@@ -192,6 +192,18 @@ async def op_run_affected_pipelines(
     return failures
 
 
+def _latest_membership_pipeline_ids(events: Iterable[dict[str, Any]]) -> set[str]:
+    """Pipeline ids from the latest membership event that listed them."""
+    present: set[str] = set()
+    for event in events:
+        if str(event.get("signal") or "") != MEMBERSHIP_SIGNAL:
+            continue
+        pipes = (event.get("payload") or {}).get("pipeline_ids")
+        if isinstance(pipes, list):
+            present = {str(item) for item in pipes}
+    return present
+
+
 def _membership_window_ready(
     events: Iterable[dict[str, Any]],
     snapshot_gateway_ids: Iterable[str] | None,
@@ -364,7 +376,13 @@ async def wait_functional_settle(
         deleted,
         pipeline_sources=sources,
     )
-    op_run_ids = affected - expected_absent
+    present_pipes = _latest_membership_pipeline_ids(events)
+    missing_expected = {
+        pipeline_id
+        for pipeline_id in expected_absent
+        if pipeline_id not in present_pipes
+    }
+    op_run_ids = affected - missing_expected
     op_failures: list[str] = []
     if not timed_out and op_run_ids and run_op_run is not None:
         op_failures = list(await run_op_run(op_run_ids))

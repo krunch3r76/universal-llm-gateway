@@ -11,11 +11,11 @@ import pytest
 from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_git_head import (
     enumerate_tip_window_commits,
+    land_deleted_paths_from_merge_sha,
+    land_paths_from_merge_sha,
     observed_lane_git_refs,
     partition_tip_window_meters,
     paths_exclusive_to_lane,
-    land_deleted_paths_from_merge_sha,
-    land_paths_from_merge_sha,
     paths_in_commit,
     with_head_sha_fallback,
 )
