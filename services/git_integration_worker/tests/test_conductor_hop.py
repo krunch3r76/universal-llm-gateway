@@ -1441,6 +1441,202 @@ async def test_next_admit_blocked_releases_when_reply_precedes_closeout() -> Non
     assert post_mock.await_count == 1
 
 
+def _row_hop_harvest_terminal(
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    summoning_thread_id: str,
+    harvest_id: str,
+    closeout_turn: int,
+    closeout_hop_seq: int,
+    hop_seq: int,
+) -> None:
+    req = _req(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        execution_id=f"exec-{dispatch_id}",
+    )
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "summoning_thread_id": summoning_thread_id,
+            "closeout_turn": closeout_turn,
+            "closeout_hop_seq": closeout_hop_seq,
+            "hop_seq": hop_seq,
+            "closeout_body": f"stop: ROW_HOP\nNEXT_ADMIT: harvest {harvest_id}\n",
+            "closeout_stop_tokens": ["ROW_HOP"],
+            "hop_deferral_gate": SKIP_GATE_NEXT_ADMIT_BLOCKED,
+        },
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+
+
+_CLEAR_GATE = {"observed_at": "2026-10-03T23:00:00+00:00", "rows": []}
+
+
+@pytest.mark.asyncio
+async def test_14915_reply_lifts_when_harvest_registry_watermark_missing() -> None:
+    """a:37767: started_at missing; closeout_turn on the worker thread still lifts."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "4d928ab0a8ef-14092bab"
+    harvest_id = "d48cd73e-dbfd-4cdf-8ce9-7928cab578ab"
+    _row_hop_harvest_terminal(
+        ledger,
+        dispatch_id=dispatch_id,
+        thread_id="14915",
+        summoning_thread_id="14915",
+        harvest_id=harvest_id,
+        closeout_turn=133,
+        closeout_hop_seq=1,
+        hop_seq=24,
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-14915"}))
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return (
+            thread_id == "14915"
+            and after_turn == 133
+            and from_agent == "web-anthropic"
+        )
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._harvest_execution_started_at_iso",
+            return_value=None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._named_target_is_terminal",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_CLEAR_GATE,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_14901_registry_watermark_still_admits_once() -> None:
+    """Control: aligned hop seq and a registry started_at still admit one successor."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "1cda05999c22-5721985b"
+    harvest_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _row_hop_harvest_terminal(
+        ledger,
+        dispatch_id=dispatch_id,
+        thread_id="14901",
+        summoning_thread_id="14901",
+        harvest_id=harvest_id,
+        closeout_turn=144,
+        closeout_hop_seq=28,
+        hop_seq=28,
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-14901"}))
+
+    def _watermark(*, thread_id: str, closeout_instant: str) -> int | None:
+        if thread_id != "14901" or not closeout_instant.startswith("2023-11-14"):
+            return None
+        return 144
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return (
+            thread_id == "14901"
+            and after_turn == 144
+            and from_agent == "web-anthropic"
+        )
+
+    with (
+        patch(
+            "claude_bundles.cdp_registry_store.load_active",
+            return_value=_live_harvest_registry(harvest_id),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.resolve_consult_summoning_watermark_at_instant",
+            side_effect=_watermark,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_CLEAR_GATE,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        admitted = await release_deferred_conductor_hops()
+        again = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert again == 0
+    assert post_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_busy_summoning_thread_closeout_turn_does_not_release() -> None:
+    """closeout_turn is a worker-thread number; a busy summoning thread must not match."""
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "4d928ab0-busy-summon"
+    harvest_id = "d48cd73e-dbfd-4cdf-8ce9-7928cab578ab"
+    _row_hop_harvest_terminal(
+        ledger,
+        dispatch_id=dispatch_id,
+        thread_id="14915",
+        summoning_thread_id="12286",
+        harvest_id=harvest_id,
+        closeout_turn=133,
+        closeout_hop_seq=1,
+        hop_seq=24,
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-false"}))
+
+    def _reply(thread_id: str, after_turn: int, from_agent: str) -> bool:
+        return thread_id == "12286" and from_agent == "web-anthropic"
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._harvest_execution_started_at_iso",
+            return_value=None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._named_target_is_terminal",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.reply_arrived_on_thread",
+            side_effect=_reply,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_CLEAR_GATE,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        admitted = await release_deferred_conductor_hops()
+    assert admitted == 0
+    post_mock.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
     ledger = CursorDispatchLedger.instance()

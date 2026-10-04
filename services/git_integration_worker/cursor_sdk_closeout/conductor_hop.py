@@ -550,8 +550,10 @@ def _expected_harvest_reply_present(
 
     The watermark is the latest bus turn at or before the registry
     ``started_at``. A reply before the conductor closeout still counts when
-    the harvest started earlier. The summon itself is excluded. Unresolved
-    watermark fails closed.
+    the harvest started earlier. The summon itself is excluded. When the
+    registry does not yield one ``started_at``, fall back to the row-local
+    bus watermark (worker ``closeout_turn``, else the stamped summoning
+    turn). Neither watermark present stays fail-closed.
     """
     from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
         reply_arrived_on_thread,
@@ -560,7 +562,7 @@ def _expected_harvest_reply_present(
 
     started_iso = _harvest_execution_started_at_iso(token)
     if started_iso is None:
-        return False
+        return _harvest_reply_at_row_watermark(row, rec)
     thread_ids: list[str] = []
     summoning_id = str(rec.get("summoning_thread_id") or "").strip()
     worker_id = str(row.get("thread_id") or "").strip()
@@ -575,6 +577,47 @@ def _expected_harvest_reply_present(
             continue
         if reply_arrived_on_thread(
             thread_id=thread_id, after_turn=watermark, from_agent="web-anthropic"
+        ):
+            return True
+    return False
+
+
+def _int_watermark(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _harvest_reply_at_row_watermark(
+    row: dict[str, Any], rec: dict[str, Any]
+) -> bool:
+    """Bus reply when the CDP registry has no single harvest ``started_at``.
+
+    ``closeout_turn`` is a turn on the worker thread only. It is also the
+    watermark for the summoning thread when that thread is the worker thread.
+    ``consult_summoning_after_turn`` is used on the summoning thread it was
+    stamped for. Missing both watermarks stays fail-closed (no zero fallback).
+    """
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        reply_arrived_on_thread,
+    )
+
+    worker_id = str(row.get("thread_id") or "").strip()
+    summoning_id = str(rec.get("summoning_thread_id") or "").strip()
+    closeout_turn = _int_watermark(rec.get("closeout_turn"))
+    if closeout_turn is not None and worker_id:
+        if reply_arrived_on_thread(
+            thread_id=worker_id,
+            after_turn=closeout_turn,
+            from_agent="web-anthropic",
+        ):
+            return True
+    stamped = _int_watermark(rec.get("consult_summoning_after_turn"))
+    if stamped is not None and summoning_id:
+        if reply_arrived_on_thread(
+            thread_id=summoning_id,
+            after_turn=stamped,
+            from_agent="web-anthropic",
         ):
             return True
     return False
