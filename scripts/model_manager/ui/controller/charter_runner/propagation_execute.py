@@ -532,6 +532,7 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         proof_class_requested=(row.proof_class_requested or row.proof_class),  # type: ignore[arg-type]
         allow_self_preempt=row.allow_self_preempt,
         force=row.force,
+        revert_on_fail=row.revert_on_fail,
         close_surfaces=tuple(sorted(close_surfaces)),
     )
 
@@ -982,7 +983,7 @@ async def execute_propagation_plan(
                 remaining.append(disposition)
                 if verdict == "indeterminate":
                     escalated.append(disposition)
-                elif verdict == "fail_attributable":
+                elif verdict == "fail_attributable" and row.revert_on_fail:
 
                     async def _revert(**_kwargs: Any) -> dict[str, Any]:
                         result = await revert_op(
@@ -1033,7 +1034,7 @@ async def execute_propagation_plan(
             if (
                 row.service == "git_integration_worker"
                 and outcome.get("status") == "ok"
-                and getattr(row, "revert_on_fail", False)
+                and row.revert_on_fail
             ):
                 from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
                     apply_verdict,
