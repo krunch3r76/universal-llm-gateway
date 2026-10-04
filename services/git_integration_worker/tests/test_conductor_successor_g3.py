@@ -625,6 +625,155 @@ async def test_non_conductor_parent_reactor_noop() -> None:
     assert post.await_count == 0
 
 
+@pytest.mark.asyncio
+async def test_prose_parked_transport_blocks_after_nest_terminal() -> None:
+    """A hold token in the closeout prose still blocks when the nest is terminal."""
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-prose-hold"
+    nest_id = "nest-prose-hold"
+    closeout = (
+        "status: partial\n\n"
+        f"NEXT_ADMIT: harvest `{_NEST_EXEC}`.\n\n"
+        "Hold this admit. stop: PARKED_TRANSPORT until the transport returns.\n"
+    )
+    _arm_terminal_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=closeout,
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "should-not-prose"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert post.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_footer_blocks_after_nest_terminal() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-confirm"
+    nest_id = "nest-confirm"
+    _arm_terminal_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+    )
+    ledger.merge_record_json(
+        dispatch_id=parent_id,
+        patch={"closeout_stop_tokens": ["CONFIRM_PENDING"]},
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "should-not-confirm"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await _promote_nest(nest_id)
+    assert post.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_token_also_in_cdp_registry_does_not_lift() -> None:
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-cdp-ambig"
+    nest_id = "nest-cdp-ambig"
+    _arm_terminal_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "should-not-ambig"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        stack.enter_context(
+            patch(
+                "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._collect_execution_targets",
+                return_value=[("other-cdp-exec", False)],
+            )
+        )
+        await _promote_nest(nest_id)
+    assert post.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_park_resumed_nest_lineage_head_admits_on_sweep() -> None:
+    """Shared execution id: the -r1 head counts, the cancelled original does not."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        maybe_fire_conductor_hop_reactor,
+        release_deferred_conductor_hops,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-park-lineage"
+    nest_id = "nest-park-lineage"
+    resumed_id = "nest-park-lineage-r1"
+    _arm_terminal_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "succ-park-lineage"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
+        assert post.await_count == 0
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, park_kind=?, "
+                "park_resumed_by=? WHERE dispatch_id=?",
+                ("cancelled", "park_for_restart", resumed_id, nest_id),
+            )
+        _admit(
+            ledger,
+            _req(
+                dispatch_id=resumed_id,
+                execution_id=_NEST_EXEC,
+                resume_of=nest_id,
+            ),
+        )
+        ledger.mark_terminal(dispatch_id=resumed_id, terminal_status="completed")
+        admitted = await release_deferred_conductor_hops()
+    assert admitted == 1
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_open_park_without_resume_does_not_admit() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        maybe_fire_conductor_hop_reactor,
+        release_deferred_conductor_hops,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    parent_id = "parent-open-park"
+    nest_id = "nest-open-park"
+    _arm_terminal_parent(
+        ledger,
+        parent_id=parent_id,
+        nest_id=nest_id,
+        nest_execution_id=_NEST_EXEC,
+        closeout=_miss_closeout(_NEST_EXEC),
+    )
+    post = AsyncMock(return_value=(True, {"dispatch_id": "should-not-open-park"}))
+    with ExitStack() as stack:
+        _promote_contexts(stack, post)
+        await maybe_fire_conductor_hop_reactor(dispatch_id=parent_id)
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, park_kind=? "
+                "WHERE dispatch_id=?",
+                ("cancelled", "park_for_restart", nest_id),
+            )
+        admitted = await release_deferred_conductor_hops()
+    assert admitted == 0
+    assert post.await_count == 0
+
+
 def test_summoning_retry_stamps_closeout_anchored_watermark() -> None:
     ledger = CursorDispatchLedger.instance()
     _admit(

@@ -323,40 +323,92 @@ def _collect_dispatch_targets(token: str) -> list[tuple[str, bool]]:
     return hits
 
 
-def _collect_execution_id_targets(token: str) -> list[tuple[str, bool]]:
-    """Ledger rows whose ``execution_id`` matches ``token``.
-
-    Conductor closeouts name a nested SDK child by execution id
-    (``NEXT_ADMIT: harvest <uuid>``). That uuid is not the dispatch id and
-    is not a CDP registry row. A dispatch-id match still goes through the
-    CDP lookup so a registry outage stays fail-closed.
-    """
+def _collect_execution_id_rows(token: str) -> list[sqlite3.Row]:
+    """Ledger rows whose ``execution_id`` matches ``token``."""
     ledger = CursorDispatchLedger.instance()
-    hits: list[tuple[str, bool]] = []
     with ledger._connect() as conn:
-        rows = conn.execute(
-            "SELECT dispatch_id, status FROM cursor_sdk_dispatches "
+        return conn.execute(
+            "SELECT dispatch_id, status, nest_under, resume_of, "
+            "park_kind, park_resumed_by FROM cursor_sdk_dispatches "
             "WHERE execution_id = ? OR execution_id LIKE ?",
             (token, token + "%"),
         ).fetchall()
-    for row in rows:
-        hits.append(
-            (str(row["dispatch_id"]), _dispatch_terminal_for_status(row["status"]))
-        )
-    return hits
 
 
-def _single_execution_id_target(token: str | None) -> tuple[str, bool] | None:
-    """The one ledger row named by execution id, or None when the match is not unique."""
-    if not token:
+def _dispatch_reaches_parent(start: str, parent_id: str) -> bool:
+    """Walk ``nest_under`` then ``resume_of`` toward ``parent_id``."""
+    ledger = CursorDispatchLedger.instance()
+    current = start
+    seen: set[str] = set()
+    with ledger._connect() as conn:
+        for _ in range(8):
+            if not current or current in seen:
+                return False
+            if current == parent_id:
+                return True
+            seen.add(current)
+            row = conn.execute(
+                "SELECT nest_under, resume_of, record_json FROM cursor_sdk_dispatches "
+                "WHERE dispatch_id = ?",
+                (current,),
+            ).fetchone()
+            if row is None:
+                return False
+            nested = str(row["nest_under"] or "")
+            resumed = str(row["resume_of"] or "")
+            if not nested and not resumed:
+                try:
+                    rec = json.loads(row["record_json"] or "{}")
+                except json.JSONDecodeError:
+                    rec = {}
+                if isinstance(rec, dict):
+                    nested = str(rec.get("nest_under") or "")
+                    resumed = str(rec.get("resume_of") or "")
+            current = nested or resumed
+    return False
+
+
+def _execution_id_target_for_parent(
+    token: str | None, parent_dispatch_id: str
+) -> tuple[str, bool] | None:
+    """Lineage head of ``token`` under ``parent_dispatch_id``.
+
+    Park-resume keeps one ``execution_id`` on the cancelled row and its
+    ``-rN`` child. The head is the row with ``park_resumed_by`` unset.
+    An open park (``park_kind`` set, not resumed) is not terminal.
+    A token that also names a dispatch id or a CDP row is ambiguous.
+    """
+    if not token or not parent_dispatch_id:
         return None
     try:
-        hits = _collect_execution_id_targets(token)
+        rows = _collect_execution_id_rows(token)
+        disp = _collect_dispatch_targets(token)
+        cdp = list(_collect_execution_targets(token))
+        if disp:
+            return None
+        for key, terminal in cdp:
+            # The nest's own id may still sit in the CDP registry after it
+            # finishes. A different id, or the same id still running, is a
+            # second target and the lift stays closed.
+            if key.lower() != token.lower() or not terminal:
+                return None
     except Exception:
         return None
-    if len(hits) != 1:
+    heads = [
+        row
+        for row in rows
+        if not str(row["park_resumed_by"] or "")
+        and _dispatch_reaches_parent(str(row["dispatch_id"]), parent_dispatch_id)
+    ]
+    if len(heads) != 1:
         return None
-    return hits[0]
+    head = heads[0]
+    if str(head["park_kind"] or ""):
+        return (str(head["dispatch_id"]), False)
+    return (
+        str(head["dispatch_id"]),
+        _dispatch_terminal_for_status(head["status"]),
+    )
 
 
 def _registry_rows_for_exact_execution_id(
@@ -442,7 +494,13 @@ def _named_target_is_terminal(
     """
     try:
         dispatch_targets = _collect_dispatch_targets(token)
-        ledger_exec = _collect_execution_id_targets(token)
+        ledger_exec = [
+            (
+                str(row["dispatch_id"]),
+                _dispatch_terminal_for_status(row["status"]),
+            )
+            for row in _collect_execution_id_rows(token)
+        ]
         if ledger_exec and not dispatch_targets:
             execution_targets: list[tuple[str, bool]] = []
             dispatch_targets = ledger_exec
@@ -481,17 +539,15 @@ def hop_body_build_refused(
     if not next_admit_blocks_hop_body(guard):
         return False
     token = _harvest_target_token(guard)
-    tokens = _closeout_tokens_from_row(row)
-    ledger_hit = _single_execution_id_target(token)
+    parent_id = str(row.get("dispatch_id") or "")
+    tokens = _lift_hold_tokens(row)
+    ledger_hit = _execution_id_target_for_parent(token, parent_id)
     # A silent closeout withholds ROW_HOP while the nest is live. Once that
-    # nest's execution id is the only ledger match and it is terminal, the
-    # harvest line is the nest finishing, not a CDP reply still owed.
-    # Exit-persist tokens (including PARKED_TRANSPORT) keep blocking.
-    if (
-        ledger_hit is not None
-        and ledger_hit[1]
-        and not (tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})))
-    ):
+    # nest's execution id resolves to one terminal lineage head under this
+    # parent, the harvest line is the nest finishing, not a CDP reply still
+    # owed. Exit-persist tokens, DONE, CONFIRM_PENDING, and CONSULT_PENDING
+    # keep blocking, including when they appear only in the closeout prose.
+    if ledger_hit is not None and ledger_hit[1] and not (tokens & _LIFT_HOLD_TOKENS):
         if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
             return True
         return False
@@ -785,7 +841,10 @@ def _deferral_stamp_allowed(row: dict[str, Any], gate: str) -> bool:
         return True
     # Silent nest harvest: the sweep must be able to clear after a restart
     # missed the nest-close re-fire. A CDP id with no ledger row stays unstamped.
-    return _single_execution_id_target(token) is not None
+    return (
+        _execution_id_target_for_parent(token, str(row.get("dispatch_id") or ""))
+        is not None
+    )
 
 
 def _emit_hop_skipped(
@@ -813,7 +872,10 @@ def _emit_hop_skipped(
     if gate == "live_nested":
         rec = _record_data(row)
         token = _harvest_target_token(_next_admit_guard_text(row, rec))
-        if _single_execution_id_target(token) is not None:
+        if (
+            _execution_id_target_for_parent(token, str(row.get("dispatch_id") or ""))
+            is not None
+        ):
             # Parent close emits live_nested. Store the gate path C already
             # clears, so a restart that misses the nest-close re-fire still sweeps.
             stamp_gate = SKIP_GATE_NEXT_ADMIT_BLOCKED
@@ -822,6 +884,22 @@ def _emit_hop_skipped(
             dispatch_id=dispatch_id,
             patch={HOP_DEFERRAL_GATE_KEY: stamp_gate},
         )
+
+
+_LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
+    {"DONE", "CONFIRM_PENDING", "CONSULT_PENDING"}
+)
+
+
+def _lift_hold_tokens(row: dict[str, Any]) -> frozenset[str]:
+    """Footer stop tokens plus tokens written in the closeout prose."""
+    from claude_bundles.conductor_stop import parse_stop_tokens
+
+    tokens = set(_closeout_tokens_from_row(row))
+    body = _closeout_body_from_row(row)
+    if body:
+        tokens.update(parse_stop_tokens(body).tokens)
+    return frozenset(tokens)
 
 
 def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
