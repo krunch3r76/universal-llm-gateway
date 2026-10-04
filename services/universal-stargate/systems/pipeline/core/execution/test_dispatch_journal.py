@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -8,8 +9,13 @@ import pytest
 from systems.pipeline.core.execution.async_tracker import (
     PipelineExecutionRecord,
     PipelineExecutionResult,
+    PipelineExecutionTracker,
+)
+from systems.pipeline.core.execution.async_tracker_delivery.outcome import (
+    DeliveryOutcome,
 )
 from systems.pipeline.core.execution.dispatch_journal import (
+    _journal_path,
     fetch_record,
     fetch_terminal,
     initialize_schema,
@@ -127,3 +133,73 @@ async def test_fetch_missing_record_returns_none(
     await initialize_schema()
 
     assert await fetch_terminal("does-not-exist") is None
+
+
+async def _drain_tracker(tracker: PipelineExecutionTracker) -> None:
+    for _ in range(6):
+        pending = list(tracker._pending_tasks)
+        if not pending:
+            await asyncio.sleep(0)
+            pending = list(tracker._pending_tasks)
+            if not pending:
+                return
+        await asyncio.gather(*pending)
+
+
+@pytest.mark.asyncio
+async def test_to_thread_started_then_one_fold_two_transitions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """AC7: to_thread leaves started in flight; delivery folds once and logs two rows.
+
+    Breaks when delivery resolves before the started write (empty in-flight read)
+    or when the terminal write replaces the fold without appending a second
+    transition (one log line, or two fold rows).
+    """
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    await initialize_schema()
+
+    async def _delivered(_record: PipelineExecutionRecord) -> DeliveryOutcome:
+        return DeliveryOutcome(status="delivered", thread="42")
+
+    tracker = PipelineExecutionTracker(delivery_sender=_delivered)
+    tracker.set_journal_writer(journal_terminal)
+    tracker.set_transition_writer(journal_transition)
+    tracker.register_execution(
+        execution_id="exec-to-thread",
+        pipeline="frontier-dispatch",
+        started_at="2026-04-19T00:00:00Z",
+        op="to_thread",
+        target_thread="42",
+        output_contract="thread",
+    )
+    await _drain_tracker(tracker)
+
+    inflight = await fetch_record("exec-to-thread")
+    assert inflight is not None
+    assert inflight["status"] == "started"
+
+    tracker.complete_execution(
+        "exec-to-thread",
+        content="posted",
+        model="cursor/grok-4.7",
+        usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        duration_s=0.1,
+    )
+    await _drain_tracker(tracker)
+
+    with sqlite3.connect(_journal_path()) as connection:
+        fold_rows = connection.execute(
+            "SELECT status FROM dispatch_records WHERE execution_id = ?",
+            ("exec-to-thread",),
+        ).fetchall()
+        transitions = connection.execute(
+            """
+            SELECT status FROM dispatch_record_transitions
+            WHERE execution_id = ?
+            ORDER BY rowid
+            """,
+            ("exec-to-thread",),
+        ).fetchall()
+    assert [row[0] for row in fold_rows] == ["completed"]
+    assert [row[0] for row in transitions] == ["started", "completed"]

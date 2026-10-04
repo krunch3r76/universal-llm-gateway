@@ -1,0 +1,73 @@
+openapi: 3.1.0
+info:
+  title: cdp_ask
+  version: 1.0.0
+  description: >-
+    Satellite HTTP contract for the execution-authority read. The handler is
+    GET /v1/project-ask/executions/{execution_id}/state in libs/cdp_ask/app.py.
+paths:
+  /v1/project-ask/executions/{execution_id}/state:
+    get:
+      summary: Read execution authority
+      operationId: readExecutionAuthority
+      description: >-
+        Returns the registry execution_state entry (or null) and the
+        ExecutionStore projection (or null). Does not recover a poll snapshot
+        and does not open a browser.
+      parameters:
+        - name: execution_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: satellite_execution_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Alternate id when the path id is the Stargate execution id.
+      responses:
+        "200":
+          description: Authority entry, store projection, and consulted sources
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - execution_state
+                  - store
+                  - sources_consulted
+                  - as_of
+                properties:
+                  execution_state:
+                    description: Registry entry verbatim, or null on miss.
+                  execution_state_freshness:
+                    type: string
+                    nullable: true
+                    enum: [live, expired_by_ttl, null]
+                  registration_id:
+                    type: string
+                    nullable: true
+                  store:
+                    description: ExecutionStore projection, or null on miss.
+                    nullable: true
+                  sources_consulted:
+                    type: array
+                    items:
+                      type: object
+                      required: [source, hit]
+                      properties:
+                        source:
+                          type: string
+                          enum:
+                            - cdp_registry.execution_state
+                            - cdp_ask.execution_store
+                        hit:
+                          type: boolean
+                        execution_id:
+                          type: string
+                        reason:
+                          type: string
+                  as_of:
+                    type: string
+                    format: date-time
