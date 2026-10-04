@@ -339,7 +339,9 @@ def test_domain_category_filter_and_bare_id_post(
     index = client.get("/api/v1/capabilities")
     assert index.status_code == 200, index.text
     names = {row["name"]: row for row in index.json()["categories"]}
-    assert names["frontier_dispatch"]["href"] == "/api/v1/capabilities/frontier_dispatch"
+    assert (
+        names["frontier_dispatch"]["href"] == "/api/v1/capabilities/frontier_dispatch"
+    )
     assert "description" in names["frontier_dispatch"]
     assert names["transformation"]["href"] == "/api/v1/capabilities/transformation"
     canonical = "/api/v1/capabilities/frontier_dispatch/chat-dispatch"
