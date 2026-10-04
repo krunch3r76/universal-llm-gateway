@@ -98,6 +98,7 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         proof_class=row.proof_class,
         allow_self_preempt=row.allow_self_preempt,
         force=row.force,
+        revert_on_fail=row.revert_on_fail,
         close_surfaces=tuple(sorted(close_surfaces)),
     )
 

@@ -58,6 +58,7 @@ class OpenPropagationProjection:
     consumption_claimed_at: float | None = None
     allow_self_preempt: bool = True
     force: bool = False
+    revert_on_fail: bool = False
     proof_class_requested: str | None = None
 
 
@@ -210,7 +211,8 @@ def list_open_rows(
                    mint_thread, mint_turn, defer_reason, proof_class,
                    proof_class_requested, hazard, reason,
                    settle_boundary_monotonic, proof, consumption_token,
-                   consumption_claimed_at, allow_self_preempt, force
+                   consumption_claimed_at, allow_self_preempt, force,
+                   revert_on_fail
             FROM propagation_ledger
             WHERE status='open'
             ORDER BY age_in_harvests DESC, service ASC
@@ -240,6 +242,11 @@ def list_open_rows(
                     else bool(row["allow_self_preempt"])
                 ),
                 force=(False if row["force"] is None else bool(row["force"])),
+                revert_on_fail=(
+                    False
+                    if row["revert_on_fail"] is None
+                    else bool(row["revert_on_fail"])
+                ),
                 proof_class_requested=(
                     str(row["proof_class_requested"])
                     if row["proof_class_requested"]

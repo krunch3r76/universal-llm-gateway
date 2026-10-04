@@ -15,10 +15,40 @@ from implement_admission.propagation_row import (
     resolve_code_ref,
     rows_from_closeout_payload,
     rows_from_lib_consumers,
+    row_from_mapping,
     rows_from_residue_lines,
     rows_from_service_paths,
     stamp_liveness_on_row,
 )
+
+
+def _functional_settle_mapping(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "service": "stargate",
+        "code_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "proof_class": "functional_settle",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_row_from_mapping_revert_on_fail_false_overrides_functional_settle_default():
+    row = row_from_mapping(
+        _functional_settle_mapping(revert_on_fail=False)  # type: ignore[arg-type]
+    )
+    assert row.revert_on_fail is False
+
+
+def test_row_from_mapping_revert_on_fail_true_when_explicit():
+    row = row_from_mapping(
+        _functional_settle_mapping(revert_on_fail=True)  # type: ignore[arg-type]
+    )
+    assert row.revert_on_fail is True
+
+
+def test_row_from_mapping_revert_on_fail_absent_defaults_functional_settle():
+    row = row_from_mapping(_functional_settle_mapping())  # type: ignore[arg-type]
+    assert row.revert_on_fail is True
 
 
 def test_structured_propagation_wins_over_legacy():

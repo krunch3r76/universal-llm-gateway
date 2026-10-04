@@ -324,6 +324,13 @@ def coerce_force_flag(raw: Any) -> bool:
     return False
 
 
+def _revert_on_fail_kwargs(raw: dict[str, Any]) -> dict[str, bool]:
+    """Pass ``revert_on_fail`` only when the mapping explicitly sets it."""
+    if "revert_on_fail" not in raw or raw.get("revert_on_fail") is None:
+        return {}
+    return {"revert_on_fail": coerce_force_flag(raw.get("revert_on_fail"))}
+
+
 def coerce_allow_self_preempt_flag(raw: Any) -> bool:
     """Parse ``allow_self_preempt`` — default True when absent; explicit false only."""
     if raw is None:
@@ -365,6 +372,7 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
         allow_self_preempt=coerce_allow_self_preempt_flag(
             raw.get("allow_self_preempt")
         ),
+        **_revert_on_fail_kwargs(raw),
     )
 
 
@@ -427,6 +435,7 @@ def row_from_mapping_strict(
             allow_self_preempt=coerce_allow_self_preempt_flag(
                 raw.get("allow_self_preempt")
             ),
+            **_revert_on_fail_kwargs(raw),
         ),
         None,
     )

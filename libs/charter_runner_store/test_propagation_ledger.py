@@ -50,6 +50,23 @@ def test_upsert_open_row_preserves_intent_and_obligation(tmp_path, monkeypatch) 
         )
 
 
+def test_list_open_rows_round_trips_revert_on_fail(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows(
+        [
+            _row(
+                service="stargate",
+                proof_class="functional_settle",
+                code_ref="fedcba0000000000000000000000000000000000",
+                revert_on_fail=False,
+            )
+        ]
+    )
+    open_rows = list_open_rows()
+    assert len(open_rows) == 1
+    assert open_rows[0].revert_on_fail is False
+
+
 def test_open_projection_marks_proof_obligation(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     upsert_open_rows([_row(service="mcp", proof_class="client_visible")])
