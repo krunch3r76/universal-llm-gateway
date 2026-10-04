@@ -51,10 +51,14 @@ def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
     if tip.returncode != 0 or not tip.stdout.strip():
         return False
+    before_sha = _master_sha(hub)
     merged = _git_capture(hub, "merge", "--ff-only", branch)
     if merged.returncode != 0:
         return False
-    return commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is True
+    if commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is not True:
+        return False
+    _record_hub_master_move(hub, before_sha, "ff_only_onto_hub_master")
+    return True
 
 
 def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
@@ -93,11 +97,37 @@ def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
     if tip.returncode != 0 or not tip.stdout.strip():
         return False
+    before_sha = _master_sha(hub)
     merged = _git_capture(hub, "merge", "--no-edit", branch)
     if merged.returncode != 0:
         _abort_merge_if_started(hub)
         return False
-    return commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is True
+    if commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is not True:
+        return False
+    _record_hub_master_move(hub, before_sha, "clean_merge_onto_hub_master")
+    return True
+
+
+def _master_sha(hub: Path) -> str:
+    proc = _git_capture(hub, "rev-parse", "refs/heads/master")
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _record_hub_master_move(hub: Path, before_sha: str, land_path: str) -> None:
+    """Receipt after the ref moved. Failure here does not undo the move."""
+    try:
+        from implement_admission.restart_owed import record_land_restart_receipt
+
+        record_land_restart_receipt(
+            hub,
+            before_sha,
+            _master_sha(hub),
+            land_path,
+        )
+    except Exception:
+        return
 
 
 def _abort_merge_if_started(hub: Path) -> None:

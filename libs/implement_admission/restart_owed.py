@@ -9,7 +9,10 @@ as ``unmapped:`` rather than dropped.
 
 from __future__ import annotations
 
+import re
+import subprocess
 from collections.abc import Sequence
+from pathlib import Path
 
 from implement_admission.propagation_row import is_lib_test_module
 from implement_admission.service_lib_ownership import (
@@ -19,6 +22,9 @@ from implement_admission.service_lib_ownership import (
     slug_for_service_path,
     unserved_libs,
 )
+
+_GIT_TIMEOUT_S = 10.0
+_SHA_FILE_RE = re.compile(r"[0-9a-f]{4,64}")
 
 _SKIP_PREFIXES = (
     "docs/",
@@ -48,8 +54,10 @@ def _slug_for_prefix(path: str) -> str | None:
 def _skipped_non_serving(path: str) -> bool:
     if path.startswith(_SKIP_PREFIXES):
         return True
-    if path.endswith(".md") and not path.startswith("services/") and not path.startswith(
-        "libs/"
+    if (
+        path.endswith(".md")
+        and not path.startswith("services/")
+        and not path.startswith("libs/")
     ):
         return True
     return False
@@ -93,3 +101,97 @@ def restart_owed_line(paths: Sequence[str]) -> str:
     for path in sorted(unmapped):
         lines.append(f"unmapped: {path}")
     return "\n".join(lines)
+
+
+def _unavailable(exc: BaseException) -> str:
+    return f"restart_owed: unavailable ({type(exc).__name__})"
+
+
+def restart_owed_for_range(repo: str | Path, before_sha: str, after_sha: str) -> str:
+    """``restart_owed_line`` over ``git diff --name-only before..after``.
+
+    ``before == after`` is ``restart_owed: none`` and does not run git.
+    A failed diff raises; callers that record a land catch that and keep
+    the land success.
+    """
+    before = before_sha.strip()
+    after = after_sha.strip()
+    if before == after:
+        return "restart_owed: none"
+    paths = _diff_name_only(Path(repo), before, after)
+    return restart_owed_line(paths)
+
+
+def _diff_name_only(repo: Path, before: str, after: str) -> list[str]:
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "diff",
+            "--name-only",
+            f"{before}..{after}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode,
+            proc.args,
+            proc.stdout,
+            proc.stderr,
+        )
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _receipt_path(repo: Path, after_sha: str) -> Path:
+    safe = after_sha.strip().lower()
+    if _SHA_FILE_RE.fullmatch(safe) is None:
+        safe = "unknown"
+    return repo / "tmp" / "reviews" / "land-receipts" / f"{safe}.md"
+
+
+def _receipt_body(before: str, after: str, land_path: str, block: str) -> str:
+    return f"before: {before}\nafter: {after}\nland_path: {land_path}\n{block}\n"
+
+
+def record_land_restart_receipt(
+    repo: str | Path,
+    before_sha: str,
+    after_sha: str,
+    land_path: str,
+) -> str:
+    """Write ``tmp/reviews/land-receipts/<after>.md`` and return the block.
+
+    Diff or write failure becomes ``restart_owed: unavailable (<class>)``.
+    Never raises. Call only after the master ref has moved.
+    """
+    root = Path(repo)
+    before = before_sha.strip()
+    after = after_sha.strip()
+    try:
+        block = restart_owed_for_range(root, before, after)
+    except Exception as exc:
+        block = _unavailable(exc)
+    path = _receipt_path(root, after)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            _receipt_body(before, after, land_path, block),
+            encoding="utf-8",
+        )
+        return block
+    except Exception as exc:
+        unavailable = _unavailable(exc)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                _receipt_body(before, after, land_path, unavailable),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return unavailable

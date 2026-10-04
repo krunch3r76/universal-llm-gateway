@@ -11,7 +11,10 @@ from implement_admission.conductor_materialize import (
     RematerializeContext,
     materialize_conductor,
 )
-from implement_admission.conductor_no_restart import NO_RESTART_LINE
+from implement_admission.conductor_no_restart import (
+    G7_RESTART_OWED_RULE,
+    NO_RESTART_LINE,
+)
 from implement_admission.restart_owed import restart_owed_line
 from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
 
@@ -160,7 +163,9 @@ def test_materialized_packet_carries_no_restart_line(tmp_path: Path) -> None:
         files_root=tmp_path / "cortex",
     )
     assert NO_RESTART_LINE in mp.text
-    assert "restart_owed:" in mp.text
+    assert G7_RESTART_OWED_RULE in mp.text
+    assert "restart_owed_for_range" in mp.text
+    assert "Do not assemble a path list" in mp.text
     assert "Every nested implement and land prompt" in mp.text
     rematerialized = materialize_conductor(
         "todo:layer-conductor-unify",
@@ -185,7 +190,9 @@ def test_conductor_preamble_repeats_no_restart_line() -> None:
         hop_from="pred-1",
     )
     assert NO_RESTART_LINE in text
-    assert "restart_owed:" in text
+    assert G7_RESTART_OWED_RULE in text
+    assert "restart_owed_for_range" in text
+    assert "Do not assemble a path list" in text
 
 
 def test_skill_nested_dispatch_examples_carry_no_restart_line() -> None:

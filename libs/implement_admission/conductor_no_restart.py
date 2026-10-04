@@ -18,9 +18,10 @@ NESTED_PROMPT_RULE = (
 )
 
 G7_RESTART_OWED_RULE = (
-    "G7 land closeout must include the `restart_owed:` line from "
-    "implement_admission.restart_owed.restart_owed_line applied to the "
-    "landed diff (slug_for_service_path and _SERVICE_OWNERSHIP path_prefix; "
-    "a path no rule maps is `unmapped:`, not dropped). "
-    "Do not call manage. The operator seat restarts the named slugs."
+    "G7 land closeout must copy the lines of "
+    "tmp/reviews/land-receipts/<after_sha>.md in the hub checkout, or the "
+    "`restart_owed_block` from git_land, verbatim. If neither exists, call "
+    "implement_admission.restart_owed.restart_owed_for_range(repo, before_sha, "
+    "after_sha) and copy that return value verbatim. Do not assemble a path "
+    "list. Do not call manage. The operator seat restarts the named slugs."
 )

@@ -63,3 +63,4 @@ class CasResult:
 
     non_ff: bool
     new_sha: str = ""
+    restart_owed_block: str = ""

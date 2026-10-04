@@ -423,7 +423,20 @@ async def advance_master_cas(
     )
     if proc.returncode != 0:
         return CasResult(non_ff=True)
-    return CasResult(non_ff=False, new_sha=new_sha)
+    # Ref has moved. The diff is the only extra work before the caller
+    # drops the master land lease.
+    try:
+        from implement_admission.restart_owed import record_land_restart_receipt
+
+        block = record_land_restart_receipt(
+            source_repo,
+            expected,
+            new_sha,
+            "advance_master_cas",
+        )
+    except Exception as exc:
+        block = f"restart_owed: unavailable ({type(exc).__name__})"
+    return CasResult(non_ff=False, new_sha=new_sha, restart_owed_block=block)
 
 
 async def _run_command(

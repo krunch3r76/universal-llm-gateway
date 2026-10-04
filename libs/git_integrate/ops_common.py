@@ -271,6 +271,8 @@ async def integrate_retry_loop(
             "attempt": attempt,
             "working_tree": working_tree,
             "hub_porcelain": hub_porcelain,
+            "master_before_sha": master_before,
+            "restart_owed_block": adv.restart_owed_block,
         }
 
     emit_git_integrate_rejected(

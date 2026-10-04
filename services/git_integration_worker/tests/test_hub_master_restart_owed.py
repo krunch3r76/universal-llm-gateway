@@ -36,7 +36,9 @@ def _init_hub(tmp_path: Path) -> Path:
     return repo
 
 
-def _commit_on_branch(repo: Path, branch: str, files: dict[str, str], message: str) -> None:
+def _commit_on_branch(
+    repo: Path, branch: str, files: dict[str, str], message: str
+) -> None:
     assert _git(repo, "checkout", "-b", branch).returncode == 0
     for rel, body in files.items():
         path = repo / rel
@@ -104,7 +106,9 @@ def test_clean_merge_records_receipt(tmp_path: Path) -> None:
     assert "land_path: clean_merge_onto_hub_master" in text
 
 
-def test_ff_diff_failure_still_lands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ff_diff_failure_still_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = _init_hub(tmp_path)
     _commit_on_branch(
         repo,
@@ -113,10 +117,10 @@ def test_ff_diff_failure_still_lands(tmp_path: Path, monkeypatch: pytest.MonkeyP
         "vocab",
     )
 
-    def _boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def _boom(*_args: object, **_kwargs: object) -> list[str]:
         raise OSError("unreadable repo")
 
-    monkeypatch.setattr("implement_admission.restart_owed.subprocess.run", _boom)
+    monkeypatch.setattr("implement_admission.restart_owed._diff_name_only", _boom)
     assert (
         ff_only_onto_hub_master(repo, branch_name="cursor-sdk/lane-unreadable") is True
     )
