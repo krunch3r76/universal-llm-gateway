@@ -576,7 +576,7 @@ def _mark_row_settle_reverted(row_id: str) -> None:
     payload = get_open_proof_payload(row_id)
     merged = dict(payload) if isinstance(payload, dict) else {}
     merged["settle_reverted"] = True
-    set_open_proof_payload(row_id, merged)
+    set_open_proof_payload(row_id, proof_payload=merged)
 
 
 async def execute_propagation_plan(
@@ -1031,117 +1031,124 @@ async def execute_propagation_plan(
                 continue
 
             if (
-            row.service == "git_integration_worker"
-            and outcome.get("status") == "ok"
-            and getattr(row, "revert_on_fail", False)
-        ):
-            from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
-                apply_verdict,
-                emit_settle_verdict,
-                giw_ready_join_verdict,
-            )
-            from scripts.model_manager.ui.controller.propagation_ready_join import (
-                ready_join_for_settle,
-            )
-
-            join = ready_join_for_settle(row.service)
-            giw_verdict = giw_ready_join_verdict(join.outcome)
-            emit_settle_verdict(
-                service=row.service,
-                land_sha=row.code_ref,
-                verdict=giw_verdict,
-                detail=join.outcome,
-            )
-            if giw_verdict == "fail_attributable":
-                from charter_runner_store.propagation_ledger import (
-                    record_settle_verdict,
+                row.service == "git_integration_worker"
+                and outcome.get("status") == "ok"
+                and getattr(row, "revert_on_fail", False)
+            ):
+                from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
+                    apply_verdict,
+                    emit_settle_verdict,
+                    giw_ready_join_verdict,
                 )
-                from git_integrate.revert import revert_op
+                from scripts.model_manager.ui.controller.propagation_ready_join import (
+                    ready_join_for_settle,
+                )
 
-                from services.git_integration_worker.config import load_config
-
-                cfg = load_config()
-
-                async def _giw_revert(**_kwargs: Any) -> dict[str, Any]:
-                    return await revert_op(
-                        source_repo=str(cfg.source_repo),
-                        merge_sha=row.code_ref,
+                join = ready_join_for_settle(row.service)
+                giw_verdict = giw_ready_join_verdict(join.outcome)
+                emit_settle_verdict(
+                    service=row.service,
+                    land_sha=row.code_ref,
+                    verdict=giw_verdict,
+                    detail=join.outcome,
+                )
+                if giw_verdict == "fail_attributable":
+                    from charter_runner_store.propagation_ledger import (
+                        record_settle_verdict,
                     )
+                    from git_integrate.revert import revert_op
 
-                await apply_verdict(
-                    giw_verdict,
-                    revert=_giw_revert,
-                    already_reverted=False,
+                    from services.git_integration_worker.config import load_config
+
+                    cfg = load_config()
+
+                    async def _giw_revert(**_kwargs: Any) -> dict[str, Any]:
+                        return await revert_op(
+                            source_repo=str(cfg.source_repo),
+                            merge_sha=row.code_ref,
+                        )
+
+                    giw_applied = await apply_verdict(
+                        giw_verdict,
+                        revert=_giw_revert,
+                        already_reverted=_row_settle_already_reverted(row.row_id),
+                    )
+                    if giw_applied.get("revert_calls"):
+                        _mark_row_settle_reverted(row.row_id)
+                    record_settle_verdict(row.row_id, giw_verdict)
+                    remaining.append(
+                        {
+                            **projection,
+                            "defer_reason": "settle_fail_attributable",
+                            "proof_class_executed": dispatch_after.proof_class_executed,
+                            "disposition": "giw_ready_join",
+                            "verdict": giw_verdict,
+                        }
+                    )
+                    continue
+
+            live_after = dispatch_after.payload
+            executed_class = dispatch_after.proof_class_executed
+            class_diverged = executed_class != requested_class
+            authority_identity = outcome.get("authority_identity")
+            proof_ok = not class_diverged and proof_matches(
+                row,
+                live_after,
+                before=before,
+                authority_identity=authority_identity,
+            )
+            close_payload = {
+                **(live_after or {}),
+                "proof_class_requested": requested_class,
+                "proof_class_executed": executed_class,
+            }
+            if class_diverged:
+                defer = (
+                    f"proof_class_diverged:requested={requested_class}"
+                    f":executed={executed_class}"
                 )
-                record_settle_verdict(row.row_id, giw_verdict)
+                set_defer_reason(row.row_id, defer)
                 remaining.append(
                     {
                         **projection,
-                        "defer_reason": "settle_fail_attributable",
-                        "proof_class_executed": dispatch_after.proof_class_executed,
-                        "disposition": "giw_ready_join",
-                        "verdict": giw_verdict,
+                        "defer_reason": defer,
+                        "proof_class_executed": executed_class,
+                        "disposition": "failed_proof_class_diverged",
+                        "proof": live_after,
                     }
                 )
-                continue
+                if row.age_in_harvests >= 2:
+                    escalated.append({**projection, "defer_reason": defer})
+            elif proof_ok:
+                close_row(row.row_id, proof_payload=close_payload)
+                closed.append(
+                    {
+                        **projection,
+                        "proof": live_after,
+                        "proof_before": before,
+                        "proof_class_executed": executed_class,
+                        "disposition": "closed",
+                    }
+                )
+            else:
+                defer = "proof_not_observed_after_restart"
+                set_defer_reason(row.row_id, defer)
+                remaining.append(
+                    {
+                        **projection,
+                        "defer_reason": defer,
+                        "proof_class_executed": executed_class,
+                        "disposition": "deferred_proof_not_observed",
+                        "proof": live_after,
+                    }
+                )
+                if row.age_in_harvests >= 2:
+                    escalated.append({**projection, "defer_reason": defer})
+        finally:
+            if settling_held:
+                from charter_runner_store.propagation_ledger import release_settling
 
-        live_after = dispatch_after.payload
-        executed_class = dispatch_after.proof_class_executed
-        class_diverged = executed_class != requested_class
-        authority_identity = outcome.get("authority_identity")
-        proof_ok = not class_diverged and proof_matches(
-            row,
-            live_after,
-            before=before,
-            authority_identity=authority_identity,
-        )
-        close_payload = {
-            **(live_after or {}),
-            "proof_class_requested": requested_class,
-            "proof_class_executed": executed_class,
-        }
-        if class_diverged:
-            defer = (
-                f"proof_class_diverged:requested={requested_class}"
-                f":executed={executed_class}"
-            )
-            set_defer_reason(row.row_id, defer)
-            remaining.append(
-                {
-                    **projection,
-                    "defer_reason": defer,
-                    "proof_class_executed": executed_class,
-                    "disposition": "failed_proof_class_diverged",
-                    "proof": live_after,
-                }
-            )
-            if row.age_in_harvests >= 2:
-                escalated.append({**projection, "defer_reason": defer})
-        elif proof_ok:
-            close_row(row.row_id, proof_payload=close_payload)
-            closed.append(
-                {
-                    **projection,
-                    "proof": live_after,
-                    "proof_before": before,
-                    "proof_class_executed": executed_class,
-                    "disposition": "closed",
-                }
-            )
-        else:
-            defer = "proof_not_observed_after_restart"
-            set_defer_reason(row.row_id, defer)
-            remaining.append(
-                {
-                    **projection,
-                    "defer_reason": defer,
-                    "proof_class_executed": executed_class,
-                    "disposition": "deferred_proof_not_observed",
-                    "proof": live_after,
-                }
-            )
-            if row.age_in_harvests >= 2:
-                escalated.append({**projection, "defer_reason": defer})
+                release_settling(row.row_id)
 
     results: dict[str, Any] = {
         "status": "ok",

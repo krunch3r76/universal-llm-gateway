@@ -22,6 +22,24 @@ def test_equal_length_different_members_is_not_pass():
     assert verdict == "indeterminate"
 
 
+def test_membership_before_catalog_reload_is_indeterminate():
+    """Membership that precedes catalog.changed must not count as post-reload ready."""
+    verdict = judge_event_window(
+        [
+            {"signal": "federation.catalog.changed", "seq": 10, "payload": {}},
+            {
+                "signal": "federation.gateway.membership",
+                "seq": 9,
+                "payload": {"gateway_ids": ["gw-a"], "pipeline_ids": ["p"]},
+            },
+        ],
+        snapshot_gateway_ids=["gw-a"],
+        snapshot_pipeline_ids=["p"],
+        timed_out=False,
+    )
+    assert verdict == "indeterminate"
+
+
 def test_cap_expiry_while_catalog_events_arrive_is_indeterminate():
     verdict = judge_event_window(
         [
