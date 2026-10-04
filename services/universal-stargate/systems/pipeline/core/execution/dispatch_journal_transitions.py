@@ -189,7 +189,7 @@ def prune_started_sync(
     path: Path,
     retention_seconds: float,
 ) -> int:
-    """Delete ``started`` rows older than *retention_seconds* by ``updated_at_epoch``."""
+    """Delete old ``started`` rows by ``updated_at_epoch`` vs *retention_seconds*."""
     cutoff = time.time() - retention_seconds
     with sqlite3.connect(path) as connection:
         migrate_schema_sync(connection)

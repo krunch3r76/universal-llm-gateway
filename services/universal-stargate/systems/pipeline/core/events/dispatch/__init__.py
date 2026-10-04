@@ -25,6 +25,7 @@ from .async_tracker import (
     PipelineDispatchRejected,
     PipelineDispatchTrackerExpired,
 )
+from .authority import PipelineExecutionAuthorityUnreachable
 from .capability import (
     PipelineFrontierCapabilityCatalogMiss,
     PipelineFrontierCapabilityKnobRejected,
@@ -53,7 +54,6 @@ from .frontier_tools import (
     PipelineFrontierDispatchToolSuppressed,
     PipelineFrontierDispatchToolsWire,
 )
-from .authority import PipelineExecutionAuthorityUnreachable
 from .journal import (
     PipelineDispatchJournalPruned,
     PipelineDispatchJournalRead,

@@ -18,16 +18,16 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from universal_logging import get_logger
 
+from ..events.dispatch import (
+    PipelineDispatchJournalPruned,
+    PipelineDispatchJournalRead,
+    PipelineDispatchJournalWritten,
+)
 from .dispatch_journal_transitions import (
     fetch_record_sync,
     migrate_schema_sync,
     prune_started_sync,
     write_transition_sync,
-)
-from ..events.dispatch import (
-    PipelineDispatchJournalPruned,
-    PipelineDispatchJournalRead,
-    PipelineDispatchJournalWritten,
 )
 
 if TYPE_CHECKING:

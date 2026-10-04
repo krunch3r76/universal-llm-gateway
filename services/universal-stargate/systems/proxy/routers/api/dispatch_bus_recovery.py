@@ -11,12 +11,12 @@ turns and attaches the closeout body to ``result``.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-import os
 from agent_bus_store.cursor_sdk_dispatch_turn import (
     infer_cursor_sdk_terminal_status,
     sdk_terminal_closeout_turn,

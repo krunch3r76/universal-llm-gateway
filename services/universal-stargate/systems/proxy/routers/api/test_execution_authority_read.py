@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from systems.proxy.routers.api.execution_authority_read import map_authority_to_monitor
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from cdp_ask.client import project_ask_base_url, relay_async
 from universal_logging import get_logger
@@ -73,7 +73,9 @@ def map_authority_to_monitor(
     if not isinstance(entry, dict):
         store = authority.get("store")
         if isinstance(store, dict):
-            return _map_store_projection(store, authority=authority, execution_id=execution_id)
+            return _map_store_projection(
+                store, authority=authority, execution_id=execution_id
+            )
         return None
     freshness = authority.get("execution_state_freshness")
     state = str(entry.get("state") or "")
@@ -89,7 +91,9 @@ def map_authority_to_monitor(
 
     updated = entry.get("updated_at")
     as_of = (
-        datetime.fromtimestamp(float(updated), tz=UTC).isoformat().replace("+00:00", "Z")
+        datetime.fromtimestamp(float(updated), tz=UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
         if isinstance(updated, (int, float))
         else str(authority.get("as_of") or "")
     )

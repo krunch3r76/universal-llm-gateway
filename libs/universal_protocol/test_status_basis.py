@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from scripts.model_manager.ui.controller.busy_service_scope import project_service_busy
+
 from universal_protocol.status_basis import BASIS_KEYS, status_basis
 
 

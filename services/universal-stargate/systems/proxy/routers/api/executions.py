@@ -171,4 +171,6 @@ async def cancel_pipeline_execution(
             "execution_id_expired_or_unknown",
             f"Unknown or expired execution_id '{execution_id}'.",
         )
-    return JSONResponse(status_code=200, content=tracker_monitor_payload(terminal_record))
+    return JSONResponse(
+        status_code=200, content=tracker_monitor_payload(terminal_record)
+    )

@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import os
-import time
 from datetime import UTC, datetime
 from typing import Any
 
-from systems.pipeline.core.execution.async_tracker import PipelineExecutionRecord
-from systems.pipeline.core.execution.dispatch_journal import fetch_record
 from universal_protocol.status_basis import (
     SOURCE_PIPELINE_DISPATCH_JOURNAL,
     SOURCE_PIPELINE_TRACKER,
-    SOURCE_THREAD_DISPATCH_LINKS,
     status_basis,
 )
+
+from systems.pipeline.core.execution.async_tracker import PipelineExecutionRecord
+from systems.pipeline.core.execution.dispatch_journal import fetch_record
 
 from .dispatch_bus_recovery import recover_execution_from_bus_thread
 from .execution_authority_read import map_authority_to_monitor, read_execution_authority
@@ -79,11 +78,11 @@ async def resolve_execution_monitor(
             return 200, mapped
 
     if authority_result.degraded and event_bus is not None:
+        import asyncio
+
         from systems.pipeline.core.events.dispatch.authority import (
             PipelineExecutionAuthorityUnreachable,
         )
-
-        import asyncio
 
         asyncio.create_task(
             event_bus.publish_nowait(
