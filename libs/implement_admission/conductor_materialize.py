@@ -345,6 +345,14 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "and Use each slug before the first move."
         ),
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
+        (
+            "- G7 land: after the G6 verdict is PASS, call "
+            "land_lane_branch_onto_hub_master once with holder_op_id set to this "
+            "dispatch id. Never call ff_only_onto_hub_master or "
+            "clean_merge_onto_hub_master directly, and never call any land function "
+            "to test feasibility (use can_ff_onto_hub_master or "
+            "git merge-base --is-ancestor)."
+        ),
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
         f"- {NESTED_PROMPT_RULE}",
         f"- {NO_RESTART_LINE}",

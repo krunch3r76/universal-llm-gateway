@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,67 @@ _HUB_LAND_SCOPED_OUT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"out-of-scope[^\n]*\bhub\s+land\b", re.IGNORECASE),
     re.compile(r"¬\s*hub[- ]land", re.IGNORECASE),
 )
+
+
+@dataclass(frozen=True)
+class LaneBranchLandResult:
+    """Whether a deliberate lane land moved hub master, and the ref before and after."""
+
+    landed: bool
+    before_sha: str
+    after_sha: str
+
+
+def land_lane_branch_onto_hub_master(
+    repo: Path, *, branch_name: str, holder_op_id: str
+) -> LaneBranchLandResult:
+    """Fast-forward hub master to a lane branch while this process holds the land lease.
+
+    Non-blocking. Another holder returns not-landed at once. A clean merge is
+    the fallback when fast-forward is refused and the merge does not conflict.
+    Never call this to test feasibility.
+    """
+    from services.git_integration_worker.cursor_sdk_land_lease import (
+        master_land_lease_key,
+        release_land_lease_best_effort,
+        try_acquire_land_lease,
+    )
+
+    hub = resolve_hub_git_repo(repo)
+    before = _master_sha(hub)
+    lease_key = master_land_lease_key(hub)
+    holder = (holder_op_id or "").strip()
+    if not holder:
+        logger.error("lane land refused; holder_op_id empty hub=%s", hub)
+        return LaneBranchLandResult(False, before, before)
+    try:
+        acquired = try_acquire_land_lease(lease_key=lease_key, holder_op_id=holder)
+    except Exception:
+        logger.error(
+            "lane land left unlanded; master land lease acquire failed "
+            "lease_key=%s branch=%s holder=%s",
+            lease_key,
+            branch_name,
+            holder,
+        )
+        return LaneBranchLandResult(False, before, before)
+    if not acquired:
+        logger.warning(
+            "lane land left unlanded; master land lease held "
+            "lease_key=%s branch=%s holder=%s",
+            lease_key,
+            branch_name,
+            holder,
+        )
+        return LaneBranchLandResult(False, before, before)
+    try:
+        moved = ff_only_onto_hub_master(repo, branch_name=branch_name)
+        if not moved:
+            moved = clean_merge_onto_hub_master(repo, branch_name=branch_name)
+        after = _master_sha(hub)
+        return LaneBranchLandResult(bool(moved) and after != before, before, after)
+    finally:
+        release_land_lease_best_effort(lease_key=lease_key, holder_op_id=holder)
 
 
 def can_ff_onto_hub_master(repo: Path, *, branch_name: str) -> bool:

@@ -182,6 +182,18 @@ def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) ->
     assert "runbook:score-play" not in mp.text  # inline URI, not a pointer phrase
 
 
+def test_materialized_packet_names_g7_lease_land(tmp_path: Path) -> None:
+    mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets",
+        files_root=tmp_path / "cortex",
+    )
+    assert "land_lane_branch_onto_hub_master once" in mp.text
+    assert "Never call ff_only_onto_hub_master" in mp.text
+    assert "can_ff_onto_hub_master" in mp.text
+
+
 def test_materialize_conductor_packet_shape(tmp_path: Path) -> None:
     files_root = tmp_path / "cortex"
     out_dir = tmp_path / "packets"

@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_sdk_hub_land_scope import (
     can_ff_onto_hub_master,
     clean_merge_onto_hub_master,
     ff_only_onto_hub_master,
+    land_lane_branch_onto_hub_master,
 )
 from services.git_integration_worker.cursor_sdk_land_lease import (
     master_land_lease_key,
@@ -69,6 +70,72 @@ def _commit_on_branch(repo: Path, branch: str, body: str) -> None:
 
 def _master(repo: Path) -> str:
     return _git(repo, "rev-parse", "refs/heads/master").stdout.strip()
+
+
+def test_land_lane_branch_lands_when_lease_free(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(repo, "cursor-sdk/lane-deliberate", "lane\n")
+    before = _master(repo)
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name="cursor-sdk/lane-deliberate", holder_op_id="d-free"
+    )
+    assert result.landed is True
+    assert result.before_sha == before
+    assert result.after_sha == _master(repo)
+    assert result.after_sha != before
+
+
+def test_land_lane_branch_held_by_other_returns_not_landed(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(repo, "cursor-sdk/lane-held", "lane\n")
+    before = _master(repo)
+    key = master_land_lease_key(repo)
+    assert try_acquire_land_lease(lease_key=key, holder_op_id="other-land")
+    try:
+        result = land_lane_branch_onto_hub_master(
+            repo, branch_name="cursor-sdk/lane-held", holder_op_id="d-blocked"
+        )
+        assert result.landed is False
+        assert result.before_sha == before
+        assert result.after_sha == before
+        assert _master(repo) == before
+    finally:
+        release_land_lease(lease_key=key, holder_op_id="other-land")
+
+
+def test_subprocess_without_lease_cannot_move_master(tmp_path: Path) -> None:
+    repo = _init_hub(tmp_path)
+    _commit_on_branch(repo, "cursor-sdk/lane-sub", "lane\n")
+    before = _master(repo)
+    key = master_land_lease_key(repo)
+    assert try_acquire_land_lease(lease_key=key, holder_op_id="parent-land")
+    env = os.environ.copy()
+    root = str(Path(__file__).resolve().parents[3])
+    env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+    env["HUB"] = str(repo)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os; "
+            "from services.git_integration_worker.cursor_sdk_hub_land_scope "
+            "import land_lane_branch_onto_hub_master; "
+            "r = land_lane_branch_onto_hub_master("
+            "Path(os.environ['HUB']), "
+            "branch_name='cursor-sdk/lane-sub', holder_op_id='child'); "
+            "print(r.landed)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    try:
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "False"
+        assert _master(repo) == before
+    finally:
+        release_land_lease(lease_key=key, holder_op_id="parent-land")
 
 
 def test_ff_only_onto_hub_master_without_lease_leaves_master_unchanged(
