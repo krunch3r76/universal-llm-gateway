@@ -342,8 +342,15 @@ async def test_execute_functional_settle_missing_pipeline_fail_attributable_reve
                 "land_paths": kwargs.get("land_paths"),
             }
         )
-        kwargs.setdefault("run_op_run", AsyncMock(return_value=[]))
-        return await real_wait(subscribe_factory=_feed, **kwargs)
+        kwargs.pop("subscribe_factory", None)
+        run_op_run = kwargs.pop("run_op_run", None)
+        if run_op_run is None:
+            run_op_run = AsyncMock(return_value=[])
+        return await real_wait(
+            subscribe_factory=_feed,
+            run_op_run=run_op_run,
+            **kwargs,
+        )
 
     cfg = MagicMock(source_repo=Path("/tmp/repo"))
     plan = PropagationPlan(rows=[], sync_restart_services=[])
