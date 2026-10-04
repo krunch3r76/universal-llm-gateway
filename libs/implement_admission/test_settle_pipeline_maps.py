@@ -5,9 +5,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from universal_workspace import get_workspace_root
+
 from implement_admission.settle_gate import judge_settle
 from implement_admission.settle_pipeline_maps import functional_settle_pipeline_maps
-from universal_workspace import get_workspace_root
 
 
 def test_functional_settle_pipeline_maps_includes_known_pipeline() -> None:

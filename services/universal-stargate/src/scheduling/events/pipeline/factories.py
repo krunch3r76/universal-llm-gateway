@@ -22,6 +22,18 @@ from .signal_constants import (
     PIPELINE_STEP_MODEL_DEFERRED,
 )
 
+FEDERATION_GATEWAY_MEMBERSHIP = "federation.gateway.membership"
+
+
+@event_factory
+def federation_gateway_membership(membership: dict[str, list[str]]) -> Event:
+    """Publish reachable gateway ids and loaded pipeline ids (never a count)."""
+    return Event(
+        signal=FEDERATION_GATEWAY_MEMBERSHIP,
+        payload=membership,
+        scope="global",
+    )
+
 
 @event_factory
 def pipeline_registry_unavailable(

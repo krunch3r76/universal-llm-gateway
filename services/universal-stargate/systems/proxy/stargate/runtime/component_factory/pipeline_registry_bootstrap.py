@@ -90,13 +90,9 @@ async def emit_gateway_membership(proxy: StargateProxy) -> None:
     """Publish ``federation.gateway.membership`` after a reload or pre-restart."""
     if proxy.event_bus is None:
         return
-    from universal_event_bus import Event
+    from src.scheduling.events import federation_gateway_membership
 
-    event = Event(
-        signal="federation.gateway.membership",
-        payload=membership_payload(proxy),
-        scope="global",
-    )
+    event = federation_gateway_membership(membership_payload(proxy))
     try:
         await proxy.event_bus.publish_nowait(event)
     except Exception:

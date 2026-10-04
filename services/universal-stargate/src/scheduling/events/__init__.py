@@ -295,6 +295,7 @@ __all__ = [
     "PipelineStepEmbeddingStarted",
     "PipelineStepEmbeddingCompleted",
     "PipelineStepEmbeddingFailed",
+    "federation_gateway_membership",
     "pipeline_registry_unavailable",
     "pipeline_step_domain_verification_started",
     "pipeline_step_domain_verification_completed",
