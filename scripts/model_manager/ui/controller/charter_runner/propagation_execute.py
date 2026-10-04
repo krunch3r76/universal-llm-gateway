@@ -782,7 +782,9 @@ async def execute_propagation_plan(
                 }
             )
             continue
-        from services.git_integration_worker.config import load_config as _load_giw_config
+        from services.git_integration_worker.config import (
+            load_config as _load_giw_config,
+        )
 
         if restart_blocked_by_order(
             row.service,
@@ -892,6 +894,9 @@ async def execute_propagation_plan(
                 record_settle_verdict,
             )
             from git_integrate.revert import revert_op
+            from implement_admission.settle_pipeline_maps import (
+                functional_settle_pipeline_maps,
+            )
 
             from scripts.model_manager.ui.controller.charter_runner.propagation_settle import (
                 apply_verdict,
@@ -911,10 +916,6 @@ async def execute_propagation_plan(
             from services.git_integration_worker.config import load_config
             from services.git_integration_worker.cursor_sdk_git_head import (
                 land_paths_from_merge_sha,
-            )
-
-            from implement_admission.settle_pipeline_maps import (
-                functional_settle_pipeline_maps,
             )
 
             cfg = load_config()

@@ -296,7 +296,7 @@ async def test_execute_functional_settle_missing_pipeline_fail_attributable_reve
         install_propagation_context,
     )
 
-    land_sha = "deadbeef1234567890abcdef1234567890abcdef"
+    land_sha = "e92cdf077253210a89296318de0a24d3946947c3"
     yaml_path = "pipelines/settle-missing-test.yaml"
     pipeline_id = "settle-missing-test"
     maps = FunctionalSettlePipelineMaps(
@@ -342,11 +342,8 @@ async def test_execute_functional_settle_missing_pipeline_fail_attributable_reve
                 "land_paths": kwargs.get("land_paths"),
             }
         )
-        return await real_wait(
-            subscribe_factory=_feed,
-            run_op_run=AsyncMock(return_value=[]),
-            **kwargs,
-        )
+        kwargs.setdefault("run_op_run", AsyncMock(return_value=[]))
+        return await real_wait(subscribe_factory=_feed, **kwargs)
 
     cfg = MagicMock(source_repo=Path("/tmp/repo"))
     plan = PropagationPlan(rows=[], sync_restart_services=[])
@@ -362,10 +359,7 @@ async def test_execute_functional_settle_missing_pipeline_fail_attributable_reve
             "scripts.model_manager.ui.api_dispatch.sync_restart_charter_harvest",
             new=AsyncMock(return_value={"status": "ok"}),
         ),
-        patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_execute.load_config",
-            return_value=cfg,
-        ),
+        patch("services.git_integration_worker.config.load_config", return_value=cfg),
         patch(
             "services.git_integration_worker.cursor_sdk_git_head.land_paths_from_merge_sha",
             return_value=(yaml_path,),
