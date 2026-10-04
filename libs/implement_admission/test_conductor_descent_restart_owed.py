@@ -166,6 +166,8 @@ def test_materialized_packet_carries_no_restart_line(tmp_path: Path) -> None:
     assert G7_RESTART_OWED_RULE in mp.text
     assert "restart_owed_for_range" in mp.text
     assert "Do not assemble a path list" in mp.text
+    assert "slug_for_service_path / path_prefix" not in mp.text
+    assert "missing_shas" in mp.text
     assert "Every nested implement and land prompt" in mp.text
     rematerialized = materialize_conductor(
         "todo:layer-conductor-unify",
@@ -193,6 +195,7 @@ def test_conductor_preamble_repeats_no_restart_line() -> None:
     assert G7_RESTART_OWED_RULE in text
     assert "restart_owed_for_range" in text
     assert "Do not assemble a path list" in text
+    assert "missing_shas" in text
 
 
 def test_skill_nested_dispatch_examples_carry_no_restart_line() -> None:

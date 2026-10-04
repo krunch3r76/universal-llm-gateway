@@ -553,7 +553,7 @@ CLOSEOUT JSON with status, G-row progress, scoreboard tip sha, journal record id
 Include recon_method when breadth recon was owed.
 Declare land_disposition on Lane-B branch retirement.
 On every hop that authored a nested CDP prompt: list each prompt URI + its `retrieval_report:` bundle URI (or fail closeout — a:37183).
-G7 land closeout includes the restart_owed line (slug_for_service_path / path_prefix on the landed diff). {NO_RESTART_LINE}
+{G7_RESTART_OWED_RULE} {NO_RESTART_LINE}
 Designed stop tokens (last lines of final message when owed): stop: ROW_HOP | ROW_PINNED | HOLD_MERGE | OPERATOR_GATE | PARKED_TRANSPORT | DONE
 On ROW_HOP closeout include hop_seq: <n> as the last line after stop: ROW_HOP.
 </output_format>
