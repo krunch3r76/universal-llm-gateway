@@ -101,6 +101,50 @@ def test_partial_pipeline_membership_does_not_stop_the_wait():
     asyncio.run(_run())
 
 
+def test_expected_absent_pipeline_does_not_block_readiness():
+    """A deleted pipeline omitted from membership does not hold the wait once unaffected ids are present."""
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        yield {
+            "seq": 4,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": ["gw-a"], "pipeline_ids": ["keep"]},
+        }
+        await asyncio.Event().wait()
+
+    ran: list[set[str]] = []
+
+    async def _run_op_run(affected: set[str]) -> list[str]:
+        ran.append(set(affected))
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                query_sock="/dev/null",
+                resume_from=1,
+                snapshot_gateway_ids=["gw-a"],
+                snapshot_pipeline_ids=["keep", "gone"],
+                land_paths=("pipelines/gone.yaml",),
+                land_deleted_paths=("pipelines/gone.yaml",),
+                cap_s=5.0,
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                pipeline_sources={
+                    "keep": ("pipelines/keep.yaml",),
+                    "gone": ("pipelines/gone.yaml",),
+                },
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert not result.timed_out
+        assert result.events_seen == 1
+        assert ran == []
+
+    asyncio.run(_run())
+
+
 @pytest.mark.asyncio
 async def test_pre_restart_membership_request():
     """Production path reads the latest membership event from Event Service."""

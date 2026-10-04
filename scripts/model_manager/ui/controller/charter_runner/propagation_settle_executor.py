@@ -16,6 +16,7 @@ from implement_admission.settle_gate import (
     SETTLE_CAP_S,
     SettleVerdict,
     affected_pipeline_ids,
+    expected_absent_pipeline_ids,
     gateway_id_sets_equal,
     judge_event_window,
 )
@@ -197,6 +198,7 @@ def _membership_window_ready(
     *,
     snapshot_pipeline_ids: Iterable[str] | None = None,
     land_paths: Iterable[str] = (),
+    land_deleted_paths: Iterable[str] = (),
     pipeline_sources: Mapping[str, Iterable[str]] | None = None,
     step_type_modules: Mapping[str, str] | None = None,
     pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
@@ -231,14 +233,20 @@ def _membership_window_ready(
     ):
         return False
     snap_pipes = set(snapshot_pipeline_ids or ())
+    sources = pipeline_sources or {}
     affected = affected_pipeline_ids(
         snap_pipes,
         land_paths,
-        pipeline_sources=pipeline_sources or {},
+        pipeline_sources=sources,
         step_type_modules=step_type_modules or {},
         pipeline_step_types=pipeline_step_types or {},
     )
-    unrelated = snap_pipes - affected
+    expected_absent = expected_absent_pipeline_ids(
+        snap_pipes,
+        land_deleted_paths,
+        pipeline_sources=sources,
+    )
+    unrelated = snap_pipes - affected - expected_absent
     present = set(post_pipes or ())
     if unrelated - present:
         return False
@@ -252,6 +260,7 @@ async def _collect_events_until(
     snapshot_gateway_ids: Iterable[str] | None = None,
     snapshot_pipeline_ids: Iterable[str] | None = None,
     land_paths: Iterable[str] = (),
+    land_deleted_paths: Iterable[str] = (),
     pipeline_sources: Mapping[str, Iterable[str]] | None = None,
     step_type_modules: Mapping[str, str] | None = None,
     pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
@@ -279,6 +288,7 @@ async def _collect_events_until(
                 snapshot_gateway_ids,
                 snapshot_pipeline_ids=snapshot_pipeline_ids,
                 land_paths=land_paths,
+                land_deleted_paths=land_deleted_paths,
                 pipeline_sources=pipeline_sources,
                 step_type_modules=step_type_modules,
                 pipeline_step_types=pipeline_step_types,
@@ -298,6 +308,7 @@ async def wait_functional_settle(
     snapshot_gateway_ids: Iterable[str] | None,
     snapshot_pipeline_ids: Iterable[str] | None,
     land_paths: Iterable[str],
+    land_deleted_paths: Iterable[str] = (),
     cap_s: float = SETTLE_CAP_S,
     subscribe_factory: SubscribeFactory | None = None,
     run_op_run: RunOpRunFn | None = None,
@@ -311,6 +322,7 @@ async def wait_functional_settle(
     snap_gw = list(snapshot_gateway_ids or ())
     snap_pipes = list(snapshot_pipeline_ids or ())
     paths = tuple(land_paths)
+    deleted = tuple(land_deleted_paths)
 
     agen = factory(
         query_sock,
@@ -323,6 +335,7 @@ async def wait_functional_settle(
         snapshot_gateway_ids=snap_gw,
         snapshot_pipeline_ids=snap_pipes,
         land_paths=paths,
+        land_deleted_paths=deleted,
         pipeline_sources=pipeline_sources,
         step_type_modules=step_type_modules,
         pipeline_step_types=pipeline_step_types,
@@ -332,21 +345,29 @@ async def wait_functional_settle(
         snap_gw,
         snapshot_pipeline_ids=snap_pipes,
         land_paths=paths,
+        land_deleted_paths=deleted,
         pipeline_sources=pipeline_sources,
         step_type_modules=step_type_modules,
         pipeline_step_types=pipeline_step_types,
     ) and (time.monotonic() >= deadline)
 
+    sources = pipeline_sources or {}
     affected = affected_pipeline_ids(
         snap_pipes,
         paths,
-        pipeline_sources=pipeline_sources or {},
+        pipeline_sources=sources,
         step_type_modules=step_type_modules or {},
         pipeline_step_types=pipeline_step_types or {},
     )
+    expected_absent = expected_absent_pipeline_ids(
+        snap_pipes,
+        deleted,
+        pipeline_sources=sources,
+    )
+    op_run_ids = affected - expected_absent
     op_failures: list[str] = []
-    if not timed_out and affected and run_op_run is not None:
-        op_failures = list(await run_op_run(affected))
+    if not timed_out and op_run_ids and run_op_run is not None:
+        op_failures = list(await run_op_run(op_run_ids))
 
     verdict = judge_event_window(
         events,
@@ -354,6 +375,7 @@ async def wait_functional_settle(
         snapshot_pipeline_ids=snap_pipes or None,
         timed_out=timed_out,
         land_paths=paths,
+        land_deleted_paths=deleted,
         pipeline_sources=pipeline_sources,
         step_type_modules=step_type_modules,
         pipeline_step_types=pipeline_step_types,

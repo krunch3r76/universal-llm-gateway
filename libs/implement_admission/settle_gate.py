@@ -48,6 +48,26 @@ def affected_pipeline_ids(
     return affected
 
 
+def expected_absent_pipeline_ids(
+    snapshot_pipeline_ids: Iterable[str],
+    land_deleted_paths: Iterable[str],
+    *,
+    pipeline_sources: Mapping[str, Iterable[str]],
+) -> set[str]:
+    """Snapshot pipelines whose every listed source YAML is deleted at the land tip.
+
+    An empty source list is not expected-absent. A partial delete (one source
+    deleted, another only modified) stays out of this set and remains affected.
+    """
+    deleted = set(land_deleted_paths)
+    expected: set[str] = set()
+    for pipeline_id in snapshot_pipeline_ids:
+        sources = set(pipeline_sources.get(pipeline_id, ()))
+        if sources and sources <= deleted:
+            expected.add(pipeline_id)
+    return expected
+
+
 def judge_settle(
     *,
     snapshot_gateway_ids: Iterable[str] | None,
@@ -58,6 +78,7 @@ def judge_settle(
     latest_catalog_seq: int | None,
     timed_out: bool,
     land_paths: Iterable[str] = (),
+    land_deleted_paths: Iterable[str] = (),
     pipeline_sources: Mapping[str, Iterable[str]] | None = None,
     step_type_modules: Mapping[str, str] | None = None,
     pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
@@ -75,15 +96,21 @@ def judge_settle(
             return "indeterminate"
     snap_pipes = set(snapshot_pipeline_ids or ())
     post_pipes = set(post_pipeline_ids or ())
+    sources = pipeline_sources or {}
+    expected_absent = expected_absent_pipeline_ids(
+        snap_pipes,
+        land_deleted_paths,
+        pipeline_sources=sources,
+    )
     affected = affected_pipeline_ids(
         snap_pipes,
         land_paths,
-        pipeline_sources=pipeline_sources or {},
+        pipeline_sources=sources,
         step_type_modules=step_type_modules or {},
         pipeline_step_types=pipeline_step_types or {},
-    )
+    ) - expected_absent
     failures = set(op_run_failures)
-    missing_unrelated = (snap_pipes - post_pipes) - affected
+    missing_unrelated = (snap_pipes - post_pipes) - affected - expected_absent
     if missing_unrelated:
         return "indeterminate"
     for pipeline_id in affected:
@@ -99,6 +126,7 @@ def judge_event_window(
     snapshot_pipeline_ids: Iterable[str] | None,
     timed_out: bool,
     land_paths: Iterable[str] = (),
+    land_deleted_paths: Iterable[str] = (),
     pipeline_sources: Mapping[str, Iterable[str]] | None = None,
     step_type_modules: Mapping[str, str] | None = None,
     pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
@@ -137,6 +165,7 @@ def judge_event_window(
         latest_catalog_seq=latest_catalog_seq,
         timed_out=timed_out,
         land_paths=land_paths,
+        land_deleted_paths=land_deleted_paths,
         pipeline_sources=pipeline_sources,
         step_type_modules=step_type_modules,
         pipeline_step_types=pipeline_step_types,

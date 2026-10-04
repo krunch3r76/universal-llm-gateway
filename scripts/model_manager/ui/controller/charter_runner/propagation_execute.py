@@ -937,11 +937,15 @@ async def execute_propagation_plan(
                 )
                 from services.git_integration_worker.config import load_config
                 from services.git_integration_worker.cursor_sdk_git_head import (
+                    land_deleted_paths_from_merge_sha,
                     land_paths_from_merge_sha,
                 )
 
                 cfg = load_config()
                 land_paths = land_paths_from_merge_sha(cfg.source_repo, row.code_ref)
+                land_deleted_paths = land_deleted_paths_from_merge_sha(
+                    cfg.source_repo, row.code_ref
+                )
                 settle_maps = functional_settle_pipeline_maps(
                     cfg.source_repo, merge_sha=row.code_ref
                 )
@@ -957,6 +961,7 @@ async def execute_propagation_plan(
                     snapshot_gateway_ids=snap_gw,
                     snapshot_pipeline_ids=snap_pipes,
                     land_paths=land_paths,
+                    land_deleted_paths=land_deleted_paths,
                     run_op_run=_run_op_run,
                     pipeline_sources=settle_maps.pipeline_sources,
                     step_type_modules=settle_maps.step_type_modules,
@@ -1006,6 +1011,7 @@ async def execute_propagation_plan(
                             snapshot_gateway_ids=snap_gw,
                             snapshot_pipeline_ids=snap_pipes,
                             land_paths=land_paths,
+                            land_deleted_paths=land_deleted_paths,
                             run_op_run=_run_op_run,
                             pipeline_sources=settle_maps.pipeline_sources,
                             step_type_modules=settle_maps.step_type_modules,

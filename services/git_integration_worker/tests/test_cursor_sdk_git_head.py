@@ -14,6 +14,8 @@ from services.git_integration_worker.cursor_sdk_git_head import (
     observed_lane_git_refs,
     partition_tip_window_meters,
     paths_exclusive_to_lane,
+    land_deleted_paths_from_merge_sha,
+    land_paths_from_merge_sha,
     paths_in_commit,
     with_head_sha_fallback,
 )
@@ -64,6 +66,40 @@ def _commit(repo: Path, rel: str, *, dispatch_id: str | None = None) -> str:
         capture_output=True,
     )
     return head.stdout.decode().strip()
+
+
+def test_land_deleted_paths_lists_deletes_not_modifies(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    deleted = tmp_path / "gone.yaml"
+    modified = tmp_path / "kept.yaml"
+    deleted.write_text("old\n", encoding="utf-8")
+    modified.write_text("v1\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "gone.yaml", "kept.yaml"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "seed"],
+        check=True,
+        capture_output=True,
+    )
+    deleted.unlink()
+    modified.write_text("v2\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "-A"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "delete and modify"],
+        check=True,
+        capture_output=True,
+    )
+    sha = _rev_parse(tmp_path)
+    assert land_deleted_paths_from_merge_sha(tmp_path, sha) == ("gone.yaml",)
+    assert "gone.yaml" in land_paths_from_merge_sha(tmp_path, sha)
+    assert "kept.yaml" in land_paths_from_merge_sha(tmp_path, sha)
 
 
 def test_paths_exclusive_to_lane_excludes_peer_touch(tmp_path: Path) -> None:

@@ -139,6 +139,57 @@ def test_partial_membership_missing_unaffected_is_indeterminate_even_if_affected
     assert verdict == "indeterminate"
 
 
+def test_deleted_yaml_pipeline_absent_is_pass():
+    verdict = judge_settle(
+        snapshot_gateway_ids=["g1"],
+        snapshot_pipeline_ids=["gone", "keep"],
+        post_gateway_ids=["g1"],
+        post_pipeline_ids=["keep"],
+        membership_seq=4,
+        latest_catalog_seq=3,
+        timed_out=False,
+        land_paths=["pipelines/gone.yaml"],
+        land_deleted_paths=["pipelines/gone.yaml"],
+        pipeline_sources={
+            "gone": ["pipelines/gone.yaml"],
+            "keep": ["pipelines/keep.yaml"],
+        },
+    )
+    assert verdict == "pass"
+
+
+def test_deleted_yaml_pipeline_still_present_is_pass():
+    verdict = judge_settle(
+        snapshot_gateway_ids=["g1"],
+        snapshot_pipeline_ids=["gone"],
+        post_gateway_ids=["g1"],
+        post_pipeline_ids=["gone"],
+        membership_seq=4,
+        latest_catalog_seq=3,
+        timed_out=False,
+        land_paths=["pipelines/gone.yaml"],
+        land_deleted_paths=["pipelines/gone.yaml"],
+        pipeline_sources={"gone": ["pipelines/gone.yaml"]},
+    )
+    assert verdict == "pass"
+
+
+def test_partial_delete_plus_modify_absent_is_fail_attributable():
+    verdict = judge_settle(
+        snapshot_gateway_ids=["g1"],
+        snapshot_pipeline_ids=["split"],
+        post_gateway_ids=["g1"],
+        post_pipeline_ids=[],
+        membership_seq=4,
+        latest_catalog_seq=3,
+        timed_out=False,
+        land_paths=["pipelines/split.yaml", "pipelines/split-extra.yaml"],
+        land_deleted_paths=["pipelines/split.yaml"],
+        pipeline_sources={"split": ["pipelines/split.yaml", "pipelines/split-extra.yaml"]},
+    )
+    assert verdict == "fail_attributable"
+
+
 def test_absent_pipeline_whose_source_is_in_the_diff_is_fail_attributable():
     verdict = judge_settle(
         snapshot_gateway_ids=["g1"],

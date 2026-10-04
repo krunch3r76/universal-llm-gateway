@@ -224,6 +224,41 @@ def land_paths_from_merge_sha(source_repo: Path, sha: str) -> tuple[str, ...]:
     return tuple(sorted(paths_in_commit(source_repo, sha)))
 
 
+def land_deleted_paths_from_merge_sha(source_repo: Path, sha: str) -> tuple[str, ...]:
+    """Paths deleted by *sha*, on the same ``diff-tree -m`` parent basis as land paths.
+
+    ``--diff-filter=D`` only. A rename is a delete of the old path plus an
+    unfiltered add of the new path in :func:`land_paths_from_merge_sha`.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "diff-tree",
+                "--no-commit-id",
+                "-r",
+                "--diff-filter=D",
+                "--name-only",
+                "-m",
+                sha,
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return ()
+    return tuple(
+        sorted(
+            chunk.decode("utf-8", errors="replace")
+            for chunk in proc.stdout.splitlines()
+            if chunk
+        )
+    )
+
+
 def paths_in_commit(source_repo: Path, sha: str) -> frozenset[str]:
     """Paths touched by a single commit (diff-tree name-only)."""
     try:
