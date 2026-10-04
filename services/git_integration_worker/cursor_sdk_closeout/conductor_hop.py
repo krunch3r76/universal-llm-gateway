@@ -323,6 +323,42 @@ def _collect_dispatch_targets(token: str) -> list[tuple[str, bool]]:
     return hits
 
 
+def _collect_execution_id_targets(token: str) -> list[tuple[str, bool]]:
+    """Ledger rows whose ``execution_id`` matches ``token``.
+
+    Conductor closeouts name a nested SDK child by execution id
+    (``NEXT_ADMIT: harvest <uuid>``). That uuid is not the dispatch id and
+    is not a CDP registry row. A dispatch-id match still goes through the
+    CDP lookup so a registry outage stays fail-closed.
+    """
+    ledger = CursorDispatchLedger.instance()
+    hits: list[tuple[str, bool]] = []
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id, status FROM cursor_sdk_dispatches "
+            "WHERE execution_id = ? OR execution_id LIKE ?",
+            (token, token + "%"),
+        ).fetchall()
+    for row in rows:
+        hits.append(
+            (str(row["dispatch_id"]), _dispatch_terminal_for_status(row["status"]))
+        )
+    return hits
+
+
+def _single_execution_id_target(token: str | None) -> tuple[str, bool] | None:
+    """The one ledger row named by execution id, or None when the match is not unique."""
+    if not token:
+        return None
+    try:
+        hits = _collect_execution_id_targets(token)
+    except Exception:
+        return None
+    if len(hits) != 1:
+        return None
+    return hits[0]
+
+
 def _registry_rows_for_exact_execution_id(
     active: dict[str, dict[str, Any]], execution_id: str
 ) -> list[dict[str, Any]]:
@@ -406,7 +442,12 @@ def _named_target_is_terminal(
     """
     try:
         dispatch_targets = _collect_dispatch_targets(token)
-        execution_targets = _collect_execution_targets(token)
+        ledger_exec = _collect_execution_id_targets(token)
+        if ledger_exec and not dispatch_targets:
+            execution_targets: list[tuple[str, bool]] = []
+            dispatch_targets = ledger_exec
+        else:
+            execution_targets = _collect_execution_targets(token)
     except Exception:
         return False
     combined: list[tuple[str, str, bool]] = [
@@ -439,9 +480,23 @@ def hop_body_build_refused(
     guard = _next_admit_guard_text(row, data)
     if not next_admit_blocks_hop_body(guard):
         return False
+    token = _harvest_target_token(guard)
+    tokens = _closeout_tokens_from_row(row)
+    ledger_hit = _single_execution_id_target(token)
+    # A silent closeout withholds ROW_HOP while the nest is live. Once that
+    # nest's execution id is the only ledger match and it is terminal, the
+    # harvest line is the nest finishing, not a CDP reply still owed.
+    # Exit-persist tokens (including PARKED_TRANSPORT) keep blocking.
+    if (
+        ledger_hit is not None
+        and ledger_hit[1]
+        and not (tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})))
+    ):
+        if conductor_has_live_nested(dispatch_id=str(row.get("dispatch_id") or "")):
+            return True
+        return False
     if not _row_hop_tokens_allow_lift(row):
         return True
-    token = _harvest_target_token(guard)
     if token is None:
         return True
     absent = str(data.get(HOP_DEFERRAL_GATE_KEY) or "") == SKIP_GATE_NEXT_ADMIT_BLOCKED
@@ -588,9 +643,7 @@ def _int_watermark(value: Any) -> int | None:
     return value
 
 
-def _harvest_reply_at_row_watermark(
-    row: dict[str, Any], rec: dict[str, Any]
-) -> bool:
+def _harvest_reply_at_row_watermark(row: dict[str, Any], rec: dict[str, Any]) -> bool:
     """Bus reply when the CDP registry has no single harvest ``started_at``.
 
     ``closeout_turn`` is a turn on the worker thread only. It is also the
@@ -724,10 +777,15 @@ def _deferral_stamp_allowed(row: dict[str, Any], gate: str) -> bool:
         return True
     if gate != SKIP_GATE_NEXT_ADMIT_BLOCKED:
         return False
-    if not _row_hop_tokens_allow_lift(row):
-        return False
     rec = _record_data(row)
-    return _harvest_target_token(_next_admit_guard_text(row, rec)) is not None
+    token = _harvest_target_token(_next_admit_guard_text(row, rec))
+    if token is None:
+        return False
+    if _row_hop_tokens_allow_lift(row):
+        return True
+    # Silent nest harvest: the sweep must be able to clear after a restart
+    # missed the nest-close re-fire. A CDP id with no ledger row stays unstamped.
+    return _single_execution_id_target(token) is not None
 
 
 def _emit_hop_skipped(
@@ -751,10 +809,18 @@ def _emit_hop_skipped(
         hop_seq=int(hop_seq),
         gate=gate,
     )
-    if _deferral_stamp_allowed(row, gate):
+    stamp_gate = gate
+    if gate == "live_nested":
+        rec = _record_data(row)
+        token = _harvest_target_token(_next_admit_guard_text(row, rec))
+        if _single_execution_id_target(token) is not None:
+            # Parent close emits live_nested. Store the gate path C already
+            # clears, so a restart that misses the nest-close re-fire still sweeps.
+            stamp_gate = SKIP_GATE_NEXT_ADMIT_BLOCKED
+    if _deferral_stamp_allowed(row, stamp_gate):
         CursorDispatchLedger.instance().merge_record_json(
             dispatch_id=dispatch_id,
-            patch={HOP_DEFERRAL_GATE_KEY: gate},
+            patch={HOP_DEFERRAL_GATE_KEY: stamp_gate},
         )
 
 
