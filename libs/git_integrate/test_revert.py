@@ -32,9 +32,18 @@ def _patch_gate_and_cas(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(revert_mod.git_cas, "advance_master_cas", _advance)
 
 
+def _is_revert_land(argv: list[str], merge_sha: str) -> bool:
+    """True for ``git -C <wt> revert -m1 --no-edit <merge_sha>`` (not --abort)."""
+    if "--abort" in argv or argv[-1] == "revert":
+        return False
+    return "revert" in argv and "-m1" in argv and merge_sha in argv
+
+
 @pytest.mark.asyncio
 async def test_revert_does_not_use_worker_http(_patch_gate_and_cas: None) -> None:
     calls: list[list[str]] = []
+    merge_sha = "deadbeef"
+    source_repo = "/tmp/repo"
 
     def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
@@ -43,8 +52,8 @@ async def test_revert_does_not_use_worker_http(_patch_gate_and_cas: None) -> Non
         return _completed(0, stdout="")
 
     result = await revert_op(
-        source_repo="/tmp/repo",
-        merge_sha="deadbeef",
+        source_repo=source_repo,
+        merge_sha=merge_sha,
         acquire_lease=lambda _key, _holder: True,
         release_lease=lambda _key, _holder: True,
         git_runner=runner,
@@ -54,24 +63,34 @@ async def test_revert_does_not_use_worker_http(_patch_gate_and_cas: None) -> Non
     assert result["status"] == "landed"
     assert result["signal"] == "git.land.revert_landed"
     assert result["revert_sha"] == "abc123"
-    assert calls[0][0:4] == ["git", "-C", "/tmp/repo", "revert"]
-    assert "-m1" in calls[0]
-    assert "http" not in " ".join(calls[0])
+    assert calls[0][0:4] == ["git", "-C", source_repo, "worktree"]
+    revert_calls = [c for c in calls if _is_revert_land(c, merge_sha)]
+    assert len(revert_calls) == 1
+    wt = revert_calls[0][2]
+    assert wt != source_repo
+    assert revert_calls[0][3:6] == ["revert", "-m1", "--no-edit"]
+    assert "http" not in " ".join(revert_calls[0])
+    assert not any(
+        c[2:5] == [source_repo, "revert", "-m1"] for c in calls
+    )
 
 
 @pytest.mark.asyncio
 async def test_revert_conflict_is_indeterminate_and_single_call(
     _patch_gate_and_cas: None,
 ) -> None:
-    calls = {"n": 0}
+    merge_sha = "deadbeef"
+    revert_land_calls = {"n": 0}
 
-    def runner(_argv: list[str]) -> subprocess.CompletedProcess[str]:
-        calls["n"] += 1
-        return _completed(1, stderr="CONFLICT")
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        if _is_revert_land(argv, merge_sha):
+            revert_land_calls["n"] += 1
+            return _completed(1, stderr="CONFLICT")
+        return _completed(0, stdout="")
 
     result = await revert_op(
         source_repo="/tmp/repo",
-        merge_sha="deadbeef",
+        merge_sha=merge_sha,
         acquire_lease=lambda _key, _holder: True,
         release_lease=lambda _key, _holder: True,
         git_runner=runner,
@@ -79,7 +98,7 @@ async def test_revert_conflict_is_indeterminate_and_single_call(
     )
     assert result["status"] == "indeterminate"
     assert result["reason"] == "revert_conflict"
-    assert calls["n"] == 1
+    assert revert_land_calls["n"] == 1
 
 
 @pytest.mark.asyncio
