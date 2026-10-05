@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any, override
 
+from closeout_memo.events import emit_closeout_memo
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-
-from closeout_memo.events import emit_closeout_memo
 
 from . import _ledger, _transport
 
@@ -18,11 +17,12 @@ def _step(payload: dict[str, Any], *, error: str | None = None) -> StepOutput:
 
 
 def _blocks(deliver: dict[str, Any]) -> str:
-    overflow = str(deliver.get("overflow_bus_text") or "").strip()
-    if overflow:
-        return overflow
+    """Primary paste text and the overflow pointers. Dropping either loses a memo."""
     text = str(deliver.get("text") or "").strip()
-    return text
+    overflow = str(deliver.get("overflow_bus_text") or "").strip()
+    if text and overflow:
+        return f"{text}\n{overflow}"
+    return text or overflow
 
 
 class CloseoutMemoFallbackHandler(BaseHandler):

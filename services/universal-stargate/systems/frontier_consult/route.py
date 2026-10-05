@@ -692,9 +692,13 @@ async def team_dispatch(
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
-    if body.op == "generate" and getattr(body, "wake_lane", None) is not None:
-        from .wake_lane import validate_wake_lane
+    from .wake_lane import validate_wake_lane, wake_lane_needs_probe
 
+    if wake_lane_needs_probe(
+        op=body.op,
+        wake_lane=getattr(body, "wake_lane", None),
+        hop_from=getattr(body, "hop_from", None),
+    ):
         try:
             await validate_wake_lane(
                 body.wake_lane, request_id=request_id

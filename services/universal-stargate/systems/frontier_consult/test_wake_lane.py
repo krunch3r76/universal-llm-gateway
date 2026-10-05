@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from systems.frontier_consult.admission import FrontierEndpointError
-from systems.frontier_consult.wake_lane import validate_wake_lane
+from systems.frontier_consult.wake_lane import (
+    WakeLaneUnreachableError,
+    validate_wake_lane,
+    wake_lane_needs_probe,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -36,3 +40,21 @@ async def test_wake_lane_accepts_role_root() -> None:
         return {"tags": ["role:root"]}
 
     await validate_wake_lane("12286", request_id="req-3", fetch_thread=_fetch)
+
+
+@pytest.mark.asyncio
+async def test_wake_lane_bus_failure_is_unavailable_not_invalid() -> None:
+    async def _fetch(thread_id: str) -> dict:
+        raise WakeLaneUnreachableError("timeout")
+
+    with pytest.raises(FrontierEndpointError) as caught:
+        await validate_wake_lane("12286", request_id="req-4", fetch_thread=_fetch)
+    assert caught.value.status_code == 503
+    assert caught.value.code == "wake_lane_unavailable"
+
+
+def test_hop_admit_does_not_reprobe_wake_lane() -> None:
+    assert wake_lane_needs_probe(op="generate", wake_lane="12286", hop_from=None)
+    assert not wake_lane_needs_probe(
+        op="generate", wake_lane="12286", hop_from="pred-1"
+    )

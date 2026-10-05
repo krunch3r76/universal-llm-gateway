@@ -57,6 +57,9 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_DDL)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(closeout_memos)")}
+    if "overflow_bus_text" not in cols:
+        conn.execute("ALTER TABLE closeout_memos ADD COLUMN overflow_bus_text TEXT")
     return conn
 
 
@@ -104,11 +107,12 @@ def claim_admitted(wake_lane: str, *, limit: int = 5) -> list[dict[str, Any]]:
         ).fetchall()
         claimed: list[dict[str, Any]] = []
         now = _iso()
+        lease = _now() + 180.0
         for row in rows:
             cur = conn.execute(
-                "UPDATE closeout_memos SET state='delivering', updated_at=? "
+                "UPDATE closeout_memos SET state='delivering', updated_at=?, next_at=? "
                 "WHERE memo_id=? AND state='admitted'",
-                (now, row["memo_id"]),
+                (now, lease, row["memo_id"]),
             )
             if cur.rowcount == 1:
                 claimed.append(dict(row))
@@ -117,15 +121,15 @@ def claim_admitted(wake_lane: str, *, limit: int = 5) -> list[dict[str, Any]]:
 
 
 def store_render(
-    memo_ids: list[str], *, text: str, sha256: str
+    memo_ids: list[str], *, text: str, sha256: str, overflow: str = ""
 ) -> None:
     now = _iso()
     with _LOCK, connect() as conn:
         for memo_id in memo_ids:
             conn.execute(
                 "UPDATE closeout_memos SET rendered_text=?, rendered_sha256=?, "
-                "updated_at=? WHERE memo_id=?",
-                (text, sha256, now, memo_id),
+                "overflow_bus_text=?, updated_at=? WHERE memo_id=?",
+                (text, sha256, overflow, now, memo_id),
             )
 
 
@@ -182,6 +186,28 @@ def mark_undelivered(memo_ids: list[str], *, error: str) -> None:
                 "updated_at=?, next_at=NULL WHERE memo_id=? AND state!='delivered'",
                 (error, now, memo_id),
             )
+
+
+def stale_admitted(*, min_age_s: float = 90.0, now: float | None = None) -> list[dict[str, Any]]:
+    """Admitted rows the in-process coalesce never picked up."""
+    import calendar
+
+    moment = _now() if now is None else now
+    cutoff = moment - min_age_s
+    with _LOCK, connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM closeout_memos WHERE state='admitted'",
+        ).fetchall()
+    stale: list[dict[str, Any]] = []
+    for row in rows:
+        created = str(row["created_at"] or "")
+        try:
+            created_epoch = calendar.timegm(time.strptime(created, "%Y-%m-%dT%H:%M:%SZ"))
+        except ValueError:
+            continue
+        if created_epoch <= cutoff:
+            stale.append(dict(row))
+    return stale
 
 
 def due_delivering(*, now: float | None = None) -> list[dict[str, Any]]:

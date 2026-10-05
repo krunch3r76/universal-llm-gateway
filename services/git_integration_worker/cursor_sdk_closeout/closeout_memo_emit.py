@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 _BACKOFF_S = (30, 60, 120, 300)
 _GAVE_UP_AFTER = 8
+# One hop relay can take connect+write+read (~50s) and a parked parent
+# runs first. The sweep must not classify conductor_stop during that window.
+_CONDUCTOR_HOP_GRACE_S = 150.0
 _THREAD_RE = re.compile(r"^\d{1,10}$")
 _GATE_RE = re.compile(r"[a-z_]{1,40}")
 
@@ -187,6 +190,39 @@ def _reschedule_after_crash(dispatch_id: str) -> None:
     )
 
 
+def _terminal_age_s(row: dict[str, Any]) -> float | None:
+    """Seconds since ``terminal_at``. The column is an ISO timestamp."""
+    raw = row.get("terminal_at")
+    if isinstance(raw, (int, float)):
+        return time.time() - float(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return time.time() - stamp.timestamp()
+
+
+def _hop_outcome_pending(row: dict[str, Any]) -> bool:
+    """True while a conductor hop can still stamp successor or a skip gate.
+
+    The fast path runs after the reactor. The 60s sweep does not. Claiming
+    in that gap emits conductor_stop for a hop that is still in flight.
+    """
+    if str(row.get("contract") or "") != "conductor":
+        return False
+    rec = _record(row)
+    if rec.get("hop_successor") or rec.get("hop_deferral_gate") or rec.get("hop_parked"):
+        return False
+    age = _terminal_age_s(row)
+    if age is None:
+        return False
+    return age < _CONDUCTOR_HOP_GRACE_S
+
+
 async def _try_emit(dispatch_id: str) -> bool:
     """Return True once the row is claimed. Callers reschedule on raise."""
     from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -194,6 +230,19 @@ async def _try_emit(dispatch_id: str) -> bool:
     )
 
     ledger = CursorDispatchLedger.instance()
+    row = ledger.memo_row(dispatch_id)
+    if (
+        row is not None
+        and row.get("memo_state") == "owed"
+        and _hop_outcome_pending(row)
+    ):
+        age = _terminal_age_s(row) or 0.0
+        ledger.finish_memo(
+            dispatch_id,
+            state="owed",
+            next_at=time.time() + max(_CONDUCTOR_HOP_GRACE_S - age, 1.0),
+        )
+        return False
     if not ledger.claim_memo(dispatch_id):
         return False
     row = ledger.memo_row(dispatch_id)

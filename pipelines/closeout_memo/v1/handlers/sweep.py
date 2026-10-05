@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from typing import Any
 
 from closeout_memo.events import emit_closeout_memo
+from closeout_memo.models import CloseoutMemoRequest
+from closeout_memo.render import render_memos
 
 from . import _ledger, _transport
+from .coalesce import _lane_lock
 from .deliver import apply_decision
 
 logger = logging.getLogger(__name__)
@@ -30,8 +34,74 @@ def _age_exceeded(row: dict[str, Any]) -> bool:
     return time.time() - created_epoch > 15 * 60
 
 
+async def _post_overflow(wake_lane: str, memo_ids: list[str], overflow: str) -> None:
+    text = overflow.strip()
+    if not text or not memo_ids:
+        return
+    await _transport.post_bus_turn(
+        wake_lane=wake_lane,
+        subject=f"closeout memo — overflow {memo_ids[0][:8]}",
+        body=text,
+    )
+
+
+async def _recover_stale_admitted() -> None:
+    """Render admitted rows the process dropped between admit and coalesce."""
+    by_lane: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in _ledger.stale_admitted():
+        by_lane[str(row["wake_lane"])].append(row)
+    for wake_lane in by_lane:
+        async with _lane_lock(wake_lane):
+            claimed = _ledger.claim_admitted(wake_lane, limit=5)
+            if not claimed:
+                continue
+            memos = [
+                CloseoutMemoRequest.model_validate(json.loads(row["payload_json"]))
+                for row in claimed
+            ]
+            rendered = render_memos(memos)
+            memo_ids = [str(row["memo_id"]) for row in claimed]
+            _ledger.store_render(
+                memo_ids,
+                text=rendered.text,
+                sha256=rendered.sha256,
+                overflow=rendered.overflow_bus_text,
+            )
+            if rendered.bus_only or not rendered.text:
+                await _fallback_group(
+                    memo_ids,
+                    wake_lane,
+                    body=rendered.overflow_bus_text or rendered.text,
+                    error="bus_only" if rendered.bus_only else "no_render",
+                )
+                continue
+            outcome = await apply_decision(
+                memo_ids=memo_ids,
+                wake_lane=wake_lane,
+                prompt_text=rendered.text,
+                followup=_transport.post_followup,
+                harvest=_transport.harvest_marker,
+            )
+            if outcome.get("delivered"):
+                await _post_overflow(
+                    wake_lane, memo_ids, rendered.overflow_bus_text
+                )
+            elif outcome.get("needs_fallback"):
+                await _fallback_group(
+                    memo_ids,
+                    wake_lane,
+                    body="\n".join(
+                        part
+                        for part in (rendered.text, rendered.overflow_bus_text)
+                        if part
+                    ),
+                    error=str(outcome.get("error") or "undelivered"),
+                )
+
+
 async def sweep_once() -> int:
     """Re-deliver due rows. Returns how many groups were visited."""
+    await _recover_stale_admitted()
     rows = _ledger.due_delivering()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -42,30 +112,35 @@ async def sweep_once() -> int:
         visited += 1
         memo_ids = [str(row["memo_id"]) for row in group]
         wake_lane = str(group[0]["wake_lane"])
+        overflow = str(group[0].get("overflow_bus_text") or "")
+        text = str(group[0].get("rendered_text") or "")
+        body = "\n".join(part for part in (text, overflow) if part.strip())
         if _age_exceeded(group[0]) or int(group[0].get("attempts") or 0) >= 6:
             await _fallback_group(
                 memo_ids,
                 wake_lane,
-                body=str(group[0].get("rendered_text") or ""),
+                body=body,
                 error="sweep_ceiling",
             )
             continue
-        text = str(group[0].get("rendered_text") or "")
         if not text:
-            await _fallback_group(memo_ids, wake_lane, body="", error="no_render")
+            await _fallback_group(memo_ids, wake_lane, body=body, error="no_render")
             continue
-        outcome = await apply_decision(
-            memo_ids=memo_ids,
-            wake_lane=wake_lane,
-            prompt_text=text,
-            followup=_transport.post_followup,
-            harvest=_transport.harvest_marker,
-        )
-        if outcome.get("needs_fallback"):
+        async with _lane_lock(wake_lane):
+            outcome = await apply_decision(
+                memo_ids=memo_ids,
+                wake_lane=wake_lane,
+                prompt_text=text,
+                followup=_transport.post_followup,
+                harvest=_transport.harvest_marker,
+            )
+        if outcome.get("delivered"):
+            await _post_overflow(wake_lane, memo_ids, overflow)
+        elif outcome.get("needs_fallback"):
             await _fallback_group(
                 memo_ids,
                 wake_lane,
-                body=text,
+                body=body,
                 error=str(outcome.get("error") or "undelivered"),
             )
     return visited

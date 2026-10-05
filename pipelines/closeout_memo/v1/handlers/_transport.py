@@ -72,18 +72,48 @@ async def post_followup(
     return {"timed_out": False, "status_code": resp.status_code, "body": parsed}
 
 
+def _seat_for_lane(parent_thread: str) -> tuple[str | None, str | None]:
+    """registration_id, chat_url from the landed lane resolver. Never raises."""
+    from cdp_ask.lane_current_cse import resolve_lane_current_cse
+
+    body = resolve_lane_current_cse(parent_thread, snap=None)
+    current = body.get("current") if isinstance(body, dict) else None
+    if not isinstance(current, dict):
+        return None, None
+    regs = current.get("registration_ids")
+    registration_id = None
+    if isinstance(regs, list) and regs:
+        registration_id = str(regs[0])
+    elif current.get("registration_id"):
+        registration_id = str(current["registration_id"])
+    url = str(current.get("chat_url") or "").strip() or None
+    return registration_id, url
+
+
 async def harvest_marker(
     *,
     marker: str,
     registration_id: str | None,
-) -> bool:
-    """True when a harvest of the lane seat contains ``marker``."""
+    parent_thread: str | None = None,
+) -> bool | None:
+    """True when the lane seat contains ``marker``.
+
+    None when there is no seat to harvest. Callers must fall back instead of
+    pasting again: a timeout with no target is how a landed paste gets duplicated.
+    """
+    chat_url = None
+    if not registration_id and parent_thread:
+        registration_id, chat_url = _seat_for_lane(parent_thread)
+    if not registration_id and not chat_url:
+        return None
     base = project_ask_base()
     if not base:
         return False
     payload: dict[str, Any] = {"marker": marker, "reattach": False, "limit": 10}
     if registration_id:
         payload["registration_id"] = registration_id
+    elif chat_url:
+        payload["chat_url"] = chat_url
     try:
         async with make_async_client(base, timeout=30.0) as client:
             resp = await client.post("/v1/cse-session/harvest", json=payload)

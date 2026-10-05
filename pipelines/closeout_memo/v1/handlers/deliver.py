@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any, override
 
+from closeout_memo.events import emit_closeout_memo
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from closeout_memo.events import emit_closeout_memo
-
 from . import _ledger, _transport
-from .deliver_policy import classify_followup, decide
+from .coalesce import _lane_lock
+from .deliver_policy import DeliveryDecision, classify_followup, decide
 
 
 def _step(payload: dict[str, Any], *, error: str | None = None) -> StepOutput:
@@ -57,13 +57,20 @@ async def apply_decision(
         streaming = body.get("streaming_at_paste")
     if decision.action == "harvest":
         marker = memo_ids[0] if memo_ids else ""
-        present = await harvest(marker=marker, registration_id=registration_id)
-        decision = decide(
-            kind,
-            last_error=last_error,
-            attempts=attempts,
-            harvest_present=bool(present),
+        present = await harvest(
+            marker=marker,
+            registration_id=registration_id,
+            parent_thread=wake_lane,
         )
+        if present is None:
+            decision = DeliveryDecision(action="fallback", error="harvest_no_target")
+        else:
+            decision = decide(
+                kind,
+                last_error=last_error,
+                attempts=attempts,
+                harvest_present=bool(present),
+            )
     if decision.action == "delivered":
         _ledger.mark_delivered(
             memo_ids,
@@ -141,13 +148,14 @@ class CloseoutMemoDeliverHandler(BaseHandler):
                     "overflow_bus_text": coalesced.get("overflow_bus_text") or "",
                 }
             )
-        outcome = await apply_decision(
-            memo_ids=memo_ids,
-            wake_lane=wake_lane,
-            prompt_text=str(coalesced.get("text") or ""),
-            followup=_transport.post_followup,
-            harvest=_transport.harvest_marker,
-        )
+        async with _lane_lock(wake_lane):
+            outcome = await apply_decision(
+                memo_ids=memo_ids,
+                wake_lane=wake_lane,
+                prompt_text=str(coalesced.get("text") or ""),
+                followup=_transport.post_followup,
+                harvest=_transport.harvest_marker,
+            )
         overflow = str(coalesced.get("overflow_bus_text") or "")
         if outcome.get("delivered") and overflow:
             await _transport.post_bus_turn(

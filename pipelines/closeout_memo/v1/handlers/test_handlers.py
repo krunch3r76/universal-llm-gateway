@@ -9,7 +9,9 @@ from closeout_memo.models import CloseoutMemoRequest
 
 from . import _ledger
 from ._transport import followup_body
+from .deliver import apply_decision
 from .deliver_policy import decide
+from .fallback import _blocks
 
 pytestmark = pytest.mark.offline
 
@@ -143,3 +145,42 @@ def test_lane_busy_retries_then_falls_back() -> None:
 
 def test_attempt_ceiling_falls_back() -> None:
     assert decide("ok", attempts=6).action == "fallback"
+
+
+def test_claim_sets_a_delivering_lease(monkeypatch, tmp_path) -> None:
+    """A restart during deliver must still be visible to the retry sweep."""
+    monkeypatch.setenv("CLOSEOUT_MEMO_LEDGER", str(tmp_path / "memo.sqlite"))
+    assert _ledger.insert_admit(_request("giw:lease-1")) == "admitted"
+    claimed = _ledger.claim_admitted("12286", limit=5)
+    assert len(claimed) == 1
+    stored = _ledger.due_delivering(now=10**12)
+    assert len(stored) == 1
+    assert stored[0]["state"] == "delivering"
+    assert stored[0]["next_at"] is not None
+
+
+def test_fallback_keeps_primary_and_overflow() -> None:
+    body = _blocks(
+        {"text": "primary block", "overflow_bus_text": "+2 more: closeout memos"}
+    )
+    assert "primary block" in body
+    assert "+2 more" in body
+
+
+@pytest.mark.asyncio
+async def test_harvest_without_a_seat_falls_back_instead_of_repasting() -> None:
+    async def _followup(**kwargs):
+        return {"timed_out": True, "body": None}
+
+    async def _harvest(**kwargs):
+        return None
+
+    outcome = await apply_decision(
+        memo_ids=["abc"],
+        wake_lane="12286",
+        prompt_text="MEMO",
+        followup=_followup,
+        harvest=_harvest,
+    )
+    assert outcome["needs_fallback"] is True
+    assert outcome["error"] == "harvest_no_target"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 import pytest
 from closeout_memo.client import PostResult
@@ -158,6 +159,36 @@ def test_post_failure_returns_owed_with_backoff(
     assert row["memo_state"] == "owed"
     assert int(row["memo_attempts"]) == 1
     assert float(row["memo_next_at"]) > 0
+
+
+def test_conductor_hop_in_flight_is_not_emitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sweep must not paste conductor_stop while the hop relay is still open."""
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        dispatch_id="memo-hop-wait",
+        wake_lane="12286",
+        contract="conductor",
+    )
+    ledger.mark_terminal(dispatch_id="memo-hop-wait", terminal_status="completed")
+    posted: list[object] = []
+
+    async def _post(request: object) -> PostResult:
+        posted.append(request)
+        return PostResult(accepted=True, status_code=200, error="")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit.post_closeout_memo",
+        _post,
+    )
+    asyncio.run(try_emit("memo-hop-wait"))
+    row = ledger.memo_row("memo-hop-wait")
+    assert row is not None
+    assert row["memo_state"] == "owed"
+    assert posted == []
+    assert float(row["memo_next_at"]) > time.time() + 100
 
 
 def test_raising_post_does_not_clear_terminal(

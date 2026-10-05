@@ -6,12 +6,11 @@ import asyncio
 import json
 from typing import Any, override
 
-from systems.pipeline.core.handlers.builtin import BaseHandler
-from systems.pipeline.core.handlers.protocol import StepOutput
-
 from closeout_memo.events import emit_closeout_memo
 from closeout_memo.models import CloseoutMemoRequest
 from closeout_memo.render import render_memos
+from systems.pipeline.core.handlers.builtin import BaseHandler
+from systems.pipeline.core.handlers.protocol import StepOutput
 
 from . import _ledger
 
@@ -54,7 +53,12 @@ class CloseoutMemoCoalesceHandler(BaseHandler):
         for field_name in rendered.rejected_fields:
             emit_closeout_memo("field_rejected", field=field_name, wake_lane=wake_lane)
         ids = [row["memo_id"] for row in claimed]
-        _ledger.store_render(ids, text=rendered.text, sha256=rendered.sha256)
+        _ledger.store_render(
+            ids,
+            text=rendered.text,
+            sha256=rendered.sha256,
+            overflow=rendered.overflow_bus_text,
+        )
         emit_closeout_memo(
             "rendered",
             memo_ids=ids,
