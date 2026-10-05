@@ -228,6 +228,62 @@ def test_next_hop_mint_replaces_prior_successor(bus_client: TestClient) -> None:
     assert current["cse_registration_id"] == "reg-new"
 
 
+def test_hop_mint_guard_survives_same_url_append(bus_client: TestClient) -> None:
+    """A same-URL append must not clear the mint hold on the successor URL.
+
+    Breaks when the guard keys off the newest row's bound_by. After
+    web-anthropic appends the seated URL with a null registration, that row
+    is current and a later paste of the retired URL replaces the pointer.
+    """
+    thread_id = _create_lane(bus_client, "cse-hop-append-hold")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound") as emit:
+        seated = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="R1",
+            bound_by=HOP_SEATED_BOUND_BY,
+            evidence="cdp.generate.seated",
+        )
+        appended = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id=None,
+            bound_by="web-anthropic",
+            evidence="agent_bus.request",
+        )
+        retired = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-retired",
+            bound_by="web-anthropic",
+            evidence="agent_bus.request",
+        )
+    assert seated is not None
+    assert appended is not None
+    assert retired is None
+    http_retired = bus_client.post(
+        f"/threads/{thread_id}/cse-associate",
+        json={
+            "cse_chat_url": _URL_A,
+            "cse_registration_id": "reg-retired",
+            "bound_by": "web-anthropic",
+            "evidence": "agent_bus.request",
+        },
+    )
+    assert http_retired.status_code == 200
+    assert http_retired.json() == {
+        "thread_id": thread_id,
+        "state": "unchanged",
+    }
+    assert emit.call_count == 2
+    current = get_current_cse(thread_id=thread_id)
+    assert current["cse_chat_url"] == _URL_B
+    assert current["cse_registration_id"] is None
+    assert current["bound_by"] == "web-anthropic"
+    detail = bus_client.get(f"/threads/{thread_id}").json()
+    assert detail["cse_chat_url"] == _URL_B
+
+
 def test_same_successor_url_new_registration_still_appends(
     bus_client: TestClient,
 ) -> None:
