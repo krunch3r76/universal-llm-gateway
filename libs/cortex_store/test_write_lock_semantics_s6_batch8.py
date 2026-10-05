@@ -11,8 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cortex_store import db as cortex_db
-from cortex_store import entity_rekey_core as rekey_core
 from cortex_store._intent_card_test_fixtures import insert_entity
+from cortex_store import entity_rekey_core as rekey_core
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store._write_lock_semantics_testkit import (
     assert_l1_acquisition_parity,
@@ -21,17 +21,17 @@ from cortex_store._write_lock_semantics_testkit import (
     run_l2_serialization,
     trace_txn_boundaries,
 )
-from cortex_store.conftest import bind_cortex_db
 from cortex_store.dispatch_ops import execute_op
 from cortex_store.dispatch_ops import ops_endeavor_birth as endeavor_mod
 from cortex_store.dispatch_ops import ops_entities as entities_mod
 from cortex_store.endeavor_birth.repair import _T1_HOST
 from cortex_store.main import create_app
-
-
-def _seed_retype_entity(conn: sqlite3.Connection, entity_id: str = "agent_skill:batch8-lock") -> None:
-    insert_entity(conn, entity_id=entity_id, entity_type="agent_skill", name=entity_id)
-    conn.commit()
+from cortex_store.test_stamped_substrate_s6_batch8_parity import (
+    _assert_no_reference_to_id,
+    _bind_isolated_db,
+    _full_retype_inventory,
+    _seed_retype_surfaces,
+)
 
 
 def _seed_t1_pre_repair(conn: sqlite3.Connection) -> None:
@@ -54,7 +54,7 @@ def _isolated_client(
 ) -> TestClient:
     db_path = tmp_path / f"cortex_{suffix}.db"
     copy_template_db(migrated_db_template, db_path)
-    bind_cortex_db(monkeypatch, db_path)
+    _bind_isolated_db(monkeypatch, db_path)
     return TestClient(create_app(db_path=str(db_path)), raise_server_exceptions=False)
 
 
@@ -66,8 +66,8 @@ def test_entity_retype_l1_dispatch_path(
 ) -> None:
     db_path = tmp_path / "cortex_l1_dispatch.db"
     copy_template_db(migrated_db_template, db_path)
-    bind_cortex_db(monkeypatch, db_path)
-    _seed_retype_entity(cortex_db.cortex_conn())
+    _bind_isolated_db(monkeypatch, db_path)
+    _seed_retype_surfaces(cortex_db.cortex_conn(), "agent_skill:batch8-lock")
     counter = install_counting_write_lock(monkeypatch, entities_mod)
     trace = trace_txn_boundaries(monkeypatch, entities_mod, counter)
     result = execute_op(
@@ -87,7 +87,7 @@ def test_entity_retype_l1_typed_path(
     client = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="l1_typed"
     )
-    _seed_retype_entity(cortex_db.cortex_conn())
+    _seed_retype_surfaces(cortex_db.cortex_conn(), "agent_skill:batch8-lock")
     counter = install_counting_write_lock(monkeypatch, entities_mod)
     trace = trace_txn_boundaries(monkeypatch, entities_mod, counter)
     resp = client.post(
@@ -108,7 +108,7 @@ def test_entity_retype_l2_dispatch_and_typed(
     client = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="l2"
     )
-    _seed_retype_entity(cortex_db.cortex_conn())
+    _seed_retype_surfaces(cortex_db.cortex_conn(), "agent_skill:batch8-lock")
     payload = {"entity_id": "agent_skill:batch8-lock", "new_type": "rule"}
     counter = install_counting_write_lock(monkeypatch, entities_mod)
     run_l2_serialization(
@@ -132,10 +132,12 @@ def test_entity_retype_l3_failure_release(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entity_id = "agent_skill:batch8-l3"
+    new_id = "rule:batch8-l3"
     client = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="l3"
     )
-    _seed_retype_entity(cortex_db.cortex_conn(), entity_id=entity_id)
+    _seed_retype_surfaces(cortex_db.cortex_conn(), entity_id)
+    pre = _full_retype_inventory(cortex_db.cortex_conn(), entity_id)
     original = rekey_core.rewrite_simple_column
 
     def fail_after_first(
@@ -154,19 +156,15 @@ def test_entity_retype_l3_failure_release(
     with pytest.raises(sqlite3.OperationalError, match="injected after first rewrite"):
         execute_op("entity_retype", {"entity_id": entity_id, "new_type": "rule"})
     assert_l3_lock_reacquirable(counter)
-    row = cortex_db.cortex_conn().execute(
-        "SELECT id, type FROM entities WHERE id = ?", (entity_id,)
-    ).fetchone()
-    assert row is not None and row[0] == entity_id
+    assert _full_retype_inventory(cortex_db.cortex_conn(), entity_id) == pre
+    _assert_no_reference_to_id(cortex_db.cortex_conn(), new_id)
 
     counter2 = install_counting_write_lock(monkeypatch, entities_mod)
     resp = client.post(f"/entities/{entity_id}/retype", json={"new_type": "rule"})
     assert resp.status_code == 500
     assert_l3_lock_reacquirable(counter2)
-    row2 = cortex_db.cortex_conn().execute(
-        "SELECT id, type FROM entities WHERE id = ?", (entity_id,)
-    ).fetchone()
-    assert row2 is not None and row2[0] == entity_id
+    assert _full_retype_inventory(cortex_db.cortex_conn(), entity_id) == pre
+    _assert_no_reference_to_id(cortex_db.cortex_conn(), new_id)
 
 
 @pytest.mark.offline
@@ -177,7 +175,7 @@ def test_endeavor_repair_t1_l1_dispatch_path(
 ) -> None:
     db_path = tmp_path / "cortex_repair_l1_d.db"
     copy_template_db(migrated_db_template, db_path)
-    bind_cortex_db(monkeypatch, db_path)
+    _bind_isolated_db(monkeypatch, db_path)
     _seed_t1_pre_repair(cortex_db.cortex_conn())
     counter = install_counting_write_lock(monkeypatch, endeavor_mod)
     trace = trace_txn_boundaries(monkeypatch, endeavor_mod, counter)

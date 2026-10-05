@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class EntityRetypeRequest(BaseModel):
@@ -11,6 +11,4 @@ class EntityRetypeRequest(BaseModel):
 
 
 class EndeavorRepairT1Request(BaseModel):
-    """No persisted fields — repair is global T1 host maintenance."""
-
-    model_config = {"extra": "forbid"}
+    """No persisted fields — repair is global T1 host maintenance (extras ignored like ``**_``)."""
