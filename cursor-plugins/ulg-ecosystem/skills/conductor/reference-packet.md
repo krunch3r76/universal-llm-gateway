@@ -53,8 +53,8 @@ Required in `<scope>` / `<invariants>`:
   evidence-before-dispatch and one dispatch per gate: the evidence block
   (diff stat, suite summary on base and tip, catalog check when a docstring
   feeds a generated region, else `evidence: absent — <name>`) goes into the
-  single G6 `team_dispatch` before it is fired; one `poll_hint` wait, then
-  `stop: ROW_HOP` if still running. Same three steps as the materialized
+  single G6 `team_dispatch` before it is fired; stamp `poll_hint` +
+  `execution_id`, then `stop: ROW_HOP` (do not block MCP wait). Same three steps as the materialized
   packet and `reference-run-to-completion.md`.
 
 Continuity sidecar during run: `cortex://notes/system/threads/{root}-conductor.md`
@@ -107,7 +107,7 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 |---|---|---|---|
 | G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
 | G5 implement | `agent` | `implement` \| `pure-mechanical` | **Attended:** `SCORE_RESURFACE` (slug in subject; body cites CDP exec + review sha when the tip recorded them) **∧** implement (`ledger:nested_implement` ∨ `git:lane_head`). ¬ tip `DONE` · ¬ steer-inject · ¬ harvest alone · ¬ nested_implement without resurface. **Away:** implement only. Path-explicit commit / `land_disposition` are G7 |
-| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<summoning or worker>, prompt=<body>)`; prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines; one `poll_hint` wait, `NEXT_ADMIT: harvest <execution_id>` in the hop CHECKPOINT; distinct from the attended G5 closer) |
+| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI (G6 = one `team_dispatch(op=generate, model=cdp/opus-5.5, contract=delivery-review, dispatch_thread_id=<worker>, parent_thread=<summoning or worker>, prompt=<body>)`; prompt body includes a line `job=delivery-review` plus `retrieval_report:` lines; stamp `poll_hint` + hop, `NEXT_ADMIT: harvest <execution_id>` in the hop CHECKPOINT — ¬ block MCP wait; distinct from the attended G5 closer) |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
 **Scoreboard tip template (worked example — sparse birth):**

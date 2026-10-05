@@ -31,7 +31,7 @@ related_skills:
 
 - **Run, don't ask; land on green.** Admitted ⇒ drive all open G-rows in one commission; packet = standing merge ack — land at tests+AC, ¬ second "ok to merge?" → `reference-run-to-completion.md`.
 - **ROW_HOP vs exit-and-persist.** `ROW_HOP` = journal → hop CHECKPOINT → closeout `stop: ROW_HOP`; substrate admits successor — never `team_dispatch(reuse_thread=<own thread>)`. `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` persist and stop past the unpaid gate → `reference-invariant.md`, `reference-packet.md`.
-- **Nested CDP (a:37183).** Before `team_dispatch(model=cdp/…)` **or** `cse_session(op=followup)` on G1·G2·G4·G6/width: Use `retrieval-before-authoring`, write report sidecar, `target:` bound to prompt, `retrieval_report: cortex://…` own line (line-anchored). G4/SKEPTIC/adversarial-spec ¬ delivery/code-review chrome. Hop closeout: every nested prompt URI + report bundle — missing ⇒ not green.
+- **Nested CDP (a:37183 · a:37918).** Before `team_dispatch(model=cdp/…)` **or** `cse_session(op=followup)` on G1·G2·G4·G6/width: Use `retrieval-before-authoring`, write report sidecar, `target:` bound to prompt, `retrieval_report: cortex://…` own line (line-anchored). G4/SKEPTIC/adversarial-spec ¬ delivery/code-review chrome. After admit: stamp `poll_hint` + `execution_id`, `NEXT_ADMIT: harvest <id>`, `stop: ROW_HOP` — ¬ block MCP `wait` until -32001; timeout ≠ CDP dead; ¬ second-dispatch while that id is live. Hop closeout: every nested prompt URI + report bundle — missing ⇒ not green.
 - **Review harvest ≺ land ≺ DONE.** Land/`DONE`: harvest stronger-model review first — ¬ background, ¬ land-then-review → `reference-run-to-completion.md`, `reference-packet.md`.
 - **G5 witness (a:37198).** After G3→G5 CDP score-ratify harvest, required attended witness = `SCORE_RESURFACE` on `summoning_thread_id` (slug subject; CDP exec/review sha) — ¬ tip `DONE`, ¬ steer-inject, ¬ harvest alone. Attended G5 fold needs that turn **and** implement (`ledger:nested_implement` ∨ `git:lane_head`). `bus:SCORE_RESURFACE` ⇒ ¬ re-post · ¬ re-ratify → `reference-packet.md`.
 - **Explicit `lane="B"`.** Top-level admit passes `lane="B"`; omit nest/resume only — GIW default Lane A, not "no preference" → `reference-admit.md`, `reference-gotchas.md`.
@@ -51,7 +51,7 @@ Author/admit packet, drive G-rows, `/conductor`, or `follow up` / `page me when 
    Specimen: Gate-2 slug `conductor`.
 
 2. **Invariant + RTC.** → `reference-invariant.md`, `reference-run-to-completion.md`.
-   Falsifier: failed CDP consult waits, retries pool, or DEFERRED while lane continues.
+   Falsifier: failed CDP consult waits, retries pool, or DEFERRED while lane continues; nested CDP holds MCP wait until -32001.
    Specimen: `cdp_fail_route` `nested-grok` and `operator`.
 
 3. **When, tier, roles.** → `reference-when.md`, `reference-model-tier.md`, `reference-role-split.md`.
