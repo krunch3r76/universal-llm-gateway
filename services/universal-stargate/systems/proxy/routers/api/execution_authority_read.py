@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -34,7 +35,7 @@ async def read_execution_authority(
             reason="project_ask_url_unset",
             degraded=True,
         )
-    leg = read_inflight_leg(execution_id)
+    leg = await asyncio.to_thread(read_inflight_leg, execution_id)
     satellite_id = leg.satellite_execution_id if leg is not None else None
     path = f"/v1/project-ask/executions/{execution_id}/state"
     if satellite_id:

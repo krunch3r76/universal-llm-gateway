@@ -128,30 +128,79 @@ def write_transition_sync(
         _iso_epoch(completed_at) if completed_at is not None else None
     )
     payload_json = json.dumps(record_json, separators=(",", ":"), ensure_ascii=True)
+    terminal_statuses = frozenset({"completed", "failed"})
     with sqlite3.connect(path) as connection:
         connection.execute("PRAGMA journal_mode=WAL;")
         migrate_schema_sync(connection)
-        connection.execute(
-            """
-            INSERT OR REPLACE INTO dispatch_records(
-                execution_id, pipeline, status, caller_agent,
-                started_at, completed_at, completed_at_epoch,
-                updated_at, updated_at_epoch, record_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                execution_id,
-                pipeline,
-                status,
-                caller_agent,
-                started_at,
-                completed_at,
-                completed_epoch,
-                now_iso,
-                now_epoch,
-                payload_json,
-            ),
-        )
+        existing = connection.execute(
+            "SELECT status FROM dispatch_records WHERE execution_id = ?",
+            (execution_id,),
+        ).fetchone()
+        if status == "started":
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO dispatch_records(
+                        execution_id, pipeline, status, caller_agent,
+                        started_at, completed_at, completed_at_epoch,
+                        updated_at, updated_at_epoch, record_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        execution_id,
+                        pipeline,
+                        status,
+                        caller_agent,
+                        started_at,
+                        completed_at,
+                        completed_epoch,
+                        now_iso,
+                        now_epoch,
+                        payload_json,
+                    ),
+                )
+            elif str(existing[0]) not in terminal_statuses:
+                connection.execute(
+                    """
+                    UPDATE dispatch_records SET
+                        pipeline = ?, status = ?, caller_agent = ?,
+                        started_at = ?, updated_at = ?, updated_at_epoch = ?,
+                        record_json = ?
+                    WHERE execution_id = ?
+                    """,
+                    (
+                        pipeline,
+                        status,
+                        caller_agent,
+                        started_at,
+                        now_iso,
+                        now_epoch,
+                        payload_json,
+                        execution_id,
+                    ),
+                )
+        else:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO dispatch_records(
+                    execution_id, pipeline, status, caller_agent,
+                    started_at, completed_at, completed_at_epoch,
+                    updated_at, updated_at_epoch, record_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_id,
+                    pipeline,
+                    status,
+                    caller_agent,
+                    started_at,
+                    completed_at,
+                    completed_epoch,
+                    now_iso,
+                    now_epoch,
+                    payload_json,
+                ),
+            )
         connection.execute(
             """
             INSERT INTO dispatch_record_transitions(

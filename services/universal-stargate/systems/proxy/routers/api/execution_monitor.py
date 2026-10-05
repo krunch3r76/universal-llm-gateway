@@ -18,6 +18,14 @@ from systems.pipeline.core.execution.dispatch_journal import fetch_record
 from .dispatch_bus_recovery import recover_execution_from_bus_thread
 from .execution_authority_read import map_authority_to_monitor, read_execution_authority
 
+_FIVE_SOURCE_ORDER = (
+    "pipeline_tracker",
+    "pipeline_dispatch_journal",
+    "cdp_registry.execution_state",
+    "cdp_ask.execution_store",
+    "thread_dispatch_links",
+)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -69,9 +77,10 @@ async def resolve_execution_monitor(
         return 200, journal_record
 
     authority_result = await read_execution_authority(execution_id)
-    if authority_result.ok and authority_result.payload is not None:
+    authority_payload = authority_result.payload
+    if authority_result.ok and authority_payload is not None:
         mapped = map_authority_to_monitor(
-            authority_result.payload,
+            authority_payload,
             execution_id=execution_id,
         )
         if mapped is not None:
@@ -114,11 +123,11 @@ async def resolve_execution_monitor(
             }
         return 200, recovered
 
-    sources = _sources_consulted_miss(
-        execution_id,
+    sources = sources_consulted_miss(
         authority_reason=authority_result.reason,
         authority_degraded=authority_result.degraded,
-        bus_consulted=bus_hit,
+        authority_payload=authority_payload,
+        bus_link_reason="miss" if bus_hit else "non_authoritative",
     )
     return 404, {
         "code": "execution_id_expired_or_unknown",
@@ -127,26 +136,59 @@ async def resolve_execution_monitor(
     }
 
 
-def _sources_consulted_miss(
-    execution_id: str,
+def sources_consulted_miss(
     *,
     authority_reason: str | None,
     authority_degraded: bool,
-    bus_consulted: bool,
+    authority_payload: dict[str, Any] | None,
+    bus_link_reason: str,
 ) -> list[dict[str, Any]]:
-    return [
+    """Build the five-source miss list from actual ladder consultation."""
+    satellite_rows: dict[str, dict[str, Any]] = {}
+    if isinstance(authority_payload, dict):
+        raw = authority_payload.get("sources_consulted")
+        if isinstance(raw, list):
+            for row in raw:
+                if isinstance(row, dict) and row.get("source"):
+                    satellite_rows[str(row["source"])] = row
+
+    sources: list[dict[str, Any]] = [
         {"source": "pipeline_tracker", "hit": False, "reason": "miss"},
         {"source": "pipeline_dispatch_journal", "hit": False, "reason": "miss"},
-        {
-            "source": "cdp_registry.execution_state",
-            "hit": False,
-            "reason": authority_reason or "miss",
-            "degraded": authority_degraded,
-        },
-        {"source": "cdp_ask.execution_store", "hit": False, "reason": "miss"},
+    ]
+
+    for name in ("cdp_registry.execution_state", "cdp_ask.execution_store"):
+        sat = satellite_rows.get(name)
+        if sat is not None:
+            entry: dict[str, Any] = {
+                "source": name,
+                "hit": bool(sat.get("hit")),
+            }
+            if not entry["hit"]:
+                entry["reason"] = str(sat.get("reason") or "miss")
+            if name == "cdp_registry.execution_state" and authority_degraded:
+                entry["degraded"] = True
+            sources.append(entry)
+            continue
+        if name == "cdp_registry.execution_state":
+            entry = {
+                "source": name,
+                "hit": False,
+                "reason": authority_reason or "miss",
+            }
+            if authority_degraded:
+                entry["degraded"] = True
+            sources.append(entry)
+        else:
+            sources.append({"source": name, "hit": False, "reason": "miss"})
+
+    sources.append(
         {
             "source": "thread_dispatch_links",
             "hit": False,
-            "reason": "non_authoritative" if not bus_consulted else "miss",
-        },
-    ]
+            "reason": bus_link_reason,
+        }
+    )
+    assert [row["source"] for row in sources] == list(_FIVE_SOURCE_ORDER)
+    return sources
+

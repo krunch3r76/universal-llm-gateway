@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -47,7 +48,7 @@ def _assert_five_source_miss(
     authority = by_name["cdp_registry.execution_state"]
     assert authority["hit"] is False
     assert authority["reason"] == authority_reason
-    assert authority.get("degraded") is authority_degraded
+    assert bool(authority.get("degraded")) is authority_degraded
     assert by_name["cdp_ask.execution_store"]["hit"] is False
     bus = by_name["thread_dispatch_links"]
     assert bus["hit"] is False
@@ -74,6 +75,33 @@ def _executions_client(
     app.dependency_overrides[get_proxy] = lambda: MagicMock()
     app.dependency_overrides[get_auth_dependency] = lambda: {}
     return TestClient(app)
+
+
+def test_sources_consulted_miss_preserves_satellite_store_reason() -> None:
+    """Honest miss: satellite sources_consulted rows survive into 404 data."""
+    sources = execution_monitor.sources_consulted_miss(
+        authority_reason="http_503",
+        authority_degraded=True,
+        authority_payload={
+            "sources_consulted": [
+                {
+                    "source": "cdp_registry.execution_state",
+                    "hit": False,
+                    "reason": "no_row",
+                },
+                {
+                    "source": "cdp_ask.execution_store",
+                    "hit": False,
+                    "reason": "miss",
+                },
+            ]
+        },
+        bus_link_reason="non_authoritative",
+    )
+    by_name = {row["source"]: row for row in sources}
+    assert by_name["cdp_registry.execution_state"]["reason"] == "no_row"
+    assert by_name["cdp_registry.execution_state"]["degraded"] is True
+    assert by_name["cdp_ask.execution_store"]["reason"] == "miss"
 
 
 @pytest.mark.asyncio
@@ -273,6 +301,91 @@ def test_ac9_get_404_lists_five_sources_with_miss_reasons(
     assert response.status_code == 404
     err = response.json()["error"]
     assert err["code"] == "execution_id_expired_or_unknown"
+    _assert_five_source_miss(err["data"]["sources_consulted"])
+
+
+@pytest.mark.asyncio
+async def test_ac8_authority_unreachable_event_when_event_bus_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Degraded authority miss emits pipeline.execution.authority_unreachable."""
+    tracker = _tracker_stub()
+    published: list[Any] = []
+
+    class _Bus:
+        async def publish_nowait(self, event: Any) -> None:
+            published.append(event)
+
+    async def _authority(_eid: str) -> AuthorityReadResult:
+        return AuthorityReadResult(
+            ok=False,
+            payload=None,
+            reason="project_ask_url_unset",
+            degraded=True,
+        )
+
+    monkeypatch.setattr(execution_monitor, "read_execution_authority", _authority)
+    monkeypatch.setattr(
+        execution_monitor,
+        "recover_execution_from_bus_thread",
+        AsyncMock(return_value=None),
+    )
+
+    status, _body = await execution_monitor.resolve_execution_monitor(
+        "exec-event",
+        tracker=tracker,
+        wait_seconds=0.0,
+        event_bus=_Bus(),
+    )
+    assert status == 404
+    await asyncio.sleep(0)
+    assert len(published) == 1
+    event = published[0]
+    assert event.signal == "pipeline.execution.authority_unreachable"
+    assert event.payload.get("execution_id") == "exec-event"
+
+
+def test_ac9_delete_cancel_wait_miss_lists_five_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE cancel path: wait_for_terminal None → 404 with sources_consulted."""
+    from fastapi import FastAPI
+
+    from systems.proxy.dependencies import get_auth_dependency, get_proxy
+
+    tracker = _tracker_stub()
+    running = MagicMock()
+    running.status = "running"
+    running.pipeline = "frontier-dispatch"
+    tracker.get = MagicMock(return_value=running)
+    tracker.wait_for_terminal = AsyncMock(return_value=None)
+    tracker.fail_execution = MagicMock()
+
+    async def _authority(_eid: str) -> AuthorityReadResult:
+        return AuthorityReadResult(
+            ok=False, payload=None, reason="miss", degraded=False
+        )
+
+    monkeypatch.setattr(executions, "_get_tracker", lambda _proxy: tracker)
+    monkeypatch.setattr(execution_monitor, "fetch_record", AsyncMock(return_value=None))
+    monkeypatch.setattr(execution_monitor, "read_execution_authority", _authority)
+    monkeypatch.setattr(
+        execution_monitor,
+        "recover_execution_from_bus_thread",
+        AsyncMock(return_value=None),
+    )
+
+    app = FastAPI()
+    app.state.pipeline_task_index = {}
+    app.include_router(executions.router)
+    proxy = MagicMock()
+    proxy.event_bus = None
+    app.dependency_overrides[get_proxy] = lambda: proxy
+    app.dependency_overrides[get_auth_dependency] = lambda: {}
+
+    response = TestClient(app).delete("/executions/exec-cancel-timeout")
+    assert response.status_code == 404
+    err = response.json()["error"]
     _assert_five_source_miss(err["data"]["sources_consulted"])
 
 

@@ -270,6 +270,36 @@ async def journal_transition(
     )
 
 
+def _enrich_legacy_journal_payload(
+    payload: dict[str, Any],
+    *,
+    execution_id: str,
+    row_status: str,
+) -> dict[str, Any]:
+    """Stamp AC4 basis fields on pre-status_basis journal rows after migration."""
+    if payload.get("source") and payload.get("as_of") and payload.get("epoch"):
+        return payload
+    from universal_protocol.status_basis import (
+        SOURCE_PIPELINE_DISPATCH_JOURNAL,
+        status_basis,
+    )
+
+    as_of = payload.get("completed_at") or payload.get("started_at") or ""
+    base = status_basis(
+        "status",
+        str(payload.get("status") or row_status),
+        as_of=str(as_of),
+        source=SOURCE_PIPELINE_DISPATCH_JOURNAL,
+        scope=f"execution:{execution_id}",
+        epoch={"writer": "pipeline_dispatch_journal", "migrated_read": True},
+        recovery={"consulted": ["pipeline_tracker", "pipeline_dispatch_journal"]},
+        state=str(payload.get("status") or row_status),
+    )
+    merged = {**payload, **base}
+    merged.setdefault("status", row_status)
+    return merged
+
+
 async def fetch_record(
     execution_id: str,
     *,
@@ -283,7 +313,10 @@ async def fetch_record(
     )
     if result is None:
         return None
-    payload, _status, updated_epoch = result
+    payload, row_status, updated_epoch = result
+    payload = _enrich_legacy_journal_payload(
+        payload, execution_id=execution_id, row_status=row_status
+    )
     age_seconds = max(0.0, time.time() - updated_epoch)
     _emit(
         event_bus,
@@ -309,6 +342,11 @@ async def fetch_terminal(
     if result is None:
         return None
     payload, completed_at_epoch = result
+    payload = _enrich_legacy_journal_payload(
+        payload,
+        execution_id=execution_id,
+        row_status=str(payload.get("status") or "completed"),
+    )
     age_seconds = max(0.0, time.time() - completed_at_epoch)
     _emit(
         event_bus,
