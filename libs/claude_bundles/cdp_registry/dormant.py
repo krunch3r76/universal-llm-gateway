@@ -308,11 +308,10 @@ def relaunch_dormant(
             registration_id, chrome_pid, log_event="relaunch"
         )
     except Exception:
-        # The pre-lock snapshot predates a close that landed in the reserve
-        # window. Restoring it would wipe seat_closed_at and reopen the seat.
-        live = _store.load_active().get(registration_id)
-        if not (isinstance(live, dict) and live.get("seat_closed_at") is not None):
-            _restore_dormant(registration_id, row)
+        # Restore under the lock. An unlocked read can miss a hop bind that
+        # still holds ports.lock, and writing the pre-reserve snapshot then
+        # clears seat_closed_at.
+        _restore_dormant(registration_id, row)
         raise
     # Display is placement; chat URL stays the identity. Reserve writes the
     # admitted display; this rewrite covers a row that still names the old one.
@@ -333,6 +332,9 @@ def relaunch_dormant(
         # clear seat_closed_at and close the hop that just won the seat.
         current = _store.load_active().get(registration_id) or {}
         if current.get("seat_closed_at") is not None:
+            _abandon_superseded_relaunch(
+                registration_id, row, current.get("port")
+            )
             raise RegistryError(
                 f"registration {registration_id!r} has seat_closed_at set; "
                 "refusing relaunch of a superseded seat"
@@ -340,6 +342,9 @@ def relaunch_dormant(
         bind_driving_seat(registration_id)
         bound = _store.load_active().get(registration_id) or {}
         if bound.get("seat_closed_at") is not None:
+            _abandon_superseded_relaunch(
+                registration_id, row, bound.get("port")
+            )
             raise RegistryError(
                 f"registration {registration_id!r} has seat_closed_at set; "
                 "refusing relaunch of a superseded seat"
@@ -357,14 +362,46 @@ def relaunch_dormant(
     return reg
 
 
+def _abandon_superseded_relaunch(
+    registration_id: str,
+    prior: dict[str, Any],
+    port: Any,
+) -> None:
+    """Park a relaunch the hop already closed, and drop its Chrome.
+
+    Leaving the row active with the driver lock held blocks both dormancy
+    (``driver_attached``) and a later claim of the same lock.
+    """
+    if isinstance(port, int):
+        with contextlib.suppress(Exception):
+            registry_package()._kill_listener(port)
+    _restore_dormant(registration_id, prior)
+
+
 def _restore_dormant(registration_id: str, prior: dict[str, Any]) -> None:
-    """Put a failed relaunch back to dormant — the URL binding must survive."""
+    """Put a failed relaunch back to dormant — the URL binding must survive.
+
+    A close that landed after *prior* was read stays. Overwriting it would
+    reopen the predecessor and drop ``superseded_by``.
+    """
     with contextlib.suppress(Exception):
         with _store.ports_lock():
             active = _store.load_active()
-            active[registration_id] = dict(prior)
-            _store.write_active(active)
-            _store.append_log("dormant_relaunch_failed", dict(prior))
+            current = active.get(registration_id)
+            if (
+                isinstance(current, dict)
+                and current.get("seat_closed_at") is not None
+            ):
+                closed = dict(current)
+                closed["status"] = STATUS_DORMANT
+                closed["chrome_pid"] = None
+                active[registration_id] = closed
+                _store.write_active(active)
+                _store.append_log("dormant_relaunch_failed", closed)
+            else:
+                active[registration_id] = dict(prior)
+                _store.write_active(active)
+                _store.append_log("dormant_relaunch_failed", dict(prior))
         _release_driver_lock(registration_id)
 
 
