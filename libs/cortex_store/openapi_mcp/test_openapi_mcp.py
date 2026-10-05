@@ -2,19 +2,76 @@
 
 from __future__ import annotations
 
+import json
+from copy import deepcopy
+from pathlib import Path
+
 import pytest
 
 from cortex_store.dispatch_ops import _OP_SPECS
 from cortex_store.main import create_app
 from cortex_store.openapi_mcp.bijection import (
     assert_op_served_bijection,
+    assert_served_bijection,
+    assert_unbound_ratchet_baseline_not_stale,
+    assert_unbound_ratchet_no_new_unbound,
     find_reachable_unserved_violations,
     served_operation_ids,
+    unbound_ratchet_violations,
 )
 from cortex_store.openapi_mcp.census import build_four_bucket_census
 from cortex_store.openapi_mcp.codegen import check_generated_module, dry_run_generate
 from cortex_store.openapi_mcp.death_path import DEATH_PATH_GATE_DOC, death_path_gate_met
+from cortex_store.openapi_mcp.generated_adapter_manifest import SERVED_OPS
 from cortex_store.openapi_mcp.schema_channel import SCHEMA_CHANNEL_DEFAULT
+from cortex_store.openapi_mcp._route_map import UNTYPEABLE_OPS
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+UNBOUND_BASELINE: frozenset[str] = frozenset(
+    {
+        "assemble_transcript",
+        "assertion_get",
+        "assertion_state",
+        "case_audit",
+        "claim_alignment",
+        "deadline_resolve",
+        "digest",
+        "endeavor_dispose_row",
+        "endeavor_lock_ready",
+        "endeavor_repair_t1",
+        "endeavor_write_row",
+        "entities_bulk_upsert",
+        "entities_by_content_hash",
+        "entity_retype",
+        "fill_gaps",
+        "friction",
+        "friction_close",
+        "frictions",
+        "graph_reach",
+        "observe",
+        "pinned_deliverable_write",
+        "predicate_renormalize",
+        "prose_fact_scan",
+        "recon_sidecar_write",
+        "register_skill_substrate",
+        "relationships_bulk_upsert",
+        "review_queue",
+        "rj_consolidate",
+        "session_audit",
+        "session_close_preflight",
+        "tag_resolve",
+        "thread_sidecar_write",
+        "todo_close_sidecar",
+        "todo_distill_implement_gate",
+        "transcript_discover",
+        "transcript_harvest",
+        "transcript_project",
+        "transcript_seal",
+        "transcript_source_probe",
+        "view_render",
+    }
+)
 
 
 @pytest.mark.offline
@@ -28,11 +85,16 @@ def test_four_bucket_census_partitions_all_ops() -> None:
 @pytest.mark.offline
 def test_four_bucket_census_counts() -> None:
     census = build_four_bucket_census()
-    assert len(census.served) == 46
-    assert len(census.untypeable) == 4
-    assert len(census.rb_only) == 19
-    assert len(census.neither) == 15
-    assert census.total == 84
+    assert census.total == len(_OP_SPECS)
+    assert census.served == frozenset(SERVED_OPS)
+    assert census.untypeable == UNTYPEABLE_OPS & set(_OP_SPECS)
+    assert census.rb_only | census.neither == UNBOUND_BASELINE
+
+
+@pytest.mark.offline
+def test_every_served_op_bijects() -> None:
+    schema = create_app().openapi()
+    assert_served_bijection(schema)
 
 
 @pytest.mark.offline
@@ -45,7 +107,7 @@ def test_assert_op_openapi_bijection() -> None:
 def test_generator_dry_run_covers_served_ops() -> None:
     schema = create_app().openapi()
     manifest = dry_run_generate(schema)
-    assert len(manifest.served_ops) == 46
+    assert len(manifest.served_ops) == len(SERVED_OPS)
     assert manifest.served_ops["assert"]["path"] == "/assertions"
     assert manifest.openapi_sha256
 
@@ -162,6 +224,68 @@ def test_death_path_gate_requires_both_conditions() -> None:
 @pytest.mark.offline
 def test_schema_channel_defaults_to_generated_op() -> None:
     assert SCHEMA_CHANNEL_DEFAULT == "cortex_schema(op)"
+
+
+@pytest.mark.offline
+def test_unbound_ratchet_no_new_unbound() -> None:
+    schema = create_app().openapi()
+    assert_unbound_ratchet_no_new_unbound(schema, UNBOUND_BASELINE)
+
+
+@pytest.mark.offline
+def test_unbound_ratchet_baseline_not_stale() -> None:
+    schema = create_app().openapi()
+    assert_unbound_ratchet_baseline_not_stale(schema, UNBOUND_BASELINE)
+
+
+@pytest.mark.offline
+def test_committed_openapi_bindings_match_served() -> None:
+    from openapi_mcp.binding import extract_typed_routes
+
+    committed_path = _REPO_ROOT / "config" / "mcp" / "generated" / "cortex.openapi.json"
+    committed = json.loads(committed_path.read_text(encoding="utf-8"))
+    live = create_app().openapi()
+
+    def binding_map(schema: dict) -> dict[str, tuple[str, str, str]]:
+        routes = extract_typed_routes(schema)
+        return {
+            op: (route.method, route.path, route.operation_id)
+            for op, route in routes.items()
+        }
+
+    assert binding_map(committed) == binding_map(live)
+
+
+@pytest.mark.offline
+def test_assert_served_bijection_falsifier_phantom_stamp() -> None:
+    schema = deepcopy(create_app().openapi())
+    for path, methods in schema.get("paths", {}).items():
+        for method, spec in methods.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            if isinstance(spec, dict) and "x-mcp" not in spec:
+                spec["x-mcp"] = {"op": "phantom_op", "tool": "cortex"}
+                with pytest.raises(AssertionError, match="phantom_op"):
+                    assert_served_bijection(schema)
+                return
+    pytest.fail("no unstamped operation found for phantom falsifier")
+
+
+@pytest.mark.offline
+def test_assert_served_bijection_falsifier_operation_id_drift() -> None:
+    schema = deepcopy(create_app().openapi())
+    spec = schema["paths"]["/entities/{entity_id}"]["get"]
+    spec["operationId"] = "mutated_entity_get_operation_id"
+    with pytest.raises(AssertionError, match="entity_get"):
+        assert_served_bijection(schema)
+
+
+@pytest.mark.offline
+def test_unbound_ratchet_reports_stamp_removal_as_new_unbound() -> None:
+    schema = deepcopy(create_app().openapi())
+    del schema["paths"]["/assertions"]["post"]["x-mcp"]
+    new_unbound, _ = unbound_ratchet_violations(schema, UNBOUND_BASELINE)
+    assert "assert" in new_unbound
 
 
 @pytest.mark.offline
