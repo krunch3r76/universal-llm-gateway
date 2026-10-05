@@ -9,7 +9,7 @@ from openapi_mcp.binding import x_mcp
 from ._shared import router
 
 
-@router.get("/{assertion_id}", openapi_extra=x_mcp("assertion_get"))
+@router.get("/{assertion_id:int}", openapi_extra=x_mcp("assertion_get"))
 def get_assertion(assertion_id: int) -> dict[str, Any]:
     """Read one assertion by id (full AssertionItem shape)."""
     from ...dispatch_ops.ops_assertions_update import _op_assertion_get

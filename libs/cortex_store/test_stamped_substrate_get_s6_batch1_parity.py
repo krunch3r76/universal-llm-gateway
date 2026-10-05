@@ -74,6 +74,23 @@ def test_assertion_state_dispatch_matches_typed_route(
 
 
 @pytest.mark.offline
+def test_assertion_get_does_not_shadow_search_or_activate_routes(
+    cortex_client: TestClient,
+) -> None:
+    """/{assertion_id:int} must not capture static GET siblings (review B1)."""
+    search = cortex_client.get("/assertions/search", params={"q": "parity-shadow"})
+    assert search.status_code != 422 or "int_parsing" not in search.text
+    assert search.status_code == 200
+
+    activate = cortex_client.get(
+        "/assertions/activate",
+        params={"entity_ids": "decision:shadow-probe"},
+    )
+    assert activate.status_code != 422 or "int_parsing" not in activate.text
+    assert activate.status_code == 200
+
+
+@pytest.mark.offline
 def test_entities_by_content_hash_dispatch_matches_typed_route(
     cortex_client: TestClient,
     migrated_conn: sqlite3.Connection,
