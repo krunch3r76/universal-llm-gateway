@@ -460,14 +460,6 @@ def _seed_pending_refresh_delta(
     return root_id, doc_id
 
 
-def _seed_refresh_delta(conn: sqlite3.Connection, files_root: Path) -> None:
-    _seed_pending_refresh_delta(conn, files_root)
-    result = execute_op(
-        "view_render", {"document_id": _DOC_ID, **_REFRESH_BODY}
-    )
-    assert "error" not in result, result
-
-
 @pytest.mark.offline
 def test_view_render_refresh_after_graph_change_parity(
     migrated_db_template: Path,
@@ -505,8 +497,7 @@ def test_view_render_bodiless_post_refresh_parity(
     """Bodiless typed POST defaults to refresh like /dispatch with only document_id."""
 
     def seed(conn: sqlite3.Connection, files_root: Path) -> None:
-        root_id, doc_id = _seed_view_entities(conn)
-        _seed_registered_view(conn, files_root, root_id, doc_id)
+        _seed_pending_refresh_delta(conn, files_root)
 
     _run_parity_pair(
         migrated_db_template,
@@ -515,6 +506,7 @@ def test_view_render_bodiless_post_refresh_parity(
         document_id=_DOC_ID,
         root_id=_ROOT_ID,
         seed_fn=seed,
+        assert_post_differs_from_pre=True,
         dispatch_call=lambda: execute_op("view_render", {"document_id": _DOC_ID}),
         typed_call=lambda c: _typed_post_bodiless(c, f"/views/{_DOC_ID}/render"),
     )
@@ -716,6 +708,13 @@ def test_view_render_error_cases_parity(
         dispatch_raw = execute_op("view_render", payload)
         assert _error_code(dispatch_raw) == code, (label, dispatch_raw)
         assert _events_snapshot(dispatch_events) == []
+        post = _full_view_inventory(
+            cortex_db.cortex_conn(),
+            tmp_path / f"files_err_d_{label}",
+            payload.get("document_id", _DOC_ID),
+            _ROOT_ID,
+        )
+        assert post == pre, (label, pre, post)
 
         client, _, files_t = _isolated_client(
             migrated_db_template, tmp_path, monkeypatch, suffix=f"err_t_{label}"
@@ -739,9 +738,11 @@ def test_view_render_error_cases_parity(
         resp = client.post(f"/views/{doc_path}/render", json=body)
         assert resp.status_code == 200, resp.text
         assert _error_code(resp.json()) == code
-        assert _full_view_inventory(
+        assert _events_snapshot(typed_events) == []
+        post_t = _full_view_inventory(
             cortex_db.cortex_conn(), files_t, doc_path, _ROOT_ID
-        ) == pre_t
+        )
+        assert post_t == pre_t, (label, pre_t, post_t)
         assert pre_t == pre
 
 
@@ -1011,6 +1012,7 @@ def test_view_render_register_failure_preserves_preexisting_derived_from(
         (edge_id,),
     )
     assert len(rels_t) == 1
+    assert rollback_t == [] or all(r is None for r in rollback_t)
 
 
 @pytest.mark.offline

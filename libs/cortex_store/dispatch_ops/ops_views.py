@@ -60,6 +60,23 @@ def _load_document(conn, document_id: str) -> dict[str, Any] | None:
     return dict(rows[0]) if rows else None
 
 
+def _infer_root_id_from_derived_from(conn, document_id: str) -> str | None:
+    rows = query(
+        conn,
+        """
+        SELECT to_entity FROM relationships
+        WHERE from_entity = ?
+          AND type = 'derived_from'
+          AND active = 1
+        """,
+        (document_id,),
+    )
+    if len(rows) != 1:
+        return None
+    target = rows[0].get("to_entity")
+    return str(target) if target else None
+
+
 def _section_stamps(
     recipe: dict[str, Any],
     core_sections: dict[str, str],
@@ -244,6 +261,9 @@ def _op_view_render(
                         )
                 except ViewRecipeError as exc:
                     return _err(exc.code, exc.message)
+
+            if not root_id and mode in ("refresh", "full"):
+                root_id = _infer_root_id_from_derived_from(conn, document_id)
 
             source_uri = doc.get("source_uri")
             if not source_uri:
