@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, override
 
@@ -22,16 +21,12 @@ from ._message import (
     densify_ask_prompt,
     densify_dispatch_body,
     densify_sdk_model,
-    extract_densify_splice,
     parse_compose_options,
 )
+from .densify_wait import latest_turn_number, wait_sdk_closeout
 from .launch import agent_bus_headers, cursor_sdk_refuse_payload, post_json
 
-logger = logging.getLogger(__name__)
-
 _REQUEST_TIMEOUT = 30.0
-_WAIT_TIMEOUT = 55.0
-_WAIT_ROUNDS = 24
 DensifyHop = Callable[..., Awaitable[dict[str, Any]]]
 
 
@@ -92,7 +87,8 @@ class CursorPasteDensifyHandler(BaseHandler):
             payload = {
                 "ok": False,
                 "error": err,
-                "http_status": result.get("http_status") or 422,
+                "failure_class": result.get("failure_class") or "hop_failed",
+                "http_status": result.get("http_status"),
                 "model": model,
                 "densify": densify,
                 "dispatch": result.get("dispatch"),
@@ -105,7 +101,7 @@ class CursorPasteDensifyHandler(BaseHandler):
                 {
                     "ok": False,
                     "error": err,
-                    "http_status": 422,
+                    "failure_class": "empty_splice",
                     "model": model,
                     "dispatch": result.get("dispatch"),
                 },
@@ -136,170 +132,97 @@ async def default_densify_hop(
     """
     kind = bound["kind"]
     assertion_id = bound["assertion_id"]
-    thread_id = str(bound.get("densify_thread_id") or "").strip()
-    if thread_id == MAESTRO_MEMO_THREAD:
+    headers = agent_bus_headers()
+    if headers is None:
+        payload = cursor_sdk_refuse_payload(
+            reason="AGENT_BUS_TOKEN unset — cannot mint a densify thread",
+            admit={"model": model, "job": "investigate"},
+        )
         return {
             "ok": False,
+            "failure_class": "token_unset",
             "http_status": 422,
-            "error": "dispatch_thread_id 12286 is maestro memo only — mint a work/review thread",
+            "error": payload["error"],
         }
-
-    headers = agent_bus_headers()
-    if not thread_id:
-        if headers is None:
-            payload = cursor_sdk_refuse_payload(
-                reason="AGENT_BUS_TOKEN unset — cannot mint a densify thread",
-                admit={"model": model, "job": "investigate"},
-            )
+    async with make_async_client(
+        DEFAULT_AGENT_BUS_URL, timeout=_REQUEST_TIMEOUT
+    ) as bus:
+        slug = f"cursor-paste-densify-{kind}-{assertion_id}"
+        mint = await post_json(
+            bus,
+            "/threads",
+            {"slug": slug, "idempotency_key": slug},
+            headers=headers,
+        )
+        if "error" in mint:
             return {
                 "ok": False,
-                "http_status": 422,
-                "error": payload["error"],
+                "failure_class": "mint_failed",
+                "http_status": mint.get("http_status") or 422,
+                "error": f"create_thread failed: {mint['error']}",
+                "dispatch": mint,
             }
+        thread_id = str(mint.get("id") or "")
+        if not thread_id or thread_id == MAESTRO_MEMO_THREAD:
+            return {
+                "ok": False,
+                "failure_class": "mint_failed",
+                "http_status": 422,
+                "error": "create_thread returned no id"
+                if not thread_id
+                else (
+                    "dispatch_thread_id 12286 is maestro memo only — "
+                    "mint a work/review thread"
+                ),
+                "dispatch": mint,
+            }
+        after_turn = await latest_turn_number(bus, thread_id, headers)
+
+        body = densify_dispatch_body(
+            kind=kind,
+            assertion_id=assertion_id,
+            prompt=prompt,
+            dispatch_thread_id=thread_id,
+            model=model,
+        )
         async with make_async_client(
-            DEFAULT_AGENT_BUS_URL, timeout=_REQUEST_TIMEOUT
-        ) as bus:
-            slug = f"cursor-paste-densify-{kind}-{assertion_id}"
-            mint = await post_json(
-                bus,
-                "/threads",
-                {"slug": slug, "idempotency_key": slug},
-                headers=headers,
-            )
-            if "error" in mint:
-                return {
-                    "ok": False,
-                    "http_status": mint.get("http_status") or 422,
-                    "error": f"create_thread failed: {mint['error']}",
-                    "dispatch": mint,
-                }
-            thread_id = str(mint.get("id") or "")
-            if not thread_id:
-                return {
-                    "ok": False,
-                    "http_status": 422,
-                    "error": "create_thread returned no id",
-                    "dispatch": mint,
-                }
+            DEFAULT_STARGATE_URL, timeout=_REQUEST_TIMEOUT
+        ) as stargate:
+            dispatched = await post_json(stargate, "/api/v1/team/dispatch", body)
+        if dispatched.get("error") or (
+            isinstance(dispatched.get("status_code"), int)
+            and dispatched["status_code"] >= 400
+        ):
+            err = dispatched.get("error") or dispatched
+            return {
+                "ok": False,
+                "failure_class": "dispatch_refused",
+                "http_status": dispatched.get("http_status") or 422,
+                "error": str(err)[:500],
+                "dispatch": dispatched,
+                "dispatch_thread_id": thread_id,
+            }
 
-    body = densify_dispatch_body(
-        kind=kind,
-        assertion_id=assertion_id,
-        prompt=prompt,
-        dispatch_thread_id=thread_id,
-        model=model,
-    )
-    async with make_async_client(
-        DEFAULT_STARGATE_URL, timeout=_REQUEST_TIMEOUT
-    ) as stargate:
-        dispatched = await post_json(stargate, "/api/v1/team/dispatch", body)
-    if dispatched.get("error") or (
-        isinstance(dispatched.get("status_code"), int)
-        and dispatched["status_code"] >= 400
-    ):
-        err = dispatched.get("error") or dispatched
+        execution_id = str(dispatched.get("execution_id") or "")
+        closeout = await wait_sdk_closeout(
+            bus,
+            thread_id,
+            headers=headers,
+            after_turn=after_turn,
+            execution_id=execution_id,
+        )
+        if not closeout.get("ok"):
+            return {
+                "ok": False,
+                "failure_class": closeout.get("failure_class") or "wait_failed",
+                "http_status": closeout.get("http_status"),
+                "error": closeout.get("error") or "densify wait failed",
+                "dispatch": dispatched,
+                "dispatch_thread_id": thread_id,
+            }
         return {
-            "ok": False,
-            "http_status": dispatched.get("http_status") or 422,
-            "error": str(err)[:500],
+            "ok": True,
+            "splice": closeout.get("splice"),
             "dispatch": dispatched,
             "dispatch_thread_id": thread_id,
         }
-
-    closeout = await _wait_sdk_closeout(thread_id, headers=headers)
-    if not closeout.get("ok"):
-        return {
-            "ok": False,
-            "http_status": closeout.get("http_status") or 422,
-            "error": closeout.get("error") or "densify wait failed",
-            "dispatch": dispatched,
-            "dispatch_thread_id": thread_id,
-        }
-    splice = extract_densify_splice(str(closeout.get("body") or ""))
-    if not splice:
-        return {
-            "ok": False,
-            "http_status": 422,
-            "error": "densify hop returned an empty splice",
-            "dispatch": dispatched,
-            "dispatch_thread_id": thread_id,
-        }
-    return {
-        "ok": True,
-        "splice": splice,
-        "dispatch": dispatched,
-        "dispatch_thread_id": thread_id,
-    }
-
-
-async def _wait_sdk_closeout(
-    thread_id: str,
-    *,
-    headers: dict[str, str] | None,
-) -> dict[str, Any]:
-    if headers is None:
-        return {"ok": False, "error": "AGENT_BUS_TOKEN unset — cannot wait densify hop"}
-    last: dict[str, Any] = {}
-    async with make_async_client(
-        DEFAULT_AGENT_BUS_URL, timeout=_WAIT_TIMEOUT + 5.0
-    ) as bus:
-        for _ in range(_WAIT_ROUNDS):
-            try:
-                resp = await bus.get(
-                    f"/threads/{thread_id}/wait",
-                    params={
-                        "from_agent": "cursor-sdk",
-                        "wait": int(_WAIT_TIMEOUT),
-                        "completion": "proof_reply_from",
-                    },
-                    headers=headers,
-                )
-            except Exception as exc:
-                return {"ok": False, "error": f"wait transport_error: {exc}"}
-            try:
-                last = resp.json() if resp.content else {}
-            except Exception:
-                last = {"raw": (resp.text or "")[:300]}
-            if not isinstance(last, dict):
-                last = {"value": last}
-            if resp.status_code >= 400:
-                last.setdefault("error", f"http_{resp.status_code}")
-                return {
-                    "ok": False,
-                    "http_status": resp.status_code,
-                    "error": str(last.get("error")),
-                }
-            status = str(last.get("status") or last.get("completion") or "")
-            body = _closeout_body(last)
-            if body and extract_densify_splice(body):
-                return {"ok": True, "body": body}
-            if status in {"complete", "completed", "error", "failed"}:
-                if status in {"error", "failed"}:
-                    return {
-                        "ok": False,
-                        "error": str(last.get("error") or status),
-                        "body": body,
-                    }
-                return {"ok": True, "body": body}
-    return {
-        "ok": False,
-        "error": "densify hop wait exhausted without a splice",
-        "dispatch": last,
-    }
-
-
-def _closeout_body(payload: dict[str, Any]) -> str:
-    turn = payload.get("turn") if isinstance(payload.get("turn"), dict) else {}
-    for key in ("body", "text", "content"):
-        value = payload.get(key) or turn.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    turns = payload.get("turns")
-    if isinstance(turns, list) and turns:
-        last = turns[-1]
-        if isinstance(last, dict):
-            for key in ("body", "text", "content"):
-                value = last.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value
-    return ""

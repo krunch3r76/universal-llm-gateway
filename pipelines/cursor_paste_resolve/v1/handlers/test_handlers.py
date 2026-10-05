@@ -26,6 +26,11 @@ from ._message import (
     work_key_for,
 )
 from .densify import CursorPasteDensifyHandler
+from .densify_wait import (
+    WAIT_SNAPSHOT_KEYS,
+    wait_sdk_closeout,
+    wait_snapshot_fixture,
+)
 from .launch import CursorPasteLaunchHandler, bridge_argv, paste_thread_name
 
 pytestmark = pytest.mark.offline
@@ -484,3 +489,87 @@ async def test_tab_opus_sets_bridge_model_query(tmp_path: Path) -> None:
     assert (
         "CURSOR_BRIDGE_MODEL_QUERY=claude-opus-5-5" in env["CURSOR_BRIDGE_REMOTE_ENV"]
     )
+
+
+def test_wait_snapshot_fixture_matches_route_keys() -> None:
+    snap = wait_snapshot_fixture()
+    assert set(snap) == WAIT_SNAPSHOT_KEYS
+    assert "body" not in snap
+    assert "text" not in snap
+    assert "content" not in snap
+    assert "turns" not in snap
+
+
+class _Resp:
+    def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.content = b"{}"
+        self.text = ""
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _WaitBus:
+    def __init__(
+        self,
+        wait_payload: dict[str, object],
+        turn_payload: dict[str, object] | None = None,
+    ) -> None:
+        self.paths: list[str] = []
+        self.wait_params: list[dict[str, object]] = []
+        self.wait_payload = wait_payload
+        self.turn_payload = turn_payload or {}
+
+    async def get(
+        self,
+        path: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _Resp:
+        self.paths.append(path)
+        if path.endswith("/wait"):
+            self.wait_params.append(dict(params or {}))
+            return _Resp(self.wait_payload)
+        if path == "/turns/by-number":
+            return _Resp(self.turn_payload)
+        return _Resp({"error": path}, status_code=404)
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_fetches_qualifying_turn_body() -> None:
+    splice = f"{SPLICE_START}\nsurfaces: live\n{SPLICE_END}"
+    bus = _WaitBus(
+        wait_snapshot_fixture(
+            qualifying_reply_turn=2, complete=True, status="complete"
+        ),
+        {"turn_number": 2, "from": "cursor-sdk", "body": splice},
+    )
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=4,
+        execution_id="exec-1",
+    )
+    assert out["ok"] is True
+    assert out["splice"] == "surfaces: live"
+    assert bus.wait_params[0]["after_turn"] == 4
+    assert bus.wait_params[0]["execution_id"] == "exec-1"
+    assert bus.paths == ["/threads/99/wait", "/turns/by-number"]
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_producer_terminal_stops() -> None:
+    bus = _WaitBus(wait_snapshot_fixture(status="producer_terminal", complete=False))
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=0,
+        execution_id="",
+    )
+    assert out["ok"] is False
+    assert out["failure_class"] == "producer_terminal"
+    assert bus.paths == ["/threads/99/wait"]
