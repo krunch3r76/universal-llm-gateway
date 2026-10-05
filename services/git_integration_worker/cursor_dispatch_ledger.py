@@ -21,6 +21,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from implement_admission.conductor_g5_nest_pin import pin_g5_nest_dispatch_id
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_home import operator_real_home
@@ -1334,6 +1335,7 @@ class CursorDispatchLedger:
         )
 
         park_emits: list = []
+        g5_nest_pin: dict[str, Any] | None = None
         with emit_after_commit(park_emits), self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
@@ -1561,7 +1563,7 @@ class CursorDispatchLedger:
                             )
                     else:
                         holder_row = conn.execute(
-                            "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                            "SELECT dispatch_id, contract FROM cursor_sdk_dispatches "
                             "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
                             "AND status IN ('admitted','running') AND dispatch_id<>? "
                             "LIMIT 1",
@@ -1597,6 +1599,13 @@ class CursorDispatchLedger:
                         nested_park_parent = nest_under
                         insert_status = _STATUS_ADMITTED
                         queued_at = None
+                        g5_nest_pin = {
+                            "parent_dispatch_id": nest_under,
+                            "parent_contract": holder_row["contract"],
+                            "child_contract": contract,
+                            "work_key": effective_work_key,
+                            "source_repo": source_repo,
+                        }
                 if nested_park_parent is None and (
                     (conflict and conflict_holder is not None)
                     or prior_queued is not None
@@ -1757,10 +1766,9 @@ class CursorDispatchLedger:
                     req.wake_lane,
                 ),
             )
-            if nested_park_parent is not None:
-                # Capacity transfer is caller's duty (cursor_sdk_park); ledger done.
-                return None
-            if insert_status == _STATUS_QUEUED:
+            if g5_nest_pin is not None:
+                pin_g5_nest_dispatch_id(**g5_nest_pin)
+            if nested_park_parent is None and insert_status == _STATUS_QUEUED:
                 pos = self._queue_position_conn(
                     conn,
                     dispatch_id=req.dispatch_id,

@@ -263,16 +263,34 @@ def _dispatch_ids_on_thread(ledger: Any, thread_id: str) -> list[str]:
     return [str(row["dispatch_id"]) for row in rows]
 
 
+def _dispatch_ids_for_work_key(ledger: Any, work_key: str) -> list[str]:
+    """Ledger parents/children sharing ``work_key`` (a:37920 tip-line miss)."""
+    with ledger._connect() as conn:
+        cols = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
+        }
+        if "work_key" not in cols:
+            return []
+        rows = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE work_key=?",
+            (work_key,),
+        ).fetchall()
+    return [str(row["dispatch_id"]) for row in rows]
+
+
 def parent_ids_for_tip(
     ledger: Any,
     tip_body: str,
     explicit_parent_id: str | None,
+    work_key: str | None = None,
 ) -> list[str]:
     """Parent ids the G5 witness should try, explicit id first.
 
     The scoreboard names the hop-1 conductor (``dispatch `<id>` on thread N``).
     The nested child that authored the commits may sit under a later dispatch
-    on that same thread, which the hop-1 id does not nest.
+    on that same thread, which the hop-1 id does not nest. When the tip omits
+    that line, rows sharing ``work_key`` still name the nest parent.
     """
     ordered: list[str] = []
     if explicit_parent_id:
@@ -288,6 +306,11 @@ def parent_ids_for_tip(
         for dispatch_id in _dispatch_ids_on_thread(ledger, thread_id):
             if dispatch_id not in ordered:
                 ordered.append(dispatch_id)
+    key = (work_key or "").strip()
+    if key:
+        for dispatch_id in _dispatch_ids_for_work_key(ledger, key):
+            if dispatch_id not in ordered:
+                ordered.append(dispatch_id)
     return ordered
 
 
@@ -295,10 +318,13 @@ def nested_parent_with_commits(
     *,
     tip_body: str,
     explicit_parent_id: str | None,
+    work_key: str | None = None,
 ) -> str | None:
     """Return a parent dispatch id whose nested child authored commits."""
     ledger = _ledger_for_witness()
-    for parent_id in parent_ids_for_tip(ledger, tip_body, explicit_parent_id):
+    for parent_id in parent_ids_for_tip(
+        ledger, tip_body, explicit_parent_id, work_key=work_key
+    ):
         if nested_implement_has_commits(nest_under_dispatch_id=parent_id):
             return parent_id
     return None
@@ -317,10 +343,12 @@ class LedgerNestedImplementWitness:
         *,
         tip_body: str,
         explicit_parent_id: str | None,
+        work_key: str | None = None,
     ) -> str | None:
         return nested_parent_with_commits(
             tip_body=tip_body,
             explicit_parent_id=explicit_parent_id,
+            work_key=work_key,
         )
 
 

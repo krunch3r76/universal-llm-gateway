@@ -823,3 +823,47 @@ def test_g5_attended_nested_implement_without_resurface(tmp_path: Path) -> None:
         rows=G_ROWS,
     )
     assert witnesses.get("G5") is None
+
+
+class _WorkKeyNestedImplement:
+    def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
+        _ = nest_under_dispatch_id
+        return False
+
+    def parent_with_commits(
+        self,
+        *,
+        tip_body: str,
+        explicit_parent_id: str | None,
+        work_key: str | None = None,
+    ) -> str | None:
+        _ = tip_body
+        if explicit_parent_id:
+            return None
+        if work_key == _SOURCE_REF:
+            return "parent-from-work-key"
+        return None
+
+
+@pytest.mark.offline
+def test_g5_implement_uses_work_key_when_tip_omits_dispatch_id(
+    tmp_path: Path,
+) -> None:
+    """Falsifier a:37920 — nested commits witness G5 with the pin line deleted."""
+    tip_body = "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+    g5 = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=FoldDeps(
+            cortex=_StubCortex(),
+            nested_implement=_WorkKeyNestedImplement(),
+            source_ref=_SOURCE_REF,
+            summon_mode="away",
+            repo=tmp_path / "repo",
+        ),
+        files_root=tmp_path / "cortex",
+        rows=G_ROWS,
+    ).get("G5")
+    assert g5 is not None
+    assert g5.source == "ledger:nested_implement"
+    assert g5.detail == "parent-from-work-key"

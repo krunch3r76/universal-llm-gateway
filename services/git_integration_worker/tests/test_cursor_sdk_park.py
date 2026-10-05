@@ -177,3 +177,79 @@ def test_restore_from_park_clears_park_and_unblocks_promote() -> None:
     promoted = ledger.promote_next_queued(source_repo=repo, worker_instance="w")
     assert promoted is not None
     assert promoted.dispatch_id == "sib-3"
+
+
+def test_g5_nest_pin_refuse_rolls_back_park(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin refuse aborts the admit transaction — parent stays live, child absent."""
+    from universal_protocol.errors import ProtocolError
+
+    from services.git_integration_worker.cursor_dispatch_ledger import _connect
+
+    def _boom(**_kwargs: object) -> None:
+        raise ProtocolError(
+            code="CURSOR_G5_NEST_DISPATCH_ID_UNPINNED",
+            message="pin refused",
+            source="worker",
+        )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_dispatch_ledger.pin_g5_nest_dispatch_id",
+        _boom,
+    )
+    ledger = CursorDispatchLedger.instance()
+    repo = "/tmp/repo-g5-pin-rollback"
+    parent = _req(
+        dispatch_id="parent-g5",
+        execution_id="e-pg5",
+        message="parent-g5",
+        work_key="todo:g5-pin-rollback",
+    )
+    assert (
+        ledger.admit(
+            req=parent,
+            fingerprint=ledger.fingerprint(parent),
+            execution_id=parent.execution_id,
+            caller_agent=None,
+            resolved_model="composer-2.5",
+            admission=_admission(parent),
+            source_repo=repo,
+            contract="conductor",
+            work_key="todo:g5-pin-rollback",
+        )
+        is None
+    )
+    ledger.mark_running(dispatch_id="parent-g5")
+    child = _req(
+        dispatch_id="child-g5",
+        execution_id="e-cg5",
+        message="child-g5",
+        nest_under="parent-g5",
+        thread_id="t-g5c",
+        work_key="todo:g5-pin-rollback",
+    )
+    with pytest.raises(ProtocolError) as caught:
+        ledger.admit(
+            req=child,
+            fingerprint=ledger.fingerprint(child),
+            execution_id=child.execution_id,
+            caller_agent=None,
+            resolved_model="composer-2.5",
+            admission=_admission(child),
+            source_repo=repo,
+            nest_under="parent-g5",
+            contract="implement",
+            work_key="todo:g5-pin-rollback",
+        )
+    assert caught.value.code == "CURSOR_G5_NEST_DISPATCH_ID_UNPINNED"
+    with _connect() as conn:
+        parent_row = conn.execute(
+            "SELECT status, park_child_dispatch_id FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id='parent-g5'"
+        ).fetchone()
+        child_row = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id='child-g5'"
+        ).fetchone()
+    assert parent_row is not None
+    assert parent_row["status"] == "running"
+    assert parent_row["park_child_dispatch_id"] is None
+    assert child_row is None
