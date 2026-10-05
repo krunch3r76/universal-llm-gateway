@@ -33,7 +33,10 @@ from claude_bundles.cdp_model_endpoint_staging import (
 from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
-from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
+from claude_bundles.overload_only_harvest import (
+    _ERROR_BANNER_ONLY_MAX_LEN,
+    is_error_banner_only_harvest,
+)
 
 DEFAULT_MAX_WALL_S = 1800
 DEFAULT_NO_PROGRESS_S = 600
@@ -391,12 +394,16 @@ def _proof_rejects_overload(snapshot: dict[str, Any]) -> bool:
 
 def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
     """True when harvest is a product quota banner, not a seat reply."""
-    body = str(snapshot.get("body") or "")
     banner = " ".join(
         str(snapshot.get(k) or "")
         for k in ("error_banner_text", "error_banner_match", "error_banner")
     )
-    return bool(_WEEKLY_LIMIT_RE.search(body) or _WEEKLY_LIMIT_RE.search(banner))
+    if _WEEKLY_LIMIT_RE.search(banner):
+        return True
+    body = str(snapshot.get("body") or "")
+    if body and len(body) <= _ERROR_BANNER_ONLY_MAX_LEN:
+        return bool(_WEEKLY_LIMIT_RE.search(body))
+    return False
 
 
 def _weekly_limit_result(

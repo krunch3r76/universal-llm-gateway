@@ -2065,6 +2065,114 @@ def test_run_cdp_generate_weekly_limit_terminal_failure_still_aborts(
     assert retain_calls == [False]
 
 
+_WEEKLY_LIMIT_ARCHIVE_PHRASE = (
+    "it does this for overload, the weekly limit, completed_without_proof"
+)
+
+
+def test_weekly_limit_rejects_long_review_mentioning_limit_in_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Long seat review that discusses weekly_limit grading must not stall."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-review-mention")
+    review_body = (
+        "VERDICT: APPROVE\n\n"
+        + ("Analysis paragraph. " * 400)
+        + _WEEKLY_LIMIT_ARCHIVE_PHRASE
+        + ".\n"
+    )
+    assert len(review_body) > 5000
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-review", "status": "running"},
+            {
+                "execution_id": "sat-wl-review",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-review.md",
+                "body": review_body,
+                "attested_model": "Model: Opus 5.5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-review-mention",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="code-review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert result.stall_stage is None
+
+
+def test_run_cdp_generate_weekly_limit_from_harvested_banner_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Product quota banner in DOM harvest fields still grades weekly_limit."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-banner-fields")
+    banner = "You've hit your weekly limit. Try again next week."
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-banner", "status": "running"},
+            {
+                "execution_id": "sat-wl-banner",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-banner.md",
+                "body": "VERDICT: WITHHOLD\n\nShort review body without limit wording.",
+                "error_banner": banner,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-banner-fields",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
+def test_run_cdp_generate_weekly_limit_short_body_only_banner_sentence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Banner sentence as harvested body when DOM scan missed banner fields."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-body-only")
+    banner_body = "You've hit your weekly limit. Try again next week."
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-body-only", "status": "running"},
+            {
+                "execution_id": "sat-wl-body-only",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-body.md",
+                "body": banner_body,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-body-only",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
 def test_run_cdp_generate_weekly_limit_proof_path_aborts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
