@@ -10,8 +10,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from systems.frontier_consult.cdp_generate_inflight_ledger import InflightLeg
 from systems.proxy.dependencies import get_auth_dependency, get_proxy
-from systems.proxy.routers.api import execution_monitor, executions
+from systems.proxy.routers.api import (
+    execution_authority_read,
+    execution_monitor,
+    executions,
+)
 from systems.proxy.routers.api.execution_authority_read import AuthorityReadResult
 
 pytestmark = pytest.mark.offline
@@ -144,6 +149,110 @@ async def test_ac2_authority_streaming_when_tracker_journal_bus_miss(
     assert body is not None
     assert body["status"] == "running"
     assert body["state"] == "streaming"
+    assert body["source"] == "cdp_registry.execution_state"
+    assert "recovered_from" not in body.get("recovery", {})
+
+
+def _fake_satellite_state_payload(
+    execution_id: str,
+    *,
+    state: str,
+) -> dict[str, Any]:
+    return {
+        "execution_state": {
+            "execution_id": execution_id,
+            "state": state,
+            "updated_at": 1_700_000_000.0,
+            "holder_pid": 42,
+        },
+        "execution_state_freshness": "live",
+        "store": None,
+        "as_of": "2026-01-01T00:00:00Z",
+    }
+
+
+def _patch_fake_satellite_state(
+    monkeypatch: pytest.MonkeyPatch,
+    execution_id: str,
+    *,
+    state: str,
+    satellite_execution_id: str | None = None,
+) -> None:
+    """Wire relay + project-ask URL; optional inflight leg for id resolution."""
+    monkeypatch.setattr(
+        execution_authority_read,
+        "project_ask_base_url",
+        lambda: "http://127.0.0.1:9",
+    )
+    if satellite_execution_id is not None:
+
+        def _read_leg(eid: str) -> InflightLeg | None:
+            if eid != execution_id:
+                return None
+            return InflightLeg(
+                execution_id=execution_id,
+                request_id="req-ac2",
+                satellite_execution_id=satellite_execution_id,
+                thread_id="15068",
+                pointer_turn=1,
+                caller_agent="cursor",
+                prompt_uri="cortex://test",
+                model_id="cdp/fable-5.1",
+                max_wall_s=600.0,
+                admitted_at="2026-01-01T00:00:00Z",
+                proof_emitted=False,
+                delivered=False,
+                abandoned=False,
+            )
+
+        monkeypatch.setattr(execution_authority_read, "read_inflight_leg", _read_leg)
+
+    expected_path = f"/v1/project-ask/executions/{execution_id}/state"
+    if satellite_execution_id:
+        expected_path = (
+            f"{expected_path}?satellite_execution_id={satellite_execution_id}"
+        )
+    payload = _fake_satellite_state_payload(execution_id, state=state)
+
+    async def _relay(method: str, path: str, **_kwargs: Any) -> tuple[int, dict, str]:
+        assert method == "GET"
+        assert path == expected_path
+        return 200, payload, "application/json"
+
+    monkeypatch.setattr(execution_authority_read, "relay_async", _relay)
+
+
+@pytest.mark.parametrize("state", ["seated", "streaming"])
+def test_ac2_get_inflight_via_fake_satellite_state(
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    """GET ladder hits relay /state; read_execution_authority is not stubbed."""
+    execution_id = "0af05e2f-1111-4222-8333-444455556666"
+    satellite_id = "67aae3ee-ff0b-4e63-bfad-de87ceac2f93"
+    tracker = _tracker_stub()
+    _patch_fake_satellite_state(
+        monkeypatch,
+        execution_id,
+        state=state,
+        satellite_execution_id=satellite_id,
+    )
+    monkeypatch.setattr(
+        execution_monitor,
+        "recover_execution_from_bus_thread",
+        AsyncMock(
+            side_effect=AssertionError(
+                "bus_thread recovery must not run on authority hit"
+            )
+        ),
+    )
+    client = _executions_client(tracker, monkeypatch)
+
+    response = client.get(f"/executions/{execution_id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "running"
+    assert body["state"] == state
     assert body["source"] == "cdp_registry.execution_state"
     assert "recovered_from" not in body.get("recovery", {})
 
