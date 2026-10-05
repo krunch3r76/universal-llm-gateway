@@ -31,7 +31,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 UNBOUND_BASELINE: frozenset[str] = frozenset(
     {
         "claim_alignment",
-        "deadline_resolve",
         "endeavor_dispose_row",
         "endeavor_repair_t1",
         "endeavor_write_row",
@@ -42,8 +41,6 @@ UNBOUND_BASELINE: frozenset[str] = frozenset(
         "recon_sidecar_write",
         "register_skill_substrate",
         "relationships_bulk_upsert",
-        "rj_consolidate",
-        "tag_resolve",
         "thread_sidecar_write",
         "todo_close_sidecar",
         "view_render",

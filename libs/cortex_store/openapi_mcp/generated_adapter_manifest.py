@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "4fe3923a2c9da07f21c2527ad54c8a2f14f5bfa1ccbeee843174581364ec10e7"
+OPENAPI_SHA256 = "7f60e7a35ac66bd55c4c6290de044eddfe0f86a3a8ceade928b032a00513ab10"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -49,6 +49,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/boot-audit-counters",
         "operation_id": "boot_audit_counters_boot_audit_counters_get",
+    },
+    "deadline_resolve": {
+        "method": "POST",
+        "path": "/deadlines/{deadline_id}/resolve",
+        "operation_id": "deadline_resolve_route_deadlines__deadline_id__resolve_post",
     },
     "deadlines": {
         "method": "GET",
@@ -180,6 +185,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/resolve",
         "operation_id": "resolve_cortex_uri_resolve_get",
     },
+    "rj_consolidate": {
+        "method": "POST",
+        "path": "/reflective-journal/consolidations",
+        "operation_id": "rj_consolidate_route_reflective_journal_consolidations_post",
+    },
     "rj_link": {
         "method": "POST",
         "path": "/reflective-journal/{entry_id}/links",
@@ -280,6 +290,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/tags",
         "operation_id": "list_tags_tags_get",
     },
+    "tag_resolve": {
+        "method": "GET",
+        "path": "/tags/{tag_name}/resolve",
+        "operation_id": "tag_resolve_route_tags__tag_name__resolve_get",
+    },
     "todo_audit": {
         "method": "GET",
         "path": "/todo-audit",
@@ -297,7 +312,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "f2ad7f7835f1a812b9e83229fbdf874b4dc07c335eec3470c8f15fb03ba5445b",
+    "@components": "777d1c52eea17d895b0d6196a24e368639fc32cb014e3f33d7fd0bb4dab3ca55",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

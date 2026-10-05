@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "f6290b7228f61d64aeca8d7892a886f11535bd71e2ad781f97a63a23ba37d6e5"
+OPENAPI_SHA256 = "199c204496b45203805ab75609087da3671f180955632e5ad7c45f4db7488d6b"
 FACADE_TOOL = "rag"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "coverage": {
@@ -47,7 +47,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "9e076c2ff9d8b176f40a2761a819d8ba0cfaf165d5c6828a205c636f160b21a2",
+    "@components": "163f78706eae190bf176712fe23b9e3736e4edaff52239d6676bbdee5d0a1fbf",
     "@info": "77e496792f0915708096b3bac40c1ab86b45641b4ff6231aa452bf8f653d6852",
     "DELETE /indexing_failures/{source}": "e30c51d4c872392e7142ecc9a1286956eaefc0cabfa7302cea0078cc488c2be7",
     "GET /articles": "07c287482f97680d989f70f87c9a6bbfe69e29a845742091e1ec29d82a5e410d",

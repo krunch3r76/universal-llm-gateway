@@ -24,6 +24,7 @@ from ..models import (
     ReflectiveEntryItem,
     ReflectiveEntryList,
 )
+from ..models.substrate_s6_batch3 import RjConsolidateRequest
 
 logger = get_logger("cortex-api.reflective_journal")
 router = APIRouter(prefix="/reflective-journal", tags=["reflective-journal"])
@@ -254,6 +255,14 @@ def get_entry(entry_id: int) -> ReflectiveEntryItem:
         conn.close()
 
     return _row_to_item(rows[0], links_by_entry.get(entry_id, []))
+
+
+@router.post("/consolidations", openapi_extra=x_mcp("rj_consolidate"))
+def rj_consolidate_route(body: RjConsolidateRequest) -> dict[str, Any]:
+    """Synthesize a consolidation entry (dispatch ``rj_consolidate`` op)."""
+    from ..dispatch_ops.ops_reflective import _op_rj_consolidate
+
+    return _op_rj_consolidate(**body.model_dump(exclude_unset=True))
 
 
 @router.post(

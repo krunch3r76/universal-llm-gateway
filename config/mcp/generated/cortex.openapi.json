@@ -2574,6 +2574,61 @@
         "title": "DeadlineList",
         "type": "object"
       },
+      "DeadlineResolveRequest": {
+        "properties": {
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "fulfilling_assertion_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfilling Assertion Id"
+          },
+          "outcome": {
+            "default": "met",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          }
+        },
+        "title": "DeadlineResolveRequest",
+        "type": "object"
+      },
       "DispatchRequest": {
         "properties": {
           "arguments": {
@@ -6275,6 +6330,164 @@
           "via"
         ],
         "title": "ResolvedEntity",
+        "type": "object"
+      },
+      "RjConsolidateRequest": {
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "contradiction_set": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contradiction Set"
+          },
+          "entry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry"
+          },
+          "falsifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Falsifier"
+          },
+          "now": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Now"
+          },
+          "register": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Register"
+          },
+          "rendered_shift": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rendered Shift"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "source_entry_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Entry Ids"
+          },
+          "tension_points": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tension Points"
+          },
+          "throughline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Throughline"
+          }
+        },
+        "title": "RjConsolidateRequest",
         "type": "object"
       },
       "SeatClaimHolder": {
@@ -14121,6 +14334,193 @@
         }
       }
     },
+    "/deadlines/{deadline_id}/resolve": {
+      "post": {
+        "description": "Atomically close a deadline entity (dispatch ``deadline_resolve`` op).",
+        "operationId": "deadline_resolve_route_deadlines__deadline_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deadline_id",
+            "required": true,
+            "schema": {
+              "title": "Deadline Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeadlineResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Deadline Resolve Route Deadlines  Deadline Id  Resolve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deadline Resolve Route",
+        "tags": [
+          "deadlines"
+        ],
+        "x-mcp": {
+          "op": "deadline_resolve",
+          "tool": "cortex"
+        }
+      }
+    },
     "/dispatch": {
       "post": {
         "description": "Execute a named cortex op. Body: {tool, arguments}.\n\narguments accepts either a JSON object or a JSON-encoded string (xAI\nremote-MCP emits objects; legacy agent_seat callers emit strings).\n\nOptional telemetry fields (surface, seat, via_adapter) are relayed from the\nMCP adapter for per-op \u00d7 per-seat observability. Routing headers win over\nthose body fields when both are present; both keep flowing so an old\nadapter and a new cortex_api still interoperate during the restart window.",
@@ -19299,6 +19699,184 @@
         ],
         "x-mcp": {
           "op": "rj_write",
+          "tool": "cortex"
+        }
+      }
+    },
+    "/reflective-journal/consolidations": {
+      "post": {
+        "description": "Synthesize a consolidation entry (dispatch ``rj_consolidate`` op).",
+        "operationId": "rj_consolidate_route_reflective_journal_consolidations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RjConsolidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rj Consolidate Route Reflective Journal Consolidations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rj Consolidate Route",
+        "tags": [
+          "reflective-journal"
+        ],
+        "x-mcp": {
+          "op": "rj_consolidate",
           "tool": "cortex"
         }
       }
@@ -25073,6 +25651,198 @@
         "tags": [
           "tags"
         ]
+      }
+    },
+    "/tags/{tag_name}/resolve": {
+      "get": {
+        "description": "Resolve a tag pointer to its assertion (dispatch ``tag_resolve`` op).",
+        "operationId": "tag_resolve_route_tags__tag_name__resolve_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tag_name",
+            "required": true,
+            "schema": {
+              "title": "Tag Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Entity id (TYPE:SLUG)",
+            "in": "query",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "description": "Entity id (TYPE:SLUG)",
+              "title": "Entity Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolve_aliases",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Resolve Aliases",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "raw_id",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Raw Id",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Tag Resolve Route Tags  Tag Name  Resolve Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tag Resolve Route",
+        "tags": [
+          "tags"
+        ],
+        "x-mcp": {
+          "op": "tag_resolve",
+          "tool": "cortex"
+        }
       }
     },
     "/todo-audit": {

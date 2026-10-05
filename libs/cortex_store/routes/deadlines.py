@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from fastapi import APIRouter, Query
 from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..action_hints import detect_deadline_resolution
-from ..db import cortex_conn, query
+from ..db import cortex_conn, execute, query
 from ..models import DeadlineItem, DeadlineList
+from ..models.substrate_s6_batch3 import DeadlineResolveRequest
 
 logger = get_logger("cortex-api.deadlines")
 router = APIRouter(prefix="/deadlines", tags=["deadlines"])
@@ -149,3 +151,27 @@ def list_deadlines(
 
 def _list_deadlines_impl(*, include_resolved: bool = False) -> dict[str, object]:
     return list_deadlines(include_resolved=include_resolved).model_dump(mode="json")
+
+
+@router.post("/{deadline_id}/resolve", openapi_extra=x_mcp("deadline_resolve"))
+def deadline_resolve_route(
+    deadline_id: str,
+    body: DeadlineResolveRequest,
+) -> dict[str, Any]:
+    """Atomically close a deadline entity (dispatch ``deadline_resolve`` op)."""
+    from ..dispatch_ops.ops_journals import _op_deadline_resolve
+
+    result = _op_deadline_resolve(
+        deadline_id=deadline_id,
+        **body.model_dump(exclude_unset=True),
+    )
+    # Typed route keeps the deadline open when the outcome merge fails (AC3).
+    if (
+        isinstance(result, dict)
+        and result.get("outcome_set") is False
+        and (aid := result.get("resolution_assertion_id"))
+    ):
+        with cortex_conn() as conn:
+            execute(conn, "DELETE FROM assertions WHERE id = ?", (aid,))
+        result = {**result, "resolution_assertion_id": None}
+    return result

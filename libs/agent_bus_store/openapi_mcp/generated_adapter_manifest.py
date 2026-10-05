@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "858bdd6b44ed90eee83f27f427f67622898697b3fa5ed3741c8b3c542bf6d6d6"
+OPENAPI_SHA256 = "d4962a322a20fcba82659d02c7daa0d4bf567f56e7b2bad371abb05cf9a3ccc7"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -137,7 +137,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "1d8709f320369c05252fe6a185240b7cb2499b2e3f1482ca37ed559d849122d1",
+    "@components": "16c64fde2efa8b05e690ffa774ecc7dabdb97e8b9a2399626a69fbe66525220a",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
     "GET /health": "1863eebbca661a08d0f2f879e48af294a3e3619e30ff42052a2ffdb33010d20c",

@@ -106,6 +106,24 @@ def assign_tag(req: TagAssignRequest) -> dict[str, Any]:
     return rows[0] if rows else {"ok": True}
 
 
+@router.get("/{tag_name}/resolve", openapi_extra=x_mcp("tag_resolve"))
+def tag_resolve_route(
+    tag_name: str,
+    entity_id: str = Query(..., description="Entity id (TYPE:SLUG)"),
+    resolve_aliases: bool = Query(True),
+    raw_id: bool = Query(False),
+) -> dict[str, Any]:
+    """Resolve a tag pointer to its assertion (dispatch ``tag_resolve`` op)."""
+    from ..dispatch_ops.ops_misc import _op_tag_resolve
+
+    return _op_tag_resolve(
+        tag_name=tag_name,
+        entity_id=entity_id,
+        resolve_aliases=resolve_aliases,
+        raw_id=raw_id,
+    )
+
+
 @router.delete("/{tag_name}")
 def delete_tag(
     tag_name: str,
