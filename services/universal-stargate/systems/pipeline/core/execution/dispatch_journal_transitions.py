@@ -264,6 +264,7 @@ def sweep_orphan_started_sync(
             body["status"] = "failed"
             body["state"] = "failed"
             body["completed_at"] = now_iso
+            body["as_of"] = now_iso
             body["error"] = {
                 "code": "interrupted_by_restart",
                 "message": "Dispatch interrupted by process restart",
