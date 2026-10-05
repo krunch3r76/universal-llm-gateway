@@ -277,6 +277,9 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     _include(reaper.router)
     _include(reflective_journal.router)
     _include(seat_claims.router)
+    from .routes.frictions import router as frictions_router
+
+    _include(frictions_router)
     from .routes.triage import router as triage_router
 
     _include(triage_router, prefix="/assertions")
