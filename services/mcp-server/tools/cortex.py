@@ -60,4 +60,22 @@ def register_cortex_tools(mcp: FastMCP, surface: Surface = "life") -> None:
         }
         if seat:
             body["seat"] = str(seat)
-        return cx("POST", "/dispatch", body, dispatch_tool=tool)
+        headers: dict[str, str] = {
+            "X-ULG-Surface": req_surface,
+            "X-ULG-Adapter": "mcp-server",
+        }
+        if seat:
+            headers["X-ULG-Seat"] = str(seat)
+        caller = meta.get("caller_identity")
+        if caller:
+            headers["X-ULG-Caller"] = str(caller)
+        session_id = meta.get("mcp_session_id")
+        if session_id:
+            headers["X-ULG-Session"] = str(session_id)
+        return cx(
+            "POST",
+            "/dispatch",
+            body,
+            headers=headers,
+            dispatch_tool=tool,
+        )

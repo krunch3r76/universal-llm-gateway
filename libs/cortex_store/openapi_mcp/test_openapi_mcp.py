@@ -10,6 +10,7 @@ import pytest
 
 from cortex_store.dispatch_ops import _OP_SPECS
 from cortex_store.main import create_app
+from cortex_store.openapi_mcp._route_map import UNTYPEABLE_OPS
 from cortex_store.openapi_mcp.bijection import (
     assert_op_served_bijection,
     assert_served_bijection,
@@ -24,7 +25,6 @@ from cortex_store.openapi_mcp.codegen import check_generated_module, dry_run_gen
 from cortex_store.openapi_mcp.death_path import DEATH_PATH_GATE_DOC, death_path_gate_met
 from cortex_store.openapi_mcp.generated_adapter_manifest import SERVED_OPS
 from cortex_store.openapi_mcp.schema_channel import SCHEMA_CHANNEL_DEFAULT
-from cortex_store.openapi_mcp._route_map import UNTYPEABLE_OPS
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -303,3 +303,43 @@ def test_reachable_unserved_violations_during_strangler() -> None:
     violations = find_reachable_unserved_violations(live_ops)
     assert "entity_get" not in violations
     assert "assert" not in violations
+
+
+_ROUTING_HEADERS = frozenset(
+    {
+        "X-ULG-Surface",
+        "X-ULG-Seat",
+        "X-ULG-Caller",
+        "X-ULG-Adapter",
+        "X-ULG-Thread",
+        "X-ULG-Session",
+        "traceparent",
+    }
+)
+_WRITE_METHODS = frozenset({"post", "put", "patch", "delete"})
+
+
+@pytest.mark.offline
+def test_every_stamped_op_declares_routing_headers() -> None:
+    schema = create_app().openapi()
+    seen = 0
+    for path, methods in schema.get("paths", {}).items():
+        if not isinstance(methods, dict):
+            continue
+        for method, spec in methods.items():
+            if method not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            if not isinstance(spec, dict) or "x-mcp" not in spec:
+                continue
+            seen += 1
+            params = [p for p in (spec.get("parameters") or []) if isinstance(p, dict)]
+            headers = [p for p in params if p.get("in") == "header"]
+            names = {p["name"] for p in headers}
+            expected = set(_ROUTING_HEADERS)
+            if method in _WRITE_METHODS:
+                expected.add("Idempotency-Key")
+            assert names == expected, f"{method.upper()} {path}: {sorted(names)}"
+            assert len(headers) == len(names), f"duplicate headers on {method} {path}"
+            for param in headers:
+                assert param.get("required", False) is False
+    assert seen > 0
