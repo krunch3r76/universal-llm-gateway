@@ -15,9 +15,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+
+def _default_checkpoint_storage_path() -> str:
+    data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+    return str(data_dir / "pipeline_checkpoints")
 
 if TYPE_CHECKING:
     from .execution.map_reduce import MapIterationContext
@@ -208,7 +215,9 @@ class CheckpointConfig:
     enabled: bool = True
     strategy: Literal["per_step", "milestone", "none"] = "per_step"
     backend: str = "filesystem"
-    storage_path: str = "/tmp/pipeline_checkpoints"
+    storage_path: str = dataclass_field(
+        default_factory=_default_checkpoint_storage_path
+    )
     ttl_seconds: int = 86400
     resume_on_failure: bool = True
     options: dict = dataclass_field(default_factory=dict)

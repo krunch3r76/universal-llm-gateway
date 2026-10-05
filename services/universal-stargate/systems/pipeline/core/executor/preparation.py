@@ -17,6 +17,7 @@ Invariants:
 from __future__ import annotations
 
 import time
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,8 +34,14 @@ from ..events.step import (
     SubPipelineExpanded as BusSubPipelineExpanded,
 )
 from ..execution import DAGExecutor
+from ..execution.checkpoint import CheckpointManager, FilesystemCheckpointBackend
 from ..handlers import PipelineContext
-from ..schemas import FragmentRef, PipelineSpec, StepConfig
+from ..schemas import (  # PipelineSpec: checkpoint wiring
+    FragmentRef,
+    PipelineSpec,
+    StepConfig,
+)
+from ..step_types import CheckpointConfig
 from .input_extraction import (
     extract_chat_id,
     extract_dispatch_thread_id,
@@ -53,6 +60,72 @@ if TYPE_CHECKING:
     from .pipeline_executor import PipelineExecutor
 
 logger = get_logger(__name__)
+
+_CHECKPOINT_CONFIG_FIELDS = {f.name for f in fields(CheckpointConfig)}
+
+
+def extract_resume_of(context: _PipelineRequestContextProtocol) -> str | None:
+    """Return ``resume_of`` from the inbound request when present."""
+    if not context.original_request:
+        return None
+    raw = context.original_request.get("resume_of")
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def resolve_checkpoint_config(
+    checkpoint_raw: dict[str, Any] | None,
+    *,
+    resume_of: str | None,
+) -> CheckpointConfig | None:
+    """Build checkpoint config when YAML enables checkpoints or ``resume_of`` is set."""
+    if not checkpoint_raw and not resume_of:
+        return None
+
+    if checkpoint_raw:
+        kwargs = {
+            k: v for k, v in checkpoint_raw.items() if k in _CHECKPOINT_CONFIG_FIELDS
+        }
+        config = CheckpointConfig(**kwargs)
+    else:
+        config = CheckpointConfig()
+
+    if not config.enabled and not resume_of:
+        return None
+    if resume_of and not config.enabled:
+        config = replace(config, enabled=True)
+    return config
+
+
+def build_checkpoint_manager_if_needed(
+    executor: PipelineExecutor,
+    pipeline: PipelineSpec,
+    context: _PipelineRequestContextProtocol,
+    execution_id: str,
+) -> CheckpointManager | None:
+    """Construct a lineage-scoped checkpoint manager or return ``None``."""
+    resume_of = extract_resume_of(context)
+    config = resolve_checkpoint_config(pipeline.checkpoint, resume_of=resume_of)
+    if config is None:
+        return None
+
+    lineage_root = resume_of or execution_id
+    backend = FilesystemCheckpointBackend(config.storage_path)
+    event_bus = None
+    proxy = getattr(executor, "proxy", None)
+    if proxy is not None:
+        event_bus = getattr(proxy, "event_bus", None)
+
+    return CheckpointManager(
+        backend,
+        config,
+        pipeline.id,
+        execution_id=lineage_root,
+        event_bus=event_bus,
+    )
 
 
 def do_prepare_execution(
@@ -213,7 +286,17 @@ def do_prepare_execution(
         ),
     )
 
-    dag_executor = DAGExecutor(nodes, pipeline_context)
+    checkpoint_manager = build_checkpoint_manager_if_needed(
+        executor,
+        pipeline,
+        context,
+        execution_id,
+    )
+    dag_executor = DAGExecutor(
+        nodes,
+        pipeline_context,
+        checkpoint_manager=checkpoint_manager,
+    )
 
     return PreparedPipelineExecution(
         pipeline=pipeline,

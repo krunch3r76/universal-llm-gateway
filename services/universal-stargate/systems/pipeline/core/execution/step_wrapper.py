@@ -80,8 +80,13 @@ async def execute_step_with_wrappers(
     else:
         result = await with_retry()
 
-    # Save checkpoint after successful execution
-    if checkpoint_manager and _should_checkpoint(step, checkpoint_manager):
+    # Save checkpoint after successful execution (never memo stop or stream outputs)
+    if (
+        checkpoint_manager
+        and _should_checkpoint(step, checkpoint_manager)
+        and result.stop is None
+        and result.stream is None
+    ):
         await _save_checkpoint(step, result, checkpoint_manager)
 
     return result
