@@ -25,10 +25,17 @@ from ..events.dispatch import (
     PipelineDispatchJournalWritten,
 )
 from .dispatch_journal_transitions import (
+    ContinuationClaim,
+    ContinuationDecision,
+    assess_continuation_sync,
+    claim_continuation_sync,
     fetch_record_sync,
     migrate_schema_sync,
     prune_started_sync,
+    read_lineage_sync,
+    steps_sha256_from_dump,
     sweep_orphan_started_sync,
+    write_lineage_root_sync,
     write_transition_sync,
 )
 
@@ -128,9 +135,7 @@ def _fetch_terminal_sync(
     return json.loads(payload_json), float(completed_at_epoch)
 
 
-def _prune_sync(
-    path: Path, retention_seconds: float
-) -> tuple[int, float | None, int]:
+def _prune_sync(path: Path, retention_seconds: float) -> tuple[int, float | None, int]:
     now = time.time()
     cutoff = now - retention_seconds
     started_deleted = prune_started_sync(path, retention_seconds)
@@ -412,3 +417,79 @@ async def prune_expired(
         "oldest_deleted_age_seconds": oldest_age_seconds,
         "started_records_deleted": started_deleted,
     }
+
+
+def pipeline_steps_sha256(pipeline: Any) -> str:
+    """SHA-256 of the loaded pipeline's YAML steps, aliased as in the file."""
+    steps = [step.model_dump(mode="json", by_alias=True) for step in pipeline.steps]
+    return steps_sha256_from_dump(steps)
+
+
+def _claimed_at_now() -> str:
+    return datetime.now().astimezone().isoformat().replace("+00:00", "Z")
+
+
+async def claim_continuation(
+    *,
+    stop_execution_id: str,
+    successor_execution_id: str,
+    claimed_at: str | None = None,
+) -> ContinuationClaim:
+    """Insert-or-fail the single successor for ``stop_execution_id``."""
+    return await asyncio.to_thread(
+        claim_continuation_sync,
+        _journal_path(),
+        stop_execution_id=stop_execution_id,
+        successor_execution_id=successor_execution_id,
+        claimed_at=claimed_at or _claimed_at_now(),
+    )
+
+
+async def read_lineage(root_id: str) -> dict[str, Any] | None:
+    """Return the pinned root row, or None when this execution is not a lineage root."""
+    return await asyncio.to_thread(read_lineage_sync, _journal_path(), root_id)
+
+
+async def write_lineage_root(
+    *,
+    root_id: str,
+    pipeline_id: str,
+    version: str,
+    steps_sha256: str,
+    source_text: str,
+    options_json: str,
+) -> None:
+    """Pin the root request once. A repeat root id does not overwrite the pin."""
+    await asyncio.to_thread(
+        write_lineage_root_sync,
+        _journal_path(),
+        root_id=root_id,
+        pipeline_id=pipeline_id,
+        version=version,
+        steps_sha256=steps_sha256,
+        source_text=source_text,
+        options_json=options_json,
+    )
+
+
+async def assess_continuation(
+    *,
+    stop_execution_id: str,
+    successor_execution_id: str,
+    steps_sha256: str,
+    pipeline_id: str,
+    claimed_at: str | None = None,
+) -> ContinuationDecision:
+    """Map a ``resume_of`` to one admit or a 409/422 refusal.
+
+    The claim itself is a single INSERT.
+    """
+    return await asyncio.to_thread(
+        assess_continuation_sync,
+        _journal_path(),
+        stop_execution_id=stop_execution_id,
+        successor_execution_id=successor_execution_id,
+        steps_sha256=steps_sha256,
+        pipeline_id=pipeline_id,
+        claimed_at=claimed_at or _claimed_at_now(),
+    )

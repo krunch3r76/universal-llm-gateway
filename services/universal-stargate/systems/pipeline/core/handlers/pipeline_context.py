@@ -60,6 +60,10 @@ class PipelineContext:
 
     # Execution metadata
     execution_id: str = ""
+    # Root execution of this lineage. A root run uses its own execution_id.
+    lineage_root: str = ""
+    # 0 on the root run; 1 for the first continuation, then one per hop.
+    continuation_seq: int = 0
     started_at: datetime = field(default_factory=datetime.now)
 
     # Runtime options from HTTP request
@@ -254,6 +258,11 @@ class PipelineContext:
     def get_option(self, key: str, default: Any = None) -> Any:
         """Get option value."""
         return self.options.get(key, default)
+
+    def step_idempotency_key(self, step: Any) -> str:
+        """Lineage-stable key for one step: ``{lineage_root}:{step.id}``."""
+        root = self.lineage_root or self.execution_id
+        return f"{root}:{step.id}"
 
     @property
     def gateway_manager(self):

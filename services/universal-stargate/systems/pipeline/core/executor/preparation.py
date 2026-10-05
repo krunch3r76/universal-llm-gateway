@@ -16,6 +16,7 @@ Invariants:
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import fields, replace
 from datetime import UTC, datetime
@@ -64,11 +65,7 @@ logger = get_logger(__name__)
 _CHECKPOINT_CONFIG_FIELDS = {f.name for f in fields(CheckpointConfig)}
 
 
-def extract_resume_of(context: _PipelineRequestContextProtocol) -> str | None:
-    """Return ``resume_of`` from the inbound request when present."""
-    if not context.original_request:
-        return None
-    raw = context.original_request.get("resume_of")
+def _stripped_str(raw: Any) -> str | None:
     if isinstance(raw, str):
         stripped = raw.strip()
         if stripped:
@@ -76,13 +73,43 @@ def extract_resume_of(context: _PipelineRequestContextProtocol) -> str | None:
     return None
 
 
+def extract_resume_of(context: _PipelineRequestContextProtocol) -> str | None:
+    """Return ``resume_of`` from ``pipeline_options``, else the top-level request."""
+    if not context.original_request:
+        return None
+    options = context.original_request.get("pipeline_options")
+    if isinstance(options, dict):
+        found = _stripped_str(options.get("resume_of"))
+        if found:
+            return found
+    return _stripped_str(context.original_request.get("resume_of"))
+
+
+def extract_continuation_input(context: _PipelineRequestContextProtocol) -> Any:
+    """Return ``continuation_input`` from options or the top-level request."""
+    if not context.original_request:
+        return None
+    options = context.original_request.get("pipeline_options")
+    if isinstance(options, dict) and "continuation_input" in options:
+        return options.get("continuation_input")
+    if "continuation_input" in context.original_request:
+        return context.original_request.get("continuation_input")
+    return None
+
+
 def resolve_checkpoint_config(
     checkpoint_raw: dict[str, Any] | None,
     *,
     resume_of: str | None,
+    stops_declared: bool = False,
 ) -> CheckpointConfig | None:
-    """Build checkpoint config when YAML enables checkpoints or ``resume_of`` is set."""
-    if not checkpoint_raw and not resume_of:
+    """Build checkpoint config when a memo is required.
+
+    A memo is required when YAML enables checkpoints, the request carries
+    ``resume_of``, or the pipeline declares ``stops:``.
+    """
+    memo_required = bool(resume_of) or stops_declared
+    if not checkpoint_raw and not memo_required:
         return None
 
     if checkpoint_raw:
@@ -93,11 +120,25 @@ def resolve_checkpoint_config(
     else:
         config = CheckpointConfig()
 
-    if not config.enabled and not resume_of:
+    if not config.enabled and not memo_required:
         return None
-    if resume_of and not config.enabled:
+    if memo_required and not config.enabled:
         config = replace(config, enabled=True)
     return config
+
+
+def _lineage_root_for_run(
+    *,
+    resume_of: str | None,
+    execution_id: str,
+) -> tuple[str, int]:
+    """Root id and continuation sequence. A root run is ``(execution_id, 0)``."""
+    if not resume_of:
+        return execution_id, 0
+    from ..execution.dispatch_journal import _journal_path
+    from ..execution.dispatch_journal_transitions import resolve_lineage_root_sync
+
+    return resolve_lineage_root_sync(_journal_path(), resume_of)
 
 
 def build_checkpoint_manager_if_needed(
@@ -108,11 +149,19 @@ def build_checkpoint_manager_if_needed(
 ) -> CheckpointManager | None:
     """Construct a lineage-scoped checkpoint manager or return ``None``."""
     resume_of = extract_resume_of(context)
-    config = resolve_checkpoint_config(pipeline.checkpoint, resume_of=resume_of)
+    stops_declared = pipeline.stops is not None
+    config = resolve_checkpoint_config(
+        pipeline.checkpoint,
+        resume_of=resume_of,
+        stops_declared=stops_declared,
+    )
     if config is None:
         return None
 
-    lineage_root = resume_of or execution_id
+    lineage_root, _seq = _lineage_root_for_run(
+        resume_of=resume_of,
+        execution_id=execution_id,
+    )
     backend = FilesystemCheckpointBackend(config.storage_path)
     event_bus = None
     proxy = getattr(executor, "proxy", None)
@@ -126,6 +175,80 @@ def build_checkpoint_manager_if_needed(
         execution_id=lineage_root,
         event_bus=event_bus,
     )
+
+
+def _lineage_envelope(context: _PipelineRequestContextProtocol) -> str:
+    request = context.original_request or {}
+    options = request.get("pipeline_options")
+    messages = request.get("messages")
+    envelope = {
+        "_lineage_request": True,
+        "pipeline_options": options if isinstance(options, dict) else {},
+        "messages": messages if isinstance(messages, list) else None,
+    }
+    return json.dumps(
+        envelope,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        ensure_ascii=True,
+    )
+
+
+def _apply_lineage(
+    pipeline: PipelineSpec,
+    context: _PipelineRequestContextProtocol,
+    execution_id: str,
+    *,
+    text: str,
+    messages: list[dict[str, Any]] | None,
+    runtime_options: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]] | None, dict[str, Any], str, int]:
+    """Inherit the root request on continue, and pin it on a root run."""
+    from ..execution.dispatch_journal import _journal_path, pipeline_steps_sha256
+    from ..execution.dispatch_journal_transitions import (
+        read_lineage_sync,
+        write_lineage_root_sync,
+    )
+
+    resume_of = extract_resume_of(context)
+    lineage_root, continuation_seq = _lineage_root_for_run(
+        resume_of=resume_of,
+        execution_id=execution_id,
+    )
+    if not resume_of:
+        write_lineage_root_sync(
+            _journal_path(),
+            root_id=execution_id,
+            pipeline_id=pipeline.id,
+            version=str(pipeline.version),
+            steps_sha256=pipeline_steps_sha256(pipeline),
+            source_text=text,
+            options_json=_lineage_envelope(context),
+        )
+        return text, messages, runtime_options, lineage_root, continuation_seq
+
+    lineage = read_lineage_sync(_journal_path(), lineage_root)
+    if lineage is not None:
+        text = lineage["source_text"]
+        try:
+            stored = json.loads(lineage["options_json"])
+        except json.JSONDecodeError:
+            stored = {}
+        if isinstance(stored, dict) and stored.get("_lineage_request") is True:
+            inherited = stored.get("pipeline_options")
+            if isinstance(inherited, dict):
+                runtime_options = {**inherited, **runtime_options}
+            stored_messages = stored.get("messages")
+            if not messages and isinstance(stored_messages, list):
+                messages = stored_messages
+        elif isinstance(stored, dict):
+            runtime_options = {**stored, **runtime_options}
+    continuation_input = extract_continuation_input(context)
+    if continuation_input is not None:
+        runtime_options["continuation_input"] = continuation_input
+    runtime_options["resume_of"] = resume_of
+    return text, messages, runtime_options, lineage_root, continuation_seq
 
 
 def do_prepare_execution(
@@ -166,6 +289,14 @@ def do_prepare_execution(
         executor.fragment_loader.register_inline_fragments(pipeline.fragments)
 
     runtime_options = extract_runtime_options(context, pipeline)
+    text, messages, runtime_options, lineage_root, continuation_seq = _apply_lineage(
+        pipeline,
+        context,
+        execution_id,
+        text=text,
+        messages=messages,
+        runtime_options=runtime_options,
+    )
 
     steps = expand_steps(executor, pipeline.steps)
     from ..step_controls import apply_request_step_controls
@@ -200,6 +331,8 @@ def do_prepare_execution(
         source_text=text,
         http_request=context.http_request,
         execution_id=execution_id,
+        lineage_root=lineage_root,
+        continuation_seq=continuation_seq,
         runtime_options=runtime_options,
         _messages=messages,
         chat_id=extract_chat_id(context),
