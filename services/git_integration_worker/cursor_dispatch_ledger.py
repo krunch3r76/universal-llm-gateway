@@ -348,6 +348,8 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "admitted_via": req.admitted_via,
         "nest_under": req.nest_under,
         "workspace": req.workspace,
+        "wake_lane": req.wake_lane,
+        "parent_dispatch_thread_id": req.parent_dispatch_thread_id,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -440,7 +442,10 @@ def _fetch_active_holder_conn(
         "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
         "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
         "FROM cursor_sdk_dispatches "
-        "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') LIMIT 1"
+        "WHERE rowid IN ("
+        "  SELECT rowid FROM cursor_sdk_dispatches "
+        "  WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
+        ") LIMIT 1"
     ).fetchone()
 
 
@@ -462,8 +467,10 @@ def _fetch_active_holders_conn(
             "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
             "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
             "FROM cursor_sdk_dispatches "
-            "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') "
-            "ORDER BY rowid ASC"
+            "WHERE rowid IN ("
+            "  SELECT rowid FROM cursor_sdk_dispatches "
+            "  WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
+            ") ORDER BY rowid ASC"
         ).fetchall()
     return [_holder_projection(row) for row in rows]
 
@@ -1050,6 +1057,19 @@ def _migrate_packet_kind_to_contract(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_memo_columns(conn: sqlite3.Connection) -> None:
+    """Opt-in closeout-memo outbox columns. Additive; safe to re-run."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")}
+    _add_column_if_missing(conn, cols, "wake_lane", "TEXT")
+    _add_column_if_missing(conn, cols, "memo_state", "TEXT")
+    _add_column_if_missing(conn, cols, "memo_next_at", "REAL")
+    _add_column_if_missing(conn, cols, "memo_attempts", "INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_memo_owed "
+        "ON cursor_sdk_dispatches(memo_next_at) WHERE memo_state = 'owed'"
+    )
+
+
 def _add_column_if_missing(
     conn: sqlite3.Connection, cols: set[str], name: str, decl: str
 ) -> None:
@@ -1115,6 +1135,7 @@ class CursorDispatchLedger:
             _migrate_lease_key_column(conn)
             _migrate_cancelled_status(conn)
             _migrate_park_columns(conn)
+            _migrate_memo_columns(conn)
             _migrate_active_lease_index(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
                 ensure_land_lease_schema,
@@ -1259,6 +1280,7 @@ class CursorDispatchLedger:
         child inserts as ``admitted``.
 
         Raises ``DispatchConflict`` on fingerprint mismatch."""
+        self._inherit_resume_wake_lane(req)
         record_json = _dispatch_record_json(req)
         content_wf = self.work_fingerprint(req)
         if req.force and getattr(req, "force_reason", None):
@@ -1701,9 +1723,9 @@ class CursorDispatchLedger:
                 " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
                 " queued_at, source_ref, work_key, work_fingerprint, resume_of, "
                 " identity_class, work_key_seq, packet_kind, lineage_depth, hop_from, "
-                " nest_under) "
+                " nest_under, wake_lane) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?)",
+                "?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -1732,6 +1754,7 @@ class CursorDispatchLedger:
                     effective_lineage_depth,
                     effective_hop,
                     effective_nest,
+                    req.wake_lane,
                 ),
             )
             if nested_park_parent is not None:
@@ -2129,9 +2152,19 @@ class CursorDispatchLedger:
                     lease_key=row["lease_key"], source_repo=row["source_repo"]
                 )
             conn.execute(
-                "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=? "
+                "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, terminal_at=?, "
+                "memo_state=CASE WHEN wake_lane IS NOT NULL AND memo_state IS NULL "
+                "THEN 'owed' ELSE memo_state END, "
+                "memo_next_at=CASE WHEN wake_lane IS NOT NULL AND memo_state IS NULL "
+                "THEN ? ELSE memo_next_at END "
                 "WHERE dispatch_id=?",
-                (terminal_status, terminal_status, _now(), dispatch_id),
+                (
+                    terminal_status,
+                    terminal_status,
+                    _now(),
+                    time.time() + 30,
+                    dispatch_id,
+                ),
             )
             conn.execute(
                 "INSERT OR IGNORE INTO cursor_dispatch_stop_service "
@@ -2139,6 +2172,74 @@ class CursorDispatchLedger:
                 (dispatch_id,),
             )
         return lease_key
+
+    def _inherit_resume_wake_lane(self, req: CursorDispatchRequest) -> None:
+        """Copy ``wake_lane`` from a ``resume_of`` parent. ``nest_under`` does not."""
+        if req.wake_lane or req.nest_under or not req.resume_of:
+            return
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT wake_lane FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (req.resume_of,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return
+        if row is None or "wake_lane" not in row.keys():
+            return
+        inherited = row["wake_lane"]
+        if inherited:
+            req.wake_lane = str(inherited)
+
+    def claim_memo(self, dispatch_id: str) -> bool:
+        """One winner for an owed memo. Lost races return False."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "UPDATE cursor_sdk_dispatches SET memo_state='claimed' "
+                "WHERE dispatch_id=? AND memo_state='owed'",
+                (dispatch_id,),
+            )
+            claimed = cur.rowcount == 1
+            conn.commit()
+            return claimed
+
+    def finish_memo(
+        self,
+        dispatch_id: str,
+        *,
+        state: str,
+        next_at: float | None = None,
+        attempts: int | None = None,
+    ) -> None:
+        """Write the post-claim memo state. ``owed`` reschedules the sweep."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET memo_state=?, "
+                "memo_next_at=COALESCE(?, memo_next_at), "
+                "memo_attempts=COALESCE(?, memo_attempts) "
+                "WHERE dispatch_id=?",
+                (state, next_at, attempts, dispatch_id),
+            )
+
+    def memo_row(self, dispatch_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {key: row[key] for key in row.keys()}
+
+    def list_owed_memos(self, *, now: float) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE memo_state='owed' AND memo_next_at IS NOT NULL AND memo_next_at<=?",
+                (now,),
+            ).fetchall()
+        return [str(row["dispatch_id"]) for row in rows]
 
     def claim_stop_service(self, stop_id: str, admit_dispatch_id: str) -> bool:
         """Claim the single admit slot for a terminal stop row.

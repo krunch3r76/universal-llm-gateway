@@ -292,6 +292,13 @@ async def _finalize_discarded_common(
             terminal_status="cancelled",
             controller=controller,
             emit_tag=DISCARDED_EMIT_TAG,
+            memo_facts={
+                "emit_tag": DISCARDED_EMIT_TAG,
+                "closeout_status": "discarded",
+                "actor": actor,
+                "turn": extract_turn_number(bus_result.body),
+                "sidecar_ref": sidecar_uri,
+            },
         )
     finally:
         if clear_mark and mark is not None:
@@ -496,6 +503,13 @@ async def finalize_parked(
             terminal_status="cancelled",
             controller=controller,
             emit_tag=PARKED_EMIT_TAG,
+            memo_facts={
+                "emit_tag": PARKED_EMIT_TAG,
+                "closeout_status": "parked",
+                "wake": f"giw_restart:{mark.intent_id or ''}",
+                "turn": extract_turn_number(bus_result.body),
+                "sidecar_ref": sidecar_uri,
+            },
         )
 
     # friction 37491: keep merge → cancelled emit → promote as one task so a

@@ -233,6 +233,8 @@ async def dispatch_cursor_sdk_worker(
     hop_park_release: bool = False,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
+    wake_lane: str | None = None,
+    parent_dispatch_thread_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -290,6 +292,10 @@ async def dispatch_cursor_sdk_worker(
         payload["hop_park_release"] = True
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
+    if wake_lane:
+        payload["wake_lane"] = wake_lane
+    if parent_dispatch_thread_id:
+        payload["parent_dispatch_thread_id"] = parent_dispatch_thread_id
     # bus_lifecycle stays on the bus thread (append_bus_lifecycle_tags).
     # Running GIW extra=forbid rejects the field until that process reloads
     # models/cursor_api.py (422 extra_forbidden — 11834 play hop 2853894a).
@@ -355,6 +361,8 @@ async def dispatch_cursor_sdk_worker_message(
     force_reason: str | None = None,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
+    wake_lane: str | None = None,
+    parent_dispatch_thread_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -399,6 +407,10 @@ async def dispatch_cursor_sdk_worker_message(
         payload["force_reason"] = force_reason
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
+    if wake_lane:
+        payload["wake_lane"] = wake_lane
+    if parent_dispatch_thread_id:
+        payload["parent_dispatch_thread_id"] = parent_dispatch_thread_id
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

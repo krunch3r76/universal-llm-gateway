@@ -129,6 +129,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     supervise(app, "trigger_fire_loop", lambda: trigger_fire_loop(app))
     supervise(app, "lane_b_sweeper", lambda: lane_b_sweeper_loop(app))
     supervise(app, "bridge_sweeper", lambda: bridge_sweeper(app))
+    from services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit import (
+        closeout_memo_sweep_loop,
+    )
+
+    supervise(
+        app,
+        "closeout_memo_sweeper",
+        lambda: closeout_memo_sweep_loop(app),
+        restart=True,
+    )
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s startup_persistence=background "

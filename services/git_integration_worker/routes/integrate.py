@@ -501,9 +501,10 @@ async def get_active_work(request: Request):
         if getattr(request.app.state, "worker_config", None) is not None
         else None
     )
-    # One lease snapshot for write_lease + busy_status (a:37853).
+    # Keyed write_lease is Lane-A only. busy_status must stay global so
+    # Lane-B holders (lease_key = worktree path) still appear (a:37853 B1).
     lease = CursorDispatchLedger.instance().lease_snapshot(source_repo=source_repo)
-    sdk_gate = sdk_dispatch_gate_stats(source_repo=source_repo, lease=lease)
+    sdk_gate = sdk_dispatch_gate_stats()
     sdk_gate["holders"] = sdk_dispatch_gate_holder_detail()
     active_count = controller.active_count()
     lane_fields = await active_work_lane_fields_bounded(source_repo=cfg.source_repo)

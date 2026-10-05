@@ -683,6 +683,7 @@ async def dispatch_cdp_generate(
         pointer_turn=after_turn,
         admit_reason=admit_result.reason,
         caller_supplied_thread=caller_supplied_thread,
+        wake_lane=getattr(body, "wake_lane", None),
     )
 
     timeout_seconds = getattr(body, "timeout_seconds", None)

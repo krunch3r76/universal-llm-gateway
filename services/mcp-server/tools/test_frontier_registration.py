@@ -1040,6 +1040,46 @@ def test_team_dispatch_generate_forwards_parent_thread() -> None:
     assert relay_calls[0]["body"]["parent_thread"] == "10479"
 
 
+def test_team_dispatch_wake_lane_param_present() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "wake_lane" in sig.parameters
+
+
+def test_team_dispatch_generate_forwards_wake_lane() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-wake", "thread_id": "15091"}
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=lambda *_a, **_k: None),
+    ):
+        result = asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="freeform",
+                dispatch_thread_id="15091",
+                model="cursor/grok-4.7",
+                prompt="memo",
+                lane="B",
+                wake_lane="12286",
+            )
+        )
+
+    assert "error" not in result, result
+    assert relay_calls[0]["body"]["wake_lane"] == "12286"
+
+
 def test_team_dispatch_nest_under_rejects_non_sdk_seat() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)

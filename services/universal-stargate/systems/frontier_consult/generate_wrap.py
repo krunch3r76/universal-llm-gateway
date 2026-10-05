@@ -534,6 +534,7 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             ),
             transcript_id=getattr(body, "transcript_id", None),
+            wake_lane=getattr(body, "wake_lane", None),
         )
         if isinstance(result, dict):
             if operator_lane_summon_warning:

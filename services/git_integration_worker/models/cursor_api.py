@@ -123,6 +123,13 @@ class CursorDispatchRequest(BaseModel):
         | None
     ) = None
     hop_park_release: bool = False
+    wake_lane: str | None = Field(
+        default=None,
+        description=(
+            "Opt-in operator continuity root (role:root thread id). When set, "
+            "terminal closeout posts a pointer memo on that lane."
+        ),
+    )
     _workspace_inherited_from: str | None = PrivateAttr(default=None)
 
     @property

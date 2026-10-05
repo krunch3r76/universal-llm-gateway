@@ -1418,6 +1418,9 @@ def build_hop_team_dispatch_body(
         body["dispatch_thread_id"] = summoning_thread_id
     if rec.get("model_knobs"):
         body["model_knobs"] = rec.get("model_knobs")
+    wake_lane = row.get("wake_lane") or rec.get("wake_lane")
+    if wake_lane:
+        body["wake_lane"] = wake_lane
     body["hop_from"] = predecessor_id
     body["hop_seq"] = next_seq
     body["hop_reason"] = hop_reason

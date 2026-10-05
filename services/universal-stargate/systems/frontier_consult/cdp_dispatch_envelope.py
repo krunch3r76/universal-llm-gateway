@@ -15,6 +15,7 @@ class CdpDispatchEnvelope:
     admit_reason: str
     caller_supplied_thread: bool
     dispatch_link_terminal: bool | None = None
+    wake_lane: str | None = None
 
 
 def record_cdp_admit(
@@ -24,6 +25,7 @@ def record_cdp_admit(
     pointer_turn: int,
     admit_reason: str,
     caller_supplied_thread: bool,
+    wake_lane: str | None = None,
 ) -> None:
     _ENVELOPE[execution_id] = CdpDispatchEnvelope(
         execution_id=execution_id,
@@ -31,6 +33,7 @@ def record_cdp_admit(
         pointer_turn=pointer_turn,
         admit_reason=admit_reason,
         caller_supplied_thread=caller_supplied_thread,
+        wake_lane=wake_lane,
     )
 
 

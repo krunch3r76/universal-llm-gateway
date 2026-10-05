@@ -161,6 +161,13 @@ class _DispatchCommon(BaseModel):
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
     skills: list[str] | None = None
     server_tools: bool | None = None
+    wake_lane: str | None = Field(
+        default=None,
+        description=(
+            "Opt-in operator continuity root. A worker closeout pastes a "
+            "pointer memo on this lane. Numeric thread id carrying role:root."
+        ),
+    )
 
 
 class TeamDispatchGenerateBody(_DispatchCommon):
@@ -685,6 +692,19 @@ async def team_dispatch(
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
+    from .wake_lane import validate_wake_lane, wake_lane_needs_probe
+
+    if wake_lane_needs_probe(
+        op=body.op,
+        wake_lane=getattr(body, "wake_lane", None),
+        hop_from=getattr(body, "hop_from", None),
+    ):
+        try:
+            await validate_wake_lane(
+                body.wake_lane, request_id=request_id
+            )
+        except FrontierEndpointError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     # job=wrap on an explicit non-sdk role must refuse before check-review
     # coercion rewrites reviewer/skeptic into seat=cursor-sdk. role=cursor-sdk
     # stays on the later role_is_not_a_seat teaching path.
