@@ -48,6 +48,7 @@ from cdp_ask.followup import execute_followup
 from cdp_ask.followup_events import (
     cdp_ask_attended_refused,
     cdp_ask_attended_resolve,
+    cdp_ask_lane_current_resolve,
 )
 from cdp_ask.followup_events import (
     emit as emit_followup_event,
@@ -272,8 +273,42 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         return await execution_store.drain_state_snapshot()
 
     @app.get("/v1/project-ask/attended-operator")
-    async def attended_operator() -> JSONResponse:
-        """Resolve the attended mission-operator CSE — live or dormant (read-only)."""
+    async def attended_operator(parent_thread: str | None = None) -> JSONResponse:
+        """Resolve the attended mission-operator CSE — live or dormant (read-only).
+
+        ``parent_thread`` switches to the live lane-current probe. Absent or
+        blank keeps the attended-operator triple.
+        """
+        lane = (parent_thread or "").strip()
+        if lane:
+            from cdp_ask.lane_current_cse import resolve_lane_current_cse
+
+            snap = await execution_store.active_work_snapshot()
+            body = await asyncio.to_thread(resolve_lane_current_cse, lane, snap=snap)
+            current = (
+                body.get("current") if isinstance(body.get("current"), dict) else None
+            )
+            emit_followup_event(
+                cdp_ask_lane_current_resolve(
+                    parent_thread=lane,
+                    state=str(body.get("state") or ""),
+                    basis=body.get("basis"),
+                    chat_url=(current or {}).get("chat_url"),
+                    applied=False,
+                )
+            )
+            payload = dict(body)
+            state = payload.get("state")
+            if state == "current":
+                return JSONResponse(status_code=200, content=payload)
+            if state == "ambiguous":
+                payload["code"] = "lane_cse_ambiguous"
+                return JSONResponse(status_code=409, content=payload)
+            if payload.get("reason") == "probe_error":
+                payload["code"] = "lane_cse_probe_error"
+                return JSONResponse(status_code=503, content=payload)
+            payload["code"] = "lane_cse_none"
+            return JSONResponse(status_code=404, content=payload)
         outcome = resolve_attended_operator()
         if isinstance(outcome, AttendedResolveSuccess):
             emit_followup_event(

@@ -7,6 +7,25 @@ from unittest.mock import patch
 from tools.agent_bus.threads import _thread_get_dispatch, _thread_get_impl
 
 
+def test_thread_get_labels_last_associated_only_when_url_present() -> None:
+    with_url = {
+        "id": "12286",
+        "cse_chat_url": "https://claude.ai/cowork/cse_old",
+        "status": "active",
+    }
+    without = {"id": "12286", "cse_chat_url": None, "status": "active"}
+    with patch("tools.agent_bus.threads.relay", return_value=with_url):
+        labeled = _thread_get_impl(thread="12286")
+    assert labeled["cse_chat_url_basis"] == "last_associated"
+    assert labeled["cse_current_probe"] == (
+        "cse_session(op=resolve_attended, parent_thread=12286)"
+    )
+    with patch("tools.agent_bus.threads.relay", return_value=dict(without)):
+        plain = _thread_get_impl(thread="12286")
+    assert "cse_chat_url_basis" not in plain
+    assert "cse_current_probe" not in plain
+
+
 def test_thread_get_happy_path() -> None:
     detail = {
         "id": "049",

@@ -79,6 +79,79 @@ def test_per_op_mandate_safety_in_catalog() -> None:
     assert by_name["cse_session_resolve_attended"]["mandate_safety"] == "read_only"
 
 
+def _fake_client(body: dict, status: int = 200):
+    from unittest.mock import MagicMock
+
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = body
+    resp.raise_for_status.return_value = None
+    client = MagicMock()
+    client.get.return_value = resp
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+    return client
+
+
+def test_relay_attended_forwards_parent_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    import tools.cse_session_warm as warm
+
+    client = _fake_client(
+        {
+            "state": "current",
+            "basis": "in_flight",
+            "current": {"chat_url": "https://claude.ai/cowork/cse_live"},
+        }
+    )
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://cdp-ask")
+    monkeypatch.setattr(warm.httpx, "Client", MagicMock(return_value=client))
+    result = warm.relay_attended(parent_thread="12286")
+    params = client.get.call_args.kwargs["params"]
+    assert params == {"parent_thread": "12286"}
+    assert result["current"]["chat_url"] == "https://claude.ai/cowork/cse_live"
+    assert client.get.call_count == 1
+
+
+def test_relay_attended_new_codes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    import tools.cse_session_warm as warm
+
+    client = _fake_client(
+        {
+            "code": "lane_cse_ambiguous",
+            "state": "ambiguous",
+            "current": None,
+            "candidates": [],
+        },
+        status=409,
+    )
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://cdp-ask")
+    monkeypatch.setattr(warm.httpx, "Client", MagicMock(return_value=client))
+    result = warm.relay_attended(parent_thread="12286")
+    assert result["code"] == "lane_cse_ambiguous"
+    assert result["retryable"] is True
+    assert "data.candidates" in result["message"]
+    assert result["data"]["state"] == "ambiguous"
+
+    client_none = _fake_client({"code": "lane_cse_none", "state": "none"}, status=404)
+    monkeypatch.setattr(warm.httpx, "Client", MagicMock(return_value=client_none))
+    none = warm.relay_attended(parent_thread="12286")
+    assert none["code"] == "lane_cse_none"
+    assert none["retryable"] is True
+
+    client_err = _fake_client(
+        {"code": "lane_cse_probe_error", "state": "none", "reason": "probe_error"},
+        status=503,
+    )
+    monkeypatch.setattr(warm.httpx, "Client", MagicMock(return_value=client_err))
+    err = warm.relay_attended(parent_thread="12286")
+    assert err["code"] == "lane_cse_probe_error"
+    assert err["retryable"] is True
+
+
 def test_relay_module_has_no_bundle_imports() -> None:
     for rel in ("cse_session.py", "cse_session_warm.py"):
         source = (MCP_SERVER_DIR / "tools" / rel).read_text(encoding="utf-8")

@@ -323,6 +323,8 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 | New turn with no retained CSE — or its context is stale / Customize skills refreshed | `team_dispatch(model=cdp/…)` (default) · CLI project-ask (IF6) — a **fresh window**, ¬ warm paste | n/a |
 | Audit trail for either | bus turn **accompanies** — ¬ substitutes | n/a |
 
+**Current CSE for a lane (BINDING — a:37834):** `cse_session(op=resolve_attended, parent_thread=<lane>)` → `current.chat_url` (`basis` = `in_flight` | `seat_holder`; only operator-purpose registrations claim a page; `stale[]` lists the other open pages). `followup(parent_thread=<lane>)` with no identity binds the in-flight page or the seat holder, and refuses (`lane_cse_ambiguous` / `lane_cse_unattached`) when another registered page is streaming or unprobeable. `ThreadDetail.cse_chat_url`, `provenance state=current`, and a remembered handoff `seat=` line are last-associated, not current — ¬ paste target alone. `send_verified` / `dom_committed` prove the page's DOM, not that the operator is looking at it. `lane_cse_ambiguous` ⇒ do not pick; report the candidates.
+
 `in_chat_delivery ≻ bus_NOTE` · identity ladder `chat_url ≻ registration_id ≻ execution_id` · dormant/bound `chat_url` auto-wakes that seat; mint/borrow still needs `reattach=true`. **Launch-path paste** (reattach mints satellite lane) proves **satellite-scope** DOM only — relaying `ok=true` / `send_verified=true` as human/CSE-seat delivery when `lane_created=true` is the **a:27855** failure class.
 
 #### Followup failure triage (2026-08-01 — do not misread the error)

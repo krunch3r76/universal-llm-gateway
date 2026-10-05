@@ -49,12 +49,20 @@ _ATTENDED_RETRYABLE: dict[str, bool] = {
     "no_attended_cse": True,
     "ambiguous_attended": False,
     "attended_liveness_failed": True,
+    "lane_cse_ambiguous": True,
+    "lane_cse_none": True,
+    "lane_cse_probe_error": True,
 }
 
 _ATTENDED_MESSAGES: dict[str, str] = {
     "no_attended_cse": "No mission-purpose attended CSE registered with bound chat_url",
     "ambiguous_attended": "Multiple mission-purpose attended candidates — operator must disambiguate",
     "attended_liveness_failed": "Sole attended candidate failed liveness on its registered port",
+    "lane_cse_ambiguous": (
+        "No single current CSE page for this lane; see data.reason and data.candidates"
+    ),
+    "lane_cse_none": "No live CSE page claims this lane",
+    "lane_cse_probe_error": "Lane-current CDP probe failed; absence is unknown",
 }
 
 
@@ -107,7 +115,9 @@ def _relay(
         return transport_failure_payload(exc, path=path, timeout_s=http_timeout)
 
 
-def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
+def relay_attended(
+    *, timeout_s: float = 30.0, parent_thread: str | None = None
+) -> dict[str, Any]:
     """GET attended-operator with ProtocolError envelope on refusal codes."""
     base = _project_ask_url()
     if not base:
@@ -115,12 +125,18 @@ def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
     path = "/v1/project-ask/attended-operator"
     url = f"{base.rstrip('/')}{path}"
     http_timeout = http_client_timeout_s(timeout_s)
+    params = None
+    lane = (parent_thread or "").strip()
+    if lane:
+        params = {"parent_thread": lane}
     try:
         with httpx.Client(timeout=http_timeout) as client:
-            resp = client.get(url)
+            resp = client.get(url, params=params)
             if resp.status_code == 200:
                 return resp.json()
-            if resp.status_code in {404, 409, 424}:
+            if resp.status_code in {404, 409, 424} or (
+                lane and resp.status_code == 503
+            ):
                 body = resp.json()
                 code = str(body.get("code") or "attended_resolve_failed")
                 data = {k: v for k, v in body.items() if k != "code"}
@@ -131,7 +147,11 @@ def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
                     "retryable": _ATTENDED_RETRYABLE.get(code, False),
                     "data": data,
                 }
-                record("mcp.cse_session.resolve_attended", code=code, retryable=result["retryable"])
+                record(
+                    "mcp.cse_session.resolve_attended",
+                    code=code,
+                    retryable=result["retryable"],
+                )
                 return result
             resp.raise_for_status()
             return resp.json()
