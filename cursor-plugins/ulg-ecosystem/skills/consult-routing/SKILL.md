@@ -195,7 +195,11 @@ When the operator orders a review of this session's changes and auto-apply of ev
 
 1. Review is `cdp/opus-5.5`, `contract=code-review`, ``. That call does not edit.
 2. On `AMEND`, the compose packet lists every suggestion. It does not say "do not commit" or "do not land".
-3. After the implement closeout, the parent lands the lane (`git merge` of `cursor-sdk/lane-<thread>`, never a path copy) and recycles every serving process that loaded a touched path.
+3. After the implement closeout, the parent lands the lane — attended IDE:
+   `git merge` of `cursor-sdk/lane-<thread>` (never a path copy); headless:
+   hub actuator (`land_lane_branch_onto_hub_master`) only when the packet carries
+   line-start `land: silent` — and recycles every serving process that loaded a
+   touched path.
 4. `landed: false` is not the end of this path. Quote the merge SHA and the recycle payload before calling the suggestions live.
 
 ## cursor-sdk model name surfaces

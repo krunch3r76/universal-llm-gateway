@@ -22,7 +22,8 @@ Recycle-from-dirty-tree is exceptional, not the ordinary-live default; `live@sha
 commit-then-recycle. Liveness proof is `fleet_liveness(code_ref=…)`;
 repo timestamps / `recent_commits` are low-confidence fallback.
 
-`land(lane_B) ⇒ git merge cursor-sdk/lane-{thread}` — `checkout <branch> -- <paths>` and `cherry-pick` are
+`land(lane_B) ⇒ headless hub: land_lane_branch_onto_hub_master` (packet `land: silent` or conductor G7);
+attended IDE: `git merge cursor-sdk/lane-{thread}` — `checkout <branch> -- <paths>` and `cherry-pick` are
 **copies, not lands**: they clobber dirty peer WIP with no conflict and leave the branch unmerged (branch debt
 on shipped work). `dirty ∩ incoming ⇒ commit overlapping ≺ merge` and resolve keep-both. **¬ stash**
 instead of merge; **¬ leave a stash unpopped**. `merge_blocked ⇒ reconcile`, never route around git;
