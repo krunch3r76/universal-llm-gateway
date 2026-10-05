@@ -88,7 +88,7 @@ When a bus-consult / dispatch-closeout arm misfires:
 | **Hold-turn** | Foreground `wait`/`Await`/`tail \| grep` instead of background tail + exit |
 | **Hang-tail** | `tail --forever`, raw `tail -F` on watcher log, or tail still running **after** `state.json status=complete` — **not** tail waiting while `status=polling` |
 | **Killed-tail** | IDE/supervisor killed the wake tail while the poller stayed up (a:36552, a:35526). Poller may later print `consult complete` / `closeout turn=` with **no** living tail ⇒ this chat never wakes |
-| **Tab-orphan** | Resume / new IDE tab reports a prior-tab poller label as armed without same-turn leg 2 on **this** tab (a:38172 · agent-bus:15266). Pollers (esp. `house-*`) survive tab retire; tab tails die with the departing chat — `prior_tab_poller_alive ⇏ this_tab_wake_armed` |
+| **Tab-orphan** | Resume / new IDE tab reports a prior-tab poller label as armed without same-turn leg 2 on **this** tab (a:38172 · agent-bus:15266). Pollers survive retire (house or tab label); tab tails die with the departing chat — `prior_tab_poller_alive ⇏ this_tab_wake_armed` |
 | **Wake-no-relay** | Leg 2 fired; turn closed without `get` + operator translate (leg 3) |
 | **Wrong target** | Wrong script family, bad `after_turn`, omitted `poll_hint.after_turn`, invalid flags, false `complete` |
 
@@ -100,23 +100,21 @@ On any class — **same turn** before close:
 2. **`assert` on `runbook:bus-consult-watcher`** — specimen + falsifier candidate.
 3. **¬ `todo:`** — accumulate; consolidate only on commission/triage.
 
-**Killed-tail recovery (binding — a:36552):** `poller_alive ⇏ wake_armed`. When the
-IDE tail dies (Shell abort, kill, elapsed fail) and `state.json` is still
-`polling`/`predicate_unmet`, **same turn** re-arm leg 2:
-`watch-supervise.sh tail --label L` background, no `notify_on_output`.
-The shell completion is the wake. Do not wait for a later chat
-question to discover `consult complete` in the log. If complete already
-printed with no tail attached: `get` the qualifying turn + relay now (leg 3);
-do not keep reporting the dispatch/densify as `in_flight`.
-
-**Tab-orphan / resume recovery (binding — a:38172):**
-`prior_tab_poller_alive ⇏ this_tab_wake_armed`. On `resume` / hop successor /
-new IDE tab pickup: if `tmp/watchers/<L>.state.json` is still
-`polling`/`predicate_unmet` and **this** chat has no living background
-`watch-supervise.sh tail --label L`, **same turn** attach leg 2 (no
-`notify_on_output`) before saying the watcher is armed. Do not equate a
-surviving prior-tab poller (or a CHECKPOINT that named the label) with
-wake armed on this tab. Terminal unrelayed ⇒ leg 3, not a second start
+**Killed-tail / Tab-orphan recovery (binding — a:36552 · a:38172):**
+`poller_alive ⇏ wake_armed` (and `prior_tab_poller_alive ⇏ this_tab_wake_armed`).
+When the IDE tail dies (Shell abort, kill, elapsed fail) **or** on `resume` /
+hop successor / new IDE tab where **this** chat never owned the tail, and
+`state.json` is still `polling`/`predicate_unmet`, **same turn** re-arm leg 2
+for **owned** labels only: `watch-supervise.sh tail --label L` background, no
+`notify_on_output`. Owned = label starts with `{root}-` or `house-{root}-`, or
+`state.thread == root`, or the tip CHECKPOINT names `L` — same ownership test as
+`libs/bus_watch/ide_hop_retire.py::departing_watcher_labels` plus house labels
+and CHECKPOINT-named labels. Do **not** attach tails for every polling file under
+`tmp/watchers/` (shared dir; foreign tails get superseded). The shell completion
+is the wake. Do not wait for a later chat question to discover `consult complete`
+in the log. If complete already printed with no tail attached: `get` the
+qualifying turn + relay now (leg 3); do not keep reporting the dispatch/densify
+as `in_flight`. Terminal unrelayed ⇒ leg 3, not a second start
 (see `operator-posture` Pickup / boot · `runbook:bus-consult-watcher` §6).
 
 **Complete-state read gate (binding — a:36552 / a:35437):** `status=complete` ∧
