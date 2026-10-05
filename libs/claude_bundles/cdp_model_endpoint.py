@@ -401,7 +401,8 @@ def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
     if _WEEKLY_LIMIT_RE.search(banner):
         return True
     body = str(snapshot.get("body") or "")
-    if body and len(body) <= _ERROR_BANNER_ONLY_MAX_LEN:
+    stripped = body.strip()
+    if stripped and len(stripped) <= _ERROR_BANNER_ONLY_MAX_LEN:
         return bool(_WEEKLY_LIMIT_RE.search(body))
     return False
 

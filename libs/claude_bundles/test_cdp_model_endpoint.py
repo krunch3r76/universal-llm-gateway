@@ -2070,7 +2070,7 @@ _WEEKLY_LIMIT_ARCHIVE_PHRASE = (
 )
 
 
-def test_weekly_limit_rejects_long_review_mentioning_limit_in_body(
+def test_weekly_limit_does_not_grade_long_review_mentioning_limit_in_body(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Long seat review that discusses weekly_limit grading must not stall."""
