@@ -299,14 +299,32 @@ def _emit_lane_current(lane: str, body: dict, *, applied: bool) -> None:
     )
 
 
+def _in_flight_off_holder(lane_body: dict) -> list[str]:
+    holder = lane_body.get("seat_holder")
+    holder_url = (
+        str(holder.get("chat_url") or "").strip() if isinstance(holder, dict) else ""
+    )
+    return [
+        str(page.get("chat_url") or "")
+        for page in lane_body.get("candidates") or []
+        if isinstance(page, dict)
+        and page.get("in_flight") is True
+        and page.get("chat_url")
+        and page.get("chat_url") != holder_url
+    ]
+
+
 def _lane_seat_followup_gate(
     req: FollowupProjectAskRequest,
+    lane_pin: dict | None = None,
 ) -> tuple[FollowupProjectAskRequest, FollowupProjectAskResponse | None, str | None]:
     """When ``parent_thread`` is set, bind or refuse against the seat-axis holder.
 
-    A live in-flight (or sole claimed) page rewrites ``chat_url`` and marks
-    ``resolution_path`` ``lane_current``. The seat-holder basis keeps the
-    registration binding. The third tuple element is that path marker.
+    One in-flight operator page with a listable registry row rewrites
+    ``chat_url`` and marks ``resolution_path`` ``lane_current``. An in-flight
+    page that is not the holder and cannot be bound refuses. The seat-holder
+    basis keeps the registration binding. ``lane_pin`` carries the first probe
+    across a reattach retry so one followup sees one page set.
     """
     lane = (req.parent_thread or "").strip()
     if not lane:
@@ -352,23 +370,50 @@ def _lane_seat_followup_gate(
     if identity_supplied(req):
         return req, None, None
     lane_body: dict | None
-    try:
-        from cdp_ask.lane_current_cse import resolve_lane_current_cse
+    if lane_pin is not None and "body" in lane_pin:
+        lane_body = lane_pin["body"]
+    else:
+        try:
+            from cdp_ask.lane_current_cse import resolve_lane_current_cse
 
-        lane_body = resolve_lane_current_cse(lane, snap=snap)
-    except Exception:
-        lane_body = None
+            lane_body = resolve_lane_current_cse(lane, snap=snap)
+        except Exception:
+            lane_body = None
+        if lane_pin is not None:
+            lane_pin["body"] = lane_body
     if isinstance(lane_body, dict):
-        basis = lane_body.get("basis")
         chat_url = _lane_current_chat_url(lane_body)
+        current = lane_body.get("current")
+        holder = lane_body.get("seat_holder")
+        holder_url = (
+            str(holder.get("chat_url") or "").strip()
+            if isinstance(holder, dict)
+            else ""
+        )
         if (
             lane_body.get("state") == "current"
-            and basis in {"in_flight", "sole_live_claim"}
+            and lane_body.get("basis") == "in_flight"
             and chat_url
+            and chat_url != holder_url
         ):
+            claims = current.get("claims") if isinstance(current, dict) else None
+            if not isinstance(claims, list) or "registry_row" not in claims:
+                _emit_lane_current(lane, lane_body, applied=False)
+                return (
+                    req,
+                    fail_followup("lane_cse_unattached", detail=chat_url),
+                    None,
+                )
             _emit_lane_current(lane, lane_body, applied=True)
             return req.model_copy(update={"chat_url": chat_url}), None, "lane_current"
         _emit_lane_current(lane, lane_body, applied=False)
+        contested = _in_flight_off_holder(lane_body)
+        if lane_body.get("state") == "ambiguous" and contested:
+            return (
+                req,
+                fail_followup("lane_cse_ambiguous", detail=", ".join(contested)),
+                None,
+            )
     resolved = resolve_operator_seat(lane, get_lane_snapshot=lambda: snap)
     if not resolved.get("authority_reachable"):
         return (
@@ -411,6 +456,8 @@ def _lane_seat_followup_gate(
 async def resolve_followup_target(
     req: FollowupProjectAskRequest,
     store: ExecutionStore,
+    *,
+    lane_pin: dict | None = None,
 ) -> tuple[
     FollowupCandidate | None,
     FollowupProjectAskResponse | None,
@@ -418,7 +465,9 @@ async def resolve_followup_target(
     TargetBinding | None,
 ]:
     """Resolve to a single attached CSE target or return a typed error response."""
-    req, lane_err, lane_path = await asyncio.to_thread(_lane_seat_followup_gate, req)
+    req, lane_err, lane_path = await asyncio.to_thread(
+        _lane_seat_followup_gate, req, lane_pin
+    )
     if lane_err is not None:
         return None, lane_err, "parent_thread", None
 

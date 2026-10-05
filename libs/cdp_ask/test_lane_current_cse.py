@@ -57,6 +57,7 @@ def _resolve(**overrides: Any) -> dict[str, Any]:
         "provenance_for": _prov,
         "list_active": lambda: [],
         "chat_url_for_registration": lambda _rid: None,
+        "purpose_for_registration": lambda _rid: "operator-proxy",
         "now": lambda: 1_700_000_000.0,
     }
     kwargs.update(overrides)
@@ -121,7 +122,7 @@ def test_holder_page_live_when_none_in_flight() -> None:
     assert body["seat_holder"]["registration_id"] == "held"
 
 
-def test_one_claimed_idle_is_sole_live_claim() -> None:
+def test_one_claimed_idle_is_not_current() -> None:
     def pages():
         yield 9224, DRAIN, "ws://9224"
         yield 9225, UNCLAIMED, "ws://9225"
@@ -130,10 +131,55 @@ def test_one_claimed_idle_is_sole_live_claim() -> None:
         return {"streaming": False, "stop": False, "tool_pause": False}, True
 
     body = _resolve(list_pages=pages, probe_page=probe)
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "no_live_signal"
+    assert body["current"] is None
+    assert [page["chat_url"] for page in body["candidates"]] == [DRAIN]
+
+
+def test_consult_purpose_streaming_page_is_unclaimed() -> None:
+    class _Consult:
+        parent_thread = LANE
+        registration_id = "consult-reg"
+        purpose = "consult"
+
+    def prov(url: str) -> dict[str, Any] | None:
+        if url == LIVE:
+            return {"parent_thread_claim": LANE, "registration_id": "consult-reg"}
+        return None
+
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": "held",
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+            }
+        ]
+    }
+    body = _resolve(
+        snap=snap,
+        provenance_for=prov,
+        list_active=lambda: [_Consult()],
+        chat_url_for_registration=lambda rid: {
+            "consult-reg": LIVE,
+            "held": UNCLAIMED,
+        }.get(rid),
+        purpose_for_registration=lambda rid: (
+            "consult" if rid == "consult-reg" else "operator-proxy"
+        ),
+    )
     assert body["state"] == "current"
-    assert body["basis"] == "sole_live_claim"
-    assert body["current"]["chat_url"] == DRAIN
-    assert body["stale"] == []
+    assert body["basis"] == "seat_holder"
+    assert body["current"]["chat_url"] == UNCLAIMED
+    assert LIVE in body["unclaimed_cse_urls"]
+
+
+def test_provenance_without_known_purpose_is_unclaimed() -> None:
+    body = _resolve(purpose_for_registration=lambda _rid: None)
+    assert body["state"] == "none"
+    assert body["unclaimed_cse_urls"] == sorted([LIVE, DRAIN, UNCLAIMED])
 
 
 def test_two_claimed_idle_no_holder_is_no_live_signal() -> None:
@@ -202,9 +248,27 @@ def test_list_pages_and_provenance_raising_do_not_escape() -> None:
         list_pages=pages,
         provenance_for=boom_prov,
         list_active=boom_active,
+        purpose_for_registration=lambda _rid: "operator-proxy",
         now=lambda: 10.0,
     )
-    assert body["state"] in {"none", "current", "ambiguous"}
+    assert body["state"] == "none"
+    assert body["reason"] == "no_claimed_live_page"
+    assert body["unclaimed_cse_urls"] == [LIVE]
+
+
+def test_top_level_failure_is_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("cdp_ask.lane_current_cse._resolve", explode)
+    failed = resolve_lane_current_cse(
+        LANE,
+        snap={},
+        purpose_for_registration=lambda _rid: None,
+        now=lambda: 10.0,
+    )
+    assert failed["state"] == "none"
+    assert failed["reason"] == "probe_error"
 
 
 def test_same_url_two_ports_is_one_identity() -> None:
@@ -214,7 +278,11 @@ def test_same_url_two_ports_is_one_identity() -> None:
 
     def prov(url: str) -> dict[str, Any] | None:
         if url.rstrip("/").endswith("01XLJF9g6JFdHYnrDSePwc23"):
-            return {"parent_thread_claim": LANE, "reason": "idle_exit"}
+            return {
+                "parent_thread_claim": LANE,
+                "reason": "idle_exit",
+                "registration_id": "fc69582c",
+            }
         return None
 
     def probe(_port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
@@ -227,6 +295,7 @@ def test_same_url_two_ports_is_one_identity() -> None:
         probe_page=probe,
         provenance_for=prov,
         list_active=lambda: [],
+        purpose_for_registration=lambda _rid: "mission",
         now=lambda: 10.0,
     )
     assert body["state"] == "current"
@@ -238,6 +307,7 @@ def test_registry_row_only_claim_counts() -> None:
     class _Reg:
         parent_thread = LANE
         registration_id = "reg-only"
+        purpose = "operator-proxy"
 
     def prov(_url: str) -> None:
         return None
@@ -246,7 +316,7 @@ def test_registry_row_only_claim_counts() -> None:
         yield 9224, DRAIN, "ws://d"
 
     def probe(_port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
-        return {"streaming": False, "stop": False, "tool_pause": False}, True
+        return {"streaming": True, "stop": False, "tool_pause": False}, True
 
     body = resolve_lane_current_cse(
         LANE,
@@ -259,7 +329,7 @@ def test_registry_row_only_claim_counts() -> None:
         now=lambda: 10.0,
     )
     assert body["state"] == "current"
-    assert body["basis"] == "sole_live_claim"
+    assert body["basis"] == "in_flight"
     assert body["current"]["claims"] == ["registry_row"]
     assert body["current"]["registration_ids"] == ["reg-only"]
 
@@ -333,7 +403,7 @@ def test_attended_route_parent_thread_codes(monkeypatch: pytest.MonkeyPatch) -> 
             "parent_thread": lane,
             "state": "none",
             "basis": None,
-            "reason": "no_claimed_live_page",
+            "reason": "probe_error" if lane == "err" else "no_claimed_live_page",
             "current": None,
             "stale": [],
             "candidates": [],
@@ -361,9 +431,14 @@ def test_attended_route_parent_thread_codes(monkeypatch: pytest.MonkeyPatch) -> 
     assert ok.json()["current"]["chat_url"] == LIVE
     assert amb.status_code == 409
     assert amb.json()["code"] == "lane_cse_ambiguous"
+    err = client.get(
+        "/v1/project-ask/attended-operator", params={"parent_thread": "err"}
+    )
     assert none.status_code == 404
     assert none.json()["code"] == "lane_cse_none"
-    assert [item[0] for item in calls] == ["cur", "amb", "none"]
+    assert err.status_code == 503
+    assert err.json()["code"] == "lane_cse_probe_error"
+    assert [item[0] for item in calls] == ["cur", "amb", "none", "err"]
 
 
 def test_attended_route_blank_parent_thread_uses_existing(

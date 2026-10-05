@@ -5692,7 +5692,7 @@ tools:
     substrate_qualified: user-vortex__cse_session_followup
   fol_descriptor: "Warm paste into a retained or dormant Cowork CSE — not hop-pair paste.
     Identity omitted ⇒ attended resolve. See agent_skill:claude-ai-cdp-navigation.
-    parent_thread without identity ⇒ lane-current probe binds the in-flight page.\n"
+    parent_thread without identity ⇒ the one in-flight operator page; contested ⇒ lane_cse_ambiguous.\n"
   json_schema:
     type: object
     properties:

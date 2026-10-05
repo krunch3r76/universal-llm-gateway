@@ -16,10 +16,12 @@ from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cdp_orphan_cse_classify import cse_pages_from_list
 from claude_bundles.cse_idle_probe import in_flight_from_state, probe_page_liveness_sync
 from claude_bundles.cse_url import normalize_cse_url
+from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 PageProbe = Callable[[int, str], tuple[dict[str, Any] | None, bool]]
 ProvenanceFor = Callable[[str], dict[str, Any] | None]
 ListPages = Callable[[], Iterator[tuple[int, str, str | None]]]
+PurposeFor = Callable[[str], str | None]
 
 
 def enumerate_live_cse_pages() -> Iterator[tuple[int, str, str | None]]:
@@ -53,6 +55,30 @@ def _default_provenance(chat_url: str) -> dict[str, Any] | None:
     from claude_bundles.cse_provenance_resolve import is_row_present
 
     return resolve_provenance(chat_url=chat_url, host_listable=is_row_present)
+
+
+def _default_purpose_for() -> PurposeFor:
+    rows: dict[str, dict[str, Any]] | None = None
+
+    def purpose_for(registration_id: str) -> str | None:
+        nonlocal rows
+        if rows is None:
+            from claude_bundles import cdp_registry_store as store
+
+            try:
+                rows = store.load_active()
+            except Exception:
+                rows = {}
+        row = rows.get(registration_id)
+        if not isinstance(row, dict):
+            return None
+        return str(row.get("purpose") or "").strip() or None
+
+    return purpose_for
+
+
+def _is_operator_purpose(purpose: Any) -> bool:
+    return str(purpose or "").strip().lower() in OPERATOR_PURPOSES
 
 
 def _probe_one(
@@ -115,9 +141,9 @@ def select_lane_current(
         # A dormant holder is still the lane's seat; an idle open page is not
         # evidence the operator moved off it.
         return "ambiguous", None, "seat_holder_not_open", None
-    if len(claimed) == 1:
-        return "current", "sole_live_claim", None, claimed[0]
-    if len(claimed) >= 2:
+    if claimed:
+        # An idle claim is stored association, the same evidence that named
+        # the hygiene_drain page in a:37834.
         return "ambiguous", None, "no_live_signal", None
     return "none", None, "no_claimed_live_page", None
 
@@ -182,9 +208,14 @@ def resolve_lane_current_cse(
     provenance_for: ProvenanceFor | None = None,
     list_active: Callable[[], list[Any]] | None = None,
     chat_url_for_registration: Callable[..., str | None] | None = None,
+    purpose_for_registration: PurposeFor | None = None,
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
-    """Return the live CSE identity for ``parent_thread``. Never raises."""
+    """Return the live CSE identity for ``parent_thread``. Never raises.
+
+    Only operator-purpose registrations claim a page; a consult or worker
+    CSE registered under the same ``parent_thread`` is reported unclaimed.
+    """
     lane = (parent_thread or "").strip()
     try:
         now_s = float(now())
@@ -196,6 +227,8 @@ def resolve_lane_current_cse(
         list_active = cdp_registry.list_active
     if chat_url_for_registration is None:
         chat_url_for_registration = cdp_registry.chat_url_for_registration
+    if purpose_for_registration is None:
+        purpose_for_registration = _default_purpose_for()
     try:
         return _resolve(
             lane,
@@ -205,6 +238,7 @@ def resolve_lane_current_cse(
             provenance_for=provenance_for,
             list_active=list_active,
             chat_url_for_registration=chat_url_for_registration,
+            purpose_for_registration=purpose_for_registration,
             now_s=now_s,
         )
     except Exception:
@@ -220,14 +254,17 @@ def _resolve(
     provenance_for: ProvenanceFor,
     list_active: Callable[[], list[Any]],
     chat_url_for_registration: Callable[..., str | None],
+    purpose_for_registration: PurposeFor,
     now_s: float,
 ) -> dict[str, Any]:
     grouped: dict[str, dict[str, Any]] = {}
+    gathered: list[Any] = []
     try:
-        pages = list_pages()
+        for item in list_pages():
+            gathered.append(item)
     except Exception:
-        pages = ()
-    for item in pages:
+        pass
+    for item in gathered:
         try:
             port, url, ws_url = item
             url = normalize_cse_url(str(url or ""))
@@ -262,6 +299,9 @@ def _resolve(
             if parent != lane:
                 continue
             rid = str(getattr(reg, "registration_id", "") or "").strip()
+            purpose = getattr(reg, "purpose", None) or purpose_for_registration(rid)
+            if not _is_operator_purpose(purpose):
+                continue
             raw_url = chat_url_for_registration(rid)
             key = normalize_cse_url(str(raw_url or ""))
         except Exception:
@@ -289,14 +329,21 @@ def _resolve(
             prov = provenance_for(url)
         except Exception:
             prov = None
+        prid = ""
+        if isinstance(prov, dict):
+            prid = str(prov.get("registration_id") or "").strip()
+        try:
+            prov_purpose = purpose_for_registration(prid) if prid else None
+        except Exception:
+            prov_purpose = None
         if (
             isinstance(prov, dict)
             and str(prov.get("parent_thread_claim") or "") == lane
+            and _is_operator_purpose(prov_purpose)
         ):
             claims.append("provenance_claim")
             provenance_reason = prov.get("reason")
-            prid = str(prov.get("registration_id") or "").strip()
-            if prid and prid not in registration_ids:
+            if prid not in registration_ids:
                 registration_ids.append(prid)
         if not claims:
             unclaimed.append(url)

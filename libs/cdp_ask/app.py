@@ -304,6 +304,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             if state == "ambiguous":
                 payload["code"] = "lane_cse_ambiguous"
                 return JSONResponse(status_code=409, content=payload)
+            if payload.get("reason") == "probe_error":
+                payload["code"] = "lane_cse_probe_error"
+                return JSONResponse(status_code=503, content=payload)
             payload["code"] = "lane_cse_none"
             return JSONResponse(status_code=404, content=payload)
         outcome = resolve_attended_operator()

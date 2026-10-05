@@ -63,8 +63,9 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         ``paste`` = hop-pair / grant authorized paste (``/v1/cse-session/paste``).
         ``followup`` = warm wake into a retained or dormant Cowork CSE
         (``/v1/project-ask/followups``). Identity omitted on followup ⇒ attended
-        resolve. ``parent_thread`` without identity binds the in-flight page
-        via the lane-current probe. ``resolve_attended(parent_thread=…)`` is
+        resolve. ``parent_thread`` without identity binds the one in-flight
+        operator page, else the seat holder; a contested lane refuses with
+        ``lane_cse_ambiguous``. ``resolve_attended(parent_thread=…)`` is
         that live probe; ``ThreadDetail.cse_chat_url`` is last-associated,
         never current. ``send_verified`` / ``dom_committed`` are not
         operator-visible. New CDP consults use ``team_dispatch(model=cdp/…)``.

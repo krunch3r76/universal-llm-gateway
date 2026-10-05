@@ -230,8 +230,9 @@ async def execute_followup(
         (req.chat_url or "").strip() or (req.registration_id or "").strip()
     )
 
+    lane_pin: dict = {}
     target, err, resolution_path, target_binding = await resolve_followup_target(
-        req, store
+        req, store, lane_pin=lane_pin
     )
     if err is not None:
         reattach_outcome, reattach_err = await _maybe_reattach(req, store, err)
@@ -240,7 +241,7 @@ async def execute_followup(
         reattach_used = True
         lane_created = bool(reattach_outcome and reattach_outcome.lane_created)
         target, err, resolution_path, target_binding = await resolve_followup_target(
-            req, store
+            req, store, lane_pin=lane_pin
         )
         if err is not None:
             await _reattach_teardown(reattach_outcome, retain_lane=req.retain_lane)
