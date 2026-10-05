@@ -36,6 +36,27 @@ UNTYPEABLE_OPS: frozenset[str] = frozenset(
     }
 )
 
+# Agent-workflow ops bound to a pipeline package slug; served-parity waits on
+# pipeline OpenAPI ``x-mcp`` stamps (S8 pipeline-class-binding-v1).
+PIPELINE_PENDING: dict[str, str] = {
+    "assemble_transcript": "pipelines/transcript_continuity/v1/",
+    "case_audit": "pipelines/cortex_review/v1/",
+    "digest": "pipelines/cortex_digest/v1/",
+    "endeavor_lock_ready": "pipelines/endeavor_birth/v1/",
+    "fill_gaps": "pipelines/cortex_review/v1/",
+    "predicate_renormalize": "pipelines/predicate_renormalize/v1/",
+    "prose_fact_scan": "pipelines/prose_fact_scan/v1/",
+    "review_queue": "pipelines/cortex_review/v1/",
+    "session_audit": "pipelines/cortex_review/v1/",
+    "session_close_preflight": "pipelines/session_close/v1/",
+    "todo_distill_implement_gate": "pipelines/implement_admission/v1/",
+    "transcript_discover": "pipelines/transcript_continuity/v1/",
+    "transcript_harvest": "pipelines/transcript_continuity/v1/",
+    "transcript_project": "pipelines/transcript_continuity/v1/",
+    "transcript_seal": "pipelines/transcript_continuity/v1/",
+    "transcript_source_probe": "pipelines/transcript_continuity/v1/",
+}
+
 
 def typed_routes_from_openapi(openapi_schema: Mapping) -> dict[str, TypedRoute]:
     """Derive served bindings from native ``x-mcp`` stamps in the document."""
@@ -66,7 +87,7 @@ def unbound_dispatch_ops(
     return _unbound_dispatch_ops(
         openapi_schema,
         all_ops=ops,
-        exempt_ops=UNTYPEABLE_OPS,
+        exempt_ops=UNTYPEABLE_OPS | frozenset(PIPELINE_PENDING),
         load_openapi=_live_openapi if openapi_schema is None else None,
     )
 
