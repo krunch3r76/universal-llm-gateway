@@ -294,6 +294,13 @@ def _typed_post(
     return resp.json(), resp.status_code
 
 
+def _typed_post_bodiless(
+    client: TestClient, path: str
+) -> tuple[dict[str, Any], int]:
+    resp = client.post(path)
+    return resp.json(), resp.status_code
+
+
 def _doc_entity_row(conn: sqlite3.Connection, document_id: str) -> dict[str, Any]:
     rows = _query_table(conn, "entities", "id = ?", (document_id,))
     assert len(rows) == 1, rows
@@ -461,6 +468,7 @@ def _seed_refresh_delta(conn: sqlite3.Connection, files_root: Path) -> None:
     assert "error" not in result, result
 
 
+@pytest.mark.offline
 def test_view_render_refresh_after_graph_change_parity(
     migrated_db_template: Path,
     tmp_path: Path,
@@ -485,6 +493,30 @@ def test_view_render_refresh_after_graph_change_parity(
         typed_call=lambda c: _typed_post(
             c, f"/views/{_DOC_ID}/render", _REFRESH_BODY
         ),
+    )
+
+
+@pytest.mark.offline
+def test_view_render_bodiless_post_refresh_parity(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bodiless typed POST defaults to refresh like /dispatch with only document_id."""
+
+    def seed(conn: sqlite3.Connection, files_root: Path) -> None:
+        root_id, doc_id = _seed_view_entities(conn)
+        _seed_registered_view(conn, files_root, root_id, doc_id)
+
+    _run_parity_pair(
+        migrated_db_template,
+        tmp_path,
+        monkeypatch,
+        document_id=_DOC_ID,
+        root_id=_ROOT_ID,
+        seed_fn=seed,
+        dispatch_call=lambda: execute_op("view_render", {"document_id": _DOC_ID}),
+        typed_call=lambda c: _typed_post_bodiless(c, f"/views/{_DOC_ID}/render"),
     )
 
 
@@ -713,59 +745,97 @@ def test_view_render_error_cases_parity(
         assert pre_t == pre
 
 
+def _active_derived_from_edges(
+    conn: sqlite3.Connection, document_id: str, root_id: str
+) -> list[dict[str, Any]]:
+    return _query_table(
+        conn,
+        "relationships",
+        "from_entity = ? AND to_entity = ? AND type = 'derived_from' AND active = 1",
+        (document_id, root_id),
+    )
+
+
+def _assert_view_render_reject_clean_state(
+    conn: sqlite3.Connection,
+    files_root: Path,
+    document_id: str,
+    root_id: str,
+    pre: dict[str, Any],
+    post: dict[str, Any],
+    events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    assert post == pre
+    assert _active_derived_from_edges(conn, document_id, root_id) == []
+    assert _events_snapshot(events) == []
+
+
 @pytest.mark.offline
 def test_view_render_s4_narrative_sections_not_object(
     migrated_db_template: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Known S4 (4a2e0268bf10172f): typed 422 vs dispatch TypeError after orphan edge."""
+    """Known S4 (4a2e0268bf10172f): typed 422 vs dispatch 200+error; identical stored state."""
     _freeze_view_snapshot_as_of(monkeypatch)
+    payload = {
+        "document_id": _DOC_ID,
+        "mode": "register",
+        "root_id": _ROOT_ID,
+        "view_profile": "matter_charter",
+        "narrative_sections": "not-an-object",
+    }
     bind_db = tmp_path / "dispatch_s4.db"
     copy_template_db(migrated_db_template, bind_db)
     _bind_isolated_db(monkeypatch, bind_db)
     files_d = _bind_files_root(monkeypatch, tmp_path / "files_s4_d")
-    root_id, doc_id = _seed_view_entities(cortex_db.cortex_conn())
-    pre = _full_view_inventory(cortex_db.cortex_conn(), files_d, doc_id, root_id)
-    with pytest.raises(TypeError):
-        execute_op(
-            "view_render",
-            {
-                "document_id": doc_id,
-                "mode": "register",
-                "root_id": root_id,
-                "view_profile": "matter_charter",
-                "narrative_sections": "not-an-object",
-            },
-        )
-    post = _full_view_inventory(cortex_db.cortex_conn(), files_d, doc_id, root_id)
-    assert post["files"] == pre["files"]
-    assert post["entities"] == pre["entities"]
-    orphan = _query_table(
+    _seed_view_entities(cortex_db.cortex_conn())
+    pre = _full_view_inventory(cortex_db.cortex_conn(), files_d, _DOC_ID, _ROOT_ID)
+    assert _active_derived_from_edges(
+        cortex_db.cortex_conn(), _DOC_ID, _ROOT_ID
+    ) == []
+    dispatch_events: list = []
+    _capture_view_events(monkeypatch, dispatch_events)
+    dispatch_raw = execute_op("view_render", payload)
+    assert _error_code(dispatch_raw) == "invalid_narrative_sections", dispatch_raw
+    post = _full_view_inventory(cortex_db.cortex_conn(), files_d, _DOC_ID, _ROOT_ID)
+    _assert_view_render_reject_clean_state(
         cortex_db.cortex_conn(),
-        "relationships",
-        "from_entity = ? AND to_entity = ? AND type = 'derived_from' AND active = 1",
-        (doc_id, root_id),
+        files_d,
+        _DOC_ID,
+        _ROOT_ID,
+        pre,
+        post,
+        dispatch_events,
     )
-    assert len(orphan) == 1, "dispatch path leaves active derived_from without compensation"
 
     client, _, files_t = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="s4_t"
     )
     _seed_view_entities(cortex_db.cortex_conn())
-    pre_t = _full_view_inventory(cortex_db.cortex_conn(), files_t, doc_id, root_id)
+    pre_t = _full_view_inventory(cortex_db.cortex_conn(), files_t, _DOC_ID, _ROOT_ID)
+    typed_events: list = []
+    _capture_view_events(monkeypatch, typed_events)
     resp = client.post(
-        f"/views/{doc_id}/render",
+        f"/views/{_DOC_ID}/render",
         json={
             "mode": "register",
-            "root_id": root_id,
+            "root_id": _ROOT_ID,
             "view_profile": "matter_charter",
             "narrative_sections": "not-an-object",
         },
     )
-    assert resp.status_code == 422
-    post_t = _full_view_inventory(cortex_db.cortex_conn(), files_t, doc_id, root_id)
-    assert post_t == pre_t
+    assert resp.status_code == 422, resp.text
+    post_t = _full_view_inventory(cortex_db.cortex_conn(), files_t, _DOC_ID, _ROOT_ID)
+    _assert_view_render_reject_clean_state(
+        cortex_db.cortex_conn(),
+        files_t,
+        _DOC_ID,
+        _ROOT_ID,
+        pre_t,
+        post_t,
+        typed_events,
+    )
 
 
 def _install_register_update_failure(

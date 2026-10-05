@@ -170,6 +170,18 @@ def _op_view_render(
     if mode not in _VALID_MODES:
         return _err("unknown_view_profile", f"Invalid mode {mode!r}")
 
+    if narrative_sections is not None:
+        if not isinstance(narrative_sections, dict):
+            return _err(
+                "invalid_narrative_sections",
+                "narrative_sections must be an object mapping section IDs to strings",
+            )
+        for key, value in narrative_sections.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                return _err(
+                    "invalid_narrative_sections",
+                    "narrative_sections keys and values must be strings",
+                )
     narrative_sections = narrative_sections or {}
 
     with WRITE_LOCK:

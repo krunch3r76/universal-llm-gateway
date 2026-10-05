@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from openapi_mcp.binding import x_mcp
 
 from ..models.substrate_s6_batch9 import ViewRenderRequest
@@ -18,7 +18,7 @@ router = APIRouter(tags=["substrate-s6-batch9"])
 )
 def view_render_route(
     document_id: str,
-    body: ViewRenderRequest,
+    body: ViewRenderRequest = Body(default_factory=ViewRenderRequest),
 ) -> dict[str, Any]:
     """Render or refresh a derived view document (dispatch ``view_render`` op)."""
     from ..dispatch_ops.ops_views import _op_view_render
