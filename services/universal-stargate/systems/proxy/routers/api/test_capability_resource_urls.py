@@ -14,7 +14,13 @@ from fastapi.testclient import TestClient
 from systems.pipeline.core.handlers.registry import HandlerRegistry
 from systems.pipeline.registry.core import PipelineRegistry
 from systems.proxy.dependencies import get_auth_dependency, get_proxy
-from systems.proxy.routers.api import capabilities, executions, providers_cdp
+from systems.proxy.routers.api import (
+    capabilities,
+    execution_monitor,
+    executions,
+    providers_cdp,
+)
+from systems.proxy.routers.api.execution_authority_read import AuthorityReadResult
 
 pytestmark = pytest.mark.offline
 
@@ -27,9 +33,7 @@ def _handlers() -> None:
 
 
 def _spec(pipeline_id: str, category: str | None = "demo") -> str:
-    category_line = (
-        f"category: {category}\n" if category is not None else ""
-    )
+    category_line = f"category: {category}\n" if category is not None else ""
     return (
         "schema_version: 6\n"
         f"id: {pipeline_id}\n"
@@ -84,9 +88,18 @@ def _client(proxy: Any, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         _agent_bus_url="unix:///tmp/agent-bus.sock",
         _agent_bus_token="test-token",
     )
+
+    async def _authority_miss(_execution_id: str) -> AuthorityReadResult:
+        return AuthorityReadResult(
+            ok=False, payload=None, reason="miss", degraded=False
+        )
+
     monkeypatch.setattr(executions, "_get_tracker", lambda _proxy: tracker)
-    monkeypatch.setattr(executions, "fetch_terminal", _missing)
-    monkeypatch.setattr(executions, "recover_execution_from_bus_thread", _missing)
+    monkeypatch.setattr(execution_monitor, "fetch_record", _missing)
+    monkeypatch.setattr(execution_monitor, "read_execution_authority", _authority_miss)
+    monkeypatch.setattr(
+        execution_monitor, "recover_execution_from_bus_thread", _missing
+    )
     app = FastAPI()
     parent = APIRouter(prefix="/api/v1")
     parent.include_router(capabilities.router)
@@ -261,9 +274,7 @@ def test_derived_category_pipeline_invocable_by_id_and_category_url(
     by_category = client.get(canonical)
     assert by_category.status_code == 200, by_category.text
     assert by_category.json()["url"] == canonical
-    response = client.post(
-        canonical, json={"model": "bare-pipe", "messages": []}
-    )
+    response = client.post(canonical, json={"model": "bare-pipe", "messages": []})
     assert response.status_code == 202, response.text
     assert response.json()["execution_id"] == "exec-bare"
 
