@@ -1,4 +1,4 @@
-"""Spawn-time Lane-B remint — friction 37813 missing cwd before bridge launch."""
+"""Spawn-time Lane-B refuse — friction 37813 missing cwd before bridge launch."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def _launch_kwargs(tmp_path: Path) -> dict[str, object]:
 
 
 def test_ensure_spawn_workspace_skips_lane_a(tmp_path: Path) -> None:
-    """Lane A must not remint when dispatch_workspace is absent."""
+    """Lane A must not refuse when dispatch_workspace is absent."""
     hub = tmp_path / "hub"
     hub.mkdir()
     missing = tmp_path / "no-such-shared"
@@ -101,7 +101,7 @@ def test_ensure_spawn_workspace_skips_lane_a(tmp_path: Path) -> None:
 
 
 def test_ensure_spawn_workspace_noop_when_lane_b_present(tmp_path: Path) -> None:
-    """Present isolation tree must not remint."""
+    """Present isolation tree must not refuse."""
     hub = tmp_path / "hub"
     hub.mkdir()
     wt = tmp_path / "lane-t1"
@@ -112,87 +112,35 @@ def test_ensure_spawn_workspace_noop_when_lane_b_present(tmp_path: Path) -> None
     assert out is ctx
 
 
-def test_ensure_spawn_workspace_remints_missing_lane_b(
+def test_ensure_spawn_workspace_refuses_missing_lane_b(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Missing Lane-B dir at spawn remints before the caller proceeds."""
+    """Missing Lane-B dir at spawn refuses; remint is admit-time (15067#2)."""
     hub = tmp_path / "hub"
     hub.mkdir()
     missing = tmp_path / "lane-missing"
-    restored = tmp_path / "lane-restored"
     cfg = _cfg(hub, tmp_path / "wtroot", tmp_path / "dws")
     ctx = _lane_b_ctx(hub, missing, dispatch_id="d2", thread_id="t2", cfg=cfg)
     calls: list[str] = []
 
     def _remint(**kwargs: object) -> Path:
         calls.append(str(kwargs["thread_id"]))
-        restored.mkdir()
-        return restored
+        return missing
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_worktree_remint.remint_lane_worktree",
         _remint,
     )
-    out = ensure_spawn_workspace(ctx)
-    assert calls == ["t2"]
-    assert out.dispatch_workspace == restored
-    assert out.capture_binding.write_tree == restored.resolve()
-    assert restored.is_dir()
-
-
-def test_ensure_spawn_workspace_raises_when_remint_leaves_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Remint that does not restore a directory must not reach Node spawn."""
-    hub = tmp_path / "hub"
-    hub.mkdir()
-    missing = tmp_path / "lane-gone"
-    cfg = _cfg(hub, tmp_path / "wtroot", tmp_path / "dws")
-    ctx = _lane_b_ctx(hub, missing, dispatch_id="d3", thread_id="t3", cfg=cfg)
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_worktree_remint.remint_lane_worktree",
-        lambda **_k: tmp_path / "still-missing",
-    )
-    with pytest.raises(WorktreeMintError, match="missing at bridge spawn"):
+    with pytest.raises(WorktreeMintError, match="missing at bridge spawn") as caught:
         ensure_spawn_workspace(ctx)
+    assert caught.value.retryable is True
+    assert calls == []
 
 
-def test_launch_sdk_bridge_remints_before_client_launch(
+def test_launch_sdk_bridge_does_not_spawn_when_lane_b_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``Client.launch_bridge`` must see a directory, not a vanished lane path."""
-    import services.git_integration_worker.cursor_sdk_bridge_launch as bridge_launch
-
-    hub = tmp_path / "hub"
-    hub.mkdir()
-    missing = tmp_path / "lane-spawn-missing"
-    restored = tmp_path / "lane-spawn-restored"
-    cfg = _cfg(hub, tmp_path / "wtroot", tmp_path / "dws")
-    ctx = _lane_b_ctx(hub, missing, dispatch_id="d4", thread_id="t4", cfg=cfg)
-    captured: dict[str, str] = {}
-
-    def _remint(**_kwargs: object) -> Path:
-        restored.mkdir()
-        return restored
-
-    def _launch_bridge(*, command, workspace, **_kwargs):  # noqa: ARG001
-        captured["workspace"] = workspace
-        return object()
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_worktree_remint.remint_lane_worktree",
-        _remint,
-    )
-    monkeypatch.setattr(bridge_launch.Client, "launch_bridge", _launch_bridge)
-    launch_sdk_bridge(ctx, **_launch_kwargs(tmp_path))
-    assert captured["workspace"] == str(restored)
-    assert restored.is_dir()
-
-
-def test_launch_sdk_bridge_does_not_spawn_when_remint_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Failed remint must raise before ``Client.launch_bridge``."""
+    """Missing Lane-B workspace must raise before ``Client.launch_bridge``."""
     import services.git_integration_worker.cursor_sdk_bridge_launch as bridge_launch
 
     hub = tmp_path / "hub"
@@ -206,14 +154,8 @@ def test_launch_sdk_bridge_does_not_spawn_when_remint_fails(
         launched["n"] += 1
         return object()
 
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_worktree_remint.remint_lane_worktree",
-        lambda **_k: (_ for _ in ()).throw(
-            WorktreeMintError("git lock", retryable=True)
-        ),
-    )
     monkeypatch.setattr(bridge_launch.Client, "launch_bridge", _launch_bridge)
-    with pytest.raises(WorktreeMintError, match="git lock"):
+    with pytest.raises(WorktreeMintError, match="missing at bridge spawn"):
         launch_sdk_bridge(ctx, **_launch_kwargs(tmp_path))
     assert launched["n"] == 0
 
@@ -255,3 +197,65 @@ def test_remint_after_hand_deleted_directory(source_repo: Path, tmp_path: Path) 
     )
     assert reminted.is_dir()
     assert (reminted / "kept.txt").read_text(encoding="utf-8") == "visible\n"
+
+
+def test_sweep_vanished_pin_swallows_remint_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Locked vanished-pin remint must not crash the orphan reaper (15067#2)."""
+    from services.git_integration_worker.cursor_sdk_worktree_lock import LockedWorktree
+    from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
+        reset_vanished_pin_reports,
+        sweep_vanished_pinned_worktrees,
+    )
+
+    class _Parsed:
+        dispatch_id = "d-lock"
+        thread_id = "t-lock"
+
+    vanished = tmp_path / "lane-vanished-locked"
+    entry = LockedWorktree(
+        path=vanished,
+        exists=False,
+        reason="ulg:dispatch=d-lock;thread=t-lock;pinned_at=2026-10-05T00:00:00Z",
+        parsed=_Parsed(),  # type: ignore[arg-type]
+    )
+    reset_vanished_pin_reports()
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def execute(self, *_a, **_k):
+            return self
+
+        def fetchone(self):
+            return {"status": "running"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_lock.list_locked_worktrees",
+        lambda _repo: [entry],
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_live_guard.ledger_connection",
+        lambda: _Conn(),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_live_guard.worktree_held_by_live_bridge",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_lane_b_pinned_worktree_vanished",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_remint.remint_lane_worktree",
+        lambda **_k: (_ for _ in ()).throw(
+            WorktreeMintError("missing but locked worktree", retryable=True)
+        ),
+    )
+    count = sweep_vanished_pinned_worktrees(source_repo=tmp_path)
+    assert count == 1

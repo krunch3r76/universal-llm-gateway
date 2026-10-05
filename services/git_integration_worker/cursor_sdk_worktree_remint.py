@@ -1,4 +1,4 @@
-"""Remint a vanished Lane-B worktree so spawn does not die as ENOENT.
+"""Spawn refuse and vanished-pin remint for missing Lane-B worktrees.
 
 Admit already refuses a missing isolation tree. Bridge launch is later,
 after the capacity slot wait, and does not re-stat. Friction 37813: admit
@@ -6,22 +6,20 @@ returned admitted=true, then ``launch_bridge`` used a deleted
 ``lane-{thread}`` directory and the Node bridge died
 ``spawn_enoent_missing_cwd``. A later admit reminted and succeeded.
 
-This module is the spawn (and vanished-pin) remint: prune stale git
-worktree metadata, then ``mint_dispatch_worktree`` so an existing lane
-branch is re-attached. ``reconcile`` already imports
-``remint_lane_worktree``; the module was missing.
+Post-admit lanes are ``git worktree lock``ed, so spawn-time remint cannot
+reattach (CDP review 15067#2). Spawn therefore refuses with a retryable
+``WorktreeMintError``; remint stays on the next admit. ``remint_lane_worktree``
+is for the vanished-pin sweep only.
 """
 
 from __future__ import annotations
 
 import subprocess
-from dataclasses import replace
 from pathlib import Path
 
 from universal_logging import get_logger
 
 from services.git_integration_worker.config import load_config
-from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_dispatch_context import (
     SdkDispatchContext,
 )
@@ -63,7 +61,8 @@ def remint_lane_worktree(
 
     ``worktree_root`` defaults to ``load_config().worktree_root`` so
     ``sweep_vanished_pinned_worktrees`` can call this with the reconcile
-    signature (source_repo, dispatch_id, thread_id).
+    signature (source_repo, dispatch_id, thread_id). Callers must catch
+    ``WorktreeMintError``: locked vanished pins fail prune/add.
     """
     root = worktree_root if worktree_root is not None else load_config().worktree_root
     _prune_stale_worktree_metadata(source_repo=source_repo)
@@ -89,46 +88,27 @@ def remint_lane_worktree(
     return minted
 
 
-def ensure_spawn_workspace(
-    ctx: SdkDispatchContext,
-    *,
-    worktree_root: Path | None = None,
-) -> SdkDispatchContext:
-    """Return ctx whose Lane-B ``dispatch_workspace`` exists, reminting if needed.
+def ensure_spawn_workspace(ctx: SdkDispatchContext) -> SdkDispatchContext:
+    """Refuse Lane-B spawn when ``dispatch_workspace`` is gone.
 
-    Lane A is unchanged. A remint that lands on a different resolved path
-    replaces ``dispatch_workspace`` and the capture write tree so
-    ``local.cwd`` and ``launch_bridge(workspace=)`` agree.
+    Lane A is unchanged. A present Lane-B tree is unchanged. Missing Lane-B
+    raises retryable ``WorktreeMintError`` so the closeout is
+    ``CURSOR_WORKTREE_MINT_FAILED`` instead of ``CURSOR_SDK_BRIDGE_SPAWN_CWD``.
+    Remint is admit's job (correct repo and inherited lane thread).
     """
     if ctx.lane != "B":
         return ctx
     if ctx.dispatch_workspace.is_dir():
         return ctx
     logger.warning(
-        "lane worktree missing at spawn; reminting dispatch_id=%s thread_id=%s path=%s",
+        "lane worktree missing at spawn; refusing remint dispatch_id=%s "
+        "thread_id=%s path=%s",
         ctx.dispatch_id,
         ctx.thread_id,
         ctx.dispatch_workspace,
     )
-    minted = remint_lane_worktree(
-        source_repo=ctx.hub,
-        dispatch_id=ctx.dispatch_id,
-        thread_id=ctx.thread_id,
-        worktree_root=worktree_root,
+    raise WorktreeMintError(
+        "lane worktree missing at bridge spawn; remint is admit-time "
+        f"(path={ctx.dispatch_workspace})",
+        retryable=True,
     )
-    if not minted.is_dir():
-        raise WorktreeMintError(
-            "lane worktree missing at bridge spawn and remint left no directory: "
-            f"{minted}",
-            retryable=True,
-        )
-    if minted.resolve() == ctx.dispatch_workspace.resolve():
-        return ctx
-    binding = CaptureBinding(
-        lane="B",
-        write_tree=minted.resolve(),
-        receipt_tree=ctx.hub.resolve(),
-        mount_root=minted.resolve(),
-        repo_roots=(minted.resolve(),),
-    )
-    return replace(ctx, dispatch_workspace=minted, capture_binding=binding)

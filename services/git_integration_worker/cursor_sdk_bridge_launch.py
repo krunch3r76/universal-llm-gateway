@@ -198,7 +198,7 @@ def launch_sdk_bridge(
     (alignment only when lane is ``B``). Other context fields are the
     caller's responsibility.
 
-    Lane-B: remint a vanished worktree before spawn (friction 37813) so
+    Lane-B: refuse spawn when the worktree is gone (friction 37813) so
     Node does not die ``spawn_enoent_missing_cwd``.
     """
     from services.git_integration_worker.cursor_sdk_worktree_remint import (

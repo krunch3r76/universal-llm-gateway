@@ -156,16 +156,24 @@ def sweep_vanished_pinned_worktrees(*, source_repo: Path) -> int:
         ):
             try:
                 from services.git_integration_worker.cursor_sdk_worktree_remint import (
+                    WorktreeMintError,
                     remint_lane_worktree,
                 )
             except ImportError:
                 remint_lane_worktree = None  # type: ignore[misc, assignment]
             if remint_lane_worktree is not None:
-                remint_lane_worktree(
-                    source_repo=repo,
-                    dispatch_id=entry.parsed.dispatch_id,
-                    thread_id=entry.parsed.thread_id,
-                )
+                try:
+                    remint_lane_worktree(
+                        source_repo=repo,
+                        dispatch_id=entry.parsed.dispatch_id,
+                        thread_id=entry.parsed.thread_id,
+                    )
+                except WorktreeMintError as exc:
+                    logger.warning(
+                        "vanished-pin remint failed path=%s err=%s",
+                        entry.path,
+                        exc,
+                    )
     return count
 
 
