@@ -12,6 +12,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
 )
 from claude_bundles.nested_cdp_prompt_gate import (
     NestedCdpPromptGateError,
+    empty_report_sections,
     enforce_nested_cdp_prompt_gates,
     enforce_retrieval_report,
     enforce_skeptic_chrome_refuse,
@@ -97,7 +98,7 @@ def test_inlined_skill_excerpt_does_not_arm() -> None:
     """A1 — skill prose mentioning G2/G4 mid-sentence is not an author declaration."""
     inline = (
         "<skills_inline>\n"
-        "<skill slug=\"consult-routing\">G2 frame and G4 skeptic read ACTIVE.</skill>\n"
+        '<skill slug="consult-routing">G2 frame and G4 skeptic read ACTIVE.</skill>\n'
         "</skills_inline>\n"
         "Pin the ordinary ask.\n"
     )
@@ -123,12 +124,9 @@ def test_charter_uses_author_body_not_merged_skills() -> None:
     author = "Pin the lane branch diff.\n"
     merged = (
         "/reasoning-posture\n"
-        "G4 skeptic review is documented in consult-routing.\n"
-        + author
+        "G4 skeptic review is documented in consult-routing.\n" + author
     )
-    out = ensure_review_reading_charter(
-        merged, "review", author_body=author
-    )
+    out = ensure_review_reading_charter(merged, "review", author_body=author)
     assert "the packet carries the code under review" in out.casefold()
 
 
@@ -185,6 +183,30 @@ def test_report_target_mismatch_refuses(
     with pytest.raises(NestedCdpPromptGateError) as exc:
         enforce_retrieval_report(body)
     assert exc.value.code == "nested_cdp_retrieval_report_target_mismatch"
+
+
+def test_yields_subheading_table_is_not_empty_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37914 — ``###`` after ``## Yields`` is in-section content, not a terminator."""
+    assert empty_report_sections("## Yields\n\n### scope\n| table |") == []
+    report = """# Retrieval report
+target: todo:demo
+
+## Queries
+- q
+
+## Yields
+
+### llm_prompting
+| table |
+
+## Choice-to-evidence
+| choice | evidence |
+"""
+    uri = _write_report(tmp_path, monkeypatch, body=report)
+    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
+    assert enforce_retrieval_report(body) == uri
 
 
 def test_report_empty_section_refuses(
