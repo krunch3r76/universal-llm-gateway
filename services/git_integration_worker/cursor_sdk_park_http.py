@@ -137,12 +137,17 @@ async def park_for_restart(
     controller: Any,
 ) -> tuple[int, dict[str, Any]]:
     """Sweep every live dispatch for an intent; converge bridges in the background."""
+    armed = bool(getattr(controller, "_armed", False))
+    holder = getattr(controller, "_arm_holder_id", None)
     summary: ParkSweepSummary = await asyncio.to_thread(
         park_for_restart_sweep,
         intent_id=intent_id,
         drain_epoch=drain_epoch,
         actor=actor,
         reason=reason,
+        drain_armed=armed,
+        arm_holder_id=str(holder) if holder else None,
+        wait_for_boundary=armed or bool(holder),
     )
     if summary.requested:
         controller.create_tracked_task(

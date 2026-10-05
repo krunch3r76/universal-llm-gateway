@@ -32,7 +32,7 @@ _TERMINAL_ROW_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
 class ParkRefusal(StrEnum):
-    """Park refusals in precedence order (spec D3 #1–#9, +#10 amendment)."""
+    """Park refusals in precedence order (spec D3 #1–#9, +#10–#11)."""
 
     NOT_FOUND = "NOT_FOUND"
     ALREADY_TERMINAL = "ALREADY_TERMINAL"
@@ -44,6 +44,7 @@ class ParkRefusal(StrEnum):
     LANE_B_UNPINNED = "LANE_B_UNPINNED"
     CANCEL_FAILED = "CANCEL_FAILED"
     RUN_ALREADY_TERMINAL = "RUN_ALREADY_TERMINAL"
+    BOUNDARY_HOLDER = "BOUNDARY_HOLDER"
 
 
 # refusal → (http_status, retryable)
@@ -58,6 +59,7 @@ REFUSAL_HTTP: dict[ParkRefusal, tuple[int, bool]] = {
     ParkRefusal.LANE_B_UNPINNED: (422, False),
     ParkRefusal.CANCEL_FAILED: (503, False),
     ParkRefusal.RUN_ALREADY_TERMINAL: (409, False),
+    ParkRefusal.BOUNDARY_HOLDER: (409, True),
 }
 
 # Refusals that leave nothing for a restart to wait on once the row closes.
@@ -140,7 +142,11 @@ def preflight_park(
     intent_id: str | None = None,
     mode: str = "cancel",
 ) -> ParkPreflight:
-    """Decide the D3 refusal for *dispatch_id* without touching any state."""
+    """Decide the D3 refusal for *dispatch_id* without touching any state.
+
+    ``BOUNDARY_HOLDER`` is decided in ``park_for_restart_sweep`` (arm holder /
+    conductor while a boundary drain is armed), not here.
+    """
     discard = mode == "discard"
     row = load_park_candidate_row(dispatch_id)
     if row is None:

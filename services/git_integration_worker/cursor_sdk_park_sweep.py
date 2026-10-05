@@ -28,6 +28,9 @@ from services.git_integration_worker.cursor_sdk_park_for_restart import (
     ParkSignalResult,
     signal_park,
 )
+from services.git_integration_worker.cursor_sdk_conductor_identity import (
+    is_conductor_dispatch_row,
+)
 from services.git_integration_worker.cursor_sdk_park_preflight import (
     HARD_REFUSALS,
     SELF_CLEARING_REFUSALS,
@@ -68,7 +71,7 @@ def _sweep_candidates(intent_id: str) -> tuple[list[dict[str, Any]], list[str]]:
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         rows = conn.execute(
-            "SELECT dispatch_id, thread_id, status FROM cursor_sdk_dispatches "
+            "SELECT dispatch_id, thread_id, status, contract FROM cursor_sdk_dispatches "
             "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') "
             "ORDER BY rowid ASC"
         ).fetchall()
@@ -83,12 +86,31 @@ def _sweep_candidates(intent_id: str) -> tuple[list[dict[str, Any]], list[str]]:
     )
 
 
+def _boundary_holder_refusal(
+    row: dict[str, Any],
+    *,
+    drain_armed: bool,
+    arm_holder_id: str | None,
+    wait_for_boundary: bool,
+) -> bool:
+    """True when park would manufacture the hop-boundary terminal (a:38111)."""
+    if not (drain_armed or wait_for_boundary):
+        return False
+    did = str(row.get("dispatch_id") or "")
+    if arm_holder_id and did == arm_holder_id:
+        return True
+    return is_conductor_dispatch_row(row)
+
+
 def park_for_restart_sweep(
     *,
     intent_id: str,
     drain_epoch: int | None,
     actor: str,
     reason: str,
+    drain_armed: bool = False,
+    arm_holder_id: str | None = None,
+    wait_for_boundary: bool = False,
 ) -> ParkSweepSummary:
     """Park every live write-capable dispatch for one restart intent (blocking)."""
     summary = ParkSweepSummary(intent_id=intent_id, drain_epoch=drain_epoch)
@@ -113,9 +135,34 @@ def park_for_restart_sweep(
                 "refusal": ParkRefusal.NOT_LIVE_HERE.value,
             }
         )
+    parkable_ids: list[str] = []
+    for row in candidates:
+        did = row["dispatch_id"]
+        if did not in live_ids:
+            continue
+        if _boundary_holder_refusal(
+            row,
+            drain_armed=drain_armed,
+            arm_holder_id=arm_holder_id,
+            wait_for_boundary=wait_for_boundary,
+        ):
+            emit_sdk_park_refused(
+                dispatch_id=str(did),
+                refusal=ParkRefusal.BOUNDARY_HOLDER.value,
+                intent_id=intent_id,
+                actor=actor,
+            )
+            summary.refused.append(
+                {
+                    "dispatch_id": str(did),
+                    "refusal": ParkRefusal.BOUNDARY_HOLDER.value,
+                }
+            )
+            continue
+        parkable_ids.append(did)
     results: list[ParkSignalResult] = []
-    if live_ids:
-        with ThreadPoolExecutor(max_workers=min(4, len(live_ids))) as pool:
+    if parkable_ids:
+        with ThreadPoolExecutor(max_workers=min(4, len(parkable_ids))) as pool:
             results = list(
                 pool.map(
                     lambda did: signal_park(
@@ -125,7 +172,7 @@ def park_for_restart_sweep(
                         actor=actor,
                         reason=reason,
                     ),
-                    live_ids,
+                    parkable_ids,
                 )
             )
     for result in results:

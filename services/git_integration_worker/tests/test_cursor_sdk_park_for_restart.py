@@ -27,6 +27,7 @@ from services.git_integration_worker.cursor_sdk_park_ledger import (
 )
 from services.git_integration_worker.cursor_sdk_park_preflight import (
     REFUSAL_HTTP,
+    SELF_CLEARING_REFUSALS,
     ParkRefusal,
     preflight_park,
 )
@@ -105,6 +106,7 @@ def _admit_running(
     lane: str | None = None,
     nest_under: str | None = None,
     read_only: bool = False,
+    contract: str | None = None,
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req(dispatch_id, thread_id=thread_id, lane=lane, nest_under=nest_under)
@@ -123,6 +125,7 @@ def _admit_running(
         work_key=work_key,
         identity_class="declared" if work_key else None,
         nest_under=nest_under,
+        contract=contract,
     )
     ledger.mark_running(dispatch_id=dispatch_id)
     if with_store:
@@ -509,3 +512,63 @@ def test_converge_aborts_only_lingering_parked_bridges(
         for ev in events
         if ev.signal == "sdk.park.bridge_abort_escalated"
     ] == ["parked-1"]
+
+
+def test_sweep_refuses_boundary_holder_and_armed_conductor(
+    tmp_path: Path, events: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3 a:38111: armed holder and conductor are BOUNDARY_HOLDER; others park."""
+    signalled: list[str] = []
+    real_signal = signal_park
+
+    def _wrap(did: str, **kw: Any):
+        signalled.append(did)
+        return real_signal(did, **kw)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_park_sweep.signal_park",
+        _wrap,
+    )
+    runs: dict[str, FakeCancellableRun] = {}
+    for did, contract in (("holder-x", None), ("cond-1", "conductor"), ("other-1", None)):
+        _admit_running(did, thread_id=f"t-{did}", tmp_path=tmp_path, contract=contract)
+        runs[did] = FakeCancellableRun(id=f"run-{did}")
+        _register(did, thread_id=f"t-{did}", run=runs[did])
+
+    summary = park_for_restart_sweep(
+        intent_id=_INTENT,
+        drain_epoch=4,
+        actor="manage",
+        reason="deploy",
+        drain_armed=True,
+        arm_holder_id="holder-x",
+        wait_for_boundary=True,
+    )
+    refusals = {r["dispatch_id"]: r["refusal"] for r in summary.refused}
+    assert refusals["holder-x"] == ParkRefusal.BOUNDARY_HOLDER.value
+    assert refusals["cond-1"] == ParkRefusal.BOUNDARY_HOLDER.value
+    assert "other-1" not in refusals
+    assert summary.requested == ["other-1"]
+    assert "holder-x" not in signalled
+    assert "cond-1" not in signalled
+    assert signalled == ["other-1"]
+    assert runs["holder-x"].cancel_calls == 0
+    assert runs["cond-1"].cancel_calls == 0
+    assert runs["other-1"].cancel_calls == 1
+    assert ParkRefusal.BOUNDARY_HOLDER not in SELF_CLEARING_REFUSALS
+    assert summary.live_after == 2
+    assert REFUSAL_HTTP[ParkRefusal.BOUNDARY_HOLDER][1] is True
+
+
+def test_sweep_parks_non_holder_when_drain_not_armed(tmp_path: Path) -> None:
+    """Without an armed drain, a conductor row is still parkable (Layer 1 owns skip)."""
+    _admit_running(
+        "cond-free", thread_id="t-cf", tmp_path=tmp_path, contract="conductor"
+    )
+    run = FakeCancellableRun(id="run-cf")
+    _register("cond-free", thread_id="t-cf", run=run)
+    summary = park_for_restart_sweep(
+        intent_id=_INTENT, drain_epoch=1, actor="manage", reason="deploy"
+    )
+    assert summary.requested == ["cond-free"]
+    assert run.cancel_calls == 1

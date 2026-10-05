@@ -580,3 +580,245 @@ async def test_partial_drain_release_failure_leaves_pending(tmp_path) -> None:
     stored = store.get(intent.intent_id)
     assert stored is not None
     assert stored.status == "pending_drain"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_boundary_park_live_skips_while_armed(tmp_path) -> None:
+    """AC1 a:38111: park_live grace does not fire while GIW reports armed."""
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="a38111-ac1",
+        wait_for_boundary=True,
+        park_live=True,
+        caller_agent="cursor",
+    )
+    park_calls: list[tuple[str, int | None, str]] = []
+    worker = _BoundaryParkWorker()
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return {"requested": [], "refused": [], "already_parked": [], "live_after": 0}
+
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed(),
+        kill=_Kill(),
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        park_for_restart=_park,
+        park_live_grace_s=0.0,
+    )
+    task = asyncio.create_task(sup.supervise(intent))
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not worker.begun:
+            await asyncio.sleep(0.01)
+        assert worker.begun, "begin_drain must arm"
+        assert worker.begun[0].get("arm") == "holder:sole-1"
+        settle = time.monotonic() + 0.2
+        while time.monotonic() < settle:
+            assert park_calls == []
+            await asyncio.sleep(0.01)
+        assert worker.phase == "armed"
+        assert not task.done() or task.exception() is None
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        elif task.exception() is not None:
+            raise task.exception()  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_boundary_park_live_after_activate(tmp_path) -> None:
+    """AC2 a:38111: after drain activate, park_live still sweeps a new occupant."""
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="a38111-ac2",
+        wait_for_boundary=True,
+        park_live=True,
+        caller_agent="cursor",
+    )
+    park_calls: list[tuple[str, int | None, str]] = []
+    worker = _BoundaryParkWorker()
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return {
+            "requested": ["new-op"],
+            "refused": [],
+            "already_parked": [],
+            "live_after": 0,
+        }
+
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed(),
+        kill=_Kill(),
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        park_for_restart=_park,
+        park_live_grace_s=0.0,
+    )
+    task = asyncio.create_task(sup.supervise(intent))
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not worker.begun:
+            await asyncio.sleep(0.01)
+        assert worker.begun and park_calls == []
+        worker.activate_with_new_op()
+        while time.monotonic() < deadline and not park_calls:
+            await asyncio.sleep(0.01)
+        assert park_calls, "park_live must run after draining=True"
+        assert park_calls[0][0] == intent.intent_id
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        elif task.exception() is not None:
+            raise task.exception()  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_boundary_park_live_skips_on_generation_gone(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GIW restart mid-arm: new generation must not hang or park the old epoch."""
+    import scripts.model_manager.ui.controller.git_worker_drain_supervisor as sup_mod
+
+    monkeypatch.setattr(sup_mod, "_GENERATION_GONE_CONFIRM_WINDOW_S", 0.03)
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="a38111-gone",
+        wait_for_boundary=True,
+        park_live=True,
+        caller_agent="cursor",
+    )
+    park_calls: list[tuple[str, int | None, str]] = []
+    worker = _BoundaryParkWorker()
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return {"requested": [], "refused": [], "already_parked": [], "live_after": 0}
+
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed(),
+        kill=_Kill(),
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        park_for_restart=_park,
+        park_live_grace_s=0.0,
+    )
+    task = asyncio.create_task(sup.supervise(intent))
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not worker.begun:
+            await asyncio.sleep(0.01)
+        assert worker.begun
+        worker.simulate_new_generation()
+        while time.monotonic() < deadline and not task.done():
+            await asyncio.sleep(0.01)
+        assert park_calls == []
+        assert task.done(), "generation_gone must resolve, not hang in park wait"
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+class _BoundaryParkWorker:
+    """Fake GIW that stays armed until the test flips the drain."""
+
+    def __init__(self) -> None:
+        self.begun: list[dict[str, Any]] = []
+        self.phase = "pre"
+        self.pre = {
+            "active_count": 1,
+            "draining": False,
+            "armed": False,
+            "drain_epoch": 0,
+            "worker_id": "w",
+            "worker_started_at": "t0",
+            "active_ops": [{"op_id": "sole-1", "kind": "cursor_sdk"}],
+        }
+        self.armed = {
+            "active_count": 1,
+            "draining": False,
+            "armed": True,
+            "arm": "holder:sole-1",
+            "drain_epoch": 1,
+            "worker_id": "w",
+            "worker_started_at": "t0",
+            "active_ops": [{"op_id": "sole-1", "kind": "cursor_sdk"}],
+        }
+        self.active = {
+            "active_count": 1,
+            "draining": True,
+            "armed": False,
+            "drain_epoch": 1,
+            "worker_id": "w",
+            "worker_started_at": "t0",
+            "active_ops": [{"op_id": "new-op", "kind": "cursor_sdk"}],
+        }
+
+    async def drain_state(self) -> dict[str, Any]:
+        if self.phase == "pre":
+            return self.pre
+        if self.phase == "armed":
+            return self.armed
+        if self.phase == "gone":
+            return {
+                "active_count": 0,
+                "draining": False,
+                "armed": False,
+                "drain_epoch": 0,
+                "worker_id": "w-new",
+                "worker_started_at": "t1",
+                "active_ops": [],
+            }
+        return self.active
+
+    async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.begun.append(body)
+        self.phase = "armed"
+        return self.armed
+
+    def activate_with_new_op(self) -> None:
+        self.phase = "active"
+
+    def simulate_new_generation(self) -> None:
+        self.phase = "gone"

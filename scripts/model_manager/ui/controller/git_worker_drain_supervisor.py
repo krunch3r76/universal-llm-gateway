@@ -207,6 +207,10 @@ class GitWorkerDrainSupervisor:
             # armed-open-admits window that wait_for_boundary exists to cover.
             defer_deadline = bool(intent.wait_for_boundary)
             if intent.park_live:
+                # a:38111 — wait_for_boundary keeps admits open while armed.
+                # Starting park_live grace here CancelRun-manufactures the
+                # holder's terminal. Defer the grace until GIW reports
+                # draining=True (same predicate as the deadline clock).
                 await self._park_live_after_grace(intent)
             while True:
                 outcome, t0 = await self._await_drain_completed(
@@ -386,13 +390,40 @@ class GitWorkerDrainSupervisor:
             logger.debug("park summary persist failed", exc_info=True)
         return summary
 
+    async def _wait_until_draining_for_park(self, intent: Intent) -> bool:
+        """True when this intent's drain is active; False ⇒ skip park_live.
+
+        ``wait_for_boundary`` arms keep ``draining=False``. Park grace must not
+        start in that window (a:38111). A new worker generation is resolved
+        by ``_generation_gone`` — do not hang waiting for the old epoch.
+        """
+        while True:
+            if self._abort_kind(intent) is not None:
+                return False
+            snapshot = await self._safe_drain_state()
+            if snapshot is not None:
+                if self._generation_gone(snapshot, intent):
+                    return False
+                if (
+                    snapshot.get("drain_epoch") == intent.drain_epoch
+                    and bool(snapshot.get("draining"))
+                ):
+                    return True
+            await asyncio.sleep(self.reconcile_interval_s)
+
     async def _park_live_after_grace(self, intent: Intent) -> None:
         """Wait ``park_live_grace_s``, then park if the drain is still busy.
 
         ``park_live_grace_s <= 0`` parks immediately (tests of step 1b). A drain
         that converges during the grace skips the sweep. Cancel during the grace
         returns without parking; the caller observes the abort next.
+
+        When ``wait_for_boundary`` is set, the grace does not start until GIW
+        reports ``draining=True`` for this epoch (a:38111).
         """
+        if intent.wait_for_boundary:
+            if not await self._wait_until_draining_for_park(intent):
+                return
         if self.park_live_grace_s > 0:
             grace_end = time.monotonic() + self.park_live_grace_s
             while time.monotonic() < grace_end:
