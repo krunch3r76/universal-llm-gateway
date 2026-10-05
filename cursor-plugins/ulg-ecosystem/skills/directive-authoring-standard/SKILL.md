@@ -62,6 +62,15 @@ Declaring a judgment fork is not enough. Admit only sees an **opt-in line-start 
 |---|---|
 | `AC2 — seed 1, and this is the fork.` then a bolded imperative: `**Before you pick, answer this and put the answer first: which direction of error is worse here, and why?**` A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? Withheld lean. Still admitted `mechanical`. | `AC2 — RULING: which direction of error is worse here, and why?` A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? Withheld lean. Line-start `AC<n> — RULING` is what the admit path can see. |
 
+
+### Pipeline-first (agent-workflow ops)
+
+- A claude.ai commission or `TYPE: DIRECTIVE` does not name an MCP tool as the delivery surface for an agent-workflow op (observability, review, version, orchestration step).
+- That op lands as `pipelines/{domain}/vN/` even when it is one step.
+- Substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) stay bare typed HTTP.
+- Use a pipeline when a human reviews the logic as a unit, or steps and prompts must be recorded for provenance, or the op versions independently of its service.
+- Falsifier: a one-step pipeline whose YAML is not a better map than the handler docstring.
+
 ## D2 — Wire contract enum
 
 Live enum: `cursor_request` **Contract vocabulary** (do not re-copy). Digest:
