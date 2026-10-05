@@ -16,7 +16,7 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 |---|---|
 | Recon, loci unknown | `Task(subagent_type="explore")` in this tab |
 | Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane=B, source_ref=todo:…, dispatch_thread_id=<root>)` then end. Sketch, Compose, and `contract=implement` are that conductor's nest |
-| Unpaid `PARKED_TRANSPORT`, consult reply already on the worker thread | Same conductor hop: `reuse_thread=<worker>` `hop_from=<dispatch_id>` `hop_reason=park_harvest` then end. Do not wait for an operator resume reminder |
+| Unpaid `PARKED_TRANSPORT`, consult reply already on the worker thread | After harvest: if no successor after one GIW reconcile sweep, fire GIW park-harvest continue (`fire_park_harvest_continue` / `caller_agent=conductor-hop`). Never hand-build `team_dispatch` hop fields |
 | Script or upload, no repo edit | same cursor-sdk generate, `lane=B`, `contract=freeform` |
 | Independent check of a harvested closeout | `team_dispatch(model=cdp/opus-5.5)` |
 | Land on green | in-seat `git merge` of `cursor-sdk/lane-<thread>`. Conflict ⇒ keep both |
@@ -31,7 +31,7 @@ A watcher line `closeout turn=` is the harvest, once. `conductor_live ⇒ ¬arm(
 
 A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished. `watch-supervise.sh stop --label <label>`. That tail is not a watcher and not a close. Arm the finish tail with no `notify_on_output`. Its shell completion is the one harvest turn. A pattern notify plus that exit is two turns, and the second covers the relay (friction 37400; `runbook:bus-consult-watcher` step 4).
 
-Unpaid `PARKED_TRANSPORT` with the `web-anthropic` reply already on the worker thread is an owed hop admit in that harvest (`liaison` Seat stays 6). Do not stop at an empty continue stamp.
+Unpaid `PARKED_TRANSPORT` with the `web-anthropic` reply already on the worker thread is owed park-harvest continue in that harvest (`liaison` Seat stays 6): one successor check, then the GIW single-admit path. Do not stop at an empty continue stamp, and do not hand-admit via `team_dispatch`.
 
 ## Bad / good
 
@@ -40,4 +40,4 @@ Unpaid `PARKED_TRANSPORT` with the `web-anthropic` reply already on the worker t
 | Arm a tail and read each conductor turn | Wait for the closeout or a designed stop |
 | Sketch or `contract=implement` on a house row | One `contract=conductor` admit, then land here |
 | Another `--replace` after the same quoted error | A new gate, or stop `REPEATED_FAILURE` |
-| Empty continue stamp + reply on thread, wait for "resume" | Fire `hop_reason=park_harvest` in the same harvest |
+| Empty continue stamp + reply on thread, wait for "resume" or hand `team_dispatch` hop | One reconcile check, then GIW park-harvest continue |
