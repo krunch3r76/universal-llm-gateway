@@ -147,6 +147,8 @@ async def _finish_prepared_dispatch(
             hop_park_release=handle.hop_park_release,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
+            wake_lane=handle.wake_lane,
+            parent_dispatch_thread_id=handle.parent_dispatch_thread_id,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -176,6 +178,8 @@ async def _finish_prepared_dispatch(
             force_reason=handle.force_reason,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
+            wake_lane=handle.wake_lane,
+            parent_dispatch_thread_id=handle.parent_dispatch_thread_id,
         )
 
     if not worker_ok:
@@ -347,6 +351,7 @@ async def dispatch_cursor_sdk_generate(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     transcript_id: str | None = None,
+    wake_lane: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -401,5 +406,6 @@ async def dispatch_cursor_sdk_generate(
         force=force,
         force_reason=force_reason,
         hop_park_release=hop_park_release,
+        wake_lane=wake_lane,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

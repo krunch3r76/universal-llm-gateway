@@ -1605,8 +1605,15 @@ async def _mark_terminal_and_promote(
     controller: WorkAdmissionController,
     request: Request | None = None,
     emit_tag: str,
+    memo_facts: dict | None = None,
 ) -> None:
     """Mark terminal, release/restore lease, prune Lane-B worktree, promote FIFO head."""
+    if memo_facts:
+        from services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit import (
+            record_memo_closeout,
+        )
+
+        await asyncio.to_thread(record_memo_closeout, dispatch_id, memo_facts)
     disposition = await release_or_restore_for_child(dispatch_id=dispatch_id)
     ledger = CursorDispatchLedger.instance()
     lease_key = await asyncio.to_thread(
@@ -1669,6 +1676,14 @@ async def _mark_terminal_and_promote(
             "conductor hop reactor failed dispatch_id=%s",
             dispatch_id,
         )
+    try:
+        from services.git_integration_worker.cursor_sdk_closeout.closeout_memo_emit import (
+            try_emit,
+        )
+
+        await try_emit(dispatch_id)
+    except Exception:  # noqa: BLE001 — AC-10: memo emit never changes terminal
+        logger.exception("closeout memo fast path failed dispatch_id=%s", dispatch_id)
     if not terminal_emitted(dispatch_id):
         orphan_row = await asyncio.to_thread(
             load_ledger_row, ledger, dispatch_id=dispatch_id
@@ -2380,6 +2395,16 @@ async def _deliver_sdk_closeout(
                 if refusal is not None
                 else "CURSOR_CLOSEOUT_COMPLETED"
             ),
+            memo_facts={
+                "emit_tag": (
+                    "CURSOR_CLOSEOUT_REFUSED"
+                    if refusal is not None
+                    else "CURSOR_CLOSEOUT_COMPLETED"
+                ),
+                "closeout_status": "refused" if refusal is not None else "completed",
+                "turn": turn_number,
+                "sidecar_ref": delivery.sidecar_ref,
+            },
         )
         record_json = await asyncio.to_thread(
             _load_dispatch_record_json_sync, dispatch_id=req.dispatch_id
@@ -2493,6 +2518,11 @@ async def _deliver_sdk_closeout(
         terminal_status="failed",
         controller=controller,
         emit_tag="CURSOR_CLOSEOUT_DELIVERY_FAILED",
+        memo_facts={
+            "emit_tag": "CURSOR_CLOSEOUT_DELIVERY_FAILED",
+            "closeout_status": "delivery_failed",
+            "sidecar_ref": delivery.sidecar_ref,
+        },
     )
 
 

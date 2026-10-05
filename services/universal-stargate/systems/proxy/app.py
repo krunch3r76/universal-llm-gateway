@@ -171,6 +171,11 @@ async def lifespan(app: FastAPI):
     logger.info("🔍 Lifespan: Starting startup phase...")
     assert_workflow_registry_boot_conformance()
     proxy = init_proxy(_federation_config)
+    from systems.frontier_consult.closeout_memo_retry import (
+        start_closeout_memo_retry_sweep,
+    )
+
+    start_closeout_memo_retry_sweep()
     shutdown_reason = "unknown"
 
     # Retain references to async-dispatched pipeline background tasks so

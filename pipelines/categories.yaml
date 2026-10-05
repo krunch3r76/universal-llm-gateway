@@ -1,6 +1,8 @@
 categories:
   assertion_enrichment:
     description: assertion_enrichment
+  closeout_memo:
+    description: closeout_memo
   conductor_census:
     description: conductor_census
   continuity_checkpoint:
