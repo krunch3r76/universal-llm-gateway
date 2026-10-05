@@ -204,7 +204,7 @@ def resolve_lane_current_cse(
             now_s=now_s,
         )
     except Exception:
-        return _none_body(lane, now_s, reason="no_claimed_live_page")
+        return _none_body(lane, now_s, reason="probe_error")
 
 
 def _resolve(

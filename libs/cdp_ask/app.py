@@ -199,9 +199,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         refresh_flag = os.environ.get("CDP_ASK_TREE_STATE_REFRESH", "1").strip().lower()
         if refresh_flag not in ("0", "false", "no"):
             _tree_refresh_task = asyncio.create_task(_tree_state_refresh_loop())
-        health_refresh_flag = (
-            os.environ.get("CDP_ASK_HEALTH_CACHE_REFRESH", "1").strip().lower()
-        )
+        health_refresh_flag = os.environ.get(
+            "CDP_ASK_HEALTH_CACHE_REFRESH", "1"
+        ).strip().lower()
         if health_refresh_flag not in ("0", "false", "no"):
             _health_cache_refresh_task = asyncio.create_task(
                 _health_cache_refresh_loop()
