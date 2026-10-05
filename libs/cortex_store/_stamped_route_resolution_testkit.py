@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from fastapi import FastAPI
+from starlette.routing import Match, Mount, Route
 
 # (HTTP method, FastAPI route name, path params, expected endpoint function name)
 # at hub e6262356; batch 4 adds only entities/relationships bulk POST routes.
@@ -43,18 +46,44 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
 )
 
 
-def assert_baseline_route_resolution(app: FastAPI) -> None:
-    """Named-route resolution via ``app.url_path_for`` (same graph as ``app.router``)."""
-    for _method, route_name, path_params, _expected in ROUTE_RESOLUTION_PROBES:
-        path = app.url_path_for(route_name, **path_params)
-        assert path.startswith("/"), path
+def _iter_api_routes(routes: list[object]) -> Iterator[Route]:
+    """Yield Starlette ``Route`` objects from a FastAPI app (included routers included)."""
+    for route in routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            yield from _iter_api_routes(list(original.routes))
+            continue
+        if isinstance(route, Mount):
+            yield from _iter_api_routes(route.routes)
+        elif isinstance(route, Route):
+            yield route
+        elif hasattr(route, "routes"):
+            yield from _iter_api_routes(list(route.routes))  # type: ignore[arg-type]
 
 
 def resolve_endpoint_name(app: FastAPI, method: str, path: str) -> str | None:
-    """Resolve batch-4 paths by reverse lookup on registered route names."""
-    del method
-    targets = {
-        app.url_path_for("entities_bulk_upsert_route"): "entities_bulk_upsert_route",
-        app.url_path_for("relationships_bulk_upsert_route"): "relationships_bulk_upsert_route",
+    """First ``Route.matches`` FULL win for (method, path) — same order Starlette uses."""
+    method_u = method.upper()
+    scope = {
+        "type": "http",
+        "method": method.lower(),
+        "path": path,
+        "root_path": "",
+        "headers": [],
     }
-    return targets.get(path)
+    for route in _iter_api_routes(list(app.router.routes)):
+        if method_u not in route.methods:
+            continue
+        match, _child = route.matches(scope)
+        if match in (Match.FULL, Match.PARTIAL):
+            return route.endpoint.__name__
+    return None
+
+
+def assert_baseline_route_resolution(app: FastAPI) -> None:
+    for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
+        path = app.url_path_for(route_name, **path_params)
+        resolved = resolve_endpoint_name(app, method, path)
+        assert resolved == expected, (
+            f"{method} {path}: expected endpoint {expected!r}, got {resolved!r}"
+        )

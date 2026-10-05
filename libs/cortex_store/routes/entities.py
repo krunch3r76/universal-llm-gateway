@@ -402,7 +402,7 @@ def entities_bulk_upsert_route(body: EntitiesBulkUpsertRequest) -> dict[str, obj
 
     entities = (
         [
-            item.model_dump(mode="python", exclude_none=True)
+            item.model_dump(mode="python", exclude_unset=True)
             for item in body.entities
         ]
         if body.entities is not None

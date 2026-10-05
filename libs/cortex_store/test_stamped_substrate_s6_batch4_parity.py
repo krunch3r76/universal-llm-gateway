@@ -296,8 +296,10 @@ def test_entities_bulk_upsert_failure_parity_dispatch_and_typed(
     _seed_entities_bulk_failure(cortex_db.cortex_conn())
     dispatch_raw = execute_op("entities_bulk_upsert", payload)
     assert dispatch_raw.get("rolled_back") is True
+    assert dispatch_raw.get("failed_index") == 1
     dispatch_body = _normalize_bulk_body(dispatch_raw)
     dispatch_ids = _entity_id_set(cortex_db.cortex_conn())
+    assert "model:fail-a" not in dispatch_ids
 
     typed_client = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="typed_ent_fail"
@@ -307,7 +309,58 @@ def test_entities_bulk_upsert_failure_parity_dispatch_and_typed(
     assert resp.status_code == 200, resp.text
     typed_body = _normalize_bulk_body(resp.json())
     assert dispatch_body == typed_body
-    assert _entity_id_set(cortex_db.cortex_conn()) == dispatch_ids
+    typed_ids = _entity_id_set(cortex_db.cortex_conn())
+    assert typed_ids == dispatch_ids
+    assert "model:fail-a" not in typed_ids
+
+
+@pytest.mark.offline
+def test_entities_bulk_upsert_null_clear_dispatch_matches_typed_route(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity_id = "family:null-clear-batch4"
+
+    def seed(conn: sqlite3.Connection) -> None:
+        insert_entity(
+            conn,
+            entity_id=entity_id,
+            entity_type="family",
+            name="Null clear seed",
+            description="must be cleared",
+        )
+        conn.commit()
+
+    payload = {
+        "if_exists": "update",
+        "entities": [
+            {
+                "id": entity_id,
+                "type": "family",
+                "name": "Null clear seed",
+                "description": None,
+            }
+        ],
+    }
+
+    bind_db = tmp_path / "cortex_dispatch_null_clear.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    seed(cortex_db.cortex_conn())
+    dispatch_raw = execute_op("entities_bulk_upsert", payload)
+    assert dispatch_raw.get("rolled_back") is False, dispatch_raw
+    dispatch_row = _entity_row(cortex_db.cortex_conn(), entity_id)
+
+    typed_client = _isolated_client(
+        migrated_db_template, tmp_path, monkeypatch, suffix="typed_null_clear"
+    )
+    seed(cortex_db.cortex_conn())
+    resp = typed_client.post("/entities/bulk", json=payload)
+    assert resp.status_code == 200, resp.text
+    typed_row = _entity_row(cortex_db.cortex_conn(), entity_id)
+    assert dispatch_row == typed_row
+    assert dispatch_row.get("description") is None
 
 
 @pytest.mark.offline
@@ -339,11 +392,6 @@ def test_relationships_bulk_upsert_failure_parity_dispatch_and_typed(
             "('model:rel-fail-a', 'model', 'A', 't0', 't0'), "
             "('family:rel-fail-b', 'family', 'B', 't0', 't0')"
         )
-        conn.execute(
-            "INSERT INTO relationships (type, from_entity, to_entity, role, strength, "
-            "created_at, updated_at, active) VALUES "
-            "('child_of', 'model:rel-fail-a', 'family:rel-fail-b', 'seed', 1.0, 't0', 't0', 1)"
-        )
         conn.commit()
 
     bind_db = tmp_path / "cortex_dispatch_rel_fail.db"
@@ -352,6 +400,7 @@ def test_relationships_bulk_upsert_failure_parity_dispatch_and_typed(
     seed(cortex_db.cortex_conn())
     dispatch_raw = execute_op("relationships_bulk_upsert", payload)
     assert dispatch_raw.get("rolled_back") is True
+    assert dispatch_raw.get("failed_index") == 1
     dispatch_body = _normalize_bulk_body(dispatch_raw)
     dispatch_count = cortex_db.cortex_conn().execute(
         "SELECT COUNT(*) FROM relationships WHERE active = 1"
@@ -368,7 +417,7 @@ def test_relationships_bulk_upsert_failure_parity_dispatch_and_typed(
     typed_count = cortex_db.cortex_conn().execute(
         "SELECT COUNT(*) FROM relationships WHERE active = 1"
     ).fetchone()[0]
-    assert int(dispatch_count) == int(typed_count) == 1
+    assert int(dispatch_count) == int(typed_count) == 0
 
 
 @pytest.mark.offline

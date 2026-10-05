@@ -217,7 +217,7 @@ def relationships_bulk_upsert_route(
 
     relationships = (
         [
-            item.model_dump(mode="python", exclude_none=True)
+            item.model_dump(mode="python", exclude_unset=True)
             for item in body.relationships
         ]
         if body.relationships is not None
