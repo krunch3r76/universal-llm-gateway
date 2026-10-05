@@ -448,7 +448,11 @@ def completing_dispatch_blocks_directory_remove(
         reset_occupancy_cache()
     target = worktree_path.resolve()
     root = (worktree_root or worktree_path.parent).resolve()
-    bridges = occupancy if occupancy is not None else _occupancy_snapshot()
+    bridges = (
+        occupancy
+        if occupancy is not None
+        else _occupancy_snapshot(fresh=fresh)
+    )
     for bridge in bridges:
         if bridge.dispatch_id != dispatch_id:
             continue

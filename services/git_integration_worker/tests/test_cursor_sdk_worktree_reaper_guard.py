@@ -29,6 +29,7 @@ from services.git_integration_worker.cursor_sdk_worktree import (
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     _occupancy_snapshot,
     containing_worktree_under_root,
+    completing_dispatch_blocks_directory_remove,
     live_bridge_worktree_paths,
     live_ledger_worktree_paths,
     reset_occupancy_cache,
@@ -1100,3 +1101,38 @@ def test_unregistered_flag_does_not_skip_checks_when_row_exists(
 
     assert not result.released
     assert lane.is_dir()
+
+
+def test_completing_dispatch_fresh_sees_bridge_past_occupancy_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``fresh=True`` on the completing-dispatch check bypasses the orphan cache.
+
+    Breaks when the cached roster is empty and the bridge chdir'd during the
+    pass: without ``live_bridge_occupancy(fresh=True)`` the directory looks free.
+    """
+    import time
+
+    from services.git_integration_worker import cursor_sdk_orphan
+
+    lane = tmp_path / "worktrees" / "lane-complete"
+    lane.mkdir(parents=True)
+    bridge = BridgeOccupancy(pid=7, cwd=str(lane), dispatch_id="completing")
+
+    def scan(*_a, fresh: bool = False, **_k):
+        if fresh:
+            return [bridge]
+        return []
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
+        scan,
+    )
+    reset_occupancy_cache()
+    cursor_sdk_orphan._occupancy_cache = (time.monotonic(), [])
+
+    assert completing_dispatch_blocks_directory_remove(
+        worktree_path=lane,
+        dispatch_id="completing",
+        fresh=True,
+    )
