@@ -276,6 +276,13 @@ def execute_op(
     if tool == "entity_get":
         dispatch_telemetry["intent"] = parsed.get("intent") or "full"
     record("mcp.cortex.dispatch", **dispatch_telemetry)
+    # Shadow evidence only. A failure here must not change or replace `result`.
+    try:
+        from ._shadow_validate import shadow_validate
+
+        shadow_validate(tool, parsed, caller)
+    except Exception:
+        logger.debug("dispatch shadow swallowed")
     result = handler(**parsed)
     if not isinstance(result, dict):
         return result
