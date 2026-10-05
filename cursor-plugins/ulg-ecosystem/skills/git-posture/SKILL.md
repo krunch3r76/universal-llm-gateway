@@ -337,9 +337,14 @@ already identical, so the merge is trivial and records the missing ancestry.
 **Do not reach for `git_land` to land a lane branch.** `validate_land` /
 `validate_integrate` compute `expected_branch = f"arc/{arc}"` and reject
 `cursor-sdk/lane-*` outright (a:29587), which is what pushes seats into copy
-shapes. Plain `git merge` from the shared checkout is the ordinary path;
-`git_land` needs an `arc/<slug>` worktree minted from the lane branch first and
-is reserved for operator-gated arc lands (§ `git_*` MCP).
+shapes. On the **attended** shared checkout (this IDE), the ordinary path is:
+commit overlapping dirty paths path-explicit, then `git merge` the lane branch;
+on conflict keep both sides — never stash. Headless ULG (`cursor-sdk`, conductor
+land legs) must not raw-`git merge` hub master; **land** is the actuator and
+carries that dispatch's op id. `git_land` / `git_integrate` remain
+`arc/<name>`-only (§ `git_*` MCP). Mint `arc/<slug>` from a lane only when
+the operator names an arc land, then retire that extra ref — not the ordinary
+lane-to-master path.
 
 Ground: arc 9912 — R2 landed by `cherry-pick` and R3 by `git checkout lane --`,
 which clobbered an uncommitted attended-in-flight block in

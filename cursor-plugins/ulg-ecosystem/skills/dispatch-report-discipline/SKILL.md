@@ -188,7 +188,7 @@ admit at the hard horizon.
 `landed` is **measured, not asserted** — a claim the tree does not support is
 refused, names the paths that disagree, and opens the debt anyway. A reasoned
 `discard` is a complete honest outcome; a false `landed` is not. Discharge later
-via `POST /cursor-sdk/branch-discharge`; nothing is deleted unarchived, so
+via `POST /api/v1/cursor/branch-discharge`; nothing is deleted unarchived, so
 neither exit loses work.
 
 **Harvest briefing one-liner:** when relaying a Lane-B closeout, name
