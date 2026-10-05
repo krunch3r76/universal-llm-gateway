@@ -343,6 +343,59 @@ def test_relaunch_superseded_during_headroom_refuses_and_leaves_hop(
     assert after[pred.registration_id]["seat_closed_at"] is not None
 
 
+def test_relaunch_failure_keeps_close_landed_during_launch(
+    isolated_registry: Path,
+) -> None:
+    """A launch error must not write the pre-reserve snapshot over a close."""
+    hop = reg.register_lane(
+        holder="hop-chrome",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.bind_driving_seat(hop.registration_id)
+    pred = reg.register_lane(
+        holder="pred-chrome",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    active = reg._store.load_active()
+    active[pred.registration_id]["status"] = "dormant"
+    active[pred.registration_id]["seat_lane"] = "9497"
+    active[pred.registration_id]["seat_bound_at"] = 1.0
+    active[pred.registration_id]["seat_closed_at"] = None
+    reg._store.write_active(active)
+    reg._release_driver_lock(pred.registration_id)
+    closed_hop: dict[str, object] = {}
+
+    def close_then_fail(_port: int, _profile: Path) -> int:
+        reg.bind_driving_seat(hop.registration_id)
+        closed_hop.update(reg._store.load_active()[hop.registration_id])
+        raise RuntimeError("chrome refused to start")
+
+    with pytest.raises(RuntimeError, match="chrome refused"):
+        reg.relaunch_dormant(
+            pred.registration_id,
+            launch_chrome=close_then_fail,
+            is_listening=lambda _p: False,
+        )
+
+    after = reg._store.load_active()
+    pred_row = after[pred.registration_id]
+    hop_row = after[hop.registration_id]
+    assert pred_row["seat_closed_at"] is not None
+    assert pred_row["status"] == "dormant"
+    assert pred_row.get("superseded_by") == hop.registration_id
+    assert hop_row["seat_lane"] == closed_hop["seat_lane"]
+    assert hop_row["seat_bound_at"] == closed_hop["seat_bound_at"]
+    assert hop_row["seat_closed_at"] is None
+
+
 def test_ensure_rejects_hop_as_driving_kind(isolated_registry: Path) -> None:
     with pytest.raises(RegistryError, match="cannot be mission_kind=hop"):
         _ensure(mission_kind="hop")
