@@ -23,7 +23,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | `handoff-packet-authoring` | Six-block authoring |
 | `bind-then-compose-dispatch` | Mechanical nest after a pick (any G-row) |
 | `judgment-escalation-ladder` | Unsure → binder, not human |
-| `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master. Conductor admit = standing "operator directs a merge" for its own branch (§ Run to completion) — ¬ a second gate |
+| `git-posture` | Lane-B hub-land = actuator (`land_lane_branch_onto_hub_master`) or attended IDE `git merge`; ¬ path-copy onto master. Conductor admit = standing merge authorization for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
 | `consult-routing` | Model split / non-primary gate · **cursor-sdk `lane=` caller recipe** (this skill does not own omit semantics) |
 | `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Mission Composer → conductor score · this seat plays it) — named hop is direction, not a recipe when harvest conflicts |
@@ -56,7 +56,7 @@ optional, ¬ Composer self-cert; CDP transport fail ≡ stop past that gate
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
 | Call `team_dispatch(reuse_thread=<own thread>)` from inside the running conductor | Journal → hop CHECKPOINT → `stop: ROW_HOP`; the substrate admits the successor after your terminal (§ Run to completion) |
 | End with the mission open and no token ("done for now") | `ROW_HOP` at a boundary, or the owed designed stop — silence is a budgeted re-admit, then a park |
-| Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
+| Treat G7 hub-land as a second approval gate | Admit is the standing merge ack; actuator land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
 | Closes `status: partial`/`checks_failed` with zero files touched because it wanted to flag the plan first | Flag the concern on the CHECKPOINT while still driving — flagging is commentary, not a hold |

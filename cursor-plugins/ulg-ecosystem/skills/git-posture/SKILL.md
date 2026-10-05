@@ -363,16 +363,22 @@ destructive:
 |---|---|---|
 | Landed | `land_disposition: landed` | Content probe against `master` — assertion is not accepted |
 | Discarded | `land_disposition: discard` + `land_reason:` | The recorded reason |
+| Unlanded | `land_disposition: unlanded <tip>` | Branch kept (`do not hub-land` or exploratory) |
 
-Silence on an in-scope lane fast-forwards the branch onto hub master when that
-merge is clean. A dirty tree, a non-fast-forward, or `do not hub-land` leaves
-an attributed **branch debt** in the dispatch ledger, shown to whoever
-dispatches into that lane next. Aged debt escalates on the owning bus thread;
-at the hard horizon the lane's Lane-B admit is refused.
+Omit the line while the branch carries commits master lacks: the branch stays
+for a guarded land. GIW fast-forwards or clean-merges onto hub master only when
+the packet contains a line-start `land: silent` and the hub tree can take the
+merge. Without that token the branch stays and debt opens. With the token, a
+dirty tree or a conflict still opens an attributed **branch debt**
+(`cursor_sdk_branch_debts`) naming your thread, dispatch, and caller.
+`do not hub-land` keeps the branch (declare `land_disposition: unlanded <tip>`).
+Debt surfaces in `busy_status` / `lane_hygiene` and in the admit response at
+this lane's *next* dispatch, escalates on the owning bus thread once aged, and
+refuses that lane's Lane-B admit at the hard horizon.
 Nothing is deleted on a timer — sweeping aged residue would destroy the
 evidence and clear the owner, which is the failure this replaced.
 
-Discharge anytime: `POST /cursor-sdk/branch-discharge`
+Discharge anytime: `POST /api/v1/cursor/branch-discharge`
 `{"branch": …, "verb": "landed"|"discard", "reason": …}`. Read standing:
 `GET /cursor-sdk/branch-debt` or `lane_hygiene` in `manage busy_status`.
 Full obligation text: `dispatch-report-discipline` § Branch discharge.

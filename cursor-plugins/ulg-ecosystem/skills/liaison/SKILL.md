@@ -246,7 +246,7 @@ touch the same files. `¬ discard(peer_work)` — a blocked merge is reconcile, 
 
 | Conflict | Action |
 |---|---|
-| Keepable overlap (both hunks valid) | `git merge`; keep both; verify ACs; ¬ hop while unreconciled |
+| Keepable overlap (both hunks valid) | attended IDE `git merge`; keep both; verify ACs; ¬ hop while unreconciled |
 | Judgment (which hunk is right) | `cdp/opus-5.5` → `cdp/opus-5`. ¬ `cursor/claude-*` |
 | Sensitive (`OPERATOR_GATE` class · discard-risk · identity) | only after that ladder fails: page human |
 

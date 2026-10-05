@@ -168,9 +168,10 @@ def settle_lane_and_dispatch_fields(
                 lane_b_head_sha = resolved_head
             if resolved_ahead is not None:
                 lane_b_commits_ahead = resolved_ahead
-            # Silence on an in-scope lane fast-forwards before the landed flag
-            # is frozen. A later grade must not call complete work partial
-            # after the bytes are already on master.
+            # Opt-in silent land (packet line-start land: silent) may ff-merge
+            # via maybe_ff_land_silent_lane before the landed flag is frozen.
+            # A later grade must not call complete work partial after the bytes
+            # are already on master.
             from services.git_integration_worker.cursor_sdk_branch_terminal import (
                 maybe_ff_land_silent_lane,
             )

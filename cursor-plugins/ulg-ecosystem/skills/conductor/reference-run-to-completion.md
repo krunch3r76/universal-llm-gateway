@@ -46,11 +46,11 @@ per-G-row one. Default posture once running:
   that child: nest_under is refused unless seat=cursor-sdk, so a still-running
   CDP review does not forbid stop: ROW_HOP; the substrate defers the successor while that review streams on the mission lane (P1.2, live_external_gate); that is not a stall. If you end with the mission open and **no** token, the substrate
   still re-admits you (budgeted) — that is the safety net, not the default.
-- **¬ a second gate on the mission's own merge.** `git-posture` gates
-  `git_land` / `git_integrate` on "operator directs a merge" — for a conductor
-  mission, admitting the packet **is** that direction, standing for the
-  mission's own Lane-B branch. Land on green (tests pass, AC met) as part of
-  *completion*; do not round-trip for a separate "ok to merge?"
+- **¬ a second gate on the mission's own merge.** For a conductor mission,
+  admitting the packet **is** merge authorization, standing for the mission's
+  own Lane-B branch. On green (tests pass, AC met), G7 calls
+  `land_lane_branch_onto_hub_master` once — not a round-trip `git_land`
+  (arc-only) and not a separate "ok to merge?"
 - **Stop only for a true operator-only gate** — credentials, an irreversible
   non-revertible act, or a genuine unranked fork. Forks go to the judgment
   ladder (`cdp/opus-5.5`; `cdp/fable` only when Kaywan asks) first; `needs-attended`
