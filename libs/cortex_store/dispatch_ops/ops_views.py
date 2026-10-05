@@ -269,11 +269,13 @@ def _op_view_render(
                     rel_result = _create_derived_from(document_id, root_id)
                     if "error" in rel_result:
                         return rel_result
-                    rel_id = rel_result.get("id")
-                    if rel_id is None:
+                    # Only roll back edges this register created (dedup returns was_new: false).
+                    if rel_result.get("was_new"):
                         item = rel_result.get("item")
                         if isinstance(item, dict):
                             rel_id = item.get("id")
+                        else:
+                            rel_id = rel_result.get("id")
                 view_rev = 1
                 stamp = build_stamp(
                     document_id=document_id,
