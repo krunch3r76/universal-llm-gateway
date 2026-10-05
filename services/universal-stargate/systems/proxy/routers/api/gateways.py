@@ -5,6 +5,7 @@ from universal_logging import get_logger
 
 from ...dependencies import get_auth_dependency, get_proxy
 from ...stargate_core import StargateProxy
+from ...vram_selection import select_best_vram_from_status
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/gateways", tags=["gateways"])
@@ -81,13 +82,7 @@ async def gateway_status_full(
     disabled = total - enabled
     connected = sum(1 for gw in status.values() if gw["is_connected"])
 
-    # Find gateway with most total VRAM (for measurement capability, must be enabled)
-    best_vram_gateway = None
-    best_vram = 0
-    for url, gw in status.items():
-        if gw["enabled"] and gw["is_connected"] and gw["total_vram_mb"] > best_vram:
-            best_vram = gw["total_vram_mb"]
-            best_vram_gateway = url
+    best_vram_gateway, best_vram = select_best_vram_from_status(status)
 
     return {
         "summary": {

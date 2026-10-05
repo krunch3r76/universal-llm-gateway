@@ -9,6 +9,7 @@ from universal_logging import get_logger
 
 from ..dependencies import get_optional_auth_dependency, get_proxy
 from ..stargate_core import StargateProxy
+from ..vram_selection import vram_mb_for_health_reachable_gateways
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["health"])
@@ -39,7 +40,9 @@ async def health_check(
             if not gw.is_unreachable
         ]
         if live:
-            gw = live[0]
+            vram_free_mb, vram_total_mb = vram_mb_for_health_reachable_gateways(
+                live
+            )
             status = "healthy" if pipeline_ready else "stargate_proxy_healthy"
             response = {
                 "status": status,
@@ -47,8 +50,8 @@ async def health_check(
                 "pipeline_system_ready": pipeline_ready,
                 "pipeline_count": pipeline_count,
                 "gateways_connected": len(live),
-                "vram_free_mb": gw.vram_free_mb,
-                "vram_total_mb": gw.vram_total_mb,
+                "vram_free_mb": vram_free_mb,
+                "vram_total_mb": vram_total_mb,
                 "timestamp": int(time.time()),
                 "version": "1.0.0",
                 "code_version": code_version,
