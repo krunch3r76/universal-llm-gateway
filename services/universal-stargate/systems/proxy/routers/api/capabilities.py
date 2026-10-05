@@ -49,6 +49,26 @@ def _canonical_headers(response: JSONResponse, url: str) -> JSONResponse:
     return response
 
 
+def _canonical_redirect(request: Request, url: str) -> RedirectResponse:
+    query = urlencode(list(request.query_params.multi_items()))
+    if query:
+        url = f"{url}?{query}"
+    return RedirectResponse(url=url, status_code=308)
+
+
+def _accepted_with_links(response: JSONResponse, canonical_url: str) -> JSONResponse:
+    """202 body links. monitor.href is copied from Location so the two match."""
+    location = response.headers["location"]
+    payload = json.loads(bytes(response.body))
+    payload["links"] = {
+        "monitor": {"href": location},
+        "capability": {"href": canonical_url},
+    }
+    accepted = JSONResponse(status_code=response.status_code, content=payload)
+    accepted.headers["Location"] = location
+    return accepted
+
+
 def _member_payload(tree, registry) -> dict[str, Any]:
     members = {member.id: member.summary for member in tree.members.values()}
     skips = list(registry.catalog_skips) + list(tree.skips)
@@ -298,6 +318,10 @@ async def _local_post(
             return _skipped(row)
         return _not_found(tree, member_id)
     response = await admit_dispatch(request, proxy, dispatch)
+    if response.status_code == 202:
+        if response.headers.get("location"):
+            return _accepted_with_links(response, member.canonical_url)
+        return response
     return _canonical_headers(response, member.canonical_url)
 
 
@@ -378,11 +402,7 @@ async def capability_first(
             return _local_list(proxy, None, first)
         member = tree.resolve(first)
         if member is not None:
-            query = urlencode(list(request.query_params.multi_items()))
-            location = member.canonical_url
-            if query:
-                location = f"{location}?{query}"
-            return RedirectResponse(url=location, status_code=308)
+            return _canonical_redirect(request, member.canonical_url)
     owners: list[tuple[Category, str]] = []
     for category in categories:
         listing = await _origin_listing(category)
@@ -404,11 +424,9 @@ async def capability_first(
             status_code=404,
         )
     category, member = owners[0]
-    query = urlencode(list(request.query_params.multi_items()))
-    location = f"/api/v1/capabilities/{category.name}/{member}"
-    if query:
-        location = f"{location}?{query}"
-    return RedirectResponse(url=location, status_code=308)
+    return _canonical_redirect(
+        request, f"/api/v1/capabilities/{category.name}/{member}"
+    )
 
 
 @router.api_route("/capabilities/{category}/{member}", methods=["GET", "POST"])
@@ -418,12 +436,22 @@ async def capability_member(
     request: Request,
     _user: dict[str, object] = Depends(get_auth_dependency),
 ) -> Response:
-    """Relay a satellite category; otherwise resolve or admit a local member."""
+    """Relay a satellite category; otherwise redirect or admit a local member.
+
+    Satellite match stays ahead of readiness. A local member whose category
+    differs from the path is a 308 before the body is read. Anything else
+    falls through to the existing GET or POST handler.
+    """
     categories, _skips = _categories()
     match = next((cat for cat in categories if cat.name == category), None)
     if match is not None:
         return await _relay(request, match, member)
     proxy = _proxy(request)
+    if not _local_ready(proxy):
+        return _unavailable()
+    resolved = build_tree(proxy).resolve(member)
+    if resolved is not None and resolved.category != category:
+        return _canonical_redirect(request, resolved.canonical_url)
     if request.method == "POST":
         return await _local_post(request, proxy, member)
     return _local_get(proxy, member)

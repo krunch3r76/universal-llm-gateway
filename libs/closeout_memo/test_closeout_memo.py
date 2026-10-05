@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import yaml
 from pydantic import ValidationError
 
+from closeout_memo.client import CAPABILITY_PATH
 from closeout_memo.models import CloseoutMemoRequest, memo_id_for
 from closeout_memo.render import MEMO_OPENING, STANCE_LINE, render_memos
 
@@ -35,6 +39,16 @@ def _memo(**overrides: object) -> CloseoutMemoRequest:
     }
     body.update(overrides)
     return CloseoutMemoRequest.model_validate(body)
+
+
+def test_capability_path_matches_pipeline_yaml() -> None:
+    spec = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[2]
+            / "pipelines/closeout_memo/v1/closeout-memo-v1.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert CAPABILITY_PATH == f"/api/v1/capabilities/{spec['category']}/{spec['id']}"
 
 
 def test_memo_id_is_sha256_prefix() -> None:
