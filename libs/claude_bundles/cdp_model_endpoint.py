@@ -69,6 +69,15 @@ _WEEKLY_LIMIT_RE = re.compile(
     r"weekly\s+limit|hit\s+your\s+.+\s*limit|you've\s+hit\s+your",
     re.IGNORECASE,
 )
+_WEEKLY_LIMIT_STOP_RE = re.compile(
+    r"hit\s+your\s+.+\s*limit|you'?ve\s+hit\s+your|limit\s+reached|reached\s+your\s+.+\s*limit",
+    re.IGNORECASE,
+)
+_WEEKLY_LIMIT_APPROACHING_RE = re.compile(
+    r"approaching|nearing|close\s+to",
+    re.IGNORECASE,
+)
+_WEEKLY_LIMIT_WARNING_MAX_LEN = 200
 
 HarvestSource = Literal["chat", "output-file", "auto"]
 ExpectedSize = Literal["small", "large", "auto"]
@@ -392,14 +401,45 @@ def _proof_rejects_overload(snapshot: dict[str, Any]) -> bool:
     return bool(snapshot.get("archive_uri"))
 
 
-def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
-    """True when harvest is a product quota banner, not a seat reply."""
-    banner = " ".join(
+def _joined_error_banner(snapshot: dict[str, Any]) -> str:
+    return " ".join(
         str(snapshot.get(k) or "")
         for k in ("error_banner_text", "error_banner_match", "error_banner")
     )
+
+
+def _classify_weekly_limit_banner(banner: str) -> Literal["stop", "warning", "other"] | None:
+    """Classify joined harvest banner text when it mentions weekly limit."""
+    if not _WEEKLY_LIMIT_RE.search(banner):
+        return None
+    if _WEEKLY_LIMIT_STOP_RE.search(banner):
+        return "stop"
+    if _WEEKLY_LIMIT_APPROACHING_RE.search(banner) and re.search(
+        r"weekly\s+limit", banner, re.IGNORECASE
+    ):
+        return "warning"
+    return "other"
+
+
+def _weekly_limit_warning_extra(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Surface approaching-limit notice on successful grades (operator paging)."""
+    banner = _joined_error_banner(snapshot)
+    if _classify_weekly_limit_banner(banner) != "warning":
+        return {}
+    text = banner.strip()
+    if len(text) > _WEEKLY_LIMIT_WARNING_MAX_LEN:
+        text = text[:_WEEKLY_LIMIT_WARNING_MAX_LEN]
+    return {"weekly_limit_warning": text}
+
+
+def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
+    """True when harvest is a product quota banner, not a seat reply."""
+    banner = _joined_error_banner(snapshot)
     if _WEEKLY_LIMIT_RE.search(banner):
-        return True
+        cls = _classify_weekly_limit_banner(banner)
+        if cls != "warning":
+            return True
+        # Sticky approaching banner: still run short-body check (review B1).
     body = str(snapshot.get("body") or "")
     stripped = body.strip()
     if stripped and len(stripped) <= _ERROR_BANNER_ONLY_MAX_LEN:
@@ -533,6 +573,7 @@ def result_from_snapshot(
                 picker_model=picker_model,
                 carry=carry,
             )
+        ok_extras = _weekly_limit_warning_extra(snapshot)
         return CdpGenerateResult(
             ok=True,
             body=body,
@@ -543,6 +584,7 @@ def result_from_snapshot(
             archive_uri=carry["archive_uri"],
             content_proof_uri=carry["content_proof_uri"],
             content_proof_sha256=carry["content_proof_sha256"],
+            extras=ok_extras,
         )
 
     if completed_without_proof(snapshot):
@@ -953,6 +995,8 @@ def run_cdp_generate(
                     abort=abort_info,
                 )
             sweep_ephemeral(execution_id)
+            ok_extras = proof_carry.carry_extras()
+            ok_extras.update(_weekly_limit_warning_extra(snapshot))
             return CdpGenerateResult(
                 ok=True,
                 body=body,
@@ -964,7 +1008,7 @@ def run_cdp_generate(
                 content_proof_uri=snapshot.get("content_proof_uri"),
                 content_proof_sha256=snapshot.get("content_proof_sha256"),
                 poll_snapshots=polls,
-                extras=proof_carry.carry_extras(),
+                extras=ok_extras,
             )
 
         if _completed_without_proof(snapshot):
