@@ -88,6 +88,7 @@ When a bus-consult / dispatch-closeout arm misfires:
 | **Hold-turn** | Foreground `wait`/`Await`/`tail \| grep` instead of background tail + exit |
 | **Hang-tail** | `tail --forever`, raw `tail -F` on watcher log, or tail still running **after** `state.json status=complete` — **not** tail waiting while `status=polling` |
 | **Killed-tail** | IDE/supervisor killed the wake tail while the poller stayed up (a:36552, a:35526). Poller may later print `consult complete` / `closeout turn=` with **no** living tail ⇒ this chat never wakes |
+| **Tab-orphan** | Resume / new IDE tab reports a prior-tab poller label as armed without same-turn leg 2 on **this** tab (a:38172 · agent-bus:15266). Pollers (esp. `house-*`) survive tab retire; tab tails die with the departing chat — `prior_tab_poller_alive ⇏ this_tab_wake_armed` |
 | **Wake-no-relay** | Leg 2 fired; turn closed without `get` + operator translate (leg 3) |
 | **Wrong target** | Wrong script family, bad `after_turn`, omitted `poll_hint.after_turn`, invalid flags, false `complete` |
 
@@ -107,6 +108,16 @@ The shell completion is the wake. Do not wait for a later chat
 question to discover `consult complete` in the log. If complete already
 printed with no tail attached: `get` the qualifying turn + relay now (leg 3);
 do not keep reporting the dispatch/densify as `in_flight`.
+
+**Tab-orphan / resume recovery (binding — a:38172):**
+`prior_tab_poller_alive ⇏ this_tab_wake_armed`. On `resume` / hop successor /
+new IDE tab pickup: if `tmp/watchers/<L>.state.json` is still
+`polling`/`predicate_unmet` and **this** chat has no living background
+`watch-supervise.sh tail --label L`, **same turn** attach leg 2 (no
+`notify_on_output`) before saying the watcher is armed. Do not equate a
+surviving prior-tab poller (or a CHECKPOINT that named the label) with
+wake armed on this tab. Terminal unrelayed ⇒ leg 3, not a second start
+(see `operator-posture` Pickup / boot · `runbook:bus-consult-watcher` §6).
 
 **Complete-state read gate (binding — a:36552 / a:35437):** `status=complete` ∧
 (`verdict=in_flight` ∨ `producer.terminal_status` null ∨ stale `turn_count`) ⇒
