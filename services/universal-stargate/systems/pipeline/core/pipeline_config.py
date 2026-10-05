@@ -97,7 +97,7 @@ class PipelineSpec(BaseModel):
     The `type` field determines which domain handles execution.
 
     Validated Pydantic model for one pipeline YAML (created by
-    ``systems.pipeline.loader`` via ``PipelineSpec(**data)``): id/version, the
+    ``registry.loader.PipelineLoader`` via ``PipelineSpec(**data)``): id/version, the
     ``steps`` list of StepConfig, the ``output`` reference, options, token
     defaults, fragments and checkpoint settings, plus the search path and variant
     it was loaded from for isolation-scoped model resolution and handler dispatch.

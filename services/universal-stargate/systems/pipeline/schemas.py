@@ -4,9 +4,11 @@ Pipeline schemas - exports from core.
 Re-exports the core pipeline Pydantic models (``PipelineSpec``,
 ``StepConfig``, ``SubPipelineSpec``, ``PromptConfig``, ``FragmentRef``,
 ``PipelineOptions``) and defines the shared-config models ``ModelRef``,
-``SharedModels`` and ``SharedPrompts`` populated by
-``registry.loader.PipelineLoader`` from YAML under registry search paths.
-Re-exported again by the ``systems.pipeline`` package.
+``SharedModels`` and ``SharedPrompts`` (legacy Pydantic wrappers; no in-tree
+code constructs them after ``PipelineConfigLoader`` removal). Live loading uses
+``registry.loader.PipelineLoader``: ``models.yaml`` → ``ModelRef`` dicts on the
+registry, ``prompts.yaml`` → the ``registry.prompts`` namespace dict.
+Re-exported again by the ``systems.pipeline`` package for compatibility.
 """
 
 from typing import Any
@@ -59,22 +61,22 @@ class ModelRef(BaseModel):
 
 
 class SharedModels(BaseModel):
-    """Collection of shared model references.
+    """Collection of shared model references (compatibility type).
 
-    Parsed by ``PipelineLoader`` from ``pipeline_models.yaml``; maps a
-    shared model alias to its ``ModelRef`` (model ID plus optional profile and
-    extra handler execution hints) so steps can reference models by name.
+    Maps a shared model alias to its ``ModelRef``. Nothing in-tree builds this
+    model today; ``PipelineLoader`` stores ``ModelRef`` values in registry dicts
+    loaded from per-path ``models.yaml`` files.
     """
 
     models: dict[str, ModelRef]
 
 
 class SharedPrompts(BaseModel):
-    """Collection of shared prompt templates.
+    """Collection of shared prompt templates (compatibility type).
 
-    Built by ``PipelineLoader`` by merging every
-    ``pipeline_prompts*.yaml``; ``prompts`` is an arbitrarily nested dict where
-    suffixed files contribute a top-level namespace (e.g. ``transformation``).
+    ``prompts`` supports arbitrary nesting. Nothing in-tree builds this model
+    today; ``PipelineLoader`` merges domain ``prompts.yaml`` files into
+    ``registry.prompts`` (namespaced by domain/subpath).
     """
 
     prompts: dict[str, Any]  # Supports arbitrary nesting
