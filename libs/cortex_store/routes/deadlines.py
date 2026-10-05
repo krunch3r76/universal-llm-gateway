@@ -8,7 +8,7 @@ from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
 
 from ..action_hints import detect_deadline_resolution
-from ..db import cortex_conn, execute, query
+from ..db import cortex_conn, query
 from ..models import DeadlineItem, DeadlineList
 from ..models.substrate_s6_batch3 import DeadlineResolveRequest
 
@@ -161,17 +161,7 @@ def deadline_resolve_route(
     """Atomically close a deadline entity (dispatch ``deadline_resolve`` op)."""
     from ..dispatch_ops.ops_journals import _op_deadline_resolve
 
-    result = _op_deadline_resolve(
+    return _op_deadline_resolve(
         deadline_id=deadline_id,
         **body.model_dump(exclude_unset=True),
     )
-    # Typed route keeps the deadline open when the outcome merge fails (AC3).
-    if (
-        isinstance(result, dict)
-        and result.get("outcome_set") is False
-        and (aid := result.get("resolution_assertion_id"))
-    ):
-        with cortex_conn() as conn:
-            execute(conn, "DELETE FROM assertions WHERE id = ?", (aid,))
-        result = {**result, "resolution_assertion_id": None}
-    return result

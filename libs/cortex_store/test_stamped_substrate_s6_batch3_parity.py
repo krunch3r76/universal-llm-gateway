@@ -26,9 +26,19 @@ _VOLATILE_ASSERTION_KEYS = frozenset(
     {"id", "observed_at", "created_at", "updated_at", "claim_hash", "quality_score"}
 )
 _VOLATILE_ENTITY_KEYS = frozenset({"created_at", "updated_at"})
-_VOLATILE_DEADLINE_RESOLVE_KEYS = frozenset(
-    {"resolution_assertion_id", "outcome_set"}
+# resolution_assertion_id is store-local; outcome_set is compared (review B2).
+_VOLATILE_DEADLINE_RESOLVE_KEYS = frozenset({"resolution_assertion_id"})
+_RESOLUTION_ASSERTION_COLS = (
+    "entity_id",
+    "claim",
+    "confidence",
+    "confidence_score",
+    "evidence",
+    "derivation_type",
+    "fulfillment_assertion_id",
+    "superseded_by",
 )
+_DEADLINE_ENTITY_COLS = ("type", "name", "workflow_state", "attributes")
 _RJ_ROW_COLS = (
     "agent",
     "register",
@@ -39,6 +49,42 @@ _RJ_ROW_COLS = (
     "consolidation_data",
 )
 _LINK_COLS = ("from_entry", "to_entry", "to_entity", "link_type")
+
+# x-mcp op names for routes that existed before batch 3 (AC4 / review B3).
+_EXPECTED_PRE_BATCH3_X_MCP_OPS: dict[tuple[str, str], str] = {
+    ("GET", "/tags"): "tag_list",
+    ("PUT", "/tags"): "tag_assign",
+    ("GET", "/deadlines"): "deadlines",
+    ("GET", "/reflective-journal"): "rj_list",
+    ("GET", "/reflective-journal/{entry_id}"): "rj_read",
+    ("POST", "/reflective-journal"): "rj_write",
+    ("POST", "/reflective-journal/{entry_id}/links"): "rj_link",
+    ("GET", "/assertions/{assertion_id}"): "assertion_get",
+    ("GET", "/assertions/search"): "search",
+    ("GET", "/assertions/activate"): "activate",
+    ("POST", "/assertions/observations"): "observe",
+    ("GET", "/frictions"): "frictions",
+    ("POST", "/frictions/{assertion_id}/close"): "friction_close",
+    ("GET", "/entities/{entity_id}/assertion-state"): "assertion_state",
+    ("GET", "/entities/by-content-hash/{content_hash}"): "entities_by_content_hash",
+}
+
+
+def _openapi_x_mcp_ops(app: object) -> dict[tuple[str, str], str]:
+    schema = app.openapi()  # type: ignore[union-attr]
+    out: dict[tuple[str, str], str] = {}
+    for path, methods in (schema.get("paths") or {}).items():
+        if not isinstance(methods, dict):
+            continue
+        for method, spec in methods.items():
+            if method.upper() not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                continue
+            if not isinstance(spec, dict):
+                continue
+            xmcp = spec.get("x-mcp")
+            if isinstance(xmcp, dict) and xmcp.get("op"):
+                out[(method.upper(), path)] = str(xmcp["op"])
+    return out
 
 
 def _without_dispatch_envelope(body: dict[str, Any]) -> dict[str, Any]:
@@ -96,7 +142,7 @@ def _isolated_client(
     return TestClient(create_app(db_path=str(db_path)))
 
 
-def _seed_tag_fixture(conn: sqlite3.Connection, *, entity_id: str, assertion_id: int) -> None:
+def _seed_tag_fixture(conn: sqlite3.Connection, *, entity_id: str) -> None:
     insert_entity(conn, entity_id=entity_id, entity_type="decision")
     conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, derivation_type, observed_at) "
@@ -181,6 +227,43 @@ def _seed_deadline(conn: sqlite3.Connection, *, deadline_id: str = "deadline:s6-
     conn.commit()
 
 
+def _fetch_resolution_assertion(
+    conn: sqlite3.Connection, deadline_id: str
+) -> dict[str, Any]:
+    row = conn.execute(
+        f"SELECT {', '.join(_RESOLUTION_ASSERTION_COLS)} FROM assertions "
+        "WHERE entity_id = ? AND confidence = 'confirmed' "
+        "AND UPPER(claim) LIKE '%RESOLVED%' ORDER BY id DESC LIMIT 1",
+        (deadline_id,),
+    ).fetchone()
+    assert row is not None, f"no RESOLVED assertion for {deadline_id}"
+    return dict(zip(_RESOLUTION_ASSERTION_COLS, row, strict=True))
+
+
+def _fetch_deadline_entity_row(
+    conn: sqlite3.Connection, deadline_id: str
+) -> dict[str, Any]:
+    row = conn.execute(
+        f"SELECT {', '.join(_DEADLINE_ENTITY_COLS)} FROM entities WHERE id = ?",
+        (deadline_id,),
+    ).fetchone()
+    assert row is not None
+    data = dict(zip(_DEADLINE_ENTITY_COLS, row, strict=True))
+    if isinstance(data.get("attributes"), str) and data["attributes"]:
+        data["attributes"] = json.loads(data["attributes"])
+    return data
+
+
+def _seed_fulfilling_assertion(conn: sqlite3.Connection, *, entity_id: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, derivation_type, observed_at) "
+        "VALUES (?, ?, 'believed', 'agent_observation', datetime('now'))",
+        (entity_id, "fulfillment seed for deadline_resolve parity"),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
 def _deadline_attrs(conn: sqlite3.Connection, deadline_id: str) -> dict[str, Any]:
     row = conn.execute(
         "SELECT attributes FROM entities WHERE id = ?",
@@ -209,7 +292,7 @@ def test_tag_resolve_dispatch_matches_typed_route(
     entity_id = "decision:s6-batch3-tag"
 
     def seed(conn: sqlite3.Connection) -> None:
-        _seed_tag_fixture(conn, entity_id=entity_id, assertion_id=0)
+        _seed_tag_fixture(conn, entity_id=entity_id)
 
     args = {"tag_name": "current", "entity_id": entity_id}
     bind_db = tmp_path / "cortex_dispatch_tag.db"
@@ -284,6 +367,14 @@ def test_deadline_resolve_dispatch_matches_typed_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     deadline_id = "deadline:s6-batch3"
+    fulfill_holder: dict[str, int] = {}
+
+    def seed(conn: sqlite3.Connection) -> None:
+        _seed_deadline(conn, deadline_id=deadline_id)
+        fulfill_holder["id"] = _seed_fulfilling_assertion(
+            conn, entity_id=deadline_id
+        )
+
     body = {
         "resolution_note": "batch 3 parity resolution",
         "resolved_at": "2026-10-05T12:00:00Z",
@@ -295,25 +386,37 @@ def test_deadline_resolve_dispatch_matches_typed_route(
     bind_db = tmp_path / "cortex_dispatch_dl.db"
     copy_template_db(migrated_db_template, bind_db)
     bind_cortex_db(monkeypatch, bind_db)
-    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    seed(cortex_db.cortex_conn())
+    fulfill_id = fulfill_holder["id"]
+    body["fulfilling_assertion_id"] = fulfill_id
+    dispatch_args["fulfilling_assertion_id"] = fulfill_id
     dispatch_raw = execute_op("deadline_resolve", dispatch_args)
     assert "error" not in dispatch_raw, dispatch_raw
     dispatch_body = _normalize_deadline_resolve(dispatch_raw)
-    dispatch_attrs = _deadline_attrs(cortex_db.cortex_conn(), deadline_id)
-    dispatch_assertions = _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id)
+    dispatch_entity = _fetch_deadline_entity_row(
+        cortex_db.cortex_conn(), deadline_id
+    )
+    dispatch_assertion = _fetch_resolution_assertion(
+        cortex_db.cortex_conn(), deadline_id
+    )
 
     typed_client = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="typed_dl"
     )
-    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    seed(cortex_db.cortex_conn())
+    body["fulfilling_assertion_id"] = fulfill_id
     http_resp = typed_client.post(f"/deadlines/{deadline_id}/resolve", json=body)
     assert http_resp.status_code == 200, http_resp.text
     typed_body = _normalize_deadline_resolve(http_resp.json())
     assert dispatch_body == typed_body
-    typed_attrs = _deadline_attrs(cortex_db.cortex_conn(), deadline_id)
-    typed_assertions = _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id)
-    assert dispatch_attrs.get("outcome") == typed_attrs.get("outcome") == "met"
-    assert dispatch_assertions == typed_assertions == 1
+    typed_entity = _fetch_deadline_entity_row(cortex_db.cortex_conn(), deadline_id)
+    typed_assertion = _fetch_resolution_assertion(
+        cortex_db.cortex_conn(), deadline_id
+    )
+    assert dispatch_entity == typed_entity
+    assert dispatch_assertion == typed_assertion
+    assert dispatch_entity["attributes"].get("outcome") == "met"
+    assert dispatch_assertion["fulfillment_assertion_id"] == fulfill_id
 
 
 @pytest.mark.offline
@@ -322,16 +425,37 @@ def test_rj_consolidate_typed_route_atomic_on_link_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Entry insert + links share one commit (reflective_journal.py:309-319)."""
+    """Entry + links share one commit (reflective_journal.py:309-319)."""
     from cortex_store.routes import reflective_journal as rj_mod
 
-    real_insert = rj_mod._insert_reflective_entry_tx
+    real_cortex_conn = rj_mod.cortex_conn
+    link_inserts = {"n": 0}
 
-    def fail_after_entry_insert(*args: Any, **kwargs: Any) -> int:
-        entry_id = real_insert(*args, **kwargs)
-        raise RuntimeError("injected after entry insert")
+    class _ConnProxy:
+        __slots__ = ("_inner",)
 
-    monkeypatch.setattr(rj_mod, "_insert_reflective_entry_tx", fail_after_entry_insert)
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
+            if "INSERT INTO journal_links" in sql:
+                link_inserts["n"] += 1
+                raise RuntimeError("injected link insert failure")
+            return self._inner.execute(sql, params)
+
+        def commit(self) -> None:
+            self._inner.commit()
+
+        def close(self) -> None:
+            self._inner.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    def wrapped_cortex_conn() -> _ConnProxy:
+        return _ConnProxy(real_cortex_conn())
+
+    monkeypatch.setattr(rj_mod, "cortex_conn", wrapped_cortex_conn)
 
     db_path = tmp_path / "cortex_rj_atomic.db"
     copy_template_db(migrated_db_template, db_path)
@@ -339,10 +463,11 @@ def test_rj_consolidate_typed_route_atomic_on_link_failure(
     client = TestClient(
         create_app(db_path=str(db_path)), raise_server_exceptions=False
     )
-    e1, _e2 = _seed_rj_source_entries(cortex_db.cortex_conn())
-    args = _rj_consolidate_args(source_ids=[e1])
+    e1, e2 = _seed_rj_source_entries(cortex_db.cortex_conn())
+    args = _rj_consolidate_args(source_ids=[e1, e2])
     resp = client.post("/reflective-journal/consolidations", json=args)
     assert resp.status_code >= 500
+    assert link_inserts["n"] >= 1
 
     count = cortex_db.cortex_conn().execute(
         "SELECT COUNT(*) FROM reflective_journal WHERE kind = 'consolidation'"
@@ -354,12 +479,20 @@ def test_rj_consolidate_typed_route_atomic_on_link_failure(
     assert int(link_count) == 0
 
 
+def _deadline_failure_db_snapshot(
+    conn: sqlite3.Connection, deadline_id: str
+) -> tuple[dict[str, Any], int]:
+    entity = _fetch_deadline_entity_row(conn, deadline_id)
+    return entity, _resolved_assertion_count(conn, deadline_id)
+
+
 @pytest.mark.offline
-def test_deadline_resolve_typed_route_atomic_on_outcome_failure(
+def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     migrated_db_template: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Handler uses separate commits (ops_journals.py); typed route is passthrough only."""
     import cortex_store.dispatch_ops.ops_journals as dj_mod
 
     original_execute = dj_mod.execute
@@ -372,46 +505,53 @@ def test_deadline_resolve_typed_route_atomic_on_outcome_failure(
     monkeypatch.setattr(dj_mod, "execute", execute_guard)
 
     deadline_id = "deadline:s6-batch3-atomic"
-    client = _isolated_client(
-        migrated_db_template, tmp_path, monkeypatch, suffix="dl_atomic"
-    )
-    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
     body = {
         "resolution_note": "atomic failure probe",
         "resolved_at": "2026-10-05T12:00:00Z",
         "outcome": "met",
     }
-    resp = client.post(f"/deadlines/{deadline_id}/resolve", json=body)
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload.get("outcome_set") is False
 
-    attrs = _deadline_attrs(cortex_db.cortex_conn(), deadline_id)
-    assert attrs.get("outcome") != "met"
-    assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == 0
+    bind_db = tmp_path / "cortex_dispatch_dl_fail.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    dispatch_raw = execute_op(
+        "deadline_resolve", {"deadline_id": deadline_id, **body}
+    )
+    assert dispatch_raw.get("outcome_set") is False
+    dispatch_snap = _deadline_failure_db_snapshot(
+        cortex_db.cortex_conn(), deadline_id
+    )
+
+    typed_client = _isolated_client(
+        migrated_db_template, tmp_path, monkeypatch, suffix="typed_dl_fail"
+    )
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    resp = typed_client.post(f"/deadlines/{deadline_id}/resolve", json=body)
+    assert resp.status_code == 200
+    assert resp.json().get("outcome_set") is False
+    typed_snap = _deadline_failure_db_snapshot(
+        cortex_db.cortex_conn(), deadline_id
+    )
+    assert dispatch_snap == typed_snap
+    assert dispatch_snap[0]["attributes"].get("outcome") != "met"
+    assert dispatch_snap[1] >= 1
 
 
 @pytest.mark.offline
 def test_batch3_paths_do_not_shadow_existing_routes(
-    cortex_client: TestClient,
+    migrated_db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tags_list = cortex_client.get("/tags", params={"entity_id": "decision:shadow-probe"})
-    assert tags_list.status_code == 200
-
-    deadlines_list = cortex_client.get("/deadlines")
-    assert deadlines_list.status_code == 200
-
-    rj_list = cortex_client.get("/reflective-journal")
-    assert rj_list.status_code == 200
-
-    rj_read = cortex_client.get("/reflective-journal/1")
-    assert rj_read.status_code != 422 or "int_parsing" not in rj_read.text
-
-    observe = cortex_client.post(
-        "/assertions/observations",
-        json={"entity_id": "decision:shadow", "claim": "x", "agent": "pytest"},
-    )
-    assert observe.status_code != 422 or "int_parsing" not in observe.text
-
-    frictions = cortex_client.get("/frictions")
-    assert frictions.status_code == 200
+    bind_cortex_db(monkeypatch, migrated_db_path)
+    app = create_app(db_path=str(migrated_db_path))
+    stamped = _openapi_x_mcp_ops(app)
+    for key, expected_op in _EXPECTED_PRE_BATCH3_X_MCP_OPS.items():
+        assert key in stamped, f"missing pre-batch3 route {key!r}"
+        assert stamped[key] == expected_op, (
+            f"{key!r} shadowed: expected x-mcp op {expected_op!r}, got {stamped[key]!r}"
+        )
+    schema = app.openapi()
+    delete_tag = (schema.get("paths") or {}).get("/tags/{tag_name}", {}).get("delete")
+    assert isinstance(delete_tag, dict)
+    assert "delete_tag" in delete_tag.get("operationId", "")
