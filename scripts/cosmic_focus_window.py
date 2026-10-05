@@ -216,6 +216,58 @@ def read_states(
         time.sleep(0.15)
 
 
+BROWSER_APP_ID_NEEDLES = ("firefox", "chromium", "google-chrome", "chrome", "brave", "vivaldi")
+
+
+def _is_browser_app(app_id: str) -> bool:
+    needle = (app_id or "").lower()
+    return any(part in needle for part in BROWSER_APP_ID_NEEDLES)
+
+
+def exclusive_cursor_keyboard(
+    rows: list[dict[str, Any]],
+    *,
+    identifier: str = "",
+    title: str = "",
+) -> dict[str, Any]:
+    """Seat keyboard is on the chosen Cursor toplevel and not on a browser.
+
+    cosmic-comp can mark the Cursor handle ``activated`` while Firefox (claude.ai
+    Cowork) still holds the seat. uinput then types into the browser. Specimen:
+    orion-node 2026-10-05, identifier 1GTsuA4NedTMQ1fchPkIG5KKoi8cQ82R, launch
+    ``ok=true`` while maestro CSE received Ctrl+Enter.
+    """
+    activated = [row for row in rows if row.get("activated")]
+    browsers = [row for row in activated if _is_browser_app(str(row.get("app_id") or ""))]
+    want_id = (identifier or "").strip()
+    want_title = (title or "").strip()
+
+    def _is_chosen(row: dict[str, Any]) -> bool:
+        if "cursor" not in str(row.get("app_id") or "").lower():
+            return False
+        if want_id and str(row.get("identifier") or "") == want_id:
+            return True
+        if want_title and str(row.get("title") or "") == want_title:
+            return True
+        return not want_id and not want_title
+
+    cursor_hit = [row for row in activated if _is_chosen(row)]
+    if browsers:
+        return {
+            "ok": False,
+            "reason": "browser_activated",
+            "activated": activated,
+            "browsers": browsers,
+        }
+    if not cursor_hit:
+        return {
+            "ok": False,
+            "reason": "cursor_not_activated",
+            "activated": activated,
+        }
+    return {"ok": True, "reason": "exclusive_cursor", "activated": activated, "cursor": cursor_hit[0]}
+
+
 def select(
     rows: list[dict[str, Any]], *, app_id: str | None, title_substr: list[str]
 ) -> list[dict[str, Any]]:
@@ -265,6 +317,12 @@ def main() -> int:
         default="only",
         help="only: refuse ambiguity (default)",
     )
+    ac = sub.add_parser(
+        "assert-cursor",
+        help="fail if a browser is activated or the named Cursor toplevel is not",
+    )
+    ac.add_argument("--identifier", default="")
+    ac.add_argument("--title", default="")
     args = p.parse_args()
     wire = Wire()
     rows = toplevels(wire)
@@ -273,6 +331,14 @@ def main() -> int:
         rows = [{"handle": h, **p} for h, p in wire.handles.items() if p.get("title")]
         print(json.dumps({"ok": True, "count": len(rows), "toplevels": rows}, indent=1))
         return 0
+    if args.cmd == "assert-cursor":
+        read_states(wire)
+        rows = [{"handle": h, **p} for h, p in wire.handles.items() if p.get("title")]
+        verdict = exclusive_cursor_keyboard(
+            rows, identifier=args.identifier, title=args.title
+        )
+        print(json.dumps(verdict))
+        return 0 if verdict.get("ok") else 3
     matches = select(rows, app_id=args.app_id, title_substr=args.title_substr)
     if not matches or (len(matches) > 1 and args.pick == "only"):
         print(
@@ -288,14 +354,21 @@ def main() -> int:
         return 2
     activate(wire, matches[0]["handle"])
     read_states(wire, target=matches[0]["handle"])
+    rows = [{"handle": h, **p} for h, p in wire.handles.items() if p.get("title")]
     focused = bool(wire.handles[matches[0]["handle"]].get("activated"))
-    ok = focused and not wire.errors
+    exclusive = exclusive_cursor_keyboard(
+        rows,
+        identifier=str(matches[0].get("identifier") or ""),
+        title=str(matches[0].get("title") or ""),
+    )
+    ok = focused and bool(exclusive.get("ok")) and not wire.errors
     print(
         json.dumps(
             {
                 "ok": ok,
                 "activated": matches[0],
                 "focused": focused,
+                "exclusive": exclusive,
                 "errors": wire.errors,
             }
         )

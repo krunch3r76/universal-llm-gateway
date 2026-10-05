@@ -142,6 +142,49 @@ def _list_cursor_toplevels() -> list[dict]:
     return [r for r in rows if "cursor" in str(r.get("app_id") or "").lower()]
 
 
+def _assert_cursor_keyboard(chosen: dict) -> dict:
+    """Re-list compositor state. Activate-ok is not exclusive keyboard focus."""
+    helper = Path(__file__).with_name("cosmic_focus_window.py")
+    argv = [
+        sys.executable,
+        str(helper),
+        "assert-cursor",
+        "--title",
+        str(chosen.get("title") or ""),
+    ]
+    ident = str(chosen.get("identifier") or "").strip()
+    if ident:
+        argv.extend(["--identifier", ident])
+    proc = subprocess.run(
+        argv, env=os.environ, capture_output=True, text=True, timeout=20
+    )
+    try:
+        verdict = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        verdict = {
+            "ok": False,
+            "reason": "assert_cursor_unreadable",
+            "raw": (proc.stdout or "")[-400:] + (proc.stderr or "")[-400:],
+        }
+    if not isinstance(verdict, dict):
+        return {"ok": False, "reason": "assert_cursor_unreadable"}
+    return verdict
+
+
+def _require_cursor_keyboard(chosen: dict, *, retries: int = 0) -> dict:
+    """Abort before keys if a browser still holds activation (maestro CSE specimen)."""
+    last: dict = {}
+    for attempt in range(retries + 1):
+        last = _assert_cursor_keyboard(chosen)
+        if last.get("ok"):
+            return last
+        if attempt < retries:
+            _focus_window(str(chosen.get("title") or ""), "cursor")
+    raise SystemExit(
+        json.dumps({"ok": False, "phase": "focus", **last}, default=str)
+    )
+
+
 def _pick_cursor_window(role: str, title_substr: str | None, repo: str) -> dict:
     """Pick the IDE window or the Glass window. Never treat them as the same title.
 
@@ -509,16 +552,19 @@ def launch_glass_chat_with_message(
             "message_preview": message[:120],
         }
     focused = _focus_window(str(chosen["title"]), "cursor")
+    keyboard = _require_cursor_keyboard(chosen, retries=2)
     clip: subprocess.Popen[bytes] | None = None
     ui = _ui()
     try:
         _new_glass_agent(ui)
         time.sleep(1.5)
+        _require_cursor_keyboard(chosen)
         if model_query:
             _quick_command(ui, model_query, opener="ctrl_slash")
         clip = _wl_copy(message)
         _paste(ui)
         time.sleep(0.4)
+        _require_cursor_keyboard(chosen)
         _submit_composer(ui)
     finally:
         ui.close()
@@ -528,6 +574,8 @@ def launch_glass_chat_with_message(
         "steps": steps,
         "window_title": chosen.get("title"),
         "focused": focused.get("activated"),
+        "focus_ok": bool(focused.get("focused")),
+        "keyboard": keyboard,
         "model_query": model_query,
         "message_len": len(message),
     }

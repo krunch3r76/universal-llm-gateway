@@ -365,9 +365,13 @@ def _focus_paste_surface(surface: str, repo: str) -> dict[str, object]:
         mod = _glass_launcher()
         chosen = mod._pick_agents_window(repo)
         focused = mod._focus_window(str(chosen["title"]), "cursor")
+        keyboard = mod._require_cursor_keyboard(chosen, retries=2)
+        row = focused.get("activated") if isinstance(focused.get("activated"), dict) else {}
         return {
             "window_title": chosen.get("title"),
             "focused": focused.get("activated"),
+            "identifier": (row or chosen).get("identifier"),
+            "keyboard": keyboard,
         }
     _raise_cursor(repo)
     time.sleep(0.9)
@@ -432,10 +436,22 @@ def paste_message(
                     **focus_check,
                 }
         if glass:
+            _glass_launcher()._require_cursor_keyboard(
+                {
+                    "title": focused_meta.get("window_title"),
+                    "identifier": focused_meta.get("identifier"),
+                }
+            )
             _wl_copy(message)
             time.sleep(0.08)
             _paste(ui)
             time.sleep(0.25)
+            _glass_launcher()._require_cursor_keyboard(
+                {
+                    "title": focused_meta.get("window_title"),
+                    "identifier": focused_meta.get("identifier"),
+                }
+            )
             _chord(ui, e.KEY_LEFTCTRL, e.KEY_ENTER)
         else:
             _paste_text_enter(ui, message)
