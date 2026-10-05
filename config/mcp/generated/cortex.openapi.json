@@ -1899,6 +1899,348 @@
         "title": "AssociationRow",
         "type": "object"
       },
+      "BulkEntityUpsertItem": {
+        "additionalProperties": true,
+        "description": "One row for ``entities_bulk_upsert`` \u2014 same fields as dispatch plus per-item ``if_exists``.",
+        "properties": {
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          },
+          "attributes": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attributes"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "duplicate_name_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Name Ok"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "if_exists": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "If Exists"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "retention_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "permanent",
+                  "ephemeral",
+                  "archival"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Policy"
+          },
+          "retention_ttl_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Ttl Days"
+          },
+          "source_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Uri"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unsubstantiated",
+                  "confirmed",
+                  "provisional",
+                  "merged",
+                  "deprecated",
+                  "reaped"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "workflow_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow State"
+          }
+        },
+        "required": [
+          "type",
+          "name"
+        ],
+        "title": "BulkEntityUpsertItem",
+        "type": "object"
+      },
+      "BulkRelationshipUpsertItem": {
+        "additionalProperties": true,
+        "description": "One row for ``relationships_bulk_upsert`` \u2014 dispatch fields plus per-item overrides.",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "if_exists": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "If Exists"
+          },
+          "resolve_aliases": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolve Aliases"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Uri"
+          },
+          "strength": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strength"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type Id"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "title": "BulkRelationshipUpsertItem",
+        "type": "object"
+      },
       "BurstClaimItem": {
         "properties": {
           "action": {
@@ -3129,6 +3471,31 @@
           "results"
         ],
         "title": "EnrichResponse",
+        "type": "object"
+      },
+      "EntitiesBulkUpsertRequest": {
+        "properties": {
+          "entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BulkEntityUpsertItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities"
+          },
+          "if_exists": {
+            "default": "fail",
+            "title": "If Exists",
+            "type": "string"
+          }
+        },
+        "title": "EntitiesBulkUpsertRequest",
         "type": "object"
       },
       "EntityCollisionMatch": {
@@ -6300,6 +6667,36 @@
           }
         },
         "title": "RelationshipUpdate",
+        "type": "object"
+      },
+      "RelationshipsBulkUpsertRequest": {
+        "properties": {
+          "if_exists": {
+            "default": "fail",
+            "title": "If Exists",
+            "type": "string"
+          },
+          "relationships": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BulkRelationshipUpsertItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relationships"
+          },
+          "resolve_aliases": {
+            "default": true,
+            "title": "Resolve Aliases",
+            "type": "boolean"
+          }
+        },
+        "title": "RelationshipsBulkUpsertRequest",
         "type": "object"
       },
       "ResolvedEntity": {
@@ -16592,6 +16989,184 @@
         }
       }
     },
+    "/entities/bulk": {
+      "post": {
+        "description": "Bulk create/update entities (dispatch ``entities_bulk_upsert`` op).",
+        "operationId": "entities_bulk_upsert_route_entities_bulk_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntitiesBulkUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Entities Bulk Upsert Route Entities Bulk Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Entities Bulk Upsert Route",
+        "tags": [
+          "entities"
+        ],
+        "x-mcp": {
+          "op": "entities_bulk_upsert",
+          "tool": "cortex"
+        }
+      }
+    },
     "/entities/by-content-hash/{content_hash}": {
       "get": {
         "description": "Dedicated content-hash entity lookup (same shape as dispatch op).",
@@ -20589,6 +21164,184 @@
         ],
         "x-mcp": {
           "op": "relationship_create",
+          "tool": "cortex"
+        }
+      }
+    },
+    "/relationships/bulk": {
+      "post": {
+        "description": "Bulk create/update relationships (dispatch ``relationships_bulk_upsert`` op).",
+        "operationId": "relationships_bulk_upsert_route_relationships_bulk_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelationshipsBulkUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Relationships Bulk Upsert Route Relationships Bulk Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Relationships Bulk Upsert Route",
+        "tags": [
+          "relationships"
+        ],
+        "x-mcp": {
+          "op": "relationships_bulk_upsert",
           "tool": "cortex"
         }
       }

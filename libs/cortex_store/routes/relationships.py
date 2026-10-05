@@ -19,6 +19,7 @@ from ..models import (
     RelationshipList,
     RelationshipUpdate,
 )
+from ..models.substrate_s6_batch4 import RelationshipsBulkUpsertRequest
 from ..relationship_sql import FROM_CLAUSE, SELECT_COLUMNS, SYMMETRIC_REL_TYPES
 
 logger = get_logger("cortex-api.relationships")
@@ -205,6 +206,28 @@ def create_relationship(
         status.HTTP_201_CREATED if result.was_new else status.HTTP_200_OK
     )
     return result
+
+
+@router.post("/bulk", openapi_extra=x_mcp("relationships_bulk_upsert"))
+def relationships_bulk_upsert_route(
+    body: RelationshipsBulkUpsertRequest,
+) -> dict[str, object]:
+    """Bulk create/update relationships (dispatch ``relationships_bulk_upsert`` op)."""
+    from ..dispatch_ops.ops_bulk_relationships import _op_relationships_bulk_upsert
+
+    relationships = (
+        [
+            item.model_dump(mode="python", exclude_none=True)
+            for item in body.relationships
+        ]
+        if body.relationships is not None
+        else None
+    )
+    return _op_relationships_bulk_upsert(
+        relationships=relationships,
+        if_exists=body.if_exists,
+        resolve_aliases=body.resolve_aliases,
+    )
 
 
 @router.delete(

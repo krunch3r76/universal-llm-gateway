@@ -18,6 +18,7 @@ from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
 from cortex_store.dispatch_ops import execute_op
+from cortex_store._stamped_route_resolution_testkit import assert_baseline_route_resolution
 from cortex_store.main import create_app
 
 _DISPATCH_ENVELOPE_KEYS = frozenset({"_next", "_hint", "skill_hint"})
@@ -440,7 +441,8 @@ def test_rj_consolidate_typed_route_atomic_on_link_failure(
         def execute(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
             if "INSERT INTO journal_links" in sql:
                 link_inserts["n"] += 1
-                raise RuntimeError("injected link insert failure")
+                if link_inserts["n"] >= 2:
+                    raise RuntimeError("injected link insert failure")
             return self._inner.execute(sql, params)
 
         def commit(self) -> None:
@@ -543,12 +545,13 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
 
 
 @pytest.mark.offline
-def test_batch3_paths_do_not_shadow_existing_routes(
+def test_batch3_router_resolution_no_shadow_baseline_routes(
     migrated_db_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bind_cortex_db(monkeypatch, migrated_db_path)
     app = create_app(db_path=str(migrated_db_path))
+    assert_baseline_route_resolution(app)
     stamped = _openapi_x_mcp_ops(app)
     for key, expected_op in _EXPECTED_PRE_BATCH3_X_MCP_OPS.items():
         assert key in stamped, f"missing pre-batch3 route {key!r}"

@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "7f60e7a35ac66bd55c4c6290de044eddfe0f86a3a8ceade928b032a00513ab10"
+OPENAPI_SHA256 = "36c553d96b8ab6f6ac32e27c74799a95483ac9f75ea5b51fa1b0202582e734a7"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -95,6 +95,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/entities",
         "operation_id": "list_entities_entities_get",
     },
+    "entities_bulk_upsert": {
+        "method": "POST",
+        "path": "/entities/bulk",
+        "operation_id": "entities_bulk_upsert_route_entities_bulk_post",
+    },
     "entities_by_content_hash": {
         "method": "GET",
         "path": "/entities/by-content-hash/{content_hash}",
@@ -174,6 +179,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/relationships",
         "operation_id": "list_relationships_relationships_get",
+    },
+    "relationships_bulk_upsert": {
+        "method": "POST",
+        "path": "/relationships/bulk",
+        "operation_id": "relationships_bulk_upsert_route_relationships_bulk_post",
     },
     "render_subgraph": {
         "method": "GET",
@@ -312,7 +322,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "777d1c52eea17d895b0d6196a24e368639fc32cb014e3f33d7fd0bb4dab3ca55",
+    "@components": "25d94d8b2974eaae821768837007eaaaf4c306bcf85864df52c0346996c828d8",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

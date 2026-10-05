@@ -37,6 +37,7 @@ from ..models import (
     EntitySummary,
     EntityUpdate,
 )
+from ..models.substrate_s6_batch4 import EntitiesBulkUpsertRequest
 
 logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
@@ -392,6 +393,22 @@ def update_entity(
             conn, entity_id=entity_id, updates=updates, intent=intent
         )
     return result
+
+
+@router.post("/bulk", openapi_extra=x_mcp("entities_bulk_upsert"))
+def entities_bulk_upsert_route(body: EntitiesBulkUpsertRequest) -> dict[str, object]:
+    """Bulk create/update entities (dispatch ``entities_bulk_upsert`` op)."""
+    from ..dispatch_ops.ops_bulk_entities import _op_entities_bulk_upsert
+
+    entities = (
+        [
+            item.model_dump(mode="python", exclude_none=True)
+            for item in body.entities
+        ]
+        if body.entities is not None
+        else None
+    )
+    return _op_entities_bulk_upsert(entities=entities, if_exists=body.if_exists)
 
 
 @router.post("/merge", openapi_extra=x_mcp("entity_merge"))
