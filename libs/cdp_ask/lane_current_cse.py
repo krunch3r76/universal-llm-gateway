@@ -313,8 +313,13 @@ def _resolve(
     listable_ids = {
         str(getattr(r, "registration_id", "") or "").strip() for r in active
     } - {""}
+    # A listable registration whose page is not among the open probe
+    # candidates is a stored pointer, not the live holder (a:38165).
+    holder_page_open = bool(holder_key and holder_key in grouped)
     holder_live = bool(
-        seat and str(seat.get("registration_id") or "").strip() in listable_ids
+        seat
+        and holder_page_open
+        and str(seat.get("registration_id") or "").strip() in listable_ids
     )
     if seat is not None:
         seat = {

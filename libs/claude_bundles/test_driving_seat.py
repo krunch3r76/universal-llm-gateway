@@ -241,6 +241,50 @@ def test_hop_bind_retires_stale_registry_rows(
     assert census_match_ids("9497", snap_after) == [seat.registration_id]
 
 
+def test_relaunch_closed_predecessor_refuses_and_leaves_pointer(
+    isolated_registry: Path,
+) -> None:
+    """A dormant predecessor with seat_closed_at must not reopen and steal the seat."""
+    hop = reg.register_lane(
+        holder="hop-chrome",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.bind_driving_seat(hop.registration_id)
+    pred = reg.register_lane(
+        holder="pred-chrome",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    active = reg._store.load_active()
+    active[pred.registration_id]["status"] = "dormant"
+    active[pred.registration_id]["seat_closed_at"] = 1.0
+    active[pred.registration_id]["seat_close_reason"] = "superseded"
+    reg._store.write_active(active)
+    reg._release_driver_lock(pred.registration_id)
+    before = dict(reg._store.load_active()[hop.registration_id])
+
+    with pytest.raises(RegistryError, match="seat_closed_at"):
+        reg.relaunch_dormant(
+            pred.registration_id,
+            launch_chrome=_noop_launch,
+            is_listening=lambda _p: False,
+        )
+
+    after_active = reg._store.load_active()
+    assert after_active[hop.registration_id]["seat_lane"] == before["seat_lane"]
+    assert after_active[hop.registration_id]["seat_bound_at"] == before["seat_bound_at"]
+    assert after_active[hop.registration_id]["seat_closed_at"] is None
+    assert after_active[pred.registration_id]["status"] == "dormant"
+    assert after_active[pred.registration_id]["seat_closed_at"] == 1.0
+
+
 def test_ensure_rejects_hop_as_driving_kind(isolated_registry: Path) -> None:
     with pytest.raises(RegistryError, match="cannot be mission_kind=hop"):
         _ensure(mission_kind="hop")

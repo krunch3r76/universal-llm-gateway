@@ -263,6 +263,11 @@ def relaunch_dormant(
     row = _store.load_active().get(registration_id)
     if row is None:
         raise RegistryError(f"unknown registration_id: {registration_id!r}")
+    if row.get("seat_closed_at") is not None:
+        raise RegistryError(
+            f"registration {registration_id!r} has seat_closed_at set; "
+            "refusing relaunch of a superseded seat"
+        )
     if row.get("status") != STATUS_DORMANT:
         observed = row.get("status")
         raise SeatContended(
