@@ -103,6 +103,15 @@ async def resolve_execution_monitor(
     )
     bus_hit = recovered is not None
     if bus_hit:
+        if authority_result.degraded and isinstance(recovered.get("recovery"), dict):
+            recovered = {
+                **recovered,
+                "recovery": {
+                    **recovered["recovery"],
+                    "degraded": True,
+                    "source_attempted": "cdp_registry.execution_state",
+                },
+            }
         return 200, recovered
 
     sources = _sources_consulted_miss(

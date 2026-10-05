@@ -128,6 +128,22 @@ async def cancel_pipeline_execution(
 
     record = tracker.get(execution_id)
     if record is None:
+        status_code, body = await resolve_execution_monitor(
+            execution_id,
+            tracker=tracker,
+            wait_seconds=0.0,
+            event_bus=getattr(proxy, "event_bus", None),
+        )
+        if status_code == 404 and body is not None:
+            data = body.get("data")
+            return _error_response(
+                404,
+                str(body.get("code") or "execution_id_expired_or_unknown"),
+                str(body.get("message") or ""),
+                data=data if isinstance(data, dict) else None,
+            )
+        if status_code == 200 and body is not None:
+            return JSONResponse(status_code=200, content=body)
         return _error_response(
             404,
             "execution_id_expired_or_unknown",

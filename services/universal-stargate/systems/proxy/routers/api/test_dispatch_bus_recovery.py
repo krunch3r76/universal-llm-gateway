@@ -525,27 +525,27 @@ def test_get_pipeline_execution_still_404_when_no_signal(
     from fastapi import FastAPI
 
     from systems.proxy.dependencies import get_auth_dependency, get_proxy
+    from systems.proxy.routers.api import execution_monitor
     from systems.proxy.routers.api import executions as mod
+    from systems.proxy.routers.api.execution_authority_read import AuthorityReadResult
 
     tracker = MagicMock()
     tracker.wait_for_terminal = AsyncMock(return_value=None)
     tracker._agent_bus_url = "unix:///tmp/agent-bus.sock"
     tracker._agent_bus_token = "test-token"
 
+    async def _authority(_eid: str) -> AuthorityReadResult:
+        return AuthorityReadResult(
+            ok=False, payload=None, reason="miss", degraded=False
+        )
+
     monkeypatch.setattr(mod, "_get_tracker", lambda _proxy: tracker)
+    monkeypatch.setattr(execution_monitor, "fetch_record", AsyncMock(return_value=None))
+    monkeypatch.setattr(execution_monitor, "read_execution_authority", _authority)
     monkeypatch.setattr(
-        mod,
-        "resolve_execution_monitor",
-        AsyncMock(
-            return_value=(
-                404,
-                {
-                    "code": "execution_id_expired_or_unknown",
-                    "message": "Unknown or expired execution_id 'unknown-exec'.",
-                    "data": {"sources_consulted": []},
-                },
-            )
-        ),
+        execution_monitor,
+        "recover_execution_from_bus_thread",
+        AsyncMock(return_value=None),
     )
 
     app = FastAPI()
@@ -555,4 +555,14 @@ def test_get_pipeline_execution_still_404_when_no_signal(
 
     response = TestClient(app).get("/executions/unknown-exec")
     assert response.status_code == 404
-    assert response.json()["error"]["code"] == "execution_id_expired_or_unknown"
+    err = response.json()["error"]
+    assert err["code"] == "execution_id_expired_or_unknown"
+    sources = err["data"]["sources_consulted"]
+    assert len(sources) == 5
+    assert {row["source"] for row in sources} == {
+        "pipeline_tracker",
+        "pipeline_dispatch_journal",
+        "cdp_registry.execution_state",
+        "cdp_ask.execution_store",
+        "thread_dispatch_links",
+    }
