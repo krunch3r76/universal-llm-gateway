@@ -145,6 +145,155 @@ def test_expected_absent_pipeline_does_not_block_readiness():
     asyncio.run(_run())
 
 
+def _late_loader_land():
+    """8 gateways, 12 early pipelines, 13 late loaders the land touches."""
+    gateways = [f"g{i}" for i in range(8)]
+    early = [f"p{i:02d}" for i in range(12)]
+    late = [f"late{i:02d}" for i in range(13)]
+    pipelines = early + late
+    sources = {pipeline_id: (f"pipelines/{pipeline_id}.yaml",) for pipeline_id in late}
+    land_paths = tuple(sources[pipeline_id][0] for pipeline_id in late)
+    return gateways, early, pipelines, sources, land_paths
+
+
+def test_late_loader_land_waits_until_membership_follows_gateway_catalog():
+    """Partial 8/12 is not ready while the late gateway's catalog seq is still ahead of it."""
+
+    gateways, early, pipelines, sources, land_paths = _late_loader_land()
+    late_gateway = gateways[-1]
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        yield {
+            "seq": 15,
+            "signal": "federation.catalog.changed",
+            "payload": {"gateway_id": late_gateway},
+        }
+        yield {
+            "seq": 10,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": early},
+        }
+        yield {
+            "seq": 20,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
+        }
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                query_sock="/dev/null",
+                resume_from=1,
+                snapshot_gateway_ids=gateways,
+                snapshot_pipeline_ids=pipelines,
+                land_paths=land_paths,
+                cap_s=5.0,
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                pipeline_sources=sources,
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert not result.timed_out
+        assert result.events_seen == 3
+
+    asyncio.run(_run())
+
+
+def test_catalog_ahead_of_only_membership_times_out_indeterminate():
+    """Silence after a membership that precedes that gateway's catalog is a cap expiry."""
+
+    gateways, early, pipelines, sources, land_paths = _late_loader_land()
+    late_gateway = gateways[-1]
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        yield {
+            "seq": 15,
+            "signal": "federation.catalog.changed",
+            "payload": {"gateway_id": late_gateway},
+        }
+        yield {
+            "seq": 10,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": early},
+        }
+        await asyncio.Event().wait()
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return ["should-not-run"]
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                query_sock="/dev/null",
+                resume_from=1,
+                snapshot_gateway_ids=gateways,
+                snapshot_pipeline_ids=pipelines,
+                land_paths=land_paths,
+                cap_s=0.05,
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                pipeline_sources=sources,
+            ),
+            timeout=2.0,
+        )
+        assert result.timed_out
+        assert result.verdict == "indeterminate"
+
+    asyncio.run(_run())
+
+
+def test_membership_before_one_gateway_catalog_waits_for_later_event():
+    """Seq 20 is not ready when one connected gateway's catalog is at seq 25."""
+
+    gateways, _early, pipelines, sources, land_paths = _late_loader_land()
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        yield {
+            "seq": 25,
+            "signal": "federation.catalog.changed",
+            "payload": {"gateway_id": gateways[0]},
+        }
+        yield {
+            "seq": 20,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
+        }
+        yield {
+            "seq": 30,
+            "signal": "federation.gateway.membership",
+            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
+        }
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                query_sock="/dev/null",
+                resume_from=1,
+                snapshot_gateway_ids=gateways,
+                snapshot_pipeline_ids=pipelines,
+                land_paths=land_paths,
+                cap_s=5.0,
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                pipeline_sources=sources,
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert not result.timed_out
+        assert result.events_seen == 3
+
+    asyncio.run(_run())
+
+
 @pytest.mark.asyncio
 async def test_pre_restart_membership_request():
     """Production path reads the latest membership event from Event Service."""

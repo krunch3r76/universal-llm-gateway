@@ -204,6 +204,50 @@ def _latest_membership_pipeline_ids(events: Iterable[dict[str, Any]]) -> set[str
     return present
 
 
+def _catalog_seq_by_gateway(
+    events: Iterable[dict[str, Any]],
+) -> tuple[dict[str, int], bool]:
+    """Latest ``catalog.changed`` seq per ``payload.gateway_id``.
+
+    The second value is true when any catalog event has no gateway id.
+    Those events are not attributable per gateway.
+    """
+    latest: dict[str, int] = {}
+    unattributed = False
+    for event in events:
+        if str(event.get("signal") or "") != CATALOG_CHANGED:
+            continue
+        seq = event.get("seq")
+        if not isinstance(seq, int):
+            continue
+        payload = event.get("payload") or {}
+        gateway_id = payload.get("gateway_id")
+        if isinstance(gateway_id, str) and gateway_id:
+            previous = latest.get(gateway_id)
+            if previous is None or seq > previous:
+                latest[gateway_id] = seq
+        else:
+            unattributed = True
+    return latest, unattributed
+
+
+def _pipeline_set_stable(events: Iterable[dict[str, Any]]) -> bool:
+    """True after two consecutive membership events list the same pipeline ids."""
+    previous: list[str] | None = None
+    for event in events:
+        if str(event.get("signal") or "") != MEMBERSHIP_SIGNAL:
+            continue
+        pipes = (event.get("payload") or {}).get("pipeline_ids")
+        if not isinstance(pipes, list):
+            previous = None
+            continue
+        current = [str(item) for item in pipes]
+        if previous is not None and current == previous:
+            return True
+        previous = current
+    return False
+
+
 def _membership_window_ready(
     events: Iterable[dict[str, Any]],
     snapshot_gateway_ids: Iterable[str] | None,
@@ -215,21 +259,26 @@ def _membership_window_ready(
     step_type_modules: Mapping[str, str] | None = None,
     pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
 ) -> bool:
-    """True when membership matches gateways, follows catalog, and lists every unaffected pipeline."""
+    """True when membership matches gateways, follows each gateway's catalog, and lists every unaffected pipeline.
+
+    A membership event is ready only when its seq is greater than the latest
+    ``catalog.changed`` seq of every snapshot gateway that has one. Catalog
+    events without ``payload.gateway_id`` are not attributable; that window
+    falls back to two consecutive identical pipeline sets.
+    """
     snap = list(snapshot_gateway_ids or ())
     if not snap:
         return False
+    event_list = list(events)
+    catalog_by_gateway, catalog_unattributed = _catalog_seq_by_gateway(event_list)
     post: list[str] | None = None
     post_pipes: list[str] | None = None
     membership_seq: int | None = None
-    latest_catalog: int | None = None
-    for event in events:
+    for event in event_list:
         signal = str(event.get("signal") or "")
         payload = event.get("payload") or {}
         seq = event.get("seq")
-        if signal == CATALOG_CHANGED and isinstance(seq, int):
-            latest_catalog = seq
-        elif signal == MEMBERSHIP_SIGNAL:
+        if signal == MEMBERSHIP_SIGNAL:
             ids = payload.get("gateway_ids")
             if isinstance(ids, list):
                 post = [str(item) for item in ids]
@@ -240,10 +289,16 @@ def _membership_window_ready(
                 membership_seq = seq
     if post is None or not gateway_id_sets_equal(snap, post):
         return False
-    if latest_catalog is not None and (
-        membership_seq is None or membership_seq <= latest_catalog
-    ):
-        return False
+    if catalog_unattributed:
+        if not _pipeline_set_stable(event_list):
+            return False
+    else:
+        for gateway_id in snap:
+            catalog_seq = catalog_by_gateway.get(gateway_id)
+            if catalog_seq is None:
+                continue
+            if membership_seq is None or membership_seq <= catalog_seq:
+                return False
     snap_pipes = set(snapshot_pipeline_ids or ())
     sources = pipeline_sources or {}
     affected = affected_pipeline_ids(
