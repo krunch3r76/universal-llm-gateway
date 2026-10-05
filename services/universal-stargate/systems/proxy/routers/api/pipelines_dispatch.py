@@ -365,6 +365,15 @@ async def admit_dispatch(
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)
+        if resume_of:
+            from systems.pipeline.core.execution.dispatch_journal import (
+                release_continuation,
+            )
+
+            await release_continuation(
+                stop_execution_id=resume_of,
+                successor_execution_id=execution_id,
+            )
         return _error_response(
             503,
             "pipeline_dispatch_capacity_exhausted",
@@ -389,6 +398,15 @@ async def admit_dispatch(
         )
     except Exception as exc:
         logger.error("Failed to prepare async dispatch request: %s", exc, exc_info=True)
+        if resume_of:
+            from systems.pipeline.core.execution.dispatch_journal import (
+                release_continuation,
+            )
+
+            await release_continuation(
+                stop_execution_id=resume_of,
+                successor_execution_id=execution_id,
+            )
         tracker.fail_execution(
             execution_id,
             code="pipeline_dispatch_preparation_failed",

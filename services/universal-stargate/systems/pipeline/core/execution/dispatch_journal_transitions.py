@@ -101,6 +101,25 @@ class ContinuationDecision:
     successor_execution_id: str | None = None
     lineage_root: str | None = None
     continuation_seq: int = 0
+    fresh_claim: bool = False
+
+
+class ContinuationRefusedError(Exception):
+    """A ``resume_of`` that must not start a run. Carries the HTTP decision."""
+
+    def __init__(self, decision: ContinuationDecision) -> None:
+        self.decision = decision
+        super().__init__(decision.message)
+
+
+def continuation_refusal_body(decision: ContinuationDecision) -> dict[str, Any]:
+    """Error envelope shared by the dispatch route and the chat path."""
+    error: dict[str, Any] = {"code": decision.code, "message": decision.message}
+    if decision.http_status == 409 and decision.successor_execution_id:
+        error["data"] = {
+            "successor_execution_id": decision.successor_execution_id
+        }
+    return {"error": error}
 
 
 def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
@@ -348,6 +367,40 @@ def sweep_orphan_started_sync(
     return updated
 
 
+def prune_bound_lineage_sync(
+    connection: sqlite3.Connection,
+    *,
+    record_predicate_sql: str,
+    cutoff: float,
+) -> None:
+    """Drop claims and pins whose dispatch row is about to be pruned.
+
+    ``record_predicate_sql`` is a WHERE body over ``dispatch_records`` with
+    one ``?`` bound to ``cutoff``. Claims follow the stopped run. Pins follow
+    the root run. Both use the journal's retention clock.
+    """
+    connection.execute(
+        f"""
+        DELETE FROM pipeline_continuation_claims
+        WHERE stop_execution_id IN (
+            SELECT execution_id FROM dispatch_records
+            WHERE {record_predicate_sql}
+        )
+        """,
+        (cutoff,),
+    )
+    connection.execute(
+        f"""
+        DELETE FROM pipeline_lineage
+        WHERE root_id IN (
+            SELECT execution_id FROM dispatch_records
+            WHERE {record_predicate_sql}
+        )
+        """,
+        (cutoff,),
+    )
+
+
 def prune_started_sync(
     path: Path,
     retention_seconds: float,
@@ -356,6 +409,11 @@ def prune_started_sync(
     cutoff = time.time() - retention_seconds
     with sqlite3.connect(path) as connection:
         migrate_schema_sync(connection)
+        prune_bound_lineage_sync(
+            connection,
+            record_predicate_sql="status = 'started' AND updated_at_epoch < ?",
+            cutoff=cutoff,
+        )
         deleted = connection.execute(
             """
             DELETE FROM dispatch_records
@@ -434,6 +492,31 @@ def claim_continuation_sync(
             else successor_execution_id
         )
         return ContinuationClaim(won=False, successor_execution_id=existing)
+    finally:
+        connection.close()
+
+
+def release_continuation_sync(
+    path: Path,
+    *,
+    stop_execution_id: str,
+    successor_execution_id: str,
+) -> None:
+    """Drop a claim this successor inserted, after admit fails before the run.
+
+    One statement. A different successor's row does not match, so a loser
+    cannot release the winner.
+    """
+    connection = _connect(path)
+    try:
+        connection.execute(
+            """
+            DELETE FROM pipeline_continuation_claims
+            WHERE stop_execution_id = ? AND successor_execution_id = ?
+            """,
+            (stop_execution_id, successor_execution_id),
+        )
+        connection.commit()
     finally:
         connection.close()
 
@@ -617,6 +700,17 @@ def assess_continuation_sync(
         claimed_at=claimed_at,
     )
     if not claim.won:
+        if claim.successor_execution_id == successor_execution_id:
+            return ContinuationDecision(
+                admitted=True,
+                http_status=202,
+                code="admitted",
+                message="Continuation already claimed by this successor.",
+                successor_execution_id=claim.successor_execution_id,
+                lineage_root=lineage_root,
+                continuation_seq=continuation_seq,
+                fresh_claim=False,
+            )
         return ContinuationDecision(
             admitted=False,
             http_status=409,
@@ -634,4 +728,5 @@ def assess_continuation_sync(
         successor_execution_id=claim.successor_execution_id,
         lineage_root=lineage_root,
         continuation_seq=continuation_seq,
+        fresh_claim=True,
     )

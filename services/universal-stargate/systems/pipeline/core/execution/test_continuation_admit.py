@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from systems.pipeline.core.conditions import evaluate_condition
 from systems.pipeline.core.dag import StepNode, StepState
@@ -303,6 +303,7 @@ async def test_continuation_context_lineage_root_and_input(
     pipeline = _pipeline(stops=["CONSULT_PENDING"])
     path = _path(tmp_path)
     _pin(path, pipeline, "root-1")
+    _stopped(path, "root-1")
     executor = MagicMock()
     executor.registry.get_pipeline.return_value = pipeline
     executor.proxy = None
@@ -501,3 +502,379 @@ async def test_admit_dispatch_maps_409_and_does_not_register_the_loser(
         == winner_body["execution_id"]
     )
     assert tracker.register_execution.call_count == 1
+
+
+def _executor(pipeline: PipelineSpec) -> MagicMock:
+    executor = MagicMock()
+    executor.registry.get_pipeline.return_value = pipeline
+    executor.proxy = None
+    executor._publish_event = MagicMock()
+    executor.request_executor = None
+    return executor
+
+
+def _continue_context(
+    pipeline: PipelineSpec,
+    tmp_path,
+    **options: object,
+) -> SimpleNamespace:
+    log_dir = tmp_path / "logs"
+    pipeline_options = {"log_dir": str(log_dir), **options}
+    return SimpleNamespace(
+        selected_model=pipeline.id,
+        original_request={
+            "messages": [{"role": "user", "content": "continue"}],
+            "pipeline_options": pipeline_options,
+        },
+        http_request=SimpleNamespace(state=SimpleNamespace()),
+        selected_gateway_instance=None,
+        chat_request=None,
+    )
+
+
+def test_chat_prepare_one_claim_second_resume_is_409(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """The sync chat path claims in prepare. A second resume of the same stop is 409."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _stopped(path)
+    _pin(path, pipeline, "root-1")
+    executor = _executor(pipeline)
+    from systems.pipeline.core.execution.dispatch_journal_transitions import (
+        ContinuationRefusedError,
+    )
+
+    do_prepare_execution(
+        executor,
+        _continue_context(pipeline, tmp_path, resume_of="root-1"),
+        execution_id="succ-chat",
+    )
+    with pytest.raises(ContinuationRefusedError) as caught:
+        do_prepare_execution(
+            executor,
+            _continue_context(pipeline, tmp_path, resume_of="root-1"),
+            execution_id="succ-other",
+        )
+    assert caught.value.decision.http_status == 409
+    assert caught.value.decision.successor_execution_id == "succ-chat"
+    connection = sqlite3.connect(path)
+    count = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_continuation_claims"
+    ).fetchone()
+    connection.close()
+    assert count is not None
+    assert count[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_execute_maps_cancelled_to_422(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A chat resume of a cancelled run is 422 and does not insert a claim."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _record(
+        path,
+        "cancel-1",
+        status="failed",
+        record_json={
+            "status": "failed",
+            "error": {"code": "pipeline_execution_cancelled", "message": "no"},
+        },
+    )
+    _pin(path, pipeline, "cancel-1")
+    from systems.pipeline.core.executor.pipeline_executor import PipelineExecutor
+
+    executor = _executor(pipeline)
+    executor.generate_execution_id.return_value = "succ-cancel-chat"
+    executor.prepare_execution.side_effect = (
+        lambda context, *, execution_id, journal_backed=False: do_prepare_execution(
+            executor,
+            context,
+            execution_id=execution_id,
+            journal_backed=journal_backed,
+        )
+    )
+    context = _continue_context(pipeline, tmp_path, resume_of="cancel-1")
+    with pytest.raises(HTTPException) as caught:
+        await PipelineExecutor.execute(executor, context)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["error"]["code"] == "cancelled"
+    connection = sqlite3.connect(path)
+    count = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_continuation_claims"
+    ).fetchone()
+    connection.close()
+    assert count is not None
+    assert count[0] == 0
+
+
+def test_same_successor_prepare_after_admit_is_not_a_second_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Dispatch claims, then prepare runs again for that same successor."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _stopped(path)
+    _pin(path, pipeline, "root-1")
+
+    async def _admit() -> None:
+        decision = await assess_continuation(
+            stop_execution_id="root-1",
+            successor_execution_id="succ-1",
+            steps_sha256=pipeline_steps_sha256(pipeline),
+            pipeline_id=pipeline.id,
+        )
+        assert decision.admitted
+        assert decision.fresh_claim is True
+
+    asyncio.run(_admit())
+    prepared = do_prepare_execution(
+        _executor(pipeline),
+        _continue_context(pipeline, tmp_path, resume_of="root-1"),
+        execution_id="succ-1",
+    )
+    assert prepared.pipeline_context.execution_id == "succ-1"
+    connection = sqlite3.connect(path)
+    count = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_continuation_claims"
+    ).fetchone()
+    connection.close()
+    assert count is not None
+    assert count[0] == 1
+
+
+def test_inherited_model_sets_chat_completions_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Root model survives a continuation that omits it."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _stopped(path)
+    write_lineage_root_sync(
+        path,
+        root_id="root-1",
+        pipeline_id=pipeline.id,
+        version=pipeline.version,
+        steps_sha256=pipeline_steps_sha256(pipeline),
+        source_text="root source",
+        options_json=json.dumps(
+            {
+                "_lineage_request": True,
+                "pipeline_options": {"model": "openai/gpt-5-search-api"},
+                "messages": [{"role": "user", "content": "root source"}],
+            }
+        ),
+    )
+    prepared = do_prepare_execution(
+        _executor(pipeline),
+        _continue_context(pipeline, tmp_path, resume_of="root-1"),
+        execution_id="succ-model",
+    )
+    assert prepared.pipeline_context.options["model"] == "openai/gpt-5-search-api"
+    assert prepared.pipeline_context.options["chat_completions_only"] is True
+    assert prepared.pipeline_context.source_text == "root source"
+    assert prepared.pipeline_context._messages == [
+        {"role": "user", "content": "root source"}
+    ]
+    assert prepared.pipeline_context.options["continuation_input"] == [
+        {"role": "user", "content": "continue"}
+    ]
+
+
+def test_root_pin_only_when_the_run_is_journal_backed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A chat root writes no lineage row. A dispatch root does."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline()
+    path = _path(tmp_path)
+    context = SimpleNamespace(
+        selected_model=pipeline.id,
+        original_request={
+            "messages": [{"role": "user", "content": "root"}],
+            "pipeline_options": {"log_dir": str(tmp_path / "logs")},
+        },
+        http_request=SimpleNamespace(state=SimpleNamespace()),
+        selected_gateway_instance=None,
+        chat_request=None,
+    )
+    do_prepare_execution(_executor(pipeline), context, execution_id="chat-root")
+    connection = sqlite3.connect(path)
+    chat_table = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pipeline_lineage'"
+    ).fetchone()
+    connection.close()
+    assert chat_table is None
+    do_prepare_execution(
+        _executor(pipeline),
+        context,
+        execution_id="dispatch-root",
+        journal_backed=True,
+    )
+    connection = sqlite3.connect(path)
+    row = connection.execute(
+        "SELECT root_id FROM pipeline_lineage"
+    ).fetchone()
+    connection.close()
+    assert row == ("dispatch-root",)
+
+
+def _admit_proxy(pipeline: PipelineSpec):
+    proxy = MagicMock()
+    proxy.is_pipeline_system_ready = True
+    proxy.pipeline_registry.is_pipeline.return_value = True
+    proxy.pipeline_registry.get_pipeline.return_value = pipeline
+    proxy.pipeline_executor.generate_execution_id.return_value = "succ-fail"
+    proxy.pipeline_executor.execute_async = AsyncMock()
+    proxy.pipeline_dispatch_tracker = MagicMock()
+    return proxy
+
+
+def _admit_request() -> Request:
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/v1/capabilities/test/stop-pipe",
+        "raw_path": b"/",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+        "server": ("127.0.0.1", 80),
+        "app": SimpleNamespace(state=SimpleNamespace()),
+    }
+    return Request(scope)
+
+
+@pytest.mark.asyncio
+async def test_capacity_failure_releases_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A 503 after the insert must not leave the stop claimed."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _stopped(path)
+    _pin(path, pipeline, "root-1")
+    proxy = _admit_proxy(pipeline)
+    from systems.pipeline.core.execution.async_tracker import TrackerCapacityError
+
+    proxy.pipeline_dispatch_tracker.register_execution.side_effect = (
+        TrackerCapacityError("full")
+    )
+    body = DispatchRequest(
+        model="stop-pipe",
+        messages=[{"role": "user", "content": "continue"}],
+        pipeline_options={"resume_of": "root-1"},
+    )
+    response = await admit_dispatch(_admit_request(), proxy, body)
+    assert response.status_code == 503
+    connection = sqlite3.connect(path)
+    count = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_continuation_claims"
+    ).fetchone()
+    connection.close()
+    assert count is not None
+    assert count[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_prepare_failure_releases_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A 500 from request prepare releases the claim this successor inserted."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _stopped(path)
+    _pin(path, pipeline, "root-1")
+    proxy = _admit_proxy(pipeline)
+    proxy.request_preparer.prepare_request = AsyncMock(
+        side_effect=RuntimeError("boom")
+    )
+    body = DispatchRequest(
+        model="stop-pipe",
+        messages=[{"role": "user", "content": "continue"}],
+        pipeline_options={"resume_of": "root-1"},
+    )
+    response = await admit_dispatch(_admit_request(), proxy, body)
+    assert response.status_code == 500
+    proxy.pipeline_dispatch_tracker.fail_execution.assert_called_once()
+    connection = sqlite3.connect(path)
+    count = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_continuation_claims"
+    ).fetchone()
+    connection.close()
+    assert count is not None
+    assert count[0] == 0
+
+
+def test_prune_drops_claims_and_lineage_with_the_journal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Retention for the new tables is the journal's completed_at clock."""
+    _journal(monkeypatch, tmp_path)
+    pipeline = _pipeline(stops=["CONSULT_PENDING"])
+    path = _path(tmp_path)
+    _record(
+        path,
+        "root-old",
+        status="completed",
+        record_json={
+            "status": "completed",
+            "result": {"stop": {"kind": "CONSULT_PENDING"}},
+        },
+    )
+    # write_transition stamps a fresh completed_at. Force the retention clock back.
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        UPDATE dispatch_records
+        SET completed_at_epoch = ?
+        WHERE execution_id = 'root-old'
+        """,
+        (1.0,),
+    )
+    connection.commit()
+    connection.close()
+    _pin(path, pipeline, "root-old")
+
+    async def _claim() -> None:
+        decision = await assess_continuation(
+            stop_execution_id="root-old",
+            successor_execution_id="succ-old",
+            steps_sha256=pipeline_steps_sha256(pipeline),
+            pipeline_id=pipeline.id,
+        )
+        assert decision.admitted
+
+    asyncio.run(_claim())
+    from systems.pipeline.core.execution.dispatch_journal import _prune_sync
+
+    _prune_sync(path, retention_seconds=3600)
+    connection = sqlite3.connect(path)
+    claims = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_continuation_claims"
+    ).fetchone()
+    pins = connection.execute(
+        "SELECT COUNT(*) FROM pipeline_lineage WHERE root_id = 'root-old'"
+    ).fetchone()
+    connection.close()
+    assert claims is not None and claims[0] == 0
+    assert pins is not None and pins[0] == 0

@@ -31,8 +31,10 @@ from .dispatch_journal_transitions import (
     claim_continuation_sync,
     fetch_record_sync,
     migrate_schema_sync,
+    prune_bound_lineage_sync,
     prune_started_sync,
     read_lineage_sync,
+    release_continuation_sync,
     steps_sha256_from_dump,
     sweep_orphan_started_sync,
     write_lineage_root_sync,
@@ -150,6 +152,13 @@ def _prune_sync(path: Path, retention_seconds: float) -> tuple[int, float | None
             """,
             (cutoff,),
         ).fetchone()
+        prune_bound_lineage_sync(
+            connection,
+            record_predicate_sql=(
+                "completed_at_epoch IS NOT NULL AND completed_at_epoch < ?"
+            ),
+            cutoff=cutoff,
+        )
         deleted = connection.execute(
             """
             DELETE FROM dispatch_records
@@ -469,6 +478,20 @@ async def write_lineage_root(
         steps_sha256=steps_sha256,
         source_text=source_text,
         options_json=options_json,
+    )
+
+
+async def release_continuation(
+    *,
+    stop_execution_id: str,
+    successor_execution_id: str,
+) -> None:
+    """Release a claim after this successor fails before its run starts."""
+    await asyncio.to_thread(
+        release_continuation_sync,
+        _journal_path(),
+        stop_execution_id=stop_execution_id,
+        successor_execution_id=successor_execution_id,
     )
 
 
