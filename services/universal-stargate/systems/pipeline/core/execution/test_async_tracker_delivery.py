@@ -26,6 +26,10 @@ from systems.pipeline.core.execution.async_tracker_delivery import (
 from systems.pipeline.core.execution.async_tracker_delivery.envelope import (
     _extract_pointer_summary,
 )
+from systems.pipeline.core.execution.async_tracker_delivery import (
+    agent_bus_http,
+    on_behalf,
+)
 from systems.pipeline.core.execution.async_tracker_delivery.sidecar import SidecarResult
 
 
@@ -69,7 +73,8 @@ def _patch_client(
     monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport
 ) -> None:
     monkeypatch.setattr(
-        "systems.pipeline.core.execution.async_tracker_delivery.agent_bus_http.make_async_client",
+        agent_bus_http,
+        "make_async_client",
         lambda *_a, **_k: httpx.AsyncClient(
             transport=transport, base_url="http://localhost"
         ),
@@ -89,20 +94,14 @@ def _patch_sidecar_ok(
             body_chars=len(content),
         )
 
-    monkeypatch.setattr(
-        "systems.pipeline.core.execution.async_tracker_delivery.on_behalf.write_on_behalf_sidecar",
-        _write_sidecar,
-    )
+    monkeypatch.setattr(on_behalf, "write_on_behalf_sidecar", _write_sidecar)
 
 
 def _patch_sidecar_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _write_sidecar_fail(record, *, content, thread, subject, oversized):
         return None
 
-    monkeypatch.setattr(
-        "systems.pipeline.core.execution.async_tracker_delivery.on_behalf.write_on_behalf_sidecar",
-        _write_sidecar_fail,
-    )
+    monkeypatch.setattr(on_behalf, "write_on_behalf_sidecar", _write_sidecar_fail)
 
 
 @pytest.mark.asyncio

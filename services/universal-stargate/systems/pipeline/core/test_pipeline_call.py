@@ -14,6 +14,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from systems.pipeline.core.dag import PipelineExecutionError  # noqa: E402
+from systems.pipeline.core.handlers import pipeline_call as pipeline_call_mod  # noqa: E402
 from systems.pipeline.core.handlers.pipeline_call import (  # noqa: E402
     PipelineCallHandler,
 )
@@ -53,11 +54,12 @@ async def test_pipeline_call_surfaces_upstream_error_message() -> None:
     instance = MagicMock()
     instance.post = AsyncMock(return_value=response)
 
-    with patch(
-        "systems.pipeline.core.handlers.pipeline_call.httpx.AsyncClient"
-    ) as mock_cls:
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=instance)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    client_cm = MagicMock()
+    client_cm.__aenter__ = AsyncMock(return_value=instance)
+    client_cm.__aexit__ = AsyncMock(return_value=False)
+    with patch.object(
+        pipeline_call_mod, "make_async_client", return_value=client_cm
+    ):
         expected_msg = (
             "Sub-pipeline 'rag-context' failed: "
             "Step 'relevance_check' response truncated"

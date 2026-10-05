@@ -19,6 +19,9 @@ import pytest
 from model_capabilities import server_side_tools
 
 from systems.pipeline.core.execution.errors import FrontierDispatchExhaustedError
+from systems.pipeline.core.execution.errors.dispatch_frontier import (
+    CapabilityKnobRejectedError,
+)
 from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
 )
@@ -881,12 +884,10 @@ async def test_handler_anthropic_legacy_skips_thinking_for_extended_effort(
     effort: str,
 ) -> None:
     """Legacy budget-mode Anthropic has no documented mapping for extended
-    effort values; the handler must skip the thinking config rather than
-    fake a budget. The raw effort still rides on req.effort."""
-    captured: dict[str, Any] = {}
-
-    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
-        captured["req"] = kwargs["req"]
+    effort values. ``resolve_dispatch`` rejects ``reasoning.effort``
+    (``unsupported_by_model``) instead of inventing a token budget.
+    """
+    async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="anthropic")
 
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
@@ -900,11 +901,8 @@ async def test_handler_anthropic_legacy_skips_thinking_for_extended_effort(
         }
     )
 
-    await handler.execute(step, context)
-
-    req = captured["req"]
-    assert req.thinking is None
-    assert req.effort == effort
+    with pytest.raises(CapabilityKnobRejectedError, match="unsupported_by_model"):
+        await handler.execute(step, context)
 
 
 @pytest.mark.asyncio
@@ -1790,9 +1788,7 @@ async def test_default_capability_tier_does_not_suppress(
     ) -> _FakeBundle:
         return _FakeBundle(capability_tier=None)
 
-    async def fake_resolve(
-        names: tuple[str, ...], *, fallback: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    async def fake_defs() -> list[dict[str, Any]]:
         return [
             {
                 "type": "function",
@@ -1807,10 +1803,8 @@ async def test_default_capability_tier_does_not_suppress(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="openai")
 
-    from systems.pipeline.core.handlers.frontier_dispatch import tools as fdt_mod
-
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
-    monkeypatch.setattr(fdt_mod, "resolve_default_tools", fake_resolve)
+    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
     monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
-from .execution import requirements_resolver
+from .execution import requirements_resolver, resolved_candidates
 from .handlers.generate import GenericGenerateHandler
 from .pipeline_config import PromptConfig
 from .step_config import StepConfig
@@ -23,10 +24,21 @@ def _build_context(*, model_ref_overrides: dict[str, str] | None = None) -> Magi
     )
     context = MagicMock(_registry=registry)
     context.options = {}
+    context.runtime_options = {}
     if model_ref_overrides:
         context.options["model_ref_overrides"] = model_ref_overrides
     context._step_model_override = {}
-    context.pipeline = MagicMock(domain="consult", source_search_path=[])
+    context.pipeline = MagicMock(
+        domain="consult",
+        source_search_path=[],
+        is_stream_passthrough_eligible=False,
+    )
+    context.pipeline.options = SimpleNamespace(
+        timeout_seconds=None,
+        disable_profile=None,
+        profile=None,
+        skip_token_counting=None,
+    )
     context.source_text = "quick health check"
     return context
 
@@ -106,11 +118,13 @@ async def test_generate_handler_auto_resolution_uses_returned_candidate(
     context = _build_context()
     handler = _build_handler()
 
-    def _resolve(requirements: dict[str, object]) -> list[str]:
+    async def _resolve(**kwargs: object) -> list[str]:
+        requirements = kwargs["requirements"]
+        assert isinstance(requirements, dict)
         seen_requirements.append(dict(requirements))
         return [resolved_model_id]
 
-    monkeypatch.setattr(requirements_resolver, "resolve_model_requirements", _resolve)
+    monkeypatch.setattr(resolved_candidates, "get_ranked_candidates", _resolve)
 
     result = await handler.execute(step, context)
 

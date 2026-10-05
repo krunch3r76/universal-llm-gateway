@@ -30,6 +30,9 @@ from systems.pipeline.core.execution.proxy_client import (
 from systems.pipeline.core.execution.proxy_client import (
     chat_completion_streaming as streaming_mod,
 )
+from systems.pipeline.core.execution.proxy_client import (
+    transport_lifecycle,
+)
 
 
 def _sse_frame(payload: dict[str, Any] | str) -> bytes:
@@ -86,10 +89,8 @@ def _patch_client(
 ) -> None:
     """Patch transport_utils.make_async_client to use the supplied mock transport."""
     monkeypatch.setattr(
-        (
-            "systems.pipeline.core.execution.proxy_client."
-            "transport_lifecycle.make_async_client"
-        ),
+        transport_lifecycle,
+        "make_async_client",
         lambda *a, **k: httpx.AsyncClient(
             transport=transport, base_url="http://localhost"
         ),
