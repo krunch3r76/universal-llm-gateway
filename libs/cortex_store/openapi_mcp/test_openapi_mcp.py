@@ -31,8 +31,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 UNBOUND_BASELINE: frozenset[str] = frozenset(
     {
         "claim_alignment",
-        "endeavor_repair_t1",
-        "entity_retype",
         "graph_reach",
         "view_render",
     }

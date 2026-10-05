@@ -99,6 +99,16 @@ def trace_txn_boundaries(
                     trace.lock_held_at_end = counter.locked()
             return self._inner.execute(sql, params)
 
+        def commit(self) -> None:
+            trace.commit_or_rollback_seen = True
+            trace.lock_held_at_end = counter.locked()
+            self._inner.commit()
+
+        def rollback(self) -> None:
+            trace.commit_or_rollback_seen = True
+            trace.lock_held_at_end = counter.locked()
+            self._inner.rollback()
+
         def __getattr__(self, name: str) -> Any:
             return getattr(self._inner, name)
 

@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "0b6638d8b96f6dfd53f176880696f95983049b161935109bcfefbc66977e34f9"
+OPENAPI_SHA256 = "87afc926ac1fae9f0b4893b32a0a0113e1bacfdd3f4e64908553aa61f1c93713"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -95,6 +95,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/endeavors/strategy-rows/dispose",
         "operation_id": "endeavor_dispose_row_route_endeavors_strategy_rows_dispose_post",
     },
+    "endeavor_repair_t1": {
+        "method": "POST",
+        "path": "/endeavors/repair-t1",
+        "operation_id": "endeavor_repair_t1_route_endeavors_repair_t1_post",
+    },
     "endeavor_write_row": {
         "method": "POST",
         "path": "/endeavors/strategy-rows",
@@ -134,6 +139,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "POST",
         "path": "/entities/{old_id}/rekey",
         "operation_id": "rekey_entity_entities__old_id__rekey_post",
+    },
+    "entity_retype": {
+        "method": "POST",
+        "path": "/entities/{entity_id}/retype",
+        "operation_id": "entity_retype_route_entities__entity_id__retype_post",
     },
     "entity_update": {
         "method": "PATCH",
@@ -357,7 +367,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "4406c62c1ee39f7d31c40b844c139f04df25737122f75d90591ca3eff2a928c9",
+    "@components": "ef04a1d9a36869b10de090a2b84e58654d5fb3931da9a103514e1896c67a7fb8",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

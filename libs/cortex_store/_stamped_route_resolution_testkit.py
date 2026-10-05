@@ -59,6 +59,18 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
         {},
         "register_skill_substrate_route",
     ),
+    (
+        "POST",
+        "entity_retype_route",
+        {"entity_id": "decision:probe"},
+        "entity_retype_route",
+    ),
+    (
+        "POST",
+        "endeavor_repair_t1_route",
+        {},
+        "endeavor_repair_t1_route",
+    ),
 )
 
 _FASTAPI_PATH_PARAM_RE = re.compile(r"\{([^}:]+)(?::[^}]+)?\}")
@@ -131,6 +143,10 @@ _BATCH6_NEW_ENDPOINTS = frozenset(
 
 _BATCH7_NEW_ENDPOINTS = frozenset({"register_skill_substrate_route"})
 
+_BATCH8_NEW_ENDPOINTS = frozenset(
+    {"entity_retype_route", "endeavor_repair_t1_route"}
+)
+
 
 def iter_app_route_probes(app: FastAPI) -> Iterator[tuple[str, str, str]]:
     """Every named Starlette route → (method, concrete path, endpoint __name__)."""
@@ -183,4 +199,14 @@ def assert_pre_batch7_route_resolution_unchanged(app: FastAPI) -> None:
     assert_every_route_forward_matches_self(
         app,
         skip_endpoint_names=_BATCH6_NEW_ENDPOINTS | _BATCH7_NEW_ENDPOINTS,
+    )
+
+
+def assert_pre_batch8_route_resolution_unchanged(app: FastAPI) -> None:
+    """AC4: pre-batch-8 routes still FULL-match; batch 8 endpoints excluded from walk."""
+    assert_every_route_forward_matches_self(
+        app,
+        skip_endpoint_names=_BATCH6_NEW_ENDPOINTS
+        | _BATCH7_NEW_ENDPOINTS
+        | _BATCH8_NEW_ENDPOINTS,
     )
