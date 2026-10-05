@@ -6,16 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from systems.pipeline.core.execution.errors.timeout import StepTimeoutError
 from systems.pipeline.core.handlers.registry import HandlerRegistry
 from systems.pipeline.core.schemas import PipelineSpec, StepConfig
 from systems.pipeline.registry.core import PipelineRegistry
 from systems.pipeline.registry.validator import PipelineValidator
-from systems.pipeline.core.step_controls import (
-    StepCallerError,
-    StepDefinitionError,
-    failure_is_retryable,
-)
 
 pytestmark = pytest.mark.offline
 
@@ -107,14 +101,3 @@ def test_decision_table_validator_error_names_step_via_validate_pipeline(
     )
     errors = PipelineValidator(registry)._validate_pipeline(pipeline)
     assert any("rerank" in err and "decision_table is not supported" in err for err in errors)
-
-
-def test_decision_table_error_names_step_and_is_not_retryable() -> None:
-    assert failure_is_retryable(StepDefinitionError("rerank", "x")) is False
-    assert failure_is_retryable(StepCallerError("rerank", "x")) is False
-    assert (
-        failure_is_retryable(
-            StepTimeoutError(step_name="rerank", timeout_seconds=1)
-        )
-        is True
-    )

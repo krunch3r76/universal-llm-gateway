@@ -15,9 +15,12 @@ if _repo_root not in sys.path:
 from .dag import StepNode, StepState  # noqa: E402
 from .execution import DAGExecutor  # noqa: E402
 from .schemas import PipelineSpec, StepConfig  # noqa: E402
+from .execution.errors.timeout import StepTimeoutError  # noqa: E402
 from .step_controls import (  # noqa: E402
     StepCallerError,
+    StepDefinitionError,
     apply_request_step_controls,
+    failure_is_retryable,
 )
 
 
@@ -228,3 +231,14 @@ async def test_skipped_step_never_launches() -> None:
     assert "a" not in launched
     assert nodes["a"].state == StepState.SKIPPED
     assert "c" in launched
+
+
+def test_definition_and_caller_errors_not_retryable() -> None:
+    assert failure_is_retryable(StepDefinitionError("rerank", "x")) is False
+    assert failure_is_retryable(StepCallerError("rerank", "x")) is False
+    assert (
+        failure_is_retryable(
+            StepTimeoutError(step_name="rerank", timeout_seconds=1)
+        )
+        is True
+    )
