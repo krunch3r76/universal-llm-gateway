@@ -4,8 +4,9 @@ Pipeline schemas - exports from core.
 Re-exports the core pipeline Pydantic models (``PipelineSpec``,
 ``StepConfig``, ``SubPipelineSpec``, ``PromptConfig``, ``FragmentRef``,
 ``PipelineOptions``) and defines the shared-config models ``ModelRef``,
-``SharedModels`` and ``SharedPrompts`` that ``loader.PipelineConfigLoader``
-builds from YAML. Re-exported again by the ``systems.pipeline`` package.
+``SharedModels`` and ``SharedPrompts`` populated by
+``registry.loader.PipelineLoader`` from YAML under registry search paths.
+Re-exported again by the ``systems.pipeline`` package.
 """
 
 from typing import Any
@@ -60,7 +61,7 @@ class ModelRef(BaseModel):
 class SharedModels(BaseModel):
     """Collection of shared model references.
 
-    Parsed by ``PipelineConfigLoader`` from ``pipeline_models.yaml``; maps a
+    Parsed by ``PipelineLoader`` from ``pipeline_models.yaml``; maps a
     shared model alias to its ``ModelRef`` (model ID plus optional profile and
     extra handler execution hints) so steps can reference models by name.
     """
@@ -71,7 +72,7 @@ class SharedModels(BaseModel):
 class SharedPrompts(BaseModel):
     """Collection of shared prompt templates.
 
-    Built by ``PipelineConfigLoader`` by merging every
+    Built by ``PipelineLoader`` by merging every
     ``pipeline_prompts*.yaml``; ``prompts`` is an arbitrarily nested dict where
     suffixed files contribute a top-level namespace (e.g. ``transformation``).
     """
