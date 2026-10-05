@@ -118,6 +118,7 @@ def test_holder_page_live_when_none_in_flight() -> None:
             }
         ]
     }
+
     class _Held:
         parent_thread = LANE
         registration_id = "held"
@@ -346,6 +347,7 @@ def test_unknown_provenance_only_page_does_not_block_holder() -> None:
             }
         ]
     }
+
     class _Held:
         parent_thread = LANE
         registration_id = "held"
@@ -835,9 +837,7 @@ def test_dormant_holder_open_idle_is_not_current() -> None:
                     else None
                 ),
                 "list_active": lambda: [],
-                "chat_url_for_registration": lambda rid: (
-                    DRAIN if rid == "h" else None
-                ),
+                "chat_url_for_registration": lambda rid: DRAIN if rid == "h" else None,
             },
             False,
         ),

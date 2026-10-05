@@ -311,9 +311,7 @@ def relaunch_dormant(
         # The pre-lock snapshot predates a close that landed in the reserve
         # window. Restoring it would wipe seat_closed_at and reopen the seat.
         live = _store.load_active().get(registration_id)
-        if not (
-            isinstance(live, dict) and live.get("seat_closed_at") is not None
-        ):
+        if not (isinstance(live, dict) and live.get("seat_closed_at") is not None):
             _restore_dormant(registration_id, row)
         raise
     # Display is placement; chat URL stays the identity. Reserve writes the

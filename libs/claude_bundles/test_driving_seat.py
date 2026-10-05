@@ -312,14 +312,14 @@ def test_relaunch_superseded_during_headroom_refuses_and_leaves_hop(
     active[pred.registration_id]["seat_lane"] = "9497"
     active[pred.registration_id]["seat_bound_at"] = 1.0
     active[pred.registration_id]["seat_closed_at"] = None
-    active[hop.registration_id]["seat_closed_at"] = 1.0
+    active[hop.registration_id]["seat_lane"] = "9497"
+    active[hop.registration_id]["seat_closed_at"] = None
+    active[hop.registration_id]["seat_bound_at"] = 2.0
     reg._store.write_active(active)
     reg._release_driver_lock(pred.registration_id)
     pointer: dict[str, object] = {}
-    calls = {"n": 0}
 
     def close_during_headroom(**_kwargs: object) -> None:
-        calls["n"] += 1
         reg.bind_driving_seat(hop.registration_id)
         pointer.update(reg._store.load_active()[hop.registration_id])
 
@@ -328,19 +328,11 @@ def test_relaunch_superseded_during_headroom_refuses_and_leaves_hop(
         close_during_headroom,
     )
 
-    try:
+    with pytest.raises(RegistryError, match="seat_closed_at"):
         reg.relaunch_dormant(
             pred.registration_id,
             launch_chrome=_noop_launch,
             is_listening=lambda _p: False,
-        )
-    except RegistryError:
-        pass
-    else:
-        after_dbg = reg._store.load_active()
-        raise AssertionError(
-            f"calls={calls} pred={after_dbg[pred.registration_id].get('seat_closed_at')} "
-            f"hop_closed={after_dbg[hop.registration_id].get('seat_closed_at')}"
         )
 
     after = reg._store.load_active()
