@@ -68,6 +68,7 @@ Declaring a judgment fork is not enough. Admit only sees an **opt-in line-start 
 - A claude.ai commission or `TYPE: DIRECTIVE` does not name an MCP tool as the delivery surface for an agent-workflow op (observability, review, version, orchestration step).
 - That op lands as `pipelines/{domain}/vN/` even when it is one step.
 - Substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) stay bare typed HTTP.
+- MCP appears only as a thin relay (no business logic in the handler) when the review names it; the DIRECTIVE then names that relay as the review named it.
 - Use a pipeline when a human reviews the logic as a unit, or steps and prompts must be recorded for provenance, or the op versions independently of its service.
 - Falsifier: a one-step pipeline whose YAML is not a better map than the handler docstring.
 

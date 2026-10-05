@@ -12,7 +12,7 @@ description: 'When updating config/mcp/canonical.yaml for MCP surface change —
 <!-- pipeline-first -->
 ## Pipeline-first (agent-workflow ops)
 **Trigger**
-An agent-workflow op (observability, review, version, orchestration step) lands as `pipelines/{domain}/vN/` even when it is one step. Substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) stay bare typed HTTP. MCP appears only as a thin relay when the review names it. Boundary: pipeline when a human reviews the logic as a unit, or steps and prompts must be recorded for provenance, or the op versions independently of its service.
+Choosing or changing the home of an agent-workflow op (observability, review, version, orchestration step). It lands as `pipelines/{domain}/vN/` even when it is one step. Substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) stay bare typed HTTP. MCP appears only as a thin relay when the review names it. Boundary: pipeline when a human reviews the logic as a unit, or steps and prompts must be recorded for provenance, or the op versions independently of its service.
 **Refuse**
 - A new MCP tool, or the REST or service handler behind it, as the home of an agent-workflow op.
 - A packet or DIRECTIVE naming an MCP tool as the delivery surface. Raise in the review request.
@@ -22,7 +22,7 @@ An agent-workflow op (observability, review, version, orchestration step) lands 
    Falsifier: an agent-workflow op whose package is missing.
 2. Leave substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) as bare typed HTTP.
    Falsifier: a substrate resource wrapped as a pipeline.
-3. MCP only when the review names a thin relay (no business logic in the handler).
+3. MCP only when the review names a thin relay (no business logic in the handler). Agents already reach any pipeline through the existing pipeline tool by pipeline_id; that is not a new MCP surface.
    Falsifier: any other reason.
 4. In the change moving callers, delete the old `vN/`; update every `pipeline_call_v1` `pipeline_id`, skill, config, and caller (`[universal:no-bc]`).
    Falsifier: old `vN/`, stale id, or callers still claim or rely on a hide or archive flag.
