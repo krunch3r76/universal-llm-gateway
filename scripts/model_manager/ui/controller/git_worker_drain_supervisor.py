@@ -396,12 +396,35 @@ class GitWorkerDrainSupervisor:
         ``wait_for_boundary`` arms keep ``draining=False``. Park grace must not
         start in that window (a:38111). A new worker generation is resolved
         by ``_generation_gone`` — do not hang waiting for the old epoch.
+        Probe-None + pid-absent (R1) and arm TTL expiry (R2) also exit so
+        ``supervise`` can take the existing dead / cancel paths.
         """
+        last_progress = time.monotonic()
+        probe_fail_streak = 0
+        probe_unreachable_threshold = _polls_for_window(
+            _liveness.unreachable_window_s(), self.reconcile_interval_s
+        )
         while True:
             if self._abort_kind(intent) is not None:
                 return False
+            now = time.monotonic()
+            if now - last_progress >= self.progress_interval_s:
+                try:
+                    expired = await self._expire_abandoned(intent)
+                except Exception:
+                    logger.warning(
+                        "restart intent expiry tick failed during park wait "
+                        "intent_id=%s",
+                        intent.intent_id,
+                        exc_info=True,
+                    )
+                    expired = False
+                if expired:
+                    return False
+                last_progress = now
             snapshot = await self._safe_drain_state()
             if snapshot is not None:
+                probe_fail_streak = 0
                 if self._generation_gone(snapshot, intent):
                     return False
                 if (
@@ -409,6 +432,16 @@ class GitWorkerDrainSupervisor:
                     and bool(snapshot.get("draining"))
                 ):
                     return True
+            else:
+                probe_fail_streak += 1
+                if probe_fail_streak >= probe_unreachable_threshold:
+                    absent = await self._health_pid_absent()
+                    if _liveness.drain_target_is_dead(
+                        consecutive_snapshot_misses=probe_fail_streak,
+                        miss_threshold=probe_unreachable_threshold,
+                        health_pid_absent=absent,
+                    ):
+                        return False
             await asyncio.sleep(self.reconcile_interval_s)
 
     async def _park_live_after_grace(self, intent: Intent) -> None:
@@ -817,7 +850,8 @@ class GitWorkerDrainSupervisor:
         )
 
     async def _expire_abandoned(self, intent: Intent) -> bool:
-        """Cancel an arm past its window. The 30s tick is the only caller."""
+        """Cancel an arm past its window. Callers: drain-await 30s tick and
+        the wait_for_boundary park-wait loop (a:38111 R2)."""
         from .restart_intent_expiry import expire_via_cancel
 
         return await expire_via_cancel(

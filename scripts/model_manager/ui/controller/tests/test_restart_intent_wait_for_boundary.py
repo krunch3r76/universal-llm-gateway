@@ -822,3 +822,146 @@ class _BoundaryParkWorker:
 
     def simulate_new_generation(self) -> None:
         self.phase = "gone"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_boundary_park_live_skips_when_giw_dead(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1: armed GIW whose drain_state is gone and pid is absent must not hang."""
+    import scripts.model_manager.ui.controller.git_worker_liveness as live_mod
+
+    monkeypatch.setattr(live_mod, "PROBE_UNREACHABLE_WINDOW_S", 0.03)
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="a38111-r1",
+        wait_for_boundary=True,
+        park_live=True,
+        caller_agent="cursor",
+    )
+    park_calls: list[tuple[str, int | None, str]] = []
+    worker = _BoundaryParkWorker()
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return {"requested": [], "refused": [], "already_parked": [], "live_after": 0}
+
+    orig_drain = worker.drain_state
+    orig_begin = worker.begin_drain
+    post_arm = {"gone": False}
+
+    async def _begin(body: dict[str, Any]) -> dict[str, Any]:
+        snap = await orig_begin(body)
+        post_arm["gone"] = True
+        return snap
+
+    async def _drain() -> dict[str, Any]:
+        if post_arm["gone"]:
+            return None  # type: ignore[return-value]
+        return await orig_drain()
+
+    async def _absent() -> bool:
+        return True
+
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=_begin,
+        drain_state=_drain,
+        subscribe_events=_Feed(),
+        kill=_Kill(),
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        park_for_restart=_park,
+        park_live_grace_s=0.0,
+        process_absent=_absent,
+    )
+    task = asyncio.create_task(sup.supervise(intent))
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not worker.begun:
+            await asyncio.sleep(0.01)
+        assert worker.begun
+        while time.monotonic() < deadline and not task.done():
+            await asyncio.sleep(0.01)
+        assert park_calls == []
+        assert task.done(), "dead GIW must leave the park wait"
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+@pytest.mark.asyncio
+async def test_wait_for_boundary_park_live_expires_ttl_while_armed(
+    tmp_path,
+) -> None:
+    """R2: caller TTL must cancel during the pre-draining park wait."""
+    store = RestartIntentStore(tmp_path / "restart-intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="ceiling",
+        reason="a38111-r2",
+        wait_for_boundary=True,
+        park_live=True,
+        intent_ttl_s=0.05,
+        caller_agent="cursor",
+    )
+    past = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    store._update(intent.intent_id, expires_at=past)
+    park_calls: list[tuple[str, int | None, str]] = []
+    worker = _BoundaryParkWorker()
+    released: list[tuple[str, int]] = []
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return {"requested": [], "refused": [], "already_parked": [], "live_after": 0}
+
+    async def _release(iid: str, epoch: int) -> dict[str, Any]:
+        released.append((iid, epoch))
+        return {"draining": False, "armed": False}
+
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed(),
+        kill=_Kill(),
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=0.01,
+        park_for_restart=_park,
+        park_live_grace_s=0.0,
+        cancel_drain=_release,
+    )
+    task = asyncio.create_task(sup.supervise(intent))
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not worker.begun:
+            await asyncio.sleep(0.01)
+        assert worker.begun
+        while time.monotonic() < deadline and not task.done():
+            await asyncio.sleep(0.01)
+        assert park_calls == []
+        assert released, "TTL expiry must release the armed drain"
+        stored = store.get(intent.intent_id)
+        assert stored is not None
+        assert stored.status == "cancelled"
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
