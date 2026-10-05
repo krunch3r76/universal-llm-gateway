@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -141,3 +142,68 @@ async def test_init_membership_without_reload_is_tagged(
         proxy
     )
     assert reloads == []
+
+
+@pytest.mark.asyncio
+async def test_overlapping_catalog_reloads_coalesce_and_last_membership_is_full():  # noqa: E501
+    gateways = [_gateway("a", unreachable=False, models=frozenset({"m"}))]
+    published: list = []
+    handlers: list = []
+    release = asyncio.Event()
+    started = asyncio.Event()
+    calls = {"n": 0}
+    last_walk = {"full": object()}
+
+    class _Bus:
+        def subscribe_async(self, signal, handler) -> None:
+            handlers.append((signal, handler))
+
+        async def publish_nowait(self, event) -> None:
+            published.append(event)
+
+    registry = SimpleNamespace(pipelines={}, unavailable_pipelines=[])
+    loop = asyncio.get_running_loop()
+
+    def reload_pipelines():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            started.set()
+            asyncio.run_coroutine_threadsafe(release.wait(), loop).result(timeout=5)
+            gateways.append(_gateway("d", unreachable=False, models=frozenset({"m"})))
+            registry.pipelines = {"partial": object()}
+            return (0, 1)
+        registry.pipelines = last_walk
+        return (1, 2)
+
+    registry.reload_pipelines = reload_pipelines
+    proxy = SimpleNamespace(
+        federated_manager=SimpleNamespace(get_all_gateways=lambda: list(gateways)),
+        pipeline_registry=registry,
+        event_bus=_Bus(),
+        federation_integration=object(),
+        pipeline_catalog_synced=False,
+    )
+    bootstrap._subscribe_pipeline_reload_on_federation_signals(proxy)
+    on_catalog = next(
+        handler for signal, handler in handlers if "catalog" in str(signal)
+    )
+    event = SimpleNamespace(payload={"gateway_id": "a"})
+    first = asyncio.create_task(on_catalog(event))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    second = asyncio.create_task(on_catalog(event))
+    await asyncio.wait_for(second, timeout=1)
+    release.set()
+    await asyncio.wait_for(first, timeout=2)
+    memberships = [
+        item.payload
+        for item in published
+        if getattr(item, "signal", "") == "federation.gateway.membership"
+    ]
+    assert calls["n"] == 2
+    assert len(memberships) == 2
+    assert "d" not in memberships[0]["catalog_gateway_ids"]
+    assert set(memberships[0]["catalog_gateway_ids"]) < set(
+        memberships[1]["catalog_gateway_ids"]
+    )
+    assert "d" in memberships[1]["catalog_gateway_ids"]
+    assert registry.pipelines == last_walk

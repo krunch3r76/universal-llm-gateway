@@ -167,6 +167,55 @@ async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
             )
 
 
+def _pipeline_reload_lock(proxy: StargateProxy) -> asyncio.Lock:
+    lock = getattr(proxy, "_pipeline_reload_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        proxy._pipeline_reload_lock = lock
+    return lock
+
+
+async def _coalesced_pipeline_reload(
+    proxy: StargateProxy,
+    *,
+    on_reloaded: Callable[[int, int], None],
+    error_message: str,
+    error_args: tuple[object, ...] = (),
+) -> None:
+    """Serialize reloads. A trigger during a walk sets pending and returns.
+
+    The in-flight coroutine loops while pending, capturing
+    ``catalog_gateway_ids_now`` before each walk and emitting one membership
+    per walk. Overlapping ``to_thread(reload_pipelines)`` calls otherwise
+    let an earlier walk overwrite a later one.
+    """
+    if proxy.pipeline_registry is None:
+        return
+    lock = _pipeline_reload_lock(proxy)
+    if lock.locked():
+        proxy._pipeline_reload_pending = True
+        return
+    async with lock:
+        while proxy.pipeline_registry is not None:
+            proxy._pipeline_reload_pending = False
+            seen = catalog_gateway_ids_now(proxy)
+            try:
+                old_count, new_count = await asyncio.to_thread(
+                    proxy.pipeline_registry.reload_pipelines
+                )
+            except Exception:
+                logger.exception(error_message, *error_args)
+                if not getattr(proxy, "_pipeline_reload_pending", False):
+                    return
+                continue
+            proxy.pipeline_catalog_synced = True
+            on_reloaded(old_count, new_count)
+            await _emit_pipeline_unavailable_events(proxy)
+            await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
+            if not getattr(proxy, "_pipeline_reload_pending", False):
+                return
+
+
 def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> None:
     """Subscribe to local gateway connect events for pipeline reload (Edge mode).
 
@@ -185,21 +234,19 @@ def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> Non
             return
         if event.payload.get("connectivity") != "reachable":
             return
-        seen = catalog_gateway_ids_now(proxy)
-        try:
-            old_count, new_count = await asyncio.to_thread(
-                proxy.pipeline_registry.reload_pipelines
-            )
-            proxy.pipeline_catalog_synced = True
+
+        def _log(old_count: int, new_count: int) -> None:
             logger.info(
                 "🔄 Pipelines reloaded after gateway connected: %d → %d pipelines",
                 old_count,
                 new_count,
             )
-            await _emit_pipeline_unavailable_events(proxy)
-            await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
-        except Exception:
-            logger.exception("Pipeline reload failed after gateway connect")
+
+        await _coalesced_pipeline_reload(
+            proxy,
+            on_reloaded=_log,
+            error_message="Pipeline reload failed after gateway connect",
+        )
 
     proxy.event_bus.subscribe_async(GATEWAY_STATE_CHANGED, on_gateway_state)
     logger.debug("Subscribed to GATEWAY_STATE_CHANGED for pipeline reload")
@@ -214,12 +261,8 @@ async def _reload_pipelines_after_federation_event(
 
     payload = getattr(event, "payload", None) or {}
     gateway_id = payload.get("gateway_id", "unknown")
-    seen = catalog_gateway_ids_now(proxy)
-    try:
-        old_count, new_count = await asyncio.to_thread(
-            proxy.pipeline_registry.reload_pipelines
-        )
-        proxy.pipeline_catalog_synced = True
+
+    def _log(old_count: int, new_count: int) -> None:
         logger.info(
             "🔄 Pipelines re-gated after %s from %s: %d → %d pipelines",
             reason,
@@ -227,10 +270,13 @@ async def _reload_pipelines_after_federation_event(
             old_count,
             new_count,
         )
-        await _emit_pipeline_unavailable_events(proxy)
-        await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
-    except Exception:
-        logger.exception("Pipeline reload failed after %s from %s", reason, gateway_id)
+
+    await _coalesced_pipeline_reload(
+        proxy,
+        on_reloaded=_log,
+        error_message="Pipeline reload failed after %s from %s",
+        error_args=(reason, gateway_id),
+    )
 
 
 def _subscribe_pipeline_reload_on_federation_signals(proxy: StargateProxy) -> None:
