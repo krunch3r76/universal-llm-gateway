@@ -10,7 +10,7 @@ MapExecutor). Re-exported through ``protocol.py``, ``handler_contract.py`` and
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -26,6 +26,55 @@ class MapIterationState:
     source_step_name: str  # e.g., "answer_all"
     iteration_key: str | None  # e.g., "phi" (None for list-based iterations)
     iteration_index: int  # e.g., 0
+
+
+@dataclass
+class StepStop:
+    """Data-only stop carried on a successful step.
+
+    ``kind`` is an opaque string. The engine does not branch on it.
+    Designed values (CONSULT_PENDING, CONFIRM_PENDING, ROW_PINNED,
+    HOLD_MERGE, OPERATOR_GATE, awaiting_child, hop_budget_*) are data,
+    not behaviors. ``payload`` is caller data; ``resume_key`` is an
+    optional handle for a later waker that this engine does not run.
+    """
+
+    kind: str
+    reason: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+    resume_key: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "reason": self.reason,
+            "payload": dict(self.payload),
+            "resume_key": self.resume_key,
+        }
+
+
+def stop(
+    kind: str,
+    *,
+    reason: str | None = None,
+    payload: dict[str, Any] | None = None,
+    resume_key: str | None = None,
+    raw: str = "",
+) -> StepOutput:
+    """Return a successful ``StepOutput`` that requests the pipeline to stop.
+
+    Callers pass ``kind`` as data. A declared ``pipeline.stops`` list is
+    enforced later by ``record_success``; an undeclared list accepts any kind.
+    """
+    return StepOutput(
+        raw=raw,
+        stop=StepStop(
+            kind=kind,
+            reason=reason,
+            payload=dict(payload or {}),
+            resume_key=resume_key,
+        ),
+    )
 
 
 @dataclass
@@ -99,6 +148,10 @@ class StepOutput:
 
     # Embedded provenance (auto-populated from model_id + step_id)
     provenance: dict[str, Any] | None = None
+
+    # Set when the handler requests a designed stop. The step still
+    # completes; scheduling then skips unlaunched PENDING/READY nodes.
+    stop: StepStop | None = None
 
     def __post_init__(self):
         """Auto-populate provenance from model_id and step_id if not set."""

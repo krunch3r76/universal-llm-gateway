@@ -15,6 +15,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from ..dag import StepState
 from ..handlers import PipelineContext, StepOutput
 from ..schemas import PipelineSpec, StepConfig
 
@@ -61,6 +62,41 @@ def extract_output_hints(
     if isinstance(hints, list):
         return hints
     return None
+
+
+def content_when_output_skipped(
+    pipeline: PipelineSpec,
+    context: PipelineContext,
+    nodes: dict[str, Any],
+    *,
+    stop_step_id: str | None,
+    output_aliases: dict[str, str] | None = None,
+) -> str | None:
+    """Return the stopping step's ``raw`` when ``pipeline.output`` was skipped.
+
+    Returns ``None`` when the named output was not skipped or no stop step
+    was recorded, so the caller keeps ``get_final_result``. A skipped named
+    output never raises; a missing stopper yields ``""``.
+    """
+    if not stop_step_id:
+        return None
+    output_ref = resolve_terminal_output_ref(pipeline, output_aliases)
+    node = nodes.get(output_ref)
+    output = context.get_output(output_ref)
+    skipped = node is not None and node.state == StepState.SKIPPED
+    if (
+        not skipped
+        and isinstance(output, StepOutput)
+        and isinstance(output.json, dict)
+        and output.json.get("_skipped") is True
+    ):
+        skipped = True
+    if not skipped:
+        return None
+    stopper = context.get_output(stop_step_id)
+    if isinstance(stopper, StepOutput):
+        return stopper.raw
+    return ""
 
 
 def get_final_result(

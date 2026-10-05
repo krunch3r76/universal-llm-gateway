@@ -254,6 +254,7 @@ class PipelineExecutor:
                 duration_s=outcome.duration_s,
                 reasoning=outcome.reasoning,
                 hints=outcome.hints,
+                stop=outcome.stop,
             )
         except asyncio.CancelledError:
             tracker.fail_execution(
