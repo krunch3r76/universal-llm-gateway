@@ -270,6 +270,10 @@ def _op_view_render(
                     if "error" in rel_result:
                         return rel_result
                     rel_id = rel_result.get("id")
+                    if rel_id is None:
+                        item = rel_result.get("item")
+                        if isinstance(item, dict):
+                            rel_id = item.get("id")
                 view_rev = 1
                 stamp = build_stamp(
                     document_id=document_id,
