@@ -1766,6 +1766,8 @@ class CursorDispatchLedger:
                     req.wake_lane,
                 ),
             )
+            if g5_nest_pin is not None:
+                pin_g5_nest_dispatch_id(**g5_nest_pin)
             if nested_park_parent is None and insert_status == _STATUS_QUEUED:
                 pos = self._queue_position_conn(
                     conn,
@@ -1785,8 +1787,6 @@ class CursorDispatchLedger:
                 return _response_from_row(
                     row, admission=admission, queue_position=pos, holder=holder
                 )
-        if g5_nest_pin is not None:
-            pin_g5_nest_dispatch_id(**g5_nest_pin)
         return None
 
     def park_for_nested(self, *, parent_id: str, child_id: str) -> bool:

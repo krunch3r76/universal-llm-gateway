@@ -1,4 +1,4 @@
-"""G5 nest pin: conductor dispatch_id line + L1 before Composer (a:37920)."""
+"""G5 nest pin: conductor dispatch_id line on nest hop (a:37920)."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _git_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_pin_writes_dispatch_id_and_l1_head(tmp_path: Path) -> None:
+def test_pin_writes_dispatch_id_leaves_l1_pending(tmp_path: Path) -> None:
     files_root = tmp_path / "cortex"
     repo = _git_repo(tmp_path)
     body = render_sparse_scoreboard(
@@ -56,10 +56,7 @@ def test_pin_writes_dispatch_id_and_l1_head(tmp_path: Path) -> None:
     tip = read_tip(_SLUG, files_root=files_root)
     assert tip is not None
     assert _conductor_dispatch_id(tip[0]) == _PARENT
-    assert "(pending)" not in next(
-        line for line in tip[0].splitlines() if line.startswith("| L1 |")
-    )
-    assert "on master" in next(
+    assert "(pending)" in next(
         line for line in tip[0].splitlines() if line.startswith("| L1 |")
     )
 

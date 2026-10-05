@@ -1,8 +1,7 @@
-"""Pin ``conductor dispatch_id`` and L1 on the G5 nest hop (a:37920)."""
+"""Pin ``conductor dispatch_id`` on the G5 nest hop (a:37920)."""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from universal_protocol.errors import ProtocolError
@@ -13,19 +12,12 @@ from implement_admission.conductor_score_journal import (
     forward_mutate_tip,
     read_tip,
 )
-from implement_admission.conductor_witness_table import (
-    _conductor_dispatch_id,
-    _repo_head_full_sha,
-)
+from implement_admission.conductor_witness_table import _conductor_dispatch_id
 
 # Same set as GIW nested-implement witness jobs. Kept here so pin does not
 # import the worker package.
 _IMPLEMENT_JOBS = frozenset(
     {"implement", "pure-mechanical", "mechanical", "none", "freeform"}
-)
-_L1_PENDING_RE = re.compile(
-    r"^(\|\s*L1\s*\|\s*)\(pending\)(\s*\|)",
-    re.MULTILINE | re.IGNORECASE,
 )
 
 
@@ -45,32 +37,23 @@ def _with_dispatch_id_line(tip_body: str, parent_dispatch_id: str) -> str:
     return f"{body}\n{line}\n"
 
 
-def _with_l1_lane_head(tip_body: str, repo: Path | None) -> str:
-    if repo is None:
-        return tip_body
-    head = _repo_head_full_sha(repo)
-    if not head:
-        return tip_body
-    if _L1_PENDING_RE.search(tip_body):
-        return _L1_PENDING_RE.sub(rf"\g<1>{head} on master\g<2>", tip_body, count=1)
-    return tip_body
-
-
 def pin_g5_nest_dispatch_id(
     *,
     parent_dispatch_id: str,
     parent_contract: str | None,
     child_contract: str | None,
     work_key: str | None,
-    source_repo: str | None,
+    source_repo: str | None = None,
     files_root: Path | None = None,
 ) -> str | None:
-    """Write the G5 nest pin onto the scoreboard tip when one already exists.
+    """Write the G5 nest dispatch_id pin when a scoreboard tip already exists.
 
+    Does not write L1 (G7 land slot / G5 git:lane_head). L1 is post-ship.
     Skips when this admit is not a conductor→implement nest, or when no tip
     exists yet. If a tip exists and the pin line is still missing after the
-    write, Composer must not proceed.
+    write, raise so the nest admit transaction rolls back.
     """
+    _ = source_repo
     if str(parent_contract or "").strip().lower() != "conductor":
         return None
     if str(child_contract or "").strip().lower() not in _IMPLEMENT_JOBS:
@@ -82,18 +65,14 @@ def pin_g5_nest_dispatch_id(
     prior = read_tip(slug, files_root=root)
     if prior is None:
         return None
-    repo = Path(source_repo) if source_repo else None
-    next_body = _with_l1_lane_head(
-        _with_dispatch_id_line(prior[0], parent_dispatch_id),
-        repo,
-    )
+    next_body = _with_dispatch_id_line(prior[0], parent_dispatch_id)
     if next_body != prior[0]:
         result = forward_mutate_tip(
             slug,
             next_body=next_body,
             seat="giw",
             dispatch_id=parent_dispatch_id,
-            reason="g5 nest pin conductor dispatch_id + L1",
+            reason="g5 nest pin conductor dispatch_id",
             rows=G_ROWS,
             delta=f"conductor dispatch_id `{parent_dispatch_id}`",
             files_root=root,
