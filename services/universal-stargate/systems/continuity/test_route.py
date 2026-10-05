@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.offline
 
@@ -155,6 +157,54 @@ async def test_checkpoint_claude_ai_admits_with_chat_url() -> None:
     payload = json.loads(resp.body)
     assert payload["execution_id"] == "exec-claude-ai"
     assert payload["pipeline"] == "continuity-checkpoint-v1"
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_posts_canonical_capability_url() -> None:
+    from systems.continuity.models import CheckpointRequest
+
+    route_mod = _import_route_module(with_dispatch=True)
+    posted: dict[str, str] = {}
+
+    @asynccontextmanager
+    async def _capture(*_args, **_kwargs):
+        client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.json.return_value = {
+            "execution_id": "exec-claude-ai",
+            "started_at": "2026-09-10T00:00:00Z",
+        }
+
+        async def _post(url, json=None):
+            posted["url"] = url
+            return mock_resp
+
+        client.post = _post
+        yield client
+
+    body = CheckpointRequest(
+        thread="10479",
+        surface="claude_ai",
+        from_agent="cursor",
+        chat_url="https://claude.ai/cowork/cse_0181xcjbYP83D8VdBopSyiLs",
+    )
+    with (
+        patch.object(route_mod, "make_async_client", _capture),
+        patch("agent_bus_store.db.get_thread_turn_count", return_value=5),
+    ):
+        resp = await route_mod.continuity_checkpoint(
+            body,
+            current_user={"agent": "cursor"},
+        )
+    assert resp.status_code == 202
+    spec = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[4]
+            / "pipelines/continuity_checkpoint/v1/continuity-checkpoint-v1.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert posted["url"] == f"/api/v1/capabilities/{spec['category']}/{spec['id']}"
 
 
 @pytest.mark.asyncio

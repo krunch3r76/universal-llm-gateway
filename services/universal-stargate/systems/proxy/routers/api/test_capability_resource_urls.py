@@ -145,7 +145,7 @@ def test_body_path_id_mismatch_is_422(
     assert response.json()["error"]["code"] == "capability_id_mismatch"
 
 
-def test_noncanonical_segment_stays_200_with_canonical_link(
+def test_noncanonical_segment_redirects_to_canonical(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "pipelines"
@@ -156,19 +156,19 @@ def test_noncanonical_segment_stays_200_with_canonical_link(
         follow_redirects=False,
     )
     assert response.history == []
-    assert response.status_code == 200, response.text
-    link = response.headers["link"]
-    assert 'rel="canonical"' in link
-    assert "/api/v1/capabilities/demo/demo-pipe" in link
+    assert response.status_code == 308, response.text
+    assert response.headers["location"].endswith("/api/v1/capabilities/demo/demo-pipe")
 
 
-def test_noncanonical_post_stays_202_with_canonical_link(
+def test_noncanonical_post_redirects_without_admit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "pipelines"
     _write_root(root)
+    admitted = {"n": 0}
 
     async def _admit(_request: Any, _proxy: Any, _dispatch: Any) -> JSONResponse:
+        admitted["n"] += 1
         return JSONResponse(
             status_code=202,
             content={"execution_id": "exec-wrong-cat"},
@@ -183,11 +183,9 @@ def test_noncanonical_post_stays_202_with_canonical_link(
         follow_redirects=False,
     )
     assert response.history == []
-    assert response.status_code == 202, response.text
-    assert response.json()["execution_id"] == "exec-wrong-cat"
-    link = response.headers["link"]
-    assert 'rel="canonical"' in link
-    assert "/api/v1/capabilities/demo/demo-pipe" in link
+    assert response.status_code == 308, response.text
+    assert response.headers["location"].endswith("/api/v1/capabilities/demo/demo-pipe")
+    assert admitted["n"] == 0
 
 
 def test_legacy_pipeline_routes_are_absent(
@@ -398,8 +396,9 @@ def test_hot_reload_new_yaml_is_invocable_at_canonical_url(
     response = client.post(canonical, json={"model": "fresh-pipe", "messages": []})
     assert response.status_code == 202, response.text
     assert response.json()["execution_id"] == "exec-fresh"
-    assert 'rel="canonical"' in response.headers["link"]
-    assert canonical in response.headers["link"]
+    assert "link" not in response.headers
+    assert "content-location" not in response.headers
+    assert response.json()["links"]["capability"]["href"] == canonical
 
 
 def test_cdp_executions_path_is_not_pipeline_executions(
@@ -467,3 +466,184 @@ def test_restored_registry_category_matches_rebuild(
     rebuilt = again.get("/api/v1/capabilities", params={"category": "demo"})
     assert rebuilt.status_code == 200
     assert rebuilt.json()["members"] == listed.json()["members"]
+
+
+def test_noncanonical_308_keeps_repeated_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    response = client.post(
+        "/api/v1/capabilities/wrong/demo-pipe",
+        params=[("a", "1"), ("a", "2")],
+        json={"model": "demo-pipe", "messages": []},
+        follow_redirects=False,
+    )
+    assert response.status_code == 308, response.text
+    assert response.headers["location"].endswith(
+        "/api/v1/capabilities/demo/demo-pipe?a=1&a=2"
+    )
+
+
+def test_canonical_post_monitor_href_matches_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    location = "/api/v1/executions/exec-links"
+
+    async def _admit(_request: Any, _proxy: Any, _dispatch: Any) -> JSONResponse:
+        return JSONResponse(
+            status_code=202,
+            content={"execution_id": "exec-links", "status": "running"},
+            headers={"Location": location},
+        )
+
+    monkeypatch.setattr(capabilities, "admit_dispatch", _admit)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    canonical = "/api/v1/capabilities/demo/demo-pipe"
+    response = client.post(canonical, json={"model": "demo-pipe", "messages": []})
+    assert response.status_code == 202, response.text
+    assert response.json()["links"]["monitor"]["href"] == response.headers["location"]
+    assert response.json()["links"]["capability"]["href"] == canonical
+
+
+def test_member_not_ready_is_503_before_redirect_and_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    registry = _registry(root)
+    proxy = SimpleNamespace(pipeline_registry=registry, is_pipeline_system_ready=False)
+    admitted = {"n": 0}
+
+    async def _admit(_request: Any, _proxy: Any, _dispatch: Any) -> JSONResponse:
+        admitted["n"] += 1
+        return JSONResponse(status_code=202, content={"execution_id": "should-not"})
+
+    monkeypatch.setattr(capabilities, "admit_dispatch", _admit)
+    client = _client(proxy, monkeypatch)
+
+    ready_get = client.get("/api/v1/capabilities/demo/demo-pipe")
+    assert ready_get.status_code == 503, ready_get.text
+    assert ready_get.json()["error"]["code"] == "pipeline_system_unavailable"
+
+    mismatched = client.get(
+        "/api/v1/capabilities/wrong/demo-pipe", follow_redirects=False
+    )
+    assert mismatched.status_code == 503, mismatched.text
+    assert mismatched.status_code != 308
+    assert mismatched.json()["error"]["code"] == "pipeline_system_unavailable"
+
+    posted = client.post(
+        "/api/v1/capabilities/demo/demo-pipe",
+        json={"model": "demo-pipe", "messages": []},
+    )
+    assert posted.status_code == 503, posted.text
+    assert posted.json()["error"]["code"] == "pipeline_system_unavailable"
+    assert admitted["n"] == 0
+
+    invalid = client.post(
+        "/api/v1/capabilities/demo/demo-pipe",
+        content=b"not-json",
+        headers={"content-type": "application/json"},
+    )
+    assert invalid.status_code == 503, invalid.text
+    assert invalid.json()["error"]["code"] == "pipeline_system_unavailable"
+
+
+def test_member_without_proxy_is_503(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    client = _client(None, monkeypatch)
+    fetched = client.get("/api/v1/capabilities/demo/demo-pipe")
+    assert fetched.status_code == 503, fetched.text
+    assert fetched.json()["error"]["code"] == "pipeline_system_unavailable"
+    posted = client.post(
+        "/api/v1/capabilities/demo/demo-pipe",
+        json={"model": "demo-pipe", "messages": []},
+    )
+    assert posted.status_code == 503, posted.text
+    assert posted.json()["error"]["code"] == "pipeline_system_unavailable"
+
+
+def test_ready_unknown_member_keeps_body_validation_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    fetched = client.get("/api/v1/capabilities/demo/unknown-pipe")
+    assert fetched.status_code == 404, fetched.text
+    assert fetched.json()["error"]["code"] == "capability_not_found"
+    posted = client.post(
+        "/api/v1/capabilities/demo/unknown-pipe",
+        content=b"not-json",
+        headers={"content-type": "application/json"},
+    )
+    assert posted.status_code == 400, posted.text
+    assert posted.json()["error"]["code"] == "invalid_json"
+
+
+class _RecordingBus:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def publish_nowait(self, event: object) -> None:
+        self.events.append(event)
+
+
+def test_noncanonical_308_emits_no_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    bus = _RecordingBus()
+    client.app.state.event_bus = bus
+    fetched = client.get("/api/v1/capabilities/wrong/demo-pipe", follow_redirects=False)
+    posted = client.post(
+        "/api/v1/capabilities/wrong/demo-pipe",
+        json={"model": "demo-pipe", "messages": []},
+        follow_redirects=False,
+    )
+    assert fetched.status_code == 308, fetched.text
+    assert posted.status_code == 308, posted.text
+    assert bus.events == []
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (503, "pipeline_dispatch_capacity_exhausted"),
+        (404, "pipeline_not_found"),
+        (500, "pipeline_dispatch_preparation_failed"),
+    ],
+)
+def test_non_202_admit_keeps_canonical_headers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    code: str,
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+
+    async def _admit(_request: Any, _proxy: Any, _dispatch: Any) -> JSONResponse:
+        return JSONResponse(
+            status_code=status,
+            content={"error": {"code": code, "message": code}},
+        )
+
+    monkeypatch.setattr(capabilities, "admit_dispatch", _admit)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    canonical = "/api/v1/capabilities/demo/demo-pipe"
+    response = client.post(canonical, json={"model": "demo-pipe", "messages": []})
+    assert response.status_code == status, response.text
+    assert response.headers["content-location"] == canonical
+    assert 'rel="canonical"' in response.headers["link"]
+    assert canonical in response.headers["link"]
+    assert "links" not in response.json()

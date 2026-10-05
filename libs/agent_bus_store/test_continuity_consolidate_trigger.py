@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from agent_bus_store import continuity_consolidate_trigger as trig
 from agent_bus_store.db import create_thread_with_turn, init_db
@@ -88,7 +90,9 @@ def _closeout(thread_id: str, *, body: str = "ok") -> int:
     return turn_number
 
 
-def _arm_short_debounce(monkeypatch: pytest.MonkeyPatch, seconds: float = 0.05) -> float:
+def _arm_short_debounce(
+    monkeypatch: pytest.MonkeyPatch, seconds: float = 0.05
+) -> float:
     monkeypatch.setenv("AGENT_BUS_CONTINUITY_DEBOUNCE_S", str(seconds))
     if hasattr(trig, "DEBOUNCE_S"):
         monkeypatch.setattr(trig, "DEBOUNCE_S", seconds)
@@ -325,7 +329,9 @@ def test_cross_root_independent_debounce(bus_db, monkeypatch: pytest.MonkeyPatch
     trig.reset_debounce_state()
 
 
-def test_debounce_second_timer_tick_after_clear_is_noop(bus_db, monkeypatch: pytest.MonkeyPatch):
+def test_debounce_second_timer_tick_after_clear_is_noop(
+    bus_db, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv("AGENT_BUS_CONTINUITY_DEBOUNCE_S", "0.05")
     trig.reset_debounce_state()
     root = _thread(
@@ -350,3 +356,37 @@ def test_debounce_second_timer_tick_after_clear_is_noop(bus_db, monkeypatch: pyt
         trig._fire_pending(root)
     assert len(calls) == 1
     trig.reset_debounce_state()
+
+
+def test_enqueue_posts_canonical_capability_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted: dict[str, str] = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"execution_id": "exec-consolidate"}
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def post(self, url: str, json: object = None) -> _Resp:
+            posted["url"] = url
+            return _Resp()
+
+    monkeypatch.setattr("transport_utils.make_sync_client", lambda *_a, **_k: _Client())
+    assert trig.enqueue_consolidate({"root_thread": "1"}) == "exec-consolidate"
+    spec = yaml.safe_load(
+        (
+            Path(__file__).resolve().parents[2]
+            / "pipelines/continuity_consolidate/v1/continuity-consolidate-v1.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert posted["url"] == f"/api/v1/capabilities/{spec['category']}/{spec['id']}"

@@ -142,6 +142,7 @@ def test_index_relay_alias_and_failure(
         (422, b'{"code":"OPERATION_REJECTED"}'),
         (503, b'{"code":"LOCK_WAIT"}'),
     ):
+
         def one(
             request: httpx.Request, status=status, payload=payload
         ) -> httpx.Response:
@@ -178,6 +179,47 @@ def test_index_relay_alias_and_failure(
         if getattr(event, "signal", "") == "capability.relay.failed"
     ]
     assert failed_events
+
+
+def test_satellite_category_relays_ahead_of_local_member(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A satellite category relays even when the member id exists locally."""
+    from types import SimpleNamespace
+
+    from systems.pipeline.core.handlers.registry import HandlerRegistry
+    from systems.proxy.dependencies import get_proxy
+    from systems.proxy.routers.api.test_capability_resource_urls import (
+        _registry,
+        _write_root,
+    )
+
+    HandlerRegistry._ensure_initialized()
+    seen: list[str] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(201, content=b'{"operation":"relayed"}')
+
+    client, _bus = _app(tmp_path, _GOOD, monkeypatch, responder)
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    registry = _registry(root)
+    client.app.dependency_overrides[get_proxy] = lambda: SimpleNamespace(
+        pipeline_registry=registry,
+        is_pipeline_system_ready=True,
+    )
+    relayed = client.get("/api/v1/capabilities/observability/demo-pipe")
+    assert relayed.status_code == 201, relayed.text
+    assert seen[-1].endswith("/demo-pipe")
+
+    client.app.dependency_overrides[get_proxy] = lambda: SimpleNamespace(
+        pipeline_registry=registry,
+        is_pipeline_system_ready=False,
+    )
+    not_ready = client.get("/api/v1/capabilities/observability/demo-pipe")
+    assert not_ready.status_code == 201, not_ready.text
+    assert seen[-1].endswith("/demo-pipe")
 
 
 def test_alias_uses_origin_listing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

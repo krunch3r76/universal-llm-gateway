@@ -58,7 +58,11 @@ Response:
   "execution_id": "uuid",
   "pipeline": "pipeline-id",
   "started_at": "2026-04-18T12:34:56Z",
-  "status": "running"
+  "status": "running",
+  "links": {
+    "monitor": {"href": "/api/v1/executions/uuid"},
+    "capability": {"href": "/api/v1/capabilities/category/pipeline-id"}
+  }
 }
 ```
 
@@ -70,6 +74,7 @@ Error envelope (all `/api/v1/capabilities and /api/v1/executions` errors):
 
 | Status | Code | Meaning |
 |---|---|---|
+| 308 | — | non-canonical member path redirects to the canonical category URL |
 | 400 | `invalid_body` / `validation_error` | malformed JSON or schema failure |
 | 404 | `pipeline_not_found` | unknown pipeline id |
 | 503 | `capacity_exhausted` | tracker saturated with running executions |
