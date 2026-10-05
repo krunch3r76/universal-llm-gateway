@@ -308,7 +308,13 @@ def relaunch_dormant(
             registration_id, chrome_pid, log_event="relaunch"
         )
     except Exception:
-        _restore_dormant(registration_id, row)
+        # The pre-lock snapshot predates a close that landed in the reserve
+        # window. Restoring it would wipe seat_closed_at and reopen the seat.
+        live = _store.load_active().get(registration_id)
+        if not (
+            isinstance(live, dict) and live.get("seat_closed_at") is not None
+        ):
+            _restore_dormant(registration_id, row)
         raise
     # Display is placement; chat URL stays the identity. Reserve writes the
     # admitted display; this rewrite covers a row that still names the old one.
@@ -325,8 +331,22 @@ def relaunch_dormant(
     if parent and purpose in OPERATOR_PURPOSES:
         from claude_bundles.cdp_registry.session_address import bind_driving_seat
 
+        # Supersede during Chrome launch lands after reserve. Binding would
+        # clear seat_closed_at and close the hop that just won the seat.
+        current = _store.load_active().get(registration_id) or {}
+        if current.get("seat_closed_at") is not None:
+            raise RegistryError(
+                f"registration {registration_id!r} has seat_closed_at set; "
+                "refusing relaunch of a superseded seat"
+            )
         bind_driving_seat(registration_id)
-        reg = _row_to_registration(_store.load_active()[registration_id])
+        bound = _store.load_active().get(registration_id) or {}
+        if bound.get("seat_closed_at") is not None:
+            raise RegistryError(
+                f"registration {registration_id!r} has seat_closed_at set; "
+                "refusing relaunch of a superseded seat"
+            )
+        reg = _row_to_registration(bound)
     with contextlib.suppress(Exception):
         _events.emit(
             _events.cdp_port_relaunched(
