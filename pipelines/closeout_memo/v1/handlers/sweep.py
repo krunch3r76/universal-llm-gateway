@@ -83,9 +83,7 @@ async def _recover_stale_admitted() -> None:
                 harvest=_transport.harvest_marker,
             )
             if outcome.get("delivered"):
-                await _post_overflow(
-                    wake_lane, memo_ids, rendered.overflow_bus_text
-                )
+                await _post_overflow(wake_lane, memo_ids, rendered.overflow_bus_text)
             elif outcome.get("needs_fallback"):
                 await _fallback_group(
                     memo_ids,
@@ -159,8 +157,6 @@ async def _fallback_group(
     memo8 = memo_ids[0][:8] if memo_ids else "unknown"
     subject = f"closeout memo — undelivered {memo8} {kind} status:{status}"
     await _transport.post_bus_turn(wake_lane=wake_lane, subject=subject, body=body)
-    if wake_lane and _ledger.claim_page(wake_lane):
-        await _transport.page_lane(wake_lane=wake_lane, subject=subject, body=body[:400])
     _ledger.mark_undelivered(memo_ids, error=error)
     emit_closeout_memo(
         "undelivered", memo_ids=memo_ids, wake_lane=wake_lane, error=error

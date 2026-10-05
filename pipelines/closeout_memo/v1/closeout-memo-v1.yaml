@@ -11,7 +11,7 @@ category: closeout_memo
 description: >
   Admit and dedupe a closeout memo, coalesce per wake lane, render a
   pointer-only paste, deliver via project-ask followup, and fall back
-  to a bus turn plus a coalesced page.
+  to a bus turn on the wake lane (no phone page).
 output: fallback
 
 options:

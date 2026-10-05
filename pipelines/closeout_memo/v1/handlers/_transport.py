@@ -61,7 +61,11 @@ async def post_followup(
         return {
             "timed_out": False,
             "status_code": 0,
-            "body": {"ok": False, "error": "seat_unavailable", "detail": type(exc).__name__},
+            "body": {
+                "ok": False,
+                "error": "seat_unavailable",
+                "detail": type(exc).__name__,
+            },
         }
     try:
         parsed = resp.json()
@@ -158,15 +162,14 @@ async def post_bus_turn(
 
 
 async def page_lane(*, wake_lane: str, subject: str, body: str) -> bool:
-    """One pager notify. Coalescing is the ledger's job; this only sends."""
-    try:
-        from pager_notify.client import notify_pager
+    """Retired: undelivered closeout memos must not page the phone.
 
-        result = await notify_pager(subject, body, tag="closeout-memo")
-    except Exception:  # noqa: BLE001
-        logger.warning("closeout memo page failed lane=%s", wake_lane, exc_info=True)
-        return False
-    return bool(result)
+    Kept as a no-op so any stray caller stays silent. Bus fallback is the
+    interagent path; Maestro tab tracking owns delivery reliability.
+    """
+    del subject, body  # signature retained for call-site compatibility
+    logger.info("closeout memo page skipped (retired) lane=%s", wake_lane)
+    return False
 
 
 def stargate_base() -> str:

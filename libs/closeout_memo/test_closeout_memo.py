@@ -14,11 +14,7 @@ from closeout_memo.render import MEMO_OPENING, STANCE_LINE, render_memos
 
 pytestmark = pytest.mark.offline
 
-_OPENING = (
-    "MEMO (closeout pointer). If this context no longer holds the operator "
-    "skills (new window or after compaction), reload them per the opening "
-    "prompt first; otherwise do not reload."
-)
+_OPENING = "MEMO (closeout pointer)."
 
 
 def _memo(**overrides: object) -> CloseoutMemoRequest:

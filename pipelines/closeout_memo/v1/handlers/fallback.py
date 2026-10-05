@@ -1,4 +1,4 @@
-"""closeout_memo_fallback_v1 — one bus turn and at most one page per lane per 15 min."""
+"""closeout_memo_fallback_v1 — one bus turn per undelivered lane (no phone page)."""
 
 from __future__ import annotations
 
@@ -46,24 +46,24 @@ class CloseoutMemoFallbackHandler(BaseHandler):
             if row is not None:
                 kind = str(row.get("kind") or kind)
                 status = str(row.get("status") or status)
-        memo8 = (memo_ids[0][:8] if memo_ids else "unknown")
+        memo8 = memo_ids[0][:8] if memo_ids else "unknown"
         subject = f"closeout memo — undelivered {memo8} {kind} status:{status}"
         body = _blocks({**coalesce, **deliver})
         posted = await _transport.post_bus_turn(
             wake_lane=wake_lane, subject=subject, body=body
         )
-        paged = False
-        if wake_lane and _ledger.claim_page(wake_lane):
-            paged = await _transport.page_lane(
-                wake_lane=wake_lane, subject=subject, body=body[:400]
-            )
-        _ledger.mark_undelivered(memo_ids, error=str(deliver.get("error") or "undelivered"))
+        # Phone page retired: undelivered memos are interagent (bus → wake
+        # lane). harvest_no_target / untracked Maestro tab is a separate
+        # tracking fix — paging the human was the wrong place.
+        _ledger.mark_undelivered(
+            memo_ids, error=str(deliver.get("error") or "undelivered")
+        )
         emit_closeout_memo(
             "undelivered",
             memo_ids=memo_ids,
             wake_lane=wake_lane,
             bus_posted=posted,
-            paged=paged,
+            paged=False,
         )
         return _step(
             {
@@ -71,7 +71,7 @@ class CloseoutMemoFallbackHandler(BaseHandler):
                 "undelivered": True,
                 "memo_ids": memo_ids,
                 "bus_posted": posted,
-                "paged": paged,
+                "paged": False,
                 "subject": subject,
             }
         )
