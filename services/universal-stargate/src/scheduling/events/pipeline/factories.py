@@ -1,4 +1,4 @@
-"""Factory functions for `pipeline` scheduling events. Builds `Event` objects via `event_factory` from this package's signal constants (DAG execution completion, deadlock detection, cancellation/timeout, model-gate claim/release, registry lookup failures, and per-step embedding/domain-verification progress) for callers importing from `src.scheduling.events.pipeline`."""
+"""Factory functions for `pipeline` scheduling events. Builds `Event` objects via `event_factory` from this package's signal constants (DAG execution completion, deadlock detection, cancellation/timeout, model-gate claim/release, registry lookup failures, and per-step embedding/domain-verification progress) for callers importing from `src.scheduling.events.pipeline`."""  # noqa: E501
 
 # ruff: noqa: N802
 
@@ -27,7 +27,7 @@ FEDERATION_GATEWAY_MEMBERSHIP = "federation.gateway.membership"
 
 @event_factory
 def federation_gateway_membership(membership: dict[str, list[str]]) -> Event:
-    """Publish reachable gateway ids and loaded pipeline ids (never a count)."""
+    """Publish reachable gateway ids, loaded pipeline ids, and `catalog_gateway_ids` — the reachable gateways whose catalog was non-empty when the reload that produced this event began (never a count)."""  # noqa: E501
     return Event(
         signal=FEDERATION_GATEWAY_MEMBERSHIP,
         payload=membership,

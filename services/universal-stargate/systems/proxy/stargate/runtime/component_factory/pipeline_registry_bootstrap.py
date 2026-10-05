@@ -67,8 +67,36 @@ def create_model_checker(
     return checker
 
 
-def membership_payload(proxy: StargateProxy) -> dict[str, list[str]]:
-    """Reachable ``gateway_id`` set and loaded pipeline ids. Never a count."""
+def catalog_gateway_ids_now(proxy: StargateProxy) -> list[str]:
+    """Reachable gateways whose ``available_models`` is non-empty right now.
+
+    Same reachability filter as :func:`membership_payload`. Empty when there
+    is no federated manager. This is the catalog view a reload tags itself with.
+    """
+    manager = proxy.federated_manager
+    if manager is None or not hasattr(manager, "get_all_gateways"):
+        return []
+    gateway_ids: list[str] = []
+    for gateway in manager.get_all_gateways():
+        if getattr(gateway, "is_unreachable", False):
+            continue
+        if not getattr(gateway, "available_models", None):
+            continue
+        gateway_id = getattr(gateway, "gateway_id", None)
+        if isinstance(gateway_id, str) and gateway_id:
+            gateway_ids.append(gateway_id)
+    return gateway_ids
+
+
+def membership_payload(
+    proxy: StargateProxy, *, catalog_gateway_ids: list[str] | None = None
+) -> dict[str, list[str]]:
+    """Reachable ``gateway_id`` set, loaded pipeline ids, and the catalog tag.
+
+    ``catalog_gateway_ids`` is the reachable gateways whose catalog was
+    non-empty when the reload that produced this payload began. Callers that
+    omit it get the live view.
+    """
     gateway_ids: list[str] = []
     manager = proxy.federated_manager
     if manager is not None and hasattr(manager, "get_all_gateways"):
@@ -83,16 +111,29 @@ def membership_payload(proxy: StargateProxy) -> dict[str, list[str]]:
     pipelines = getattr(registry, "pipelines", None) if registry is not None else None
     if isinstance(pipelines, dict):
         pipeline_ids = [str(key) for key in pipelines]
-    return {"gateway_ids": gateway_ids, "pipeline_ids": pipeline_ids}
+    tagged = (
+        list(catalog_gateway_ids)
+        if catalog_gateway_ids is not None
+        else catalog_gateway_ids_now(proxy)
+    )
+    return {
+        "gateway_ids": gateway_ids,
+        "pipeline_ids": pipeline_ids,
+        "catalog_gateway_ids": tagged,
+    }
 
 
-async def emit_gateway_membership(proxy: StargateProxy) -> None:
+async def emit_gateway_membership(
+    proxy: StargateProxy, *, catalog_gateway_ids: list[str] | None = None
+) -> None:
     """Publish ``federation.gateway.membership`` after a reload or pre-restart."""
     if proxy.event_bus is None:
         return
     from src.scheduling.events import federation_gateway_membership
 
-    event = federation_gateway_membership(membership_payload(proxy))
+    event = federation_gateway_membership(
+        membership_payload(proxy, catalog_gateway_ids=catalog_gateway_ids)
+    )
     try:
         await proxy.event_bus.publish_nowait(event)
     except Exception:
@@ -144,6 +185,7 @@ def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> Non
             return
         if event.payload.get("connectivity") != "reachable":
             return
+        seen = catalog_gateway_ids_now(proxy)
         try:
             old_count, new_count = await asyncio.to_thread(
                 proxy.pipeline_registry.reload_pipelines
@@ -155,7 +197,7 @@ def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> Non
                 new_count,
             )
             await _emit_pipeline_unavailable_events(proxy)
-            await emit_gateway_membership(proxy)
+            await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
         except Exception:
             logger.exception("Pipeline reload failed after gateway connect")
 
@@ -172,6 +214,7 @@ async def _reload_pipelines_after_federation_event(
 
     payload = getattr(event, "payload", None) or {}
     gateway_id = payload.get("gateway_id", "unknown")
+    seen = catalog_gateway_ids_now(proxy)
     try:
         old_count, new_count = await asyncio.to_thread(
             proxy.pipeline_registry.reload_pipelines
@@ -185,7 +228,7 @@ async def _reload_pipelines_after_federation_event(
             new_count,
         )
         await _emit_pipeline_unavailable_events(proxy)
-        await emit_gateway_membership(proxy)
+        await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
     except Exception:
         logger.exception("Pipeline reload failed after %s from %s", reason, gateway_id)
 
@@ -307,10 +350,13 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             else None
         )
         if healthy_gateway is None:
-            await emit_gateway_membership(proxy)
+            await emit_gateway_membership(
+                proxy, catalog_gateway_ids=catalog_gateway_ids_now(proxy)
+            )
 
         if proxy.gateway_manager is not None:
             if healthy_gateway:
+                seen = catalog_gateway_ids_now(proxy)
                 _old, _new = proxy.pipeline_registry.reload_pipelines()
                 proxy.pipeline_catalog_synced = True
                 logger.info(
@@ -318,7 +364,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                     "(local gateway already connected)"
                 )
                 await _emit_pipeline_unavailable_events(proxy)
-                await emit_gateway_membership(proxy)
+                await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
             _subscribe_pipeline_reload_on_gateway_connected(proxy)
 
         if proxy.federation_integration is not None:
@@ -330,6 +376,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                 proxy.federated_manager is not None
                 and proxy.federated_manager.has_any_catalog_data()
             ):
+                seen = catalog_gateway_ids_now(proxy)
                 _old, _new = proxy.pipeline_registry.reload_pipelines()
                 proxy.pipeline_catalog_synced = True
                 logger.info(
@@ -339,7 +386,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                     _new,
                 )
                 await _emit_pipeline_unavailable_events(proxy)
-                await emit_gateway_membership(proxy)
+                await emit_gateway_membership(proxy, catalog_gateway_ids=seen)
 
         proxy.pipeline_executor = PipelineExecutor(
             registry=proxy.pipeline_registry,

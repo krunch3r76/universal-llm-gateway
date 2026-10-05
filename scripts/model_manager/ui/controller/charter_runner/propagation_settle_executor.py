@@ -11,14 +11,15 @@ from typing import Any
 import httpx
 from event_store.client import subscribe_events
 from implement_admission.settle_gate import (
-    CATALOG_CHANGED,
     MEMBERSHIP_SIGNAL,
     SETTLE_CAP_S,
     SettleVerdict,
+    StopReason,
     affected_pipeline_ids,
     expected_absent_pipeline_ids,
-    gateway_id_sets_equal,
+    fold_settle_window,
     judge_event_window,
+    membership_ready,
 )
 
 SubscribeFactory = Callable[..., AsyncIterator[dict[str, Any]]]
@@ -33,6 +34,7 @@ class FunctionalSettleResult:
     op_run_failures: tuple[str, ...]
     timed_out: bool
     events_seen: int
+    stop_reason: StopReason
 
 
 def membership_snapshot_from_event(
@@ -192,134 +194,6 @@ async def op_run_affected_pipelines(
     return failures
 
 
-def _latest_membership_pipeline_ids(events: Iterable[dict[str, Any]]) -> set[str]:
-    """Pipeline ids from the latest membership event that listed them."""
-    present: set[str] = set()
-    for event in events:
-        if str(event.get("signal") or "") != MEMBERSHIP_SIGNAL:
-            continue
-        pipes = (event.get("payload") or {}).get("pipeline_ids")
-        if isinstance(pipes, list):
-            present = {str(item) for item in pipes}
-    return present
-
-
-def _catalog_seq_by_gateway(
-    events: Iterable[dict[str, Any]],
-) -> tuple[dict[str, int], bool]:
-    """Latest ``catalog.changed`` seq per ``payload.gateway_id``.
-
-    The second value is true when any catalog event has no gateway id.
-    Those events are not attributable per gateway.
-    """
-    latest: dict[str, int] = {}
-    unattributed = False
-    for event in events:
-        if str(event.get("signal") or "") != CATALOG_CHANGED:
-            continue
-        seq = event.get("seq")
-        if not isinstance(seq, int):
-            continue
-        payload = event.get("payload") or {}
-        gateway_id = payload.get("gateway_id")
-        if isinstance(gateway_id, str) and gateway_id:
-            previous = latest.get(gateway_id)
-            if previous is None or seq > previous:
-                latest[gateway_id] = seq
-        else:
-            unattributed = True
-    return latest, unattributed
-
-
-def _pipeline_set_stable(events: Iterable[dict[str, Any]]) -> bool:
-    """True after two consecutive membership events list the same pipeline ids."""
-    previous: list[str] | None = None
-    for event in events:
-        if str(event.get("signal") or "") != MEMBERSHIP_SIGNAL:
-            continue
-        pipes = (event.get("payload") or {}).get("pipeline_ids")
-        if not isinstance(pipes, list):
-            previous = None
-            continue
-        current = [str(item) for item in pipes]
-        if previous is not None and current == previous:
-            return True
-        previous = current
-    return False
-
-
-def _membership_window_ready(
-    events: Iterable[dict[str, Any]],
-    snapshot_gateway_ids: Iterable[str] | None,
-    *,
-    snapshot_pipeline_ids: Iterable[str] | None = None,
-    land_paths: Iterable[str] = (),
-    land_deleted_paths: Iterable[str] = (),
-    pipeline_sources: Mapping[str, Iterable[str]] | None = None,
-    step_type_modules: Mapping[str, str] | None = None,
-    pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
-) -> bool:
-    """True when membership matches gateways, follows each gateway's catalog, and lists every unaffected pipeline.
-
-    A membership event is ready only when every snapshot gateway has a
-    ``catalog.changed`` in this window and the membership seq is greater than
-    each of those seqs. A gateway whose catalog event is older than
-    ``resume_from`` is absent here, so the wait stays closed until the cap.
-    Catalog events without ``payload.gateway_id`` are not attributable; that
-    window falls back to two consecutive identical pipeline sets.
-    """
-    snap = list(snapshot_gateway_ids or ())
-    if not snap:
-        return False
-    event_list = list(events)
-    catalog_by_gateway, catalog_unattributed = _catalog_seq_by_gateway(event_list)
-    post: list[str] | None = None
-    post_pipes: list[str] | None = None
-    membership_seq: int | None = None
-    for event in event_list:
-        signal = str(event.get("signal") or "")
-        payload = event.get("payload") or {}
-        seq = event.get("seq")
-        if signal == MEMBERSHIP_SIGNAL:
-            ids = payload.get("gateway_ids")
-            if isinstance(ids, list):
-                post = [str(item) for item in ids]
-            pipes = payload.get("pipeline_ids")
-            if isinstance(pipes, list):
-                post_pipes = [str(item) for item in pipes]
-            if isinstance(seq, int):
-                membership_seq = seq
-    if post is None or not gateway_id_sets_equal(snap, post):
-        return False
-    if catalog_unattributed:
-        if not _pipeline_set_stable(event_list):
-            return False
-    else:
-        for gateway_id in snap:
-            catalog_seq = catalog_by_gateway.get(gateway_id)
-            if catalog_seq is None or membership_seq is None or membership_seq <= catalog_seq:
-                return False
-    snap_pipes = set(snapshot_pipeline_ids or ())
-    sources = pipeline_sources or {}
-    affected = affected_pipeline_ids(
-        snap_pipes,
-        land_paths,
-        pipeline_sources=sources,
-        step_type_modules=step_type_modules or {},
-        pipeline_step_types=pipeline_step_types or {},
-    )
-    expected_absent = expected_absent_pipeline_ids(
-        snap_pipes,
-        land_deleted_paths,
-        pipeline_sources=sources,
-    )
-    unrelated = snap_pipes - affected - expected_absent
-    present = set(post_pipes or ())
-    if unrelated - present:
-        return False
-    return True
-
-
 async def _collect_events_until(
     agen: AsyncIterator[dict[str, Any]],
     *,
@@ -331,28 +205,33 @@ async def _collect_events_until(
     pipeline_sources: Mapping[str, Iterable[str]] | None = None,
     step_type_modules: Mapping[str, str] | None = None,
     pipeline_step_types: Mapping[str, Iterable[str]] | None = None,
-) -> list[dict[str, Any]]:
-    """Stop on a matching membership event, the cap, or a finite iterator.
+) -> tuple[list[dict[str, Any]], StopReason]:
+    """Stop on a ready membership, the cap, or the end of a finite iterator.
 
     A live ``subscribe_events`` socket never raises ``StopAsyncIteration``.
-    Closing the iterator on match is what ends that subscription.
+    An Event Service restart or a closed socket does, and that is not
+    acceptance: the stop reason is ``stream_ended``, not a cap expiry.
     """
     events: list[dict[str, Any]] = []
+    stop_reason: StopReason = "cap"
     try:
         while True:
             remaining = deadline_mono - time.monotonic()
             if remaining <= 0:
+                stop_reason = "cap"
                 break
             try:
                 event = await asyncio.wait_for(agen.__anext__(), timeout=remaining)
             except TimeoutError:
+                stop_reason = "cap"
                 break
             except StopAsyncIteration:
+                stop_reason = "stream_ended"
                 break
             events.append(event)
-            if _membership_window_ready(
-                events,
-                snapshot_gateway_ids,
+            if membership_ready(
+                fold_settle_window(events),
+                snapshot_gateway_ids=snapshot_gateway_ids,
                 snapshot_pipeline_ids=snapshot_pipeline_ids,
                 land_paths=land_paths,
                 land_deleted_paths=land_deleted_paths,
@@ -360,12 +239,13 @@ async def _collect_events_until(
                 step_type_modules=step_type_modules,
                 pipeline_step_types=pipeline_step_types,
             ):
+                stop_reason = "ready"
                 break
     finally:
         aclose = getattr(agen, "aclose", None)
         if aclose is not None:
             await aclose()
-    return events
+    return events, stop_reason
 
 
 async def wait_functional_settle(
@@ -396,7 +276,7 @@ async def wait_functional_settle(
         filter={"signal": "federation.*"},
         resume_from=resume_from,
     )
-    events = await _collect_events_until(
+    events, stop_reason = await _collect_events_until(
         agen,
         deadline_mono=deadline,
         snapshot_gateway_ids=snap_gw,
@@ -407,16 +287,8 @@ async def wait_functional_settle(
         step_type_modules=step_type_modules,
         pipeline_step_types=pipeline_step_types,
     )
-    timed_out = not _membership_window_ready(
-        events,
-        snap_gw,
-        snapshot_pipeline_ids=snap_pipes,
-        land_paths=paths,
-        land_deleted_paths=deleted,
-        pipeline_sources=pipeline_sources,
-        step_type_modules=step_type_modules,
-        pipeline_step_types=pipeline_step_types,
-    ) and (time.monotonic() >= deadline)
+    timed_out = stop_reason == "cap"
+    window = fold_settle_window(events)
 
     sources = pipeline_sources or {}
     affected = affected_pipeline_ids(
@@ -431,7 +303,7 @@ async def wait_functional_settle(
         deleted,
         pipeline_sources=sources,
     )
-    present_pipes = _latest_membership_pipeline_ids(events)
+    present_pipes = set(window.post_pipeline_ids or ())
     missing_expected = {
         pipeline_id
         for pipeline_id in expected_absent
@@ -439,7 +311,7 @@ async def wait_functional_settle(
     }
     op_run_ids = affected - missing_expected
     op_failures: list[str] = []
-    if not timed_out and op_run_ids and run_op_run is not None:
+    if stop_reason == "ready" and op_run_ids and run_op_run is not None:
         op_failures = list(await run_op_run(op_run_ids))
 
     verdict = judge_event_window(
@@ -459,6 +331,7 @@ async def wait_functional_settle(
         op_run_failures=tuple(op_failures),
         timed_out=timed_out,
         events_seen=len(events),
+        stop_reason=stop_reason,
     )
 
 

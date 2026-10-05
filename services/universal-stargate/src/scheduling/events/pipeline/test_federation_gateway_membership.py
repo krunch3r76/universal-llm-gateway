@@ -19,6 +19,16 @@ def test_federation_gateway_membership_factory_signal_and_payload() -> None:
     assert event.scope == "global"
 
 
+def test_federation_gateway_membership_factory_passes_catalog_gateway_ids_through():
+    membership = {
+        "gateway_ids": ["gw-a"],
+        "pipeline_ids": ["pipe-1"],
+        "catalog_gateway_ids": ["gw-a"],
+    }
+    event = federation_gateway_membership(membership)
+    assert event.payload == membership
+
+
 def test_direct_federation_gateway_membership_event_raises() -> None:
     with pytest.raises(RuntimeError, match="Direct Event"):
         Event(signal="federation.gateway.membership", payload={})

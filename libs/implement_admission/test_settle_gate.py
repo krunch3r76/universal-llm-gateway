@@ -1,9 +1,12 @@
 """Settle-gate breaks from the 14901 bind."""
 
 from implement_admission.settle_gate import (
+    SettleWindow,
+    fold_settle_window,
     gateway_id_sets_equal,
     judge_event_window,
     judge_settle,
+    membership_ready,
 )
 
 
@@ -270,3 +273,190 @@ def test_unrelated_stargate_py_does_not_fail():
         pipeline_step_types={"uses-step": ["embed"]},
     )
     assert verdict == "pass"
+
+
+def _cat(gateway_id: str, new_model_count: int) -> dict:
+    return {
+        "signal": "federation.catalog.changed",
+        "payload": {
+            "gateway_id": gateway_id,
+            "old_model_count": 0,
+            "new_model_count": new_model_count,
+        },
+    }
+
+
+def _mem(gateway_ids: list[str], pipeline_ids: list[str], tag: list[str] | None) -> dict:
+    payload: dict = {"gateway_ids": gateway_ids, "pipeline_ids": pipeline_ids}
+    if tag is not None:
+        payload["catalog_gateway_ids"] = tag
+    return {"signal": "federation.gateway.membership", "payload": payload}
+
+
+def test_fold_settle_window_tracks_latest_membership_and_arrivals_before_it():
+    events = [
+        _cat("gw-a", 3),
+        _mem(["gw-a"], ["p"], ["gw-a"]),
+        _cat("gw-b", 2),
+        _mem(["gw-a", "gw-b"], ["p", "q"], ["gw-a", "gw-b"]),
+    ]
+    window = fold_settle_window(events)
+    assert window.post_gateway_ids == ("gw-a", "gw-b")
+    assert window.post_pipeline_ids == ("p", "q")
+    assert window.catalog_gateway_ids == ("gw-a", "gw-b")
+    assert window.catalog_arrivals == {"gw-a", "gw-b"}
+    assert window.membership_count == 2
+
+    reordered = [
+        _cat("gw-a", 3),
+        _mem(["gw-a"], ["p"], ["gw-a"]),
+        _mem(["gw-a", "gw-b"], ["p", "q"], ["gw-a", "gw-b"]),
+        _cat("gw-b", 2),
+    ]
+    later = fold_settle_window(reordered)
+    assert later.catalog_arrivals == {"gw-a"}
+
+
+def test_membership_ready_requires_tag_superset_of_snapshot():
+    base = dict(
+        post_gateway_ids=("gw-a", "gw-b"),
+        post_pipeline_ids=("p",),
+        catalog_arrivals=frozenset({"gw-a", "gw-b"}),
+        membership_count=1,
+        membership_seq=None,
+    )
+    short = SettleWindow(catalog_gateway_ids=("gw-a",), **base)
+    assert (
+        membership_ready(
+            short,
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["p"],
+        )
+        is False
+    )
+    wide = SettleWindow(catalog_gateway_ids=("gw-a", "gw-b", "gw-z"), **base)
+    assert (
+        membership_ready(
+            wide,
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["p"],
+        )
+        is True
+    )
+
+
+def test_membership_ready_untagged_is_false():
+    window = SettleWindow(
+        post_gateway_ids=("gw-a",),
+        post_pipeline_ids=("p",),
+        catalog_gateway_ids=None,
+        catalog_arrivals=frozenset({"gw-a"}),
+        membership_count=1,
+        membership_seq=None,
+    )
+    assert (
+        membership_ready(
+            window,
+            snapshot_gateway_ids=["gw-a"],
+            snapshot_pipeline_ids=["p"],
+        )
+        is False
+    )
+
+
+def test_membership_ready_requires_catalog_arrival_per_snapshot_gateway_before_membership():
+    missing = SettleWindow(
+        post_gateway_ids=("gw-a", "gw-b"),
+        post_pipeline_ids=("p",),
+        catalog_gateway_ids=("gw-a", "gw-b"),
+        catalog_arrivals=frozenset({"gw-a"}),
+        membership_count=1,
+        membership_seq=None,
+    )
+    assert (
+        membership_ready(
+            missing,
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["p"],
+        )
+        is False
+    )
+    after = fold_settle_window(
+        [
+            _cat("gw-a", 1),
+            _mem(["gw-a", "gw-b"], ["p"], ["gw-a", "gw-b"]),
+            _cat("gw-b", 1),
+        ]
+    )
+    assert (
+        membership_ready(
+            after,
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["p"],
+        )
+        is False
+    )
+
+
+def test_window_ready_implies_judge_not_indeterminate_with_out_of_snapshot_catalog():
+    ready_events = [
+        _cat("gw-a", 1),
+        _cat("gw-b", 1),
+        _cat("gw-x", 1),
+        _mem(["gw-a", "gw-b"], ["keep", "other"], ["gw-a", "gw-b"]),
+    ]
+    assert (
+        membership_ready(
+            fold_settle_window(ready_events),
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["keep", "other"],
+        )
+        is True
+    )
+    assert (
+        judge_event_window(
+            ready_events,
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["keep", "other"],
+            timed_out=False,
+        )
+        == "pass"
+    )
+    absent = [
+        _cat("gw-a", 1),
+        _cat("gw-b", 1),
+        _cat("gw-x", 1),
+        _mem(["gw-a", "gw-b"], ["other"], ["gw-a", "gw-b"]),
+    ]
+    assert (
+        judge_event_window(
+            absent,
+            snapshot_gateway_ids=["gw-a", "gw-b"],
+            snapshot_pipeline_ids=["keep", "other"],
+            timed_out=False,
+            land_paths=["pipelines/keep.yaml"],
+            pipeline_sources={
+                "keep": ["pipelines/keep.yaml"],
+                "other": ["pipelines/other.yaml"],
+            },
+        )
+        == "fail_attributable"
+    )
+
+
+def test_judge_event_window_not_ready_is_indeterminate_even_with_affected_absent():
+    events = [
+        _cat("gw-a", 1),
+        _mem(["gw-a"], [], None),
+    ]
+    assert (
+        judge_event_window(
+            events,
+            snapshot_gateway_ids=["gw-a"],
+            snapshot_pipeline_ids=["keep"],
+            timed_out=False,
+            land_paths=["pipelines/keep.yaml"],
+            pipeline_sources={"keep": ["pipelines/keep.yaml"]},
+        )
+        == "indeterminate"
+    )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import pytest
@@ -20,19 +21,10 @@ def test_subscribe_events_wires_stargate_settle_with_cap_and_op_run():
     """Live subscribe ends when the collector stops on a matching membership event."""
 
     async def _feed(*_args: Any, **_kwargs: Any):
-        yield {
-            "seq": 1,
-            "signal": "federation.catalog.changed",
-            "payload": {"gateway_id": "gw-a"},
-        }
-        yield {
-            "seq": 2,
-            "signal": "federation.gateway.membership",
-            "payload": {
-                "gateway_ids": ["gw-a"],
-                "pipeline_ids": ["keep"],
-            },
-        }
+        yield _catalog(1, "gw-a")
+        yield _membership(
+            2, ["gw-a"], ["keep"], catalog_gateway_ids=["gw-a"]
+        )
         await asyncio.Event().wait()
 
     async def _run_op_run(affected: set[str]) -> list[str]:
@@ -74,18 +66,14 @@ def test_partial_pipeline_membership_does_not_stop_the_wait():
             yield {
                 "seq": index + 1,
                 "signal": "federation.catalog.changed",
-                "payload": {"gateway_id": gateway_id},
+                "payload": {
+                    "gateway_id": gateway_id,
+                    "old_model_count": 0,
+                    "new_model_count": 1,
+                },
             }
-        yield {
-            "seq": 10,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": partial},
-        }
-        yield {
-            "seq": 20,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
-        }
+        yield _membership(10, gateways, partial, catalog_gateway_ids=gateways)
+        yield _membership(20, gateways, pipelines, catalog_gateway_ids=gateways)
 
     async def _run_op_run(_affected: set[str]) -> list[str]:
         return []
@@ -116,16 +104,8 @@ def test_expected_absent_pipeline_does_not_block_readiness():
     """A deleted pipeline omitted from membership does not hold the wait once unaffected ids are present."""
 
     async def _feed(*_args: Any, **_kwargs: Any):
-        yield {
-            "seq": 1,
-            "signal": "federation.catalog.changed",
-            "payload": {"gateway_id": "gw-a"},
-        }
-        yield {
-            "seq": 4,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": ["gw-a"], "pipeline_ids": ["keep"]},
-        }
+        yield _catalog(1, "gw-a")
+        yield _membership(4, ["gw-a"], ["keep"], catalog_gateway_ids=["gw-a"])
         await asyncio.Event().wait()
 
     ran: list[set[str]] = []
@@ -172,12 +152,49 @@ def _late_loader_land():
     return gateways, early, pipelines, sources, land_paths
 
 
-def _catalog(seq: int, gateway_id: str) -> dict[str, Any]:
-    return {
-        "seq": seq,
+def _catalog(
+    seq: int | None, gateway_id: str, *, new_model_count: int = 1
+) -> dict[str, Any]:
+    event: dict[str, Any] = {
         "signal": "federation.catalog.changed",
-        "payload": {"gateway_id": gateway_id},
+        "payload": {
+            "gateway_id": gateway_id,
+            "old_model_count": 0,
+            "new_model_count": new_model_count,
+        },
     }
+    if seq is not None:
+        event["seq"] = seq
+    return event
+
+
+def _membership(
+    seq: int | None,
+    gateway_ids: list[str],
+    pipeline_ids: list[str],
+    *,
+    catalog_gateway_ids: list[str] | None = None,
+    tagged: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "gateway_ids": list(gateway_ids),
+        "pipeline_ids": list(pipeline_ids),
+    }
+    if tagged:
+        payload["catalog_gateway_ids"] = (
+            list(gateway_ids) if catalog_gateway_ids is None else list(catalog_gateway_ids)
+        )
+    event: dict[str, Any] = {
+        "signal": "federation.gateway.membership",
+        "payload": payload,
+    }
+    if seq is not None:
+        event["seq"] = seq
+    return event
+
+
+def _without_seq(event: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in event.items() if key != "seq"}
 
 
 def test_late_loader_land_seq_ordered_waits_for_late_gateway_catalog():
@@ -186,23 +203,17 @@ def test_late_loader_land_seq_ordered_waits_for_late_gateway_catalog():
     gateways, early, pipelines, sources, land_paths = _late_loader_land()
     early_gateways = gateways[:-1]
     late_gateway = gateways[-1]
+    ran: list[set[str]] = []
 
     async def _feed(*_args: Any, **_kwargs: Any):
         for index, gateway_id in enumerate(early_gateways):
             yield _catalog(index + 1, gateway_id)
-        yield {
-            "seq": 10,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": early},
-        }
+        yield _membership(10, gateways, early, catalog_gateway_ids=early_gateways)
         yield _catalog(15, late_gateway)
-        yield {
-            "seq": 20,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
-        }
+        yield _membership(20, gateways, pipelines, catalog_gateway_ids=gateways)
 
-    async def _run_op_run(_affected: set[str]) -> list[str]:
+    async def _run_op_run(affected: set[str]) -> list[str]:
+        ran.append(set(affected))
         return []
 
     async def _run() -> None:
@@ -221,8 +232,10 @@ def test_late_loader_land_seq_ordered_waits_for_late_gateway_catalog():
             timeout=2.0,
         )
         assert result.verdict == "pass"
-        assert not result.timed_out
+        assert result.timed_out is False
+        assert result.stop_reason == "ready"
         assert result.events_seen == 10
+        assert ran == [set(sources)]
 
     asyncio.run(_run())
 
@@ -235,11 +248,7 @@ def test_catalog_ahead_of_only_membership_times_out_indeterminate():
     async def _feed(*_args: Any, **_kwargs: Any):
         for index, gateway_id in enumerate(gateways[:-1]):
             yield _catalog(index + 1, gateway_id)
-        yield {
-            "seq": 10,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": early},
-        }
+        yield _membership(10, gateways, early, catalog_gateway_ids=gateways)
         await asyncio.Event().wait()
 
     async def _run_op_run(_affected: set[str]) -> list[str]:
@@ -274,17 +283,11 @@ def test_membership_before_one_gateway_catalog_waits_for_later_event():
     async def _feed(*_args: Any, **_kwargs: Any):
         for index, gateway_id in enumerate(gateways[1:]):
             yield _catalog(index + 1, gateway_id)
-        yield {
-            "seq": 20,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
-        }
+        yield _membership(
+            20, gateways, pipelines, catalog_gateway_ids=list(gateways[1:])
+        )
         yield _catalog(25, gateways[0])
-        yield {
-            "seq": 30,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
-        }
+        yield _membership(30, gateways, pipelines, catalog_gateway_ids=gateways)
 
     async def _run_op_run(_affected: set[str]) -> list[str]:
         return []
@@ -319,11 +322,7 @@ def test_snapshot_gateway_without_window_catalog_times_out_indeterminate():
     async def _feed(*_args: Any, **_kwargs: Any):
         for index, gateway_id in enumerate(gateways[:-1]):
             yield _catalog(index + 1, gateway_id)
-        yield {
-            "seq": 20,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": gateways, "pipeline_ids": pipelines},
-        }
+        yield _membership(20, gateways, pipelines, catalog_gateway_ids=gateways)
         await asyncio.Event().wait()
 
     async def _run_op_run(_affected: set[str]) -> list[str]:
@@ -687,16 +686,8 @@ async def test_execute_functional_settle_missing_pipeline_fail_attributable_reve
     )
 
     async def _feed(*_args: Any, **_kwargs: Any):
-        yield {
-            "seq": 1,
-            "signal": "federation.catalog.changed",
-            "payload": {"gateway_id": "gw-a"},
-        }
-        yield {
-            "seq": 2,
-            "signal": "federation.gateway.membership",
-            "payload": {"gateway_ids": ["gw-a"], "pipeline_ids": []},
-        }
+        yield _catalog(1, "gw-a")
+        yield _membership(2, ["gw-a"], [], catalog_gateway_ids=["gw-a"])
         await asyncio.Event().wait()
 
     revert_calls = {"n": 0}
@@ -770,6 +761,277 @@ async def test_execute_functional_settle_missing_pipeline_fail_attributable_reve
     assert revert_calls["n"] == 1
     remaining = results["remaining"]
     assert any(r.get("verdict") == "fail_attributable" for r in remaining)
+
+
+def _late_loader_kwargs(gateways, pipelines, sources, land_paths, *, cap_s: float):
+    return {
+        "query_sock": "/dev/null",
+        "resume_from": 1,
+        "snapshot_gateway_ids": gateways,
+        "snapshot_pipeline_ids": pipelines,
+        "land_paths": land_paths,
+        "cap_s": cap_s,
+        "pipeline_sources": sources,
+    }
+
+
+def test_catalog_before_membership_but_reload_started_earlier_holds_wait():
+    """A catalog at seq 9 does not make a membership tagged with the earlier view ready."""
+    gateways, early, pipelines, sources, land_paths = _late_loader_land()
+    early_gateways = gateways[:-1]
+    late_gateway = gateways[-1]
+    ran: list[set[str]] = []
+
+    def _prefix():
+        events = [_catalog(index + 1, gateway_id) for index, gateway_id in enumerate(early_gateways)]
+        events.append(_catalog(9, late_gateway))
+        events.append(
+            _membership(10, gateways, early, catalog_gateway_ids=early_gateways)
+        )
+        return events
+
+    async def _feed_full(*_args: Any, **_kwargs: Any):
+        for event in _prefix():
+            yield event
+        yield _membership(12, gateways, pipelines, catalog_gateway_ids=gateways)
+
+    async def _feed_truncated(*_args: Any, **_kwargs: Any):
+        for event in _prefix():
+            yield event
+        await asyncio.Event().wait()
+
+    async def _run_op_run(affected: set[str]) -> list[str]:
+        ran.append(set(affected))
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed_full,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(gateways, pipelines, sources, land_paths, cap_s=5.0),
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert result.events_seen == 10
+        assert ran == [set(sources)]
+
+        ran.clear()
+        held = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed_truncated,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(
+                    gateways, pipelines, sources, land_paths, cap_s=0.05
+                ),
+            ),
+            timeout=2.0,
+        )
+        assert held.verdict == "indeterminate"
+        assert held.stop_reason == "cap"
+        assert ran == []
+
+    asyncio.run(_run())
+
+
+def test_live_events_without_seq_reach_ready():
+    """Live fan-out omits seq. Arrival order and the tag are enough."""
+    gateways, early, pipelines, sources, land_paths = _late_loader_land()
+    early_gateways = gateways[:-1]
+    late_gateway = gateways[-1]
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        for index, gateway_id in enumerate(early_gateways):
+            yield _without_seq(_catalog(index + 1, gateway_id))
+        yield _without_seq(
+            _membership(10, gateways, early, catalog_gateway_ids=early_gateways)
+        )
+        yield _without_seq(_catalog(15, late_gateway))
+        yield _without_seq(
+            _membership(20, gateways, pipelines, catalog_gateway_ids=gateways)
+        )
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(gateways, pipelines, sources, land_paths, cap_s=5.0),
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert result.events_seen == 10
+
+    asyncio.run(_run())
+
+
+def test_untagged_membership_never_ready_times_out_indeterminate():
+    gateways, _early, pipelines, sources, land_paths = _late_loader_land()
+    ran: list[set[str]] = []
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        for index, gateway_id in enumerate(gateways):
+            yield _catalog(index + 1, gateway_id)
+        yield _membership(20, gateways, pipelines, tagged=False)
+        await asyncio.Event().wait()
+
+    async def _run_op_run(affected: set[str]) -> list[str]:
+        ran.append(set(affected))
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(
+                    gateways, pipelines, sources, land_paths, cap_s=0.05
+                ),
+            ),
+            timeout=2.0,
+        )
+        assert result.timed_out
+        assert result.verdict == "indeterminate"
+        assert ran == []
+
+    asyncio.run(_run())
+
+
+def test_zero_count_catalog_is_not_an_arrival():
+    gateways, _early, pipelines, sources, land_paths = _late_loader_land()
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        for index, gateway_id in enumerate(gateways[:-1]):
+            yield _catalog(index + 1, gateway_id)
+        yield _catalog(8, gateways[-1], new_model_count=0)
+        yield _membership(20, gateways, pipelines, catalog_gateway_ids=gateways)
+        await asyncio.Event().wait()
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return ["should-not-run"]
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(
+                    gateways, pipelines, sources, land_paths, cap_s=0.05
+                ),
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "indeterminate"
+
+    asyncio.run(_run())
+
+
+def test_stream_end_before_ready_is_indeterminate_without_op_run():
+    gateways, early, pipelines, sources, land_paths = _late_loader_land()
+    feed = [
+        _catalog(index + 1, gateway_id) for index, gateway_id in enumerate(gateways)
+    ]
+    partial = early[:-1]
+    feed.append(_membership(10, gateways, partial, catalog_gateway_ids=gateways))
+    ran: list[set[str]] = []
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        for event in feed:
+            yield event
+
+    async def _run_op_run(affected: set[str]) -> list[str]:
+        ran.append(set(affected))
+        return []
+
+    async def _run() -> None:
+        started = time.monotonic()
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(gateways, pipelines, sources, land_paths, cap_s=5.0),
+            ),
+            timeout=2.0,
+        )
+        assert time.monotonic() - started < 1.0
+        assert result.timed_out is False
+        assert result.stop_reason == "stream_ended"
+        assert result.verdict == "indeterminate"
+        assert ran == []
+        assert result.events_seen == len(feed)
+
+    asyncio.run(_run())
+
+
+def test_gateway_gone_during_window_is_indeterminate():
+    gateways, _early, pipelines, sources, land_paths = _late_loader_land()
+    present = gateways[:-1]
+    ran: list[set[str]] = []
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        for index, gateway_id in enumerate(present):
+            yield _catalog(index + 1, gateway_id)
+        yield _membership(10, present, pipelines, catalog_gateway_ids=present)
+        yield _membership(11, present, pipelines, catalog_gateway_ids=present)
+        await asyncio.Event().wait()
+
+    async def _run_op_run(affected: set[str]) -> list[str]:
+        ran.append(set(affected))
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(
+                    gateways, pipelines, sources, land_paths, cap_s=0.05
+                ),
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "indeterminate"
+        assert result.verdict != "fail_attributable"
+        assert ran == []
+
+    asyncio.run(_run())
+
+
+def test_out_of_snapshot_gateway_catalog_does_not_split_wait_and_judge():
+    gateways, early, pipelines, sources, land_paths = _late_loader_land()
+    early_gateways = gateways[:-1]
+    late_gateway = gateways[-1]
+
+    async def _feed(*_args: Any, **_kwargs: Any):
+        for index, gateway_id in enumerate(early_gateways):
+            yield _catalog(index + 1, gateway_id)
+        yield _membership(10, gateways, early, catalog_gateway_ids=early_gateways)
+        yield _catalog(15, late_gateway)
+        yield _catalog(18, "gw-x")
+        yield _membership(20, gateways, pipelines, catalog_gateway_ids=gateways)
+
+    async def _run_op_run(_affected: set[str]) -> list[str]:
+        return []
+
+    async def _run() -> None:
+        result = await asyncio.wait_for(
+            wait_functional_settle(
+                subscribe_factory=_feed,
+                run_op_run=_run_op_run,
+                **_late_loader_kwargs(gateways, pipelines, sources, land_paths, cap_s=5.0),
+            ),
+            timeout=2.0,
+        )
+        assert result.verdict == "pass"
+        assert result.stop_reason == "ready"
+        assert result.timed_out is False
+
+    asyncio.run(_run())
 
 
 def test_executor_module_has_tests_for_all_seven_g5_items():
