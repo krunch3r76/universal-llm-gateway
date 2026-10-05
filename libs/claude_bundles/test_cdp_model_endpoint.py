@@ -2223,6 +2223,39 @@ def test_weekly_limit_bare_phrase_banner_long_body_still_stalls(
     assert result.stall_stage == "weekly_limit"
 
 
+def test_weekly_limit_approaching_banner_short_stop_body_still_stalls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sticky approaching banner + stop-only short body still grades weekly_limit (AC2f / B1)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-approach-sticky-stop")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-approach-sticky", "status": "running"},
+            {
+                "execution_id": "sat-wl-approach-sticky",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-approach-sticky.md",
+                "body": "You've hit your weekly limit. Try again next week.",
+                "error_banner_match": "weekly limit",
+                "error_banner_text": _PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-approach-sticky-stop",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
 def test_weekly_limit_approaching_and_stop_phrase_banner_still_stalls(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
