@@ -13,6 +13,7 @@ from __future__ import annotations
 import errno
 import json
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -102,7 +103,7 @@ def _stub_occupancy(
     """Replace the psutil scan with a fixed bridge roster."""
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
-        lambda: list(bridges),
+        lambda *_a, **_k: list(bridges),
     )
     reset_occupancy_cache()
 
@@ -262,14 +263,14 @@ def test_ac_w0_4_fresh_rescan_detects_bridge_inside_ttl(
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
-        lambda: [],
+        lambda *_a, **_k: [],
     )
     reset_occupancy_cache()
     _occupancy_snapshot()
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
-        lambda: [
+        lambda *_a, **_k: [
             BridgeOccupancy(pid=5555, cwd=str(wt), dispatch_id=dispatch_id),
         ],
     )
@@ -862,3 +863,197 @@ def test_ghost_row_backlog_is_counted_in_full_but_emits_within_budget(
     )
     assert again.registry_ghost_rows == backlog
     assert len(emitted) == _GHOST_EMIT_BUDGET
+
+
+def _clean_lane(source_repo: Path, worktree_root: Path, name: str) -> Path:
+    """Zero-commit clean ``cursor-sdk/`` worktree (no mint side effects)."""
+    worktree_root.mkdir(parents=True, exist_ok=True)
+    lane = worktree_root / name
+    _git(
+        "worktree",
+        "add",
+        "-b",
+        f"cursor-sdk/{name}",
+        str(lane),
+        "HEAD",
+        cwd=source_repo,
+    )
+    return lane
+
+
+def _head(source_repo: Path) -> str:
+    return _git("rev-parse", "HEAD", cwd=source_repo).stdout.strip()
+
+
+def _capture_removed(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    removed: list[dict] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_lane_b_worktree_removed",
+        lambda **kwargs: removed.append(kwargs),
+    )
+    return removed
+
+
+def _hide_skip_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Snapshot helpers return empty, as if the SELECT ran before the insert."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_reconcile._registered_worktree_paths",
+        lambda: set(),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_gc.registered_branch_names",
+        lambda: set(),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_live_guard.live_ledger_worktree_paths",
+        lambda **_k: set(),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_live_guard.live_bridge_worktree_paths",
+        lambda **_k: set(),
+    )
+
+
+def test_reconcile_reread_keeps_row_committed_during_the_pass(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skip-set miss plus a live registry and ledger row must not remove the tree.
+
+    Occupancy cache is pre-filled with no bridge. The row is inserted before
+    the call; the snapshot helpers are forced empty so only the pre-remove
+    reread can see it.
+    """
+    import time
+
+    from services.git_integration_worker import cursor_sdk_orphan
+
+    worktree_root = tmp_path / "worktrees"
+    lane = _clean_lane(source_repo, worktree_root, "lane-reread")
+    dispatch_id = "reread-live"
+    thread_id = "reread-thread"
+    register_lane_worktree(
+        source_repo=source_repo,
+        thread_id=thread_id,
+        worktree_path=lane,
+        branch_name="cursor-sdk/lane-reread",
+        branch_point=_head(source_repo),
+        last_dispatch_id=dispatch_id,
+    )
+    _admit(
+        ledger=CursorDispatchLedger.instance(),
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+        lease_key=str(lane.resolve()),
+    )
+    _hide_skip_set(monkeypatch)
+    _stub_occupancy(monkeypatch)
+    cursor_sdk_orphan._occupancy_cache = (time.monotonic(), [])
+    removed = _capture_removed(monkeypatch)
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert (reconciled, surfaced) == (0, 0)
+    assert lane.is_dir()
+    assert removed == []
+
+
+def test_reconcile_removes_unregistered_terminal_lane(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean tree with no registry row and a terminal ledger row is removed."""
+    worktree_root = tmp_path / "worktrees"
+    lane = _clean_lane(source_repo, worktree_root, "lane-terminal")
+    dispatch_id = "terminal-row"
+    _admit(
+        ledger=CursorDispatchLedger.instance(),
+        dispatch_id=dispatch_id,
+        thread_id="terminal-thread",
+        source_repo=source_repo,
+        lease_key=str(lane.resolve()),
+    )
+    CursorDispatchLedger.instance().mark_terminal(
+        dispatch_id=dispatch_id,
+        terminal_status="completed",
+    )
+    _stub_occupancy(monkeypatch)
+    removed = _capture_removed(monkeypatch)
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert (reconciled, surfaced) == (1, 0)
+    assert not lane.exists()
+    assert removed
+
+
+def test_reconcile_fresh_bridge_roster_keeps_unregistered_lane(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bridge that appears only on ``fresh=True`` holds the tree.
+
+    The cached roster is empty. ``live_bridge_occupancy(fresh=False)`` stays
+    empty; ``fresh=True`` reports the lane.
+    """
+    import time
+
+    from services.git_integration_worker import cursor_sdk_orphan
+
+    worktree_root = tmp_path / "worktrees"
+    lane = _clean_lane(source_repo, worktree_root, "lane-fresh")
+    bridge = BridgeOccupancy(pid=4242, cwd=str(lane), dispatch_id="fresh-bridge")
+
+    def scan(*_a, fresh: bool = False, **_k):
+        if fresh:
+            return [bridge]
+        return []
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
+        scan,
+    )
+    reset_occupancy_cache()
+    cursor_sdk_orphan._occupancy_cache = (time.monotonic(), [])
+    removed = _capture_removed(monkeypatch)
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert (reconciled, surfaced) == (0, 0)
+    assert lane.is_dir()
+    assert removed == []
+
+
+def test_reconcile_reread_failure_keeps_the_tree(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable ledger at reread time refuses the remove."""
+    worktree_root = tmp_path / "worktrees"
+    lane = _clean_lane(source_repo, worktree_root, "lane-unreadable")
+    _hide_skip_set(monkeypatch)
+    _stub_occupancy(monkeypatch)
+
+    def _boom():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_live_guard.ledger_connection",
+        _boom,
+    )
+    removed = _capture_removed(monkeypatch)
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert (reconciled, surfaced) == (0, 0)
+    assert lane.is_dir()
+    assert removed == []

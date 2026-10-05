@@ -67,15 +67,19 @@ def reset_occupancy_cache() -> None:
     _occupancy_cache = None
 
 
-def _occupancy_snapshot() -> list[BridgeOccupancy]:
+def _occupancy_snapshot(*, fresh: bool = False) -> list[BridgeOccupancy]:
     from services.git_integration_worker import cursor_sdk_orphan
 
     global _occupancy_cache
     now = time.monotonic()
-    cached = _occupancy_cache
-    if cached is not None and now - cached[0] < _OCCUPANCY_TTL_S:
-        return cached[1]
-    bridges = cursor_sdk_orphan.live_bridge_occupancy()
+    if not fresh:
+        cached = _occupancy_cache
+        if cached is not None and now - cached[0] < _OCCUPANCY_TTL_S:
+            return cached[1]
+    if fresh:
+        bridges = cursor_sdk_orphan.live_bridge_occupancy(fresh=True)
+    else:
+        bridges = cursor_sdk_orphan.live_bridge_occupancy()
     _occupancy_cache = (now, bridges)
     return bridges
 
@@ -377,7 +381,9 @@ def worktree_held_by_live_bridge(
     the single-path check usable from ``prune_dispatch_worktree`` where the
     caller knows the tree but not the root.
 
-    ``fresh=True`` drops the occupancy cache and rescans process truth.
+    ``fresh=True`` drops this module's occupancy cache and the orphan-module
+    scan cache (``live_bridge_occupancy(fresh=True)``), then rescans process
+    truth. A bridge that chdir'd during the current pass is visible.
 
     ``ignore_dispatch_id`` is the dispatch discharging its own branch. That
     bridge is not a hold: its row, lease, and cwd must not refuse the
@@ -390,7 +396,11 @@ def worktree_held_by_live_bridge(
         reset_occupancy_cache()
     target = worktree_path.resolve()
     root = (worktree_root or worktree_path.parent).resolve()
-    bridges = occupancy if occupancy is not None else _occupancy_snapshot()
+    bridges = (
+        occupancy
+        if occupancy is not None
+        else _occupancy_snapshot(fresh=fresh)
+    )
     for bridge in bridges:
         if (
             ignore_dispatch_id

@@ -254,6 +254,14 @@ def reconcile_unregistered_worktrees(
                 stage="reconcile",
             )
             continue
+        claim = _reread_remove_claim(worktree=entry.path)
+        if claim is not None:
+            logger.warning(
+                "unregistered worktree left in place — reread claim=%s path=%s",
+                claim,
+                entry.path,
+            )
+            continue
         if entry.branch:
             archive_branch(repo=repo, branch_name=entry.branch)
         if _remove_worktree(source_repo=repo, worktree=entry.path):
@@ -289,6 +297,70 @@ def _surface_dirty_tree(entry: GitWorktree) -> int:
         entry.branch,
     )
     return 1
+
+
+_LIVE_LEDGER_STATUSES = ("admitted", "running", "queued", "parked_waiting")
+
+
+def _reread_remove_claim(*, worktree: Path) -> str | None:
+    """Re-read registry and ledger immediately before ``git worktree remove``.
+
+    The skip-set at the start of the pass can miss a row that committed while
+    the loop was already running. Returns ``registry`` when a lane row carries
+    a dispatch id, ``ledger`` when a non-terminal dispatch row claims the path,
+    ``ledger_unreadable`` when that read fails (fail closed), else ``None``.
+    """
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        ledger_connection,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        ensure_worktree_schema,
+    )
+
+    resolved = str(worktree.resolve())
+    try:
+        with ledger_connection() as conn:
+            ensure_worktree_schema(conn)
+            registry_rows = conn.execute(
+                "SELECT worktree_path, last_dispatch_id FROM cursor_sdk_lane_worktrees"
+            ).fetchall()
+            placeholders = ", ".join("?" for _ in _LIVE_LEDGER_STATUSES)
+            ledger_rows = conn.execute(
+                "SELECT d.lease_key, d.source_repo, w.worktree_path "
+                "FROM cursor_sdk_dispatches d "
+                "LEFT JOIN cursor_sdk_lane_worktrees w "
+                "  ON w.thread_id = d.thread_id OR w.last_dispatch_id = d.dispatch_id "
+                f"WHERE d.status IN ({placeholders})",
+                _LIVE_LEDGER_STATUSES,
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001 — an unreadable ledger must not unguard
+        logger.warning(
+            "reconcile reread failed path=%s err=%s",
+            worktree,
+            exc,
+        )
+        return "ledger_unreadable"
+    for row in registry_rows:
+        stored = row["worktree_path"]
+        if not stored or not row["last_dispatch_id"]:
+            continue
+        try:
+            if str(Path(stored).resolve()) == resolved:
+                return "registry"
+        except (OSError, RuntimeError):
+            if str(stored) == resolved:
+                return "registry"
+    for row in ledger_rows:
+        for key in (row["worktree_path"], row["lease_key"], row["source_repo"]):
+            if not key:
+                continue
+            try:
+                if str(Path(key).resolve()) == resolved:
+                    return "ledger"
+            except (OSError, RuntimeError):
+                if str(key) == resolved:
+                    return "ledger"
+    return None
 
 
 def _registered_worktree_paths() -> set[str]:

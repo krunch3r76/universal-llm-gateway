@@ -303,6 +303,10 @@ def release_lane_worktree(
         thread_id=thread_id,
         worktree_path=worktree_path,
     )
+    if record is not None:
+        # A resolved registry row is not an unregistered tree. Live-dispatch
+        # and pin checks must run; unregistered=True only skips them.
+        unregistered = False
     if record is None and not unregistered:
         if worktree_path is not None and worktree_path.is_dir():
             _emit_release_refused(
