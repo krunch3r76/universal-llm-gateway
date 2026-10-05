@@ -19,9 +19,7 @@ from pathlib import Path
 from implement_admission.closeout_helpers import cortex_files_root
 
 # Citation + binding lines the authoring seat must leave on the author body.
-_RETRIEVAL_REPORT_LINE = re.compile(
-    r"(?im)^retrieval_report:\s*(cortex://\S+)\s*$"
-)
+_RETRIEVAL_REPORT_LINE = re.compile(r"(?im)^retrieval_report:\s*(cortex://\S+)\s*$")
 _REPORT_TARGET_LINE = re.compile(r"(?im)^target:\s*(\S+)\s*$")
 _BODY_TODO = re.compile(r"(?i)\btodo:([\w.-]+)\b")
 
@@ -58,7 +56,8 @@ _DELIVERY_CHROME_MARKERS: tuple[str, ...] = (
     "do not reject because you cannot check out a commit, run pytest, or run quality_gate",
 )
 
-_HEADING_LINE = re.compile(r"(?m)^(#{1,6}\s+.+)$")
+# Capture the ATX marker so a deeper heading (### under ##) is in-section, not a terminator (a:37914).
+_HEADING_MARKERS = re.compile(r"(?m)^(#{1,6})\s+.+$")
 
 
 class NestedCdpPromptGateError(ValueError):
@@ -128,17 +127,35 @@ def missing_report_sections(report_body: str) -> list[str]:
     return [h for h in _REQUIRED_REPORT_HEADINGS if h not in body]
 
 
+def _section_body_after(text: str, heading: str) -> str | None:
+    """Slice after *heading* up to the next ATX heading of the same or higher level.
+
+    Sub-headings stay inside the section so per-scope tables under ``###`` are
+    not treated as an empty required section (a:37914).
+    """
+    idx = text.find(heading)
+    if idx < 0:
+        return None
+    level = len(heading) - len(heading.lstrip("#"))
+    after = text[idx + len(heading) :]
+    for match in _HEADING_MARKERS.finditer(after):
+        if len(match.group(1)) <= level:
+            return after[: match.start()]
+    return after
+
+
 def empty_report_sections(report_body: str) -> list[str]:
-    """Return required headings whose section body has no non-blank content (A3)."""
+    """Return required headings whose section body has no non-blank content (A3).
+
+    A section ends at the next ATX heading of the same or higher level, so a
+    ``###`` under ``##`` stays in-section (a:37914).
+    """
     text = report_body or ""
     empty: list[str] = []
     for heading in _REQUIRED_REPORT_HEADINGS:
-        idx = text.find(heading)
-        if idx < 0:
+        section = _section_body_after(text, heading)
+        if section is None:
             continue
-        after = text[idx + len(heading) :]
-        next_heading = _HEADING_LINE.search(after)
-        section = after[: next_heading.start()] if next_heading else after
         if not section.strip():
             empty.append(heading)
     return empty
