@@ -30,10 +30,12 @@ from cortex_store.entity_crud import ENTITY_JSON_FIELDS
 from cortex_store.main import create_app
 
 _DISPATCH_ENVELOPE_KEYS = frozenset({"_next", "_hint", "skill_hint"})
-# path is absolute under tmp; uri/sha256/body_chars are stable comparators
+# path: absolute filesystem path under tmp — not comparable across twin roots
 _VOLATILE_RESPONSE_KEYS = frozenset({"path"})
+# File bytes: strip volatile frontmatter timestamps only (recon created_at, thread written_at).
+# Do not strip todo **Closed:** — fixture pins closed_at so that line is part of parity.
 _TIMESTAMP_LINE_RE = re.compile(
-    r"^(created_at|written_at|closed_at|\*\*Closed:\*\*)\s*[: ].*$",
+    r"^(created_at|written_at):\s*.*$",
     re.MULTILINE,
 )
 _LIVE_FILES_ROOT = shared_mod._FILES_ROOT
@@ -221,6 +223,7 @@ def test_thread_sidecar_write_dispatch_matches_typed_route(
     typed_body = _normalize_response(resp.json())
     assert dispatch_body == typed_body
     assert _file_tree(typed_files) == dispatch_tree
+    assert dispatch_tree
 
 
 @pytest.mark.offline
@@ -361,8 +364,54 @@ def test_todo_close_sidecar_failure_parity_after_file_write(
     typed_body = _normalize_response(resp.json())
     assert dispatch_body == typed_body
     assert _file_tree(typed_files) == dispatch_tree
+    expected_closure = "notes/system/todos/batch5-close-parity-closure.md"
+    assert set(dispatch_tree) == {expected_closure}
+    assert "closure_summary_uri" not in dispatch_attrs
+    typed_attrs = _entity_attributes(cortex_db.cortex_conn(), todo_id)
+    assert set(_file_tree(typed_files)) == {expected_closure}
+    assert "closure_summary_uri" not in typed_attrs
+    assert typed_attrs == dispatch_attrs
+
+
+@pytest.mark.offline
+def test_thread_sidecar_oversized_null_s4_divergence_dispatch_vs_typed(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4 known divergence: dispatch accepts oversized=null (renders 'none'); typed 422."""
+    payload = {
+        "thread": "999",
+        "subject": "null-oversized",
+        "content": "body text\n",
+        "oversized": None,
+    }
+    dispatch_files = tmp_path / "files_dispatch_oversized_null"
+    typed_files = tmp_path / "files_typed_oversized_null"
+    dispatch_files.mkdir()
+    typed_files.mkdir()
+
+    bind_db = tmp_path / "cortex_dispatch_oversized_null.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _bind_isolated_files(monkeypatch, dispatch_files)
+    dispatch_raw = execute_op("thread_sidecar_write", payload)
+    assert "error" not in dispatch_raw
+    dispatch_tree = _file_tree(dispatch_files)
     assert dispatch_tree
-    assert _entity_attributes(cortex_db.cortex_conn(), todo_id) == dispatch_attrs
+    sidecar_bytes = next(iter(dispatch_tree.values()))
+    assert b"oversized: none" in sidecar_bytes
+
+    typed_client = _isolated_client(
+        migrated_db_template,
+        tmp_path,
+        monkeypatch,
+        suffix="typed_oversized_null",
+        files_root=typed_files,
+    )
+    resp = typed_client.post("/threads/sidecars", json=payload)
+    assert resp.status_code == 422, resp.text
+    assert _file_tree(typed_files) == {}
 
 
 @pytest.mark.offline
