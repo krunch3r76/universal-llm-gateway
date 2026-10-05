@@ -527,6 +527,90 @@ async def test_fire_park_harvest_continue_posts_and_stamps(tmp_path, monkeypatch
     )
 
 
+@pytest.mark.asyncio
+async def test_fire_park_harvest_continue_admits_when_harvest_absent(
+    monkeypatch,
+):
+    """a:38115: NEXT_ADMIT harvest gone from the registry still admits.
+
+    hop_body_build_refused stays true on PARKED_TRANSPORT (no ROW_HOP lift).
+    Continue must skip that refuse after owed already saw the reply.
+    """
+    harvest_id = "c06ef180-7ee9-47f3-b6ed-50f0421b4ec4"
+    closeout = (
+        "status: complete\n"
+        "stop: PARKED_TRANSPORT\n"
+        "CONSULT_PENDING\n"
+        f"execution_id: {harvest_id}\n"
+        "poll_hint: wait\n"
+        f"NEXT_ADMIT: harvest {harvest_id}\n"
+    )
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="c5fe47561ce9-6ae01aaa", thread_id="15243")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT", "CONSULT_PENDING"],
+            "closeout_turn": 9,
+            "closeout_harvest_owed": True,
+            "closeout_body": closeout,
+            "hop_next_admit": f"harvest {harvest_id}",
+            "hop_park_harvest_fired_at": time.time(),
+            "summoning_thread_id": "15243",
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+
+    captured: dict = {}
+
+    async def _capture(body, **_kwargs):
+        captured["body"] = body
+        return True, {"dispatch_id": "b0818439b9f4-e339e808"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _capture,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._named_target_is_terminal",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._collect_dispatch_targets",
+        lambda *_a, **_k: [],
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._collect_execution_targets",
+        lambda *_a, **_k: [],
+    )
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        build_hop_team_dispatch_body,
+        hop_body_build_refused,
+    )
+
+    rec = json.loads(mapped["record_json"])
+    assert hop_body_build_refused(mapped, rec)
+    assert build_hop_team_dispatch_body(mapped) is None
+    assert await fire_park_harvest_continue(mapped)
+    assert captured["body"]["hop_reason"] == "park_harvest"
+    with ledger._connect() as conn:
+        stamped = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    rec = json.loads(stamped["record_json"])
+    assert rec.get("hop_successor") == "b0818439b9f4-e339e808"
+    assert "hop_park_harvest_continued_at" in rec
+
+
 def test_park_harvest_continue_candidates_no_grace() -> None:
     """R-B2 candidates: no grace delay for continue class."""
     ledger = CursorDispatchLedger.instance()

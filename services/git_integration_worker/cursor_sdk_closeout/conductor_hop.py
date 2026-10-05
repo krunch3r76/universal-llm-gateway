@@ -1362,7 +1362,11 @@ def build_hop_team_dispatch_body(
         rec = {}
     if not isinstance(rec, dict):
         rec = {}
-    if hop_body_build_refused(row, rec):
+    # PARKED_TRANSPORT is an EXIT_PERSIST hold token, so hop_body_build_refused
+    # never lifts (no ROW_HOP). park_harvest_continue_owed already required the
+    # web-anthropic reply; refusing here left hop_park_harvest_continued_at
+    # unset after that reply (a:38115, harvest id absent from the registry).
+    if hop_reason_override != "park_harvest" and hop_body_build_refused(row, rec):
         return None
     closeout_tokens = _closeout_tokens_from_row(row)
     predecessor_id = str(row.get("dispatch_id") or "")
