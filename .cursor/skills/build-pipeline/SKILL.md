@@ -6,21 +6,24 @@ description: "Build new Stargate pipelines or add versions — golden-path first
 # Build Pipeline
 
 <!-- pipeline-first -->
+## Pipeline-first (agent-workflow ops)
 **Trigger**
-New workflow: two or more ordered model, tool, or service calls.
+Choosing or changing the home of an agent-workflow op (observability, review, version, orchestration step). It lands as `pipelines/{domain}/vN/` even when it is one step. Substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) stay bare typed HTTP. MCP appears only as a thin relay when the review names it. Boundary: pipeline when a human reviews the logic as a unit, or steps and prompts must be recorded for provenance, or the op versions independently of its service.
 **Refuse**
-- A new MCP tool or the REST or service handler behind it.
-- A packet or DIRECTIVE naming an MCP tool. Raise in the review request.
+- A new MCP tool, or the REST or service handler behind it, as the home of an agent-workflow op.
+- A packet or DIRECTIVE naming an MCP tool as the delivery surface. Raise in the review request.
 - Claiming or relying on a hide or archive flag. None exists today; adding one is a design change — raise in the review request. Later `search_paths` override the same `pipeline.id`.
 **Steps**
-1. Land `pipelines/{domain}/vN/`. Kaywan reviews pipelines as self-contained units of workflow logic, and tool-plus-service code hides that workflow from review.
-   Falsifier: outside that directory.
-2. MCP only if the review names `[universal:mcp]` (thin relay, no business logic in the handler) or `pipeline` `model`=existing id (`services/mcp-server/tools/pipeline.py`).
+1. Land `pipelines/{domain}/vN/` even when the op is one step.
+   Falsifier: an agent-workflow op whose package is missing.
+2. Leave substrate resources (CRUD, lifecycle, byte pipes, high-blast named HITL) as bare typed HTTP.
+   Falsifier: a substrate resource wrapped as a pipeline.
+3. MCP only when the review names a thin relay (no business logic in the handler). Agents already reach any pipeline through the existing pipeline tool by pipeline_id; that is not a new MCP surface.
    Falsifier: any other reason.
-3. In the change moving callers, delete the old `vN/`; update every `pipeline_call_v1` `pipeline_id`, skill, config, and caller (`[universal:no-bc]`).
+4. In the change moving callers, delete the old `vN/`; update every `pipeline_call_v1` `pipeline_id`, skill, config, and caller (`[universal:no-bc]`).
    Falsifier: old `vN/`, stale id, or callers still claim or rely on a hide or archive flag.
 **Falsifier**
-Tool or handler logic, unnamed exception, or claiming or relying on a hide or archive flag that does not exist today.
+A one-step pipeline whose YAML is not a better map than the handler docstring.
 <!-- pipeline-first -->
 
 ## 1. Golden Path: First Pipeline in 10 Minutes
