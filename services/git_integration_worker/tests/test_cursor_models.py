@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, catalog_divergences
 from cursor_sdk.types import (
@@ -17,6 +19,7 @@ from services.git_integration_worker.cursor_models import (
     CapabilityDescriptorDrift,
     assert_capability_descriptor_fresh,
     build_model_selection,
+    list_live_sdk_models,
     live_admission_error,
     project_live_catalog,
     resolve_cursor,
@@ -255,3 +258,51 @@ def test_live_admission_error_none_when_accepted_values_reordered() -> None:
         ],
     )
     assert live_admission_error("composer-2.5", [reordered]) is None
+
+
+def test_list_live_sdk_models_ephemeral_bridge_not_default_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dead process-global client must not block catalog; fresh bridge lists models."""
+    import cursor_sdk._client as client_mod
+
+    expected = [_stub_sdk_model("composer-2.5")]
+    default_calls: list[bool] = []
+
+    def _dead_list_models() -> list[SDKModel]:
+        default_calls.append(True)
+        raise ConnectionError("connection refused")
+
+    dead_default = MagicMock()
+    dead_default.list_models = _dead_list_models
+    monkeypatch.setattr(client_mod, "_DEFAULT_CLIENT", dead_default)
+
+    launch_calls: list[int] = []
+
+    class _FakeBridge:
+        endpoint = object()
+
+        def close(self) -> None:
+            return None
+
+    def _fake_launch(**_kwargs: object) -> _FakeBridge:
+        launch_calls.append(1)
+        return _FakeBridge()
+
+    monkeypatch.setattr("cursor_sdk._bridge.Bridge.launch", _fake_launch)
+
+    live_client = MagicMock()
+    live_client.list_models.return_value = expected
+    monkeypatch.setattr(
+        "cursor_sdk.Client",
+        lambda endpoint, **kwargs: live_client,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_bridge_launch.resolve_bridge_bin",
+        lambda: "/fake/bridge",
+    )
+
+    assert list_live_sdk_models() == expected
+    assert launch_calls == [1]
+    assert not default_calls
+    live_client.close.assert_called_once()

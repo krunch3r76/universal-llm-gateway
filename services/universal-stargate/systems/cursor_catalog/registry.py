@@ -74,9 +74,9 @@ class CursorSdkCatalogPoller:
             )
             await self._emit_unavailable("health probe failed at startup")
         else:
-            await self._fetch_and_register()
-            self._connected = True
-            await self._emit_available()
+            self._connected = await self._fetch_and_register()
+            if self._connected:
+                await self._emit_available()
         logger.info("Cursor SDK catalog poller started")
 
     async def shutdown(self) -> None:
@@ -116,7 +116,7 @@ class CursorSdkCatalogPoller:
             await self._emit_catalog_fetch_failed(str(exc))
             return []
 
-    async def _fetch_and_register(self) -> None:
+    async def _fetch_and_register(self) -> bool:
         catalog = await self._fetch_catalog()
         model_ids: list[ModelId] = []
         model_resources: dict[ModelId, dict[str, Any]] = {}
@@ -148,7 +148,7 @@ class CursorSdkCatalogPoller:
 
         if not model_ids:
             await self._gateway_manager.remove_gateways([_GATEWAY_ID])
-            return
+            return False
 
         gateway = FederatedGateway(
             gateway_id=_GATEWAY_ID,
@@ -166,6 +166,7 @@ class CursorSdkCatalogPoller:
         await self._gateway_manager.register_cursor_gateway(gateway)
         await self._emit_catalog_updated(len(model_ids))
         await self._emit_drift_if_needed(projected)
+        return True
 
     async def _touch_heartbeat(self) -> None:
         """Refresh liveness without re-fetching the hourly catalog."""
@@ -210,9 +211,8 @@ class CursorSdkCatalogPoller:
                     await self._emit_unavailable("health probe failed during refresh")
                     continue
                 was_connected = self._connected
-                await self._fetch_and_register()
-                self._connected = True
-                if not was_connected:
+                self._connected = await self._fetch_and_register()
+                if self._connected and not was_connected:
                     await self._emit_available()
             except asyncio.CancelledError:
                 raise

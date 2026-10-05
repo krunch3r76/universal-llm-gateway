@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
@@ -144,10 +145,34 @@ def live_admission_error(bare_id: str, models: Sequence[SDKModel]) -> str | None
 
 
 def list_live_sdk_models() -> Sequence[SDKModel]:
-    """List models via ``Cursor().models.list()`` (catalog route entry point)."""
-    from cursor_sdk import Cursor
+    """List models via a dedicated bridge (catalog route entry point).
 
-    return Cursor().models.list()
+    Does not use the process-global ``Cursor()`` default client: when that
+    bridge dies, catalog polling must keep working until GIW restarts.
+    """
+    from cursor_sdk import Client
+    from cursor_sdk._bridge import Bridge
+
+    from services.git_integration_worker.cursor_sdk_bridge_launch import (
+        resolve_bridge_bin,
+    )
+
+    bridge_bin = resolve_bridge_bin()
+    workspace = os.environ.get("CURSOR_SDK_CATALOG_WORKSPACE", os.getcwd())
+    launch_timeout = float(os.environ.get("CURSOR_SDK_LAUNCH_TIMEOUT", "180"))
+    bridge = Bridge.launch(
+        command=[bridge_bin],
+        workspace=workspace,
+        timeout=launch_timeout,
+    )
+    try:
+        client = Client(bridge.endpoint, allow_api_key_env_fallback=True)
+        try:
+            return client.list_models()
+        finally:
+            client.close()
+    finally:
+        bridge.close()
 
 
 def assert_capability_descriptor_fresh(
