@@ -197,7 +197,15 @@ def launch_sdk_bridge(
     Reads ``ctx.dispatch_id``, ``ctx.dispatch_workspace``, and ``ctx.lane``
     (alignment only when lane is ``B``). Other context fields are the
     caller's responsibility.
+
+    Lane-B: refuse spawn when the worktree is gone (friction 37813) so
+    Node does not die ``spawn_enoent_missing_cwd``.
     """
+    from services.git_integration_worker.cursor_sdk_worktree_remint import (
+        ensure_spawn_workspace,
+    )
+
+    ctx = ensure_spawn_workspace(ctx)
     bridge_bin = resolve_bridge_bin()
     command = build_bridge_command(
         bridge_bin=bridge_bin,

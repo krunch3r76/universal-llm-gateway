@@ -1161,6 +1161,11 @@ def _run_sdk_sync(
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
     real_home = operator_real_home()
+    from services.git_integration_worker.cursor_sdk_worktree_remint import (
+        ensure_spawn_workspace,
+    )
+
+    ctx = ensure_spawn_workspace(ctx)
     resume_ctx = load_resume_run_context(dispatch_id=ctx.dispatch_id)
     if resume_ctx is not None:
         store_bearing_id = resolve_store_bearing_dispatch_id(
@@ -1553,6 +1558,8 @@ def _run_sdk_sync(
                 model_knobs_emitted=model_knobs_emitted,
                 provider_error=stream_capture.provider_error,
             )
+        except WorktreeMintError:
+            raise
         except BaseException as exc:
             sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
             if sdk_request_id:
@@ -2924,6 +2931,38 @@ async def _run_sdk_dispatch_gated(
             terminal_status="failed",
             controller=controller,
             emit_tag="CURSOR_VENV_CONFIG",
+        )
+        return
+    except WorktreeMintError as exc:
+        logger.error(
+            "cursor sdk lane worktree remint failed at spawn: dispatch_id=%s err=%s",
+            req.dispatch_id,
+            exc,
+        )
+        env = error_envelope(
+            code="CURSOR_WORKTREE_MINT_FAILED",
+            message=str(exc),
+            source="gateway",
+            retryable=getattr(exc, "retryable", True),
+        )
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="failed",
+            execution_id=req.execution_id,
+        )
+        await bus.reply(
+            thread_id=req.thread_id,
+            to_agent=reply_to,
+            from_agent="cursor-sdk",
+            subject=(f"cursor-sdk dispatch {req.dispatch_id} FAILED (worktree remint)"),
+            body=f"```json\n{json.dumps(env, indent=2)}\n```",
+        )
+        await _mark_terminal_and_promote(
+            dispatch_id=req.dispatch_id,
+            terminal_status="failed",
+            controller=controller,
+            emit_tag="CURSOR_WORKTREE_MINT_FAILED",
         )
         return
     except BaseException as exc:  # noqa: BLE001
