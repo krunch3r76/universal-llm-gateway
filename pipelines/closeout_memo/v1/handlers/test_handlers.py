@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 from cdp_ask.lane_admission import lane_seat_holder
-
+from cdp_ask.lane_current_cse import resolve_lane_current_cse
 from closeout_memo.models import CloseoutMemoRequest
-from pipelines.closeout_memo.v1.handlers import _ledger
-from pipelines.closeout_memo.v1.handlers._transport import followup_body
-from pipelines.closeout_memo.v1.handlers.deliver_policy import decide
+
+from . import _ledger
+from ._transport import followup_body
+from .deliver_policy import decide
 
 pytestmark = pytest.mark.offline
 
@@ -69,6 +70,51 @@ def test_two_row_seat_holder_picks_later_seat_bound_at() -> None:
     holder = lane_seat_holder(snap, "12286")
     assert holder["state"] == "conflict"
     assert holder["registration_id"] == "newer"
+
+
+def test_lane_current_resolver_picks_in_flight_page() -> None:
+    """AC-6 once friction 37834 is on master. Calls the resolver; does not copy it."""
+    live = "https://claude.ai/cowork/cse_live"
+    drain = "https://claude.ai/cowork/cse_drain"
+
+    def pages():
+        yield 9223, live, "ws://9223"
+        yield 9224, drain, "ws://9224"
+
+    def probe(port: int, _ws: str):
+        if port == 9223:
+            return {"streaming": True, "stop": False, "tool_pause": False}, True
+        return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+    def provenance(url: str):
+        if url == live:
+            return {
+                "parent_thread_claim": "12286",
+                "registration_id": "live-reg",
+                "reason": "idle_exit",
+            }
+        if url == drain:
+            return {
+                "parent_thread_claim": "12286",
+                "registration_id": "drain-reg",
+                "reason": "hygiene_drain",
+            }
+        return None
+
+    body = resolve_lane_current_cse(
+        "12286",
+        snap={},
+        list_pages=pages,
+        probe_page=probe,
+        provenance_for=provenance,
+        list_active=lambda: [],
+        chat_url_for_registration=lambda _rid: None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "current"
+    assert body["basis"] == "in_flight"
+    assert body["current"]["chat_url"] == live
 
 
 def test_indeterminate_harvests_before_retry() -> None:

@@ -1,1 +1,0 @@
-"""closeout-memo pipeline package."""
