@@ -519,6 +519,7 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
         "deadline_resolve", {"deadline_id": deadline_id, **body}
     )
     assert dispatch_raw.get("outcome_set") is False
+    dispatch_body = _normalize_deadline_resolve(dispatch_raw)
     dispatch_snap = _deadline_failure_db_snapshot(
         cortex_db.cortex_conn(), deadline_id
     )
@@ -529,7 +530,10 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
     resp = typed_client.post(f"/deadlines/{deadline_id}/resolve", json=body)
     assert resp.status_code == 200
-    assert resp.json().get("outcome_set") is False
+    typed_raw = resp.json()
+    assert typed_raw.get("outcome_set") is False
+    typed_body = _normalize_deadline_resolve(typed_raw)
+    assert dispatch_body == typed_body
     typed_snap = _deadline_failure_db_snapshot(
         cortex_db.cortex_conn(), deadline_id
     )
