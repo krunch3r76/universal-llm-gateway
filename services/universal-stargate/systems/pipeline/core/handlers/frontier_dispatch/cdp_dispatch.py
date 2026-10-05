@@ -17,14 +17,17 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from cdp_ask.unverifiable import WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
 from claude_bundles.cdp_model_endpoint import (
     DEFAULT_MAX_WALL_S,
     CdpGenerateResult,
     run_cdp_generate,
 )
 from model_id import ModelId, canonical_model_entity_id
+from universal_logging import get_logger
 
 from ...events.dispatch import (
     PipelineFrontierDispatchCompleted,
@@ -38,6 +41,8 @@ if TYPE_CHECKING:
     from ..schemas import StepConfig
     from .admission_gate import AdmissionResult
     from .handler import FrontierDispatchHandler
+
+logger = get_logger(__name__)
 
 HarvestSource = Literal["chat", "output-file", "auto"]
 ExpectedSize = Literal["small", "large", "auto"]
@@ -219,15 +224,89 @@ def lineage_leg_key(context: Any, step: Any) -> str:
     return raw
 
 
+def _pipeline_leg_within_horizon(leg: Any) -> bool:
+    """True until ``max_open_leg_s`` after the leg was admitted."""
+    from systems.frontier_consult.cdp_generate_reconcile import max_open_leg_s
+
+    try:
+        admitted = datetime.fromisoformat(leg.admitted_at).timestamp()
+    except (TypeError, ValueError):
+        return True
+    open_s = max(0.0, datetime.now(UTC).timestamp() - admitted)
+    return open_s < max_open_leg_s(leg.max_wall_s)
+
+
 def _open_pipeline_leg(leg: Any) -> bool:
-    """True when a prior pipeline submit is still the leg to poll."""
-    return bool(
-        leg is not None
-        and leg.owner == "pipeline"
-        and not leg.abandoned
-        and not leg.proof_emitted
-        and leg.satellite_execution_id
+    """True when this pipeline leg is polled instead of submitted.
+
+    An in-flight leg is polled until it is abandoned. A proof-emitted leg is
+    replayed until its horizon so a run killed after the CDP proof, and before
+    the memo write, does not resubmit.
+    """
+    if (
+        leg is None
+        or leg.owner != "pipeline"
+        or leg.abandoned
+        or not leg.satellite_execution_id
+    ):
+        return False
+    if leg.proof_emitted:
+        return _pipeline_leg_within_horizon(leg)
+    return True
+
+
+def _proof_snapshot_miss(
+    snapshot: dict[str, Any] | None,
+    result: CdpGenerateResult | None,
+) -> str | None:
+    """``not-found`` or ``unknown`` when a proof-emitted poll cannot be replayed.
+
+    A terminal result, including a failure, stays on the poll path. A
+    still-running snapshot returns None so the caller does not submit.
+    """
+    if result is not None:
+        return None
+    if snapshot is None:
+        return "unknown"
+    if snapshot.get("error") and "status" not in snapshot:
+        code = snapshot.get("status_code")
+        err = str(snapshot.get("error") or "").lower()
+        if code == 404 or "not found" in err or "not_found" in err:
+            return "not-found"
+        return "unknown"
+    status = str(snapshot.get("status") or "").lower()
+    stall = str(snapshot.get("stall_stage") or "").lower()
+    if status in ("", "unknown") or stall == "unknown":
+        return "unknown"
+    return None
+
+
+def _settle_pipeline_leg(
+    leg_key: str,
+    result: CdpGenerateResult,
+    *,
+    already_proof: bool,
+) -> None:
+    """Close a pipeline leg after a terminal result.
+
+    Success marks proof-emitted. A final failure abandons the leg so the next
+    run with the same key submits. ``WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED``
+    leaves the leg open, matching ``finalize_cdp_generate``. A leg that is
+    already proof-emitted is not abandoned.
+    """
+    from systems.frontier_consult.cdp_generate_inflight_ledger import (
+        mark_abandoned,
+        mark_proof_emitted,
     )
+
+    if result.ok:
+        mark_proof_emitted(leg_key)
+        return
+    if already_proof:
+        return
+    if result.stall_stage == WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED:
+        return
+    mark_abandoned(leg_key)
 
 
 def build_cdp_admission_result(
@@ -299,7 +378,9 @@ async def run_cdp_dispatch(
     CdpGenerateStalled and raises ``CdpDispatchError``.
 
     A re-run whose ``owner='pipeline'`` leg is still open polls that satellite
-    once and does not submit again.
+    once and does not submit again. A proof-emitted leg is replayed the same
+    way until its horizon. A final failure abandons the leg so the retry
+    submits; an unconfirmed wall-clock abort leaves it open.
     """
     from systems.frontier_consult.cdp_events import (
         CdpGenerateProof,
@@ -349,24 +430,7 @@ async def run_cdp_dispatch(
     submitted_sat_id: str | None = None
     started = time.monotonic()
 
-    if _open_pipeline_leg(existing):
-        submitted_sat_id = existing.satellite_execution_id
-        snapshot = await poll_satellite_snapshot(existing.satellite_execution_id)
-        result = None
-        if isinstance(snapshot, dict):
-            result = result_from_snapshot(
-                snapshot=snapshot,
-                execution_id=context.execution_id,
-                satellite_execution_id=existing.satellite_execution_id,
-                prompt_uri=existing.prompt_uri,
-                picker_model=picker_from_model_id(model),
-            )
-        if result is None:
-            raise CdpDispatchError(
-                f"CDP lineage leg still open: key={leg_key!r} "
-                f"satellite_execution_id={existing.satellite_execution_id!r}"
-            )
-    else:
+    async def _submit() -> CdpGenerateResult:
         upsert_inflight_leg(
             execution_id=leg_key,
             request_id=request_id,
@@ -398,7 +462,7 @@ async def run_cdp_dispatch(
 
             loop.call_soon_threadsafe(_publish)
 
-        result = await asyncio.to_thread(
+        return await asyncio.to_thread(
             run_cdp_generate,
             execution_id=context.execution_id,
             model_id=model,
@@ -412,6 +476,50 @@ async def run_cdp_dispatch(
             converse=True,
             on_submitted=_on_submitted,
         )
+
+    already_proof = False
+    if _open_pipeline_leg(existing):
+        already_proof = bool(existing.proof_emitted)
+        if model != existing.model_id:
+            logger.warning(
+                "cdp lineage leg model mismatch: key=%s leg_model=%s "
+                "admission_model=%s",
+                leg_key,
+                existing.model_id,
+                model,
+            )
+        submitted_sat_id = existing.satellite_execution_id
+        snapshot = await poll_satellite_snapshot(existing.satellite_execution_id)
+        snap = snapshot if isinstance(snapshot, dict) else None
+        result = None
+        if snap is not None:
+            result = result_from_snapshot(
+                snapshot=snap,
+                execution_id=context.execution_id,
+                satellite_execution_id=existing.satellite_execution_id,
+                prompt_uri=existing.prompt_uri,
+                picker_model=picker_from_model_id(existing.model_id),
+            )
+        miss = _proof_snapshot_miss(snap, result) if already_proof else None
+        if miss is not None:
+            logger.warning(
+                "cdp lineage proof leg snapshot %s; submitting: key=%s "
+                "satellite_execution_id=%s",
+                miss,
+                leg_key,
+                existing.satellite_execution_id,
+            )
+            result = await _submit()
+            already_proof = False
+        elif result is None:
+            raise CdpDispatchError(
+                f"CDP lineage leg still open: key={leg_key!r} "
+                f"satellite_execution_id={existing.satellite_execution_id!r}"
+            )
+    else:
+        result = await _submit()
+
+    _settle_pipeline_leg(leg_key, result, already_proof=already_proof)
     latency_ms = (time.monotonic() - started) * 1000.0
 
     if result.ok:
