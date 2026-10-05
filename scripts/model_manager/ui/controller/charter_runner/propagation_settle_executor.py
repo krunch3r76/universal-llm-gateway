@@ -261,10 +261,12 @@ def _membership_window_ready(
 ) -> bool:
     """True when membership matches gateways, follows each gateway's catalog, and lists every unaffected pipeline.
 
-    A membership event is ready only when its seq is greater than the latest
-    ``catalog.changed`` seq of every snapshot gateway that has one. Catalog
-    events without ``payload.gateway_id`` are not attributable; that window
-    falls back to two consecutive identical pipeline sets.
+    A membership event is ready only when every snapshot gateway has a
+    ``catalog.changed`` in this window and the membership seq is greater than
+    each of those seqs. A gateway whose catalog event is older than
+    ``resume_from`` is absent here, so the wait stays closed until the cap.
+    Catalog events without ``payload.gateway_id`` are not attributable; that
+    window falls back to two consecutive identical pipeline sets.
     """
     snap = list(snapshot_gateway_ids or ())
     if not snap:
@@ -295,9 +297,7 @@ def _membership_window_ready(
     else:
         for gateway_id in snap:
             catalog_seq = catalog_by_gateway.get(gateway_id)
-            if catalog_seq is None:
-                continue
-            if membership_seq is None or membership_seq <= catalog_seq:
+            if catalog_seq is None or membership_seq is None or membership_seq <= catalog_seq:
                 return False
     snap_pipes = set(snapshot_pipeline_ids or ())
     sources = pipeline_sources or {}
