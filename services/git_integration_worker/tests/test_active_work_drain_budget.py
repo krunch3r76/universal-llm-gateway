@@ -130,6 +130,8 @@ def test_agent_bus_drain_probe_determinate_while_inventory_slow(
     assert work.detail["lane_b_status"] == "pending"
     assert work.detail["lane_b"] == {"status": "pending"}
     assert isinstance(work.detail["lane_b_regime"], bool)
+    # a:37853: occupancy must not await inventory — probe stays well under 1s.
+    assert elapsed < 1.0, elapsed
     assert fresh is not None and fresh.detail["lane_b_status"] == "fresh"
     assert fresh.detail["lane_b"] == _INVENTORY
     assert fresh.detail["lane_b_as_of"]
@@ -189,3 +191,32 @@ def test_describe_probe_exc_keeps_message_when_present() -> None:
         restart_drain.describe_probe_exc(exc)
         == "ConnectError: All connection attempts failed"
     )
+
+
+def test_active_lease_index_avoids_full_scan_on_holder_lookup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37853: lease holder SELECT must use idx_sdk_dispatch_active_lease."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+        _migrate_active_lease_index,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        _migrate_active_lease_index(conn)
+        plan = list(
+            conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                "AND status IN ('admitted','running') LIMIT 1",
+                ("/tmp/repo",),
+            )
+        )
+    CursorDispatchLedger._instance = None
+    detail = " ".join(str(row[-1]) for row in plan).lower()
+    assert "idx_sdk_dispatch_active_lease" in detail, plan
+    assert "scan cursor_sdk_dispatches" not in detail, plan

@@ -848,6 +848,21 @@ def _migrate_park_columns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_active_lease_index(conn: sqlite3.Connection) -> None:
+    """Partial index for write-lease holder lookups on the drain probe path (a:37853).
+
+    ``lease_snapshot`` filtered ``lease_key`` + ``status IN ('admitted','running')``
+    with a full SCAN of the fat ``record_json`` table (~190ms × 2 per
+    ``/active-work``). Queued/parked already had lease partial indexes; active
+    holders did not.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_active_lease "
+        "ON cursor_sdk_dispatches(lease_key, status) "
+        "WHERE status IN ('admitted', 'running')"
+    )
+
+
 def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
     """Add ``cancelled`` terminal + ``work_fingerprint`` via table rebuild."""
     row = conn.execute(
@@ -1100,6 +1115,7 @@ class CursorDispatchLedger:
             _migrate_lease_key_column(conn)
             _migrate_cancelled_status(conn)
             _migrate_park_columns(conn)
+            _migrate_active_lease_index(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
                 ensure_land_lease_schema,
             )

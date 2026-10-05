@@ -423,6 +423,7 @@ def _active_holder_from_lease(lease: dict[str, Any]) -> dict[str, Any] | None:
 def sdk_busy_status_envelope(
     *,
     source_repo: str | None = None,
+    lease: dict[str, Any] | None = None,
     write_capacity_detail: dict[str, dict[str, int]] | None = None,
     active_by_lane: dict[str, int] | None = None,
     queued_by_lane: dict[str, int] | None = None,
@@ -431,6 +432,8 @@ def sdk_busy_status_envelope(
 
     Serial write-lease occupancy is the restart-defer truth surface: one active
     holder plus an explicit queue, not an undifferentiated active gate count.
+    Pass ``lease`` when the caller already has ``lease_snapshot`` (a:37853 —
+    ``/active-work`` must not pay the holder query twice).
     """
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
@@ -439,7 +442,8 @@ def sdk_busy_status_envelope(
         lane_b_regime_active,
     )
 
-    lease = CursorDispatchLedger.instance().lease_snapshot(source_repo=source_repo)
+    if lease is None:
+        lease = CursorDispatchLedger.instance().lease_snapshot(source_repo=source_repo)
     queued_dispatches = [
         {
             "dispatch_id": row["dispatch_id"],
@@ -610,11 +614,15 @@ def _write_capacity_fields(
 
 
 def sdk_dispatch_gate_stats(
-    *, lane: GateLane | None = None
+    *,
+    lane: GateLane | None = None,
+    source_repo: str | None = None,
+    lease: dict[str, Any] | None = None,
 ) -> dict[str, int | str | dict[str, int | dict[str, int]]]:
     """Return active/queued/limit counters for cursor-sdk capacity gates.
 
     ``lane=None`` (default) returns combined totals plus per-lane breakdown.
+    ``lease`` / ``source_repo`` feed ``busy_status`` without a second snapshot.
     """
     standard = _lane_stats(_STANDARD_GATE)
     operator = _lane_stats(_OPERATOR_GATE)
@@ -639,6 +647,8 @@ def sdk_dispatch_gate_stats(
         "active_by_lane": live_by_lane,
         "queued_by_lane": queued_by_lane,
         "busy_status": sdk_busy_status_envelope(
+            source_repo=source_repo,
+            lease=lease,
             write_capacity_detail=write_capacity_detail,
             active_by_lane=live_by_lane,
             queued_by_lane=queued_by_lane,

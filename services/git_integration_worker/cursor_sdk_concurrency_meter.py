@@ -486,9 +486,12 @@ def active_work_lane_fields(*, source_repo: Path) -> dict[str, Any]:
 
 
 # ``/active-work`` is the manage drain probe (5s budget) for GIW and agent_bus.
-# The Lane-B inventory costs git subprocesses per ``cursor-sdk/*`` branch and is
-# display-only there, so it must never gate the occupancy answer.
-LANE_B_INVENTORY_WAIT_S = 1.0
+# The Lane-B inventory shells out per ``cursor-sdk/*`` branch / worktree and is
+# display-only there — never await it on the occupancy answer (a:36594 bounded
+# wait to 1s; a:37853: even 1s tips MCP→manage under worktree debt, so wait is 0).
+LANE_B_INVENTORY_WAIT_S = 0.0
+# Re-kick background inventory only after the cache ages past this (a:37853).
+LANE_B_INVENTORY_REREFRESH_S = 30.0
 _lane_b_refresh: dict[Path, asyncio.Task[bool]] = {}
 _lane_b_cache: dict[Path, tuple[dict[str, Any], str]] = {}
 
@@ -503,14 +506,32 @@ async def _refresh_lane_b_inventory(repo: Path) -> bool:
     return True
 
 
+def _lane_b_cache_age_s(as_of: str) -> float | None:
+    try:
+        then = datetime.fromisoformat(as_of)
+    except ValueError:
+        return None
+    return (datetime.now(UTC) - then).total_seconds()
+
+
+def _lane_b_task_failed(task: asyncio.Task[bool]) -> bool:
+    if task.cancelled():
+        return True
+    try:
+        return not bool(task.result())
+    except Exception:
+        return True
+
+
 async def active_work_lane_fields_bounded(
     *, source_repo: Path, wait_s: float = LANE_B_INVENTORY_WAIT_S
 ) -> dict[str, Any]:
     """``active_work_lane_fields`` for ``/active-work``, waiting at most ``wait_s``.
 
     One refresh runs at a time per repo and survives the request that started it.
-    On timeout the last snapshot is served with ``lane_b_status="stale"``, or
-    ``lane_b={"status": "pending"}`` when none exists yet.
+    Default ``wait_s`` is 0: never await inventory — serve cache (``stale`` /
+    ``pending``) and refresh in the background. A positive wait keeps the
+    a:36594 bounded-await behaviour for callers that opt in.
     """
     from services.git_integration_worker.cursor_sdk_lane_regime import (
         lane_b_regime_active,
@@ -519,13 +540,32 @@ async def active_work_lane_fields_bounded(
     repo = source_repo.resolve()
     loop = asyncio.get_running_loop()
     task = _lane_b_refresh.get(repo)
-    if task is None or task.done() or task.get_loop() is not loop:
-        task = loop.create_task(_refresh_lane_b_inventory(repo))
-        _lane_b_refresh[repo] = task
-    try:
-        refreshed = await asyncio.wait_for(asyncio.shield(task), timeout=wait_s)
-    except TimeoutError:
-        refreshed = False
+    cached = _lane_b_cache.get(repo)
+    in_flight = task is not None and not task.done() and task.get_loop() is loop
+    if not in_flight:
+        age_s = _lane_b_cache_age_s(cached[1]) if cached is not None else None
+        stale_cache = cached is None or (
+            age_s is not None and age_s >= LANE_B_INVENTORY_REREFRESH_S
+        )
+        failed = task is not None and task.done() and _lane_b_task_failed(task)
+        wrong_loop = task is not None and task.get_loop() is not loop
+        if task is None or wrong_loop or failed or stale_cache:
+            task = loop.create_task(_refresh_lane_b_inventory(repo))
+            _lane_b_refresh[repo] = task
+    if wait_s <= 0:
+        # Occupancy must not await inventory (a:37853). Serve cache immediately.
+        if task.done() and not task.cancelled():
+            try:
+                refreshed = bool(task.result())
+            except Exception:
+                refreshed = False
+        else:
+            refreshed = False
+    else:
+        try:
+            refreshed = await asyncio.wait_for(asyncio.shield(task), timeout=wait_s)
+        except TimeoutError:
+            refreshed = False
     status = "fresh" if refreshed else "stale"
 
     fields: dict[str, Any] = {"lane_b_regime": lane_b_regime_active()}
