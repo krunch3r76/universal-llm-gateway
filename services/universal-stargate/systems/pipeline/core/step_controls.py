@@ -5,7 +5,6 @@ YAML ``enabled`` is the base. A request may set
 ``pipeline_options.skip_steps``. Enable and skip on the same step is a
 caller error before the run. An unknown step name is a caller error.
 Disabling a step with ``allow_disable: false`` is a caller error.
-A ``decision_table`` that is not a dict is a definition error naming the step.
 """
 
 from __future__ import annotations
@@ -158,9 +157,6 @@ def apply_request_step_controls(
 
     updated: list[StepConfig] = []
     for step in steps:
-        table = step.get_domain_field("decision_table")
-        if table is not None and not isinstance(table, dict):
-            raise StepDefinitionError(step.id, "decision_table must be a mapping")
         if step.id not in enabled_by_step:
             updated.append(step)
             continue

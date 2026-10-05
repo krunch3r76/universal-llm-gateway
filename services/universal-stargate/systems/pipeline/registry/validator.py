@@ -221,6 +221,13 @@ class PipelineValidator:
                     )
 
         for step in pipeline.steps:
+            if step.model_extra and "decision_table" in step.model_extra:
+                errors.append(
+                    f"Step '{step.id}': decision_table is not supported; "
+                    "route with condition on a verdict step and join with "
+                    "select_output"
+                )
+
             if step.type == "sub_pipeline":
                 continue
 

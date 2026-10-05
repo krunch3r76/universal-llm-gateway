@@ -6,13 +6,10 @@ from systems.pipeline.core.conditions import (
     KNOWN_CONDITION_NAMES,
     extract_condition_deps,
 )
-from systems.pipeline.core.execution.errors.timeout import StepTimeoutError
 from systems.pipeline.core.schemas import PipelineSpec, StepConfig
 from systems.pipeline.core.step_controls import (
     StepCallerError,
-    StepDefinitionError,
     apply_request_step_controls,
-    failure_is_retryable,
     fold_legacy_enable_flags,
 )
 
@@ -84,23 +81,6 @@ def test_disable_allow_disable_false_is_caller_error() -> None:
             _pipeline().steps,
             {"skip_steps": ["retrieval_metadata"]},
         )
-
-
-def test_decision_table_error_names_step_and_is_not_retryable() -> None:
-    steps = list(_pipeline().steps)
-    data = steps[1].model_dump()
-    data["decision_table"] = "nope"
-    steps[1] = StepConfig.model_validate(data)
-    with pytest.raises(StepDefinitionError, match="rerank"):
-        apply_request_step_controls(_pipeline(), steps, {})
-    assert failure_is_retryable(StepDefinitionError("rerank", "x")) is False
-    assert failure_is_retryable(StepCallerError("rerank", "x")) is False
-    assert (
-        failure_is_retryable(
-            StepTimeoutError(step_name="rerank", timeout_seconds=1)
-        )
-        is True
-    )
 
 
 def test_named_condition_is_not_a_step_dep() -> None:
