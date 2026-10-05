@@ -145,7 +145,11 @@ def _section_body_after(text: str, heading: str) -> str | None:
 
 
 def empty_report_sections(report_body: str) -> list[str]:
-    """Return required headings whose section body has no non-blank content (A3)."""
+    """Return required headings whose section body has no non-blank content (A3).
+
+    A section ends at the next ATX heading of the same or higher level, so a
+    ``###`` under ``##`` stays in-section (a:37914).
+    """
     text = report_body or ""
     empty: list[str] = []
     for heading in _REQUIRED_REPORT_HEADINGS:
