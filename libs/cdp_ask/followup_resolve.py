@@ -308,7 +308,13 @@ def _in_flight_off_holder(lane_body: dict) -> list[str]:
         str(page.get("chat_url") or "")
         for page in lane_body.get("candidates") or []
         if isinstance(page, dict)
-        and page.get("in_flight") is True
+        and (
+            page.get("in_flight") is True
+            or (
+                page.get("in_flight") is None
+                and "registry_row" in (page.get("claims") or [])
+            )
+        )
         and page.get("chat_url")
         and page.get("chat_url") != holder_url
     ]

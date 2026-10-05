@@ -58,17 +58,11 @@ def _default_provenance(chat_url: str) -> dict[str, Any] | None:
 
 
 def _default_purpose_for() -> PurposeFor:
-    rows: dict[str, dict[str, Any]] | None = None
+    from claude_bundles import cdp_registry_store as store
+
+    rows = store.load_active()
 
     def purpose_for(registration_id: str) -> str | None:
-        nonlocal rows
-        if rows is None:
-            from claude_bundles import cdp_registry_store as store
-
-            try:
-                rows = store.load_active()
-            except Exception:
-                rows = {}
         row = rows.get(registration_id)
         if not isinstance(row, dict):
             return None
@@ -129,6 +123,12 @@ def select_lane_current(
     if len(in_flight) == 1 and len(unknown) > 0:
         return "ambiguous", None, "probe_incomplete", None
     holder_key = normalize_cse_url(holder_url or "")
+    if any(
+        "registry_row" in (page.get("claims") or [])
+        and page.get("chat_url") != holder_key
+        for page in unknown
+    ):
+        return "ambiguous", None, "probe_incomplete", None
     holder_page = next(
         (page for page in claimed if page.get("chat_url") == holder_key),
         None,
@@ -227,9 +227,9 @@ def resolve_lane_current_cse(
         list_active = cdp_registry.list_active
     if chat_url_for_registration is None:
         chat_url_for_registration = cdp_registry.chat_url_for_registration
-    if purpose_for_registration is None:
-        purpose_for_registration = _default_purpose_for()
     try:
+        if purpose_for_registration is None:
+            purpose_for_registration = _default_purpose_for()
         return _resolve(
             lane,
             snap=snap,
@@ -289,10 +289,8 @@ def _resolve(
     holder_key = normalize_cse_url(holder_url or "")
 
     registry_by_url: dict[str, list[str]] = {}
-    try:
-        active = list_active()
-    except Exception:
-        active = []
+    # An unreadable registry is a probe failure, not an empty lane.
+    active = list_active()
     for reg in active:
         try:
             parent = str(getattr(reg, "parent_thread", "") or "").strip()

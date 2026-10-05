@@ -175,6 +175,41 @@ async def test_holder_present_but_other_page_streaming_refuses(
 
 
 @pytest.mark.asyncio
+async def test_unknown_registry_page_off_holder_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap()
+    )
+    monkeypatch.setattr("cdp_ask.followup_events.emit", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.lane_current_cse.resolve_lane_current_cse",
+        lambda lane, *, snap: {
+            "state": "ambiguous",
+            "basis": None,
+            "reason": "probe_incomplete",
+            "current": None,
+            "seat_holder": {"registration_id": "reg-held", "chat_url": OTHER},
+            "candidates": [
+                {"chat_url": CSE, "in_flight": None, "claims": ["registry_row"]},
+                {"chat_url": OTHER, "in_flight": False, "claims": ["seat_holder"]},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-held")],
+    )
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert path == "parent_thread"
+    assert err is not None
+    assert err.error == "lane_cse_ambiguous"
+    assert err.detail == CSE
+
+
+@pytest.mark.asyncio
 async def test_dormant_holder_with_idle_pages_binds_holder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

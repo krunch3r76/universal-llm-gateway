@@ -231,6 +231,7 @@ def test_list_pages_and_provenance_raising_do_not_escape() -> None:
         list_pages=boom_pages,
         provenance_for=boom_prov,
         list_active=lambda: [],
+        purpose_for_registration=lambda _rid: "operator-proxy",
         now=lambda: 10.0,
     )
     assert body["state"] == "none"
@@ -239,21 +240,97 @@ def test_list_pages_and_provenance_raising_do_not_escape() -> None:
         yield 9223, LIVE, "ws://x"
         raise RuntimeError("mid")
 
-    def boom_active() -> list[Any]:
-        raise RuntimeError("active")
-
     body = resolve_lane_current_cse(
         LANE,
         snap={},
         list_pages=pages,
         provenance_for=boom_prov,
-        list_active=boom_active,
+        list_active=lambda: [],
         purpose_for_registration=lambda _rid: "operator-proxy",
         now=lambda: 10.0,
     )
     assert body["state"] == "none"
     assert body["reason"] == "no_claimed_live_page"
     assert body["unclaimed_cse_urls"] == [LIVE]
+
+
+def test_unreadable_registry_is_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom_active() -> list[Any]:
+        raise RuntimeError("active")
+
+    body = _resolve(list_active=boom_active)
+    assert body["state"] == "none"
+    assert body["reason"] == "probe_error"
+
+    def boom_load() -> dict[str, Any]:
+        raise RuntimeError("active.json corrupt")
+
+    monkeypatch.setattr("claude_bundles.cdp_registry_store.load_active", boom_load)
+    body = _resolve(purpose_for_registration=None)
+    assert body["reason"] == "probe_error"
+
+
+def test_unknown_registry_page_off_holder_outranks_holder() -> None:
+    class _Live:
+        parent_thread = LANE
+        registration_id = "fc69582c"
+        purpose = "operator-proxy"
+
+    def probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        if port == 9223:
+            return None, False
+        return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": "held",
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+            }
+        ]
+    }
+    body = _resolve(
+        snap=snap,
+        probe_page=probe,
+        list_active=lambda: [_Live()],
+        chat_url_for_registration=lambda rid: {
+            "fc69582c": LIVE,
+            "held": UNCLAIMED,
+        }.get(rid),
+    )
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "probe_incomplete"
+    live = next(page for page in body["candidates"] if page["chat_url"] == LIVE)
+    assert live["in_flight"] is None
+    assert "registry_row" in live["claims"]
+
+
+def test_unknown_provenance_only_page_does_not_block_holder() -> None:
+    def probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        if port == 9224:
+            return None, False
+        return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": "held",
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+            }
+        ]
+    }
+    body = _resolve(
+        snap=snap,
+        probe_page=probe,
+        chat_url_for_registration=lambda rid: UNCLAIMED if rid == "held" else None,
+    )
+    assert body["state"] == "current"
+    assert body["basis"] == "seat_holder"
+    assert body["current"]["chat_url"] == UNCLAIMED
 
 
 def test_top_level_failure_is_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
