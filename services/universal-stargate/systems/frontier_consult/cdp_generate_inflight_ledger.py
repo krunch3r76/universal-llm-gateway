@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS cdp_inflight_leg (
     finalize_claim_until      TEXT,
     finalize_claim_holder     TEXT,
     abandoned                 INTEGER NOT NULL DEFAULT 0,
-    purpose                   TEXT
+    purpose                   TEXT,
+    owner                     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cdp_inflight_open
     ON cdp_inflight_leg(proof_emitted) WHERE proof_emitted=0 AND abandoned=0;
@@ -38,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_cdp_inflight_open
 _LEG_SELECT = (
     "SELECT execution_id, request_id, satellite_execution_id, thread_id, "
     "pointer_turn, caller_agent, prompt_uri, model_id, max_wall_s, admitted_at, "
-    "proof_emitted, delivered, abandoned, purpose FROM cdp_inflight_leg"
+    "proof_emitted, delivered, abandoned, purpose, owner FROM cdp_inflight_leg"
 )
 
 
@@ -59,12 +60,20 @@ def _ensure_purpose_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE cdp_inflight_leg ADD COLUMN purpose TEXT")
 
 
+def _ensure_owner_column(conn: sqlite3.Connection) -> None:
+    """Add ``owner`` on existing DBs. NULL keeps today's thread delivery."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(cdp_inflight_leg)")}
+    if "owner" not in cols:
+        conn.execute("ALTER TABLE cdp_inflight_leg ADD COLUMN owner TEXT")
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path(), timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_DDL)
     _ensure_purpose_column(conn)
+    _ensure_owner_column(conn)
     return conn
 
 
@@ -84,11 +93,13 @@ class InflightLeg:
     delivered: bool
     abandoned: bool
     purpose: str | None = None
+    owner: str | None = None
 
 
 def _row_to_leg(row: sqlite3.Row) -> InflightLeg:
     keys = set(row.keys())
     purpose = row["purpose"] if "purpose" in keys else None
+    owner_raw = row["owner"] if "owner" in keys else None
     return InflightLeg(
         execution_id=row["execution_id"],
         request_id=row["request_id"],
@@ -104,6 +115,7 @@ def _row_to_leg(row: sqlite3.Row) -> InflightLeg:
         delivered=bool(row["delivered"]),
         abandoned=bool(row["abandoned"]),
         purpose=str(purpose).strip() if purpose else None,
+        owner=str(owner_raw).strip() if owner_raw else None,
     )
 
 
@@ -118,16 +130,19 @@ def upsert_inflight_leg(
     model_id: str,
     max_wall_s: float,
     purpose: str | None = None,
+    owner: str | None = None,
 ) -> None:
     """Persist admitted leg before worker task spawn (AC12)."""
     purpose_norm = str(purpose).strip() if purpose else None
+    owner_norm = str(owner).strip() if owner else None
     conn = _connect()
     try:
         conn.execute(
             "INSERT OR REPLACE INTO cdp_inflight_leg "
             "(execution_id, request_id, thread_id, pointer_turn, caller_agent, "
             "prompt_uri, model_id, max_wall_s, admitted_at, proof_emitted, delivered, "
-            "abandoned, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)",
+            "abandoned, purpose, owner) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)",
             (
                 execution_id,
                 request_id,
@@ -139,6 +154,7 @@ def upsert_inflight_leg(
                 float(max_wall_s),
                 _now(),
                 purpose_norm,
+                owner_norm,
             ),
         )
         conn.commit()
