@@ -29400,8 +29400,7 @@
                 "$ref": "#/components/schemas/ViewRenderRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {

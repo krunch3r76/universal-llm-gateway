@@ -58,6 +58,9 @@ _SOURCE_URI = "cortex://notes/views/batch9-view.md"
 _NARRATIVE = {"narrative_layer": "Synthesis cites [assertion:1] for grounding."}
 _FIXED_SNAPSHOT_AS_OF = "2026-01-01T00:00:00+00:00"
 _REFRESH_BODY = {"mode": "refresh", "root_id": _ROOT_ID}
+_PENDING_REFRESH_CLAIM = "new pending claim for refresh"
+_ROOT_SEED_CLAIM = f"claim for {_ROOT_ID}"
+_FULL_WITHOUT_ROOT_MARKER = "batch9 full without root_id marker"
 
 
 def _assert_isolated_db(db_path: Path) -> None:
@@ -158,8 +161,10 @@ def _files_inventory(files_root: Path) -> dict[str, str]:
     for path in sorted(files_root.rglob("*")):
         if path.is_file():
             rel = str(path.relative_to(files_root))
-            # Volatile: durable_write lock sidecars are not part of view_render parity.
+            # Volatile: lock sidecars and content-addressed blobs are not view parity.
             if rel.endswith(".lock") or "/.lock." in rel:
+                continue
+            if rel.startswith(".content-store/"):
                 continue
             body = path.read_bytes()
             inv[rel] = hashlib.sha256(body).hexdigest()
@@ -324,6 +329,13 @@ def _insert_active_derived_from(
     return int(cur.lastrowid)
 
 
+def _read_view_head_text(files_root: Path) -> str:
+    rel = _SOURCE_URI.removeprefix("cortex://")
+    path = files_root / rel
+    assert path.is_file(), path
+    return path.read_text(encoding="utf-8")
+
+
 def _run_parity_pair(
     migrated_db_template: Path,
     tmp_path: Path,
@@ -335,6 +347,7 @@ def _run_parity_pair(
     root_id: str | None,
     seed_fn: Any,
     assert_post_differs_from_pre: bool = False,
+    assert_written_contains: str | None = None,
 ) -> None:
     _freeze_view_snapshot_as_of(monkeypatch)
     bind_db = tmp_path / "dispatch.db"
@@ -353,6 +366,9 @@ def _run_parity_pair(
     )
     dispatch_body = _normalize_view_body(dispatch_raw)
     dispatch_ev = _events_snapshot(dispatch_events)
+    if assert_written_contains:
+        written = _read_view_head_text(files_d)
+        assert assert_written_contains in written, written[:800]
     if assert_post_differs_from_pre:
         assert post["files"] != pre["files"] or post["entities"] != pre["entities"], (
             pre,
@@ -454,18 +470,10 @@ def _seed_pending_refresh_delta(
 ) -> tuple[str, str]:
     root_id, doc_id = _seed_view_entities(conn)
     _seed_registered_view(conn, files_root, root_id, doc_id)
-    _insert_pending_assertion(conn, root_id, "new pending claim for refresh")
+    _insert_pending_assertion(conn, root_id, _PENDING_REFRESH_CLAIM)
     _lower_max_assertion_id(conn, doc_id)
     conn.commit()
     return root_id, doc_id
-
-
-def _seed_refresh_delta(conn: sqlite3.Connection, files_root: Path) -> None:
-    _seed_pending_refresh_delta(conn, files_root)
-    result = execute_op(
-        "view_render", {"document_id": _DOC_ID, **_REFRESH_BODY}
-    )
-    assert "error" not in result, result
 
 
 @pytest.mark.offline
@@ -505,8 +513,7 @@ def test_view_render_bodiless_post_refresh_parity(
     """Bodiless typed POST defaults to refresh like /dispatch with only document_id."""
 
     def seed(conn: sqlite3.Connection, files_root: Path) -> None:
-        root_id, doc_id = _seed_view_entities(conn)
-        _seed_registered_view(conn, files_root, root_id, doc_id)
+        _seed_pending_refresh_delta(conn, files_root)
 
     _run_parity_pair(
         migrated_db_template,
@@ -515,9 +522,104 @@ def test_view_render_bodiless_post_refresh_parity(
         document_id=_DOC_ID,
         root_id=_ROOT_ID,
         seed_fn=seed,
+        assert_post_differs_from_pre=True,
+        assert_written_contains=_PENDING_REFRESH_CLAIM,
         dispatch_call=lambda: execute_op("view_render", {"document_id": _DOC_ID}),
         typed_call=lambda c: _typed_post_bodiless(c, f"/views/{_DOC_ID}/render"),
     )
+
+
+@pytest.mark.offline
+def test_view_render_bodiless_post_refresh_requires_root_inference(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def seed(conn: sqlite3.Connection, files_root: Path) -> None:
+        _seed_pending_refresh_delta(conn, files_root)
+
+    monkeypatch.setattr(
+        views_mod, "_infer_root_id_from_derived_from", lambda _c, _d: None
+    )
+    with pytest.raises(AssertionError):
+        _run_parity_pair(
+            migrated_db_template,
+            tmp_path,
+            monkeypatch,
+            document_id=_DOC_ID,
+            root_id=_ROOT_ID,
+            seed_fn=seed,
+            assert_post_differs_from_pre=True,
+            assert_written_contains=_PENDING_REFRESH_CLAIM,
+            dispatch_call=lambda: execute_op("view_render", {"document_id": _DOC_ID}),
+            typed_call=lambda c: _typed_post_bodiless(c, f"/views/{_DOC_ID}/render"),
+        )
+
+
+@pytest.mark.offline
+def test_view_render_full_without_root_id_parity(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode=full with only document_id infers root from derived_from (U1)."""
+
+    def seed(conn: sqlite3.Connection, files_root: Path) -> None:
+        root_id, doc_id = _seed_view_entities(conn)
+        _seed_registered_view(conn, files_root, root_id, doc_id)
+        _insert_pending_assertion(conn, root_id, _FULL_WITHOUT_ROOT_MARKER)
+        conn.commit()
+
+    _run_parity_pair(
+        migrated_db_template,
+        tmp_path,
+        monkeypatch,
+        document_id=_DOC_ID,
+        root_id=_ROOT_ID,
+        seed_fn=seed,
+        assert_written_contains=_FULL_WITHOUT_ROOT_MARKER,
+        dispatch_call=lambda: execute_op(
+            "view_render", {"document_id": _DOC_ID, "mode": "full"}
+        ),
+        typed_call=lambda c: _typed_post(
+            c, f"/views/{_DOC_ID}/render", {"mode": "full"}
+        ),
+    )
+    written = _read_view_head_text(tmp_path / "files_dispatch")
+    assert _ROOT_SEED_CLAIM in written
+
+
+@pytest.mark.offline
+def test_view_render_full_without_root_id_requires_root_inference(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def seed(conn: sqlite3.Connection, files_root: Path) -> None:
+        root_id, doc_id = _seed_view_entities(conn)
+        _seed_registered_view(conn, files_root, root_id, doc_id)
+        _insert_pending_assertion(conn, root_id, _FULL_WITHOUT_ROOT_MARKER)
+        conn.commit()
+
+    monkeypatch.setattr(
+        views_mod, "_infer_root_id_from_derived_from", lambda _c, _d: None
+    )
+    with pytest.raises(AssertionError):
+        _run_parity_pair(
+            migrated_db_template,
+            tmp_path,
+            monkeypatch,
+            document_id=_DOC_ID,
+            root_id=_ROOT_ID,
+            seed_fn=seed,
+            assert_written_contains=_FULL_WITHOUT_ROOT_MARKER,
+            dispatch_call=lambda: execute_op(
+                "view_render", {"document_id": _DOC_ID, "mode": "full"}
+            ),
+            typed_call=lambda c: _typed_post(
+                c, f"/views/{_DOC_ID}/render", {"mode": "full"}
+            ),
+        )
 
 
 @pytest.mark.offline
@@ -716,6 +818,13 @@ def test_view_render_error_cases_parity(
         dispatch_raw = execute_op("view_render", payload)
         assert _error_code(dispatch_raw) == code, (label, dispatch_raw)
         assert _events_snapshot(dispatch_events) == []
+        post = _full_view_inventory(
+            cortex_db.cortex_conn(),
+            tmp_path / f"files_err_d_{label}",
+            payload.get("document_id", _DOC_ID),
+            _ROOT_ID,
+        )
+        assert post == pre, (label, pre, post)
 
         client, _, files_t = _isolated_client(
             migrated_db_template, tmp_path, monkeypatch, suffix=f"err_t_{label}"
@@ -739,9 +848,11 @@ def test_view_render_error_cases_parity(
         resp = client.post(f"/views/{doc_path}/render", json=body)
         assert resp.status_code == 200, resp.text
         assert _error_code(resp.json()) == code
-        assert _full_view_inventory(
+        assert _events_snapshot(typed_events) == []
+        post_t = _full_view_inventory(
             cortex_db.cortex_conn(), files_t, doc_path, _ROOT_ID
-        ) == pre_t
+        )
+        assert post_t == pre_t, (label, pre_t, post_t)
         assert pre_t == pre
 
 
@@ -1011,6 +1122,7 @@ def test_view_render_register_failure_preserves_preexisting_derived_from(
         (edge_id,),
     )
     assert len(rels_t) == 1
+    assert rollback_t == [] or all(r is None for r in rollback_t)
 
 
 @pytest.mark.offline
