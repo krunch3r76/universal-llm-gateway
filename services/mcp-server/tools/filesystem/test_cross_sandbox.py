@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tools._hashing import sha256_hex_of_file
 from tools.filesystem import _cross_sandbox as cross_sandbox
 
 
@@ -43,6 +44,10 @@ def test_copy_between_sandboxes_workspaces_to_cortex(
     assert result["status"] == "copied"
     assert result["source_sandbox"] == "workspaces"
     assert result["target_sandbox"] == "cortex"
+    assert result["to"] == "notes/legal/case.pdf"
+    assert result["to_uri"] == "cortex://notes/legal/case.pdf"
+    assert result["uri"] == "cortex://notes/legal/case.pdf"
+    assert result["read_sha256"] == sha256_hex_of_file(destination)
 
 
 def test_copy_between_sandboxes_cortex_to_workspaces(

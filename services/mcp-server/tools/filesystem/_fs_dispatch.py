@@ -99,8 +99,9 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "move": ("(path, target)", "rename/relocate file"),
     "copy": (
         "(path, target, target_sandbox?)",
-        "copy file; when target_sandbox\n"
-        "                           differs from sandbox, copy server-side between sandboxes",
+        "copy file; dest Share URI infers sandbox even when\n"
+        "                           target_sandbox is omitted; success includes\n"
+        "                           dest read_sha256 after persist verify",
     ),
     "write_binary": ("(path, content)", "write base64-encoded binary"),
     "append_binary": ("(path, content)", "append base64 chunk to binary file"),
@@ -109,7 +110,10 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "check whether a cited sha256 digest resolves in the content store",
     ),
     "md_list": ("(path)", "list sections/TOC (see Markdown section ops below)"),
-    "md_read": ("(path, section?)", "read one section (see Markdown section ops below)"),
+    "md_read": (
+        "(path, section?)",
+        "read one section (see Markdown section ops below)",
+    ),
     "md_to_dict": ("(path)", "nested heading dict (see Markdown section ops below)"),
     "md_replace": (
         "(path, section, target, content, all_occurrences?)",

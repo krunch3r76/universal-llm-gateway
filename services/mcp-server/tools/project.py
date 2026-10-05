@@ -448,8 +448,11 @@ def register_project_tools(mcp: FastMCP) -> None:
             target: Relative destination path.
 
         Returns:
-            {"status": "copied", "from": "<source path>", "to": "<dest path>"}
+            {"status": "copied", "from": "<source path>", "to": "<dest path>",
+             "read_sha256": "<hex>"}
         """
+        from tools.filesystem._ops_paths import copy_file_verified
+
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
         if not src.exists():
@@ -457,13 +460,17 @@ def register_project_tools(mcp: FastMCP) -> None:
         if not src.is_file():
             return {"error": f"Path is not a file: {path!r}"}
 
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(dst))
+        dest, digest = copy_file_verified(src, dst)
         rel_src = str(src.relative_to(_PROJECT_ROOT.resolve()))
-        rel_dst = str(dst.relative_to(_PROJECT_ROOT.resolve()))
+        rel_dst = str(dest.relative_to(_PROJECT_ROOT.resolve()))
         logger.info("copy_project_file: %s -> %s", rel_src, rel_dst)
         record("mcp.project.file.copied", source=rel_src, destination=rel_dst)
-        return {"status": "copied", "from": rel_src, "to": rel_dst}
+        return {
+            "status": "copied",
+            "from": rel_src,
+            "to": rel_dst,
+            "read_sha256": digest,
+        }
 
     @mcp.tool(title="Delete Project File")
     def delete_project_file(path: str) -> dict[str, str]:

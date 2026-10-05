@@ -4,19 +4,48 @@ from __future__ import annotations
 
 import logging
 import shutil
+from pathlib import Path
 
 from mcp_events import record
+
+from tools._durable_write import WriteVerifyError, verify_persisted
 
 from ._paths import (
     SANDBOX_ROOT,
     TRASH_ROOT,
     reject_template_tokens,
     safe_path,
+    sha256_hex_of_file,
     trash_destination,
 )
 from ._share_uri_response import attach_dual_carry
 
 logger = logging.getLogger(__name__)
+
+
+def copy_file_verified(src: Path, dst: Path) -> tuple[Path, str]:
+    """Copy *src* onto *dst*, then refuse unless dest bytes match source.
+
+    ``status=copied`` is not returned by callers until this function returns.
+    If *dst* already exists as a directory, the file lands at ``dst / src.name``.
+    """
+    if not src.is_file():
+        raise ValueError(f"Source is not a file: {src}")
+    dest = dst / src.name if dst.exists() and dst.is_dir() else dst
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src), str(dest))
+    if not dest.is_file():
+        raise FileNotFoundError(f"Copy dest is not a file after copy: {dest}")
+    digest = sha256_hex_of_file(dest)
+    verify_persisted(dest, digest)
+    src_digest = sha256_hex_of_file(src)
+    if digest != src_digest:
+        raise WriteVerifyError(
+            dest,
+            expected_sha256=src_digest,
+            actual_sha256=digest,
+        )
+    return dest, digest
 
 
 def move_file_impl(source: str, destination: str) -> dict[str, str]:
@@ -52,14 +81,18 @@ def copy_file_impl(source: str, destination: str) -> dict[str, str]:
     if not src.is_file():
         raise ValueError(f"Source is not a file: {source!r}")
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(src), str(dst))
+    dest, digest = copy_file_verified(src, dst)
     record("mcp.tool.file.copied", source=source, destination=destination)
-    logger.info("copy_file: %s → %s", src, dst)
-    src_rel = source.lstrip("/")
-    dst_rel = destination.lstrip("/")
+    logger.info("copy_file: %s → %s", src, dest)
+    src_rel = str(src.relative_to(SANDBOX_ROOT))
+    dst_rel = str(dest.relative_to(SANDBOX_ROOT))
     return attach_dual_carry(
-        {"status": "copied", "from": src_rel, "to": dst_rel},
+        {
+            "status": "copied",
+            "from": src_rel,
+            "to": dst_rel,
+            "read_sha256": digest,
+        },
         sandbox="cortex",
         rel_path=dst_rel,
     )

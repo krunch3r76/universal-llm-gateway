@@ -13,10 +13,12 @@ from fs_roots import (
 )
 from project_ops import workspaces_impl_registry
 from tool_error_enricher import fs_missing_sandbox_hint
+from tools._durable_write import WriteVerifyError, write_verify_error_dict
 from tools.filesystem._batch_ingress import (
     apply_lane_ingress,
     attach_batch_key_remap,
     prepare_fs_call_ingress,
+    resolve_copy_target_ingress,
 )
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._fs_dispatch import (
@@ -162,11 +164,24 @@ def fs_impl(
             )
         }
 
+    copy_dest_sandbox = target_sandbox
+    if op == "copy" and target.strip():
+        try:
+            dest_ingress = resolve_copy_target_ingress(
+                target,
+                target_sandbox=target_sandbox,
+                source_sandbox=effective_sandbox,
+            )
+        except ValueError as exc:
+            return {"error": str(exc)}
+        copy_dest_sandbox = dest_ingress.sandbox
+        target = dest_ingress.rel_path
+
     refusal = permission_refusal(
         surface,
         effective_sandbox,
         op,
-        target_sandbox=target_sandbox,
+        target_sandbox=copy_dest_sandbox,
     )
     if refusal is not None:
         return refusal
@@ -249,18 +264,23 @@ def fs_impl(
             result.update(ingress_meta)
         return result
 
-    if op == "copy" and target_sandbox and target_sandbox != effective_sandbox:
+    if op == "copy" and copy_dest_sandbox and copy_dest_sandbox != effective_sandbox:
         if not effective_path:
             return {"error": "'path' is required for copy"}
         if not target:
             return {"error": "'target' is required for copy"}
-        result = copy_between_sandboxes_impl(
-            effective_sandbox,
-            effective_path,
-            target_sandbox,
-            target,
-            surface=surface,
-        )
+        try:
+            result = copy_between_sandboxes_impl(
+                effective_sandbox,
+                effective_path,
+                copy_dest_sandbox,
+                target,
+                surface=surface,
+            )
+        except WriteVerifyError as exc:
+            return write_verify_error_dict(exc)
+        except (ValueError, FileNotFoundError, OSError) as exc:
+            return {"error": str(exc)}
         result["_next"] = FS_WORKFLOW_HINTS["copy"]
         result.update(ingress_meta)
         return result
@@ -347,5 +367,7 @@ def fs_impl(
             )
             result.update(ingress_meta)
         return result
-    except ValueError as exc:
+    except WriteVerifyError as exc:
+        return write_verify_error_dict(exc)
+    except (ValueError, FileNotFoundError) as exc:
         return {"error": str(exc)}

@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
-from implement_admission.scheme_resolve import resolve_fs_ingress
+from implement_admission.scheme_resolve import (
+    FsIngressResult,
+    parse_schemed_path,
+    resolve_fs_ingress,
+)
 from tool_error_enricher import apply_life_sandbox_default
 
 
@@ -195,6 +199,32 @@ def prepare_fs_call_ingress(
         paths=effective_paths,
         batch_originals=batch_originals,
         meta=meta,
+    )
+
+
+def resolve_copy_target_ingress(
+    target: str,
+    *,
+    target_sandbox: str,
+    source_sandbox: str,
+    cortex_root: Path | None = None,
+) -> FsIngressResult:
+    """Resolve copy ``target`` the same way ``path`` ingress resolves sources.
+
+    Schemed ``cortex://`` / ``workspaces://`` dests infer sandbox from the URI
+    even when ``target_sandbox`` is omitted. A schemeless dest keeps the
+    explicit ``target_sandbox`` or, if that is also empty, the source sandbox.
+    ``for_write=True`` so dests use the write-side creation gate.
+    """
+    explicit = target_sandbox.strip() or None
+    if explicit is None and parse_schemed_path(target).scheme is None:
+        explicit = source_sandbox
+    root = cortex_root if cortex_root is not None else cortex_files_root()
+    return resolve_fs_ingress(
+        target,
+        sandbox=explicit,
+        cortex_root=root,
+        for_write=True,
     )
 
 
