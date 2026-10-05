@@ -40,7 +40,6 @@ response = await executor.execute(context)
 | `response_builder.py` | Response builder for pipeline results. |
 | `schemas.py` | Pipeline schemas - exports from core. |
 | `user_handlers.py` | User handlers directory loading with variant-scoped routing. |
-| `user_prompts.py` | User prompts directory loading. |
 | `verification_report.py` | Verification report builder for `consensus_verify_chain_v4` pipeline steps. |
 | `execution_summary_inputs.py` | Input formatting for pipeline execution summaries. |
 | **core/** | |
