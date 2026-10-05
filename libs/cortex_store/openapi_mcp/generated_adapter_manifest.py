@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "f7e51d7b5bc631945b8ffeffd85b483974f7d9348f8b17aca8dd91edd229d668"
+OPENAPI_SHA256 = "0b6638d8b96f6dfd53f176880696f95983049b161935109bcfefbc66977e34f9"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -350,11 +350,6 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/todos/closure-sidecars",
         "operation_id": "todo_close_sidecar_route_todos_closure_sidecars_post",
     },
-    "view_render": {
-        "method": "POST",
-        "path": "/views/{document_id}/render",
-        "operation_id": "view_render_route_views__document_id__render_post",
-    },
     "walk_subgraph": {
         "method": "GET",
         "path": "/subgraph/walk",
@@ -362,7 +357,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "284e6ddb2f56c738340789b0953188988567e24a032a8beaaba48e395f0449c2",
+    "@components": "4406c62c1ee39f7d31c40b844c139f04df25737122f75d90591ca3eff2a928c9",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

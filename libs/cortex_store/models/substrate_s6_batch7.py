@@ -16,16 +16,3 @@ class RegisterSkillSubstrateRequest(BaseModel):
     skill_binding: dict[str, Any] | None = None
     session_id: str | None = None
     agent: str | None = None
-
-
-class ViewRenderRequest(BaseModel):
-    """All fields accepted by ``_op_view_render`` (handler default ``mode=refresh``)."""
-
-    mode: str = "refresh"
-    root_id: str | None = None
-    view_profile: str | None = None
-    narrative_sections: dict[str, str] | None = None
-    as_of_system: str | None = None
-    as_of_valid: str | None = None
-    agent: str | None = None
-    session_id: str | None = None

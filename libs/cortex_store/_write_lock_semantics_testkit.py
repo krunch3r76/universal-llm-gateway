@@ -61,8 +61,14 @@ def install_counting_write_lock(
     monkeypatch: pytest.MonkeyPatch,
     handler_module: Any,
 ) -> CountingWriteLock:
-    """Replace ``WRITE_LOCK`` on the handler module (bound name at import)."""
+    """Replace ``WRITE_LOCK`` on ``cortex_store.db`` and the handler import."""
+    from cortex_store import db as db_mod
+
+    assert handler_module.WRITE_LOCK is db_mod.WRITE_LOCK, (
+        "handler module must import WRITE_LOCK from cortex_store.db"
+    )
     counter = CountingWriteLock()
+    monkeypatch.setattr(db_mod, "WRITE_LOCK", counter)
     monkeypatch.setattr(handler_module, "WRITE_LOCK", counter)
     return counter
 

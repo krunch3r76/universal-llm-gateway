@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
+from typing import Any
 
 from fastapi import FastAPI
-from starlette.routing import Match, Mount, Route
+from starlette.routing import Match, Mount, Route, compile_path
 
 # (HTTP method, FastAPI route name, path params, expected endpoint function name)
 # at hub e6262356; batch 4 adds only entities/relationships bulk POST routes.
@@ -57,13 +59,36 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
         {},
         "register_skill_substrate_route",
     ),
-    (
-        "POST",
-        "view_render_route",
-        {"document_id": "document:probe-view"},
-        "view_render_route",
-    ),
 )
+
+_FASTAPI_PATH_PARAM_RE = re.compile(r"\{([^}:]+)(?::[^}]+)?\}")
+
+
+def _concrete_path(route_path: str, param_convertors: dict[str, Any]) -> str:
+    def _repl(match: re.Match[str]) -> str:
+        key = match.group(1)
+        sample = _PATH_PARAM_SAMPLES.get(key)
+        if sample is None:
+            convertor = param_convertors.get(key)
+            if convertor and convertor.__class__.__name__ == "IntegerConverter":
+                sample = 1
+            else:
+                sample = f"probe-{key}"
+        return str(sample)
+
+    return _FASTAPI_PATH_PARAM_RE.sub(_repl, route_path)
+
+
+_PATH_PARAM_SAMPLES: dict[str, Any] = {
+    "assertion_id": 1,
+    "entity_id": "decision:ac4-probe",
+    "content_hash": "deadbeef",
+    "tag_name": "current",
+    "deadline_id": "deadline:probe",
+    "relationship_id": 1,
+    "old_id": "decision:old",
+    "document_id": "document:probe-view",
+}
 
 
 def _iter_api_routes(routes: list[object]) -> Iterator[Route]:
@@ -104,9 +129,32 @@ _BATCH6_NEW_ENDPOINTS = frozenset(
     {"endeavor_write_row_route", "endeavor_dispose_row_route"}
 )
 
-_BATCH7_NEW_ENDPOINTS = frozenset(
-    {"register_skill_substrate_route", "view_render_route"}
-)
+_BATCH7_NEW_ENDPOINTS = frozenset({"register_skill_substrate_route"})
+
+
+def iter_app_route_probes(app: FastAPI) -> Iterator[tuple[str, str, str]]:
+    """Every named Starlette route → (method, concrete path, endpoint __name__)."""
+    for route in _iter_api_routes(list(app.router.routes)):
+        if not isinstance(route, Route) or not route.name:
+            continue
+        _, _path_fmt, param_convertors = compile_path(route.path)
+        path = _concrete_path(route.path, param_convertors)
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+            yield method, path, route.endpoint.__name__
+
+
+def assert_every_route_forward_matches_self(
+    app: FastAPI,
+    *,
+    skip_endpoint_names: frozenset[str] = frozenset(),
+) -> None:
+    for method, path, expected in iter_app_route_probes(app):
+        if expected in skip_endpoint_names:
+            continue
+        resolved = resolve_endpoint_name(app, method, path)
+        assert resolved == expected, (
+            f"{method} {path}: expected endpoint {expected!r}, got {resolved!r}"
+        )
 
 
 def assert_baseline_route_resolution(app: FastAPI) -> None:
@@ -131,13 +179,8 @@ def assert_pre_batch6_route_resolution_unchanged(app: FastAPI) -> None:
 
 
 def assert_pre_batch7_route_resolution_unchanged(app: FastAPI) -> None:
-    """AC4: pre-batch-7 stamped routes unchanged (batch 6+7 endpoints excluded)."""
-    skip = _BATCH6_NEW_ENDPOINTS | _BATCH7_NEW_ENDPOINTS
-    for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
-        if expected in skip:
-            continue
-        path = app.url_path_for(route_name, **path_params)
-        resolved = resolve_endpoint_name(app, method, path)
-        assert resolved == expected, (
-            f"{method} {path}: expected endpoint {expected!r}, got {resolved!r}"
-        )
+    """AC4: every served route at batch-6 tip still FULL-matches its endpoint (batch 6–7 new excluded)."""
+    assert_every_route_forward_matches_self(
+        app,
+        skip_endpoint_names=_BATCH6_NEW_ENDPOINTS | _BATCH7_NEW_ENDPOINTS,
+    )
