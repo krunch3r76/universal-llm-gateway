@@ -23,6 +23,10 @@ from systems.pipeline.core.execution.dispatch_journal import (
     journal_transition,
     prune_expired,
 )
+from systems.pipeline.core.execution.dispatch_journal_transitions import (
+    migrate_schema_sync,
+    write_transition_sync,
+)
 
 
 def _iso(dt: datetime) -> str:
@@ -203,3 +207,102 @@ async def test_to_thread_started_then_one_fold_two_transitions(
         ).fetchall()
     assert [row[0] for row in fold_rows] == ["completed"]
     assert [row[0] for row in transitions] == ["started", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_started_write_does_not_clobber_terminal_fold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """D-race: late started transition must not replace a terminal fold row."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    db_path = _journal_path()
+    await initialize_schema()
+    completed_at = _iso(datetime.now(UTC))
+    terminal = _make_terminal_record("exec-race", completed_at=completed_at)
+    await journal_terminal(terminal)
+
+    write_transition_sync(
+        db_path,
+        execution_id="exec-race",
+        pipeline=terminal.pipeline,
+        status="started",
+        caller_agent=None,
+        started_at=terminal.started_at,
+        completed_at=None,
+        record_json={"execution_id": "exec-race", "status": "started"},
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT status FROM dispatch_records WHERE execution_id = ?",
+            ("exec-race",),
+        ).fetchone()
+        transition_count = connection.execute(
+            "SELECT COUNT(*) FROM dispatch_record_transitions WHERE execution_id = ?",
+            ("exec-race",),
+        ).fetchone()[0]
+    assert row is not None
+    assert row[0] == "completed"
+    assert transition_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_ac6_migrated_terminal_row_carries_basis_on_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Pre-change terminal JSON gains as_of/epoch/source on fetch after migration."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    db_path = _journal_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_payload = {
+        "execution_id": "exec-legacy",
+        "status": "completed",
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-02T00:00:00Z",
+    }
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE dispatch_records (
+                execution_id TEXT PRIMARY KEY,
+                pipeline TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+                caller_agent TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                completed_at_epoch REAL NOT NULL,
+                record_json TEXT NOT NULL
+            );
+            """
+        )
+        import json
+
+        connection.execute(
+            """
+            INSERT INTO dispatch_records(
+                execution_id, pipeline, status, caller_agent,
+                started_at, completed_at, completed_at_epoch, record_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "exec-legacy",
+                "frontier-dispatch",
+                "completed",
+                None,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                1_735_776_000.0,
+                json.dumps(legacy_payload),
+            ),
+        )
+        connection.commit()
+
+    with sqlite3.connect(db_path) as connection:
+        migrate_schema_sync(connection)
+
+    fetched = await fetch_record("exec-legacy")
+    assert fetched is not None
+    assert fetched["source"] == "pipeline_dispatch_journal"
+    assert fetched["as_of"] == "2026-01-02T00:00:00Z"
+    assert isinstance(fetched.get("epoch"), dict)
+    assert fetched["scope"] == "execution:exec-legacy"
