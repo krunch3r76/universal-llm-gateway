@@ -103,6 +103,56 @@ def test_lane_current_resolver_picks_in_flight_page() -> None:
             }
         return None
 
+    class _Live:
+        parent_thread = "12286"
+        registration_id = "live-reg"
+        purpose = "operator-proxy"
+
+    body = resolve_lane_current_cse(
+        "12286",
+        snap={},
+        list_pages=pages,
+        probe_page=probe,
+        provenance_for=provenance,
+        list_active=lambda: [_Live()],
+        chat_url_for_registration=lambda rid: live if rid == "live-reg" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "current"
+    assert body["basis"] == "in_flight"
+    assert body["current"]["chat_url"] == live
+    assert body["current"]["evidence_class"] == "live_binding"
+
+
+def test_lane_current_resolver_refuses_provenance_only_stream() -> None:
+    live = "https://claude.ai/cowork/cse_live"
+    drain = "https://claude.ai/cowork/cse_drain"
+
+    def pages():
+        yield 9223, live, "ws://9223"
+        yield 9224, drain, "ws://9224"
+
+    def probe(port: int, _ws: str):
+        if port == 9223:
+            return {"streaming": True, "stop": False, "tool_pause": False}, True
+        return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+    def provenance(url: str):
+        if url == live:
+            return {
+                "parent_thread_claim": "12286",
+                "registration_id": "live-reg",
+                "reason": "idle_exit",
+            }
+        if url == drain:
+            return {
+                "parent_thread_claim": "12286",
+                "registration_id": "drain-reg",
+                "reason": "hygiene_drain",
+            }
+        return None
+
     body = resolve_lane_current_cse(
         "12286",
         snap={},
@@ -114,9 +164,9 @@ def test_lane_current_resolver_picks_in_flight_page() -> None:
         purpose_for_registration=lambda _rid: "operator-proxy",
         now=lambda: 1_700_000_000.0,
     )
-    assert body["state"] == "current"
-    assert body["basis"] == "in_flight"
-    assert body["current"]["chat_url"] == live
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "stored_association_streaming"
+    assert body["current"] is None
 
 
 def test_indeterminate_harvests_before_retry() -> None:

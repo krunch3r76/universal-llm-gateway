@@ -1135,7 +1135,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 
 ### Request Events
 
-<!-- GENERATED:START region=capacity inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=capacity inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `capacity.admission.paused` | `model_id`, `duration_s`, `reason` | Admission for model_id suspended for duration_s seconds. |
@@ -1147,14 +1147,14 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | Request is still queued in CapacityPool; waiting remains non-terminal. |
 | `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | Create CAPACITY_SLOT_LEAK_RECOVERED event. |
 <!-- GENERATED:END region=capacity -->
-<!-- GENERATED:START region=federated inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=federated inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `federated.request.prompt.transformation.applied` | `request_id`, `model_id`, `gateway_id`, `prompt_chars` | — |
 | `federated.request.prompt.transformation.failed` | `request_id`, `model_id`, `gateway_id`, `error` | — |
 | `federated.request.prompt.transformation.skipped` | `request_id`, `model_id`, `gateway_id`, `reason` | — |
 <!-- GENERATED:END region=federated -->
-<!-- GENERATED:START region=model inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=model inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `model.available` | `model_id` | Publish aggregate routing availability for a model ID at Stargate scope. |
@@ -1189,7 +1189,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `model.unloaded` | `url`, `model_id`, `gateway_name` | `reason` |
 | `model.unloading.started` | `model_id` | Create MODEL_UNLOADING_STARTED event. |
 <!-- GENERATED:END region=model -->
-<!-- GENERATED:START region=request inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=request inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `request.alias.resolved` | `request_id`, `alias_id`, `backing_model_id` | Create REQUEST_ALIAS_RESOLVED event. |
@@ -1212,7 +1212,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `request.snapshot.routed` | `request_id`, `model_id`, `gateway_id`, `profile_name`, `phase` | Snapshot the routing decision (model, gateway, profile). |
 | `request.timed.out` | `request_id`, `gateway_url`, `model_id`, `timeout_seconds` | `correlation_id`, `timeout_ms` |
 <!-- GENERATED:END region=request -->
-<!-- GENERATED:START region=routing inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=routing inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | Create ROUTING_CAPACITY_DIVERGENCE event. |
@@ -1244,7 +1244,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | Emit when startup queue window exhausted with no gateway connecting. |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | Create ROUTING_UPSTREAM_ALL_EXCLUDED event. |
 <!-- GENERATED:END region=routing -->
-<!-- GENERATED:START region=scheduler inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=scheduler inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `scheduler.eviction.cooldown.applied` | `model_id`, `gateway_id`, `protected_count`, `cooldown_s`, `timestamp` | — |
@@ -1257,7 +1257,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `gateway_id`, `timestamp` | `gateway_id` |
 | `scheduler.routing.timeout` | `request_id`, `model_id`, `constraint`, `wait_ms`, `timestamp` | Emit when a queued request exceeds wait timeout for its constraint. |
 <!-- GENERATED:END region=scheduler -->
-<!-- GENERATED:START region=token inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=token inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `token.count.completed` | `request_id`, `model_id`, `gateway_url`, `timestamp`, `success`, `count_time_ms`, `input_tokens`, `context_limit`, `allocated_max_tokens`, `error` | Create TOKEN_COUNT_COMPLETED event. |
@@ -1650,7 +1650,7 @@ pass through unchanged and do not emit this signal.
 
 ### Model Events
 
-<!-- GENERATED:START region=model inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=model inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `model.available` | `model_id` | Publish aggregate routing availability for a model ID at Stargate scope. |
@@ -1691,7 +1691,7 @@ pass through unchanged and do not emit this signal.
 
 ### Federation Events
 
-<!-- GENERATED:START region=federation inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=federation inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
@@ -1748,7 +1748,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### Gateway Events
 
-<!-- GENERATED:START region=gateway inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=gateway inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `gateway.draining` | `gateway_id`, `reason`, `timeout`, `timestamp` | Create GATEWAY_DRAINING event. |
@@ -1767,7 +1767,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### Guidance Locality Events
 
-<!-- GENERATED:START region=guidance inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=guidance inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `guidance.delivery.deduped` | `execution_id`, `guidance_resource_key`, `trigger_fan_in_count`, `dedup_scope?`, `request_id?`, `dispatch_id?`, `registry_schema_version?`, `producer_version?` | Emitted when the resolver collapses overlapping triggers into one bundle. |
@@ -1780,7 +1780,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 Observation signals for the continuity-messages pipeline (JSONL extract, seal, tape read).
 
-<!-- GENERATED:START region=continuity inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=continuity inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `continuity.messages.extracted` | `surface`, `transcript_id`, `message_count`, `turn_count`, `user_turns`, `tools`, `truncated`, `source`, `chat_url_sha?` | Emitted when extract_turns_from_jsonl (or equivalent) materializes a continuity messages envelope. |
@@ -1788,7 +1788,7 @@ Observation signals for the continuity-messages pipeline (JSONL extract, seal, t
 
 ### RAG Events
 
-<!-- GENERATED:START region=rag inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=rag inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
@@ -1935,7 +1935,7 @@ requests to Stargate before `model.loading.started` arrived and closed the gate.
 See `todo:rag-admission-gate-first-burst-measurement` and Worst-Case Cold-Load
 Timing in `tmp/prompts/coordination-overhaul/phase4.md`.
 
-<!-- GENERATED:START region=rag inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=rag inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
@@ -2113,7 +2113,7 @@ singleflight hold proposal.
 
 ### RAG Article Metadata Lifecycle
 
-<!-- GENERATED:START region=rag inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=rag inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
@@ -2248,7 +2248,7 @@ singleflight hold proposal.
 
 Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state`) when a per-endpoint or total fetch of RAG pipeline state fails during `cortex_brief`. Brief continues; the stanza is omitted or shows `unreachable` depending on which endpoint failed.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2302,7 +2302,7 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 
 ### Doc Generate Events
 
-<!-- GENERATED:START region=doc inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=doc inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -2313,7 +2313,7 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 Pipeline events are persisted to the Event Service and can be queried with
 `scripts/query-events --op pipeline-trace --execution-id ID`.
 
-<!-- GENERATED:START region=frontier inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=frontier inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `frontier.admit_pointer.loop_closure` | `request_id`, `execution_id`, `admit_target_thread`, `prompt_source_thread`, `prompt_bind_mode`, `prompt_turn_number`, `has_explicit_prompt_source`, `loop_closure`, `allowlisted_silent`, `would_have_refused`, `would_have_refused_total`, `reason`, `spawn_uses_latest_on_thread`, `refused` | B.3 admission refuse — joinable with review_child.prompt_bind (6655). |
@@ -2442,7 +2442,7 @@ Emitted by the delivery-audit registry lifecycle producers. These node-scoped
 signals expose correlation-only parent lifecycle and registry-write failures;
 they do not claim artifact-level audit coverage.
 
-<!-- GENERATED:START region=delivery inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=delivery inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `delivery.audit.parent.finalized` | `audit_id`, `aggregate_audit_status`, `execution_id?`, `request_id?`, `dispatch_id?`, `registry_schema_version?`, `producer_version?` | Emitted when a B3 delivery-audit parent row is finalized. |
@@ -2450,7 +2450,7 @@ they do not claim artifact-level audit coverage.
 | `delivery.audit.registry.write.failed` | `audit_id?`, `execution_id?`, `request_id?`, `dispatch_id?`, `error_code?`, `error?`, `registry_schema_version?`, `producer_version?`, _dynamic_ | Emitted when a delivery-audit registry write fails before persisting state. |
 <!-- GENERATED:END region=delivery -->
 
-<!-- GENERATED:START region=pipeline inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=pipeline inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | Emitted when pipeline execution is cancelled (e.g., client disconnect). |
@@ -2581,7 +2581,7 @@ tracking across long-running map steps. Failed/timeout/cancelled iterations emit
 **INVARIANT**: If no boundary signal is seen,
 `pipeline.map.iteration.inference.lost` is emitted.
 
-<!-- GENERATED:START region=pipeline inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=pipeline inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | Emitted when pipeline execution is cancelled (e.g., client disconnect). |
@@ -2725,7 +2725,7 @@ consult.call.started
       └─> consult.call.finished (success=true | success=false)
 ```
 
-<!-- GENERATED:START region=consult inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=consult inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `consult.provenance.recorded` | `todo`, `consult_thread`, `archive_sha256`, `adjudication_assertion_id`, `written_by` | Build the authority-transition event for a todo-keyed provenance write. |
@@ -2733,7 +2733,7 @@ consult.call.started
 
 ### Conductor scoreboard
 
-<!-- GENERATED:START region=conductor inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=conductor inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `conductor.score.tip_mutated` | `tip_uri`, `prior_tip_sha`, `tip_sha`, `reason` | Emit when a journaled tip write succeeds (authority transition). |
@@ -2812,7 +2812,7 @@ mcp.oauth.server.started
   └─> mcp.oauth.token.rejected (request terminates)
 ```
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2893,7 +2893,7 @@ event bus debug broadcaster). Join to MCP server `mcp.transport.*` / `mcp.reques
 using `correlation_id` and timestamp; optional header `X-Cloudproxy-Correlation-Id`
 is sent upstream and may appear on MCP ingress when the provider forwards it.
 
-<!-- GENERATED:START region=cloudproxy inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cloudproxy inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cloudproxy.mcp.correlation.assigned` | `correlation_id`, `provider` | UUID assigned for one Messages request |
@@ -2909,7 +2909,7 @@ is sent upstream and may appear on MCP ingress when the provider forwards it.
 The internet-facing MCP server (`source: "mcp-server"`) publishes to the
 event service over the same `/tmp/universal-protocol/events.sock` socket.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2998,7 +2998,7 @@ semantic layer ships; target milestone is post-calibration-window close.
 Emitted by `libs/life_intent/events.py` for registry check → proposal → commit
 lifecycle on the life-domain intent path.
 
-<!-- GENERATED:START region=life inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=life inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `life.intent.committed` | `verb`, `proposal_id`, `entity_id`, `dispatch_ref` | life.intent.committed — commit applied and downstream scout fired. |
@@ -3014,7 +3014,7 @@ Emitted by `libs/bus_watch/events.py` for liaison seat lifecycle: night_id reset
 lease forfeiture, pending_spawn release, and root CHECKPOINT observation on the
 bus_watch driver path.
 
-<!-- GENERATED:START region=liaison inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=liaison inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `liaison.checkpoint.observed` | `root`, `turn`, `prior_turn`, `source` | - |
@@ -3035,7 +3035,7 @@ bus_watch driver path.
 Emitted by `libs/cortex_store/events_imprint.py` and `libs/cortex_store/events_recall.py`.
 `graph.recall.*` is the G1 life-recall card surface; `graph.imprint.*` is the sibling write door.
 
-<!-- GENERATED:START region=graph inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=graph inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `graph.imprint.commit.received` | `proposal_id` | graph.imprint.commit.received — commit request accepted for processing. |
@@ -3059,7 +3059,7 @@ Emitted by `libs/cortex_store/events_imprint.py` and `libs/cortex_store/events_r
 
 Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detectors.py` via `record()` shim. All signals use `role="observation"`, `scope="global"` per existing shim defaults. Introduced in Phase 1b of `todo:cortex-graph-projection-and-audit-primitives`.
 
-<!-- GENERATED:START region=cortex inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cortex inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cortex.digest.extract` | `journal_entity_id`, `entry_anchor`, `claim_count` | - |
@@ -3142,7 +3142,7 @@ The consolidated `agent_bus(tool=...)` tool emits operation-level signals.
 With atomic server-side endpoints, partial-failure and stage signals are
 unnecessary — each operation succeeds or fails atomically.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3202,7 +3202,7 @@ All signals: `role="observation"`, `scope="global"`.
 
 Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_entities.py` and `ops_bulk_relationships.py` via the `record()` shim. Bulk writes are atomic at the transaction boundary — either every item in the batch persists, or none do. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3258,7 +3258,7 @@ Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_ent
 
 Emitted by `services/mcp-server/tools/_cortex_relay.py::cx` via bare `mcp_events.record()` (mirrors `relay()` idiom). Makes every cortex-api REST relay observable. A `mcp.cortex.relay.called` with no terminal sibling within the relay budget indicates a connector-side abort. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3318,7 +3318,7 @@ deadline: if `mcp.local.api.failed` reports `/ingest` timeout, the
 `email.ingest.*` and `email.pipeline.*` events show which message and stage was
 still running or failed. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=email inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=email inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -3336,7 +3336,7 @@ are emitted by ``libs/cortex_store/routes/documents.py`` — the cortex-api endp
 the MCP ``extract_directory`` tool relays to. All signals:
 ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3394,7 +3394,7 @@ Emitted by ``services/mcp-server/tools/extract_document.py`` (the ``extract_docu
 MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3451,7 +3451,7 @@ MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 Emitted by ``services/mcp-server/tools/local/extract_document_structured.py``.
 All signals: ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3512,7 +3512,7 @@ Emitted by ``services/mcp-server/tools/promote_document_to_evidence.py`` (the
 ``promote_document_to_evidence`` MCP tool, phase-d of the document ingestion
 redesign). All signals: ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3568,7 +3568,7 @@ redesign). All signals: ``role="observation"``, ``scope="global"``.
 
 Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_close` via `record()`. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=cortex inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cortex inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cortex.digest.extract` | `journal_entity_id`, `entry_anchor`, `claim_count` | - |
@@ -3630,7 +3630,7 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 | `cortex.transcript.sealed_messages` | `session_id`, `surface`, `verbatim_codec`, `turn_count`, `messages_sha256`, `extended`, `already_closed`, `thread_id?`, `transcript_id?`, `prior_codec?` | - |
 | `cortex.view.rendered` | `document_id`, `view_rev`, `mode`, `sections_repaired_count`, `delta_create_count`, `delta_update_count`, `delta_delete_count` | cortex.view.rendered — emitted on register/refresh/full view_render. |
 <!-- GENERATED:END region=cortex -->
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3808,7 +3808,7 @@ Emitted by `services/mcp-server/middleware/drain.py` during graceful restart. Tr
 
 All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3913,7 +3913,7 @@ All signals: `role="observation"`, `scope="global"`.
 
 **Lib signals (`mcp.grokbuild.*`).** Source: `mcp-server` in V1; `grokbuild-worker` in V2 (via the UDS publisher hook). Payload contracts unchanged across versions.
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3990,7 +3990,7 @@ only via `grokbuild.auth.required` and the `checks.grok_auth` field, never as wo
 
 All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=git inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=git inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `git.commit.created` | `integration_id`, `arc`, `commit_sha` | - |
@@ -4011,7 +4011,7 @@ All signals: `role="observation"`, `scope="global"`.
 `CursorSdkCatalogPoller` polling `GET /api/v1/cursor/catalog` on
 git_integration_worker.
 
-<!-- GENERATED:START region=cursor inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cursor inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cursor.catalog.available` | `worker_url`, `model_count` | - |
@@ -4033,7 +4033,7 @@ paste, so emission itself witnesses that context inheritance occurred, and
 `declared` records whether the caller named the target CSE or the resolver chose
 it. `silent=true` is a violation reading.
 
-<!-- GENERATED:START region=cdp_ask inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cdp_ask inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cdp_ask.admission.refused_seat_held` | `lane`, `holder_registration_id`, `purpose`, `mission_kind?`, `execution_id?` | Submit-path refusal when the seat-axis journal reports an open holder. |
@@ -4048,7 +4048,7 @@ it. `silent=true` is a violation reading.
 | `cdp_ask.followup.refused_seat_mismatch` | `lane`, `target_registration_id`, `holder_registration_id` | Followup refused because explicit identity disagrees with the lane holder. |
 | `cdp_ask.followup.unbound_capped` | `registration_id`, `receipt`, `target_binding` | Emit when unbound paste path applies automation-visible receipt cap. |
 | `cdp_ask.fresh_run.inheritance` | `registration_id`, `resolution_path`, `target_binding`, `reattach_used`, `declared`, `silent`, `purpose` | Emit the fresh-run verdict when a followup paste inherits a live CSE. |
-| `cdp_ask.lane_current.resolve` | `parent_thread`, `state`, `basis`, `chat_url`, `applied` | Emit when a parent_thread lane-current probe returns. |
+| `cdp_ask.lane_current.resolve` | `parent_thread`, `state`, `basis`, `chat_url`, `applied`, `reason?` | Emit when a parent_thread lane-current probe returns. |
 | `cdp_ask.stop_ack.ack` | `execution_id`, `ack`, `job?` | Emit when a scraped STOP-ACK token is parsed from the model reply. |
 | `cdp_ask.stop_ack.checkin_attempt` | `execution_id`, `registration_id`, `purpose`, `route`, `lane_created` | Emit when a STOP-ACK check-in paste is attempted or pager fallback is chosen. |
 | `cdp_ask.stop_ack.no_ack` | `execution_id`, `registration_id`, `ghost_reap_candidate` | Emit when STOP-ACK TTL expires without a parsed ACK (ghost-reap candidate). |
@@ -4056,7 +4056,7 @@ it. `silent=true` is a violation reading.
 
 **CDP signals (`cdp.*`).** Source: `claude_bundles`, `cdp_ask`, registry lifecycle.
 
-<!-- GENERATED:START region=cdp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cdp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cdp.attachment.bound` | `registration_id`, `chat_url`, `attach_proof`, `parent_thread?` | - |
@@ -4118,7 +4118,7 @@ it. `silent=true` is a violation reading.
 
 All signals: `role="observation"`, `scope="node"`.
 
-<!-- GENERATED:START region=git_worker inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=git_worker inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `git_worker.admission.rejected` | `kind`, `route`, `intent_id`, `drain_epoch` | - |
@@ -4132,7 +4132,7 @@ All signals: `role="observation"`, `scope="node"`.
 
 **Hop-cadence signals (`giw.cursor_auto.hop_cadence_*`).** Source: `services/git_integration_worker/cursor_auto/hop_cadence_events.py`. Seat binding, succession confirm, release-deferral, and census OVERLAP. There is no `hop_cadence_orphan_released` signal — extras are non-holders released by rebind.
 
-<!-- GENERATED:START region=giw inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=giw inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `giw.cursor_auto.hop_cadence_fence_started` | `thread_id`, `superseded_registration_id`, `execution_id`, `satellite_execution_id` | Joinable hop-claim armed a request fence on the lane. |
@@ -4146,7 +4146,7 @@ All signals: `role="observation"`, `scope="node"`.
 
 All signals: `role="observation"`, `scope="node"`.
 
-<!-- GENERATED:START region=sdk inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=sdk inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `sdk.await_reply.expired` | `parent_dispatch_id`, `reason`, `parked_at?` | No child can be admitted (agent gone); link closed, awareness posted. |
@@ -4226,7 +4226,7 @@ All signals: `role="observation"`, `scope="node"`.
 
 **Worker signals (`grokbuild.*`).** Source: `grokbuild-worker`. Added V2. SSE-friendly tracker vocabulary plus per-op tracking events; does NOT carry the lib's audit fields (those live on the parallel `mcp.grokbuild.dispatch.completed`).
 
-<!-- GENERATED:START region=grokbuild inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=grokbuild inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -4377,7 +4377,7 @@ quality before disabling the lean partition.
 Fallback-only stdio bridge (`source: "mcp-fastmcp-remote-bridge"`) emits `mcp.bridge.stdio.started`
 (`transport=stdio`) at launch — distinct from server-side `mcp.transport.request.*` lifecycle signals. Supersedes legacy `proxy.*` names and the retired custom `mcp-stdio-proxy` publisher. Emitted NDJSON-direct via the events ingest socket — bypasses `event_factory`, so it has no GENERATED catalog row by design (curated here, parity with `fleet.service.step`).
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -4434,7 +4434,7 @@ Fallback-only stdio bridge (`source: "mcp-fastmcp-remote-bridge"`) emits `mcp.br
 OAuth signals are emitted by the auth admission middleware and OAuth service
 when OAuth is enabled (`MCP_OAUTH_ENABLED=true` with a valid HTTPS issuer).
 
-<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=mcp inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -4783,7 +4783,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
     await do_risky_operation()
 ```
 
-<!-- GENERATED:START region=agent_bus inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=agent_bus inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `agent_bus.checkpoint.lid_seal_failed` | `thread`, `transcript_id`, `turns_at_cp`, `error`, `detail?` | Signal: agent_bus.checkpoint.lid_seal_failed |
@@ -4796,13 +4796,13 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `agent_bus.tape.segment_unavailable` | `thread_id`, `session_id`, `depth` | Sealed segment omitted from tape (`depth=light` or missing file). |
 <!-- GENERATED:END region=agent_bus -->
 
-<!-- GENERATED:START region=catalog inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=catalog inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `catalog.reloaded` | `reason` | Create CATALOG_RELOADED event. |
 <!-- GENERATED:END region=catalog -->
 
-<!-- GENERATED:START region=close inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=close inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `close.check.completed` | `session_id`, `agent`, `revision`, `status`, `gap_count` | - |
@@ -4813,13 +4813,13 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `close.handoff.upserted` | `session_id`, `journal_row_id` | - |
 <!-- GENERATED:END region=close -->
 
-<!-- GENERATED:START region=closeout inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=closeout inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `closeout.seal.refused` | `path`, `surface` | - |
 <!-- GENERATED:END region=closeout -->
 
-<!-- GENERATED:START region=cloud inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=cloud inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cloud.proxy.available` | `proxy_url`, `model_count` | Proxy became reachable and catalog was fetched. |
@@ -4845,14 +4845,14 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `cloud.proxy.unavailable` | `proxy_url`, `reason`, `detection_method` | Proxy health probe failed — no cloud models will be registered. |
 <!-- GENERATED:END region=cloud -->
 
-<!-- GENERATED:START region=compute inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=compute inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `compute.capacity.queue.acquired` | `request_id`, `model_id`, `compute_type`, `wait_duration_ms`, `queue_position_at_enqueue`, `timestamp_ms` | Create COMPUTE_CAPACITY_QUEUE_ACQUIRED event. |
 | `compute.capacity.queue.wait` | `request_id`, `model_id`, `compute_type`, `queue_position`, `active_count`, `limit`, `timestamp_ms` | Create COMPUTE_CAPACITY_QUEUE_WAIT event. |
 <!-- GENERATED:END region=compute -->
 
-<!-- GENERATED:START region=dispatch inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=dispatch inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `dispatch.capability.card.missing` | `request_id`, `model`, `capability_field`, `reason_code` | Dispatch admission rejected: model capability card missing or incomplete. |
@@ -4866,7 +4866,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `dispatch.skills.predicated.skipped` | `request_id`, `role`, `model`, `skills` | Scope-default MCP-predicated skills skipped on a non-MCP dispatch. |
 <!-- GENERATED:END region=dispatch -->
 
-<!-- GENERATED:START region=expand inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=expand inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `expand.admitted` | `pipeline_id`, `execution_id`, `contract`, `stage`, `executor_tier`, `target`, `delivery` | Emitted when validate_options admits a prompt-expand run. |
@@ -4876,20 +4876,20 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `expand.retrieve.completed` | `pipeline_id`, `execution_id`, `step_name`, `rag_status`, `attempts`, `retrieve_scopes` | Emitted after retrieve leg classification completes. |
 <!-- GENERATED:END region=expand -->
 
-<!-- GENERATED:START region=handoff inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=handoff inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `handoff.skill.inline.budget.exceeded` | `request_id`, `packet_path`, `total_bytes`, `budget_bytes`, `per_slug_bytes` | - |
 | `handoff.skill.inline.materialized` | `request_id`, `packet_path`, `slugs`, `total_bytes` | - |
 <!-- GENERATED:END region=handoff -->
 
-<!-- GENERATED:START region=health inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=health inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `health.check.failed` | `model_id`, `error_message`, `socket_path` | Create HEALTH_CHECK_FAILED event. |
 <!-- GENERATED:END region=health -->
 
-<!-- GENERATED:START region=inference inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=inference inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `inference.completed` | `model_id`, `last_inference_time` | Create INFERENCE_COMPLETED event. |
@@ -4899,7 +4899,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `inference.started` | `model_id` | Create INFERENCE_STARTED event. |
 <!-- GENERATED:END region=inference -->
 
-<!-- GENERATED:START region=manage inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=manage inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `manage.charter.tick.escalation` | `root`, `fire_attempt_outcome`, `fire_attempt_reason`, `refired`, `worker_thread?` | Episode opened or TTL re-fired for an unhealthy enrolled root. |
@@ -4914,13 +4914,13 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `manage.restart.verifying` | `intent_id`, `validation_id`, `service`, `kill_boundary_at`, `boundary_source` | Kill returned; activation proof is now supervisor-owned. |
 <!-- GENERATED:END region=manage -->
 
-<!-- GENERATED:START region=measurement inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=measurement inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `measurement.embedding.detected` | `model_id`, `context_length` | Create MEASUREMENT_EMBEDDING_DETECTED event. |
 <!-- GENERATED:END region=measurement -->
 
-<!-- GENERATED:START region=monitoring inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=monitoring inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `monitoring.chat.completed` | `id`, `timestamp`, `type`, `request_id`, `original_request`, `modified_request`, `stargate_actions`, `processing_time_ms`, `gateway_endpoint`, `response?`, `token_metrics?`, `model_metadata?` | Create MONITORING_CHAT_COMPLETION event. |
@@ -4931,7 +4931,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `monitoring.stream.chunk` | `id`, `timestamp`, `type`, `request_id`, `chunk_number?`, `chunk?`, `start_chunk_number?`, `chunk_count?`, `content?`, `token_metrics?` | Create MONITORING_STREAMING_CHUNK event. |
 <!-- GENERATED:END region=monitoring -->
 
-<!-- GENERATED:START region=queue inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=queue inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `queue.master.entered` | `request_id`, `model_id`, `queue_position`, `compute_type`, `endpoint_category` | Create QUEUE_MASTER_ENTERED event. |
@@ -4940,20 +4940,20 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `queue.master.woken` | `request_id`, `model_id`, `wait_time_ms`, `gateway_id`, `compute_type`, `endpoint_category` | Create QUEUE_MASTER_WOKEN event. |
 <!-- GENERATED:END region=queue -->
 
-<!-- GENERATED:START region=resource inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=resource inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `resource.released` | `gateway_name`, `model_id`, `reservation_id`, `vram_mb`, `ram_mb`, `reason` | Signal that previously reserved resources have been released. |
 | `resource.reserved` | `gateway_name`, `model_id`, `reservation_id`, `vram_mb`, `ram_mb`, `timeout_seconds` | Signal that resources have been reserved for a model load operation. |
 <!-- GENERATED:END region=resource -->
 
-<!-- GENERATED:START region=socket inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=socket inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `socket.orphaned` | `model_id`, `socket_path`, `cleanup_successful`, `error` | Create SOCKET_ORPHANED event. |
 <!-- GENERATED:END region=socket -->
 
-<!-- GENERATED:START region=stargate inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=stargate inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `stargate.continuity.checkpoint.admitted` | `execution_id`, `thread`, `surface`, `from_agent` | - |
@@ -4966,14 +4966,14 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `stargate.continuity.tape_read.served` | `thread`, `scope`, `tools`, `include_extras`, `message_count`, `index_count`, `payload_bytes`, `truncated`, `caller_agent`, `door`, `execution_id?`, `pour_bytes?`, `sidecar_slug?` | - |
 <!-- GENERATED:END region=stargate -->
 
-<!-- GENERATED:START region=stream inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=stream inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `stream.cancellation.complete` | `model_id`, `stream_id`, `cleanup_duration` | Create STREAM_CANCELLATION_COMPLETE event. |
 | `stream.cancelled` | `model_id`, `stream_id`, `reason`, `worker_ready` | Create STREAM_CANCELLED event. |
 <!-- GENERATED:END region=stream -->
 
-<!-- GENERATED:START region=system inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=system inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `system.exception` | `exception_type`, `message`, `service`, `handler?`, `request_id?`, `traceback?` | Create a system.exception observation event for a caught exception. |
@@ -4982,7 +4982,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `system.started` | `pid`, `role`, `started_at`, `version` | Create SYSTEM_STARTED event. |
 <!-- GENERATED:END region=system -->
 
-<!-- GENERATED:START region=web_chat inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=web_chat inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `web_chat.relay.auth_missing` | `grok_url`, `page_url` | Attended :9222 tab is not signed into the target grok.com chat. |
@@ -4993,7 +4993,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `web_chat.relay.turn_relayed` | `direction`, `body_sha256`, `relay_index` | One completed assistant turn was pasted onto the other product. |
 <!-- GENERATED:END region=web_chat -->
 
-<!-- GENERATED:START region=worker inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=worker inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `worker.cleanup.requested` | `model_id`, `socket_path`, `supervisor_id`, `reason` | Create worker cleanup request event. |
@@ -5006,25 +5006,25 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `worker.supervisor.termination.requested` | `model_id`, `supervisor_id` | Create supervisor termination request event. |
 <!-- GENERATED:END region=worker -->
 
-<!-- GENERATED:START region=density_triage inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=density_triage inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `density_triage.elevated` | `entity_id`, `prior`, `current` | Emit when a todo's density_triage class rises vs the prior attribute. |
 <!-- GENERATED:END region=density_triage -->
 
-<!-- GENERATED:START region=implement_ready inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=implement_ready inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `implement_ready.asserted` | `entity_id`, `assertion_id`, `spec_sha256`, `evidence_uri` | Emit when a seat writes the implement_ready assertion at distill gate. |
 <!-- GENERATED:END region=implement_ready -->
 
-<!-- GENERATED:START region=resume inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=resume inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `resume.fence.harvest.decided` | `thread_id`, `transcript_id`, `surface`, `outcome`, `reason`, `discovered`, `sealed`, `refused` | Signal: resume.fence.harvest.decided |
 <!-- GENERATED:END region=resume -->
 
-<!-- GENERATED:START region=transcript inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=transcript inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `transcript.source.probed` | `session_id`, `source_present`, `sha_match`, `turn_count` | - |
@@ -5032,7 +5032,7 @@ async with capture_exception("stargate", handler="proxy_request", event_bus=bus)
 | `transcript.source.relocated` | `session_id`, `transcript_id`, `bytes`, `source_sha256` | - |
 <!-- GENERATED:END region=transcript -->
 
-<!-- GENERATED:START region=capability inventory_sha=48cdb07309f3 generated=2026-10-05T04:51:12Z -->
+<!-- GENERATED:START region=capability inventory_sha=48cdb07309f3 generated=2026-10-05T05:27:11Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `capability.relay.completed` | `category`, `member`, `method`, `status`, `duration_ms` | Stargate relayed a capability call. |

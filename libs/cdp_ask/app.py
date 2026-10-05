@@ -295,6 +295,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     basis=body.get("basis"),
                     chat_url=(current or {}).get("chat_url"),
                     applied=False,
+                    reason=body.get("reason"),
                 )
             )
             payload = dict(body)

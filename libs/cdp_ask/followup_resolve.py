@@ -295,6 +295,7 @@ def _emit_lane_current(lane: str, body: dict, *, applied: bool) -> None:
             basis=body.get("basis"),
             chat_url=_lane_current_chat_url(body),
             applied=applied,
+            reason=body.get("reason"),
         )
     )
 
@@ -326,11 +327,12 @@ def _lane_seat_followup_gate(
 ) -> tuple[FollowupProjectAskRequest, FollowupProjectAskResponse | None, str | None]:
     """When ``parent_thread`` is set, bind or refuse against the seat-axis holder.
 
-    One in-flight operator page with a listable registry row rewrites
-    ``chat_url`` and marks ``resolution_path`` ``lane_current``. An in-flight
-    page that is not the holder and cannot be bound refuses. The seat-holder
-    basis keeps the registration binding. ``lane_pin`` carries the first probe
-    across a reattach retry so one followup sees one page set.
+    Paste only into a probe ``current`` (``in_flight`` with a registry row, or a
+    live seat holder pinned to its ``chat_url``). Refuses ``lane_cse_none``,
+    ``lane_cse_ambiguous`` (including ``stored_association_streaming`` and
+    ``seat_holder_dormant``), ``lane_cse_unattached``, and
+    ``lane_cse_probe_error``. ``lane_pin`` carries the first probe across a
+    reattach retry so one followup sees one page set.
     """
     lane = (req.parent_thread or "").strip()
     if not lane:
@@ -387,76 +389,107 @@ def _lane_seat_followup_gate(
             lane_body = None
         if lane_pin is not None:
             lane_pin["body"] = lane_body
-    if isinstance(lane_body, dict):
-        chat_url = _lane_current_chat_url(lane_body)
-        current = lane_body.get("current")
-        holder = lane_body.get("seat_holder")
-        holder_url = (
-            str(holder.get("chat_url") or "").strip()
-            if isinstance(holder, dict)
-            else ""
+    if lane_body is None:
+        return (
+            req,
+            fail_followup(
+                "lane_cse_probe_error",
+                detail="lane-current probe raised",
+            ),
+            None,
         )
-        if (
-            lane_body.get("state") == "current"
-            and lane_body.get("basis") == "in_flight"
-            and chat_url
-            and chat_url != holder_url
-        ):
-            claims = current.get("claims") if isinstance(current, dict) else None
-            if not isinstance(claims, list) or "registry_row" not in claims:
-                _emit_lane_current(lane, lane_body, applied=False)
+    if isinstance(lane_body, dict):
+        state = lane_body.get("state")
+        reason = lane_body.get("reason")
+        if state == "none":
+            _emit_lane_current(lane, lane_body, applied=False)
+            if reason == "probe_error":
                 return (
                     req,
-                    fail_followup("lane_cse_unattached", detail=chat_url),
+                    fail_followup(
+                        "lane_cse_probe_error",
+                        detail="lane-current probe raised",
+                    ),
+                    None,
+                )
+            return (
+                req,
+                fail_followup("lane_cse_none", detail=str(reason or "")),
+                None,
+            )
+        if state == "ambiguous":
+            _emit_lane_current(lane, lane_body, applied=False)
+            contested = _in_flight_off_holder(lane_body)
+            if contested:
+                detail = ", ".join(contested)
+            else:
+                detail = ", ".join(
+                    str(page.get("chat_url") or "")
+                    for page in lane_body.get("candidates") or []
+                    if isinstance(page, dict) and page.get("chat_url")
+                )
+            return (
+                req,
+                fail_followup("lane_cse_ambiguous", detail=detail),
+                None,
+            )
+        if state == "current":
+            chat_url = _lane_current_chat_url(lane_body)
+            current = lane_body.get("current")
+            holder = lane_body.get("seat_holder")
+            holder_url = (
+                str(holder.get("chat_url") or "").strip()
+                if isinstance(holder, dict)
+                else ""
+            )
+            if (
+                lane_body.get("basis") == "in_flight"
+                and chat_url
+                and chat_url != holder_url
+            ):
+                claims = current.get("claims") if isinstance(current, dict) else None
+                if not isinstance(claims, list) or "registry_row" not in claims:
+                    _emit_lane_current(lane, lane_body, applied=False)
+                    return (
+                        req,
+                        fail_followup("lane_cse_unattached", detail=chat_url),
+                        None,
+                    )
+                _emit_lane_current(lane, lane_body, applied=True)
+                return req.model_copy(update={"chat_url": chat_url}), None, "lane_current"
+            resolved = resolve_operator_seat(lane, get_lane_snapshot=lambda: snap)
+            if not resolved.get("authority_reachable"):
+                return (
+                    req,
+                    fail_followup(
+                        "seat_unavailable",
+                        detail="seat-axis projection unavailable for followup",
+                    ),
+                    None,
+                )
+            bound_reg = str(resolved.get("registration_id") or "").strip() or None
+            if not bound_reg:
+                return (
+                    req,
+                    fail_followup(
+                        "lane_not_attached",
+                        detail=lane_not_attached_detail(),
+                    ),
                     None,
                 )
             _emit_lane_current(lane, lane_body, applied=True)
-            return req.model_copy(update={"chat_url": chat_url}), None, "lane_current"
-        _emit_lane_current(lane, lane_body, applied=False)
-        contested = _in_flight_off_holder(lane_body)
-        if lane_body.get("state") == "ambiguous" and contested:
-            return (
-                req,
-                fail_followup("lane_cse_ambiguous", detail=", ".join(contested)),
-                None,
-            )
-    resolved = resolve_operator_seat(lane, get_lane_snapshot=lambda: snap)
-    if not resolved.get("authority_reachable"):
-        return (
-            req,
-            fail_followup(
-                "seat_unavailable",
-                detail="seat-axis projection unavailable for followup",
-            ),
-            None,
-        )
-    bound_reg = str(resolved.get("registration_id") or "").strip() or None
-    if not bound_reg:
-        if isinstance(lane_body, dict) and lane_body.get("state") == "ambiguous":
-            urls = [
-                str(page.get("chat_url") or "")
-                for page in lane_body.get("candidates") or []
-                if isinstance(page, dict) and page.get("chat_url")
-            ]
-            return (
-                req,
-                fail_followup(
-                    "lane_cse_ambiguous",
-                    detail=", ".join(urls),
-                ),
-                None,
-            )
-        return (
-            req,
-            fail_followup(
-                "lane_not_attached",
-                detail=lane_not_attached_detail(),
-            ),
-            None,
-        )
-    if req.registration_id == bound_reg:
-        return req, None, None
-    return req.model_copy(update={"registration_id": bound_reg}), None, None
+            updates: dict[str, str] = {"registration_id": bound_reg}
+            if chat_url:
+                updates["chat_url"] = chat_url
+            return req.model_copy(update=updates), None, None
+    return (
+        req,
+        fail_followup(
+            "lane_cse_probe_error",
+            detail="lane-current probe raised",
+        ),
+        None,
+    )
 
 
 async def resolve_followup_target(

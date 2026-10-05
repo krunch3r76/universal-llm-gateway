@@ -106,22 +106,39 @@ def _fold_liveness(samples: list[tuple[bool | None, bool]]) -> tuple[bool | None
     return inflight, probe_ok
 
 
+def _page_evidence_class(
+    claims: list[str],
+    *,
+    holder_live: bool,
+) -> str:
+    if "registry_row" in claims or ("seat_holder" in claims and holder_live):
+        return "live_binding"
+    return "stored_association"
+
+
 def select_lane_current(
     claimed: list[dict[str, Any]],
     holder_url: str | None,
+    holder_live: bool = False,
 ) -> tuple[str, str | None, str | None, dict[str, Any] | None]:
     """Pick current/ambiguous/none over already-claimed identities.
+
+    Invariant: ``state == \"current\"`` implies
+    ``current[\"evidence_class\"] == \"live_binding\"``.
 
     Returns ``(state, basis, reason, current_page)``.
     """
     in_flight = [page for page in claimed if page.get("in_flight") is True]
     unknown = [page for page in claimed if page.get("in_flight") is None]
-    if len(in_flight) == 1 and len(unknown) == 0:
-        return "current", "in_flight", None, in_flight[0]
     if len(in_flight) >= 2:
         return "ambiguous", None, "multiple_in_flight", None
     if len(in_flight) == 1 and len(unknown) > 0:
         return "ambiguous", None, "probe_incomplete", None
+    if len(in_flight) == 1 and len(unknown) == 0:
+        page = in_flight[0]
+        if page.get("evidence_class") == "live_binding":
+            return "current", "in_flight", None, page
+        return "ambiguous", None, "stored_association_streaming", None
     holder_key = normalize_cse_url(holder_url or "")
     if any(
         "registry_row" in (page.get("claims") or [])
@@ -134,7 +151,9 @@ def select_lane_current(
         None,
     )
     if holder_key and holder_page is not None:
-        return "current", "seat_holder", None, holder_page
+        if holder_live:
+            return "current", "seat_holder", None, holder_page
+        return "ambiguous", None, "seat_holder_dormant", None
     if len(unknown) > 0:
         return "ambiguous", None, "probe_incomplete", None
     if holder_key and claimed:
@@ -291,6 +310,17 @@ def _resolve(
     registry_by_url: dict[str, list[str]] = {}
     # An unreadable registry is a probe failure, not an empty lane.
     active = list_active()
+    listable_ids = {
+        str(getattr(r, "registration_id", "") or "").strip() for r in active
+    } - {""}
+    holder_live = bool(
+        seat and str(seat.get("registration_id") or "").strip() in listable_ids
+    )
+    if seat is not None:
+        seat = {
+            **seat,
+            "evidence_class": "live_binding" if holder_live else "stored_association",
+        }
     for reg in active:
         try:
             parent = str(getattr(reg, "parent_thread", "") or "").strip()
@@ -348,6 +378,7 @@ def _resolve(
             continue
         samples = [_probe_one(port, ws, probe_page) for port, ws in slot["sockets"]]
         in_flight, probe_ok = _fold_liveness(samples)
+        evidence_class = _page_evidence_class(claims, holder_live=holder_live)
         claimed.append(
             {
                 "chat_url": url,
@@ -357,10 +388,13 @@ def _resolve(
                 "claims": claims,
                 "registration_ids": registration_ids,
                 "provenance_reason": provenance_reason,
+                "evidence_class": evidence_class,
             }
         )
 
-    state, basis, reason, current = select_lane_current(claimed, holder_url)
+    state, basis, reason, current = select_lane_current(
+        claimed, holder_url, holder_live=holder_live
+    )
     stale: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     if state == "current" and current is not None:

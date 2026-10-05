@@ -156,19 +156,26 @@ def cdp_ask_lane_current_resolve(
     basis: str | None,
     chat_url: str | None,
     applied: bool,
+    reason: str | None = None,
 ) -> Event:
-    """Emit when a parent_thread lane-current probe returns."""
+    """Emit when a parent_thread lane-current probe returns.
+
+    ``reason`` is the probe's refusal or selection reason; None on ``current``.
+    """
+    payload: dict[str, Any] = {
+        "parent_thread": parent_thread,
+        "state": state,
+        "basis": basis,
+        "chat_url": chat_url,
+        "applied": applied,
+    }
+    if reason is not None:
+        payload["reason"] = reason
     return Event(
         signal="cdp_ask.lane_current.resolve",
         role="observation",
         scope="node",
-        payload={
-            "parent_thread": parent_thread,
-            "state": state,
-            "basis": basis,
-            "chat_url": chat_url,
-            "applied": applied,
-        },
+        payload=payload,
     )
 
 

@@ -210,10 +210,11 @@ async def test_unknown_registry_page_off_holder_refuses(
 
 
 @pytest.mark.asyncio
-async def test_dormant_holder_with_idle_pages_binds_holder(
+async def test_seat_holder_not_open_refuses_no_paste(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = ExecutionStore()
+    scan = AsyncMock(return_value=[CSE])
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap()
     )
@@ -230,19 +231,15 @@ async def test_dormant_holder_with_idle_pages_binds_holder(
         },
     )
     monkeypatch.setattr(
-        "cdp_ask.followup_resolve.cdp_registry.list_active",
-        lambda: [_reg("reg-held")],
-    )
-    monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
-        AsyncMock(return_value=[CSE]),
+        scan,
     )
     req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
-    target, err, path, _binding = await resolve_followup_target(req, store)
-    assert err is None
-    assert target is not None
-    assert target.registration_id == "reg-held"
-    assert path != "lane_current"
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert path == "parent_thread"
+    assert err is not None
+    assert err.error == "lane_cse_ambiguous"
+    scan.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -337,10 +334,11 @@ async def test_ambiguous_without_holder_is_lane_cse_ambiguous(
 
 
 @pytest.mark.asyncio
-async def test_probe_raise_falls_through_to_holder(
+async def test_probe_raise_refuses_probe_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = ExecutionStore()
+    scan = AsyncMock(return_value=[CSE])
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap()
     )
@@ -350,6 +348,110 @@ async def test_probe_raise_falls_through_to_holder(
         raise RuntimeError("probe down")
 
     monkeypatch.setattr("cdp_ask.lane_current_cse.resolve_lane_current_cse", boom)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        scan,
+    )
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert path == "parent_thread"
+    assert err is not None
+    assert err.error == "lane_cse_probe_error"
+    scan.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a37868_probe_none_refuses_no_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    scan = AsyncMock(return_value=[OTHER])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap("seat-x")
+    )
+    monkeypatch.setattr("cdp_ask.followup_events.emit", lambda _e: None)
+    kkej = "https://claude.ai/cowork/cse_01KKeJtTGiUH32mi3wk7dvZx"
+    monkeypatch.setattr(
+        "cdp_ask.lane_current_cse.resolve_lane_current_cse",
+        lambda lane, *, snap: {
+            "state": "none",
+            "reason": "no_claimed_live_page",
+            "seat_holder": {"registration_id": "seat-x", "chat_url": kkej},
+            "candidates": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("seat-x")],
+    )
+    monkeypatch.setattr("cdp_ask.followup_resolve.scan_lane_cse_urls", scan)
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert path == "parent_thread"
+    assert err is not None
+    assert err.error == "lane_cse_none"
+    scan.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a37868_resolver_body_drives_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask import test_lane_current_cse as specimen
+
+    store = ExecutionStore()
+    scan = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot", specimen._a37868_snap
+    )
+    monkeypatch.setattr("cdp_ask.followup_events.emit", lambda _e: None)
+
+    import cdp_ask.lane_current_cse as lane_mod
+
+    _resolve_real = lane_mod.resolve_lane_current_cse
+
+    def injected_probe(lane: str, *, snap: dict | None) -> dict:
+        return _resolve_real(
+            lane,
+            snap=snap,
+            list_pages=lambda: iter(specimen._a37868_pages()),
+            probe_page=specimen._a37868_probe,
+            provenance_for=specimen._a37868_prov,
+            list_active=lambda: [],
+            chat_url_for_registration=lambda rid: (
+                specimen.XLJF9 if rid == "seat-x" else None
+            ),
+            purpose_for_registration=lambda _rid: "operator-proxy",
+            now=lambda: 1_700_000_000.0,
+        )
+
+    monkeypatch.setattr(lane_mod, "resolve_lane_current_cse", injected_probe)
+    monkeypatch.setattr("cdp_ask.followup_resolve.scan_lane_cse_urls", scan)
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "lane_cse_ambiguous"
+    scan.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_seat_holder_current_pins_chat_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap()
+    )
+    monkeypatch.setattr("cdp_ask.followup_events.emit", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.lane_current_cse.resolve_lane_current_cse",
+        lambda lane, *, snap: {
+            "state": "current",
+            "basis": "seat_holder",
+            "current": {"chat_url": CSE, "evidence_class": "live_binding"},
+            "candidates": [],
+        },
+    )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.list_active",
         lambda: [_reg("reg-held")],
@@ -362,8 +464,78 @@ async def test_probe_raise_falls_through_to_holder(
     target, err, path, _binding = await resolve_followup_target(req, store)
     assert err is None
     assert target is not None
+    assert target.chat_url == CSE
     assert target.registration_id == "reg-held"
-    assert path != "lane_current"
+
+
+@pytest.mark.asyncio
+async def test_seat_holder_page_off_host_refuses_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap()
+    )
+    monkeypatch.setattr("cdp_ask.followup_events.emit", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.lane_current_cse.resolve_lane_current_cse",
+        lambda lane, *, snap: {
+            "state": "current",
+            "basis": "seat_holder",
+            "current": {"chat_url": CSE, "evidence_class": "live_binding"},
+            "candidates": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-held")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[OTHER]),
+    )
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "cse_not_found_on_lane"
+
+
+@pytest.mark.asyncio
+async def test_probe_error_body_refuses_probe_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot", lambda: _held_snap()
+    )
+    monkeypatch.setattr("cdp_ask.followup_events.emit", lambda _e: None)
+    monkeypatch.setattr(
+        "cdp_ask.lane_current_cse.resolve_lane_current_cse",
+        lambda lane, *, snap: {
+            "state": "none",
+            "reason": "probe_error",
+            "current": None,
+            "candidates": [],
+        },
+    )
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "lane_cse_probe_error"
+
+
+def test_lane_current_event_carries_reason() -> None:
+    from cdp_ask.followup_events import cdp_ask_lane_current_resolve
+
+    event = cdp_ask_lane_current_resolve(
+        parent_thread="12286",
+        state="ambiguous",
+        basis=None,
+        chat_url=None,
+        applied=False,
+        reason="stored_association_streaming",
+    )
+    assert event.payload.get("reason") == "stored_association_streaming"
 
 
 @pytest.mark.asyncio

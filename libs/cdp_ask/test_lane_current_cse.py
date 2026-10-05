@@ -65,13 +65,22 @@ def _resolve(**overrides: Any) -> dict[str, Any]:
 
 
 def test_specimen_in_flight_current_and_unclaimed() -> None:
-    body = _resolve()
+    class _Live:
+        parent_thread = LANE
+        registration_id = "fc69582c"
+        purpose = "operator-proxy"
+
+    body = _resolve(
+        list_active=lambda: [_Live()],
+        chat_url_for_registration=lambda rid: LIVE if rid == "fc69582c" else None,
+    )
     assert body["state"] == "current"
     assert body["basis"] == "in_flight"
     assert body["current"]["chat_url"] == LIVE
     assert body["current"]["in_flight"] is True
     assert body["current"]["ports"] == [9223]
-    assert "provenance_claim" in body["current"]["claims"]
+    assert "registry_row" in body["current"]["claims"]
+    assert body["current"]["evidence_class"] == "live_binding"
     assert body["current"]["provenance_reason"] == "idle_exit"
     assert [page["chat_url"] for page in body["stale"]] == [DRAIN]
     assert body["stale"][0]["stale_reason"] == "not_in_flight"
@@ -109,17 +118,25 @@ def test_holder_page_live_when_none_in_flight() -> None:
             }
         ]
     }
+    class _Held:
+        parent_thread = LANE
+        registration_id = "held"
+        purpose = "operator-proxy"
+
     body = _resolve(
         snap=snap,
         probe_page=probe,
+        list_active=lambda: [_Held()],
         chat_url_for_registration=lambda rid: DRAIN if rid == "held" else None,
     )
     assert body["state"] == "current"
     assert body["basis"] == "seat_holder"
     assert body["current"]["chat_url"] == DRAIN
+    assert body["current"]["evidence_class"] == "live_binding"
     assert body["stale"][0]["chat_url"] == LIVE
     assert body["stale"][0]["stale_reason"] == "not_seat_holder"
     assert body["seat_holder"]["registration_id"] == "held"
+    assert body["seat_holder"]["evidence_class"] == "live_binding"
 
 
 def test_one_claimed_idle_is_not_current() -> None:
@@ -148,6 +165,11 @@ def test_consult_purpose_streaming_page_is_unclaimed() -> None:
             return {"parent_thread_claim": LANE, "registration_id": "consult-reg"}
         return None
 
+    class _Held:
+        parent_thread = LANE
+        registration_id = "held"
+        purpose = "operator-proxy"
+
     snap = {
         "seat_rows": [
             {
@@ -161,7 +183,7 @@ def test_consult_purpose_streaming_page_is_unclaimed() -> None:
     body = _resolve(
         snap=snap,
         provenance_for=prov,
-        list_active=lambda: [_Consult()],
+        list_active=lambda: [_Consult(), _Held()],
         chat_url_for_registration=lambda rid: {
             "consult-reg": LIVE,
             "held": UNCLAIMED,
@@ -173,6 +195,7 @@ def test_consult_purpose_streaming_page_is_unclaimed() -> None:
     assert body["state"] == "current"
     assert body["basis"] == "seat_holder"
     assert body["current"]["chat_url"] == UNCLAIMED
+    assert body["current"]["evidence_class"] == "live_binding"
     assert LIVE in body["unclaimed_cse_urls"]
 
 
@@ -323,14 +346,21 @@ def test_unknown_provenance_only_page_does_not_block_holder() -> None:
             }
         ]
     }
+    class _Held:
+        parent_thread = LANE
+        registration_id = "held"
+        purpose = "operator-proxy"
+
     body = _resolve(
         snap=snap,
         probe_page=probe,
+        list_active=lambda: [_Held()],
         chat_url_for_registration=lambda rid: UNCLAIMED if rid == "held" else None,
     )
     assert body["state"] == "current"
     assert body["basis"] == "seat_holder"
     assert body["current"]["chat_url"] == UNCLAIMED
+    assert body["current"]["evidence_class"] == "live_binding"
 
 
 def test_top_level_failure_is_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -365,19 +395,26 @@ def test_same_url_two_ports_is_one_identity() -> None:
     def probe(_port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
         return {"streaming": True, "stop": False, "tool_pause": False}, True
 
+    class _Live:
+        parent_thread = LANE
+        registration_id = "fc69582c"
+        purpose = "operator-proxy"
+
     body = resolve_lane_current_cse(
         LANE,
         snap={},
         list_pages=pages,
         probe_page=probe,
         provenance_for=prov,
-        list_active=lambda: [],
-        purpose_for_registration=lambda _rid: "mission",
+        list_active=lambda: [_Live()],
+        chat_url_for_registration=lambda rid: LIVE if rid == "fc69582c" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
         now=lambda: 10.0,
     )
     assert body["state"] == "current"
     assert body["current"]["ports"] == [9223, 9226]
     assert body["current"]["chat_url"] == LIVE
+    assert body["current"]["evidence_class"] == "live_binding"
 
 
 def test_registry_row_only_claim_counts() -> None:
@@ -429,8 +466,17 @@ def test_select_helper_multiple_in_flight() -> None:
 def test_dormant_holder_blocks_sole_idle_shadow() -> None:
     shadow = "https://claude.ai/cowork/cse_017cw5A7geCQNPPP7LzB78vB"
     holder = "https://claude.ai/cowork/cse_01KKeJtTGiUH32mi3wk7dvZx"
-    pages = [{"chat_url": shadow, "in_flight": False}]
-    state, basis, reason, current = select_lane_current(pages, holder)
+    pages = [
+        {
+            "chat_url": shadow,
+            "in_flight": False,
+            "claims": ["provenance_claim"],
+            "evidence_class": "stored_association",
+        }
+    ]
+    state, basis, reason, current = select_lane_current(
+        pages, holder, holder_live=False
+    )
     assert (state, basis, reason, current) == (
         "ambiguous",
         None,
@@ -516,6 +562,398 @@ def test_attended_route_parent_thread_codes(monkeypatch: pytest.MonkeyPatch) -> 
     assert err.status_code == 503
     assert err.json()["code"] == "lane_cse_probe_error"
     assert [item[0] for item in calls] == ["cur", "amb", "none", "err"]
+
+
+KKEJ = "https://claude.ai/cowork/cse_01KKeJtTGiUH32mi3wk7dvZx"
+XLJF9 = LIVE
+BB6A = DRAIN
+
+
+def _a37868_pages() -> list[tuple[int, str, str | None]]:
+    return [
+        (9230, KKEJ, "ws://9230"),
+        (9223, XLJF9, "ws://9223"),
+        (9224, BB6A, "ws://9224"),
+    ]
+
+
+def _a37868_probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+    if port == 9230:
+        return {"streaming": True, "stop": False, "tool_pause": False}, True
+    return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+
+def _a37868_prov(url: str) -> dict[str, Any] | None:
+    if url == KKEJ:
+        return {
+            "parent_thread_claim": LANE,
+            "reason": "hygiene_drain",
+            "registration_id": "drain-a",
+        }
+    if url == XLJF9:
+        return {
+            "parent_thread_claim": LANE,
+            "reason": "hygiene_drain",
+            "registration_id": "seat-x",
+        }
+    return None
+
+
+def _a37868_snap() -> dict[str, Any]:
+    return {
+        "seat_rows": [
+            {
+                "registration_id": "seat-x",
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+                "chat_url": XLJF9,
+            }
+        ]
+    }
+
+
+def test_a37868_drain_stream_is_not_current() -> None:
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=_a37868_snap(),
+        list_pages=lambda: iter(_a37868_pages()),
+        probe_page=_a37868_probe,
+        provenance_for=_a37868_prov,
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: XLJF9 if rid == "seat-x" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "stored_association_streaming"
+    assert body["current"] is None
+    kkej = next(p for p in body["candidates"] if p["chat_url"] == KKEJ)
+    assert kkej["evidence_class"] == "stored_association"
+    assert BB6A in body["unclaimed_cse_urls"]
+    assert body["seat_holder"]["evidence_class"] == "stored_association"
+
+
+def test_a37868_drain_stream_live_holder_still_not_current() -> None:
+    class _SeatX:
+        parent_thread = LANE
+        registration_id = "seat-x"
+        purpose = "operator-proxy"
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=_a37868_snap(),
+        list_pages=lambda: iter(_a37868_pages()),
+        probe_page=_a37868_probe,
+        provenance_for=_a37868_prov,
+        list_active=lambda: [_SeatX()],
+        chat_url_for_registration=lambda rid: XLJF9 if rid == "seat-x" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "stored_association_streaming"
+    assert body["current"] is None
+
+
+def test_live_registry_stream_is_current_despite_drain_reason() -> None:
+    class _Op:
+        parent_thread = LANE
+        registration_id = "live-op"
+        purpose = "operator-proxy"
+
+    def pages():
+        yield 9223, LIVE, "ws://9223"
+
+    def probe(port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        return {"streaming": True, "stop": False, "tool_pause": False}, True
+
+    def prov(url: str) -> dict[str, Any] | None:
+        if url == LIVE:
+            return {
+                "parent_thread_claim": LANE,
+                "reason": "hygiene_drain",
+                "registration_id": "live-op",
+            }
+        return None
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap={},
+        list_pages=pages,
+        probe_page=probe,
+        provenance_for=prov,
+        list_active=lambda: [_Op()],
+        chat_url_for_registration=lambda rid: LIVE if rid == "live-op" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "current"
+    assert body["basis"] == "in_flight"
+    assert body["current"]["evidence_class"] == "live_binding"
+    assert body["current"]["provenance_reason"] == "hygiene_drain"
+
+
+def test_dormant_holder_open_idle_is_not_current() -> None:
+    holder_url = DRAIN
+
+    def pages():
+        yield 9224, holder_url, "ws://9224"
+
+    def probe(_port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+    def prov(url: str) -> dict[str, Any] | None:
+        if url == holder_url:
+            return {
+                "parent_thread_claim": LANE,
+                "reason": "hygiene_drain",
+                "registration_id": "seat-x",
+            }
+        return None
+
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": "seat-x",
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+                "chat_url": holder_url,
+            }
+        ]
+    }
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=pages,
+        probe_page=probe,
+        provenance_for=prov,
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: holder_url if rid == "seat-x" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "seat_holder_dormant"
+    assert body["current"] is None
+
+
+@pytest.mark.parametrize(
+    "kwargs,expect_current",
+    [
+        (
+            {
+                "list_pages": lambda: iter([(9223, LIVE, "ws://9223")]),
+                "probe_page": lambda p, _w: (
+                    ({"streaming": True, "stop": False, "tool_pause": False}, True)
+                    if p == 9223
+                    else (None, False)
+                ),
+                "provenance_for": lambda u: (
+                    {
+                        "parent_thread_claim": LANE,
+                        "reason": "hygiene_drain",
+                        "registration_id": "x",
+                    }
+                    if u == LIVE
+                    else None
+                ),
+                "list_active": lambda: [],
+            },
+            False,
+        ),
+        (
+            {
+                "snap": {
+                    "seat_rows": [
+                        {
+                            "registration_id": "h",
+                            "parent_thread": LANE,
+                            "purpose": "operator-proxy",
+                            "seat_bound_at": 1.0,
+                            "chat_url": DRAIN,
+                        }
+                    ]
+                },
+                "list_pages": lambda: iter([(9224, DRAIN, "ws://9224")]),
+                "probe_page": lambda _p, _w: (
+                    {"streaming": False, "stop": False, "tool_pause": False},
+                    True,
+                ),
+                "provenance_for": lambda u: (
+                    {
+                        "parent_thread_claim": LANE,
+                        "registration_id": "h",
+                    }
+                    if u == DRAIN
+                    else None
+                ),
+                "list_active": lambda: [],
+                "chat_url_for_registration": lambda rid: (
+                    DRAIN if rid == "h" else None
+                ),
+            },
+            False,
+        ),
+        (
+            {
+                "list_pages": lambda: iter([(9224, DRAIN, "ws://9224")]),
+                "probe_page": lambda _p, _w: (
+                    {"streaming": True, "stop": False, "tool_pause": False},
+                    True,
+                ),
+                "provenance_for": lambda _u: None,
+                "list_active": lambda: [
+                    type(
+                        "R",
+                        (),
+                        {
+                            "parent_thread": LANE,
+                            "registration_id": "reg-only",
+                            "purpose": "operator-proxy",
+                        },
+                    )()
+                ],
+                "chat_url_for_registration": lambda rid: (
+                    DRAIN if rid == "reg-only" else None
+                ),
+            },
+            True,
+        ),
+        (
+            {
+                "list_pages": lambda: iter([(9224, DRAIN, "ws://9224")]),
+                "probe_page": lambda _p, _w: (
+                    {"streaming": False, "stop": False, "tool_pause": False},
+                    True,
+                ),
+                "provenance_for": lambda _u: None,
+                "list_active": lambda: [
+                    type(
+                        "R",
+                        (),
+                        {
+                            "parent_thread": LANE,
+                            "registration_id": "reg-only",
+                            "purpose": "operator-proxy",
+                        },
+                    )()
+                ],
+                "chat_url_for_registration": lambda rid: (
+                    DRAIN if rid == "reg-only" else None
+                ),
+                "snap": {
+                    "seat_rows": [
+                        {
+                            "registration_id": "reg-only",
+                            "parent_thread": LANE,
+                            "purpose": "operator-proxy",
+                            "seat_bound_at": 1.0,
+                        }
+                    ]
+                },
+            },
+            True,
+        ),
+        (
+            {
+                "list_pages": lambda: iter([(9223, LIVE, "ws://9223")]),
+                "probe_page": lambda _p, _w: (
+                    {"streaming": True, "stop": False, "tool_pause": False},
+                    True,
+                ),
+                "provenance_for": lambda u: (
+                    {
+                        "parent_thread_claim": LANE,
+                        "registration_id": "x",
+                    }
+                    if u == LIVE
+                    else None
+                ),
+                "list_active": lambda: [],
+                "snap": {
+                    "seat_rows": [
+                        {
+                            "registration_id": "live-h",
+                            "parent_thread": LANE,
+                            "purpose": "operator-proxy",
+                            "seat_bound_at": 1.0,
+                            "chat_url": DRAIN,
+                        }
+                    ]
+                },
+                "chat_url_for_registration": lambda rid: (
+                    DRAIN if rid == "live-h" else None
+                ),
+            },
+            False,
+        ),
+        (
+            {
+                "list_pages": lambda: iter([(9224, DRAIN, "ws://9224")]),
+                "probe_page": lambda _p, _w: (
+                    {"streaming": False, "stop": False, "tool_pause": False},
+                    True,
+                ),
+                "provenance_for": lambda u: (
+                    {
+                        "parent_thread_claim": LANE,
+                        "registration_id": "live-h",
+                    }
+                    if u == DRAIN
+                    else None
+                ),
+                "list_active": lambda: [
+                    type(
+                        "R",
+                        (),
+                        {
+                            "parent_thread": LANE,
+                            "registration_id": "live-h",
+                            "purpose": "operator-proxy",
+                        },
+                    )()
+                ],
+                "chat_url_for_registration": lambda rid: (
+                    DRAIN if rid == "live-h" else None
+                ),
+                "snap": {
+                    "seat_rows": [
+                        {
+                            "registration_id": "live-h",
+                            "parent_thread": LANE,
+                            "purpose": "operator-proxy",
+                            "seat_bound_at": 1.0,
+                            "chat_url": DRAIN,
+                        }
+                    ]
+                },
+            },
+            True,
+        ),
+    ],
+)
+def test_current_is_always_live_binding(kwargs: dict, expect_current: bool) -> None:
+    base: dict[str, Any] = {
+        "snap": kwargs.get("snap", {}),
+        "list_pages": kwargs["list_pages"],
+        "probe_page": kwargs["probe_page"],
+        "provenance_for": kwargs["provenance_for"],
+        "list_active": kwargs["list_active"],
+        "chat_url_for_registration": kwargs.get(
+            "chat_url_for_registration", lambda _rid: None
+        ),
+        "purpose_for_registration": lambda _rid: "operator-proxy",
+        "now": lambda: 1_700_000_000.0,
+    }
+    body = resolve_lane_current_cse(LANE, **base)
+    current = body.get("current")
+    assert body["state"] != "current" or (
+        isinstance(current, dict) and current.get("evidence_class") == "live_binding"
+    )
+    if expect_current:
+        assert body["state"] == "current"
 
 
 def test_attended_route_blank_parent_thread_uses_existing(
