@@ -48,6 +48,22 @@ def PipelineDispatchJournalRead(  # noqa: N802
 
 
 @event_factory
+def PipelineDispatchInterrupted(  # noqa: N802
+    execution_id: str,
+    pipeline: str,
+) -> Event:
+    """Emitted when a restart orphan-sweep marks a stale ``started`` row failed."""
+    return Event(
+        signal="pipeline.dispatch.interrupted",
+        payload={
+            "execution_id": execution_id,
+            "pipeline": pipeline,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def PipelineDispatchJournalPruned(  # noqa: N802
     records_deleted: int,
     oldest_deleted_age_seconds: float | None,

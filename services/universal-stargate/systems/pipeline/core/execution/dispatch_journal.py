@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from universal_logging import get_logger
 
 from ..events.dispatch import (
+    PipelineDispatchInterrupted,
     PipelineDispatchJournalPruned,
     PipelineDispatchJournalRead,
     PipelineDispatchJournalWritten,
@@ -27,6 +28,7 @@ from .dispatch_journal_transitions import (
     fetch_record_sync,
     migrate_schema_sync,
     prune_started_sync,
+    sweep_orphan_started_sync,
     write_transition_sync,
 )
 
@@ -156,6 +158,28 @@ def _prune_sync(
         oldest_epoch = float(oldest_epoch_row[0])
     oldest_age_seconds = (now - oldest_epoch) if oldest_epoch is not None else None
     return max(0, deleted), oldest_age_seconds, started_deleted
+
+
+async def sweep_orphan_started(
+    process_started_at: float,
+    *,
+    event_bus: _EventBusProtocol | None = None,
+) -> int:
+    """Flip pre-boot ``started`` journal rows to resumable ``failed`` after restart."""
+    updated = await asyncio.to_thread(
+        sweep_orphan_started_sync,
+        _journal_path(),
+        process_started_at=process_started_at,
+    )
+    for execution_id, pipeline in updated:
+        _emit(
+            event_bus,
+            PipelineDispatchInterrupted(
+                execution_id=execution_id,
+                pipeline=pipeline,
+            ),
+        )
+    return len(updated)
 
 
 async def initialize_schema() -> None:
