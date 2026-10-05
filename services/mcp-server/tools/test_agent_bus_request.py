@@ -889,12 +889,12 @@ def test_request_binds_cse_when_liveness_dead():
             cse_registration_id="reg-a",
         )
     assert result["thread"]["id"] == "9501"
-    bind.assert_called_once()
-    assert bind.call_args.args[0] == "agent-bus"
-    assert bind.call_args.args[1] == "POST"
-    assert bind.call_args.args[2] == "/threads/9501/cse-associate"
-    assert bind.call_args.kwargs["body"]["cse_chat_url"] == _CSE_URL
-    assert bind.call_args.kwargs["body"]["cse_registration_id"] == "reg-a"
+    posts = [c for c in bind.call_args_list if c.args[1] == "POST"]
+    assert len(posts) == 1
+    assert posts[0].args[0] == "agent-bus"
+    assert posts[0].args[2] == "/threads/9501/cse-associate"
+    assert posts[0].kwargs["body"]["cse_chat_url"] == _CSE_URL
+    assert posts[0].kwargs["body"]["cse_registration_id"] == "reg-a"
     stamp.assert_not_called()
 
 
@@ -1055,7 +1055,8 @@ def test_continuity_hop_from_cursor_binds_registration():
             cse_registration_id="reg-a",
             continuity_hop=True,
         )
-    bind.assert_called_once()
-    assert bind.call_args.kwargs["body"]["cse_registration_id"] == "reg-a"
+    posts = [c for c in bind.call_args_list if c.args[1] == "POST"]
+    assert len(posts) == 1
+    assert posts[0].kwargs["body"]["cse_registration_id"] == "reg-a"
     assert enqueue.call_args.kwargs["cse_registration_id"] == "reg-a"
     stamp.assert_not_called()

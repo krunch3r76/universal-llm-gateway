@@ -467,6 +467,8 @@ async def run_cdp_worker(
         def _publish() -> None:
             from agent_bus_store.db.threads_atomic import update_dispatch_link_chat_url
 
+            from .cdp_hop_cse_bind import associate_hop_seated_cse
+
             publish_cdp_kwargs(
                 CdpGenerateSeated,
                 request_id=request_id,
@@ -482,6 +484,13 @@ async def run_cdp_worker(
                 thread_id=thread_id,
                 execution_id=execution_id,
                 chat_url=chat_url,
+            )
+            associate_hop_seated_cse(
+                mission_kind=mission_kind,
+                thread_id=thread_id,
+                parent_thread=parent_thread,
+                chat_url=chat_url,
+                registration_id=registration_id,
             )
 
         loop.call_soon_threadsafe(_publish)
