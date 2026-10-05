@@ -10,7 +10,7 @@ import pytest
 
 from cortex_store.dispatch_ops import _OP_SPECS
 from cortex_store.main import create_app
-from cortex_store.openapi_mcp._route_map import UNTYPEABLE_OPS
+from cortex_store.openapi_mcp._route_map import PIPELINE_PENDING, UNTYPEABLE_OPS
 from cortex_store.openapi_mcp.bijection import (
     assert_op_served_bijection,
     assert_served_bijection,
@@ -30,42 +30,26 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 UNBOUND_BASELINE: frozenset[str] = frozenset(
     {
-        "assemble_transcript",
-        "case_audit",
         "claim_alignment",
         "deadline_resolve",
-        "digest",
         "endeavor_dispose_row",
-        "endeavor_lock_ready",
         "endeavor_repair_t1",
         "endeavor_write_row",
         "entities_bulk_upsert",
         "entity_retype",
-        "fill_gaps",
         "friction",
         "friction_close",
         "frictions",
         "graph_reach",
         "observe",
         "pinned_deliverable_write",
-        "predicate_renormalize",
-        "prose_fact_scan",
         "recon_sidecar_write",
         "register_skill_substrate",
         "relationships_bulk_upsert",
-        "review_queue",
         "rj_consolidate",
-        "session_audit",
-        "session_close_preflight",
         "tag_resolve",
         "thread_sidecar_write",
         "todo_close_sidecar",
-        "todo_distill_implement_gate",
-        "transcript_discover",
-        "transcript_harvest",
-        "transcript_project",
-        "transcript_seal",
-        "transcript_source_probe",
         "view_render",
     }
 )
@@ -75,7 +59,13 @@ UNBOUND_BASELINE: frozenset[str] = frozenset(
 def test_four_bucket_census_partitions_all_ops() -> None:
     census = build_four_bucket_census()
     assert census.total == len(_OP_SPECS)
-    union = census.served | census.rb_only | census.neither | census.untypeable
+    union = (
+        census.served
+        | census.rb_only
+        | census.neither
+        | census.untypeable
+        | census.pipeline_pending
+    )
     assert union == set(_OP_SPECS)
 
 
@@ -85,7 +75,30 @@ def test_four_bucket_census_counts() -> None:
     assert census.total == len(_OP_SPECS)
     assert census.served == frozenset(SERVED_OPS)
     assert census.untypeable == UNTYPEABLE_OPS & set(_OP_SPECS)
+    assert census.pipeline_pending == frozenset(PIPELINE_PENDING) & set(_OP_SPECS)
     assert census.rb_only | census.neither == UNBOUND_BASELINE
+
+
+@pytest.mark.offline
+def test_pipeline_pending_ops_tagged_with_slug() -> None:
+    import re
+
+    slug_re = re.compile(r"^pipelines/[a-z0-9_]+/v\d+/$")
+    for op, slug in PIPELINE_PENDING.items():
+        assert op in _OP_SPECS, f"{op} missing from dispatch ops"
+        assert slug_re.match(slug), f"{op}: slug {slug!r} not pipelines/<name>/v<N>/"
+    census = build_four_bucket_census()
+    assert census.pipeline_slugs == {
+        op: PIPELINE_PENDING[op] for op in census.pipeline_pending
+    }
+
+
+@pytest.mark.offline
+def test_no_op_both_stamped_and_pipeline_pending() -> None:
+    stamped = frozenset(SERVED_OPS)
+    pending = frozenset(PIPELINE_PENDING)
+    overlap = stamped & pending
+    assert not overlap, f"ops in both SERVED_OPS and PIPELINE_PENDING: {sorted(overlap)}"
 
 
 @pytest.mark.offline

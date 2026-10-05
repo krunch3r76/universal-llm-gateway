@@ -1,4 +1,4 @@
-"""Four-bucket census — served / R-b-only / neither / untypeable (A2)."""
+"""Five-bucket census — served / R-b-only / neither / untypeable / pipeline_pending (A2+S8)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,14 @@ import yaml
 
 from cortex_store.dispatch_ops import _OP_SPECS
 
-from ._route_map import UNTYPEABLE_OPS, _live_openapi, typed_routes_from_openapi
+from ._route_map import (
+    PIPELINE_PENDING,
+    UNTYPEABLE_OPS,
+    _live_openapi,
+    typed_routes_from_openapi,
+)
 
-Bucket = str  # served | rb_only | neither | untypeable
+Bucket = str  # served | rb_only | neither | untypeable | pipeline_pending
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_CANONICAL = _REPO_ROOT / "config" / "mcp" / "canonical.yaml"
 
@@ -23,6 +28,9 @@ class FourBucketCensus:
     rb_only: frozenset[str]
     neither: frozenset[str]
     untypeable: frozenset[str]
+    pipeline_pending: frozenset[str]
+    pipeline_slugs: dict[str, str] = field(default_factory=dict)
+    """op → pipeline package slug for ``pipeline_pending`` bucket."""
     served_routes: dict[str, tuple[str, str]] = field(default_factory=dict)
     """op → (METHOD, path), read out of the served document's ``x-mcp`` stamps."""
 
@@ -33,6 +41,7 @@ class FourBucketCensus:
             + len(self.rb_only)
             + len(self.neither)
             + len(self.untypeable)
+            + len(self.pipeline_pending)
         )
 
 
@@ -56,7 +65,7 @@ def build_four_bucket_census(
     canonical_yaml_path: Path | None = None,
     openapi_schema: dict[str, Any] | None = None,
 ) -> FourBucketCensus:
-    """Partition every dispatch op into the L0 T1-1 four-bucket join.
+    """Partition every dispatch op into the L0 T1-1 five-bucket join.
 
     ``served`` is derived from ``x-mcp`` stamps in the served document, so an
     op whose route carries no stamp falls into ``neither`` — visible, not lost.
@@ -67,14 +76,18 @@ def build_four_bucket_census(
     )
     served = frozenset(routes) & ops
     untypeable = UNTYPEABLE_OPS & ops
+    pipeline_pending = frozenset(PIPELINE_PENDING) & ops
     rb_all = _rb_schema_ops(canonical_yaml_path or _DEFAULT_CANONICAL) & ops
-    rb_only = rb_all - served - untypeable
-    neither = ops - served - rb_only - untypeable
+    rb_only = rb_all - served - untypeable - pipeline_pending
+    neither = ops - served - rb_only - untypeable - pipeline_pending
+    slugs = {op: PIPELINE_PENDING[op] for op in pipeline_pending}
     return FourBucketCensus(
         served=served,
         rb_only=rb_only,
         neither=neither,
         untypeable=untypeable,
+        pipeline_pending=pipeline_pending,
+        pipeline_slugs=slugs,
         served_routes={op: (routes[op].method, routes[op].path) for op in served},
     )
 
@@ -93,6 +106,8 @@ def render_census_markdown(census: FourBucketCensus) -> str:
         f"| R-b-only | {len(census.rb_only)} | canonical.yaml json_schema, no typed route yet |",
         f"| neither | {len(census.neither)} | dispatch-handler only; route to mint or vanish |",
         f"| untypeable | {len(census.untypeable)} | adapter-orchestration; no HTTP SOT target |",
+        f"| pipeline_pending | {len(census.pipeline_pending)} | "
+        "pipeline package slug assigned; await pipeline OpenAPI ``x-mcp`` |",
         "",
         "## served",
         "",
@@ -109,5 +124,9 @@ def render_census_markdown(census: FourBucketCensus) -> str:
     lines.extend(["", "## untypeable", ""])
     for op in sorted(census.untypeable):
         lines.append(f"- `{op}`")
+    lines.extend(["", "## pipeline_pending", ""])
+    for op in sorted(census.pipeline_pending):
+        slug = census.pipeline_slugs.get(op, PIPELINE_PENDING.get(op, "?"))
+        lines.append(f"- `{op}` → `{slug}`")
     lines.append("")
     return "\n".join(lines)
