@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from cdp_ask.app import create_app
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.runner import poll_banner_fields_from_harvest
 from cdp_ask.page_liveness import (
     SUSTAINED_IDLE_SAMPLES,
     LadderAdvanceState,
@@ -24,6 +25,37 @@ pytestmark = pytest.mark.offline
 @pytest.fixture
 def store() -> ExecutionStore:
     return ExecutionStore()
+
+
+@pytest.mark.asyncio
+async def test_merge_poll_banner_fields_projected_on_running_poll(
+    store: ExecutionStore,
+) -> None:
+    """Harvest banner latch → store.result → poll_execution (producer round trip)."""
+    record = await store.create(holder="test", purpose="ask")
+    sleeper = asyncio.create_task(asyncio.sleep(3600))
+    await store.attach_task(record.execution_id, sleeper)
+    harvest = {
+        "error_banner_match": "weekly limit",
+        "error_banner_text": "You've hit your weekly limit. Try again next week.",
+    }
+    fields = poll_banner_fields_from_harvest(harvest)
+    await store.merge_poll_result_fields(
+        record.execution_id,
+        error_banner_match=fields.get("error_banner_match"),
+        error_banner_text=fields.get("error_banner_text"),
+    )
+    client = TestClient(create_app(store=store))
+    poll = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert poll["error_banner_match"] == harvest["error_banner_match"]
+    assert poll["error_banner_text"] == harvest["error_banner_text"]
+    # Sticky latch: a later empty harvest sample must not clear banner keys.
+    await store.merge_poll_result_fields(record.execution_id)
+    poll2 = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert poll2["error_banner_match"] == harvest["error_banner_match"]
+    sleeper.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sleeper
 
 
 @pytest.mark.asyncio
