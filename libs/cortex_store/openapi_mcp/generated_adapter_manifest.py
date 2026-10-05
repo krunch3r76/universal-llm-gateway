@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "01de94f97225a4496b85b1d3969cf7b0f581ac242fda405b63e544cae5881961"
+OPENAPI_SHA256 = "4fe3923a2c9da07f21c2527ad54c8a2f14f5bfa1ccbeee843174581364ec10e7"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -120,6 +120,21 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/entities/{entity_id}",
         "operation_id": "update_entity_entities__entity_id__patch",
     },
+    "friction": {
+        "method": "POST",
+        "path": "/frictions",
+        "operation_id": "create_friction_frictions_post",
+    },
+    "friction_close": {
+        "method": "POST",
+        "path": "/frictions/{assertion_id}/close",
+        "operation_id": "close_friction_route_frictions__assertion_id__close_post",
+    },
+    "frictions": {
+        "method": "GET",
+        "path": "/frictions",
+        "operation_id": "list_frictions_frictions_get",
+    },
     "impact": {
         "method": "GET",
         "path": "/edges/impact",
@@ -129,6 +144,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/session-journals",
         "operation_id": "list_session_journals_session_journals_get",
+    },
+    "observe": {
+        "method": "POST",
+        "path": "/assertions/observations",
+        "operation_id": "observe_assertion_assertions_observations_post",
     },
     "relationship_create": {
         "method": "POST",
@@ -277,7 +297,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "3ff16902c644da9f9505dc9e98b37a9286c5bb31a106c742d7f1fce20ca5f6cf",
+    "@components": "f2ad7f7835f1a812b9e83229fbdf874b4dc07c335eec3470c8f15fb03ba5445b",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

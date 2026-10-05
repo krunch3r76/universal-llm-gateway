@@ -22,7 +22,17 @@ import json
 from fastapi.responses import JSONResponse
 
 # Side-effect imports — registering route handlers on `router`.
-from . import _create, _enrich, _entrenchment, _get, _list, _search, _supersede, _update
+from . import (
+    _create,
+    _enrich,
+    _entrenchment,
+    _get,
+    _list,
+    _observe,
+    _search,
+    _supersede,
+    _update,
+)
 from ._create import _create_assertion_impl, create_assertion
 from ._enrich import enrich_assertion_endpoint
 from ._entrenchment import list_assertions_by_entrenchment
@@ -86,4 +96,14 @@ __all__ = [
 
 # Keep the side-effect imports referenced so static analysers don't flag
 # them as unused — registration via decorator runs at import time.
-_ = (_create, _enrich, _entrenchment, _get, _list, _search, _supersede, _update)
+_ = (
+    _create,
+    _enrich,
+    _entrenchment,
+    _get,
+    _list,
+    _observe,
+    _search,
+    _supersede,
+    _update,
+)
