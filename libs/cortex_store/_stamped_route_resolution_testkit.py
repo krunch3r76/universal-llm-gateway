@@ -58,7 +58,7 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
         "register_skill_substrate_route",
     ),
     (
-        "GET",
+        "POST",
         "view_render_route",
         {"document_id": "document:probe-view"},
         "view_render_route",

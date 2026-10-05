@@ -139,24 +139,17 @@ def run_l2_serialization(
     assert counter._inner.acquire(blocking=False), "setup: lock must be free"
     counter._inner.release()
 
-    hold = threading.Event()
-    released = threading.Event()
     result: dict[str, Any] = {}
+    started = threading.Event()
 
     def worker() -> None:
-        hold.set()
-        try:
-            result["value"] = call()
-        finally:
-            released.set()
+        started.set()
+        result["value"] = call()
 
+    counter._inner.acquire()  # external hold before worker starts the handler
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
-    assert hold.wait(timeout=2.0), "worker never started"
-
-    assert counter._inner.acquire(blocking=False), "lock must be free before external hold"
-    counter._inner.release()
-    counter._inner.acquire()  # hold until we release
+    assert started.wait(timeout=2.0), "worker never started"
 
     thread.join(timeout=block_timeout_s)
     assert thread.is_alive(), "call completed while lock held — expected block"
@@ -164,10 +157,39 @@ def run_l2_serialization(
     counter._inner.release()
     thread.join(timeout=complete_timeout_s)
     assert not thread.is_alive(), "call did not complete after lock release"
-    assert released.is_set()
     assert "value" in result
 
 
 def assert_l3_lock_reacquirable(counter: CountingWriteLock) -> None:
     assert counter.acquire(blocking=False), "WRITE_LOCK not re-acquirable after failure"
     counter.release()
+
+
+def assert_register_create_rollback_empty(
+    conn: Any,
+    skill_id: str,
+    *,
+    case_id: str = "case:batch7-parity",
+) -> None:
+    """After failed atomic create, no composite member rows or uses_skill edges."""
+    from cortex_store.db import query
+
+    skill_entity = f"agent_skill:{skill_id}"
+    doc_entity = f"document:skill-{skill_id}"
+    assert not query(
+        conn,
+        "SELECT 1 FROM entities WHERE id IN (?, ?)",
+        (skill_entity, doc_entity),
+    )
+    assert not query(
+        conn,
+        "SELECT 1 FROM relationships WHERE "
+        "(from_entity = ? AND to_entity = ?) OR "
+        "(from_entity = ? AND to_entity = ? AND type = 'uses_skill')",
+        (skill_entity, doc_entity, case_id, skill_entity),
+    )
+    assert not query(
+        conn,
+        "SELECT 1 FROM session_edges WHERE from_node = ? OR to_node = ?",
+        (skill_entity, skill_entity),
+    )

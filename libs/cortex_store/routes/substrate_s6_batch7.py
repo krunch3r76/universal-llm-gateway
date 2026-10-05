@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from openapi_mcp.binding import x_mcp
 
-from ..models.substrate_s6_batch7 import RegisterSkillSubstrateRequest
+from ..models.substrate_s6_batch7 import RegisterSkillSubstrateRequest, ViewRenderRequest
 
 router = APIRouter(tags=["substrate-s6-batch7"])
 
@@ -25,39 +25,21 @@ def register_skill_substrate_route(
     return _op_register_skill_substrate(**body.model_dump(exclude_unset=True))
 
 
-@router.get(
-    "/views/{document_id}",
+@router.post(
+    "/views/{document_id}/render",
     openapi_extra=x_mcp("view_render"),
 )
 def view_render_route(
     document_id: str,
-    asof: Annotated[str | None, Query(alias="asof")] = None,
-    mode: Annotated[str, Query()] = "read_asof",
-    root_id: Annotated[str | None, Query()] = None,
-    view_profile: Annotated[str | None, Query()] = None,
-    agent: Annotated[str | None, Query()] = None,
-    session_id: Annotated[str | None, Query()] = None,
+    body: ViewRenderRequest,
 ) -> dict[str, Any]:
-    """Render or read a derived view (dispatch ``view_render`` op).
+    """Render or refresh a derived view (dispatch ``view_render`` op).
 
-    ``asof`` maps to ``as_of_system`` for ``mode=read_asof`` (bind proposal
-    ``GET /views/{id}?asof=``). Other modes remain available for parity with
-    dispatch callers that pass explicit ``mode``.
+    POST because the handler may write files, relationships, and events on
+    register/refresh/full modes; ``mode`` defaults to ``refresh`` like the handler.
     """
     from ..dispatch_ops.ops_views import _op_view_render
 
-    payload: dict[str, Any] = {
-        "document_id": document_id,
-        "mode": mode,
-    }
-    if asof is not None:
-        payload["as_of_system"] = asof
-    if root_id is not None:
-        payload["root_id"] = root_id
-    if view_profile is not None:
-        payload["view_profile"] = view_profile
-    if agent is not None:
-        payload["agent"] = agent
-    if session_id is not None:
-        payload["session_id"] = session_id
+    payload = body.model_dump(exclude_unset=True)
+    payload["document_id"] = document_id
     return _op_view_render(**payload)

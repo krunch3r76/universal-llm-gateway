@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from cortex_store._stamped_route_resolution_testkit import (
     assert_pre_batch7_route_resolution_unchanged,
     resolve_endpoint_name,
 )
+from cortex_store._write_lock_semantics_testkit import assert_register_create_rollback_empty
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.conftest import bind_cortex_db
@@ -24,6 +26,7 @@ from cortex_store.db import decode_row, json_encode, query
 from cortex_store.dispatch_ops import _shared as shared_mod
 from cortex_store.dispatch_ops import ops_composites as composites_mod
 from cortex_store.dispatch_ops import ops_views as views_mod
+from cortex_store.dispatch_ops._views.archive import read_asof_instance
 from cortex_store.dispatch_ops.ops_entities import _op_entity_create
 from cortex_store.dispatch_ops import execute_op
 from cortex_store.entity_crud import ENTITY_JSON_FIELDS
@@ -40,6 +43,7 @@ def _without_envelope(body: dict[str, Any]) -> dict[str, Any]:
 _ARCHIVED_AT_RE = re.compile(r"^<!-- archived_at: .+? -->\n", re.MULTILINE)
 _VIEW_STAMP_TIME_RE = re.compile(r'("time":\s*")[^"]+(")')
 _ISO_TS_IN_BODY_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
+_VIEW_CORE_HASH_RE = re.compile(r'"core_hash":\s*"([^"]+)"')
 
 
 def _normalize_view_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -300,9 +304,23 @@ def test_register_skill_substrate_matching_backfill_parity(
     )
     conn.commit()
 
+    dispatch_events: list = []
+    monkeypatch.setattr(
+        composites_mod,
+        "record",
+        lambda s, **p: dispatch_events.append((s, p)),
+    )
     dispatch_raw = execute_op("register_skill_substrate", payload)
     assert dispatch_raw.get("_status") == "idempotent", dispatch_raw
+    dispatch_body = _normalize_register_response(dispatch_raw)
+    doc_entity = f"document:skill-{skill_id}"
+    expected_backfill = [
+        doc_entity,
+        f"{skill_entity} -[keystone_of]-> {doc_entity}",
+    ]
+    assert dispatch_body.get("backfilled_members") == expected_backfill
     dispatch_snap = _register_db_snapshot(cortex_db.cortex_conn(), skill_id)
+    dispatch_ev = _events_snapshot(dispatch_events)
 
     typed_client = _isolated_client(
         migrated_db_template,
@@ -330,10 +348,90 @@ def test_register_skill_substrate_matching_backfill_parity(
         ),
     )
     conn2.commit()
+    typed_events: list = []
+    monkeypatch.setattr(
+        composites_mod,
+        "record",
+        lambda s, **p: typed_events.append((s, p)),
+    )
     resp = typed_client.post("/skills/register-substrate", json=payload)
     assert resp.status_code == 200, resp.text
+    typed_body = _normalize_register_response(resp.json())
+    assert typed_body == dispatch_body
+    assert typed_body.get("backfilled_members") == expected_backfill
     typed_snap = _register_db_snapshot(cortex_db.cortex_conn(), skill_id)
     assert typed_snap == dispatch_snap
+    assert _events_snapshot(typed_events) == dispatch_ev
+
+
+@pytest.mark.offline
+def test_register_skill_substrate_matching_partial_keystone_fail_parity(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Known non-atomic property: document backfilled, keystone rel fails — same on both paths."""
+    skill_id = "batch7-partial"
+    ws_dir = tmp_path / "ws_partial"
+    _, canonical = _skill_workspace(ws_dir, skill_id)
+    payload = _full_register_payload(skill_id, canonical)
+    skill_entity = f"agent_skill:{skill_id}"
+    doc_entity = f"document:skill-{skill_id}"
+
+    original_rel = composites_mod._op_relationship_create
+
+    def fail_keystone(**kwargs: Any) -> Any:
+        if kwargs.get("type_id") == "keystone_of":
+            return {"error": "injected keystone backfill failure", "code": "injected"}
+        return original_rel(**kwargs)
+
+    monkeypatch.setattr(composites_mod, "_op_relationship_create", fail_keystone)
+
+    def _seed_skill_only(conn: sqlite3.Connection) -> None:
+        _insert_case_entity(conn)
+        conn.execute(
+            "INSERT INTO entities (id, type, name, description, attributes, source_uri) "
+            "VALUES (?, 'agent_skill', ?, ?, ?, ?)",
+            (
+                skill_entity,
+                skill_id,
+                payload["description"],
+                json_encode(
+                    {
+                        "trigger_phrases": payload["trigger_phrases"],
+                        "skill_binding": payload["skill_binding"],
+                    }
+                ),
+                canonical,
+            ),
+        )
+        conn.commit()
+
+    bind_db = tmp_path / "cortex_dispatch_partial.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    monkeypatch.setenv("WORKSPACES_ROOT", str(ws_dir / "projects"))
+    _seed_skill_only(cortex_db.cortex_conn())
+    dispatch_raw = execute_op("register_skill_substrate", payload)
+    assert "error" in dispatch_raw, dispatch_raw
+    dispatch_conn = cortex_db.cortex_conn()
+    assert _entity_rows(dispatch_conn, doc_entity)
+    assert not _relationship_rows(dispatch_conn, skill_entity, doc_entity)
+
+    typed_client = _isolated_client(
+        migrated_db_template,
+        tmp_path,
+        monkeypatch,
+        suffix="typed_partial",
+        skill_id=skill_id,
+    )
+    _seed_skill_only(cortex_db.cortex_conn())
+    resp = typed_client.post("/skills/register-substrate", json=payload)
+    assert resp.status_code == 200
+    assert "error" in resp.json()
+    typed_conn = cortex_db.cortex_conn()
+    assert _entity_rows(typed_conn, doc_entity) == _entity_rows(dispatch_conn, doc_entity)
+    assert _relationship_rows(typed_conn, skill_entity, doc_entity) == []
 
 
 @pytest.mark.offline
@@ -419,7 +517,11 @@ def test_register_skill_substrate_failure_parity_after_skill_insert(
     _insert_case_entity(conn_f)
     with pytest.raises(sqlite3.OperationalError, match="injected after skill insert"):
         execute_op("register_skill_substrate", payload)
+    assert_register_create_rollback_empty(
+        cortex_db.cortex_conn(), skill_id, case_id="case:batch7-parity"
+    )
     dispatch_snap = _register_db_snapshot(cortex_db.cortex_conn(), skill_id)
+    assert dispatch_snap == ([], [], [])
 
     typed_client = _isolated_client(
         migrated_db_template,
@@ -433,6 +535,9 @@ def test_register_skill_substrate_failure_parity_after_skill_insert(
     _insert_case_entity(conn_ft)
     resp = typed_client.post("/skills/register-substrate", json=payload)
     assert resp.status_code == 500
+    assert_register_create_rollback_empty(
+        cortex_db.cortex_conn(), skill_id, case_id="case:batch7-parity"
+    )
     typed_snap = _register_db_snapshot(cortex_db.cortex_conn(), skill_id)
     assert typed_snap == dispatch_snap
 
@@ -473,13 +578,63 @@ def _seed_two_asof_stamps(
     monkeypatch.setattr(shared_mod, "_FILES_ROOT", files_root)
     monkeypatch.setattr(views_mod, "_FILES_ROOT", files_root)
     assert files_root.resolve() != _LIVE_FILES_ROOT.resolve()
-    as_of_early = _seed_view_doc(files_root, monkeypatch)
-    full = execute_op(
+    _seed_view_doc(files_root, monkeypatch)
+    case_id = "case:batch7-view"
+    first_full = execute_op(
         "view_render",
         {"document_id": "document:batch7-view", "mode": "full"},
     )
-    assert "error" not in full, full
-    as_of_late = (full.get("stamp") or {}).get("time") or as_of_early
+    assert "error" not in first_full, first_full
+    rev1 = read_asof_instance(
+        files_root,
+        document_id="document:batch7-view",
+        as_of_system=(first_full.get("stamp") or {}).get("time")
+        or "2099-01-01T00:00:00+00:00",
+    )
+    assert rev1 is not None
+    from cortex_store.dispatch_ops.ops_relationships import _op_relationship_create
+
+    conn = cortex_db.cortex_conn()
+    insert_entity(
+        conn,
+        entity_id="person:batch7-view-cast",
+        entity_type="person",
+        name="Batch7 cast member",
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO relationship_types (type, description) VALUES (?, ?)",
+        ("involves", "batch7 involves"),
+    )
+    conn.commit()
+    rel = _op_relationship_create(
+        source_id=case_id,
+        target_id="person:batch7-view-cast",
+        type_id="involves",
+        role="parity_seed",
+    )
+    assert "error" not in rel, rel
+    time.sleep(0.05)
+    second_full = execute_op(
+        "view_render",
+        {"document_id": "document:batch7-view", "mode": "full"},
+    )
+    assert "error" not in second_full, second_full
+    rev2 = read_asof_instance(
+        files_root,
+        document_id="document:batch7-view",
+        as_of_system=(second_full.get("stamp") or {}).get("time")
+        or "2099-01-01T00:00:00+00:00",
+    )
+    assert rev2 is not None and rev1 != rev2, "seeded graph change must archive distinct revisions"
+
+    def _stamp_time_from_rev(rev_body: str) -> str:
+        match = re.search(r'"time"\s*:\s*"([^"]+)"', rev_body)
+        assert match, "revision archive missing view-stamp time"
+        return match.group(1)
+
+    as_of_early = _stamp_time_from_rev(rev1)
+    as_of_late = _stamp_time_from_rev(rev2)
+    assert as_of_early != as_of_late, "archived revision stamp times must differ"
     return as_of_early, as_of_late
 
 
@@ -535,22 +690,27 @@ def test_view_render_read_asof_parity(
     as_of_early_t, as_of_late_t = _seed_two_asof_stamps(typed_files, monkeypatch)
     typed_client = TestClient(create_app(db_path=str(typed_db)))
 
-    r_early = typed_client.get(
-        "/views/document:batch7-view",
-        params={"asof": as_of_early_t, "mode": "read_asof"},
+    r_early = typed_client.post(
+        "/views/document:batch7-view/render",
+        json={"mode": "read_asof", "as_of_system": as_of_early_t},
     )
-    r_late = typed_client.get(
-        "/views/document:batch7-view",
-        params={"asof": as_of_late_t, "mode": "read_asof"},
+    r_late = typed_client.post(
+        "/views/document:batch7-view/render",
+        json={"mode": "read_asof", "as_of_system": as_of_late_t},
     )
-    r_missing = typed_client.get(
-        "/views/document:missing-view",
-        params={"asof": as_of_early_t, "mode": "read_asof"},
+    r_missing = typed_client.post(
+        "/views/document:missing-view/render",
+        json={"mode": "read_asof", "as_of_system": as_of_early_t},
     )
     assert r_early.status_code == 200
     assert r_late.status_code == 200
     assert r_missing.status_code == 200
 
+    early_hash = _VIEW_CORE_HASH_RE.search(dispatch_early.get("body") or "")
+    late_hash = _VIEW_CORE_HASH_RE.search(dispatch_late.get("body") or "")
+    assert early_hash and late_hash and early_hash.group(1) != late_hash.group(1), (
+        "read_asof at two archive stamps must return distinct core snapshots"
+    )
     assert _normalize_view_body(r_early.json()) == dispatch_early
     assert _normalize_view_body(r_late.json()) == dispatch_late
     assert _normalize_view_body(r_missing.json()) == dispatch_missing
@@ -572,8 +732,8 @@ def test_batch7_router_resolution_no_shadow_baseline_routes(
     assert (
         resolve_endpoint_name(
             app,
-            "GET",
-            "/views/document:probe-view",
+            "POST",
+            "/views/document:probe-view/render",
         )
         == "view_render_route"
     )

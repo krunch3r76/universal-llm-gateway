@@ -9899,6 +9899,98 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "ViewRenderRequest": {
+        "description": "All fields accepted by ``_op_view_render`` (handler default ``mode=refresh``).",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "as_of_system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of System"
+          },
+          "as_of_valid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of Valid"
+          },
+          "mode": {
+            "default": "refresh",
+            "title": "Mode",
+            "type": "string"
+          },
+          "narrative_sections": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Narrative Sections"
+          },
+          "root_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "view_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View Profile"
+          }
+        },
+        "title": "ViewRenderRequest",
+        "type": "object"
+      },
       "VisionDigest": {
         "description": "Served projection of the posture-stack MAP.",
         "properties": {
@@ -28763,10 +28855,10 @@
         }
       }
     },
-    "/views/{document_id}": {
-      "get": {
-        "description": "Render or read a derived view (dispatch ``view_render`` op).\n\n``asof`` maps to ``as_of_system`` for ``mode=read_asof`` (bind proposal\n``GET /views/{id}?asof=``). Other modes remain available for parity with\ndispatch callers that pass explicit ``mode``.",
-        "operationId": "view_render_route_views__document_id__get",
+    "/views/{document_id}/render": {
+      "post": {
+        "description": "Render or refresh a derived view (dispatch ``view_render`` op).\n\nPOST because the handler may write files, relationships, and events on\nregister/refresh/full modes; ``mode`` defaults to ``refresh`` like the handler.",
+        "operationId": "view_render_route_views__document_id__render_post",
         "parameters": [
           {
             "in": "path",
@@ -28775,96 +28867,6 @@
             "schema": {
               "title": "Document Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "asof",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Asof"
-            }
-          },
-          {
-            "in": "query",
-            "name": "mode",
-            "required": false,
-            "schema": {
-              "default": "read_asof",
-              "title": "Mode",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "root_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Root Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "view_profile",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "View Profile"
-            }
-          },
-          {
-            "in": "query",
-            "name": "agent",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Agent"
-            }
-          },
-          {
-            "in": "query",
-            "name": "session_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Session Id"
             }
           },
           {
@@ -28978,15 +28980,41 @@
               ],
               "title": "Traceparent"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewRenderRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response View Render Route Views  Document Id  Get",
+                  "title": "Response View Render Route Views  Document Id  Render Post",
                   "type": "object"
                 }
               }

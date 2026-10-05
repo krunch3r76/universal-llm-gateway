@@ -15,6 +15,7 @@ from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store._write_lock_semantics_testkit import (
     assert_l1_acquisition_parity,
     assert_l3_lock_reacquirable,
+    assert_register_create_rollback_empty,
     install_counting_write_lock,
     run_l2_serialization,
     trace_txn_boundaries,
@@ -189,11 +190,13 @@ def test_register_skill_substrate_l3_failure_release(
     with pytest.raises(sqlite3.OperationalError, match="injected after skill entity"):
         execute_op("register_skill_substrate", payload)
     assert_l3_lock_reacquirable(counter)
+    assert_register_create_rollback_empty(cortex_db.cortex_conn(), skill_id, case_id="case:batch7-lock")
 
     counter2 = install_counting_write_lock(monkeypatch, composites_mod)
     resp = client.post("/skills/register-substrate", json=payload)
     assert resp.status_code == 500
     assert_l3_lock_reacquirable(counter2)
+    assert_register_create_rollback_empty(cortex_db.cortex_conn(), skill_id, case_id="case:batch7-lock")
 
 
 @pytest.mark.offline
@@ -235,7 +238,7 @@ def test_view_render_l1_dispatch_path(
     as_of = (reg.get("stamp") or {}).get("time") or "2026-07-12T12:00:00+00:00"
 
     counter = install_counting_write_lock(monkeypatch, views_mod)
-    trace = trace_txn_boundaries(monkeypatch, cortex_db, counter)
+    trace = trace_txn_boundaries(monkeypatch, views_mod, counter)
     read = execute_op(
         "view_render",
         {
@@ -287,13 +290,72 @@ def test_view_render_l1_typed_path(
     client = TestClient(create_app(db_path=str(db_path)))
 
     counter = install_counting_write_lock(monkeypatch, views_mod)
-    resp = client.get(
-        "/views/document:batch7-vr-t-charter",
-        params={"asof": as_of, "mode": "read_asof"},
+    resp = client.post(
+        f"/views/document:batch7-vr-t-charter/render",
+        json={"mode": "read_asof", "as_of_system": as_of},
     )
     assert resp.status_code == 200, resp.text
     assert counter.acquires == 1
     assert counter.releases == 1
+
+
+def _view_read_asof_payload(doc_id: str, as_of: str) -> dict[str, Any]:
+    return {"document_id": doc_id, "mode": "read_asof", "as_of_system": as_of}
+
+
+def _prepare_view_read_asof_fixture(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+) -> tuple[TestClient, str, str]:
+    from cortex_store.dispatch_ops import _shared as shared_mod
+    from cortex_store.dispatch_ops.ops_entities import _op_entity_create
+
+    files_root = tmp_path / f"files_{suffix}"
+    files_root.mkdir()
+    db_path = tmp_path / f"cortex_{suffix}.db"
+    copy_template_db(migrated_db_template, db_path)
+    bind_cortex_db(monkeypatch, db_path)
+    monkeypatch.setattr(shared_mod, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(views_mod, "_FILES_ROOT", files_root)
+    doc_id = f"document:batch7-{suffix}-charter"
+    case_id = f"case:batch7-{suffix}"
+    _op_entity_create(id=case_id, type="case", name="vr")
+    _op_entity_create(
+        id=doc_id,
+        type="document",
+        name="c",
+        source_uri=f"cortex://notes/views/batch7-{suffix}.md",
+    )
+    reg = execute_op(
+        "view_render",
+        {
+            "document_id": doc_id,
+            "mode": "register",
+            "root_id": case_id,
+            "view_profile": "matter_charter",
+        },
+    )
+    as_of = (reg.get("stamp") or {}).get("time") or "2026-07-12T12:00:00+00:00"
+    client = TestClient(create_app(db_path=str(db_path)), raise_server_exceptions=False)
+    return client, doc_id, as_of
+
+
+@pytest.mark.offline
+def test_view_render_l2_dispatch_read_asof(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, doc_id, as_of = _prepare_view_read_asof_fixture(
+        migrated_db_template, tmp_path, monkeypatch, suffix="l2-dispatch"
+    )
+    counter = install_counting_write_lock(monkeypatch, views_mod)
+    run_l2_serialization(
+        counter,
+        lambda: execute_op("view_render", _view_read_asof_payload(doc_id, as_of)),
+    )
 
 
 @pytest.mark.offline
@@ -302,41 +364,15 @@ def test_view_render_l2_typed_read_asof(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from cortex_store.dispatch_ops import _shared as shared_mod
-    from cortex_store.dispatch_ops.ops_entities import _op_entity_create
-
-    files_root = tmp_path / "files_l2"
-    files_root.mkdir()
-    db_path = tmp_path / "cortex_l2.db"
-    copy_template_db(migrated_db_template, db_path)
-    bind_cortex_db(monkeypatch, db_path)
-    monkeypatch.setattr(shared_mod, "_FILES_ROOT", files_root)
-    monkeypatch.setattr(views_mod, "_FILES_ROOT", files_root)
-    _op_entity_create(id="case:batch7-l2", type="case", name="vr")
-    _op_entity_create(
-        id="document:batch7-l2-charter",
-        type="document",
-        name="c",
-        source_uri="cortex://notes/views/batch7-l2.md",
+    client, doc_id, as_of = _prepare_view_read_asof_fixture(
+        migrated_db_template, tmp_path, monkeypatch, suffix="l2-typed"
     )
-    reg = execute_op(
-        "view_render",
-        {
-            "document_id": "document:batch7-l2-charter",
-            "mode": "register",
-            "root_id": "case:batch7-l2",
-            "view_profile": "matter_charter",
-        },
-    )
-    as_of = (reg.get("stamp") or {}).get("time") or "2026-07-12T12:00:00+00:00"
-    client = TestClient(create_app(db_path=str(db_path)))
     counter = install_counting_write_lock(monkeypatch, views_mod)
-
     run_l2_serialization(
         counter,
-        lambda: client.get(
-            "/views/document:batch7-l2-charter",
-            params={"asof": as_of, "mode": "read_asof"},
+        lambda: client.post(
+            f"/views/{doc_id}/render",
+            json={"mode": "read_asof", "as_of_system": as_of},
         ).json(),
     )
 
@@ -394,4 +430,31 @@ def test_view_render_l3_failure_release(
                 "as_of_system": as_of,
             },
         )
+    assert_l3_lock_reacquirable(counter)
+
+
+@pytest.mark.offline
+def test_view_render_l3_failure_release_typed(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cortex_store.dispatch_ops._views import archive as archive_mod
+
+    client, doc_id, as_of = _prepare_view_read_asof_fixture(
+        migrated_db_template, tmp_path, monkeypatch, suffix="l3-typed"
+    )
+
+    def fail_read(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("injected read_asof failure")
+
+    monkeypatch.setattr(views_mod, "read_asof_instance", fail_read)
+    monkeypatch.setattr(archive_mod, "read_asof_instance", fail_read)
+
+    counter = install_counting_write_lock(monkeypatch, views_mod)
+    resp = client.post(
+        f"/views/{doc_id}/render",
+        json={"mode": "read_asof", "as_of_system": as_of},
+    )
+    assert resp.status_code == 500
     assert_l3_lock_reacquirable(counter)
