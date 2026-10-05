@@ -26,6 +26,7 @@ from ._message import (
     MAESTRO_MEMO_THREAD,
     cursor_sdk_dispatch_body,
     parse_compose_options,
+    tab_model_query,
     team_dispatch_admit_shape,
 )
 
@@ -40,11 +41,18 @@ def _step(payload: dict[str, Any], *, error: str | None = None) -> StepOutput:
     return StepOutput(raw=json.dumps(payload, default=str), json=payload, error=error)
 
 
-def bridge_remote_env(window: str) -> str:
-    return (
-        "WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 "
-        f"CURSOR_BRIDGE_UINPUT_ENABLED=1 CURSOR_BRIDGE_WINDOW={window}"
-    )
+def bridge_remote_env(window: str, model_query: str = "") -> str:
+    """Remote export string for open-tab. Empty model_query skips Ctrl+/."""
+    parts = [
+        "WAYLAND_DISPLAY=wayland-1",
+        "XDG_RUNTIME_DIR=/run/user/1000",
+        "CURSOR_BRIDGE_UINPUT_ENABLED=1",
+        f"CURSOR_BRIDGE_WINDOW={window}",
+    ]
+    query = (model_query or "").strip()
+    if query and all(ch.isalnum() or ch in "._-" for ch in query):
+        parts.append(f"CURSOR_BRIDGE_MODEL_QUERY={query}")
+    return " ".join(parts)
 
 
 def bridge_argv(repo: Path, message_file: Path, thread: str) -> list[str]:
@@ -189,7 +197,10 @@ async def _launch_bridge(
     env = os.environ.copy()
     env["CURSOR_BRIDGE_SSH_HOST"] = host
     env["CURSOR_BRIDGE_WINDOW"] = window
-    env["CURSOR_BRIDGE_REMOTE_ENV"] = bridge_remote_env(window)
+    query = tab_model_query(bound.get("tab_model") or "")
+    env["CURSOR_BRIDGE_REMOTE_ENV"] = bridge_remote_env(window, query)
+    if query:
+        env["CURSOR_BRIDGE_MODEL_QUERY"] = query
     result = await asyncio.to_thread(handler.bridge_runner, argv, env)
     parsed = result.get("parsed") if isinstance(result, dict) else None
     payload: dict[str, Any] = {
@@ -324,3 +335,6 @@ async def _post_json(
         data["http_status"] = resp.status_code
         data["status_code"] = resp.status_code
     return data
+
+
+post_json = _post_json

@@ -1,8 +1,10 @@
-# cursor-paste-resolve — compose a friction/assertion prompt, then launch.
+# cursor-paste-resolve — densify (optional), compose, then launch.
 #
 # Compose is identical for launch_target ∈ {glass, ide, cursor_sdk}.
-# Launch is a second step: Glass/IDE shells scripts/cursor-bridge-launch.py
-# open-tab (the paste chord). cursor_sdk POSTs /api/v1/team/dispatch.
+# Densify is a prior cursor-sdk investigate hop when options.densify is set.
+# Launch is the last step: Glass/IDE shells scripts/cursor-bridge-launch.py
+# open-tab (the paste chord). cursor_sdk POSTs /api/v1/team/dispatch with
+# CURSOR_SDK_MODEL (cursor/grok-4.7) unchanged.
 #
 # Invocation:
 #   pipeline(op="run", pipeline_id="cursor-paste-resolve",
@@ -14,7 +16,9 @@
 #              "host": "orion-node"|"jupiter",   # required for glass/ide launch
 #              "notify": "maestro"|absent,
 #              "launch_target": "glass"|"ide"|"cursor_sdk"|absent,
-#              "dispatch_thread_id": "<minted>", # cursor_sdk; mint if absent
+#              "densify": "opus"|"fable"|absent, # SDK investigate hop
+#              "tab_model": "opus"|"fable"|absent,  # Glass Ctrl+/ query
+#              "dispatch_thread_id": "<minted>", # cursor_sdk write executor
 #            })
 
 schema_version: 6
@@ -23,20 +27,38 @@ version: "1.0"
 type: cursor_paste_resolve
 category: cursor_paste_resolve
 description: >
-  assertion_get + read implementer + write tmp/prompts/cursor-paste-<kind>-<id>.md,
-  then optional Glass/IDE script launch or cursor_sdk team_dispatch admit.
+  optional densify investigate hop, then assertion_get + implementer read +
+  write tmp/prompts/cursor-paste-<kind>-<id>.md, then optional Glass/IDE
+  script launch or cursor_sdk team_dispatch admit.
 output: launch
 
 options:
-  timeout_seconds: 120
+  timeout_seconds: 1800
   launch_target:
     type: string
     description: glass | ide | cursor_sdk; empty = compose only
     default: ""
+  densify:
+    type: string
+    description: opus | fable; empty = skip densify hop
+    default: ""
+  tab_model:
+    type: string
+    description: opus | fable (folded tab-opus / tab-fable); empty = no Ctrl+/
+    default: ""
 
 steps:
+  - name: densify
+    type: cursor_paste_resolve_densify_v1
+    handler_outputs:
+      splice: densify.json.splice
+      model: densify.json.model
+
   - name: compose
     type: cursor_paste_resolve_compose_v1
+    handler_inputs:
+      densify_splice: densify.json.splice
+      densify_model: densify.json.model
     handler_outputs:
       message_path: compose.json.message_path
       kind: compose.json.kind

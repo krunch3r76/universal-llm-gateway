@@ -70,6 +70,20 @@ class CursorPasteComposeHandler(BaseHandler):
                 error=str(err),
             )
 
+        densify_out = _densify_json(context)
+        if bound["densify"]:
+            if (
+                densify_out.get("ok") is not True
+                or not str(densify_out.get("splice") or "").strip()
+            ):
+                err = str(
+                    densify_out.get("error") or "densify hop did not produce a splice"
+                )
+                return _step(
+                    {"ok": False, "error": err, "densify": densify_out or None},
+                    error=err,
+                )
+
         implementer = read_implementer()
         if implementer is None:
             err = f"implementer URI missing: {IMPLEMENTER_URI}"
@@ -78,8 +92,16 @@ class CursorPasteComposeHandler(BaseHandler):
         rel = f"tmp/prompts/cursor-paste-{bound['kind']}-{bound['assertion_id']}.md"
         dest = workspaces_root() / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
+        densify_model = str(densify_out.get("model") or "")
+        densify_splice = str(densify_out.get("splice") or "")
         body = compose_message(
-            bound["kind"], bound["assertion_id"], bound["notify"], implementer
+            bound["kind"],
+            bound["assertion_id"],
+            bound["notify"],
+            implementer,
+            densify_model=densify_model,
+            densify_splice=densify_splice,
+            tab_model=bound["tab_model"],
         )
         dest.write_text(body, encoding="utf-8")
         payload = {
@@ -90,8 +112,17 @@ class CursorPasteComposeHandler(BaseHandler):
             "host": bound["host"],
             "notify": bound["notify"],
             "launch_target": bound["launch_target"],
+            "densify": bound["densify"],
+            "tab_model": bound["tab_model"],
             "message_path": str(dest),
             "implementer_uri": IMPLEMENTER_URI,
         }
         logger.info("cursor_paste_resolve compose wrote %s", dest)
         return _step(payload)
+
+
+def _densify_json(context: Any) -> dict[str, Any]:
+    outputs = getattr(context, "outputs", {}) or {}
+    densify = outputs.get("densify")
+    json_out = getattr(densify, "json", None) if densify is not None else None
+    return json_out if isinstance(json_out, dict) else {}

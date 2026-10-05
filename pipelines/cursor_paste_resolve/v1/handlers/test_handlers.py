@@ -10,14 +10,22 @@ import yaml
 from systems.pipeline.core.pipeline_config import PipelineSpec
 from work_key_grammar import is_valid_work_key_scheme
 
+from . import densify as densify_mod
 from . import launch
 from ._message import (
+    CURSOR_SDK_MODEL,
+    SPLICE_END,
+    SPLICE_START,
+    classify_invocation_tokens,
     compose_message,
     cursor_sdk_dispatch_body,
+    densify_sdk_model,
+    extract_densify_splice,
     parse_compose_options,
     team_dispatch_admit_shape,
     work_key_for,
 )
+from .densify import CursorPasteDensifyHandler
 from .launch import CursorPasteLaunchHandler, bridge_argv, paste_thread_name
 
 pytestmark = pytest.mark.offline
@@ -29,10 +37,13 @@ def test_pipeline_yaml_loads() -> None:
     data = yaml.safe_load(_YAML.read_text(encoding="utf-8"))
     spec = PipelineSpec(**data)
     assert spec.id == "cursor-paste-resolve"
-    assert spec.steps[0].type == "cursor_paste_resolve_compose_v1"
-    assert spec.steps[1].type == "cursor_paste_resolve_launch_v1"
+    assert spec.steps[0].type == "cursor_paste_resolve_densify_v1"
+    assert spec.steps[1].type == "cursor_paste_resolve_compose_v1"
+    assert spec.steps[2].type == "cursor_paste_resolve_launch_v1"
     opts = spec.options.to_context_dict()
     assert "launch_target" in opts
+    assert "densify" in opts
+    assert "tab_model" in opts
 
 
 def test_parse_compose_options_rejects_bad_kind() -> None:
@@ -144,6 +155,8 @@ async def test_glass_launch_uses_script_argv(tmp_path: Path) -> None:
     env = captured["env"]
     assert env["CURSOR_BRIDGE_SSH_HOST"] == "orion-node"
     assert env["CURSOR_BRIDGE_WINDOW"] == "glass"
+    assert "CURSOR_BRIDGE_MODEL_QUERY" not in env
+    assert "CURSOR_BRIDGE_MODEL_QUERY" not in env["CURSOR_BRIDGE_REMOTE_ENV"]
 
 
 @pytest.mark.asyncio
@@ -304,3 +317,170 @@ def test_paste_thread_prefix() -> None:
 
     name = paste_thread_name(datetime(2026, 10, 3, 8, 9, 10, tzinfo=UTC))
     assert name == "paste-080910"
+
+
+def test_classify_folds_densify_and_refuses_two_in_set() -> None:
+    ok = classify_invocation_tokens(["glass", "orion-node", "opus"])
+    assert ok == {"window": "glass", "host": "orion-node", "densify": "opus"}
+    aliases = classify_invocation_tokens(["cursor/claude-fable-5-1"])
+    assert aliases == {"densify": "fable"}
+    two = classify_invocation_tokens(["opus", "fable"])
+    assert isinstance(two, str) and "densify" in two
+    two_tab = classify_invocation_tokens(["tab-opus", "tab-fable"])
+    assert isinstance(two_tab, str) and "tab" in two_tab
+    unknown = classify_invocation_tokens(["wayland"])
+    assert isinstance(unknown, str) and "neither" in unknown
+
+
+def test_parse_folds_pipeline_densify_and_tab_model() -> None:
+    bound = parse_compose_options(
+        {
+            "kind": "friction",
+            "assertion_id": 1,
+            "densify": "cursor/claude-opus-5-5",
+            "tab_model": "tab-opus",
+        }
+    )
+    assert bound["densify"] == "opus"
+    assert bound["tab_model"] == "opus"
+    two = parse_compose_options(
+        {"kind": "friction", "assertion_id": 1, "densify": ["opus", "fable"]}
+    )
+    assert isinstance(two, str) and "densify" in two
+
+
+def test_densify_sdk_model_ids() -> None:
+    assert densify_sdk_model("opus") == "cursor/claude-opus-5-5"
+    assert densify_sdk_model("fable") == "cursor/claude-fable-5-1"
+    assert densify_sdk_model("") == ""
+
+
+def test_extract_densify_splice() -> None:
+    text = f"noise\n{SPLICE_START}\nsurfaces: a\n{SPLICE_END}\nmore"
+    assert extract_densify_splice(text) == "surfaces: a"
+    assert extract_densify_splice("no delimiters") == ""
+
+
+def test_compose_message_prepends_densify_keeps_implementer() -> None:
+    impl = "IMPLEMENTER-BODY\n"
+    out = compose_message(
+        "friction",
+        99,
+        "",
+        impl,
+        densify_model="cursor/claude-opus-5-5",
+        densify_splice="surfaces: x",
+        tab_model="opus",
+    )
+    assert impl in out
+    assert out.index("<densify origin=cursor-sdk") < out.index(impl)
+    assert out.index(impl) < out.index("tab-opus")
+    assert "cdp/fable-5.1" in out
+    assert out.endswith("same model_identity as this Glass tab).\n")
+
+
+def test_cursor_sdk_model_pin_unchanged_when_densify_set() -> None:
+    body = cursor_sdk_dispatch_body(
+        kind="friction",
+        assertion_id=7,
+        prompt="prompt",
+        dispatch_thread_id="999",
+    )
+    assert body["model"] == CURSOR_SDK_MODEL
+    assert body["model"] == "cursor/grok-4.7"
+    bound = parse_compose_options(
+        {
+            "kind": "friction",
+            "assertion_id": 7,
+            "densify": "opus",
+            "launch_target": "cursor_sdk",
+        }
+    )
+    assert bound["densify"] == "opus"
+    assert bound["launch_target"] == "cursor_sdk"
+
+
+@pytest.mark.asyncio
+async def test_densify_skip_when_unset() -> None:
+    handler = CursorPasteDensifyHandler()
+    ctx = SimpleNamespace(
+        options={"kind": "friction", "assertion_id": 1},
+        outputs={},
+    )
+    out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
+    assert out.json["ok"] is True
+    assert out.json["skipped"] is True
+    assert out.json["splice"] == ""
+
+
+@pytest.mark.asyncio
+async def test_densify_422_is_quoted_not_swapped(monkeypatch) -> None:
+    async def fake_get(
+        _client: object, _tool: str, _arguments: dict
+    ) -> dict[str, object]:
+        return {"assertion_id": 1, "claim": "row"}
+
+    async def hop(**_kwargs: object) -> dict[str, object]:
+        return {
+            "ok": False,
+            "http_status": 422,
+            "error": "fable house block",
+            "dispatch": {"error": "fable house block"},
+        }
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(densify_mod, "make_async_client", lambda *a, **k: _Client())
+    monkeypatch.setattr(densify_mod, "cortex_dispatch", fake_get)
+    handler = CursorPasteDensifyHandler()
+    handler.hop = hop  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        options={"kind": "friction", "assertion_id": 1, "densify": "fable"},
+        outputs={},
+    )
+    out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
+    assert out.json["ok"] is False
+    assert out.json["http_status"] == 422
+    assert "fable house block" in out.error
+    assert out.json["model"] == "cursor/claude-fable-5-1"
+
+
+@pytest.mark.asyncio
+async def test_tab_opus_sets_bridge_model_query(tmp_path: Path) -> None:
+    msg = tmp_path / "msg.md"
+    msg.write_text("prompt", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def runner(argv: list[str], env: dict[str, str]) -> dict[str, object]:
+        captured["env"] = env
+        return {
+            "returncode": 0,
+            "parsed": {"ok": True, "keystroke": {}, "focused": {}},
+        }
+
+    handler = CursorPasteLaunchHandler()
+    handler.bridge_runner = runner  # type: ignore[method-assign]
+    ctx = SimpleNamespace(
+        options={
+            "kind": "friction",
+            "assertion_id": 1,
+            "host": "orion-node",
+            "launch_target": "glass",
+            "tab_model": "tab-opus",
+        },
+        outputs={
+            "compose": SimpleNamespace(json={"ok": True, "message_path": str(msg)}),
+        },
+    )
+    out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
+    assert out.json["ok"] is True
+    env = captured["env"]
+    assert env["CURSOR_BRIDGE_MODEL_QUERY"] == "claude-opus-5-5"
+    assert (
+        "CURSOR_BRIDGE_MODEL_QUERY=claude-opus-5-5" in env["CURSOR_BRIDGE_REMOTE_ENV"]
+    )
