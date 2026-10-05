@@ -49,6 +49,14 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
     ("POST", "thread_sidecar_write_route", {}, "thread_sidecar_write_route"),
     ("POST", "todo_close_sidecar_route", {}, "todo_close_sidecar_route"),
     ("POST", "pinned_deliverable_write_route", {}, "pinned_deliverable_write_route"),
+    ("POST", "endeavor_write_row_route", {}, "endeavor_write_row_route"),
+    ("POST", "endeavor_dispose_row_route", {}, "endeavor_dispose_row_route"),
+    (
+        "POST",
+        "view_render_route",
+        {"document_id": "document:probe"},
+        "view_render_route",
+    ),
 )
 
 

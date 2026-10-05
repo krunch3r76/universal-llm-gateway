@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "32c2e95f56a4f6fb5521735893aa0aaa983d7aa4ed25427270b32b87b42ffad4"
+OPENAPI_SHA256 = "1cc3a39d6e09d2662dad868ff4afc78fc9e956cfd01186b6a94ff076bf57481b"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -89,6 +89,16 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/edges",
         "operation_id": "list_edges_edges_get",
+    },
+    "endeavor_dispose_row": {
+        "method": "POST",
+        "path": "/endeavors/strategy-rows/dispose",
+        "operation_id": "endeavor_dispose_row_route_endeavors_strategy_rows_dispose_post",
+    },
+    "endeavor_write_row": {
+        "method": "POST",
+        "path": "/endeavors/strategy-rows",
+        "operation_id": "endeavor_write_row_route_endeavors_strategy_rows_post",
     },
     "entities": {
         "method": "GET",
@@ -335,6 +345,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/todos/closure-sidecars",
         "operation_id": "todo_close_sidecar_route_todos_closure_sidecars_post",
     },
+    "view_render": {
+        "method": "POST",
+        "path": "/views/{document_id}/render",
+        "operation_id": "view_render_route_views__document_id__render_post",
+    },
     "walk_subgraph": {
         "method": "GET",
         "path": "/subgraph/walk",
@@ -342,7 +357,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "b10fa80b4945349ed68cfc2f3d5cc46aab322ee4e0f4c5eb449ae215a9f8e70c",
+    "@components": "34b44084689610f141d7c264b860484075b40a24a0e2b2c46046e7145780468b",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",
