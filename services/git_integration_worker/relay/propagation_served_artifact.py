@@ -87,8 +87,7 @@ SERVED_ARTIFACT_DESCRIPTORS: dict[str, ServedArtifactDescriptor] = {
     ),
     "cortex_api": ServedArtifactDescriptor(
         surfaces=_cortex_surfaces(),
-        # Live probe 68 until cortex_api restart; committed openapi x-mcp count is 70.
-        expected_x_mcp_count=68,
+        expected_x_mcp_count=69,
     ),
     "agent_bus": ServedArtifactDescriptor(
         surfaces=(
