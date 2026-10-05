@@ -435,6 +435,12 @@ async def finalize_cdp_generate(
 async def _reconcile_leg(leg: InflightLeg) -> None:
     open_s = _leg_open_seconds(leg)
     horizon = max_open_leg_s(leg.max_wall_s)
+    # Pipeline legs are consumed by the step poll, not a thread delivery.
+    # The only reconcile action is abandon once the horizon has passed.
+    if leg.owner == "pipeline":
+        if open_s >= horizon:
+            mark_abandoned(leg.execution_id)
+        return
     if open_s >= horizon:
         await _reconcile_horizon_leg(leg, horizon=horizon)
         return

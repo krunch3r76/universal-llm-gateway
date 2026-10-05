@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,6 +25,14 @@ from systems.pipeline.core.handlers.frontier_dispatch.cdp_dispatch import (
     parse_cdp_harvest_options,
     run_cdp_dispatch,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cdp_inflight_ledger(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dispatch now writes the inflight ledger; keep that off the live DATA_DIR."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
 
 def test_is_cdp_dispatch_model() -> None:

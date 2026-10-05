@@ -194,6 +194,42 @@ def build_cdp_step_output(
     return output
 
 
+def lineage_leg_key(context: Any, step: Any) -> str:
+    """Ledger key for one CDP step. Never an empty or ``None`` root.
+
+    Prefers ``context.step_idempotency_key`` (S5). A missing method uses the
+    same ``{lineage_root or execution_id}:{step.id}`` formula. An empty root
+    or the literal ``None`` falls back to ``execution_id`` so two chat runs
+    cannot share a leg.
+    """
+    key_fn = getattr(context, "step_idempotency_key", None)
+    raw = key_fn(step) if callable(key_fn) else None
+    step_id = getattr(step, "id", "")
+    if not isinstance(raw, str) or not raw:
+        root = getattr(context, "lineage_root", None) or getattr(
+            context, "execution_id", ""
+        )
+        raw = f"{root}:{step_id}"
+    root, _sep, _rest = raw.partition(":")
+    if root in ("", "None"):
+        exec_id = getattr(context, "execution_id", None) or ""
+        if not exec_id or exec_id == "None":
+            raise ValueError("CDP lineage leg key requires a non-empty execution_id")
+        return f"{exec_id}:{step_id}"
+    return raw
+
+
+def _open_pipeline_leg(leg: Any) -> bool:
+    """True when a prior pipeline submit is still the leg to poll."""
+    return bool(
+        leg is not None
+        and leg.owner == "pipeline"
+        and not leg.abandoned
+        and not leg.proof_emitted
+        and leg.satellite_execution_id
+    )
+
+
 def build_cdp_admission_result(
     handler: FrontierDispatchHandler,
     step: StepConfig,
@@ -261,6 +297,9 @@ async def run_cdp_dispatch(
     (emitting CdpGenerateSubmitted from its callback), then on success emits
     CdpGenerateProof and PipelineFrontierDispatchCompleted. On failure emits
     CdpGenerateStalled and raises ``CdpDispatchError``.
+
+    A re-run whose ``owner='pipeline'`` leg is still open polls that satellite
+    once and does not submit again.
     """
     from systems.frontier_consult.cdp_events import (
         CdpGenerateProof,
@@ -292,39 +331,87 @@ async def run_cdp_dispatch(
         )
     )
 
+    from claude_bundles.cdp_model_endpoint import (
+        picker_from_model_id,
+        result_from_snapshot,
+    )
+
+    from systems.frontier_consult.cdp_generate_inflight_ledger import (
+        attach_satellite_execution_id,
+        read_inflight_leg,
+        upsert_inflight_leg,
+    )
+    from systems.frontier_consult.cdp_generate_reconcile import poll_satellite_snapshot
+
+    leg_key = lineage_leg_key(context, step)
+    existing = read_inflight_leg(leg_key)
     loop = asyncio.get_running_loop()
     submitted_sat_id: str | None = None
+    started = time.monotonic()
 
-    def _on_submitted(satellite_execution_id: str) -> None:
-        nonlocal submitted_sat_id
-        submitted_sat_id = satellite_execution_id
-
-        def _publish() -> None:
-            publish_cdp_kwargs(
-                CdpGenerateSubmitted,
-                request_id=request_id,
+    if _open_pipeline_leg(existing):
+        submitted_sat_id = existing.satellite_execution_id
+        snapshot = await poll_satellite_snapshot(existing.satellite_execution_id)
+        result = None
+        if isinstance(snapshot, dict):
+            result = result_from_snapshot(
+                snapshot=snapshot,
                 execution_id=context.execution_id,
+                satellite_execution_id=existing.satellite_execution_id,
+                prompt_uri=existing.prompt_uri,
+                picker_model=picker_from_model_id(model),
+            )
+        if result is None:
+            raise CdpDispatchError(
+                f"CDP lineage leg still open: key={leg_key!r} "
+                f"satellite_execution_id={existing.satellite_execution_id!r}"
+            )
+    else:
+        upsert_inflight_leg(
+            execution_id=leg_key,
+            request_id=request_id,
+            thread_id="",
+            pointer_turn=1,
+            caller_agent=None,
+            prompt_uri=f"pipeline://{leg_key}",
+            model_id=model,
+            max_wall_s=harvest["max_wall_s"],
+            owner="pipeline",
+        )
+
+        def _on_submitted(satellite_execution_id: str) -> None:
+            nonlocal submitted_sat_id
+            submitted_sat_id = satellite_execution_id
+            attach_satellite_execution_id(
+                execution_id=leg_key,
                 satellite_execution_id=satellite_execution_id,
-                model=model,
             )
 
-        loop.call_soon_threadsafe(_publish)
+            def _publish() -> None:
+                publish_cdp_kwargs(
+                    CdpGenerateSubmitted,
+                    request_id=request_id,
+                    execution_id=context.execution_id,
+                    satellite_execution_id=satellite_execution_id,
+                    model=model,
+                )
 
-    started = time.monotonic()
-    result = await asyncio.to_thread(
-        run_cdp_generate,
-        execution_id=context.execution_id,
-        model_id=model,
-        prompt_text=prompt_text,
-        skills=skills,
-        max_wall_s=harvest["max_wall_s"],
-        harvest_source=harvest["harvest_source"],
-        expected_size=harvest["expected_size"],
-        download_output=harvest["download_output"],
-        holder="frontier-dispatch-v1",
-        converse=True,
-        on_submitted=_on_submitted,
-    )
+            loop.call_soon_threadsafe(_publish)
+
+        result = await asyncio.to_thread(
+            run_cdp_generate,
+            execution_id=context.execution_id,
+            model_id=model,
+            prompt_text=prompt_text,
+            skills=skills,
+            max_wall_s=harvest["max_wall_s"],
+            harvest_source=harvest["harvest_source"],
+            expected_size=harvest["expected_size"],
+            download_output=harvest["download_output"],
+            holder="frontier-dispatch-v1",
+            converse=True,
+            on_submitted=_on_submitted,
+        )
     latency_ms = (time.monotonic() - started) * 1000.0
 
     if result.ok:
