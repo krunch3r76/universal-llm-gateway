@@ -13,11 +13,18 @@ import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from deploy_identity.code_version import process_age_s, resolve_code_version
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRouter
+from ulg_routing_headers import (
+    attach_idempotency_to_non_get_stamped_routes,
+    router_carries_xmcp_stamp,
+    ulg_routing_headers,
+)
 from universal_logging import get_logger
 from universal_workspace import get_workspace_root
 
@@ -228,41 +235,52 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(claims_burst.router)
-    app.include_router(entities.router)
-    app.include_router(entity_status.router)
-    app.include_router(assertions.router)
-    app.include_router(edges.router)
-    app.include_router(surface_forms.router)
-    app.include_router(relationships.router)
-    app.include_router(deadlines.router)
-    app.include_router(session_journals.router)
-    app.include_router(session_handoff.router)
-    app.include_router(stats.router)
-    app.include_router(salience.router)
-    app.include_router(boot.router)
-    app.include_router(skills.router)
-    app.include_router(todo_retrieval.router)
-    app.include_router(todo_audit.router)
-    app.include_router(extraction_runs.router)
-    app.include_router(staging.router)
-    app.include_router(gated.router)
-    app.include_router(documents.router)
-    app.include_router(doctrine.router)
-    app.include_router(resolve.router)
-    app.include_router(tags.router)
-    app.include_router(graph.router)
-    app.include_router(graph_imprint.router)
-    app.include_router(graph_recall.router)
-    app.include_router(close_draft.router)
-    app.include_router(subgraph.router)
-    app.include_router(reaper.router)
-    app.include_router(reflective_journal.router)
-    app.include_router(seat_claims.router)
+    def _include(router: APIRouter, **kwargs: Any) -> None:
+        # Bind § "How served OpenAPI declares them": one dependency on every
+        # router that carries an x-mcp stamp. Idempotency-Key is per non-GET
+        # stamped operation, not router-wide, so GET stamps stay exact.
+        if router_carries_xmcp_stamp(router):
+            attach_idempotency_to_non_get_stamped_routes(router)
+            extra = list(kwargs.pop("dependencies", []) or [])
+            extra.append(Depends(ulg_routing_headers))
+            kwargs["dependencies"] = extra
+        app.include_router(router, **kwargs)
+
+    _include(claims_burst.router)
+    _include(entities.router)
+    _include(entity_status.router)
+    _include(assertions.router)
+    _include(edges.router)
+    _include(surface_forms.router)
+    _include(relationships.router)
+    _include(deadlines.router)
+    _include(session_journals.router)
+    _include(session_handoff.router)
+    _include(stats.router)
+    _include(salience.router)
+    _include(boot.router)
+    _include(skills.router)
+    _include(todo_retrieval.router)
+    _include(todo_audit.router)
+    _include(extraction_runs.router)
+    _include(staging.router)
+    _include(gated.router)
+    _include(documents.router)
+    _include(doctrine.router)
+    _include(resolve.router)
+    _include(tags.router)
+    _include(graph.router)
+    _include(graph_imprint.router)
+    _include(graph_recall.router)
+    _include(close_draft.router)
+    _include(subgraph.router)
+    _include(reaper.router)
+    _include(reflective_journal.router)
+    _include(seat_claims.router)
     from .routes.triage import router as triage_router
 
-    app.include_router(triage_router, prefix="/assertions")
-    app.include_router(dispatch.router)
+    _include(triage_router, prefix="/assertions")
+    _include(dispatch.router)
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(  # noqa: ANN202

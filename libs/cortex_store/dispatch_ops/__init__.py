@@ -91,9 +91,7 @@ _OP_SPECS: dict[str, str] = {
     "journal_read": "ops_journals:_op_journal_read",
     "session_close": "ops_session_close:_op_session_close",
     "session_close_preflight": "ops_session_close:_op_session_close_preflight",
-    "implement_ready_preflight": (
-        "adapters.admission:_op_implement_ready_preflight"
-    ),
+    "implement_ready_preflight": ("adapters.admission:_op_implement_ready_preflight"),
     "doc_template": "adapters.admission:_op_doc_template",
     "doc_validate": "adapters.admission:_op_doc_validate",
     "session_handoff_upsert": "ops_session_close:_op_session_handoff_upsert",
@@ -207,12 +205,19 @@ def execute_op(
     surface: str | None = None,
     seat: str | None = None,
     via_adapter: bool | None = None,
+    caller: str | None = None,
+    adapter: str | None = None,
+    thread: str | None = None,
+    trace: str | None = None,
+    routing_source: str | None = None,
+    routing_conflict: bool | None = None,
 ) -> Any:
     """Dispatch a cortex op. Handles unknown-tool suggestions, arg parsing,
     workflow hints, and entity completeness enrichment.
 
-    Telemetry kwargs (surface, seat, via_adapter) are populated by the MCP
-    relay pass-through for per-op × per-seat ``mcp.cortex.dispatch`` events.
+    Telemetry kwargs (surface, seat, via_adapter, caller, adapter, thread,
+    trace) are populated by the MCP relay pass-through for per-op × per-seat
+    ``mcp.cortex.dispatch`` events.
     """
     parsed = _parse_cortex_arguments(arguments, tool)
     if parsed is None:
@@ -256,6 +261,18 @@ def execute_op(
         dispatch_telemetry["seat"] = seat
     if via_adapter is not None:
         dispatch_telemetry["via_adapter"] = via_adapter
+    if caller:
+        dispatch_telemetry["caller"] = caller
+    if adapter:
+        dispatch_telemetry["adapter"] = adapter
+    if thread:
+        dispatch_telemetry["thread"] = thread
+    if trace:
+        dispatch_telemetry["trace"] = trace
+    if routing_source is not None:
+        dispatch_telemetry["routing_source"] = routing_source
+    if routing_conflict is not None:
+        dispatch_telemetry["routing_conflict"] = routing_conflict
     if tool == "entity_get":
         dispatch_telemetry["intent"] = parsed.get("intent") or "full"
     record("mcp.cortex.dispatch", **dispatch_telemetry)
@@ -284,7 +301,11 @@ def execute_op(
         from ..terminal_facts import append_terminal_facts_next_hint
 
         append_terminal_facts_next_hint(result)
-    if tool == "entity_get" and not is_batch_entity_get and result.get("intent") != "card":
+    if (
+        tool == "entity_get"
+        and not is_batch_entity_get
+        and result.get("intent") != "card"
+    ):
         # Card v0 (§6.3) has its own bounded shape (top_k_assertions /
         # section_manifest); the EntityDetail-shaped completeness hint
         # would misreport "no assertions" against the projection.
