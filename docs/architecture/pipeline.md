@@ -34,7 +34,7 @@ response = await executor.execute(context)
 | `availability.py` | Pipeline model availability checks. |
 | `executor.py` | Pipeline executor - exports from core. |
 | `hot_reload.py` | Pipeline configuration hot-reload via `HotReloadWatcher`. |
-| `loader.py` | Load pipeline configuration from YAML files; recursive sub-pipeline loading. |
+| `loader.py` | Recursive sub-pipeline resolution for ``pipeline_ref`` steps. |
 | `pipeline_failure_debug.py` | Write step failure tracebacks and response details to a debug file. |
 | `plugins.py` | Plugin API for external domain handlers via entry points or direct registration. |
 | `response_builder.py` | Response builder for pipeline results. |
