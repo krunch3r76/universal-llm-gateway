@@ -254,6 +254,34 @@ def _iso_utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _dispatch_resume_of(dispatch: DispatchRequest) -> str | None:
+    """Read ``resume_of`` from ``pipeline_options``, else a top-level extra field."""
+    options = dispatch.pipeline_options or {}
+    raw = options.get("resume_of")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    extra = dispatch.model_extra or {}
+    raw = extra.get("resume_of")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def continuation_refusal_response(decision: Any) -> JSONResponse | None:
+    """Map a continuation refusal to 409 or 422. An admit returns None."""
+    if decision.admitted:
+        return None
+    data = None
+    if decision.http_status == 409 and decision.successor_execution_id:
+        data = {"successor_execution_id": decision.successor_execution_id}
+    return _error_response(
+        decision.http_status,
+        decision.code,
+        decision.message,
+        data,
+    )
+
+
 async def admit_dispatch(
     request: Request,
     proxy: StargateProxy,
@@ -291,6 +319,24 @@ async def admit_dispatch(
     execution_id = executor.generate_execution_id()
     started_at = _iso_utc_now()
 
+    resume_of = _dispatch_resume_of(dispatch)
+    if resume_of:
+        from systems.pipeline.core.execution.dispatch_journal import (
+            assess_continuation,
+            pipeline_steps_sha256,
+        )
+
+        pipeline = proxy.pipeline_registry.get_pipeline(dispatch.model)
+        decision = await assess_continuation(
+            stop_execution_id=resume_of,
+            successor_execution_id=execution_id,
+            steps_sha256=pipeline_steps_sha256(pipeline),
+            pipeline_id=dispatch.model,
+        )
+        refusal = continuation_refusal_response(decision)
+        if refusal is not None:
+            return refusal
+
     from systems.pipeline.core.execution.async_tracker import TrackerCapacityError
 
     delivery_payload = (
@@ -319,6 +365,15 @@ async def admit_dispatch(
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)
+        if resume_of:
+            from systems.pipeline.core.execution.dispatch_journal import (
+                release_continuation,
+            )
+
+            await release_continuation(
+                stop_execution_id=resume_of,
+                successor_execution_id=execution_id,
+            )
         return _error_response(
             503,
             "pipeline_dispatch_capacity_exhausted",
@@ -343,6 +398,15 @@ async def admit_dispatch(
         )
     except Exception as exc:
         logger.error("Failed to prepare async dispatch request: %s", exc, exc_info=True)
+        if resume_of:
+            from systems.pipeline.core.execution.dispatch_journal import (
+                release_continuation,
+            )
+
+            await release_continuation(
+                stop_execution_id=resume_of,
+                successor_execution_id=execution_id,
+            )
         tracker.fail_execution(
             execution_id,
             code="pipeline_dispatch_preparation_failed",

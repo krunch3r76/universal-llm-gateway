@@ -26,6 +26,7 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from fastapi.responses import Response
 from universal_event_bus import Event
 from universal_logging import get_logger
@@ -34,6 +35,10 @@ from ...registry import PipelineRegistry
 from ..execution.concurrency_backend import (
     ConcurrencyBackend,
     InProcessConcurrencyBackend,
+)
+from ..execution.dispatch_journal_transitions import (
+    ContinuationRefusedError,
+    continuation_refusal_body,
 )
 from ..execution.map_reduce.map_executor.events import ProxyProtocol
 from ..execution.outcome import PipelineExecutionOutcome
@@ -121,9 +126,15 @@ class PipelineExecutor:
         context: _PipelineRequestContextProtocol,
         *,
         execution_id: str,
+        journal_backed: bool = False,
     ) -> PreparedPipelineExecution:
         """Delegate to ``preparation.do_prepare_execution``."""
-        return do_prepare_execution(self, context, execution_id=execution_id)
+        return do_prepare_execution(
+            self,
+            context,
+            execution_id=execution_id,
+            journal_backed=journal_backed,
+        )
 
     def _extract_runtime_options(
         self,
@@ -200,7 +211,27 @@ class PipelineExecutor:
         ``plan:pipeline-terminal-passthrough-streaming`` Phase 4.
         """
         execution_id = self.generate_execution_id()
-        prepared = self.prepare_execution(context, execution_id=execution_id)
+        try:
+            prepared = self.prepare_execution(context, execution_id=execution_id)
+        except ContinuationRefusedError as exc:
+            raise HTTPException(
+                status_code=exc.decision.http_status,
+                detail=continuation_refusal_body(exc.decision),
+            ) from exc
+        except Exception:
+            claimed = getattr(context, "_continuation_fresh_claim", None)
+            if claimed:
+                from ..execution.dispatch_journal import _journal_path
+                from ..execution.dispatch_journal_transitions import (
+                    release_continuation_sync,
+                )
+
+                release_continuation_sync(
+                    _journal_path(),
+                    stop_execution_id=claimed[0],
+                    successor_execution_id=claimed[1],
+                )
+            raise
         try:
             outcome = await self._run_prepared_execution(prepared)
             terminal = prepared.pipeline_context.outputs.get(prepared.pipeline.output)
@@ -241,7 +272,11 @@ class PipelineExecutor:
         del started_at  # stored on tracker record during register_execution
         prepared: PreparedPipelineExecution | None = None
         try:
-            prepared = self.prepare_execution(context, execution_id=execution_id)
+            prepared = self.prepare_execution(
+                context,
+                execution_id=execution_id,
+                journal_backed=True,
+            )
             outcome = await self._run_prepared_execution(
                 prepared, monitor_disconnect=False
             )
