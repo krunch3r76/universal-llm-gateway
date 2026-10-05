@@ -31,8 +31,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 UNBOUND_BASELINE: frozenset[str] = frozenset(
     {
         "assemble_transcript",
-        "assertion_get",
-        "assertion_state",
         "case_audit",
         "claim_alignment",
         "deadline_resolve",
@@ -42,7 +40,6 @@ UNBOUND_BASELINE: frozenset[str] = frozenset(
         "endeavor_repair_t1",
         "endeavor_write_row",
         "entities_bulk_upsert",
-        "entities_by_content_hash",
         "entity_retype",
         "fill_gaps",
         "friction",
@@ -149,6 +146,24 @@ def test_edge_list_and_create_bindings_match_handler_direction() -> None:
     assert routes["edges"].path == "/edges"
     assert routes["edge_create"].method == "POST"
     assert routes["edge_create"].path == "/edges"
+
+
+@pytest.mark.offline
+def test_s6_batch1_read_get_bindings_match_proposed_paths() -> None:
+    """S6 batch 1: read-only GET substrate ops use bind-proposed paths."""
+    from openapi_mcp.binding import extract_typed_routes
+
+    schema = create_app().openapi()
+    routes = extract_typed_routes(schema)
+    assert routes["assertion_get"].method == "GET"
+    assert routes["assertion_get"].path == "/assertions/{assertion_id}"
+    assert routes["assertion_state"].method == "GET"
+    assert routes["assertion_state"].path == "/entities/{entity_id}/assertion-state"
+    assert routes["entities_by_content_hash"].method == "GET"
+    assert (
+        routes["entities_by_content_hash"].path
+        == "/entities/by-content-hash/{content_hash}"
+    )
 
 
 @pytest.mark.offline
@@ -293,7 +308,6 @@ def test_reachable_unserved_violations_during_strangler() -> None:
     """Documents current strangler gap — live ops still lack typed routes."""
     live_ops = frozenset(
         {
-            "assertion_get",
             "assert",
             "assertion_update",
             "entity_update",

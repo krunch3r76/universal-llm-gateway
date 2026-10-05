@@ -204,6 +204,44 @@ def list_entity_source_paths() -> SourcePathsResponse:
     )
 
 
+@router.get(
+    "/by-content-hash/{content_hash}",
+    openapi_extra=x_mcp("entities_by_content_hash"),
+)
+def entities_by_content_hash(
+    content_hash: str,
+    type: str | None = None,
+    limit: int = Query(5, ge=1, le=500),
+) -> dict[str, object]:
+    """Dedicated content-hash entity lookup (same shape as dispatch op)."""
+    from ..dispatch_ops.ops_entities import _op_entities_by_content_hash
+
+    return _op_entities_by_content_hash(
+        content_hash=content_hash,
+        type=type,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/{entity_id}/assertion-state",
+    openapi_extra=x_mcp("assertion_state"),
+)
+def get_assertion_state(
+    entity_id: str,
+    resolve_aliases: bool = Query(True),
+    raw_id: bool = Query(False),
+) -> dict[str, object]:
+    """Lightweight ratification/count projection for one entity."""
+    from ..dispatch_ops.ops_assertions import _op_assertion_state
+
+    return _op_assertion_state(
+        entity_id=entity_id,
+        resolve_aliases=resolve_aliases,
+        raw_id=raw_id,
+    )
+
+
 @router.get("/{entity_id}", openapi_extra=x_mcp("entity_get"))
 def get_entity(
     entity_id: str,

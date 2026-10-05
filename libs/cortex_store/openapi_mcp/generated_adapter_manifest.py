@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "a191eafb19647f3ee308034e896e35427a5f9ac97ab13cf3b2a569d3520d3598"
+OPENAPI_SHA256 = "01de94f97225a4496b85b1d3969cf7b0f581ac242fda405b63e544cae5881961"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -24,6 +24,16 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "POST",
         "path": "/assertions",
         "operation_id": "create_assertion_assertions_post",
+    },
+    "assertion_get": {
+        "method": "GET",
+        "path": "/assertions/{assertion_id}",
+        "operation_id": "get_assertion_assertions__assertion_id__get",
+    },
+    "assertion_state": {
+        "method": "GET",
+        "path": "/entities/{entity_id}/assertion-state",
+        "operation_id": "get_assertion_state_entities__entity_id__assertion_state_get",
     },
     "assertion_update": {
         "method": "PATCH",
@@ -79,6 +89,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "method": "GET",
         "path": "/entities",
         "operation_id": "list_entities_entities_get",
+    },
+    "entities_by_content_hash": {
+        "method": "GET",
+        "path": "/entities/by-content-hash/{content_hash}",
+        "operation_id": "entities_by_content_hash_entities_by_content_hash__content_hash__get",
     },
     "entity_create": {
         "method": "POST",
