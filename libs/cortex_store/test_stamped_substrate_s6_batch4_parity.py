@@ -421,7 +421,47 @@ def test_relationships_bulk_upsert_failure_parity_dispatch_and_typed(
 
 
 @pytest.mark.offline
-def test_batch4_router_resolution_no_shadow_baseline_routes(
+def test_entities_bulk_upsert_invalid_status_typed_422_dispatch_envelope_same_rows(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4: strict typed validation 422 vs dispatch per-item envelope; same persisted rows."""
+    payload = {
+        "if_exists": "fail",
+        "entities": [
+            {"id": "model:s4-good", "type": "model", "name": "Good row"},
+            {
+                "id": "model:s4-bad",
+                "type": "model",
+                "name": "Bad row",
+                "status": "not-a-valid-status",
+            },
+        ],
+    }
+
+    bind_db = tmp_path / "cortex_dispatch_s4.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    dispatch_raw = execute_op("entities_bulk_upsert", payload)
+    assert dispatch_raw.get("rolled_back") is True
+    assert dispatch_raw.get("failed_index") == 1
+    assert "error" in dispatch_raw
+    dispatch_ids = _entity_id_set(cortex_db.cortex_conn())
+    assert "model:s4-good" not in dispatch_ids
+    assert "model:s4-bad" not in dispatch_ids
+
+    typed_client = _isolated_client(
+        migrated_db_template, tmp_path, monkeypatch, suffix="typed_s4"
+    )
+    resp = typed_client.post("/entities/bulk", json=payload)
+    assert resp.status_code == 422, resp.text
+    typed_ids = _entity_id_set(cortex_db.cortex_conn())
+    assert typed_ids == dispatch_ids
+
+
+@pytest.mark.offline
+def test_batch4_router_resolution_forward_match_baseline_routes(
     migrated_db_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

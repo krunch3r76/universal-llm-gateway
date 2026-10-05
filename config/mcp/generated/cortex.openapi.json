@@ -1976,6 +1976,11 @@
           "if_exists": {
             "anyOf": [
               {
+                "enum": [
+                  "fail",
+                  "update",
+                  "skip"
+                ],
                 "type": "string"
               },
               {
@@ -2119,6 +2124,11 @@
           "if_exists": {
             "anyOf": [
               {
+                "enum": [
+                  "fail",
+                  "update",
+                  "skip"
+                ],
                 "type": "string"
               },
               {
@@ -3491,6 +3501,11 @@
           },
           "if_exists": {
             "default": "fail",
+            "enum": [
+              "fail",
+              "update",
+              "skip"
+            ],
             "title": "If Exists",
             "type": "string"
           }
@@ -6673,6 +6688,11 @@
         "properties": {
           "if_exists": {
             "default": "fail",
+            "enum": [
+              "fail",
+              "update",
+              "skip"
+            ],
             "title": "If Exists",
             "type": "string"
           },

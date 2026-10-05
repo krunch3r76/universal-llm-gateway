@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 from .entities import EntityCreate
+
+IfExistsPolicy = Literal["fail", "update", "skip"]
 
 
 class BulkEntityUpsertItem(EntityCreate):
@@ -12,12 +16,12 @@ class BulkEntityUpsertItem(EntityCreate):
 
     model_config = ConfigDict(extra="allow")
 
-    if_exists: str | None = None
+    if_exists: IfExistsPolicy | None = None
 
 
 class EntitiesBulkUpsertRequest(BaseModel):
     entities: list[BulkEntityUpsertItem] | None = None
-    if_exists: str = "fail"
+    if_exists: IfExistsPolicy = "fail"
 
 
 class BulkRelationshipUpsertItem(BaseModel):
@@ -37,13 +41,13 @@ class BulkRelationshipUpsertItem(BaseModel):
     source_uri: str | None = None
     session_id: str | None = None
     agent: str | None = None
-    if_exists: str | None = None
+    if_exists: IfExistsPolicy | None = None
     resolve_aliases: bool | None = None
 
 
 class RelationshipsBulkUpsertRequest(BaseModel):
     relationships: list[BulkRelationshipUpsertItem] | None = None
-    if_exists: str = "fail"
+    if_exists: IfExistsPolicy = "fail"
     resolve_aliases: bool = True
 
 
