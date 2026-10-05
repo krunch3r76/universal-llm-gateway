@@ -234,6 +234,68 @@ def fetch_record_sync(
     return json.loads(payload_json), str(status), float(updated_epoch)
 
 
+def sweep_orphan_started_sync(
+    path: Path,
+    *,
+    process_started_at: float,
+) -> list[tuple[str, str]]:
+    """Mark ``started`` rows from a prior process generation as ``failed``.
+
+    Compare-and-set per row: ``UPDATE … WHERE execution_id=? AND status='started'``.
+    Returns ``(execution_id, pipeline)`` for each row updated.
+    """
+    now_iso = datetime.now().astimezone().isoformat().replace("+00:00", "Z")
+    now_epoch = time.time()
+    updated: list[tuple[str, str]] = []
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA journal_mode=WAL;")
+        migrate_schema_sync(connection)
+        rows = connection.execute(
+            """
+            SELECT execution_id, pipeline, started_at, record_json
+            FROM dispatch_records
+            WHERE status = 'started'
+            """,
+        ).fetchall()
+        for execution_id, pipeline, started_at, record_json in rows:
+            if _iso_epoch(str(started_at)) >= process_started_at:
+                continue
+            body = json.loads(record_json)
+            body["status"] = "failed"
+            body["state"] = "failed"
+            body["completed_at"] = now_iso
+            body["error"] = {
+                "code": "interrupted_by_restart",
+                "message": "Dispatch interrupted by process restart",
+                "data": {"resumable": True},
+            }
+            payload_json = json.dumps(body, separators=(",", ":"), ensure_ascii=True)
+            cur = connection.execute(
+                """
+                UPDATE dispatch_records SET
+                    status = 'failed',
+                    completed_at = ?,
+                    completed_at_epoch = ?,
+                    updated_at = ?,
+                    updated_at_epoch = ?,
+                    record_json = ?
+                WHERE execution_id = ? AND status = 'started'
+                """,
+                (
+                    now_iso,
+                    now_epoch,
+                    now_iso,
+                    now_epoch,
+                    payload_json,
+                    execution_id,
+                ),
+            )
+            if cur.rowcount:
+                updated.append((str(execution_id), str(pipeline)))
+        connection.commit()
+    return updated
+
+
 def prune_started_sync(
     path: Path,
     retention_seconds: float,

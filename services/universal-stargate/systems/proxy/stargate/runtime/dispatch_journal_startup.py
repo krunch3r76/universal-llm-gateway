@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from systems.pipeline.core.execution.dispatch_journal import (
     journal_terminal,
     journal_transition,
     prune_expired,
+    sweep_orphan_started,
 )
 
 from .startup_task_supervision import schedule_supervised_task
@@ -56,7 +58,12 @@ async def initialize_dispatch_journal(proxy: StargateProxy) -> None:
     """
     tracker = getattr(proxy, "pipeline_dispatch_tracker", None)
     if tracker is not None:
+        process_started_at = time.time()
         await initialize_schema()
+        await sweep_orphan_started(
+            process_started_at,
+            event_bus=proxy.event_bus,
+        )
         tracker.set_journal_writer(
             partial(
                 journal_terminal,
