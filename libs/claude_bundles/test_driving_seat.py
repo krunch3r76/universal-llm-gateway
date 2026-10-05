@@ -285,6 +285,64 @@ def test_relaunch_closed_predecessor_refuses_and_leaves_pointer(
     assert after_active[pred.registration_id]["seat_closed_at"] == 1.0
 
 
+def test_relaunch_superseded_during_headroom_refuses_and_leaves_hop(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hop bind inside the headroom window must stick; relaunch must not reopen."""
+    hop = reg.register_lane(
+        holder="hop-chrome",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.bind_driving_seat(hop.registration_id)
+    pred = reg.register_lane(
+        holder="pred-chrome",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    active = reg._store.load_active()
+    active[pred.registration_id]["status"] = "dormant"
+    active[pred.registration_id]["seat_lane"] = "9497"
+    active[pred.registration_id]["seat_bound_at"] = 1.0
+    active[pred.registration_id]["seat_closed_at"] = None
+    active[hop.registration_id]["seat_lane"] = "9497"
+    active[hop.registration_id]["seat_closed_at"] = None
+    active[hop.registration_id]["seat_bound_at"] = 2.0
+    reg._store.write_active(active)
+    reg._release_driver_lock(pred.registration_id)
+    pointer: dict[str, object] = {}
+
+    def close_during_headroom(**_kwargs: object) -> None:
+        reg.bind_driving_seat(hop.registration_id)
+        pointer.update(reg._store.load_active()[hop.registration_id])
+
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom",
+        close_during_headroom,
+    )
+
+    with pytest.raises(RegistryError, match="seat_closed_at"):
+        reg.relaunch_dormant(
+            pred.registration_id,
+            launch_chrome=_noop_launch,
+            is_listening=lambda _p: False,
+        )
+
+    after = reg._store.load_active()
+    hop_row = after[hop.registration_id]
+    assert hop_row["seat_lane"] == pointer["seat_lane"]
+    assert hop_row["seat_bound_at"] == pointer["seat_bound_at"]
+    assert hop_row["seat_closed_at"] is None
+    assert after[pred.registration_id]["seat_closed_at"] is not None
+
+
 def test_ensure_rejects_hop_as_driving_kind(isolated_registry: Path) -> None:
     with pytest.raises(RegistryError, match="cannot be mission_kind=hop"):
         _ensure(mission_kind="hop")

@@ -204,6 +204,11 @@ def reserve_allocating_row(
         if expect_status is None:
             return
         current = active_map.get(registration_id) if registration_id else None
+        if isinstance(current, dict) and current.get("seat_closed_at") is not None:
+            raise RegistryError(
+                f"registration {registration_id!r} has seat_closed_at set; "
+                "refusing relaunch of a superseded seat"
+            )
         current_status = current.get("status") if isinstance(current, dict) else None
         if current_status != expect_status:
             raise SeatContended(
@@ -262,6 +267,7 @@ def reserve_allocating_row(
             port = select_free_registry_port(listen, exclude=exclude)
             if registration_id is None or profile_suffix is None:
                 registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+            prior = active.get(registration_id) if registration_id else None
             row: dict[str, Any] = {
                 **(carry or {}),
                 "registration_id": registration_id,
@@ -278,8 +284,18 @@ def reserve_allocating_row(
                 "holder_pid": os.getpid(),
                 "started_at": time.time(),
             }
-            for seat_key in ("seat_lane", "seat_bound_at", "seat_closed_at"):
+            # Carry must not mint a seat. Keys already on the stored row stay,
+            # so a close that landed before this write is not dropped.
+            for seat_key in (
+                "seat_lane",
+                "seat_bound_at",
+                "seat_closed_at",
+                "seat_close_reason",
+                "superseded_by",
+            ):
                 row.pop(seat_key, None)
+                if isinstance(prior, dict) and seat_key in prior:
+                    row[seat_key] = prior[seat_key]
             _claim_driver_lock(registration_id)
             active[registration_id] = row
             _store.write_active(active)

@@ -253,6 +253,8 @@ def apply_driving_seat_bind(
     lane = str(row.get("parent_thread") or "").strip()
     if not lane or purpose not in OPERATOR_PURPOSES:
         return None, []
+    if row.get("seat_closed_at") is not None:
+        return None, []
     ts = time.time() if now is None else now
     updated = dict(row)
     updated["seat_lane"] = lane

@@ -118,6 +118,7 @@ def test_holder_page_live_when_none_in_flight() -> None:
             }
         ]
     }
+
     class _Held:
         parent_thread = LANE
         registration_id = "held"
@@ -346,6 +347,7 @@ def test_unknown_provenance_only_page_does_not_block_holder() -> None:
             }
         ]
     }
+
     class _Held:
         parent_thread = LANE
         registration_id = "held"
@@ -463,6 +465,51 @@ def test_select_helper_multiple_in_flight() -> None:
 
 
 @pytest.mark.offline
+def test_listable_holder_absent_page_is_stored_association() -> None:
+    """Holder registration is listable, but its page is not an open candidate."""
+    holder = "https://claude.ai/cowork/cse_01KKeJtTGiUH32mi3wk7dvZx"
+
+    class _Holder:
+        parent_thread = LANE
+        registration_id = "holder-reg"
+        purpose = "operator-proxy"
+
+    body = resolve_lane_current_cse(
+        LANE,
+        snap={
+            "seat_rows": [
+                {
+                    "registration_id": "holder-reg",
+                    "parent_thread": LANE,
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 1.0,
+                    "chat_url": holder,
+                }
+            ]
+        },
+        list_pages=lambda: iter([(9223, LIVE, "ws://9223")]),
+        probe_page=lambda _port, _ws: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda url: (
+            {
+                "parent_thread_claim": LANE,
+                "reason": "idle_exit",
+                "registration_id": "other",
+            }
+            if url == LIVE
+            else None
+        ),
+        list_active=lambda: [_Holder()],
+        chat_url_for_registration=lambda rid: holder if rid == "holder-reg" else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 10.0,
+    )
+    assert body["seat_holder"]["evidence_class"] == "stored_association"
+    assert body["seat_holder"]["registration_id"] == "holder-reg"
+
+
 def test_dormant_holder_blocks_sole_idle_shadow() -> None:
     shadow = "https://claude.ai/cowork/cse_017cw5A7geCQNPPP7LzB78vB"
     holder = "https://claude.ai/cowork/cse_01KKeJtTGiUH32mi3wk7dvZx"
@@ -790,9 +837,7 @@ def test_dormant_holder_open_idle_is_not_current() -> None:
                     else None
                 ),
                 "list_active": lambda: [],
-                "chat_url_for_registration": lambda rid: (
-                    DRAIN if rid == "h" else None
-                ),
+                "chat_url_for_registration": lambda rid: DRAIN if rid == "h" else None,
             },
             False,
         ),
