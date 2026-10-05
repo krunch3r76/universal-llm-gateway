@@ -332,6 +332,9 @@ def relaunch_dormant(
         # clear seat_closed_at and close the hop that just won the seat.
         current = _store.load_active().get(registration_id) or {}
         if current.get("seat_closed_at") is not None:
+            _abandon_superseded_relaunch(
+                registration_id, row, current.get("port")
+            )
             raise RegistryError(
                 f"registration {registration_id!r} has seat_closed_at set; "
                 "refusing relaunch of a superseded seat"
@@ -339,6 +342,9 @@ def relaunch_dormant(
         bind_driving_seat(registration_id)
         bound = _store.load_active().get(registration_id) or {}
         if bound.get("seat_closed_at") is not None:
+            _abandon_superseded_relaunch(
+                registration_id, row, bound.get("port")
+            )
             raise RegistryError(
                 f"registration {registration_id!r} has seat_closed_at set; "
                 "refusing relaunch of a superseded seat"
@@ -354,6 +360,22 @@ def relaunch_dormant(
             )
         )
     return reg
+
+
+def _abandon_superseded_relaunch(
+    registration_id: str,
+    prior: dict[str, Any],
+    port: Any,
+) -> None:
+    """Park a relaunch the hop already closed, and drop its Chrome.
+
+    Leaving the row active with the driver lock held blocks both dormancy
+    (``driver_attached``) and a later claim of the same lock.
+    """
+    if isinstance(port, int):
+        with contextlib.suppress(Exception):
+            registry_package()._kill_listener(port)
+    _restore_dormant(registration_id, prior)
 
 
 def _restore_dormant(registration_id: str, prior: dict[str, Any]) -> None:
