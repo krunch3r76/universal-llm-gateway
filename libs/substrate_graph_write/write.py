@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+from ulg_routing_headers.client import internal_dispatch_headers
 
 _DEFAULT_EVIDENCE = "substrate_graph_write"
 _DEFAULT_CONFIDENCE = "confirmed"
@@ -23,7 +24,7 @@ def write_claim(
     evidence: str | None = None,
     evidence_uris: list[str] | str | None = None,
     seat: str = "cursor-sdk",
-    via_adapter: bool = True,
+    caller: str = "substrate_graph_write",
     surface: str = "code",
 ) -> dict[str, Any]:
     """Assert *claim* onto *entity_id* via cortex-api ``/dispatch`` tool=assert."""
@@ -36,16 +37,16 @@ def write_claim(
     }
     if evidence_uris:
         arguments["evidence_uris"] = evidence_uris
+    headers = internal_dispatch_headers(surface=surface, seat=seat, caller=caller)
     body = {
         "tool": "assert",
         "arguments": json.dumps(arguments),
         "surface": surface,
-        "via_adapter": via_adapter,
         "seat": seat,
     }
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_TIMEOUT) as client:
-            response = client.post("/dispatch", json=body)
+            response = client.post("/dispatch", json=body, headers=headers)
     except httpx.RequestError as exc:
         return {"error": f"cortex-api connection failed: {exc}", "status_code": None}
     if response.status_code >= 400:

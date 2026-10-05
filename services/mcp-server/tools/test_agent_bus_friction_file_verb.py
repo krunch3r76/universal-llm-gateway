@@ -64,7 +64,7 @@ def test_friction_file_accepts_service_and_claim_aliases() -> None:
         confidence=None,
         agent=None,
         seat="mcp",
-        via_adapter=True,
+        caller="mcp-server",
         surface="code",
     )
     assert result["assertion_id"] == 77

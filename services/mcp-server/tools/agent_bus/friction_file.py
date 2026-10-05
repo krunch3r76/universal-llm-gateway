@@ -63,7 +63,7 @@ def _friction_file_dispatch(
         confidence=confidence,
         agent=agent,
         seat="mcp",
-        via_adapter=True,
+        caller="mcp-server",
         surface="code",
     )
     if "error" in result:

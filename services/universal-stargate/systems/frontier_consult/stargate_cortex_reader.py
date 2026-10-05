@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_sync_client
+from ulg_routing_headers.client import internal_dispatch_headers
 
 _CORTEX_TIMEOUT = 15.0
 
@@ -13,10 +14,28 @@ _CORTEX_TIMEOUT = 15.0
 class StargateCortexReader:
     """Thin sync HTTP relay to cortex-api for implement_admission readers."""
 
+    _SURFACE = "code"
+    _SEAT = "stargate"
+    _CALLER = "stargate_cortex_reader"
+
+    def _dispatch_headers(self) -> dict[str, str]:
+        return internal_dispatch_headers(
+            surface=self._SURFACE,
+            seat=self._SEAT,
+            caller=self._CALLER,
+        )
+
     def _dispatch(self, tool: str, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-        payload = {"tool": tool, "arguments": {"entity_id": entity_id, **kwargs}}
+        payload = {
+            "tool": tool,
+            "arguments": {"entity_id": entity_id, **kwargs},
+            "surface": self._SURFACE,
+            "seat": self._SEAT,
+        }
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
-            resp = client.post("/dispatch", json=payload)
+            resp = client.post(
+                "/dispatch", json=payload, headers=self._dispatch_headers()
+            )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
         return data
@@ -55,9 +74,13 @@ class StargateCortexReader:
         payload = {
             "tool": "assertion_get",
             "arguments": {"assertion_id": assertion_id},
+            "surface": self._SURFACE,
+            "seat": self._SEAT,
         }
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
-            resp = client.post("/dispatch", json=payload)
+            resp = client.post(
+                "/dispatch", json=payload, headers=self._dispatch_headers()
+            )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
         return data

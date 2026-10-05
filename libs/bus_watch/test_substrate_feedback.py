@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from bus_watch.substrate_feedback import extract_substrate_findings
+from unittest.mock import MagicMock, patch
+
+from bus_watch.substrate_feedback import _fetch_active_claims, extract_substrate_findings
 
 pytestmark = pytest.mark.offline
 
@@ -133,6 +135,21 @@ def test_failure_after_green_bracket_is_still_rot() -> None:
     text = _RED_THEN_GREEN_CLOSEOUT + f"\nFAILED {later}\n1 failed in 0.04s\n"
     findings = extract_substrate_findings(text)
     assert findings == [f"FAILED {later}"]
+
+
+def test_fetch_active_claims_sends_internal_routing_headers() -> None:
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"items": []}
+
+    with patch("substrate_graph_write.write.make_sync_client") as client_factory:
+        client = client_factory.return_value.__enter__.return_value
+        client.post.return_value = response
+        _fetch_active_claims("todo:x")
+
+    kwargs = client.post.call_args.kwargs
+    assert kwargs["headers"]["X-ULG-Caller"] == "bus_watch"
+    assert "via_adapter" not in kwargs["json"]
 
 
 def test_json_red_then_green_same_command_is_not_rot() -> None:

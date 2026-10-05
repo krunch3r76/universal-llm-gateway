@@ -42,6 +42,27 @@ def test_substrate_tools_advertise_output_schema() -> None:
         assert payload["customTools"][name]["outputSchema"]["type"] == "object"
 
 
+def test_relay_cortex_entity_get_uses_internal_headers() -> None:
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"entity_id": "todo:x"}
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_substrate_tools.make_sync_client"
+    ) as client_factory:
+        client = client_factory.return_value.__enter__.return_value
+        client.post.return_value = response
+        from services.git_integration_worker.cursor_sdk_substrate_tools import (
+            _relay_cortex_entity_get,
+        )
+
+        _relay_cortex_entity_get({"entity_id": "todo:x", "intent": "card"})
+
+    kwargs = client.post.call_args.kwargs
+    assert kwargs["headers"]["X-ULG-Caller"] == "git_integration_worker"
+    assert "via_adapter" not in kwargs["json"]
+
+
 def test_substrate_cortex_read_execute_returns_json() -> None:
     tools = build_substrate_custom_tools(_CTX)
     tool = tools["substrate_cortex_read"]

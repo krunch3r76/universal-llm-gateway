@@ -50,7 +50,7 @@ def _graph_write_dispatch(
         evidence=evidence,
         evidence_uris=evidence_uris,
         seat="mcp",
-        via_adapter=True,
+        caller="mcp-server",
         surface="code",
     )
     if "error" in result:

@@ -139,7 +139,7 @@ def _entity_mint_dispatch(
         content_hash=content_hash,
         duplicate_name_ok=duplicate_name_ok,
         seat="mcp",
-        via_adapter=True,
+        caller="mcp-server",
         surface="code",
     )
     if "error" in result:

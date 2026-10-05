@@ -31,6 +31,10 @@ def test_write_claim_posts_assert_dispatch() -> None:
     assert args["confidence"] == "confirmed"
     assert args["derivation_type"] == "direct_observation"
     assert args["evidence"] == "substrate_graph_write"
+    assert "via_adapter" not in payload
+    headers = client.post.call_args.kwargs["headers"]
+    assert headers["X-ULG-Caller"] == "substrate_graph_write"
+    assert headers["X-ULG-Seat"] == "cursor-sdk"
 
 
 def test_write_claim_surfaces_http_errors() -> None:

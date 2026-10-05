@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+from ulg_routing_headers.client import internal_dispatch_headers
 
 _TIMEOUT = 30.0
 
@@ -39,7 +40,7 @@ def file_friction(
     confidence: str | None = None,
     agent: str | None = None,
     seat: str = "cursor-sdk",
-    via_adapter: bool = True,
+    caller: str = "substrate_friction_file",
     surface: str = "code",
 ) -> dict[str, Any]:
     """File *note* against *owner* via cortex-api ``/dispatch`` tool=friction.
@@ -61,16 +62,16 @@ def file_friction(
         arguments["confidence"] = confidence
     if agent:
         arguments["agent"] = agent
+    headers = internal_dispatch_headers(surface=surface, seat=seat, caller=caller)
     body = {
         "tool": "friction",
         "arguments": json.dumps(arguments),
         "surface": surface,
-        "via_adapter": via_adapter,
         "seat": seat,
     }
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_TIMEOUT) as client:
-            response = client.post("/dispatch", json=body)
+            response = client.post("/dispatch", json=body, headers=headers)
     except httpx.RequestError as exc:
         return {"error": f"cortex-api connection failed: {exc}", "status_code": None}
     if response.status_code >= 400:

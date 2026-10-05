@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from transport_utils import DEFAULT_CORTEX_URL, make_async_client
+from ulg_routing_headers.client import internal_dispatch_headers
 from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
@@ -248,13 +249,21 @@ def _entity_required_skills(entity: dict[str, Any]) -> list[str]:
 async def _cortex_entity_get(
     client: httpx.AsyncClient, entity_id: str
 ) -> dict[str, Any] | None:
+    headers = internal_dispatch_headers(
+        surface="code",
+        seat="stargate",
+        caller="skill_suggest_dispatch",
+    )
     try:
         resp = await client.post(
             "/dispatch",
             json={
                 "tool": "entity_get",
                 "arguments": {"entity_id": entity_id, "intent": "full"},
+                "surface": "code",
+                "seat": "stargate",
             },
+            headers=headers,
         )
     except httpx.HTTPError as exc:
         logger.warning(
