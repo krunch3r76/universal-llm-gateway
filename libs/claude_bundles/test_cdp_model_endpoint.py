@@ -2108,6 +2108,160 @@ def test_weekly_limit_does_not_grade_long_review_mentioning_limit_in_body(
     assert result.stall_stage is None
 
 
+_PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER = (
+    "se Used toys integration, loaded 2 skills, ran a command · 1 note "
+    "Approaching weekly limit Get more usage Skip all approvals is on. "
+    "Claude never pauses, even for unsafe actions. This includes using your conne"
+)
+
+
+def test_weekly_limit_approaching_banner_long_body_ok_with_warning_extra(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Approaching weekly-limit notice + long seat body grades ok (a:38096 AC2a)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-approaching-ok")
+    long_body = "VERDICT: APPROVE\n\n" + ("Seat review paragraph. " * 80)
+    assert len(long_body) > 500
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-approaching", "status": "running"},
+            {
+                "execution_id": "sat-wl-approaching",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-approaching.md",
+                "body": long_body,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": _PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-approaching-ok",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="code-review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert result.stall_stage is None
+    assert result.extras.get("weekly_limit_warning")
+
+
+def test_weekly_limit_hit_phrase_banner_long_body_still_stalls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Stop phrase in banner + long body still grades weekly_limit (a:38096 AC2b)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-hit-long")
+    banner = "You've hit your weekly limit"
+    long_body = "VERDICT: WITHHOLD\n\n" + ("Seat review paragraph. " * 80)
+    assert len(long_body) > 500
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-hit-long", "status": "running"},
+            {
+                "execution_id": "sat-wl-hit-long",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-hit-long.md",
+                "body": long_body,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": banner,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-hit-long",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="code-review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
+def test_weekly_limit_bare_phrase_banner_long_body_still_stalls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Weekly limit without approaching marker + long body grades weekly_limit (AC2c)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-bare-long")
+    banner = "weekly limit"
+    long_body = "VERDICT: WITHHOLD\n\n" + ("Seat review paragraph. " * 80)
+    assert len(long_body) > 500
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-bare-long", "status": "running"},
+            {
+                "execution_id": "sat-wl-bare-long",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-bare-long.md",
+                "body": long_body,
+                "error_banner_match": banner,
+                "error_banner_text": banner,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-bare-long",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="code-review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
+def test_weekly_limit_approaching_and_stop_phrase_banner_still_stalls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Stop phrase wins when banner holds both approaching and hit wording (AC2d)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-mixed-banner")
+    banner = (
+        "Approaching weekly limit · Get more usage. "
+        "You've hit your weekly limit. Try again next week."
+    )
+    long_body = "VERDICT: WITHHOLD\n\n" + ("Seat review paragraph. " * 80)
+    assert len(long_body) > 500
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-mixed", "status": "running"},
+            {
+                "execution_id": "sat-wl-mixed",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-mixed.md",
+                "body": long_body,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": banner,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-mixed-banner",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="code-review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
 def test_weekly_limit_from_poll_banner_fields_and_long_body(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
