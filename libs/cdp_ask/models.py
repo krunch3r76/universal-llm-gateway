@@ -321,15 +321,18 @@ class ExecutionPollResponse(BaseModel):
     error_banner_match: str | None = Field(
         default=None,
         description=(
-            "Product error/toast banner regex match from the last harvest sample "
-            "(composer excluded). Optional for mixed producer/consumer deploys."
+            "Product error/toast banner regex match from harvest (composer excluded). "
+            "Sticky for the execution row: the first non-empty sample wins and later "
+            "empty samples do not clear it, so a transient limit banner is not dropped "
+            "before a long archived reply is polled. Optional for mixed deploys."
         ),
     )
     error_banner_text: str | None = Field(
         default=None,
         description=(
-            "Product error/toast banner visible text from the last harvest sample. "
-            "Optional for mixed producer/consumer deploys."
+            "Product error/toast banner visible text from harvest. Same sticky "
+            "semantics as ``error_banner_match`` — not a live DOM mirror on every poll. "
+            "Optional for mixed deploys."
         ),
     )
 
