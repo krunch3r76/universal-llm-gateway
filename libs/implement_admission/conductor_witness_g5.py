@@ -59,7 +59,11 @@ def g5_implement_witness(
         finder = getattr(deps.nested_implement, "parent_with_commits", None)
         hit: str | None = None
         if callable(finder):
-            found = finder(tip_body=tip_body, explicit_parent_id=dispatch_id)
+            found = finder(
+                tip_body=tip_body,
+                explicit_parent_id=dispatch_id,
+                work_key=deps.source_ref,
+            )
             hit = str(found) if found else None
         elif dispatch_id and deps.nested_implement.nested_implement_has_commits(
             nest_under_dispatch_id=dispatch_id,

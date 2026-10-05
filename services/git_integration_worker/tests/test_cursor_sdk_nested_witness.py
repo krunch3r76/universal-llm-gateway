@@ -179,7 +179,13 @@ def test_nested_implement_has_commits_true_for_mechanical(monkeypatch) -> None:
         )
 
 
-def _init_ledger(path: Path, rows: list[tuple], *, with_resume_of: bool = False) -> None:
+def _init_ledger(
+    path: Path,
+    rows: list[tuple],
+    *,
+    with_resume_of: bool = False,
+    with_work_key: bool = False,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     cols = (
@@ -188,6 +194,8 @@ def _init_ledger(path: Path, rows: list[tuple], *, with_resume_of: bool = False)
     )
     if with_resume_of:
         cols += ", resume_of TEXT"
+    if with_work_key:
+        cols += ", work_key TEXT"
     conn.execute(f"CREATE TABLE cursor_sdk_dispatches ({cols})")
     if rows:
         placeholders = ", ".join("?" for _ in rows[0])
@@ -425,4 +433,61 @@ def test_parent_with_commits_finds_thread_mate_not_named_on_the_tip(
     assert (
         nested_parent_with_commits(tip_body=tip, explicit_parent_id=None)
         == "auto-d472d61ad300"
+    )
+
+
+def test_parent_with_commits_resolves_work_key_when_tip_omits_dispatch_id(
+    tmp_path, monkeypatch
+) -> None:
+    """a:37920 — GIW ledger by work_key when the tip pin is absent."""
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    work_key = "todo:g5-nest-dispatch-id"
+    child_record = json.dumps(
+        {
+            "nest_under": "parent-work-key",
+            "closeout_body": '{"commits_ahead":1}',
+        }
+    )
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "parent-work-key",
+                "conductor",
+                "parked_waiting",
+                "{}",
+                None,
+                None,
+                "15100",
+                work_key,
+            ),
+            (
+                "child-work-key",
+                "implement",
+                "completed",
+                child_record,
+                json.dumps({"admit_head": "deadbeef"}),
+                None,
+                "15101",
+                work_key,
+            ),
+        ],
+        with_work_key=True,
+    )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(scratch))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    assert (
+        nested_parent_with_commits(
+            tip_body="G5 shipped; SCORE_RESURFACE hung. no dispatch pin.",
+            explicit_parent_id=None,
+            work_key=work_key,
+        )
+        == "parent-work-key"
     )
