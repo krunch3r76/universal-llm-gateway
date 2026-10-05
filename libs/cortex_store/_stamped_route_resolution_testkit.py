@@ -43,6 +43,12 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
         {"deadline_id": "deadline:probe"},
         "deadline_resolve_route",
     ),
+    ("POST", "entities_bulk_upsert_route", {}, "entities_bulk_upsert_route"),
+    ("POST", "relationships_bulk_upsert_route", {}, "relationships_bulk_upsert_route"),
+    ("POST", "recon_sidecar_write_route", {}, "recon_sidecar_write_route"),
+    ("POST", "thread_sidecar_write_route", {}, "thread_sidecar_write_route"),
+    ("POST", "todo_close_sidecar_route", {}, "todo_close_sidecar_route"),
+    ("POST", "pinned_deliverable_write_route", {}, "pinned_deliverable_write_route"),
 )
 
 

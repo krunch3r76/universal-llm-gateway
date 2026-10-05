@@ -5661,6 +5661,57 @@
         "title": "OcrFileRequest",
         "type": "object"
       },
+      "PinnedDeliverableWriteRequest": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "dispatch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Id"
+          },
+          "rel_path": {
+            "title": "Rel Path",
+            "type": "string"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "write_if_absent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Write If Absent"
+          }
+        },
+        "required": [
+          "rel_path",
+          "content"
+        ],
+        "title": "PinnedDeliverableWriteRequest",
+        "type": "object"
+      },
       "PredicateFormNormalize": {
         "description": "Result of v1.3 predicate_form normalize-on-write.\n\nSurfaced on assertion create/update/supersede responses when the caller\nseeded a ``predicate_form`` and the route ran ``normalize_predicate_domain``\nover it. The MCP dispatcher layer reads this field and emits\n``mcp.cortex.predicate.normalized`` (always) and\n``mcp.cortex.predicate.review.required`` (when ``requires_human_review`` is\nTrue). cortex-api itself stays HTTP-only \u2014 no ``mcp_events`` dep \u2014 so the\nemission surface lives at the dispatcher contract layer, matching the\nsibling-family invariant for ``mcp.cortex.assertion.*`` signals (per\nassertion 10259 / Q5.5 deferral, dispatch packet\n``cortex://notes/system/threads/cortex-api-event-emission-surface-dispatch.md``).",
         "properties": {
@@ -6048,6 +6099,68 @@
           "operation"
         ],
         "title": "RecentFailure",
+        "type": "object"
+      },
+      "ReconSidecarWriteRequest": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "queries": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queries"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes"
+          },
+          "sink_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sink Backend"
+          },
+          "theme": {
+            "title": "Theme",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "theme",
+          "body"
+        ],
+        "title": "ReconSidecarWriteRequest",
         "type": "object"
       },
       "ReflectiveEntryCreate": {
@@ -9370,6 +9483,165 @@
           "unread"
         ],
         "title": "ThreadReference",
+        "type": "object"
+      },
+      "ThreadSidecarWriteRequest": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "execution_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Id"
+          },
+          "from_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Agent"
+          },
+          "oversized": {
+            "default": false,
+            "title": "Oversized",
+            "type": "boolean"
+          },
+          "sidecar_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sidecar Slug"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "thread": {
+            "title": "Thread",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread",
+          "subject",
+          "content"
+        ],
+        "title": "ThreadSidecarWriteRequest",
+        "type": "object"
+      },
+      "TodoCloseSidecarRequest": {
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "reasoning_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Summary"
+          },
+          "references": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "References"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "todo_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Todo Id"
+          }
+        },
+        "title": "TodoCloseSidecarRequest",
         "type": "object"
       },
       "TodoReference": {
@@ -19797,6 +20069,184 @@
         "summary": "Health"
       }
     },
+    "/pinned-deliverables": {
+      "post": {
+        "description": "Write a packet-pinned deliverable file (dispatch ``pinned_deliverable_write`` op).",
+        "operationId": "pinned_deliverable_write_route_pinned_deliverables_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PinnedDeliverableWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Pinned Deliverable Write Route Pinned Deliverables Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pinned Deliverable Write Route",
+        "tags": [
+          "substrate-sidecar-writes"
+        ],
+        "x-mcp": {
+          "op": "pinned_deliverable_write",
+          "tool": "cortex"
+        }
+      }
+    },
     "/reaper/preview": {
       "get": {
         "description": "Dry-run: show what the reaper would sweep without modifying anything.",
@@ -19917,6 +20367,184 @@
         "tags": [
           "reaper"
         ]
+      }
+    },
+    "/recon/sidecars": {
+      "post": {
+        "description": "Persist a recon markdown sidecar (dispatch ``recon_sidecar_write`` op).",
+        "operationId": "recon_sidecar_write_route_recon_sidecars_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconSidecarWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recon Sidecar Write Route Recon Sidecars Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recon Sidecar Write Route",
+        "tags": [
+          "substrate-sidecar-writes"
+        ],
+        "x-mcp": {
+          "op": "recon_sidecar_write",
+          "tool": "cortex"
+        }
       }
     },
     "/reflective-journal": {
@@ -26618,6 +27246,184 @@
         }
       }
     },
+    "/threads/sidecars": {
+      "post": {
+        "description": "Persist a thread markdown sidecar (dispatch ``thread_sidecar_write`` op).",
+        "operationId": "thread_sidecar_write_route_threads_sidecars_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadSidecarWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Thread Sidecar Write Route Threads Sidecars Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thread Sidecar Write Route",
+        "tags": [
+          "substrate-sidecar-writes"
+        ],
+        "x-mcp": {
+          "op": "thread_sidecar_write",
+          "tool": "cortex"
+        }
+      }
+    },
     "/todo-audit": {
       "get": {
         "description": "Old/open TODO audit for deferral, closure, merge, or spec conversion.",
@@ -27095,6 +27901,184 @@
         ],
         "x-mcp": {
           "op": "todo_candidates",
+          "tool": "cortex"
+        }
+      }
+    },
+    "/todos/closure-sidecars": {
+      "post": {
+        "description": "Write todo closure sidecar + entity pointer (dispatch ``todo_close_sidecar`` op).",
+        "operationId": "todo_close_sidecar_route_todos_closure_sidecars_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-ULG-Surface",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Surface"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Seat"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Caller",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Caller"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Adapter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Adapter"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Thread",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Thread"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-ULG-Session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ulg-Session"
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Traceparent"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoCloseSidecarRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Todo Close Sidecar Route Todos Closure Sidecars Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Todo Close Sidecar Route",
+        "tags": [
+          "substrate-sidecar-writes"
+        ],
+        "x-mcp": {
+          "op": "todo_close_sidecar",
           "tool": "cortex"
         }
       }

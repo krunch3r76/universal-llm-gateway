@@ -276,6 +276,9 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     _include(subgraph.router)
     _include(reaper.router)
     _include(reflective_journal.router)
+    from .routes.substrate_sidecar_writes import router as substrate_sidecar_writes_router
+
+    _include(substrate_sidecar_writes_router)
     _include(seat_claims.router)
     from .routes.frictions import router as frictions_router
 

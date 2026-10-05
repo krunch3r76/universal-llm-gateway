@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "60ab8bdd263f900f8ecf7fbbb203cab46ea9d5f29014d2a5dfc73e3440012525"
+OPENAPI_SHA256 = "32c2e95f56a4f6fb5521735893aa0aaa983d7aa4ed25427270b32b87b42ffad4"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -160,6 +160,16 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/assertions/observations",
         "operation_id": "observe_assertion_assertions_observations_post",
     },
+    "pinned_deliverable_write": {
+        "method": "POST",
+        "path": "/pinned-deliverables",
+        "operation_id": "pinned_deliverable_write_route_pinned_deliverables_post",
+    },
+    "recon_sidecar_write": {
+        "method": "POST",
+        "path": "/recon/sidecars",
+        "operation_id": "recon_sidecar_write_route_recon_sidecars_post",
+    },
     "relationship_create": {
         "method": "POST",
         "path": "/relationships",
@@ -305,6 +315,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/tags/{tag_name}/resolve",
         "operation_id": "tag_resolve_route_tags__tag_name__resolve_get",
     },
+    "thread_sidecar_write": {
+        "method": "POST",
+        "path": "/threads/sidecars",
+        "operation_id": "thread_sidecar_write_route_threads_sidecars_post",
+    },
     "todo_audit": {
         "method": "GET",
         "path": "/todo-audit",
@@ -315,6 +330,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/todo-candidates",
         "operation_id": "get_todo_candidates_todo_candidates_get",
     },
+    "todo_close_sidecar": {
+        "method": "POST",
+        "path": "/todos/closure-sidecars",
+        "operation_id": "todo_close_sidecar_route_todos_closure_sidecars_post",
+    },
     "walk_subgraph": {
         "method": "GET",
         "path": "/subgraph/walk",
@@ -322,7 +342,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "39ec4ae8893bf7ea8b7443f6faf9f6918237013d43539e3df448c0c89e0f65a9",
+    "@components": "b10fa80b4945349ed68cfc2f3d5cc46aab322ee4e0f4c5eb449ae215a9f8e70c",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

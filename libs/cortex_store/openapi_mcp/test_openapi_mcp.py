@@ -36,11 +36,7 @@ UNBOUND_BASELINE: frozenset[str] = frozenset(
         "endeavor_write_row",
         "entity_retype",
         "graph_reach",
-        "pinned_deliverable_write",
-        "recon_sidecar_write",
         "register_skill_substrate",
-        "thread_sidecar_write",
-        "todo_close_sidecar",
         "view_render",
     }
 )
