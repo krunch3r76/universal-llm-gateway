@@ -8,7 +8,11 @@ import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import init_db
 from agent_bus_store.db.connection import connect
-from agent_bus_store.db.cse_associations import associate_cse, get_current_cse
+from agent_bus_store.db.cse_associations import (
+    HOP_SEATED_BOUND_BY,
+    associate_cse,
+    get_current_cse,
+)
 from agent_bus_store.server import create_app
 from fastapi.testclient import TestClient
 
@@ -165,3 +169,140 @@ def test_list_threads_merges_cse(bus_client: TestClient) -> None:
     match = next(row for row in listed if row["id"] == thread_id)
     assert match["cse_chat_url"] == _URL_A
     assert match["cse_registration_id"] == "reg-a"
+
+
+def test_relay_url_does_not_replace_hop_successor(bus_client: TestClient) -> None:
+    """A non-mint writer naming a different URL leaves the hop successor current.
+
+    Breaks when the refuse runs before the URL is normalized, when bound_by
+    of the mint row is ignored, or when the insert still commits.
+    """
+    thread_id = _create_lane(bus_client, "cse-hop-hold")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound") as emit:
+        seated = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="reg-successor",
+            bound_by=HOP_SEATED_BOUND_BY,
+            evidence="cdp.generate.seated",
+        )
+        rewritten = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-retired",
+            bound_by="web-anthropic",
+            evidence="agent_bus.request",
+        )
+    assert seated is not None
+    assert rewritten is None
+    assert emit.call_count == 1
+    assert emit.call_args.kwargs["bound_by"] == HOP_SEATED_BOUND_BY
+    assert emit.call_args.kwargs["cse_chat_url"] == _URL_B
+    current = get_current_cse(thread_id=thread_id)
+    assert current["cse_chat_url"] == _URL_B
+    assert current["cse_registration_id"] == "reg-successor"
+    assert current["bound_by"] == HOP_SEATED_BOUND_BY
+    detail = bus_client.get(f"/threads/{thread_id}").json()
+    assert detail["cse_chat_url"] == _URL_B
+    assert detail["cse_registration_id"] == "reg-successor"
+
+
+def test_next_hop_mint_replaces_prior_successor(bus_client: TestClient) -> None:
+    thread_id = _create_lane(bus_client, "cse-hop-next")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-old",
+            bound_by=HOP_SEATED_BOUND_BY,
+        )
+        nxt = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="reg-new",
+            bound_by=HOP_SEATED_BOUND_BY,
+        )
+    assert nxt is not None
+    current = get_current_cse(thread_id=thread_id)
+    assert current["cse_chat_url"] == _URL_B
+    assert current["cse_registration_id"] == "reg-new"
+
+
+def test_hop_mint_guard_survives_same_url_append(bus_client: TestClient) -> None:
+    """A same-URL append must not clear the mint hold on the successor URL.
+
+    Breaks when the guard keys off the newest row's bound_by. After
+    web-anthropic appends the seated URL with a null registration, that row
+    is current and a later paste of the retired URL replaces the pointer.
+    """
+    thread_id = _create_lane(bus_client, "cse-hop-append-hold")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound") as emit:
+        seated = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="R1",
+            bound_by=HOP_SEATED_BOUND_BY,
+            evidence="cdp.generate.seated",
+        )
+        appended = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id=None,
+            bound_by="web-anthropic",
+            evidence="agent_bus.request",
+        )
+        retired = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_A,
+            cse_registration_id="reg-retired",
+            bound_by="web-anthropic",
+            evidence="agent_bus.request",
+        )
+    assert seated is not None
+    assert appended is not None
+    assert retired is None
+    http_retired = bus_client.post(
+        f"/threads/{thread_id}/cse-associate",
+        json={
+            "cse_chat_url": _URL_A,
+            "cse_registration_id": "reg-retired",
+            "bound_by": "web-anthropic",
+            "evidence": "agent_bus.request",
+        },
+    )
+    assert http_retired.status_code == 200
+    assert http_retired.json() == {
+        "thread_id": thread_id,
+        "state": "unchanged",
+    }
+    assert emit.call_count == 2
+    current = get_current_cse(thread_id=thread_id)
+    assert current["cse_chat_url"] == _URL_B
+    assert current["cse_registration_id"] is None
+    assert current["bound_by"] == "web-anthropic"
+    detail = bus_client.get(f"/threads/{thread_id}").json()
+    assert detail["cse_chat_url"] == _URL_B
+
+
+def test_same_successor_url_new_registration_still_appends(
+    bus_client: TestClient,
+) -> None:
+    """Host recycle on the hop URL still records the new registration."""
+    thread_id = _create_lane(bus_client, "cse-hop-recycle")
+    with patch("agent_bus_store.db.cse_associations.emit_cse_bound"):
+        associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="reg-old-host",
+            bound_by=HOP_SEATED_BOUND_BY,
+        )
+        recycled = associate_cse(
+            thread_id=thread_id,
+            cse_chat_url=_URL_B,
+            cse_registration_id="reg-new-host",
+            bound_by="web-anthropic",
+        )
+    assert recycled is not None
+    current = get_current_cse(thread_id=thread_id)
+    assert current["cse_chat_url"] == _URL_B
+    assert current["cse_registration_id"] == "reg-new-host"

@@ -233,6 +233,62 @@ async def test_bound_seat_auto_resumes_without_reattach_opt_in(
 
 
 @pytest.mark.asyncio
+async def test_paste_retired_url_does_not_call_associate_cse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Followup paste into a chat URL does not write the bus CSE pointer.
+
+    The hop successor is the current association. Breaks when the paste path
+    starts calling associate_cse for the URL it pasted into.
+    """
+    store = ExecutionStore()
+    reg = _reg("reg-retired")
+    _patch_list_active(monkeypatch, reg=reg)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        MagicMock(),
+    )
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    associate = MagicMock()
+    monkeypatch.setattr("agent_bus_store.db.cse_associations.associate_cse", associate)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            parent_thread="12286",
+        ),
+        store,
+    )
+    assert resp.ok is True
+    associate.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_reattach_true_without_chat_url() -> None:
     store = ExecutionStore()
     resp = await execute_followup(

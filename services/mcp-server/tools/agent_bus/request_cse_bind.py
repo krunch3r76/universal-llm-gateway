@@ -1,7 +1,11 @@
 """Stamp a Cowork session address onto agent-bus thread metadata at request time.
 
 Called after the request turn is written so a dead Auto handler cannot leave
-the thread silent about which CSE authored the commission.
+the thread silent about which CSE authored the commission. A hop successor's
+URL arrives later, on ``cdp.generate.seated``. The store refuses a different
+URL from a relay or paste while that mint URL is still current, including
+after a same-URL append. This path posts and returns the store result
+(``unchanged`` when the hold applies).
 """
 
 from __future__ import annotations
@@ -27,8 +31,11 @@ def maybe_bind_thread_cse(
     Not gated on Auto enqueue or liveness. Registration-only is not a bind —
     the host route no-ops without a Cowork URL. A continuity hop from the IDE
     still binds: the census reads this row, and ``cursor`` is not a mailbox.
-    Relays to agent-bus so the container does not open messages.db. Fail-soft
-    so a bind miss cannot take down the request.
+    Does not skip the associate call from the newest row's ``bound_by``: that
+    pre-check misses the mint after a same-URL append. The store holds the
+    mint URL and returns ``unchanged`` for a different URL from a non-mint
+    writer. Relays to agent-bus so the container does not open messages.db.
+    Fail-soft so a bind miss cannot take down the request.
     """
     if not thread_id:
         return None
