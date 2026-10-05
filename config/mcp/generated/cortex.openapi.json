@@ -3473,8 +3473,7 @@
         "type": "object"
       },
       "EndeavorRepairT1Request": {
-        "additionalProperties": false,
-        "description": "No persisted fields \u2014 repair is global T1 host maintenance.",
+        "description": "No persisted fields \u2014 repair is global T1 host maintenance (extras ignored like ``**_``).",
         "properties": {},
         "title": "EndeavorRepairT1Request",
         "type": "object"
