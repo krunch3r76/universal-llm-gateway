@@ -74,7 +74,7 @@ def resolve_endpoint_name(app: FastAPI, method: str, path: str) -> str | None:
     method_u = method.upper()
     scope = {
         "type": "http",
-        "method": method.lower(),
+        "method": method_u,
         "path": path,
         "root_path": "",
         "headers": [],
@@ -83,13 +83,30 @@ def resolve_endpoint_name(app: FastAPI, method: str, path: str) -> str | None:
         if method_u not in route.methods:
             continue
         match, _child = route.matches(scope)
-        if match in (Match.FULL, Match.PARTIAL):
+        if match == Match.FULL:
             return route.endpoint.__name__
     return None
 
 
+_BATCH6_NEW_ENDPOINTS = frozenset(
+    {"endeavor_write_row_route", "endeavor_dispose_row_route"}
+)
+
+
 def assert_baseline_route_resolution(app: FastAPI) -> None:
     for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
+        path = app.url_path_for(route_name, **path_params)
+        resolved = resolve_endpoint_name(app, method, path)
+        assert resolved == expected, (
+            f"{method} {path}: expected endpoint {expected!r}, got {resolved!r}"
+        )
+
+
+def assert_pre_batch6_route_resolution_unchanged(app: FastAPI) -> None:
+    """AC4: every pre-batch-6 stamped route still resolves to its own endpoint (FULL match)."""
+    for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
+        if expected in _BATCH6_NEW_ENDPOINTS:
+            continue
         path = app.url_path_for(route_name, **path_params)
         resolved = resolve_endpoint_name(app, method, path)
         assert resolved == expected, (
