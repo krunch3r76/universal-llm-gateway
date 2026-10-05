@@ -95,7 +95,7 @@ def build_four_bucket_census(
 def render_census_markdown(census: FourBucketCensus) -> str:
     """Render durable census artifact body."""
     lines = [
-        "# Four-bucket census — todo:openapi-mcp-dispatch-retire (A2)",
+        "# Five-bucket census — todo:openapi-mcp-dispatch-retire (A2+S8)",
         "",
         f"**Total ops:** {census.total} · **Generated:** mechanical from "
         "`libs/cortex_store/openapi_mcp/census.py`",
