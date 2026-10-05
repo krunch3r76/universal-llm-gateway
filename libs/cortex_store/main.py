@@ -279,12 +279,14 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     from .routes.substrate_endeavor_views import router as substrate_endeavor_views_router
     from .routes.substrate_s6_batch7 import router as substrate_s6_batch7_router
     from .routes.substrate_s6_batch8 import router as substrate_s6_batch8_router
+    from .routes.substrate_s6_batch9 import router as substrate_s6_batch9_router
     from .routes.substrate_sidecar_writes import router as substrate_sidecar_writes_router
 
     _include(substrate_sidecar_writes_router)
     _include(substrate_endeavor_views_router)
     _include(substrate_s6_batch7_router)
     _include(substrate_s6_batch8_router)
+    _include(substrate_s6_batch9_router)
     _include(seat_claims.router)
     from .routes.frictions import router as frictions_router
 

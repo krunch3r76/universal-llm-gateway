@@ -32,7 +32,6 @@ UNBOUND_BASELINE: frozenset[str] = frozenset(
     {
         "claim_alignment",
         "graph_reach",
-        "view_render",
     }
 )
 
