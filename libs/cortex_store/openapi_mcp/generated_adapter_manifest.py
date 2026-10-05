@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "c6701e0f2a9584cd7e8a114cc40d6b92ec788b117d44b39ddcba37a3183bdbf3"
+OPENAPI_SHA256 = "b31af3ffe630bfab5ea82337891b5a17c3f04f3438752d201536d557e3afe502"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -180,6 +180,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/recon/sidecars",
         "operation_id": "recon_sidecar_write_route_recon_sidecars_post",
     },
+    "register_skill_substrate": {
+        "method": "POST",
+        "path": "/skills/register-substrate",
+        "operation_id": "register_skill_substrate_route_skills_register_substrate_post",
+    },
     "relationship_create": {
         "method": "POST",
         "path": "/relationships",
@@ -345,6 +350,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/todos/closure-sidecars",
         "operation_id": "todo_close_sidecar_route_todos_closure_sidecars_post",
     },
+    "view_render": {
+        "method": "GET",
+        "path": "/views/{document_id}",
+        "operation_id": "view_render_route_views__document_id__get",
+    },
     "walk_subgraph": {
         "method": "GET",
         "path": "/subgraph/walk",
@@ -352,7 +362,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "82f7125f7e8acc2c3d947bfc63e7830d3eb53bd1e1884b3efdf4f935699f5063",
+    "@components": "4406c62c1ee39f7d31c40b844c139f04df25737122f75d90591ca3eff2a928c9",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "3fd67dfdaa2e5b50a1f1d192fa0e88e9722a19bc4dcdca19d12f3296c9be4c7f",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",

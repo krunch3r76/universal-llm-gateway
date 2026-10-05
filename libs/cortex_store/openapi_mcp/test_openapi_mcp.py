@@ -34,8 +34,6 @@ UNBOUND_BASELINE: frozenset[str] = frozenset(
         "endeavor_repair_t1",
         "entity_retype",
         "graph_reach",
-        "register_skill_substrate",
-        "view_render",
     }
 )
 

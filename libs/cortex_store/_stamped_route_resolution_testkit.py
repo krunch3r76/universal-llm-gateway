@@ -51,6 +51,18 @@ ROUTE_RESOLUTION_PROBES: tuple[tuple[str, str, dict[str, object], str], ...] = (
     ("POST", "pinned_deliverable_write_route", {}, "pinned_deliverable_write_route"),
     ("POST", "endeavor_write_row_route", {}, "endeavor_write_row_route"),
     ("POST", "endeavor_dispose_row_route", {}, "endeavor_dispose_row_route"),
+    (
+        "POST",
+        "register_skill_substrate_route",
+        {},
+        "register_skill_substrate_route",
+    ),
+    (
+        "GET",
+        "view_render_route",
+        {"document_id": "document:probe-view"},
+        "view_render_route",
+    ),
 )
 
 
@@ -92,6 +104,10 @@ _BATCH6_NEW_ENDPOINTS = frozenset(
     {"endeavor_write_row_route", "endeavor_dispose_row_route"}
 )
 
+_BATCH7_NEW_ENDPOINTS = frozenset(
+    {"register_skill_substrate_route", "view_render_route"}
+)
+
 
 def assert_baseline_route_resolution(app: FastAPI) -> None:
     for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
@@ -106,6 +122,19 @@ def assert_pre_batch6_route_resolution_unchanged(app: FastAPI) -> None:
     """AC4: every pre-batch-6 stamped route still resolves to its own endpoint (FULL match)."""
     for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
         if expected in _BATCH6_NEW_ENDPOINTS:
+            continue
+        path = app.url_path_for(route_name, **path_params)
+        resolved = resolve_endpoint_name(app, method, path)
+        assert resolved == expected, (
+            f"{method} {path}: expected endpoint {expected!r}, got {resolved!r}"
+        )
+
+
+def assert_pre_batch7_route_resolution_unchanged(app: FastAPI) -> None:
+    """AC4: pre-batch-7 stamped routes unchanged (batch 6+7 endpoints excluded)."""
+    skip = _BATCH6_NEW_ENDPOINTS | _BATCH7_NEW_ENDPOINTS
+    for method, route_name, path_params, expected in ROUTE_RESOLUTION_PROBES:
+        if expected in skip:
             continue
         path = app.url_path_for(route_name, **path_params)
         resolved = resolve_endpoint_name(app, method, path)

@@ -79,13 +79,13 @@ def test_shadow_would_reject_unknown_param(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.offline
 def test_shadow_unmapped_for_unstamped_op(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _capture(monkeypatch)
-    _install("register_skill_substrate", {"ok": True})
-    result = execute_op("register_skill_substrate", {"any": "value"}, caller="cursor-sdk")
+    _install("graph_reach", {"ok": True})
+    result = execute_op("graph_reach", {"any": "value"}, caller="cursor-sdk")
     assert result.get("ok") is True
     event = _shadow_events(captured)[-1]
     assert event["outcome"] == "unmapped"
     assert event["error_locs"] == []
-    assert event["tool"] == "register_skill_substrate"
+    assert event["tool"] == "graph_reach"
 
 
 @pytest.mark.offline
