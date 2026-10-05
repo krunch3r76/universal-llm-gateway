@@ -70,6 +70,10 @@ async def launch_steps(executor: DAGExecutor, steps_to_launch: list[StepNode]) -
 
     for node in steps_to_launch:
         target_model = await executor._model_coordination.resolve_target_model(node)
+        # A running sibling can set executor.stop during the lookup above.
+        # Leave this node READY; the next pass skips it.
+        if executor.stop is not None:
+            break
         lock_model = executor._model_coordination.get_lock_model(node, target_model)
 
         if lock_model:

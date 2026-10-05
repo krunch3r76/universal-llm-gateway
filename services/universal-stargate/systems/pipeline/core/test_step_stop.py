@@ -204,14 +204,61 @@ async def test_running_sibling_finishes_and_its_dependent_is_skipped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_during_model_lookup_does_not_launch_ready_dependent() -> None:
+    """Stop lands while the scheduler awaits dep's model lookup.
+
+    Breaks when launch_steps starts a READY step that filter already selected
+    after executor.stop was set during that wait.
+    """
+    executor = _executor([("a", set()), ("sib", set()), ("dep", {"sib"})])
+    launched: list[str] = []
+    lookup_entered = asyncio.Event()
+    release_lookup = asyncio.Event()
+    real_resolve = executor._model_coordination.resolve_target_model
+
+    async def resolve(node: StepNode) -> str | None:
+        if node.step.id == "dep":
+            lookup_entered.set()
+            await release_lookup.wait()
+        return await real_resolve(node)
+
+    executor._model_coordination.resolve_target_model = resolve  # type: ignore[method-assign]
+
+    async def fake_execute(node: StepNode) -> None:
+        launched.append(node.step.id)
+        if node.step.id == "sib":
+            executor._observability.record_success(
+                node, StepOutput(raw="sib-out"), 0.01
+            )
+            return
+        if node.step.id == "a":
+            await lookup_entered.wait()
+            executor._observability.record_success(
+                node, stop(kind="HOLD_MERGE", raw="from-a"), 0.01
+            )
+            release_lookup.set()
+            return
+        raise AssertionError(f"launched {node.step.id}")
+
+    executor._execute_step = fake_execute  # type: ignore[method-assign]
+    await executor.execute()
+
+    assert set(launched) == {"a", "sib"}
+    assert executor.nodes["dep"].state == StepState.SKIPPED
+    assert executor.nodes["sib"].state == StepState.COMPLETED
+    assert executor.stop is not None
+    assert executor.stop.kind == "HOLD_MERGE"
+
+
+@pytest.mark.asyncio
 async def test_stop_kind_outside_declared_list_names_the_step() -> None:
     """A kind outside ``stops:`` raises StepDefinitionError naming the step.
 
     Breaks when an undeclared kind is stored on the executor, or when the
     error text omits the step id.
     """
-    executor = _executor([("a", set())], stops=["CONFIRM_PENDING"])
-    node = executor.nodes["a"]
+    executor = _executor([("stopper", set())], stops=["CONFIRM_PENDING"])
+    node = executor.nodes["stopper"]
     with pytest.raises(StepDefinitionError) as raised:
         record_success(
             executor._observability,
@@ -219,7 +266,8 @@ async def test_stop_kind_outside_declared_list_names_the_step() -> None:
             stop(kind="CONSULT_PENDING", raw="nope"),
             0.0,
         )
-    assert "a" in str(raised.value)
+    assert raised.value.step_name == "stopper"
+    assert "for step stopper:" in str(raised.value)
     assert executor.stop is None
     assert node.state != StepState.COMPLETED
 
