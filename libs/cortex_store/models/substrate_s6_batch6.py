@@ -1,4 +1,4 @@
-"""Request bodies for S6 batch 6 typed substrate routes (endeavor rows + view render)."""
+"""Request bodies for S6 batch 6 typed substrate routes (endeavor strategy rows)."""
 
 from __future__ import annotations
 
@@ -18,14 +18,3 @@ class EndeavorDisposeRowRequest(BaseModel):
     disposition: str
     reason: str | None = None
     authority: str | None = None
-
-
-class ViewRenderRequest(BaseModel):
-    mode: str = "refresh"
-    root_id: str | None = None
-    view_profile: str | None = None
-    narrative_sections: dict[str, str] | None = None
-    as_of_system: str | None = None
-    as_of_valid: str | None = None
-    agent: str | None = None
-    session_id: str | None = None
