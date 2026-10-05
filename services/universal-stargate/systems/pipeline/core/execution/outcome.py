@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..handlers import PipelineContext, StepOutput
+from ..handlers.step_output import StepStop
 
 
 @dataclass(slots=True, kw_only=True)
@@ -45,6 +46,9 @@ class PipelineExecutionOutcome:
     # async pollers and bus subscribers can triage silent failures without
     # consulting the event service. ``None`` when no hints were produced.
     hints: list[dict[str, Any]] | None = None
+    # Designed stop from the step that requested it. Status stays
+    # ``completed``; this is a result field, not a terminal status.
+    stop: StepStop | None = None
 
 
 def extract_model_entity_id(

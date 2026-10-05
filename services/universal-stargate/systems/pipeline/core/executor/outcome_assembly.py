@@ -17,6 +17,7 @@ from typing import Any
 from ..execution.outcome import PipelineExecutionOutcome, extract_model_entity_id
 from ..handlers import StepOutput
 from .output_resolution import (
+    content_when_output_skipped,
     extract_backtranslation_data,
     extract_output_hints,
     get_final_result,
@@ -40,7 +41,18 @@ def assemble_outcome(
     pipeline_context = prepared.pipeline_context
     dag_executor = prepared.dag_executor
 
-    final_result = get_final_result(pipeline, pipeline_context, prepared.output_aliases)
+    skipped_content = content_when_output_skipped(
+        pipeline,
+        pipeline_context,
+        dag_executor.nodes,
+        stop_step_id=dag_executor.stop_step_id,
+        output_aliases=prepared.output_aliases,
+    )
+    final_result = (
+        skipped_content
+        if skipped_content is not None
+        else get_final_result(pipeline, pipeline_context, prepared.output_aliases)
+    )
 
     step_outputs = {
         step_id: output.text
@@ -112,4 +124,5 @@ def assemble_outcome(
         reasoning=reasoning,
         model_entity_id=model_entity_id,
         hints=hints,
+        stop=dag_executor.stop,
     )

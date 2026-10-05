@@ -68,6 +68,7 @@ def record_success(
     completion. Emits recorder ``StepOutputCaptured`` + ``StepCompleted`` and
     bus ``StepCompleted`` (with exit code and optional cached tokens).
     """
+    _reject_undeclared_stop(obs, node, output)
     step_calls = obs._executor.context.drain_step_calls(node.step.name)
     if step_calls:
         output.model_call_count = len(step_calls)
@@ -92,6 +93,7 @@ def record_success(
     if not node.step.is_map_step:
         obs._executor.context.set_output(node.step.name, output)
     obs._executor.execution_order.append(node.step.name)
+    _remember_stop(obs, node, output)
     latency_ms = output.latency_ms
     logger.info(f"Step '{node.step.name}' completed (latency: {latency_ms:.0f}ms)")
     obs._executor._propagate_completion(node.step.name)
@@ -147,6 +149,41 @@ def record_success(
     if cached_tokens is not None:
         step_completed_kwargs["cached_tokens"] = cached_tokens
     publish_event(obs, BusStepCompleted(**step_completed_kwargs))
+
+
+def _reject_undeclared_stop(
+    obs: StepObservability, node: StepNode, output: StepOutput
+) -> None:
+    """Raise when ``output.stop.kind`` is outside a declared ``pipeline.stops`` list.
+
+    ``stops is None`` (the field was not declared) accepts every kind.
+    A present list, including an empty one, is the allow-list. The error
+    names the step. No per-kind behavior lives here.
+    """
+    stop = getattr(output, "stop", None)
+    if stop is None:
+        return
+    pipeline = getattr(obs._executor.context, "pipeline", None)
+    declared = getattr(pipeline, "stops", None)
+    if not isinstance(declared, (list, tuple)):
+        return
+    if stop.kind in declared:
+        return
+    from ....step_controls import StepDefinitionError
+
+    raise StepDefinitionError(
+        node.step.id,
+        f"stop kind {stop.kind!r} is not in declared stops",
+    )
+
+
+def _remember_stop(obs: StepObservability, node: StepNode, output: StepOutput) -> None:
+    """Keep the first stop on the executor. Later stops do not replace it."""
+    stop = getattr(output, "stop", None)
+    if stop is None or obs._executor.stop is not None:
+        return
+    obs._executor.stop = stop
+    obs._executor.stop_step_id = node.step.id
 
 
 def record_failure(

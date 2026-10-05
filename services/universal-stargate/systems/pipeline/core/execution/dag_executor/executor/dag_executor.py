@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from ....dag import StepNode, StepState
     from ....handlers.protocol import PipelineContext, StepOutput
+    from ....handlers.step_output import StepStop
     from ....schemas import StepConfig
     from ....step_config import ResolvedTargetModel
     from ...checkpoint import CheckpointManager
@@ -71,6 +72,10 @@ class DAGExecutor:
         self._proxy_client: ProxyClient | None = None
         self._observability = StepObservability(self)
         self._model_coordination = StepModelCoordinator(self)
+        # First successful step stop. Later stops do not replace it.
+        # RUNNING siblings are left alone; scheduling skips PENDING/READY.
+        self.stop: StepStop | None = None
+        self.stop_step_id: str | None = None
 
     async def _ensure_proxy_client(self) -> ProxyClient:
         """Lazily initialize ProxyClient for handler invocations."""

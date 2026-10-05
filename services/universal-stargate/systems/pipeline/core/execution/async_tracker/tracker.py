@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from transport_utils import DEFAULT_AGENT_BUS_URL
 
+from ...handlers.step_output import StepStop
 from . import lifecycle, queries
 from .constants import _DEFAULT_MAX_RECORDS, _DEFAULT_RETENTION_SECONDS
 from .protocol import _EventBusProtocol
@@ -140,6 +141,7 @@ class PipelineExecutionTracker:
         duration_s: float,
         reasoning: Any = None,
         hints: list[dict[str, Any]] | None = None,
+        stop: StepStop | None = None,
     ) -> None:
         """Record success terminal state (idempotent)."""
         lifecycle.complete_execution(
@@ -152,6 +154,7 @@ class PipelineExecutionTracker:
             duration_s=duration_s,
             reasoning=reasoning,
             hints=hints,
+            stop=stop,
         )
 
     def fail_execution(

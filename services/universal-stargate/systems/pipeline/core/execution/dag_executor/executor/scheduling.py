@@ -34,6 +34,9 @@ async def process_ready_steps(executor: DAGExecutor) -> bool:
     - one or more steps launched, or
     - one or more ready steps transitioned to SKIPPED.
     """
+    if executor.stop is not None:
+        return skip_unlaunched_for_stop(executor)
+
     ready_steps = [
         node for node in executor.nodes.values() if node.state == StepState.READY
     ]
@@ -158,12 +161,41 @@ async def filter_ready_steps(
     return steps_to_launch
 
 
+def skip_unlaunched_for_stop(executor: DAGExecutor) -> bool:
+    """Mark PENDING and READY nodes SKIPPED once ``executor.stop`` is set.
+
+    Does not touch RUNNING nodes, does not cancel their tasks, and does not
+    launch anything. Skip reason is ``stopped_by:<step>`` using the step that
+    produced the stop. Returns True when at least one node changed state.
+    """
+    if executor.stop is None:
+        return False
+    from ....handlers.protocol import StepOutput
+
+    reason = f"stopped_by:{executor.stop_step_id}"
+    progressed = False
+    for node in executor.nodes.values():
+        if node.state not in (StepState.PENDING, StepState.READY):
+            continue
+        executor._observability.emit_step_skipped(node=node, reason=reason)
+        skip_output = StepOutput(raw="", json={"_skipped": True})
+        executor.context.set_output(node.step.id, skip_output)
+        node.output = skip_output
+        node.state = StepState.SKIPPED
+        progressed = True
+    return progressed
+
+
 def propagate_completion(executor: DAGExecutor, completed_step_id: str) -> None:
     """Mark dependents ready when all prerequisites are terminal-success states.
 
     Dependency satisfaction intentionally excludes FAILED prerequisites; only
-    COMPLETED/SKIPPED permit downstream execution.
+    COMPLETED/SKIPPED permit downstream execution. A set ``executor.stop``
+    blocks promotion so a running sibling cannot ready its dependent after
+    the stop; that dependent is skipped as PENDING.
     """
+    if executor.stop is not None:
+        return
     node = executor.nodes[completed_step_id]
     for dependent_id in node.dependents:
         dependent = executor.nodes[dependent_id]

@@ -13,6 +13,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ...handlers.step_output import StepStop
+
 
 @dataclass(slots=True, kw_only=True)
 class PipelineExecutionResult:
@@ -32,6 +34,9 @@ class PipelineExecutionResult:
     # callers can triage silent failures without consulting the event service.
     # Each entry has at minimum ``type`` and ``reason`` keys.
     hints: list[dict[str, Any]] | None = None
+    # Designed stop. Absent means the run completed without one.
+    # Status stays ``completed``; this is not a terminal status.
+    stop: StepStop | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -170,6 +175,9 @@ class PipelineExecutionRecord:
                 "duration_s": self.result.duration_s,
                 "reasoning": self.result.reasoning,
                 "hints": self.result.hints or [],
+                "stop": (
+                    self.result.stop.to_dict() if self.result.stop is not None else None
+                ),
             }
         error_payload: dict[str, Any] | None = None
         if self.error is not None:

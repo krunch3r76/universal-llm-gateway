@@ -116,6 +116,9 @@ class PipelineSpec(BaseModel):
     steps: list[StepConfig]
     output: str
     output_format: str | None = None
+    # Optional allow-list of stop kinds. ``None`` accepts any kind.
+    # A present list (including empty) is enforced when a step returns a stop.
+    stops: list[str] | None = None
     # Category → max_tokens for steps that don't set generation_parameters.max_tokens.
     # High values (e.g. 65536) for consult/planning pipelines avoid truncation.
     token_defaults: dict[str, int] | None = None

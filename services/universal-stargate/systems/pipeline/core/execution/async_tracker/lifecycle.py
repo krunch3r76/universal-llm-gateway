@@ -20,6 +20,7 @@ from ...events.dispatch import (
     PipelineDispatchCompleted,
     PipelineDispatchRejected,
 )
+from ...handlers.step_output import StepStop
 from .constants import _utc_now_iso
 from .delivery_hooks import _schedule_delivery
 from .dispatch_admit import _schedule_dispatch_admit
@@ -138,6 +139,7 @@ def complete_execution(
     duration_s: float,
     reasoning: Any = None,
     hints: list[dict[str, Any]] | None = None,
+    stop: StepStop | None = None,
 ) -> None:
     """Mark a running async execution as completed and fan out its success side effects.
 
@@ -166,6 +168,7 @@ def complete_execution(
         duration_s=duration_s,
         reasoning=reasoning,
         hints=hints,
+        stop=stop,
     )
     record.terminal_event.set()
     _emit(
