@@ -111,6 +111,10 @@ def select_lane_current(
         return "current", "seat_holder", None, holder_page
     if len(unknown) > 0:
         return "ambiguous", None, "probe_incomplete", None
+    if holder_key and claimed:
+        # A dormant holder is still the lane's seat; an idle open page is not
+        # evidence the operator moved off it.
+        return "ambiguous", None, "seat_holder_not_open", None
     if len(claimed) == 1:
         return "current", "sole_live_claim", None, claimed[0]
     if len(claimed) >= 2:

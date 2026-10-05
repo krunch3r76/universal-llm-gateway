@@ -278,6 +278,20 @@ def test_select_helper_multiple_in_flight() -> None:
     )
 
 
+@pytest.mark.offline
+def test_dormant_holder_blocks_sole_idle_shadow() -> None:
+    shadow = "https://claude.ai/cowork/cse_017cw5A7geCQNPPP7LzB78vB"
+    holder = "https://claude.ai/cowork/cse_01KKeJtTGiUH32mi3wk7dvZx"
+    pages = [{"chat_url": shadow, "in_flight": False}]
+    state, basis, reason, current = select_lane_current(pages, holder)
+    assert (state, basis, reason, current) == (
+        "ambiguous",
+        None,
+        "seat_holder_not_open",
+        None,
+    )
+
+
 def test_attended_route_parent_thread_codes(monkeypatch: pytest.MonkeyPatch) -> None:
     from cdp_ask.app import create_app
 
