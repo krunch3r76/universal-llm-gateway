@@ -30,7 +30,15 @@ from systems.pipeline.core.execution.async_tracker_delivery import (
     agent_bus_http,
     on_behalf,
 )
+from systems.pipeline.core.execution.async_tracker_delivery.constants import (
+    _BUS_MAX_BODY_CHARS,
+)
 from systems.pipeline.core.execution.async_tracker_delivery.sidecar import SidecarResult
+
+
+def _body_over_bus_limit(pad: str = "x") -> str:
+    """Body strictly longer than ``_BUS_MAX_BODY_CHARS`` (forces sidecar delivery)."""
+    return pad * (_BUS_MAX_BODY_CHARS + 1)
 
 
 @dataclass(slots=True)
@@ -333,113 +341,6 @@ async def test_persistent_does_not_close_thread(
     await asyncio.sleep(0)
 
     assert captured.get("close_called") is None
-
-
-# ---------------------------------------------------------------------------
-# Friction 16985 — caller-facing delivery recovery metadata
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_delivery_outcome_carries_sidecar_fields_on_oversized_delivered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bus = _FakeBus()
-    captured: dict[str, Any] = {}
-    over_limit = "x" * 8_001
-    record = _make_to_thread_record(content=over_limit)
-
-    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
-    _patch_sidecar_ok(monkeypatch)
-
-    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
-    await asyncio.sleep(0)
-
-    assert outcome.status == "delivered"
-    assert outcome.delivery_mode == "sidecar"
-    assert outcome.thread == "1051"
-    assert outcome.sidecar_uri == (
-        "cortex://notes/system/threads/1051-reviewer-reply-execution-exec-to.md"
-    )
-    assert outcome.content_sha256 == "abc123def456"
-
-
-@pytest.mark.asyncio
-async def test_delivery_outcome_carries_thread_on_inline_delivered(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bus = _FakeBus()
-    captured: dict[str, Any] = {}
-    record = _make_to_thread_record(content="Short review body.")
-
-    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
-    _patch_sidecar_ok(monkeypatch)
-
-    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
-    await asyncio.sleep(0)
-
-    assert outcome.status == "delivered"
-    assert outcome.delivery_mode == "inline"
-    assert outcome.thread == "1051"
-    assert outcome.sidecar_uri == (
-        "cortex://notes/system/threads/1051-reviewer-reply-execution-exec-to.md"
-    )
-
-
-@pytest.mark.asyncio
-async def test_delivery_outcome_carries_sidecar_uri_on_post_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bus = _FakeBus()
-    captured: dict[str, Any] = {}
-    over_limit = "x" * 8_001
-    record = _make_to_thread_record(content=over_limit)
-
-    _patch_client(monkeypatch, _make_thread_aware_transport(captured, post_status=503))
-    _patch_sidecar_ok(monkeypatch)
-
-    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
-    await asyncio.sleep(0)
-
-    assert outcome.status == "failed"
-    assert outcome.failure_reason == "post_503"
-    assert outcome.thread == "1051"
-    assert outcome.sidecar_uri == (
-        "cortex://notes/system/threads/1051-reviewer-reply-execution-exec-to.md"
-    )
-
-
-def test_delivery_state_envelope_sidecar_delivered() -> None:
-    envelope = DeliveryState(
-        status="delivered",
-        mode="sidecar",
-        thread="1051",
-        sidecar_uri="cortex://notes/x.md",
-        content_sha256="deadbeef",
-    ).to_dict("exec-9")
-
-    assert envelope["attempted"] is True
-    assert envelope["recovery"]["kind"] == "sidecar"
-    assert "fs(cortex, op=read, path=notes/x.md)" in envelope["recovery"]["hint"]
-
-
-def test_delivery_state_envelope_inline_delivered() -> None:
-    with_uri = DeliveryState(
-        status="delivered",
-        mode="inline",
-        thread="1051",
-        sidecar_uri="cortex://notes/x.md",
-    ).to_dict("exec-9")
-    assert with_uri["recovery"]["kind"] == "sidecar"
-
-    without_uri = DeliveryState(
-        status="delivered",
-        mode="inline",
-        thread="1051",
-        sidecar_uri=None,
-    ).to_dict("exec-9")
-    assert without_uri["recovery"]["kind"] == "thread"
-    assert without_uri["recovery"]["hint"] == "Delivered to agent-bus thread 1051."
 
 
 def test_delivery_state_envelope_failed_with_sidecar() -> None:
@@ -789,7 +690,7 @@ async def test_on_behalf_post_rejects_content_over_bus_limit(
     """Oversized content posts a relocation pointer when sidecar write succeeds."""
     bus = _FakeBus()
     captured: dict[str, Any] = {}
-    over_limit = "x" * 8_001
+    over_limit = _body_over_bus_limit()
     record = _make_to_thread_record(content=over_limit)
 
     _patch_client(monkeypatch, _make_thread_aware_transport(captured))
@@ -874,7 +775,7 @@ async def test_on_behalf_over_limit_writes_sidecar_and_posts_pointer(
 ) -> None:
     bus = _FakeBus()
     captured: dict[str, Any] = {}
-    content = "# Oversized report\n\n" + ("detail. " * 2_000)
+    content = "# Oversized report\n\n" + ("detail. " * 10_000)
     record = _make_to_thread_record(content=content)
 
     _patch_client(monkeypatch, _make_thread_aware_transport(captured))
@@ -897,7 +798,7 @@ async def test_on_behalf_over_limit_sidecar_fail_is_terminal(
 ) -> None:
     bus = _FakeBus()
     captured: dict[str, Any] = {}
-    record = _make_to_thread_record(content="x" * 8_001)
+    record = _make_to_thread_record(content=_body_over_bus_limit())
 
     _patch_client(monkeypatch, _make_thread_aware_transport(captured))
     _patch_sidecar_fail(monkeypatch)
@@ -1091,7 +992,7 @@ async def test_delivery_outcome_carries_sidecar_fields_on_oversized_delivered(
 ) -> None:
     bus = _FakeBus()
     captured: dict[str, Any] = {}
-    over_limit = "x" * 8_001
+    over_limit = _body_over_bus_limit()
     record = _make_to_thread_record(content=over_limit)
 
     _patch_client(monkeypatch, _make_thread_aware_transport(captured))
@@ -1137,7 +1038,7 @@ async def test_delivery_outcome_carries_sidecar_uri_on_post_failure(
 ) -> None:
     bus = _FakeBus()
     captured: dict[str, Any] = {}
-    over_limit = "x" * 8_001
+    over_limit = _body_over_bus_limit()
     record = _make_to_thread_record(content=over_limit)
 
     _patch_client(monkeypatch, _make_thread_aware_transport(captured, post_status=503))
