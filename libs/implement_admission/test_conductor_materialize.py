@@ -521,8 +521,8 @@ def test_materialize_conductor_default_confer_and_finish_strings(
     assert "Explicit see-score: ROW_PINNED at G3 + ping." in auto_mp.text
 
 
-def test_review_leg_packet_one_dispatch_then_hop(tmp_path: Path) -> None:
-    """Review-leg recipe: one delivery-review dispatch, then hop (a:37918)."""
+def test_review_leg_packet_one_dispatch_then_park(tmp_path: Path) -> None:
+    """Review-leg recipe: one delivery-review dispatch, park while live (a:37918)."""
     mp = materialize_conductor(
         "todo:layer-conductor-unify",
         cortex=_StubCortex(),
@@ -547,7 +547,12 @@ def test_review_leg_packet_one_dispatch_then_hop(tmp_path: Path) -> None:
     assert "for the same gate in this row" not in mp.text
     assert "Wait once with agent_bus tool=wait bound to" not in mp.text
     assert "One wait, then stop" not in mp.text
-    assert "Stamp and hop" in mp.text
+    assert "parent_thread omitted" not in mp.text
+    assert "parent_thread=<this worker thread id>" in mp.text
+    assert "Stamp and park while live" in mp.text
+    assert "stop: PARKED_TRANSPORT" in mp.text
+    assert "not ROW_HOP" in mp.text
+    assert "park_harvest_continue_owed" in mp.text
     assert "Timeout is a transport clock" in mp.text
     assert "do not second-dispatch G6" in mp.text
     assert "-32001" in mp.text
