@@ -245,7 +245,13 @@ def _thread_get_impl(*, thread: str, include_resume: bool = False) -> dict[str, 
         if structured is not None:
             return structured
         return {"error": f"agent-bus error: {result['error']}"}
-    return _enrich_with_cursor_auto_job(result, thread=thread)
+    detail = _enrich_with_cursor_auto_job(result, thread=thread)
+    if isinstance(detail, dict) and detail.get("cse_chat_url") is not None:
+        detail["cse_chat_url_basis"] = "last_associated"
+        detail["cse_current_probe"] = (
+            f"cse_session(op=resolve_attended, parent_thread={thread})"
+        )
+    return detail
 
 
 def _thread_get_dispatch(

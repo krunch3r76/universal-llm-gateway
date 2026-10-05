@@ -5691,7 +5691,8 @@ tools:
     tool: cse_session_followup
     substrate_qualified: user-vortex__cse_session_followup
   fol_descriptor: "Warm paste into a retained or dormant Cowork CSE — not hop-pair paste.
-    Identity omitted ⇒ attended resolve. See agent_skill:claude-ai-cdp-navigation.\n"
+    Identity omitted ⇒ attended resolve. See agent_skill:claude-ai-cdp-navigation.
+    parent_thread without identity ⇒ lane-current probe binds the in-flight page.\n"
   json_schema:
     type: object
     properties:
@@ -5727,8 +5728,7 @@ tools:
   flat_call_shape:
     tool: cse_session_resolve_attended
     substrate_qualified: user-vortex__cse_session_resolve_attended
-  fol_descriptor: "Read-only attended-operator triple. Dormant host is attended, not absent.
-    See agent_skill:claude-ai-cdp-navigation.\n"
+  fol_descriptor: "Read-only. parent_thread ⇒ live lane-current probe {state, basis, current, stale}; ThreadDetail.cse_chat_url is last-associated, never current. No parent_thread ⇒ attended-operator triple; dormant host is attended, not absent. See agent_skill:claude-ai-cdp-navigation.\n"
   json_schema:
     type: object
     properties:
@@ -5736,6 +5736,8 @@ tools:
         type: string
         enum:
         - resolve_attended
+      parent_thread:
+        type: string
     required:
     - op
   mandate_safety: read_only

@@ -12,6 +12,8 @@ side effect stays in ``followup_reattach`` — this module remains pure.
 
 from __future__ import annotations
 
+import asyncio
+
 from claude_bundles import cdp_registry
 from claude_bundles.cdp_registry.session_address import attachment_for_chat_url
 from claude_bundles.cse_provenance import resolve as resolve_provenance
@@ -30,6 +32,7 @@ from cdp_ask.followup_envelope import (
 )
 from cdp_ask.followup_events import (
     cdp_ask_followup_refused_seat_mismatch,
+    cdp_ask_lane_current_resolve,
 )
 from cdp_ask.followup_events import (
     emit as emit_followup_event,
@@ -274,23 +277,56 @@ def stale_registration_id_conflict(
     return matches[0].registration_id == chosen.registration_id
 
 
+def _lane_current_chat_url(body: dict | None) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    current = body.get("current")
+    if isinstance(current, dict):
+        url = str(current.get("chat_url") or "").strip()
+        return url or None
+    return None
+
+
+def _emit_lane_current(lane: str, body: dict, *, applied: bool) -> None:
+    emit_followup_event(
+        cdp_ask_lane_current_resolve(
+            parent_thread=lane,
+            state=str(body.get("state") or ""),
+            basis=body.get("basis"),
+            chat_url=_lane_current_chat_url(body),
+            applied=applied,
+        )
+    )
+
+
 def _lane_seat_followup_gate(
     req: FollowupProjectAskRequest,
-) -> tuple[FollowupProjectAskRequest, FollowupProjectAskResponse | None]:
-    """When ``parent_thread`` is set, bind or refuse against the seat-axis holder."""
+) -> tuple[FollowupProjectAskRequest, FollowupProjectAskResponse | None, str | None]:
+    """When ``parent_thread`` is set, bind or refuse against the seat-axis holder.
+
+    A live in-flight (or sole claimed) page rewrites ``chat_url`` and marks
+    ``resolution_path`` ``lane_current``. The seat-holder basis keeps the
+    registration binding. The third tuple element is that path marker.
+    """
     lane = (req.parent_thread or "").strip()
     if not lane:
-        return req, None
+        return req, None, None
     try:
         snap = read_cdp_lane_snapshot()
     except Exception as exc:
         # identity_supplied short-circuit is below the GET. A thrown snapshot
         # must not block a named CSE paste (a:37604); mismatch still needs a snap.
         if identity_supplied(req):
-            return req, None
-        return req, fail_followup(
-            "seat_unavailable",
-            detail=(f"active-work seat projection unreachable ({type(exc).__name__})"),
+            return req, None, None
+        return (
+            req,
+            fail_followup(
+                "seat_unavailable",
+                detail=(
+                    f"active-work seat projection unreachable ({type(exc).__name__})"
+                ),
+            ),
+            None,
         )
     holder = lane_seat_holder(snap, lane)
     holder_reg = str(holder.get("registration_id") or "").strip() or None
@@ -303,29 +339,73 @@ def _lane_seat_followup_gate(
                 holder_registration_id=holder_reg,
             )
         )
-        return req, fail_followup(
-            "operator_seat_mismatch",
-            detail=(
-                f"registration_id {reg_id!r} does not match lane holder {holder_reg!r}"
+        return (
+            req,
+            fail_followup(
+                "operator_seat_mismatch",
+                detail=(
+                    f"registration_id {reg_id!r} does not match lane holder {holder_reg!r}"
+                ),
             ),
+            None,
         )
     if identity_supplied(req):
-        return req, None
+        return req, None, None
+    lane_body: dict | None
+    try:
+        from cdp_ask.lane_current_cse import resolve_lane_current_cse
+
+        lane_body = resolve_lane_current_cse(lane, snap=snap)
+    except Exception:
+        lane_body = None
+    if isinstance(lane_body, dict):
+        basis = lane_body.get("basis")
+        chat_url = _lane_current_chat_url(lane_body)
+        if (
+            lane_body.get("state") == "current"
+            and basis in {"in_flight", "sole_live_claim"}
+            and chat_url
+        ):
+            _emit_lane_current(lane, lane_body, applied=True)
+            return req.model_copy(update={"chat_url": chat_url}), None, "lane_current"
+        _emit_lane_current(lane, lane_body, applied=False)
     resolved = resolve_operator_seat(lane, get_lane_snapshot=lambda: snap)
     if not resolved.get("authority_reachable"):
-        return req, fail_followup(
-            "seat_unavailable",
-            detail="seat-axis projection unavailable for followup",
+        return (
+            req,
+            fail_followup(
+                "seat_unavailable",
+                detail="seat-axis projection unavailable for followup",
+            ),
+            None,
         )
     bound_reg = str(resolved.get("registration_id") or "").strip() or None
     if not bound_reg:
-        return req, fail_followup(
-            "lane_not_attached",
-            detail=lane_not_attached_detail(),
+        if isinstance(lane_body, dict) and lane_body.get("state") == "ambiguous":
+            urls = [
+                str(page.get("chat_url") or "")
+                for page in lane_body.get("candidates") or []
+                if isinstance(page, dict) and page.get("chat_url")
+            ]
+            return (
+                req,
+                fail_followup(
+                    "lane_cse_ambiguous",
+                    detail=", ".join(urls),
+                ),
+                None,
+            )
+        return (
+            req,
+            fail_followup(
+                "lane_not_attached",
+                detail=lane_not_attached_detail(),
+            ),
+            None,
         )
     if req.registration_id == bound_reg:
-        return req, None
-    return req.model_copy(update={"registration_id": bound_reg}), None
+        return req, None, None
+    return req.model_copy(update={"registration_id": bound_reg}), None, None
 
 
 async def resolve_followup_target(
@@ -338,7 +418,7 @@ async def resolve_followup_target(
     TargetBinding | None,
 ]:
     """Resolve to a single attached CSE target or return a typed error response."""
-    req, lane_err = _lane_seat_followup_gate(req)
+    req, lane_err, lane_path = await asyncio.to_thread(_lane_seat_followup_gate, req)
     if lane_err is not None:
         return None, lane_err, "parent_thread", None
 
@@ -422,4 +502,4 @@ async def resolve_followup_target(
     binding = "explicit"
     if cdp_url and not any((chat_url, registration_id, execution_id)):
         binding = "explicit"
-    return chosen, None, resolution_path or "chat_url", binding
+    return chosen, None, lane_path or resolution_path or "chat_url", binding

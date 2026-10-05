@@ -149,6 +149,30 @@ def cdp_ask_attended_resolve(
 
 
 @event_factory
+def cdp_ask_lane_current_resolve(
+    *,
+    parent_thread: str,
+    state: str,
+    basis: str | None,
+    chat_url: str | None,
+    applied: bool,
+) -> Event:
+    """Emit when a parent_thread lane-current probe returns."""
+    return Event(
+        signal="cdp_ask.lane_current.resolve",
+        role="observation",
+        scope="node",
+        payload={
+            "parent_thread": parent_thread,
+            "state": state,
+            "basis": basis,
+            "chat_url": chat_url,
+            "applied": applied,
+        },
+    )
+
+
+@event_factory
 def cdp_ask_attended_refused(
     *,
     code: str,

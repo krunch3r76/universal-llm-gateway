@@ -63,8 +63,12 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         ``paste`` = hop-pair / grant authorized paste (``/v1/cse-session/paste``).
         ``followup`` = warm wake into a retained or dormant Cowork CSE
         (``/v1/project-ask/followups``). Identity omitted on followup ⇒ attended
-        resolve. New CDP consults use ``team_dispatch(model=cdp/…)``. IF6 submit
-        is CLI. See agent_skill:claude-ai-cdp-navigation.
+        resolve. ``parent_thread`` without identity binds the in-flight page
+        via the lane-current probe. ``resolve_attended(parent_thread=…)`` is
+        that live probe; ``ThreadDetail.cse_chat_url`` is last-associated,
+        never current. ``send_verified`` / ``dom_committed`` are not
+        operator-visible. New CDP consults use ``team_dispatch(model=cdp/…)``.
+        IF6 submit is CLI. See agent_skill:claude-ai-cdp-navigation.
         """
         if op == "provenance":
             params = {
@@ -149,7 +153,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
             return result
 
         if op == "resolve_attended":
-            return cse_session_warm.relay_attended()
+            return cse_session_warm.relay_attended(parent_thread=parent_thread)
 
         if op == "followup":
             return cse_session_warm.relay_followup(

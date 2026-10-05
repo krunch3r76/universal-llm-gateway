@@ -49,12 +49,18 @@ _ATTENDED_RETRYABLE: dict[str, bool] = {
     "no_attended_cse": True,
     "ambiguous_attended": False,
     "attended_liveness_failed": True,
+    "lane_cse_ambiguous": True,
+    "lane_cse_none": True,
 }
 
 _ATTENDED_MESSAGES: dict[str, str] = {
     "no_attended_cse": "No mission-purpose attended CSE registered with bound chat_url",
     "ambiguous_attended": "Multiple mission-purpose attended candidates — operator must disambiguate",
     "attended_liveness_failed": "Sole attended candidate failed liveness on its registered port",
+    "lane_cse_ambiguous": (
+        "Several live CSE pages claim this lane and none is uniquely in flight"
+    ),
+    "lane_cse_none": "No live CSE page claims this lane",
 }
 
 
@@ -107,7 +113,67 @@ def _relay(
         return transport_failure_payload(exc, path=path, timeout_s=http_timeout)
 
 
-def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
+def _normalize_cse_url(url: str | None) -> str:
+    """Match ``claude_bundles.cse_url.normalize_cse_url`` without that import."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    path = parts.path.rstrip("/") or parts.path
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
+def _thread_last_associated(
+    parent_thread: str, current_chat_url: str | None
+) -> dict[str, Any] | None:
+    """Last-associated CSE for the lane. Relay failure omits the field."""
+    from tools.agent_bus._shared import relay
+
+    try:
+        result = relay("agent-bus", "GET", f"/threads/{parent_thread}/cse-current")
+    except Exception:
+        return None
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    chat_url = result.get("cse_chat_url")
+    current = _normalize_cse_url(current_chat_url)
+    associated = _normalize_cse_url(chat_url if isinstance(chat_url, str) else None)
+    return {
+        "chat_url": chat_url,
+        "association_id": result.get("association_id"),
+        "matches_current": bool(current) and current == associated,
+    }
+
+
+def _attach_last_associated(
+    payload: dict[str, Any],
+    *,
+    parent_thread: str | None,
+    current_chat_url: str | None,
+    inside_data: bool,
+) -> dict[str, Any]:
+    lane = (parent_thread or "").strip()
+    if not lane:
+        return payload
+    associated = _thread_last_associated(lane, current_chat_url)
+    if associated is None:
+        return payload
+    if inside_data:
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            data = {}
+            payload["data"] = data
+        data["thread_last_associated"] = associated
+    else:
+        payload["thread_last_associated"] = associated
+    return payload
+
+
+def relay_attended(
+    *, timeout_s: float = 30.0, parent_thread: str | None = None
+) -> dict[str, Any]:
     """GET attended-operator with ProtocolError envelope on refusal codes."""
     base = _project_ask_url()
     if not base:
@@ -115,15 +181,39 @@ def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
     path = "/v1/project-ask/attended-operator"
     url = f"{base.rstrip('/')}{path}"
     http_timeout = http_client_timeout_s(timeout_s)
+    params = None
+    lane = (parent_thread or "").strip()
+    if lane:
+        params = {"parent_thread": lane}
     try:
         with httpx.Client(timeout=http_timeout) as client:
-            resp = client.get(url)
+            resp = client.get(url, params=params)
             if resp.status_code == 200:
-                return resp.json()
+                body = resp.json()
+                current = body.get("current") if isinstance(body, dict) else None
+                current_url = (
+                    current.get("chat_url") if isinstance(current, dict) else None
+                )
+                if isinstance(body, dict):
+                    return _attach_last_associated(
+                        body,
+                        parent_thread=lane or None,
+                        current_chat_url=current_url,
+                        inside_data=False,
+                    )
+                return body
             if resp.status_code in {404, 409, 424}:
                 body = resp.json()
                 code = str(body.get("code") or "attended_resolve_failed")
                 data = {k: v for k, v in body.items() if k != "code"}
+                current = (
+                    data.get("current")
+                    if isinstance(data.get("current"), dict)
+                    else None
+                )
+                current_url = (
+                    current.get("chat_url") if isinstance(current, dict) else None
+                )
                 result = {
                     "code": code,
                     "message": _ATTENDED_MESSAGES.get(code, code),
@@ -131,8 +221,17 @@ def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
                     "retryable": _ATTENDED_RETRYABLE.get(code, False),
                     "data": data,
                 }
-                record("mcp.cse_session.resolve_attended", code=code, retryable=result["retryable"])
-                return result
+                record(
+                    "mcp.cse_session.resolve_attended",
+                    code=code,
+                    retryable=result["retryable"],
+                )
+                return _attach_last_associated(
+                    result,
+                    parent_thread=lane or None,
+                    current_chat_url=current_url,
+                    inside_data=True,
+                )
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPStatusError as exc:
