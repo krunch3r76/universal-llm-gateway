@@ -28,6 +28,8 @@ def test_file_friction_posts_friction_dispatch() -> None:
     args = json.loads(payload["arguments"])
     assert args["owner"] == "service:mcp-server"
     assert args["note"] == "enum lagged"
+    assert "via_adapter" not in payload
+    assert client.post.call_args.kwargs["headers"]["X-ULG-Caller"] == "substrate_friction_file"
 
 
 def test_file_friction_surfaces_http_errors() -> None:

@@ -28,6 +28,7 @@ from transport_utils import (
     DEFAULT_CORTEX_URL,
     make_async_client,
 )
+from ulg_routing_headers.client import internal_dispatch_headers
 
 from agent_seat.context import get_active_role
 
@@ -153,13 +154,25 @@ async def resolve_tool_definitions(names: list[str]) -> list[dict[str, Any]]:
 
 async def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Relay a single cortex op to cortex-api POST /dispatch."""
+    role = get_active_role()
+    seat = str(role) if role else "agent_seat"
+    surface = "code"
+    headers = internal_dispatch_headers(
+        surface=surface,
+        seat=seat,
+        caller="agent_seat",
+    )
+    body = {
+        "tool": tool,
+        "arguments": arguments,
+        "surface": surface,
+        "seat": seat,
+    }
     try:
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_DEFAULT_TIMEOUT
         ) as client:
-            resp = await client.post(
-                "/dispatch", json={"tool": tool, "arguments": arguments}
-            )
+            resp = await client.post("/dispatch", json=body, headers=headers)
     except Exception as exc:
         logger.error("cortex dispatch relay failed: %s %s — %s", tool, arguments, exc)
         return {"error": f"cortex-api connection failed: {exc}"}

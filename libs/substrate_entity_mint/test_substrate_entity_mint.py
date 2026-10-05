@@ -29,6 +29,8 @@ def test_mint_entity_posts_entity_create_dispatch() -> None:
     assert args["id"] == "service:probe"
     assert args["type"] == "service"
     assert args["name"] == "probe"
+    assert "via_adapter" not in payload
+    assert client.post.call_args.kwargs["headers"]["X-ULG-Caller"] == "substrate_entity_mint"
 
 
 @pytest.mark.parametrize(

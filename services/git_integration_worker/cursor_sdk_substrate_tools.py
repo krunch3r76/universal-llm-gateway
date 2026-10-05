@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 from cursor_sdk.types import CustomTool
 from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_sync_client
+from ulg_routing_headers.client import internal_dispatch_headers
 
 _EVENTS_QUERY_SOCK = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
@@ -70,16 +71,22 @@ class SubstrateDispatchContext:
 
 
 def _relay_cortex_entity_get(arguments: dict[str, Any]) -> dict[str, Any]:
+    surface = "code"
+    seat = "cursor-sdk"
+    headers = internal_dispatch_headers(
+        surface=surface,
+        seat=seat,
+        caller="git_integration_worker",
+    )
     body = {
         "tool": "entity_get",
         "arguments": json.dumps(arguments),
-        "surface": "code",
-        "via_adapter": True,
-        "seat": "cursor-sdk",
+        "surface": surface,
+        "seat": seat,
     }
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT) as client:
-            response = client.post("/dispatch", json=body)
+            response = client.post("/dispatch", json=body, headers=headers)
     except httpx.RequestError as exc:
         return {"error": f"cortex-api connection failed: {exc}", "status_code": None}
     if response.status_code >= 400:

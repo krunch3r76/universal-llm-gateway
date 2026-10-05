@@ -23,6 +23,7 @@ from g6_review_class import (
     review_fallback_model,
 )
 from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_async_client
+from ulg_routing_headers.client import internal_dispatch_headers
 from universal_logging import get_logger
 
 from .cdp_events import (
@@ -367,11 +368,16 @@ async def _emit_upstream_overload_friction(
             }
         ),
     }
+    headers = internal_dispatch_headers(
+        surface="code",
+        seat="stargate",
+        caller="cdp_generate_worker",
+    )
     try:
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_CORTEX_FRICTION_TIMEOUT_S
         ) as client:
-            resp = await client.post("/dispatch", json=payload)
+            resp = await client.post("/dispatch", json=payload, headers=headers)
         if resp.status_code >= 300:
             logger.warning(
                 "cdp upstream overload friction failed: "

@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_async_client
+from ulg_routing_headers.client import internal_dispatch_headers
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -32,14 +33,24 @@ async def cx_async(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     failure) and logs the error. Used by archive handlers, summarize_thread_v1,
     turn_assertions and frontier_consult delivery helpers.
     """
+    surface = "code"
+    seat = "stargate"
+    headers = internal_dispatch_headers(
+        surface=surface,
+        seat=seat,
+        caller="thread_persistence",
+    )
+    body = {
+        "tool": tool,
+        "arguments": json.dumps(arguments),
+        "surface": surface,
+        "seat": seat,
+    }
     try:
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_REQUEST_TIMEOUT
         ) as client:
-            response = await client.post(
-                "/dispatch",
-                json={"tool": tool, "arguments": json.dumps(arguments)},
-            )
+            response = await client.post("/dispatch", json=body, headers=headers)
     except httpx.RequestError as exc:
         logger.error("cortex-api async relay failed: %s — %s", tool, exc)
         return {

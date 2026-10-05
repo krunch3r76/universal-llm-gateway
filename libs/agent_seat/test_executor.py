@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -86,6 +87,36 @@ async def test_brave_search_alias_remaps_to_mcp_web_search(
         "if it were passed as-is to the MCP server."
     )
     assert data["arguments"] == {"query": "eth price"}
+
+
+@pytest.mark.asyncio
+async def test_cortex_dispatch_sends_agent_seat_caller_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"ok": True}
+
+    async def fake_post(path: str, **kwargs: Any) -> _Resp:
+        captured["path"] = path
+        captured.update(kwargs)
+        return _Resp()
+
+    client_cm = MagicMock()
+    client_cm.__aenter__.return_value.post = fake_post
+    client_cm.__aexit__.return_value = None
+
+    monkeypatch.setattr(_ex, "make_async_client", lambda *a, **k: client_cm)
+
+    await _ex._cortex_dispatch("stats", {})
+    assert captured["headers"]["X-ULG-Caller"] == "agent_seat"
+    assert captured["json"]["surface"] == "code"
+    assert "via_adapter" not in captured["json"]
 
 
 @pytest.mark.asyncio

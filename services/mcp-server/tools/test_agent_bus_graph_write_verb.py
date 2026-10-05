@@ -63,7 +63,7 @@ def test_graph_write_forwards_to_lib_and_stamps_ids() -> None:
         evidence=None,
         evidence_uris=["agent-bus:77"],
         seat="mcp",
-        via_adapter=True,
+        caller="mcp-server",
         surface="code",
     )
     assert result["assertion_id"] == 99

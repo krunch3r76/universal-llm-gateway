@@ -9,6 +9,7 @@ from typing import Any
 
 from substrate_graph_write import write_claim
 from substrate_graph_write.write import _DEFAULT_EVIDENCE
+from ulg_routing_headers.client import internal_dispatch_headers
 
 # Lines reporting a green test run must never classify as rot — the prior
 # ``"warning"`` marker matched pytest summaries like ``77 passed, 3 warnings``.
@@ -291,18 +292,24 @@ def _fetch_active_claims(entity_id: str) -> list[str]:
     from substrate_graph_write.write import make_sync_client
     from transport_utils import DEFAULT_CORTEX_URL
 
+    surface = "code"
+    seat = "cursor-sdk"
+    headers = internal_dispatch_headers(
+        surface=surface,
+        seat=seat,
+        caller="bus_watch",
+    )
     body = {
         "tool": "assertions",
         "arguments": json.dumps(
             {"entity_id": entity_id, "superseded": False, "limit": 50}
         ),
-        "surface": "code",
-        "via_adapter": True,
-        "seat": "cursor-sdk",
+        "surface": surface,
+        "seat": seat,
     }
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=15.0) as client:
-            response = client.post("/dispatch", json=body)
+            response = client.post("/dispatch", json=body, headers=headers)
     except Exception:
         return []
     if response.status_code >= 400:
