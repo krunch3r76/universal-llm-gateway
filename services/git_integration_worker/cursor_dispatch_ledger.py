@@ -442,7 +442,10 @@ def _fetch_active_holder_conn(
         "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
         "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
         "FROM cursor_sdk_dispatches "
-        "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') LIMIT 1"
+        "WHERE rowid IN ("
+        "  SELECT rowid FROM cursor_sdk_dispatches "
+        "  WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
+        ") LIMIT 1"
     ).fetchone()
 
 
@@ -464,8 +467,10 @@ def _fetch_active_holders_conn(
             "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
             "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
             "FROM cursor_sdk_dispatches "
-            "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') "
-            "ORDER BY rowid ASC"
+            "WHERE rowid IN ("
+            "  SELECT rowid FROM cursor_sdk_dispatches "
+            "  WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
+            ") ORDER BY rowid ASC"
         ).fetchall()
     return [_holder_projection(row) for row in rows]
 
@@ -850,6 +855,21 @@ def _migrate_park_columns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_active_lease_index(conn: sqlite3.Connection) -> None:
+    """Partial index for write-lease holder lookups on the drain probe path (a:37853).
+
+    ``lease_snapshot`` filtered ``lease_key`` + ``status IN ('admitted','running')``
+    with a full SCAN of the fat ``record_json`` table (~190ms × 2 per
+    ``/active-work``). Queued/parked already had lease partial indexes; active
+    holders did not.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_active_lease "
+        "ON cursor_sdk_dispatches(lease_key, status) "
+        "WHERE status IN ('admitted', 'running')"
+    )
+
+
 def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
     """Add ``cancelled`` terminal + ``work_fingerprint`` via table rebuild."""
     row = conn.execute(
@@ -1116,6 +1136,7 @@ class CursorDispatchLedger:
             _migrate_cancelled_status(conn)
             _migrate_park_columns(conn)
             _migrate_memo_columns(conn)
+            _migrate_active_lease_index(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
                 ensure_land_lease_schema,
             )

@@ -495,17 +495,18 @@ async def get_active_work(request: Request):
     running = _GATE.active_count
     queued = _GATE.queue_length
     cursor = CursorDispatchLedger.instance().active_snapshot()
-    sdk_gate = sdk_dispatch_gate_stats()
-    sdk_gate["holders"] = sdk_dispatch_gate_holder_detail()
-    lease = CursorDispatchLedger.instance().lease_snapshot(
-        source_repo=str(
-            getattr(request.app.state, "worker_config", _CONFIG).source_repo.resolve()
-        )
+    cfg = getattr(request.app.state, "worker_config", _CONFIG)
+    source_repo = (
+        str(cfg.source_repo.resolve())
         if getattr(request.app.state, "worker_config", None) is not None
         else None
     )
+    # Keyed write_lease is Lane-A only. busy_status must stay global so
+    # Lane-B holders (lease_key = worktree path) still appear (a:37853 B1).
+    lease = CursorDispatchLedger.instance().lease_snapshot(source_repo=source_repo)
+    sdk_gate = sdk_dispatch_gate_stats()
+    sdk_gate["holders"] = sdk_dispatch_gate_holder_detail()
     active_count = controller.active_count()
-    cfg = getattr(request.app.state, "worker_config", _CONFIG)
     lane_fields = await active_work_lane_fields_bounded(source_repo=cfg.source_repo)
     from services.git_integration_worker.cse_session_holders import (
         occupancy_projections,

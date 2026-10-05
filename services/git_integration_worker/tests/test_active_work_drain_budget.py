@@ -130,6 +130,8 @@ def test_agent_bus_drain_probe_determinate_while_inventory_slow(
     assert work.detail["lane_b_status"] == "pending"
     assert work.detail["lane_b"] == {"status": "pending"}
     assert isinstance(work.detail["lane_b_regime"], bool)
+    # a:37853: occupancy must not await inventory — probe stays well under 1s.
+    assert elapsed < 1.0, elapsed
     assert fresh is not None and fresh.detail["lane_b_status"] == "fresh"
     assert fresh.detail["lane_b"] == _INVENTORY
     assert fresh.detail["lane_b_as_of"]
@@ -189,3 +191,88 @@ def test_describe_probe_exc_keeps_message_when_present() -> None:
         restart_drain.describe_probe_exc(exc)
         == "ConnectError: All connection attempts failed"
     )
+
+
+def test_active_lease_index_avoids_full_scan_on_holder_lookup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """a:37853: instance() wires idx_sdk_dispatch_active_lease; holder SELECT uses it."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        names = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        }
+        assert "idx_sdk_dispatch_active_lease" in names
+        plan = list(
+            conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                "AND status IN ('admitted','running') LIMIT 1",
+                ("/tmp/repo",),
+            )
+        )
+    CursorDispatchLedger._instance = None
+    detail = " ".join(str(row[-1]) for row in plan).lower()
+    assert "idx_sdk_dispatch_active_lease" in detail, plan
+    assert "scan cursor_sdk_dispatches" not in detail, plan
+
+
+def test_active_work_busy_status_sees_lane_b_holder(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B1: Lane-B lease_key is a worktree path — busy_status must stay global."""
+    from fastapi.testclient import TestClient
+
+    from services.git_integration_worker.models.cursor_api import (
+        CursorDispatchRequest,
+        CursorDispatchResponse,
+    )
+
+    repo = tmp_path / "source"
+    worktree = tmp_path / "worktrees" / "lane-b"
+    repo.mkdir()
+    worktree.mkdir(parents=True)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(repo))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="t-lane-b",
+        model="cursor/composer-2.5",
+        dispatch_id="lane-b-holder",
+        execution_id="exec-lane-b",
+        message="lane-b subject",
+        lane="B",
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=str(repo),
+        lease_key=str(worktree),
+        contract="implement",
+        read_only=False,
+    )
+    ledger.mark_running(dispatch_id="lane-b-holder")
+    with TestClient(create_app()) as client:
+        data = client.get("/api/v1/git/active-work").json()
+    CursorDispatchLedger._instance = None
+    busy = data["cursor_sdk_gate"]["busy_status"]
+    assert busy["active_holder"]["dispatch_id"] == "lane-b-holder"
+    assert data["write_lease"]["holder_dispatch_id"] is None
