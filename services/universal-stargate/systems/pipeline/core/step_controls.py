@@ -1,4 +1,4 @@
-"""Request-time step enablement for rag-search.
+"""Request-time step enablement for any pipeline.
 
 YAML ``enabled`` is the base. A request may set
 ``pipeline_options.step_overrides.<step>.enabled`` or
@@ -119,16 +119,14 @@ def apply_request_step_controls(
     steps: list[StepConfig],
     runtime_options: dict[str, Any],
 ) -> list[StepConfig]:
-    """Apply rag-search step_overrides and skip_steps. Other pipelines return their steps unchanged."""
-    if pipeline.id != "rag-search":
-        return steps
-
-    for banned in BANNED_REQUEST_FIELDS:
-        if banned in runtime_options:
-            raise StepCallerError(
-                "",
-                f"option {banned} is rejected; use step_overrides",
-            )
+    """Apply step_overrides and skip_steps for any pipeline."""
+    if pipeline.id == "rag-search":
+        for banned in BANNED_REQUEST_FIELDS:
+            if banned in runtime_options:
+                raise StepCallerError(
+                    "",
+                    f"option {banned} is rejected; use step_overrides",
+                )
 
     by_name = {step.id: step for step in steps}
     overrides = runtime_options.get("step_overrides") or {}
@@ -167,6 +165,11 @@ def apply_request_step_controls(
             updated.append(step)
             continue
         want = enabled_by_step[step.id]
+        if step.type == "sub_pipeline":
+            raise StepCallerError(
+                step.id,
+                "sub_pipeline steps cannot be toggled; they expand after step controls",
+            )
         base = step.get_domain_field("enabled", True)
         if want is False and not step.get_domain_field("allow_disable", False):
             raise StepCallerError(step.id, "allow_disable is false")

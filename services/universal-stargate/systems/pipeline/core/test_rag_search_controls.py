@@ -49,6 +49,7 @@ def _pipeline() -> PipelineSpec:
             "id": "rag-search",
             "version": "1.0",
             "type": "rag_search",
+            "category": "rag_search",
             "output": "retrieval_metadata",
             "steps": steps,
         }
