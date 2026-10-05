@@ -44,6 +44,9 @@ from services.git_integration_worker.cursor_sdk_worktree_prune import (
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     reconcile_unregistered_worktrees,
 )
+from services.git_integration_worker.cursor_sdk_worktree_release import (
+    release_lane_worktree,
+)
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_lane_worktree,
     register_lane_worktree,
@@ -1057,3 +1060,43 @@ def test_reconcile_reread_failure_keeps_the_tree(
     assert (reconciled, surfaced) == (0, 0)
     assert lane.is_dir()
     assert removed == []
+
+
+def test_unregistered_flag_does_not_skip_checks_when_row_exists(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``unregistered=True`` still runs live-dispatch checks after a row resolves.
+
+    Breaks when a caller passes the flag and ``_resolve_record`` found the row
+    (the reconcile remove path). A non-terminal ledger row must keep the tree.
+    """
+    worktree_root = tmp_path / "worktrees"
+    lane = _clean_lane(source_repo, worktree_root, "lane-flag")
+    dispatch_id = "flag-live"
+    thread_id = "flag-thread"
+    register_lane_worktree(
+        source_repo=source_repo,
+        thread_id=thread_id,
+        worktree_path=lane,
+        branch_name="cursor-sdk/lane-flag",
+        branch_point=_head(source_repo),
+        last_dispatch_id=dispatch_id,
+    )
+    _admit(
+        ledger=CursorDispatchLedger.instance(),
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+        lease_key=str(lane.resolve()),
+    )
+    _stub_occupancy(monkeypatch)
+
+    result = release_lane_worktree(
+        source_repo=source_repo,
+        worktree_path=lane,
+        reason="reconcile",
+        unregistered=True,
+    )
+
+    assert not result.released
+    assert lane.is_dir()
