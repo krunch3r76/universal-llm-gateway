@@ -193,3 +193,55 @@ def test_shadow_p50_overhead_under_2ms(monkeypatch: pytest.MonkeyPatch) -> None:
         f"off={off_p50 * 1000:.4f}ms overhead={overhead * 1000:.4f}ms"
     )
     assert overhead < 0.002
+
+
+@pytest.mark.offline
+def test_shadow_operation_ids_match_served_ops() -> None:
+    """Nested stamps (audit) and optional body models (edge_retire) resolve."""
+    shadow.reset_shadow_cache()
+    from cortex_store.openapi_mcp.generated_adapter_manifest import SERVED_OPS
+
+    mismatches: list[tuple[str, str | None, str]] = []
+    unresolved_bodies: list[str] = []
+    for op, spec in sorted(SERVED_OPS.items()):
+        oid = shadow._operation_id_for(op)
+        if oid != spec["operation_id"]:
+            mismatches.append((op, oid, spec["operation_id"]))
+            continue
+        route = shadow._routes_by_oid[oid]
+        contract = shadow._contract_for(oid)
+        for field in route.dependant.body_params:
+            if (
+                shadow._as_model(field.field_info.annotation) is not None
+                and contract.body_model is None
+            ):
+                unresolved_bodies.append(op)
+    assert mismatches == []
+    assert unresolved_bodies == []
+    assert shadow._operation_id_for("audit") == (
+        "boot_audit_counters_boot_audit_counters_get"
+    )
+
+
+@pytest.mark.offline
+def test_shadow_optional_body_match_and_reject(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _capture(monkeypatch)
+    _install("edge_retire", {"ok": True})
+    valid = execute_op(
+        "edge_retire",
+        {"edge_id": 5, "valid_until": "2026-10-05T00:00:00Z"},
+        caller="cursor-sdk",
+    )
+    bad = execute_op(
+        "edge_retire",
+        {"edge_id": 5, "valid_until": 12345},
+        caller="cursor-sdk",
+    )
+    assert valid == {"ok": True}
+    assert bad == {"ok": True}
+    shadows = _shadow_events(captured)
+    assert shadows[0]["outcome"] == "match"
+    assert shadows[0]["error_locs"] == []
+    assert shadows[1]["outcome"] == "would_reject"
+    assert shadows[1]["error_locs"] == ["valid_until"]
+    assert "12345" not in json.dumps(shadows[1])

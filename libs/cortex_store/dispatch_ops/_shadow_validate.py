@@ -9,11 +9,13 @@ write config. Contracts are cached by OpenAPI operationId on first use.
 
 from __future__ import annotations
 
+import types
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union, get_args, get_origin
 
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ValidationError
+from ulg_routing_headers import _walk_routes
 from universal_event_bus.events import Event
 from universal_event_bus.events.factory import event_factory
 
@@ -132,30 +134,25 @@ def _load_tool_index() -> dict[str, str]:
 def _iter_stamped_routes(app: Any):
     """Yield ``(mcp op, operationId, route)`` from the already-built app.
 
-    Included routers stay on ``app.routes`` as wrappers; their original route
-    objects carry ``x-mcp`` and the path/query/body dependant. Header
-    dependencies added at include time (fleet routing, idempotency) are not
-    part of the dispatch argument object and are not validated here.
+    ``_walk_routes`` recurses into included routers, so a stamp on a nested
+    router (``boot`` includes ``audit_counters``) is visible. Header
+    dependencies added at include time are not part of the dispatch argument
+    object and are not validated here.
     """
     seen: set[int] = set()
-    for route in getattr(app, "routes", ()):
-        original = getattr(route, "original_router", None)
-        candidates = list(getattr(original, "routes", ()))
-        if isinstance(route, APIRoute):
-            candidates.append(route)
-        for sub in candidates:
-            if not isinstance(sub, APIRoute) or id(sub) in seen:
-                continue
-            seen.add(id(sub))
-            extra = sub.openapi_extra or {}
-            xm = extra.get("x-mcp") if isinstance(extra, dict) else None
-            if not isinstance(xm, dict):
-                continue
-            op = xm.get("op")
-            oid = sub.operation_id or sub.unique_id
-            if not isinstance(op, str) or not op or not isinstance(oid, str) or not oid:
-                continue
-            yield op, oid, sub
+    for sub in _walk_routes(getattr(app, "routes", ())):
+        if not isinstance(sub, APIRoute) or id(sub) in seen:
+            continue
+        seen.add(id(sub))
+        extra = sub.openapi_extra or {}
+        xm = extra.get("x-mcp") if isinstance(extra, dict) else None
+        if not isinstance(xm, dict):
+            continue
+        op = xm.get("op")
+        oid = sub.operation_id or sub.unique_id
+        if not isinstance(op, str) or not op or not isinstance(oid, str) or not oid:
+            continue
+        yield op, oid, sub
 
 
 def _contract_from_route(route: APIRoute, operation_id: str) -> _RouteContract:
@@ -208,6 +205,11 @@ def _body_spec(body_params: list[Any]) -> tuple[type[BaseModel] | None, frozense
 def _as_model(annotation: Any) -> type[BaseModel] | None:
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return annotation
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(args) == 1:
+            return _as_model(args[0])
     return None
 
 
