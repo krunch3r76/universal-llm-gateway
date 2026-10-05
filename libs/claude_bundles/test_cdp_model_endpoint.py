@@ -2108,6 +2108,42 @@ def test_weekly_limit_does_not_grade_long_review_mentioning_limit_in_body(
     assert result.stall_stage is None
 
 
+def test_weekly_limit_from_poll_banner_fields_and_long_body(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Poll ``error_banner_*`` + body >500 chars grades weekly_limit (a:38054)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-banner-long")
+    banner = "You've hit your weekly limit. Try again next week."
+    long_body = "VERDICT: WITHHOLD\n\n" + ("Seat review paragraph. " * 80)
+    assert len(long_body) > 500
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-banner-long", "status": "running"},
+            {
+                "execution_id": "sat-wl-banner-long",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-banner-long.md",
+                "body": long_body,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": banner,
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-banner-long",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+
+
 def test_run_cdp_generate_weekly_limit_from_harvested_banner_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2122,7 +2158,8 @@ def test_run_cdp_generate_weekly_limit_from_harvested_banner_fields(
                 "status": "running",
                 "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl-banner.md",
                 "body": "VERDICT: WITHHOLD\n\nShort review body without limit wording.",
-                "error_banner": banner,
+                "error_banner_match": "weekly limit",
+                "error_banner_text": banner,
                 "attested_model": "Model: Opus 5 High",
                 "harvest_provenance": "chat",
             },

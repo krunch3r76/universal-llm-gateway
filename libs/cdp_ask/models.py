@@ -318,6 +318,20 @@ class ExecutionPollResponse(BaseModel):
             "Projection input for ``has_proof`` — must not be dual-written."
         ),
     )
+    error_banner_match: str | None = Field(
+        default=None,
+        description=(
+            "Product error/toast banner regex match from the last harvest sample "
+            "(composer excluded). Optional for mixed producer/consumer deploys."
+        ),
+    )
+    error_banner_text: str | None = Field(
+        default=None,
+        description=(
+            "Product error/toast banner visible text from the last harvest sample. "
+            "Optional for mixed producer/consumer deploys."
+        ),
+    )
 
 
 class AbortExecutionResponse(BaseModel):

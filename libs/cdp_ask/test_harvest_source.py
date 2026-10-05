@@ -233,3 +233,18 @@ def test_execution_poll_response_harvest_provenance_field() -> None:
         harvest_provenance=None,
     )
     assert failed.harvest_provenance is None
+
+
+def test_execution_poll_response_error_banner_fields_optional() -> None:
+    bare = ExecutionPollResponse(execution_id=_EXEC_ID, status="running")
+    assert bare.error_banner_match is None
+    assert bare.error_banner_text is None
+    with_banner = ExecutionPollResponse(
+        execution_id=_EXEC_ID,
+        status="running",
+        error_banner_match="weekly limit",
+        error_banner_text="You've hit your weekly limit.",
+    )
+    dumped = with_banner.model_dump(exclude_none=True)
+    assert dumped["error_banner_match"] == "weekly limit"
+    assert dumped["error_banner_text"] == "You've hit your weekly limit."

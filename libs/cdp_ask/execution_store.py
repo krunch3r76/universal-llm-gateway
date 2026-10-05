@@ -438,6 +438,28 @@ class ExecutionStore:
                 rec.stall_stage = stall_stage
             rec.updated_at = time.time()
 
+    async def merge_poll_result_fields(
+        self,
+        execution_id: str,
+        *,
+        error_banner_match: str | None = None,
+        error_banner_text: str | None = None,
+    ) -> None:
+        """Latch harvest banner fields onto the in-flight poll projection (``result``)."""
+        if not error_banner_match and not error_banner_text:
+            return
+        async with self._lock:
+            rec = self._records.get(execution_id)
+            if rec is None:
+                return
+            partial = dict(rec.result or {})
+            if error_banner_match:
+                partial["error_banner_match"] = error_banner_match
+            if error_banner_text:
+                partial["error_banner_text"] = error_banner_text
+            rec.result = partial
+            rec.updated_at = time.time()
+
     async def update_liveness(
         self,
         execution_id: str,

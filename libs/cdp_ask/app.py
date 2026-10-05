@@ -66,6 +66,7 @@ from cdp_ask.page_liveness import LadderCallbacks
 from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
 from cdp_ask.runner import (
     peek_harvest_root_health,
+    poll_banner_fields_from_harvest,
     refresh_harvest_root_health,
     run_execution,
     verify_harvest_root,
@@ -624,6 +625,16 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             abort_check=_abort_check,
         )
 
+        async def _on_poll_harvest(state: dict[str, object]) -> None:
+            fields = poll_banner_fields_from_harvest(state)  # type: ignore[arg-type]
+            if not fields:
+                return
+            await execution_store.merge_poll_result_fields(
+                record.execution_id,
+                error_banner_match=fields.get("error_banner_match"),
+                error_banner_text=fields.get("error_banner_text"),
+            )
+
         async def _run() -> None:
             payload = await run_execution(
                 req,
@@ -632,6 +643,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 on_registered=_sync_registered,
                 ladder=ladder,
                 teardown_check=lambda: execution_store.shutting_down,
+                on_poll_harvest=_on_poll_harvest,
             )
             await finish_execution(execution_store, record.execution_id, payload)
 
@@ -714,6 +726,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             liveness_observed_at=record.liveness_observed_at if live else None,
             artifact_cards=payload.get("artifact_cards"),
             artifact_cards_unresolved=payload.get("artifact_cards_unresolved"),
+            error_banner_match=payload.get("error_banner_match"),
+            error_banner_text=payload.get("error_banner_text"),
         )
 
     @app.post(

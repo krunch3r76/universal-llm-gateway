@@ -179,15 +179,33 @@ def _latch_streaming_attachment(
     fold_attachment_journal()
 
 
+def poll_banner_fields_from_harvest(state: dict[str, Any]) -> dict[str, str]:
+    """Extract optional poll-plane banner keys from a ``HARVEST_JS`` sample."""
+    out: dict[str, str] = {}
+    match = (state.get("error_banner_match") or "").strip()
+    text = (state.get("error_banner_text") or "").strip()
+    if match:
+        out["error_banner_match"] = match
+    if text:
+        out["error_banner_text"] = text
+    return out
+
+
 def _wrap_harvest_with_address(
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None,
     *,
     registration_id: str,
     execution_id: str,
+    poll_banner_sink: dict[str, str] | None = None,
+    on_poll_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> Callable[[dict[str, Any]], Awaitable[None]]:
     """Compose harvest hook: latch attachment only when ``streaming`` is true."""
 
     async def _hook(state: dict[str, Any]) -> None:
+        if poll_banner_sink is not None:
+            poll_banner_sink.update(poll_banner_fields_from_harvest(state))
+        if on_poll_harvest is not None:
+            await on_poll_harvest(state)
         if state.get("streaming") is True:
             _latch_streaming_attachment(
                 registration_id,
@@ -625,6 +643,7 @@ async def run_execution(
     on_registered: Callable[[str], None] | None = None,
     ladder: LadderCallbacks | None = None,
     teardown_check: Callable[[], bool] | None = None,
+    on_poll_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run one registry-backed project-ask and return a terminal-shaped result dict.
 
@@ -645,10 +664,13 @@ async def run_execution(
         # Held-page samples only — competing connect_cdp blocked dual-completion
         # while converse held the lane (friction 25671).
         on_harvest = make_harvest_ladder_hook(callbacks=ladder, progress=progress)
+    poll_banner_fields: dict[str, str] = {}
     on_harvest = _wrap_harvest_with_address(
         on_harvest,
         registration_id=reg.registration_id,
         execution_id=execution_id,
+        poll_banner_sink=poll_banner_fields,
+        on_poll_harvest=on_poll_harvest,
     )
     retain_host = False
     try:
@@ -733,6 +755,7 @@ async def run_execution(
                         "harvest_provenance": None,
                         "stall_stage": classify_stall_stage(str(exc)),
                         **retry_meta,
+                        **poll_banner_fields,
                     }
                 if not last.archive_uri and archive_uri:
                     backfilled = ProjectAskResult(
@@ -796,6 +819,7 @@ async def run_execution(
                 "stall_stage": stall,
                 **retry_meta,
                 **_wake_debt_extras(reg.registration_id, ok=conv_ok),
+                **poll_banner_fields,
             }
 
         if req.no_project_uuid and not req.converse:
@@ -872,6 +896,7 @@ async def run_execution(
         )
         payload.update(retry_meta)
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
+        payload.update(poll_banner_fields)
         return payload
     finally:
         escaped = sys.exc_info()[1]
