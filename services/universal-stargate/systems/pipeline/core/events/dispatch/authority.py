@@ -1,4 +1,4 @@
-"""Monitor authority read degradation signals."""
+"""Monitor authority-read degradation. When registry execution_state is unreachable, emit the attempted source, reason, and fallback."""
 
 from __future__ import annotations
 

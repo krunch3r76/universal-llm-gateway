@@ -1,4 +1,4 @@
-"""Project the live pipeline registry into a capability tree."""
+"""Project the live pipeline registry into a capability tree that Stargate uses for capability listing."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class PipelineRegistrySource:
-    """Pipeline registry is the only source registered in this change."""
+    """Adapter: each registry pipeline becomes one CapabilityMember. This is the only source in this tree."""
 
     def __init__(self, registry: PipelineRegistry) -> None:
         self._registry = registry
@@ -51,7 +51,7 @@ class PipelineRegistrySource:
 
 
 def build_tree(proxy: StargateProxy) -> CapabilityTree:
-    """Rebuild from the live registry. No new stored state."""
+    """Rebuild the capability tree from the live registry. Empty source when the registry is unset."""
     registry = proxy.pipeline_registry
     if registry is None:
         return CapabilityTree.build(_EmptySource())

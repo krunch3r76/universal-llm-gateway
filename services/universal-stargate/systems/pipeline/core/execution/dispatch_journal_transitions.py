@@ -58,7 +58,7 @@ def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
 
 
 def migrate_schema_sync(connection: sqlite3.Connection) -> None:
-    """Idempotent migration from terminal-only ``dispatch_records`` to fold+log."""
+    """Idempotent schema migration. Old terminal-only dispatch records become a fold table plus a transition log."""
     connection.execute(_TRANSITIONS_DDL)
     connection.execute(_INDEX_TRANSITIONS)
     if not _table_columns(connection, "dispatch_records"):
@@ -217,7 +217,7 @@ def fetch_record_sync(
     path: Path,
     execution_id: str,
 ) -> tuple[dict[str, Any], str, float] | None:
-    """Return ``(record_json, status, updated_at_epoch)`` for any status."""
+    """Return ``(record_json, status, updated_at_epoch)`` for any status, or None if the id is missing."""
     with sqlite3.connect(path) as connection:
         migrate_schema_sync(connection)
         row = connection.execute(
@@ -238,7 +238,7 @@ def prune_started_sync(
     path: Path,
     retention_seconds: float,
 ) -> int:
-    """Delete old ``started`` rows by ``updated_at_epoch`` vs *retention_seconds*."""
+    """Delete ``started`` rows whose ``updated_at_epoch`` is older than now minus *retention_seconds*."""
     cutoff = time.time() - retention_seconds
     with sqlite3.connect(path) as connection:
         migrate_schema_sync(connection)

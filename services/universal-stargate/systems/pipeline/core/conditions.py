@@ -199,7 +199,7 @@ KNOWN_CONDITION_NAMES: frozenset[str] = frozenset(
 
 
 class ConditionDefinitionError(Exception):
-    """Non-retryable condition evaluation failure. ``name`` is the condition."""
+    """Non-retryable condition evaluation failure. ``name`` is the condition string; ``detail`` is why eval refused it."""
 
     def __init__(self, name: str, detail: str) -> None:
         self.name = name

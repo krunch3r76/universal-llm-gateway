@@ -226,7 +226,7 @@ async def journal_transition(
     status: str = "started",
     event_bus: _EventBusProtocol | None = None,
 ) -> None:
-    """Persist a non-terminal ``started`` fold row (fire-and-forget safe)."""
+    """Persist a non-terminal ``started`` fold row. Callers may fire-and-forget; other statuses are ignored."""
     if status != "started":
         return
     payload = record.to_dict()
@@ -305,7 +305,7 @@ async def fetch_record(
     *,
     event_bus: _EventBusProtocol | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch any-status record from the sqlite journal."""
+    """Fetch a journal record of any status from sqlite, or None when the execution id is absent."""
     result = await asyncio.to_thread(
         fetch_record_sync,
         _journal_path(),

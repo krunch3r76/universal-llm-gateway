@@ -97,7 +97,7 @@ def finalize_relay_pipeline_options(
 
 
 def fold_legacy_enable_flags(options: dict[str, Any]) -> dict[str, Any]:
-    """Map hyde/rerank/catalog_retry flags onto step_overrides and drop them."""
+    """Map hyde/rerank/catalog_retry flags onto step_overrides.enabled, then drop the legacy keys."""
     folded = dict(options)
     overrides = dict(folded.get("step_overrides") or {})
     for flag, step_name in LEGACY_ENABLE_FLAGS.items():
@@ -119,7 +119,7 @@ def apply_request_step_controls(
     steps: list[StepConfig],
     runtime_options: dict[str, Any],
 ) -> list[StepConfig]:
-    """Apply step_overrides and skip_steps. Other pipelines are unchanged."""
+    """Apply rag-search step_overrides and skip_steps. Other pipelines return their steps unchanged."""
     if pipeline.id != "rag-search":
         return steps
 
