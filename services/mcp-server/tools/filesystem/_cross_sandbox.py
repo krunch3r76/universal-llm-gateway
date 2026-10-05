@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from endpoint_surface import Surface
@@ -11,7 +10,9 @@ from implement_admission.scheme_resolve import resolve_fs_ingress
 from implement_admission.share_uri_emit import to_share_uri
 from mcp_events import record
 
+from tools.filesystem._ops_paths import copy_file_verified
 from tools.filesystem._paths import SANDBOX_ROOT
+from tools.filesystem._share_uri_response import attach_dual_carry
 
 
 def _sandbox_root(sandbox: str, *, surface: Surface = "code") -> Path:
@@ -68,7 +69,7 @@ def copy_between_sandboxes_impl(
     src, src_rel = _resolve_sandbox_path(
         source_sandbox, source, for_write=False, surface=surface
     )
-    dst, dst_rel = _resolve_sandbox_path(
+    dst, _dst_rel = _resolve_sandbox_path(
         target_sandbox, destination, for_write=True, surface=surface
     )
     if not src.exists():
@@ -76,21 +77,28 @@ def copy_between_sandboxes_impl(
     if not src.is_file():
         raise ValueError(f"Source is not a file: {source!r}")
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(src), str(dst))
+    dest, digest = copy_file_verified(src, dst)
+    dest_rel = dest.relative_to(
+        _sandbox_root(target_sandbox, surface=surface)
+    ).as_posix()
     record(
         "mcp.tool.file.copied",
         source_sandbox=source_sandbox,
         source=source,
         target_sandbox=target_sandbox,
-        destination=destination,
+        destination=dest_rel,
     )
-    return {
-        "status": "copied",
-        "source_sandbox": source_sandbox,
-        "target_sandbox": target_sandbox,
-        "from": src_rel,
-        "to": dst_rel,
-        "from_uri": to_share_uri(source_sandbox, src_rel),
-        "to_uri": to_share_uri(target_sandbox, dst_rel),
-    }
+    return attach_dual_carry(
+        {
+            "status": "copied",
+            "source_sandbox": source_sandbox,
+            "target_sandbox": target_sandbox,
+            "from": src_rel,
+            "to": dest_rel,
+            "from_uri": to_share_uri(source_sandbox, src_rel),
+            "to_uri": to_share_uri(target_sandbox, dest_rel),
+            "read_sha256": digest,
+        },
+        sandbox=target_sandbox,
+        rel_path=dest_rel,
+    )
