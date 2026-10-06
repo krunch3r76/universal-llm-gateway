@@ -18,7 +18,10 @@ from implement_admission.scheme_resolve import (
     parse_schemed_path,
     resolve_fs_ingress,
 )
-from tool_error_enricher import apply_life_sandbox_default
+from tool_error_enricher import (
+    apply_life_sandbox_default,
+    life_cortex_repo_stub_alias,
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +64,14 @@ def _entry_sandbox_hint(
     if parse_schemed_path(raw).scheme is not None:
         return None
     if surface == "life":
-        return "cortex"
+        # Empty cortex repo stubs alias to workspaces on reads (a:38194).
+        aliased, _err = life_cortex_repo_stub_alias(
+            surface=surface,
+            sandbox="cortex",
+            path=raw,
+            for_write=False,
+        )
+        return aliased or "cortex"
     return None
 
 
@@ -147,6 +157,25 @@ def prepare_fs_call_ingress(
     effective_path = path
     batch_originals: list[str] | None = None
     root = cortex_files_root()
+
+    if path.strip() and effective_sandbox == "cortex":
+        aliased, stub_err = life_cortex_repo_stub_alias(
+            surface=surface,
+            sandbox=effective_sandbox,
+            path=path,
+            for_write=for_write,
+            cortex_root=root,
+        )
+        if stub_err is not None:
+            return CallIngress(
+                sandbox=effective_sandbox,
+                path=path,
+                paths=effective_paths,
+                error=stub_err,
+            )
+        if aliased is not None:
+            effective_sandbox = aliased
+            meta["life_cortex_repo_stub_aliased"] = True
 
     if path.strip():
         try:

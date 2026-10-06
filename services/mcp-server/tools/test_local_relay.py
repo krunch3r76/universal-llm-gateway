@@ -51,6 +51,39 @@ def test_agent_bus_wait_suffix_uses_320s_budget() -> None:
     )
 
 
+def test_agent_bus_tip_fetch_compact_last_uses_short_budget() -> None:
+    """a:38194 — compact last=N must not burn the full 30s relay budget."""
+    assert (
+        resolve_timeout(
+            "agent-bus",
+            "GET",
+            "/turns?thread=12286&compact=true&last=3",
+        )
+        == relay_mod._AGENT_BUS_TIP_FETCH_TIMEOUT
+    )
+    # Query order must not matter.
+    assert (
+        resolve_timeout(
+            "agent-bus",
+            "GET",
+            "/turns?last=3&thread=12286&compact=true",
+        )
+        == relay_mod._AGENT_BUS_TIP_FETCH_TIMEOUT
+    )
+
+
+def test_agent_bus_non_tip_turns_keep_default_timeout() -> None:
+    assert resolve_timeout("agent-bus", "GET", "/turns?thread=12286") == 30.0
+    assert (
+        resolve_timeout(
+            "agent-bus",
+            "GET",
+            "/turns/by-number?thread=12286&turn_number=2530",
+        )
+        == 30.0
+    )
+
+
 def _relay_call_kwargs(**overrides: Any) -> dict[str, Any]:
     base = {
         "service_url": "unix:///tmp/agent-bus.sock",

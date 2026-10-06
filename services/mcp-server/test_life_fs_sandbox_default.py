@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tool_error_enricher import (
     apply_life_sandbox_default,
     fs_missing_sandbox_hint,
+    life_cortex_repo_stub_alias,
     life_workspaces_fs_refusal,
 )
 
@@ -118,3 +119,88 @@ def test_life_default_then_ingress_resolves_bare_notes(tmp_path, monkeypatch):
     )
     assert ingress.sandbox == "cortex"
     assert ingress.rel_path.endswith("4917-entity-implies-map-fable-design.md")
+
+
+def test_life_empty_cortex_repo_stub_aliases_read_to_workspaces(tmp_path, monkeypatch):
+    """a:38194 — empty cortex repo stub must not trap life reads."""
+    from tools._project_paths import repo_roots
+
+    projects = tmp_path / "projects"
+    repo = projects / "universal-llm-gateway"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "README.md").write_text("ok\n", encoding="utf-8")
+    cortex = tmp_path / "cortex"
+    stub = cortex / "universal-llm-gateway" / "docs" / "research"
+    stub.mkdir(parents=True)
+
+    monkeypatch.setenv("PROJECT_ROOT", str(projects))
+    import tools._project_paths as paths_mod
+
+    paths_mod._PROJECT_ROOT = projects
+    assert "universal-llm-gateway" in {r.name for r in repo_roots(projects)}
+
+    sandbox = apply_life_sandbox_default(
+        surface="life",
+        sandbox="",
+        path="universal-llm-gateway/README.md",
+    )
+    assert sandbox == "cortex"
+    aliased, err = life_cortex_repo_stub_alias(
+        surface="life",
+        sandbox=sandbox,
+        path="universal-llm-gateway/README.md",
+        for_write=False,
+        cortex_root=cortex,
+    )
+    assert err is None
+    assert aliased == "workspaces"
+
+
+def test_life_populated_cortex_repo_stays_cortex(tmp_path, monkeypatch):
+    projects = tmp_path / "projects"
+    repo = projects / "universal-llm-gateway"
+    (repo / ".git").mkdir(parents=True)
+    cortex = tmp_path / "cortex"
+    target = cortex / "universal-llm-gateway" / "notes"
+    target.mkdir(parents=True)
+    (target / "kept.md").write_text("cortex content\n", encoding="utf-8")
+
+    monkeypatch.setenv("PROJECT_ROOT", str(projects))
+    import tools._project_paths as paths_mod
+
+    paths_mod._PROJECT_ROOT = projects
+
+    aliased, err = life_cortex_repo_stub_alias(
+        surface="life",
+        sandbox="cortex",
+        path="universal-llm-gateway/notes/kept.md",
+        for_write=False,
+        cortex_root=cortex,
+    )
+    assert err is None
+    assert aliased is None
+
+
+def test_life_empty_cortex_repo_stub_write_refuses(tmp_path, monkeypatch):
+    projects = tmp_path / "projects"
+    repo = projects / "universal-llm-gateway"
+    (repo / ".git").mkdir(parents=True)
+    cortex = tmp_path / "cortex"
+    (cortex / "universal-llm-gateway" / "docs").mkdir(parents=True)
+
+    monkeypatch.setenv("PROJECT_ROOT", str(projects))
+    import tools._project_paths as paths_mod
+
+    paths_mod._PROJECT_ROOT = projects
+
+    aliased, err = life_cortex_repo_stub_alias(
+        surface="life",
+        sandbox="cortex",
+        path="universal-llm-gateway/README.md",
+        for_write=True,
+        cortex_root=cortex,
+    )
+    assert aliased is None
+    assert err is not None
+    assert "empty cortex stub" in err
+    assert "workspaces://universal-llm-gateway" in err
