@@ -116,7 +116,7 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-1/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    # Spec fork 8 / staging marker (cdp_model_endpoint_staging.stage_cdp_prompt_with_skills):
+    # Spec fork 8 / staging marker (stage_cdp_prompt_with_skills):
     # shared_sync floor is the cdp-required-skills marker, not a leading slash block.
     assert (
         "<!--cdp-required-skills:reasoning-posture,consult-posture-->" in text
@@ -1294,15 +1294,22 @@ def _review_body_over_min() -> str:
     return body
 
 
-def _stub_missing_staged_file(monkeypatch: pytest.MonkeyPatch, mod: Any) -> None:
-    monkeypatch.setattr(
-        mod,
-        "staged_prompt_digest",
-        lambda _uri: {
-            "staged_prompt_byte_count": 1,
-            "staged_prompt_sha256": "0" * 64,
-        },
-    )
+def _plant_cortex_staged_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    *,
+    body: str = "stub staged prompt\n",
+) -> str:
+    """On-disk cortex prompt for mocked ``_stage_inputs`` that still runs digest."""
+    from claude_bundles import cdp_model_endpoint_staging as staging
+
+    cortex = tmp_path / "cortex"
+    rel = "notes/system/ephemeral/prompt.md"
+    path = cortex / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: cortex)
+    return f"cortex://{rel}"
 
 
 def _stub_cdp_generate_after_gate(
@@ -1311,8 +1318,6 @@ def _stub_cdp_generate_after_gate(
     from claude_bundles import cdp_model_endpoint_staging as staging
 
     from systems.frontier_consult import cdp_generate as mod
-
-    from claude_bundles import cdp_review_prompt_gate as review_gate
 
     def _ephemeral(execution_id: str):
         return (
@@ -1323,7 +1328,6 @@ def _stub_cdp_generate_after_gate(
 
     monkeypatch.setattr(staging, "ephemeral_dir", _ephemeral)
     monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
-    monkeypatch.setattr(review_gate, "cortex_files_root", lambda: tmp_path)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
@@ -1603,7 +1607,7 @@ def test_mission_provenance_ignores_ask_purpose(
 
 @pytest.mark.asyncio
 async def test_dispatch_cdp_generate_forwards_parent_thread(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     """team_dispatch parent_thread reaches run_cdp_worker unchanged (T1 wire)."""
     from unittest.mock import AsyncMock, MagicMock
@@ -1611,14 +1615,12 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
     monkeypatch.setattr(
         mod,
         "_stage_inputs",
-        lambda **kw: MagicMock(
-            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
-        ),
+        lambda **kw: MagicMock(prompt_uri=prompt_uri, staged=True),
     )
-    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
@@ -1683,9 +1685,9 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
 
 @pytest.mark.asyncio
 async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """Omitted session and purpose: worker wire stays None; explicit values pass through.
+    """Omitted session/purpose: worker stays None; explicit values pass through.
 
     Breaks when staging receives ask on admit (arch skill floor) or when explicit
     purpose/session fail to reach run_cdp_worker unchanged.
@@ -1695,16 +1697,14 @@ async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
     staged_calls: list[dict[str, object]] = []
 
     def _stage_inputs(**kwargs: object) -> MagicMock:
         staged_calls.append(dict(kwargs))
-        return MagicMock(
-            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
-        )
+        return MagicMock(prompt_uri=prompt_uri, staged=True)
 
     monkeypatch.setattr(mod, "_stage_inputs", _stage_inputs)
-    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
@@ -1756,7 +1756,6 @@ async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
     )
     response = MagicMock()
     response.status_code = 202
-    _stub_missing_staged_file(monkeypatch, mod)
     await mod.dispatch_cdp_generate(
         request_id="req-purpose-default",
         body=body,
@@ -1824,14 +1823,12 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
     monkeypatch.setattr(
         mod,
         "_stage_inputs",
-        lambda **kw: MagicMock(
-            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
-        ),
+        lambda **kw: MagicMock(prompt_uri=prompt_uri, staged=True),
     )
-    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
@@ -1993,19 +1990,16 @@ async def test_cdp_admit_registers_dispatch_link_row(
     assert row is not None
     thread_id = row["id"]
 
+    prompt_uri = _plant_cortex_staged_prompt(monkeypatch, tmp_path)
     monkeypatch.setattr(
         mod,
         "_stage_inputs",
         lambda **kw: type(
             "Staged",
             (),
-            {
-                "prompt_uri": "cortex://notes/system/ephemeral/prompt.md",
-                "staged": True,
-            },
+            {"prompt_uri": prompt_uri, "staged": True},
         )(),
     )
-    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
     monkeypatch.setattr(
@@ -2080,7 +2074,6 @@ _SPECIMEN_SIDECAR = (
 
 def _plant_sidecar(monkeypatch: pytest.MonkeyPatch, tmp_path: Any, body: str) -> None:
     from claude_bundles import cdp_model_endpoint_staging as staging
-    from claude_bundles import cdp_review_prompt_gate as review_gate
 
     ws = tmp_path / "ws"
     rel = _SPECIMEN_SIDECAR.removeprefix("workspaces://")
@@ -2089,7 +2082,6 @@ def _plant_sidecar(monkeypatch: pytest.MonkeyPatch, tmp_path: Any, body: str) ->
     path.write_text(body, encoding="utf-8")
     monkeypatch.setattr(staging, "workspaces_root", lambda: ws)
     monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path / "cortex")
-    monkeypatch.setattr(review_gate, "cortex_files_root", lambda: tmp_path / "cortex")
 
 
 @pytest.mark.asyncio
@@ -2140,9 +2132,9 @@ async def test_review_prompt_staged_digest_on_admit(
     """
     import hashlib
 
+    from claude_bundles.cdp_review_prompt_gate import read_cortex_uri_bytes
     from fastapi import Response
 
-    from claude_bundles.cdp_review_prompt_gate import read_cortex_uri_bytes
     from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
@@ -2178,17 +2170,15 @@ async def test_staged_prompt_digest_on_freeform_admit(
     """
     import hashlib
 
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from claude_bundles.cdp_review_prompt_gate import read_cortex_uri_bytes
     from fastapi import Response
 
-    from claude_bundles import cdp_model_endpoint_staging as staging
-    from claude_bundles import cdp_review_prompt_gate as review_gate
-    from claude_bundles.cdp_review_prompt_gate import read_cortex_uri_bytes
     from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
     cortex = tmp_path / "cortex"
     monkeypatch.setattr(staging, "cortex_files_root", lambda: cortex)
-    monkeypatch.setattr(review_gate, "cortex_files_root", lambda: cortex)
     _stub_cdp_generate_after_gate(monkeypatch, cortex)
     body = TeamDispatchGenerateBody(
         op="generate",
@@ -2207,4 +2197,198 @@ async def test_staged_prompt_digest_on_freeform_admit(
     raw = read_cortex_uri_bytes(result["prompt_uri"])
     assert result["staged_prompt_byte_count"] == len(raw)
     assert result["staged_prompt_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+def _utf8_body_of_byte_length(target: int, *, seed: str = "R") -> str:
+    body = seed
+    while len(body.encode("utf-8")) < target:
+        body += "x"
+    while len(body.encode("utf-8")) > target:
+        body = body[:-1]
+    assert len(body.encode("utf-8")) == target
+    return body
+
+
+@pytest.mark.asyncio
+async def test_review_prompt_too_small_inline_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Short inline ``prompt`` on code-review is 422 before bus admit.
+
+    Breaks when the gate runs after staging, when too_small is not emitted for
+    sub-512 UTF-8 bodies, or when admit_handoff_dispatch still runs.
+    """
+    from fastapi import Response
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    admit = AsyncMock(return_value=MagicMock(reason="ok"))
+    monkeypatch.setattr(mod, "admit_handoff_dispatch", admit)
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        prompt="Review the diff.\n",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-review-too-small",
+            body=body,
+            response=Response(),
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.code == "review_prompt_too_small"
+    admit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_review_prompt_delivery_review_contract() -> None:
+    """delivery-review uses the same admit gate as code-review.
+
+    Breaks when delivery-review skips enforce_review_prompt_gate.
+    """
+    from fastapi import Response
+
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="delivery-review",
+        model="cdp/opus-5.5",
+        prompt="# placeholder",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-delivery-placeholder",
+            body=body,
+            response=Response(),
+        )
+    assert exc.value.code == "review_prompt_placeholder"
+
+
+@pytest.mark.asyncio
+async def test_review_prompt_byte_floor_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """511 UTF-8 bytes refused; 512 bytes admit with digest echo.
+
+    Breaks when the floor uses character count instead of UTF-8 bytes or when
+    digest runs after admit.
+    """
+    from fastapi import Response
+
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    _stub_cdp_generate_after_gate(monkeypatch, tmp_path)
+    too_small = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="15436",
+        prompt=_utf8_body_of_byte_length(511),
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-review-511",
+            body=too_small,
+            response=Response(),
+        )
+    assert exc.value.code == "review_prompt_too_small"
+
+    at_floor = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="15436",
+        prompt=_utf8_body_of_byte_length(512),
+    )
+    response = Response()
+    result = await dispatch_cdp_generate(
+        request_id="req-review-512",
+        body=at_floor,
+        response=response,
+    )
+    assert response.status_code == 202
+    assert result["staged_prompt_byte_count"] >= 512
+
+
+def test_review_prompt_gate_matches_cortex_packet_over_sidecar(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """cortex:// packet_path outranks workspaces sidecar for gate resolution.
+
+    Breaks when the gate reads the sidecar while staging would stage the cortex
+    packet (placeholder bypass). HTTP bodies forbid both fields; gate/staging
+    share the same resolver for the combined shape.
+    """
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from claude_bundles.cdp_model_endpoint_staging import CdpStagingError
+    from claude_bundles.cdp_review_prompt_gate import enforce_review_prompt_gate
+
+    cortex = tmp_path / "cortex"
+    packet_uri = "cortex://notes/system/review-packets/placeholder-packet"
+    rel = packet_uri.removeprefix("cortex://")
+    (cortex / rel).parent.mkdir(parents=True, exist_ok=True)
+    (cortex / rel).write_text("# placeholder", encoding="utf-8")
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: cortex)
+    _plant_sidecar(monkeypatch, tmp_path, _review_body_over_min())
+
+    with pytest.raises(CdpStagingError) as exc:
+        enforce_review_prompt_gate(
+            contract="code-review",
+            prompt_text=None,
+            packet_path=packet_uri,
+            sidecar_ref=_SPECIMEN_SIDECAR,
+        )
+    assert exc.value.code == "review_prompt_placeholder"
+    assert (exc.value.details or {})["source_ref"].startswith("prompt_uri=")
+
+
+@pytest.mark.asyncio
+async def test_staged_digest_failure_before_admit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Missing staged prompt file is 422 before admit (no duplicate CDP retry).
+
+    Breaks when digest runs after poll_hint/worker creation or when a missing
+    staged file returns 500 after partial admit.
+    """
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from fastapi import Response
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    cortex = tmp_path / "cortex"
+    cortex.mkdir()
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: cortex)
+    admit = AsyncMock(return_value=MagicMock(reason="ok"))
+    monkeypatch.setattr(mod, "admit_handoff_dispatch", admit)
+    missing_uri = "cortex://notes/system/ephemeral/missing-prompt.md"
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: MagicMock(prompt_uri=missing_uri, staged=True),
+    )
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="15436",
+        prompt="any prompt",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-missing-staged-digest",
+            body=body,
+            response=Response(),
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.code == "cdp_prompt_missing"
+    admit.assert_not_called()
 

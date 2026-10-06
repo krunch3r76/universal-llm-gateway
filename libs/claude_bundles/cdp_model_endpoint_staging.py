@@ -112,6 +112,75 @@ def _stamp_owned_ephemeral_notice(uri: str, purpose: str | None) -> None:
     durable_write_text(path, updated, retain_store_root=cortex_files_root())
 
 
+def resolve_cortex_prompt_path(uri: str) -> Path:
+    """Map ``cortex://`` to an on-disk prompt file (directory → ``prompt.md``)."""
+    rel = uri.removeprefix("cortex://").lstrip("/")
+    path = cortex_files_root() / rel
+    if path.is_dir():
+        path = path / "prompt.md"
+    return path
+
+
+def prepare_cdp_staging_sources(
+    *,
+    prompt_text: str | None,
+    sidecar_ref: str | None,
+    packet_path: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Mirror ``cdp_generate._stage_inputs`` source fields before skill staging."""
+    cortex_uri: str | None = None
+    if isinstance(sidecar_ref, str) and sidecar_ref.startswith("cortex://"):
+        cortex_uri = sidecar_ref
+    elif isinstance(packet_path, str) and packet_path.startswith("cortex://"):
+        cortex_uri = packet_path
+    packet_non_cortex = (
+        packet_path
+        if isinstance(packet_path, str) and not packet_path.startswith("cortex://")
+        else None
+    )
+    sidecar_non_cortex = (
+        sidecar_ref
+        if isinstance(sidecar_ref, str) and not sidecar_ref.startswith("cortex://")
+        else None
+    )
+    return prompt_text, cortex_uri, packet_non_cortex, sidecar_non_cortex
+
+
+def resolve_cdp_admit_prompt_author(
+    *,
+    prompt_text: str | None,
+    sidecar_ref: str | None,
+    packet_path: str | None,
+) -> tuple[str, str, str]:
+    """Resolve the author body using the same sources CDP staging will read."""
+    staged_prompt, staged_uri, staged_packet, staged_sidecar = prepare_cdp_staging_sources(
+        prompt_text=prompt_text,
+        sidecar_ref=sidecar_ref,
+        packet_path=packet_path,
+    )
+    body = read_prompt_text(
+        prompt_text=staged_prompt,
+        prompt_uri=staged_uri,
+        packet_path=staged_packet,
+        sidecar_ref=staged_sidecar,
+    )
+    if staged_prompt is not None and str(staged_prompt).strip():
+        return body, "prompt", "prompt"
+    for kind, candidate in (
+        ("prompt_uri", staged_uri),
+        ("sidecar_ref", staged_sidecar),
+        ("packet_path", staged_packet),
+    ):
+        if candidate is None or not str(candidate).strip():
+            continue
+        raw = str(candidate).strip()
+        return body, kind, f"{kind}={raw}"
+    raise CdpStagingError(
+        "CDP generate requires prompt_text, prompt_uri, sidecar_ref, or packet_path",
+        code="cdp_prompt_missing",
+    )
+
+
 def resolve_workspaces_path(uri_or_path: str) -> Path | None:
     """Map workspaces:// or checkout-relative path to an on-disk file."""
     raw = uri_or_path.strip()
@@ -164,8 +233,7 @@ def read_prompt_text(
             continue
         raw = str(candidate).strip()
         if raw.startswith("cortex://"):
-            rel = raw[len("cortex://") :].lstrip("/")
-            path = cortex_files_root() / rel
+            path = resolve_cortex_prompt_path(raw)
             if not path.is_file():
                 raise CdpStagingError(
                     f"cortex prompt missing on disk: {raw!r}",

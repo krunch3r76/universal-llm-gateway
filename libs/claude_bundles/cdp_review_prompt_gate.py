@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from pathlib import Path
-
-from implement_admission.closeout_helpers import cortex_files_root
 
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
-    read_prompt_text,
+    resolve_cdp_admit_prompt_author,
+    resolve_cortex_prompt_path,
 )
 
 REVIEW_PROMPT_MIN_BYTES = 512
@@ -32,31 +30,16 @@ FIX_HINT = (
 def author_prompt_source(
     *,
     prompt_text: str | None,
-    prompt_uri: str | None,
-    sidecar_ref: str | None,
-    packet_path: str | None,
+    prompt_uri: str | None = None,
+    sidecar_ref: str | None = None,
+    packet_path: str | None = None,
 ) -> tuple[str, str, str]:
-    """Resolve author body with ``read_prompt_text`` precedence.
-
-    Returns ``(body, source_kind, source_ref)`` where ``source_ref`` names
-    the winning input and its literal ref.
-    """
-    if prompt_text is not None and str(prompt_text).strip():
-        body = read_prompt_text(prompt_text=prompt_text)
-        return body, "prompt", "prompt"
-    for kind, candidate in (
-        ("prompt_uri", prompt_uri),
-        ("sidecar_ref", sidecar_ref),
-        ("packet_path", packet_path),
-    ):
-        if candidate is None or not str(candidate).strip():
-            continue
-        raw = str(candidate).strip()
-        body = read_prompt_text(**{kind: raw})
-        return body, kind, f"{kind}={raw}"
-    raise CdpStagingError(
-        "CDP generate requires prompt_text, prompt_uri, sidecar_ref, or packet_path",
-        code="cdp_prompt_missing",
+    """Resolve author body with the same sources CDP staging will read."""
+    del prompt_uri  # callers may pass explicit uri; staging derives it from sidecar/packet
+    return resolve_cdp_admit_prompt_author(
+        prompt_text=prompt_text,
+        sidecar_ref=sidecar_ref,
+        packet_path=packet_path,
     )
 
 
@@ -98,8 +81,6 @@ def enforce_review_prompt_gate(
         else "review_prompt_too_small"
     )
     field = "sidecar_ref" if kind == "sidecar_ref" else "prompt"
-    if kind == "packet_path":
-        field = "prompt"
     raise CdpStagingError(
         f"CDP {contract} prompt refused ({code})",
         code=code,
@@ -113,18 +94,9 @@ def enforce_review_prompt_gate(
     )
 
 
-def cortex_uri_path(uri: str) -> Path:
-    """Map ``cortex://`` to an on-disk file under ``cortex_files_root()``."""
-    rel = uri.removeprefix("cortex://").lstrip("/")
-    path = cortex_files_root() / rel
-    if path.is_dir():
-        path = path / "prompt.md"
-    return path
-
-
 def read_cortex_uri_bytes(uri: str) -> bytes:
     """Load staged prompt bytes for a ``cortex://`` URI."""
-    path = cortex_uri_path(uri)
+    path = resolve_cortex_prompt_path(uri)
     if not path.is_file():
         raise CdpStagingError(
             f"staged CDP prompt missing on disk: {uri!r}",

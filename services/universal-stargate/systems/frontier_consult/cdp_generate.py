@@ -22,6 +22,7 @@ from claude_bundles.cdp_model_endpoint import (
 )
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
+    prepare_cdp_staging_sources,
     stage_cdp_prompt_with_skills,
 )
 from claude_bundles.cdp_review_prompt_gate import (
@@ -414,23 +415,15 @@ def _stage_inputs(
     omitted on none CDP generate). Stamps Block 5 MCP defaults for
     life/web before sealing (parity handoff enrich; a:32088).
     """
-    cortex_uri = None
-    if isinstance(sidecar_ref, str) and sidecar_ref.startswith("cortex://"):
-        cortex_uri = sidecar_ref
-    elif isinstance(packet_path, str) and packet_path.startswith("cortex://"):
-        cortex_uri = packet_path
-    packet_non_cortex = (
-        packet_path
-        if isinstance(packet_path, str) and not packet_path.startswith("cortex://")
-        else None
-    )
-    sidecar_non_cortex = (
-        sidecar_ref
-        if isinstance(sidecar_ref, str) and not sidecar_ref.startswith("cortex://")
-        else None
+    staged_prompt, cortex_uri, packet_non_cortex, sidecar_non_cortex = (
+        prepare_cdp_staging_sources(
+            prompt_text=prompt,
+            sidecar_ref=sidecar_ref,
+            packet_path=packet_path,
+        )
     )
     stamp = stamp_cdp_packet_mcp_default(
-        prompt_text=prompt,
+        prompt_text=staged_prompt,
         prompt_uri=cortex_uri,
         packet_path=packet_non_cortex,
         sidecar_ref=sidecar_non_cortex,
@@ -441,7 +434,7 @@ def _stage_inputs(
             source_label=stamp.source_label,
             web_mcp_stamped=True,
         )
-    staged_prompt = stamp.body if stamp.stamped else prompt
+    staged_prompt = stamp.body if stamp.stamped else staged_prompt
     staged_uri = None if stamp.stamped else cortex_uri
     staged_packet = None if stamp.stamped else packet_non_cortex
     staged_sidecar = None if stamp.stamped else sidecar_non_cortex
@@ -564,6 +557,7 @@ async def dispatch_cdp_generate(
             request_id=request_id,
             dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
         )
+        staged_digest = staged_prompt_digest(staged.prompt_uri)
     except CdpStagingError as exc:
         if exc.field:
             field = exc.field
@@ -797,12 +791,11 @@ async def dispatch_cdp_generate(
         handoff_fields=handoff_fields,
     )
     response.status_code = 202
-    digest = staged_prompt_digest(staged.prompt_uri)
     return {
         "op": "generate",
         "status": "running",
-        "staged_prompt_byte_count": digest["staged_prompt_byte_count"],
-        "staged_prompt_sha256": digest["staged_prompt_sha256"],
+        "staged_prompt_byte_count": staged_digest["staged_prompt_byte_count"],
+        "staged_prompt_sha256": staged_digest["staged_prompt_sha256"],
         "execution_id": execution_id,
         "thread_id": str(thread_id),
         "thread": str(thread_id),
