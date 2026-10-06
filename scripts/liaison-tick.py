@@ -37,6 +37,7 @@ from pathlib import Path
 import bus_watch.doorbell as doorbell_module
 import httpx
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
+from bus_watch.liaison_loop_detach import clear_loop_pid_files, monitor_heartbeat_stale
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
 )
@@ -216,6 +217,11 @@ def main() -> int:
         "--take-over",
         action="store_true",
         help="with --claim/--loop: preempt live ide: holder (operator resume <root> on another host)",
+    )
+    p.add_argument(
+        "--monitor-heartbeat",
+        default="",
+        help="with --loop: path touched by liaison-monitor-loop.sh; stale ⇒ exit+release (a:38446 B1)",
     )
     p.add_argument(
         "--set",
@@ -418,7 +424,7 @@ def main() -> int:
             json.dumps(
                 {
                     "loop": "refused",
-                    "reason": "fable_lock_held",
+                    "reason": claim.get("reason") or "fable_lock_held",
                     "lock": claim.get("lock"),
                 }
             ),
@@ -434,6 +440,7 @@ def main() -> int:
                 "holder": holder,
                 "poll_s": args.poll,
                 "heartbeat_s": args.heartbeat,
+                "monitor_heartbeat": args.monitor_heartbeat or None,
             }
         ),
         flush=True,
@@ -443,6 +450,7 @@ def main() -> int:
         return _loop(args, root, state, state_path, register, holder, last_emit)
     finally:
         release_fable_lock(holder, root_id=root)
+        clear_loop_pid_files()
 
 
 def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN202
@@ -530,6 +538,19 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
                 flush=True,
             )
             return 4
+        hb = str(getattr(args, "monitor_heartbeat", "") or "")
+        if monitor_heartbeat_stale(hb, poll_s=int(args.poll)):
+            print(
+                json.dumps(
+                    {
+                        "loop": "monitor_gone",
+                        "holder": holder,
+                        "monitor_heartbeat": hb,
+                    }
+                ),
+                flush=True,
+            )
+            return 5
         _log_steer(absorb_operator_edits(state, state_path))
         register = str(state.get("register") or register)
         try:
