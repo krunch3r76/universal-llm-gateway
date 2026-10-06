@@ -17,6 +17,8 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from evdev import UInput
@@ -183,6 +185,74 @@ def _require_cursor_keyboard(chosen: dict, *, retries: int = 0) -> dict:
     raise SystemExit(
         json.dumps({"ok": False, "phase": "focus", **last}, default=str)
     )
+
+
+@contextmanager
+def _compositor_shortcuts_inhibit() -> Iterator[dict]:
+    """Route 1: hold zwp_keyboard_shortcuts_inhibit for the chord window (a:38365).
+
+    Breaks if compositor globals are missing or inhibit never goes active — caller
+    must not open uinput. Release is tied to stdin EOF on the helper subprocess.
+    """
+    helper = Path(__file__).with_name("cosmic_focus_window.py")
+    proc = subprocess.Popen(
+        [sys.executable, str(helper), "inhibit-hold"],
+        env=os.environ,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.stdout is None or proc.stdin is None:
+        proc.kill()
+        raise SystemExit(
+            json.dumps({"ok": False, "phase": "focus", "error": "inhibit_popen"})
+        )
+    line = ""
+    try:
+        line = proc.stdout.readline()
+        verdict = json.loads(line.strip())
+    except (json.JSONDecodeError, ValueError):
+        proc.kill()
+        raise SystemExit(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "focus",
+                    "error": "inhibit_unreadable",
+                    "raw": line[:400],
+                }
+            )
+        ) from None
+    if not verdict.get("ok"):
+        proc.kill()
+        raise SystemExit(json.dumps({"ok": False, "phase": "focus", **verdict}))
+    verdict["_proc"] = proc
+    try:
+        yield verdict
+    finally:
+        verdict.pop("_proc", None)
+        proc.stdin.close()
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def _abort_if_inhibit_lost(inhibit_meta: dict) -> None:
+    proc = inhibit_meta.get("_proc")
+    if proc is not None and proc.poll() is not None:
+        raise SystemExit(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "focus",
+                    "error": "inhibit_lost",
+                    "returncode": proc.returncode,
+                }
+            )
+        )
 
 
 def _pick_cursor_window(role: str, title_substr: str | None, repo: str) -> dict:
@@ -554,21 +624,25 @@ def launch_glass_chat_with_message(
     focused = _focus_window(str(chosen["title"]), "cursor")
     keyboard = _require_cursor_keyboard(chosen, retries=2)
     clip: subprocess.Popen[bytes] | None = None
-    ui = _ui()
-    try:
-        _new_glass_agent(ui)
-        time.sleep(1.5)
-        _require_cursor_keyboard(chosen)
-        if model_query:
-            _quick_command(ui, model_query, opener="ctrl_slash")
-        clip = _wl_copy(message)
-        _paste(ui)
-        time.sleep(0.4)
-        _require_cursor_keyboard(chosen)
-        _submit_composer(ui)
-    finally:
-        ui.close()
-        _release_clipboard(clip)
+    with _compositor_shortcuts_inhibit() as inhibit_meta:
+        ui = _ui()
+        try:
+            _abort_if_inhibit_lost(inhibit_meta)
+            _new_glass_agent(ui)
+            time.sleep(1.5)
+            _abort_if_inhibit_lost(inhibit_meta)
+            _require_cursor_keyboard(chosen)
+            if model_query:
+                _quick_command(ui, model_query, opener="ctrl_slash")
+            clip = _wl_copy(message)
+            _paste(ui)
+            time.sleep(0.4)
+            _abort_if_inhibit_lost(inhibit_meta)
+            _require_cursor_keyboard(chosen)
+            _submit_composer(ui)
+        finally:
+            ui.close()
+            _release_clipboard(clip)
     return {
         "ok": True,
         "steps": steps,
@@ -576,6 +650,7 @@ def launch_glass_chat_with_message(
         "focused": focused.get("activated"),
         "focus_ok": bool(focused.get("focused")),
         "keyboard": keyboard,
+        "inhibit": inhibit_meta,
         "model_query": model_query,
         "message_len": len(message),
     }
