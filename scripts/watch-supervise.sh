@@ -146,8 +146,6 @@ cmd_start() {
   local existing
   existing="$(read_pid || true)"
   if pid_alive "${existing:-}"; then
-    # Reuse must still expose a log for same-turn leg 2 (a:38410).
-    [[ -f "$log_file" ]] || : >"$log_file"
     echo "reuse pid=$existing label=$safe (already running)"
     echo "log=$log_file"
     echo "state=$state_file"
@@ -247,7 +245,7 @@ cmd_tail() {
     exit 2
   fi
   # Same-turn leg 1→2 can fire before start's `: >log` (~115ms specimen
-  # a:38410). Retry through the start arm window; fail-closed only after.
+  # a:38410). Retry until start creates the log; fail-closed only after.
   local waited=0
   while [[ ! -f "$log_file" ]]; do
     if [[ "$waited" -ge 150 ]]; then
