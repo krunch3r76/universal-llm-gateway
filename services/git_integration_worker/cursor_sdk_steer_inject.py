@@ -17,7 +17,9 @@ from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_event_bus import Event, event_factory
 
 from scripts.mcp_bridge_steer_inject import (
+    TERMINAL_UNDELIVERED_REASON,
     append_spool_entry,
+    expire_pending_entries,
     read_delivery_ack,
     spool_path,
 )
@@ -107,10 +109,16 @@ def SdkSteerInjectExpired(  # noqa: N802
     dispatch_id: str,
     entry_id: str,
     ttl_s: int,
+    reason: str = "",
 ) -> Event:
     return Event(
         signal="frontier.sdk.steer.inject.expired",
-        payload={"dispatch_id": dispatch_id, "entry_id": entry_id, "ttl_s": ttl_s},
+        payload={
+            "dispatch_id": dispatch_id,
+            "entry_id": entry_id,
+            "ttl_s": ttl_s,
+            "reason": reason,
+        },
         scope="node",
     )
 
@@ -295,6 +303,68 @@ def expire_undelivered(
     )
 
 
+def expire_undelivered_on_terminal(
+    dispatch_id: str,
+    *,
+    reason: str = TERMINAL_UNDELIVERED_REASON,
+    spool_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Mark still-pending spool rows expired and emit one event per row.
+
+    Idempotent: rows already moved are not emitted again.
+    """
+    root = spool_dir or steer_spool_dir()
+    moved = expire_pending_entries(dispatch_id, reason=reason, spool_dir=root)
+    for raw in moved:
+        emit_frontier_event(
+            SdkSteerInjectExpired(
+                dispatch_id=dispatch_id,
+                entry_id=str(raw.get("entry_id") or ""),
+                ttl_s=int(raw.get("ttl_s") or 0),
+                reason=reason,
+            )
+        )
+    return moved
+
+
+def steer_undelivered_field(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Operator-facing closeout rows: entry id, deposit time, reason."""
+    field: list[dict[str, str]] = []
+    for raw in rows:
+        field.append(
+            {
+                "entry_id": str(raw.get("entry_id") or ""),
+                "deposited_at": str(raw.get("deposited_at") or ""),
+                "reason": str(raw.get("reason") or ""),
+            }
+        )
+    return field
+
+
+def apply_steer_undelivered_closeout(
+    body: str,
+    *,
+    dispatch_id: str,
+    spool_dir: Path | None = None,
+) -> str:
+    """Expire pending steers and, when any remain, add ``steer_undelivered``.
+
+    A body that is not a JSON object is returned unchanged after the expire
+    (the event still fires). An empty pending list does not add the field.
+    """
+    rows = expire_undelivered_on_terminal(dispatch_id, spool_dir=spool_dir)
+    if not rows:
+        return body
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+    if not isinstance(payload, dict):
+        return body
+    payload["steer_undelivered"] = steer_undelivered_field(rows)
+    return json.dumps(payload, separators=(",", ":"))
+
+
 def _fetch_thread_turns(thread_id: str) -> list[dict[str, Any]] | None:
     """Sync GET /turns?thread=<id>; None on transport/parse failure."""
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
@@ -333,7 +403,7 @@ def _spool_known_authority_ids(
     except (json.JSONDecodeError, OSError):
         return set()
     known: set[str] = set()
-    for bucket in ("pending", "delivered"):
+    for bucket in ("pending", "delivered", "expired"):
         for raw in data.get(bucket) or []:
             if isinstance(raw, dict) and raw.get("authority_turn_id"):
                 known.add(str(raw["authority_turn_id"]))

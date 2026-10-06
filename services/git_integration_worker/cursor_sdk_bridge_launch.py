@@ -33,6 +33,7 @@ from cursor_sdk._vendor import resolve_bridge_path
 from cursor_sdk.types import LocalAgentOptions
 from universal_logging import get_logger
 
+from scripts.mcp_bridge_steer_inject import ULG_STEER_SPOOL_DIR_ENV
 from services.git_integration_worker.cursor_dispatch_ledger import (
     dispatch_ledger_env_vars,
 )
@@ -43,6 +44,7 @@ from services.git_integration_worker.cursor_home import (
     build_dispatch_path_prepend,
     dispatch_git_env_vars,
 )
+from services.git_integration_worker.cursor_sdk_context import steer_spool_dir
 from services.git_integration_worker.cursor_sdk_dispatch_context import (
     SdkDispatchContext,
 )
@@ -159,6 +161,7 @@ def build_bridge_command(
             f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items()
         )
         command.extend(f"{k}={v}" for k, v in dispatch_ledger_env_vars().items())
+        command.append(f"{ULG_STEER_SPOOL_DIR_ENV}={steer_spool_dir()}")
     if lane_path is not None:
         preload = shell_cwd_preload_path()
         prior = os.environ.get("NODE_OPTIONS", "").strip()

@@ -1621,6 +1621,17 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    try:
+        from services.git_integration_worker.cursor_sdk_steer_inject import (
+            expire_undelivered_on_terminal,
+        )
+
+        await asyncio.to_thread(expire_undelivered_on_terminal, dispatch_id)
+    except Exception:
+        logger.exception(
+            "steer expire on terminal failed dispatch=%s",
+            dispatch_id,
+        )
     # a:37197 — flip armed wait_for_boundary drain BEFORE hop successor admit
     try:
         controller.maybe_activate_armed_drain(dispatch_id=dispatch_id)
@@ -2271,6 +2282,33 @@ async def _deliver_sdk_closeout(
             sidecar_ref=delivery.sidecar_ref,
             sidecar_path=delivery.sidecar_path,
             full_result_bytes=len(shaped.encode("utf-8")),
+            closeout_status=delivery.closeout_status,
+        )
+    try:
+        from services.git_integration_worker.cursor_sdk_steer_inject import (
+            apply_steer_undelivered_closeout,
+        )
+
+        steered_body = apply_steer_undelivered_closeout(
+            delivery.body,
+            dispatch_id=req.dispatch_id,
+        )
+    except Exception:
+        logger.exception(
+            "steer undelivered closeout failed dispatch=%s",
+            req.dispatch_id,
+        )
+        steered_body = delivery.body
+    if steered_body != delivery.body:
+        from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+            CloseoutDelivery,
+        )
+
+        delivery = CloseoutDelivery(
+            body=steered_body,
+            sidecar_ref=delivery.sidecar_ref,
+            sidecar_path=delivery.sidecar_path,
+            full_result_bytes=len(steered_body.encode("utf-8")),
             closeout_status=delivery.closeout_status,
         )
     closeout_reply_kwargs = {

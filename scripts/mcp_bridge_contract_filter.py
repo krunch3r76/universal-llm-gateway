@@ -33,9 +33,8 @@ from g6_review_class import refuse_filtered_tools_call  # noqa: E402
 from scripts.mcp_bridge_generate_ledger import GenerateObserver  # noqa: E402
 from scripts.mcp_bridge_steer_inject import (  # noqa: E402
     CURSOR_SDK_DISPATCH_ID_ENV,
-    append_directive,
-    claim_pending,
-    mark_delivered,
+    append_steer_text,
+    consume_next_steer_envelope,
 )
 
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
@@ -157,12 +156,10 @@ def _maybe_inject_steer(
     dispatch_id = os.environ.get(CURSOR_SDK_DISPATCH_ID_ENV, "").strip()
     if not dispatch_id:
         return message
-    pending = claim_pending(dispatch_id)
-    if pending is None:
+    envelope = consume_next_steer_envelope(dispatch_id)
+    if not envelope:
         return message
-    message = append_directive(message, pending)
-    mark_delivered(pending)
-    return message
+    return append_steer_text(message, envelope)
 
 
 def _copy_upstream(
@@ -232,8 +229,7 @@ def refuse_conductor_descended_manage(
         descended = descends_from_conductor(stamp, reader)
     except Exception as exc:
         print(
-            "mcp-bridge: conductor descent lookup failed "
-            f"dispatch_id={stamp}: {exc}",
+            f"mcp-bridge: conductor descent lookup failed dispatch_id={stamp}: {exc}",
             file=sys.stderr,
             flush=True,
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -19,12 +20,17 @@ from scripts.mcp_bridge_contract_filter import (  # noqa: E402
 )
 from scripts.mcp_bridge_steer_inject import (  # noqa: E402
     CURSOR_SDK_DISPATCH_ID_ENV,
+    STEER_LIVE_LEDGER_STATUSES,
+    STEER_TERMINAL_LEDGER_STATUSES,
     ULG_STEER_SPOOL_DIR_ENV,
     PendingSteer,
     append_directive,
     append_spool_entry,
     claim_pending,
+    consume_next_steer_envelope,
     mark_delivered,
+    native_tool_steer_hook_response,
+    spool_path,
 )
 
 
@@ -120,6 +126,152 @@ def test_copy_upstream_injects_on_tools_call(
     assert relayed is not None
     assert len(relayed["result"]["content"]) == 2
     assert "use Stargate" in relayed["result"]["content"][1]["text"]
+
+
+def _age_pending(spool: Path, dispatch_id: str) -> None:
+    path = spool_path(spool, dispatch_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for raw in data["pending"]:
+        raw["deposited_at"] = "2020-01-01T00:00:00+00:00"
+        raw["ttl_s"] = 1
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _deposit(spool: Path, dispatch_id: str, entry_id: str, directive: str) -> None:
+    append_spool_entry(
+        dispatch_id,
+        authority_turn_id="9",
+        directive=directive,
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id=entry_id,
+    )
+
+
+def test_b1_native_hook_delivers_without_mcp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _deposit(tmp_path, "disp-native", "e-native", "operator ruling")
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-native")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    response = native_tool_steer_hook_response({"tool_name": "Shell"})
+    assert "operator ruling" in response["additional_context"]
+    assert response["additional_context"].startswith("ULG_STEER:")
+
+
+def test_b2_mcp_name_leaves_steer_for_the_bridge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _deposit(tmp_path, "disp-mcp", "e-mcp", "use Stargate")
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-mcp")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    assert (
+        native_tool_steer_hook_response({"tool_name": "MCP:vortex-code-cortex"}) == {}
+    )
+    payload = _tools_call_response()
+    upstream = io.BytesIO()
+    write_framed_message(upstream, payload)
+    upstream.seek(0)
+    downstream = io.BytesIO()
+    _copy_upstream(upstream, downstream, allow=None, pending_methods={42: "tools/call"})
+    downstream.seek(0)
+    relayed = read_framed_message(downstream)
+    assert relayed is not None
+    assert "use Stargate" in relayed["result"]["content"][1]["text"]
+    again = io.BytesIO()
+    write_framed_message(again, _tools_call_response())
+    again.seek(0)
+    second = io.BytesIO()
+    _copy_upstream(again, second, allow=None, pending_methods={42: "tools/call"})
+    second.seek(0)
+    relayed_again = read_framed_message(second)
+    assert relayed_again is not None
+    assert len(relayed_again["result"]["content"]) == 1
+
+
+def test_b3_fifo_on_successive_native_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _deposit(tmp_path, "disp-fifo", "e-first", "first ruling")
+    _deposit(tmp_path, "disp-fifo", "e-second", "second ruling")
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-fifo")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    first = native_tool_steer_hook_response({"tool_name": "Read"})
+    second = native_tool_steer_hook_response({"tool_name": "Grep"})
+    assert "first ruling" in first["additional_context"]
+    assert "second ruling" in second["additional_context"]
+    assert "e-first" in first["additional_context"]
+    assert "e-second" in second["additional_context"]
+
+
+def test_b4_ttl_elapsed_while_live_still_delivers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _deposit(tmp_path, "disp-ttl", "e-ttl", "late ruling")
+    _age_pending(tmp_path, "disp-ttl")
+    assert claim_pending("disp-ttl", spool_dir=tmp_path) is None
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-ttl")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    response = native_tool_steer_hook_response({"tool_name": "Shell"})
+    assert "late ruling" in response["additional_context"]
+
+
+def test_b5_delivered_once_not_on_later_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _deposit(tmp_path, "disp-once", "e-once", "only once")
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-once")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    assert (
+        "only once"
+        in native_tool_steer_hook_response({"tool_name": "Shell"})["additional_context"]
+    )
+    assert native_tool_steer_hook_response({"tool_name": "Grep"}) == {}
+    assert consume_next_steer_envelope("disp-once", spool_dir=tmp_path) is None
+
+
+def test_consume_refuses_when_dispatch_has_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _deposit(tmp_path, "disp-ended", "e-ended", "too late")
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: False,
+    )
+    assert consume_next_steer_envelope("disp-ended", spool_dir=tmp_path) is None
+    assert claim_pending("disp-ended", spool_dir=tmp_path) is not None
+
+
+def test_steer_live_statuses_match_ledger() -> None:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        _STATUS_TERMINAL,
+    )
+
+    assert STEER_TERMINAL_LEDGER_STATUSES == frozenset(_STATUS_TERMINAL)
+    assert STEER_LIVE_LEDGER_STATUSES == frozenset(
+        {"admitted", "running", "parked_waiting"}
+    )
+    assert "queued" not in STEER_LIVE_LEDGER_STATUSES
 
 
 def test_framing_roundtrip_one_mib_payload() -> None:

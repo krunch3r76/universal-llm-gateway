@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from scripts.mcp_bridge_steer_inject import (
     PendingSteer,
     append_spool_entry,
+    claim_pending,
     mark_delivered,
 )
 from services.git_integration_worker.cursor_sdk_park_for_restart import ParkRefusal
@@ -633,9 +634,7 @@ def test_preflight_ac3_prefixed_execution_id(ledger_env: Any) -> None:
 def _seed_ac4_park_resume(ledger: Any) -> None:
     _ledger_admit(ledger, dispatch_id="P", execution_id="E")
     ledger.mark_terminal(dispatch_id="P", terminal_status="cancelled")
-    _ledger_admit(
-        ledger, dispatch_id="P-r1", execution_id="E", resume_of="P"
-    )
+    _ledger_admit(ledger, dispatch_id="P-r1", execution_id="E", resume_of="P")
     register_live_run(
         dispatch_id="P-r1",
         thread_id="10479",
@@ -667,18 +666,14 @@ def test_preflight_ac5_prefixed_park_resume(ledger_env: Any) -> None:
 def test_preflight_ac6_rowid_order_irrelevant(ledger_env: Any) -> None:
     _ledger_admit(ledger_env, dispatch_id="P", execution_id="E")
     ledger_env.mark_terminal(dispatch_id="P", terminal_status="cancelled")
-    _ledger_admit(
-        ledger_env, dispatch_id="P-r1", execution_id="E", resume_of="P"
-    )
+    _ledger_admit(ledger_env, dispatch_id="P-r1", execution_id="E", resume_of="P")
     register_live_run(
         dispatch_id="P-r1",
         thread_id="10479",
         source_repo="/tmp/repo",
         run=object(),
     )
-    _ledger_admit(
-        ledger_env, dispatch_id="P-r2", execution_id="E", resume_of="P"
-    )
+    _ledger_admit(ledger_env, dispatch_id="P-r2", execution_id="E", resume_of="P")
     ledger_env.mark_terminal(dispatch_id="P-r2", terminal_status="cancelled")
     assert _ledger_rowid(ledger_env, "P-r2") > _ledger_rowid(ledger_env, "P-r1")
     try:
@@ -711,11 +706,14 @@ async def test_preflight_ac7_ambiguous_two_live(
     events: list[Any] = []
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_steer_inject_http.deposit_steer_directive",
-        lambda **kw: deposit_calls.append(kw) or SteerDepositResult(
-            dispatch_id="x",
-            entry_id="e",
-            authority_turn_id="1",
-            spool_path=str(spool / "x.json"),
+        lambda **kw: (
+            deposit_calls.append(kw)
+            or SteerDepositResult(
+                dispatch_id="x",
+                entry_id="e",
+                authority_turn_id="1",
+                spool_path=str(spool / "x.json"),
+            )
         ),
     )
     monkeypatch.setattr(
@@ -786,7 +784,9 @@ def test_preflight_ac11_pk_beats_execution_id_collision(ledger_env: Any) -> None
         source_repo="/tmp/repo",
         run=object(),
     )
-    _ledger_admit(ledger_env, dispatch_id="other-live", execution_id="D", thread_id="10480")
+    _ledger_admit(
+        ledger_env, dispatch_id="other-live", execution_id="D", thread_id="10480"
+    )
     register_live_run(
         dispatch_id="other-live",
         thread_id="10480",
@@ -839,12 +839,14 @@ async def test_inject_ac12_bus_address_202(
     recover_kw: list[dict[str, Any]] = []
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_steer_inject_http.deposit_steer_directive",
-        lambda **kw: deposit_kw.append(kw)
-        or SteerDepositResult(
-            dispatch_id="disp-live",
-            entry_id="e-live",
-            authority_turn_id="77",
-            spool_path=str(spool / "disp-live.json"),
+        lambda **kw: (
+            deposit_kw.append(kw)
+            or SteerDepositResult(
+                dispatch_id="disp-live",
+                entry_id="e-live",
+                authority_turn_id="77",
+                spool_path=str(spool / "disp-live.json"),
+            )
         ),
     )
     monkeypatch.setattr(
@@ -956,9 +958,7 @@ async def test_inject_ac17_ac18_submitted_id_on_event(
             spool_dir=spool,
         )
         requested = [
-            ev
-            for ev in events
-            if ev.signal == "frontier.sdk.steer.inject.requested"
+            ev for ev in events if ev.signal == "frontier.sdk.steer.inject.requested"
         ][0]
         assert requested.payload["submitted_id"] == "cursor-sdk:dispatch:E"
         assert requested.payload["dispatch_id"] == "P-r1"
@@ -974,14 +974,129 @@ async def test_inject_ac17_ac18_submitted_id_on_event(
             spool_dir=spool,
         )
         req2 = [
-            ev
-            for ev in events
-            if ev.signal == "frontier.sdk.steer.inject.requested"
+            ev for ev in events if ev.signal == "frontier.sdk.steer.inject.requested"
         ][0]
         assert req2.payload["submitted_id"] == "plain-key"
         assert req2.payload["submitted_id"] == req2.payload["dispatch_id"]
     finally:
         unregister_live_run(dispatch_id="P-r1")
+
+
+def test_a1_terminal_pending_expires_into_closeout(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda ev: events.append(ev),
+    )
+    append_spool_entry(
+        "disp-a1",
+        authority_turn_id="5",
+        directive="lost ruling",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-a1",
+    )
+    from services.git_integration_worker.cursor_sdk_steer_inject import (
+        TERMINAL_UNDELIVERED_REASON,
+        apply_steer_undelivered_closeout,
+    )
+
+    body = json.dumps({"status": "complete"})
+    out = apply_steer_undelivered_closeout(body, dispatch_id="disp-a1", spool_dir=spool)
+    payload = json.loads(out)
+    assert payload["steer_undelivered"] == [
+        {
+            "entry_id": "entry-a1",
+            "deposited_at": payload["steer_undelivered"][0]["deposited_at"],
+            "reason": TERMINAL_UNDELIVERED_REASON,
+        }
+    ]
+    assert payload["steer_undelivered"][0]["deposited_at"]
+    expired = [ev for ev in events if ev.signal == "frontier.sdk.steer.inject.expired"]
+    assert len(expired) == 1
+    assert expired[0].payload["entry_id"] == "entry-a1"
+    assert expired[0].payload["reason"] == TERMINAL_UNDELIVERED_REASON
+    from scripts.mcp_bridge_steer_inject import spool_path
+
+    stored = json.loads(spool_path(spool, "disp-a1").read_text(encoding="utf-8"))
+    assert stored["pending"] == []
+    assert stored["expired"][0]["reason"] == TERMINAL_UNDELIVERED_REASON
+
+
+def test_a2_terminal_ttl_expired_pending_same(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda ev: events.append(ev),
+    )
+    append_spool_entry(
+        "disp-a2",
+        authority_turn_id="6",
+        directive="aged ruling",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-a2",
+    )
+    from scripts.mcp_bridge_steer_inject import spool_path
+
+    path = spool_path(spool, "disp-a2")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["pending"][0]["deposited_at"] = "2020-01-01T00:00:00+00:00"
+    data["pending"][0]["ttl_s"] = 1
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert claim_pending("disp-a2", spool_dir=spool) is None
+    from services.git_integration_worker.cursor_sdk_steer_inject import (
+        TERMINAL_UNDELIVERED_REASON,
+        apply_steer_undelivered_closeout,
+    )
+
+    out = apply_steer_undelivered_closeout(
+        json.dumps({"status": "complete"}),
+        dispatch_id="disp-a2",
+        spool_dir=spool,
+    )
+    payload = json.loads(out)
+    assert payload["steer_undelivered"][0]["entry_id"] == "entry-a2"
+    assert payload["steer_undelivered"][0]["reason"] == TERMINAL_UNDELIVERED_REASON
+    assert any(
+        ev.signal == "frontier.sdk.steer.inject.expired"
+        and ev.payload["entry_id"] == "entry-a2"
+        for ev in events
+    )
+
+
+def test_a3_delivered_closeout_omits_steer_undelivered(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda ev: events.append(ev),
+    )
+    append_spool_entry(
+        "disp-a3",
+        authority_turn_id="7",
+        directive="already there",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-a3",
+    )
+    pending = claim_pending("disp-a3", spool_dir=spool)
+    assert pending is not None
+    mark_delivered(pending, spool_dir=spool)
+    from services.git_integration_worker.cursor_sdk_steer_inject import (
+        apply_steer_undelivered_closeout,
+    )
+
+    body = json.dumps({"status": "complete"})
+    out = apply_steer_undelivered_closeout(body, dispatch_id="disp-a3", spool_dir=spool)
+    assert out == body
+    assert "steer_undelivered" not in out
+    assert events == []
 
 
 def test_ac19_sibling_payloads_omit_submitted_id() -> None:
@@ -992,9 +1107,7 @@ def test_ac19_sibling_payloads_omit_submitted_id() -> None:
         authority_turn_id="a",
         spool_uri="u",
     )
-    de = SdkSteerInjectDelivered(
-        dispatch_id="d", entry_id="e", authority_turn_id="a"
-    )
+    de = SdkSteerInjectDelivered(dispatch_id="d", entry_id="e", authority_turn_id="a")
     ex = SdkSteerInjectExpired(dispatch_id="d", entry_id="e", ttl_s=1)
     es = SdkSteerInjectEscalated(dispatch_id="d", entry_id="e", reason="r")
     for ev in (sp, de, ex, es):

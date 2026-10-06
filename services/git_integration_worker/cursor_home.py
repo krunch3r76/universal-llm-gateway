@@ -14,6 +14,7 @@ import json
 import os
 import pwd
 import shutil
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -318,6 +319,54 @@ def _link_operator_venv(home: Path, real: Path) -> None:
         )
 
 
+def steer_native_hook_command() -> str:
+    """Absolute command the SDK user hook runs for native-tool steer delivery."""
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "mcp_bridge_steer_hook.py"
+    )
+    return f"{sys.executable} {script}"
+
+
+def _install_steer_native_hook(cursor_dir: Path) -> None:
+    """Install postToolUse hook into the dispatch HOME.
+
+    The local SDK agent loads user hooks from ``$HOME/.cursor/hooks.json``.
+    Dispatch HOME is that HOME, so the hook is visible to the headless agent
+    and not to the operator IDE. MCP tool names (``MCP:``) are ignored inside
+    the hook so the stdio bridge remains the MCP delivery path.
+    """
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "mcp_bridge_steer_hook.py"
+    )
+    if not script.is_file():
+        logger.warning("dispatch_home: steer hook script absent at %s", script)
+        return
+    command = steer_native_hook_command()
+    path = cursor_dir / "hooks.json"
+    data: dict = {"version": 1, "hooks": {}}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            loaded = None
+        if isinstance(loaded, dict):
+            data = loaded
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    post = hooks.get("postToolUse")
+    if not isinstance(post, list):
+        post = []
+    if not any(
+        isinstance(item, dict) and item.get("command") == command for item in post
+    ):
+        post.append({"command": command})
+    hooks["postToolUse"] = post
+    data["hooks"] = hooks
+    data["version"] = data.get("version") or 1
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def setup_cursor_dispatch_home(
     dispatch_id: str,
     *,
@@ -384,6 +433,7 @@ def setup_cursor_dispatch_home(
     # Plugin parity with the IDE is wrong for the human-facing operator register:
     # a headless seat has no human reader. Swap it for the interagent counterpart.
     apply_cursor_sdk_seat_overlay(cursor_dir)
+    _install_steer_native_hook(cursor_dir)
     seed_dispatch_git_identity(home, dispatch_id)
     _link_operator_venv(home, real)
     link_operator_playwright_browsers(home, real)

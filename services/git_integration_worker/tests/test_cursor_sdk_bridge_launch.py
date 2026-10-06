@@ -627,6 +627,7 @@ def test_build_bridge_command_lane_a_argv_matches_master(
         build_dispatch_path_prepend,
         dispatch_git_env_vars,
     )
+    from services.git_integration_worker.cursor_sdk_context import steer_spool_dir
 
     monkeypatch.delenv("NODE_OPTIONS", raising=False)
     lane = tmp_path / "lane"
@@ -647,6 +648,7 @@ def test_build_bridge_command_lane_a_argv_matches_master(
         f"CURSOR_SDK_DISPATCH_ID={dispatch_id}",
         *[f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items()],
         *[f"{k}={v}" for k, v in dispatch_ledger_env_vars().items()],
+        f"ULG_STEER_SPOOL_DIR={steer_spool_dir()}",
         f"NODE_OPTIONS=--require {preload}",
         f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane}",
         bridge_bin,
