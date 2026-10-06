@@ -45,8 +45,10 @@ Usage
 
 Exit status
 -----------
-* 0 — success (regardless of whether drift was detected)
-* 1 — infrastructure failure (cortex-api unreachable, bad response)
+* 0 — success (regardless of whether drift was detected), or cortex_api
+  not ready within the readiness budget (stdout skip; the restart continues)
+* 1 — infrastructure failure (cannot import the cortex relay or MCP boot
+  runner, render raises, bad response)
 """
 
 from __future__ import annotations
@@ -78,6 +80,9 @@ _RELAY_ERROR_MAX_BYTES = 512
 _READY_PATH = "/boot-audit-counters"
 _READY_BUDGET_S = 20.0
 _READY_INTERVAL_S = 0.5
+# cx() uses a 30s client timeout. A probe issued near the end of the budget
+# would then run past manage's 45s subprocess cap. Cap each readiness call.
+_PROBE_CALL_CAP_S = 2.0
 
 # Families recognised by the seat model.  Used to distinguish
 # '{family}-{platform}' slugs (e.g. "claude-cursor") from bare platform slugs
@@ -255,11 +260,44 @@ def _manifest_has_relay_error_fetches(manifest: dict[str, Any]) -> list:
     return []
 
 
-def _default_cx(method: str, path: str) -> dict[str, Any]:
-    _ensure_mcp_path()
-    from tools._cortex_relay import cx  # type: ignore[import-not-found]
+def _default_cx(method: str, path: str, *, timeout_s: float) -> dict[str, Any]:
+    """Readiness GET with an explicit client timeout.
 
-    return cx(method, path)
+    ``cx()`` fixes the client budget at 30s and does not take a timeout, so
+    this calls the same sync client factory directly. Import failure exits 1
+    with the same shape of message as ``_import_boot_runner``.
+    """
+    _ensure_mcp_path()
+    try:
+        import httpx
+        from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+    except ImportError as exc:
+        print(
+            f"boot-render-diff: cannot import cortex relay ({exc}). "
+            "Ensure ~/.venvs/universal is active and the repo is on sys.path.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    try:
+        with make_sync_client(DEFAULT_CORTEX_URL, timeout=timeout_s) as client:
+            response = client.request(method, path)
+    except httpx.RequestError as exc:
+        return {
+            "error": f"cortex-api connection failed: {exc}",
+            "status_code": None,
+        }
+    if response.status_code >= 400:
+        return {
+            "error": f"cortex-api error: HTTP {response.status_code}",
+            "status_code": response.status_code,
+        }
+    try:
+        data = response.json()
+    except ValueError as exc:
+        return {"error": f"bad response: {exc}", "status_code": response.status_code}
+    if isinstance(data, dict):
+        return data
+    return {"error": "non-dict response", "status_code": response.status_code}
 
 
 def _wait_cortex_ready(
@@ -270,13 +308,23 @@ def _wait_cortex_ready(
 ) -> bool:
     """Poll GET /boot-audit-counters until the relay returns a non-error dict.
 
-    Ready means a dict with no top-level ``error``. Budget is 20 s so this
-    wait plus a two-agent render stays inside manage's 45 s subprocess cap.
+    Ready means a dict with no top-level ``error``. The wait stops at 20s.
+    Each default probe is limited to ``min(2s, remaining)`` so a hung accept
+    cannot run the readiness loop past that budget.
     """
-    probe = cx_fn or _default_cx
     deadline = monotonic() + _READY_BUDGET_S
     while True:
-        result = probe("GET", _READY_PATH)
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return False
+        if cx_fn is None:
+            result = _default_cx(
+                "GET",
+                _READY_PATH,
+                timeout_s=min(_PROBE_CALL_CAP_S, remaining),
+            )
+        else:
+            result = cx_fn("GET", _READY_PATH)
         if isinstance(result, dict) and "error" not in result:
             return True
         now = monotonic()

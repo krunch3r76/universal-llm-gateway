@@ -172,3 +172,60 @@ def test_probe_ready_after_n_polls_renders_within_budget(baseline_dir, capsys, m
     assert calls["n"] == 3
     assert clock["t"] == pytest.approx(1.0)
     assert clock["t"] <= brd._READY_BUDGET_S
+
+
+def test_exit_status_doc_names_not_ready_as_exit_zero():
+    doc = brd.__doc__ or ""
+    exit_section = doc.split("Exit status", 1)[1]
+    assert "not ready" in exit_section
+    assert "0 —" in exit_section
+    assert "cortex-api unreachable" not in exit_section
+
+
+def test_ready_probe_timeout_is_min_of_cap_and_remaining(monkeypatch):
+    """Hung accept near the budget must not take cx's 30s timeout."""
+    clock = {"t": 0.0}
+    seen: list[tuple[float, float]] = []
+
+    def fake(method, path, *, timeout_s):
+        assert method == "GET"
+        assert path == "/boot-audit-counters"
+        seen.append((clock["t"], timeout_s))
+        clock["t"] += timeout_s
+        return {"error": "hung"}
+
+    monkeypatch.setattr(brd, "_default_cx", fake)
+
+    def monotonic():
+        return clock["t"]
+
+    def sleep(seconds):
+        clock["t"] += seconds
+
+    assert brd._wait_cortex_ready(sleep=sleep, monotonic=monotonic) is False
+    assert seen
+    for start, timeout_s in seen:
+        remaining = brd._READY_BUDGET_S - start
+        assert timeout_s == pytest.approx(min(brd._PROBE_CALL_CAP_S, remaining))
+        assert timeout_s <= brd._PROBE_CALL_CAP_S
+    assert clock["t"] <= brd._READY_BUDGET_S + 1e-9
+
+
+def test_default_cx_import_error_exits_soft(monkeypatch, capsys):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "transport_utils" or name.startswith("transport_utils."):
+            raise ImportError("simulated missing relay")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(SystemExit) as exc_info:
+        brd._default_cx("GET", "/boot-audit-counters", timeout_s=0.1)
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot import cortex relay" in err
+    assert "simulated missing relay" in err
+    assert "Traceback" not in err
