@@ -95,7 +95,7 @@ def _mock_bind_unless_isolated_registry(
     if "isolated_registry" in request.fixturenames:
         return
     monkeypatch.setattr(
-        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
         MagicMock(return_value=True),
     )
 
@@ -327,7 +327,7 @@ async def test_bound_seat_auto_resumes_without_reattach_opt_in(
     )
     monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
     monkeypatch.setattr(
-        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
         MagicMock(),
     )
     page = MagicMock()
@@ -378,7 +378,7 @@ async def test_paste_retired_url_does_not_call_associate_cse(
     )
     monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
     monkeypatch.setattr(
-        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
         MagicMock(),
     )
     page = MagicMock()
@@ -439,7 +439,7 @@ async def test_ensure_cse_attached_reuses_existing_tab_without_navigate(
     )
     bind = MagicMock()
     monkeypatch.setattr(
-        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
         bind,
     )
     navigate = AsyncMock()
@@ -505,7 +505,7 @@ async def test_restricted_resume_does_not_navigate_other_cse_host(
 
     monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
     monkeypatch.setattr(
-        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        "cdp_ask.followup_reattach.cdp_registry.bind_chat_url_only",
         MagicMock(),
     )
 
@@ -546,7 +546,7 @@ async def test_launch_path_registers_lane(monkeypatch: pytest.MonkeyPatch) -> No
 async def test_operator_mint_with_lane_yields_seat_open_after_bind(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """AC4: operator-purpose mint with parent_thread seats after bind_session_address."""
+    """Mint binds chat_url only; the driving seat is the post-acquire commit."""
     from claude_bundles import cdp_registry as reg
     from claude_bundles.cdp_registry.models import seat_open
 
@@ -579,6 +579,10 @@ async def test_operator_mint_with_lane_yields_seat_open_after_bind(
         _connect_factory(),
     )
 
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        lambda **_kwargs: True,
+    )
     outcome = await ensure_cse_attached(
         CSE_A,
         holder="h",
@@ -587,6 +591,18 @@ async def test_operator_mint_with_lane_yields_seat_open_after_bind(
     )
     assert outcome.ok is True
     assert outcome.lane_created is True
+    row = reg._load_active()[outcome.registration_id]
+    assert not seat_open(row, "10479")
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    status = commit_reattach_driving_seat(
+        outcome.registration_id or "",
+        chat_url=CSE_A,
+        lane="10479",
+        snapshot_holder_id=outcome.seat_snapshot_holder_id,
+        snapshot_seat_bound_at=outcome.seat_snapshot_bound_at,
+    )
+    assert status == "committed"
     row = reg._load_active()[outcome.registration_id]
     assert seat_open(row, "10479")
 
@@ -2245,3 +2261,485 @@ async def test_unrelated_seat_holder_change_still_refuses_mismatch(
         getattr(e, "signal", None) == "cdp_ask.followup.refused_seat_mismatch"
         for e in events
     )
+
+
+def _open_operator_pair(lane: str) -> tuple[Any, Any, Any]:
+    """Two seat-open operator hosts on one parent_thread. Holder has the later bind."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    holder = reg.register_lane(
+        holder="holder-open",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    borrowed = reg.register_lane(
+        holder="borrow-open",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        for rid, bound_at in (
+            (holder.registration_id, 20.0),
+            (borrowed.registration_id, 10.0),
+        ):
+            row = dict(active[rid])
+            row["parent_thread"] = lane
+            row["seat_lane"] = lane
+            row["seat_bound_at"] = bound_at
+            row["seat_closed_at"] = None
+            row["purpose"] = "operator-proxy"
+            active[rid] = row
+        reg._store.write_active(active)
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[borrowed.registration_id], lane)
+    return reg, holder, borrowed
+
+
+def _snap_from_active(reg: Any) -> dict[str, Any]:
+    from claude_bundles.hop_cadence_seat_snap import seat_rows_from_registry_records
+
+    return {
+        "seat_rows": seat_rows_from_registry_records(reg._store.load_active()),
+        "rows": [],
+        "observed_at": "step0",
+    }
+
+
+def test_step0_chat_url_only_borrow_second_gate_mismatches(
+    isolated_registry: Path,
+) -> None:
+    """Premise (a): chat_url-only bind leaves the prior holder; gate refuses."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+    from cdp_ask.lane_admission import lane_seat_holder
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[borrowed.registration_id])
+        row["chat_url"] = CSE_TARGET_38282
+        row["chat_url_bound_at"] = 1.0
+        active[borrowed.registration_id] = row
+        reg._store.write_active(active)
+    active = reg._store.load_active()
+    assert active[holder.registration_id].get("seat_closed_at") is None
+    assert active[borrowed.registration_id].get("seat_closed_at") is None
+    snap = _snap_from_active(reg)
+    projected = lane_seat_holder(snap, lane)
+    assert projected["registration_id"] == holder.registration_id
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=CSE_TARGET_38282,
+        registration_id=borrowed.registration_id,
+        purpose="operator-proxy",
+    )
+    _out, err, _path = _lane_seat_followup_gate(req, None, snap)
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+
+
+def test_step0_full_bind_second_gate_accepts_matched_reattach_host(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Falsifier (b): today's full bind seats the borrow host; gate does not refuse it."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+    from cdp_ask.lane_admission import lane_seat_holder
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        lambda **_kwargs: True,
+    )
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    assert reg.bind_session_address(
+        borrowed.registration_id, chat_url=CSE_TARGET_38282
+    )
+    active = reg._store.load_active()
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert active[holder.registration_id].get("seat_closed_at") is not None
+    snap = _snap_from_active(reg)
+    projected = lane_seat_holder(snap, lane)
+    assert projected["registration_id"] == borrowed.registration_id
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=CSE_TARGET_38282,
+        registration_id=borrowed.registration_id,
+        purpose="operator-proxy",
+    )
+    _out, err, _path = _lane_seat_followup_gate(req, None, snap)
+    assert err is None
+
+
+def _upsert_spy(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def _record(**kwargs: Any) -> bool:
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        _record,
+    )
+    return calls
+
+
+def _arm_split_borrow(
+    monkeypatch: pytest.MonkeyPatch,
+    reg: Any,
+    borrowed_id: str,
+    *,
+    store: ExecutionStore,
+) -> list[str]:
+    """Navigate only *borrowed_id*; project seats from the registry; record paste order."""
+    order: list[str] = []
+
+    async def _snap() -> dict[str, Any]:
+        return _snap_from_active(reg)
+
+    monkeypatch.setattr(store, "active_work_snapshot", _snap)
+
+    async def _scan(lane: Any) -> list[str]:
+        current = reg.chat_url_for_registration(lane.registration_id)
+        if current == CSE_TARGET_38282:
+            return [CSE_TARGET_38282]
+        return []
+
+    monkeypatch.setattr("cdp_ask.followup_resolve.scan_lane_cse_urls", _scan)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.find_page_on_lane", AsyncMock(return_value=None)
+    )
+
+    async def _nav(lane: Any, chat_url: str) -> tuple[Any, Any] | None:
+        if lane.registration_id != borrowed_id:
+            return None
+        page = _FakePage()
+        page.url = chat_url
+        return page, _FakePw()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", _nav)
+    page = MagicMock()
+    page.url = CSE_TARGET_38282
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+
+    async def _paste(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        order.append("paste")
+        return {
+            "send_verified": True,
+            "receipt": "dom_paste",
+            "streaming_at_paste": False,
+            "url": CSE_TARGET_38282,
+            "pasted_at": 1.0,
+        }
+
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", _paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr("cdp_ask.followup_resolve.emit_followup_event", lambda _e: None)
+    return order
+
+
+@pytest.mark.asyncio
+async def test_refused_borrow_keeps_both_open_seats(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1: lane_busy after chat_url-only borrow does not close either open seat."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    from cdp_ask.followup import _acquire_lane, _release_lane
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+    _upsert_spy(monkeypatch)
+    assert await _acquire_lane(borrowed.registration_id)
+    try:
+        resp = await execute_followup(
+            FollowupProjectAskRequest(
+                prompt_text="memo",
+                parent_thread=lane,
+                chat_url=CSE_TARGET_38282,
+                reattach=True,
+                purpose="operator-proxy",
+            ),
+            store,
+        )
+    finally:
+        _release_lane(borrowed.registration_id)
+    assert resp.error == "lane_busy"
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert reg.chat_url_for_registration(borrowed.registration_id) is None
+
+
+@pytest.mark.asyncio
+async def test_successful_borrow_commits_seat_once_after_acquire(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC2: borrow host is seated, holder upserted once, after gate and acquire."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    import cdp_ask.followup as followup_mod
+    import cdp_ask.followup_resolve as resolve_mod
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    order = _arm_split_borrow(
+        monkeypatch, reg, borrowed.registration_id, store=store
+    )
+    upserts = _upsert_spy(monkeypatch)
+    real_gate = resolve_mod._lane_seat_followup_gate
+    real_acquire = followup_mod._acquire_lane
+    real_commit = followup_mod._commit_reattach_seat
+
+    def _gate(*args: Any, **kwargs: Any) -> Any:
+        order.append("gate")
+        return real_gate(*args, **kwargs)
+
+    async def _acquire(*args: Any, **kwargs: Any) -> bool:
+        order.append("acquire")
+        return await real_acquire(*args, **kwargs)
+
+    def _commit(*args: Any, **kwargs: Any) -> str:
+        order.append("commit")
+        return real_commit(*args, **kwargs)
+
+    monkeypatch.setattr(resolve_mod, "_lane_seat_followup_gate", _gate)
+    monkeypatch.setattr(followup_mod, "_acquire_lane", _acquire)
+    monkeypatch.setattr(followup_mod, "_commit_reattach_seat", _commit)
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert order == ["gate", "gate", "acquire", "commit", "paste"]
+    assert len(upserts) == 1
+    assert upserts[0]["registration_id"] == borrowed.registration_id
+    assert upserts[0]["chat_url"] == CSE_TARGET_38282
+    active = reg._store.load_active()
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert active[holder.registration_id].get("seat_closed_at") is not None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_seat_change_refuses_commit_without_seating(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3: seat_bound_at change after reattach refuses commit; no paste."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    import cdp_ask.followup as followup_mod
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    order = _arm_split_borrow(
+        monkeypatch, reg, borrowed.registration_id, store=store
+    )
+    real_acquire = followup_mod._acquire_lane
+
+    async def _acquire(*args: Any, **kwargs: Any) -> bool:
+        ok = await real_acquire(*args, **kwargs)
+        if ok:
+            with reg._store.ports_lock():
+                active = reg._store.load_active()
+                row = dict(active[holder.registration_id])
+                row["seat_bound_at"] = 99.0
+                active[holder.registration_id] = row
+                reg._store.write_active(active)
+        return ok
+
+    monkeypatch.setattr(followup_mod, "_acquire_lane", _acquire)
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.error == "reattach_seat_changed"
+    assert "paste" not in order
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert active[holder.registration_id]["seat_bound_at"] == 99.0
+    assert reg.chat_url_for_registration(borrowed.registration_id) is None
+
+
+@pytest.mark.asyncio
+async def test_idempotent_rebind_refusal_does_not_upsert_holder(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC4: idempotent chat_url re-bind does not map the refused URL to the host."""
+    from cdp_ask.followup import _acquire_lane, _release_lane
+
+    lane = "15404"
+    reg, _holder, borrowed = _open_operator_pair(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[borrowed.registration_id])
+        row["chat_url"] = CSE_TARGET_38282
+        active[borrowed.registration_id] = row
+        reg._store.write_active(active)
+    store = ExecutionStore()
+    _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+    upserts = _upsert_spy(monkeypatch)
+    assert await _acquire_lane(borrowed.registration_id)
+    try:
+        resp = await execute_followup(
+            FollowupProjectAskRequest(
+                prompt_text="memo",
+                parent_thread=lane,
+                chat_url=CSE_TARGET_38282,
+                reattach=True,
+                purpose="operator-proxy",
+            ),
+            store,
+        )
+    finally:
+        _release_lane(borrowed.registration_id)
+    assert resp.error == "lane_busy"
+    assert upserts == []
+
+
+@pytest.mark.asyncio
+async def test_commit_raise_restores_borrow_without_paste(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC5: commit helper raising after acquire restores the borrow and skips paste."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    order = _arm_split_borrow(
+        monkeypatch, reg, borrowed.registration_id, store=store
+    )
+
+    def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.apply_driving_seat_bind",
+        _boom,
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.error == "reattach_seat_commit_failed"
+    assert "paste" not in order
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert reg.chat_url_for_registration(borrowed.registration_id) is None
+
+
+def test_non_reattach_non_holder_still_mismatches(
+    isolated_registry: Path,
+) -> None:
+    """AC6: a non-reattach request to a non-holder host is still refused."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    snap = _snap_from_active(reg)
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=CSE_TARGET_38282,
+        registration_id=borrowed.registration_id,
+        purpose="operator-proxy",
+    )
+    _out, err, _path = _lane_seat_followup_gate(req, None, snap)
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert holder.registration_id != borrowed.registration_id
+    assert reg is not None
+
+
+@pytest.mark.asyncio
+async def test_reattach_host_on_other_lane_still_mismatches(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6: a reattach host registered on another lane is still refused."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "15404"
+    holder = reg.register_lane(
+        holder="holder-open",
+        purpose="operator-proxy",
+        parent_thread=lane,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    borrowed = reg.register_lane(
+        holder="borrow-other",
+        purpose="operator-proxy",
+        parent_thread="99999",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[holder.registration_id])
+        row["seat_lane"] = lane
+        row["seat_bound_at"] = 20.0
+        row["seat_closed_at"] = None
+        active[holder.registration_id] = row
+        reg._store.write_active(active)
+    store = ExecutionStore()
+    _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.error == "operator_seat_mismatch"
+    assert seat_open(reg._store.load_active()[holder.registration_id], lane)

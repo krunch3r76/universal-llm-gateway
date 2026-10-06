@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from claude_bundles import cdp_registry
@@ -42,6 +42,9 @@ class ReattachOutcome:
     pw: Any | None = None
     prior_chat_url: str | None = None
     reattach_bound_chat_url: str | None = None
+    seat_snapshot_lane: str | None = None
+    seat_snapshot_holder_id: str | None = None
+    seat_snapshot_bound_at: float | None = None
 
 
 def _lane_order(
@@ -128,7 +131,7 @@ def _bind_chat_url(registration_id: str, chat_url: str) -> str | None:
     from universal_protocol.errors import ProtocolError
 
     def _once() -> str | None:
-        if not cdp_registry.bind_session_address(registration_id, chat_url=chat_url):
+        if not cdp_registry.bind_chat_url_only(registration_id, chat_url=chat_url):
             return "attachment.refused"
         return None
 
@@ -300,10 +303,30 @@ async def ensure_cse_attached(
     false, an unbound URL is refused instead of minting a fresh host.
     ``restrict_to_registration_id`` limits navigation to that host after wake —
     auto-resume must not ``goto`` a lane that already holds a different CSE.
+
+    Chat URL is bound without seating. The lane seat snapshot is taken before
+    navigation so a later commit can refuse if that holder moved.
     """
+    from claude_bundles.cdp_registry.session_address import open_lane_seat_holder
+
+    lane_key = (parent_thread or "").strip()
+    snap_holder, snap_bound = (
+        open_lane_seat_holder(lane_key) if lane_key else (None, None)
+    )
+
+    def _done(outcome: ReattachOutcome) -> ReattachOutcome:
+        if not outcome.ok:
+            return outcome
+        return replace(
+            outcome,
+            seat_snapshot_lane=lane_key or None,
+            seat_snapshot_holder_id=snap_holder,
+            seat_snapshot_bound_at=snap_bound,
+        )
+
     woken = await _wake_dormant_seat(chat_url, holder=holder)
     if woken is not None:
-        return woken
+        return _done(woken)
 
     lanes = list(cdp_registry.list_active())
     if restrict_to_registration_id:
@@ -321,15 +344,17 @@ async def ensure_cse_attached(
             )
             if err:
                 return ReattachOutcome(ok=False, error=err)
-            return ReattachOutcome(
-                ok=True,
-                registration_id=lane.registration_id,
-                cdp_url=lane.cdp_url,
-                lane_created=False,
-                page=page,
-                pw=pw,
-                prior_chat_url=prior,
-                reattach_bound_chat_url=bound,
+            return _done(
+                ReattachOutcome(
+                    ok=True,
+                    registration_id=lane.registration_id,
+                    cdp_url=lane.cdp_url,
+                    lane_created=False,
+                    page=page,
+                    pw=pw,
+                    prior_chat_url=prior,
+                    reattach_bound_chat_url=bound,
+                )
             )
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
@@ -340,15 +365,17 @@ async def ensure_cse_attached(
         )
         if err:
             return ReattachOutcome(ok=False, error=err)
-        return ReattachOutcome(
-            ok=True,
-            registration_id=lane.registration_id,
-            cdp_url=lane.cdp_url,
-            lane_created=False,
-            page=page,
-            pw=pw,
-            prior_chat_url=prior,
-            reattach_bound_chat_url=bound,
+        return _done(
+            ReattachOutcome(
+                ok=True,
+                registration_id=lane.registration_id,
+                cdp_url=lane.cdp_url,
+                lane_created=False,
+                page=page,
+                pw=pw,
+                prior_chat_url=prior,
+                reattach_bound_chat_url=bound,
+            )
         )
 
     if not allow_mint:
@@ -369,13 +396,15 @@ async def ensure_cse_attached(
     if err:
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error=err)
-    return ReattachOutcome(
-        ok=True,
-        registration_id=reg.registration_id,
-        cdp_url=reg.cdp_url,
-        lane_created=True,
-        page=page,
-        pw=pw,
-        prior_chat_url=prior,
-        reattach_bound_chat_url=bound,
+    return _done(
+        ReattachOutcome(
+            ok=True,
+            registration_id=reg.registration_id,
+            cdp_url=reg.cdp_url,
+            lane_created=True,
+            page=page,
+            pw=pw,
+            prior_chat_url=prior,
+            reattach_bound_chat_url=bound,
+        )
     )

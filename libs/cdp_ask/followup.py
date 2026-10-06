@@ -117,6 +117,19 @@ def _release_lane(registration_id: str) -> None:
     _lane_targets.pop(registration_id, None)
 
 
+def _commit_reattach_seat(outcome: ReattachOutcome, lane: str) -> str:
+    """Post-acquire seat commit. Runs only after the second gate and lane acquire."""
+    from claude_bundles.cdp_registry.session_address import commit_reattach_driving_seat
+
+    return commit_reattach_driving_seat(
+        outcome.registration_id or "",
+        chat_url=outcome.reattach_bound_chat_url or "",
+        lane=lane,
+        snapshot_holder_id=outcome.seat_snapshot_holder_id,
+        snapshot_seat_bound_at=outcome.seat_snapshot_bound_at,
+    )
+
+
 def _skip_borrow_restore_for_inflight_paste(outcome: ReattachOutcome) -> bool:
     """Skip restore when another followup holds the lane lock on this bind."""
     reg_id = (outcome.registration_id or "").strip()
@@ -279,6 +292,8 @@ async def execute_followup(
             # omitted so the second resolve remains the attended-operator oracle
             # (a dormant wake) instead of a registration-keyed CDP scan.
             req = req.model_copy(update={"registration_id": outcome_reg})
+        lane_pin["reattach_used"] = True
+        lane_pin["outcome_reg"] = outcome_reg
         try:
             target, err, resolution_path, target_binding = (
                 await resolve_followup_target(req, store, lane_pin=lane_pin)
@@ -360,6 +375,30 @@ async def execute_followup(
     pw = None
     paste_delivered = False
     try:
+        if (
+            reattach_used
+            and reattach_outcome is not None
+            and reattach_outcome.ok
+            and (reattach_outcome.reattach_bound_chat_url or "").strip()
+        ):
+            try:
+                status = await asyncio.to_thread(
+                    _commit_reattach_seat,
+                    reattach_outcome,
+                    (req.parent_thread or "").strip(),
+                )
+            except Exception as exc:
+                return fail_followup(
+                    "reattach_seat_commit_failed",
+                    detail=f"{type(exc).__name__}: {exc}",
+                    **extra,
+                )
+            if status != "committed":
+                return fail_followup(
+                    "reattach_seat_changed",
+                    detail="lane seat holder changed since reattach",
+                    **extra,
+                )
         found = await find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
             resp = fail_followup(

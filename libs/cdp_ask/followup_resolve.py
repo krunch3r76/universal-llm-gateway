@@ -321,6 +321,37 @@ def _in_flight_off_holder(lane_body: dict) -> list[str]:
     ]
 
 
+def _registry_parent_thread(registration_id: str) -> str:
+    """Lane stamped on the registry row, or empty when the row is absent."""
+    active = cdp_registry._store.load_active()
+    row = active.get(registration_id)
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("parent_thread") or "").strip()
+
+
+def _reattach_same_lane_carve_out(
+    req: FollowupProjectAskRequest,
+    lane: str,
+    reg_id: str,
+    *,
+    reattach_used: bool,
+    outcome_reg: str,
+) -> bool:
+    """Skip ``operator_seat_mismatch`` for a same-lane reattach host.
+
+    Predicate: ``reattach_used`` and ``identity_supplied(req)`` and
+    ``reg_id == outcome_reg`` (non-empty) and the registry row's
+    ``parent_thread`` equals *lane*. Identity omitted does not match.
+    A row whose ``parent_thread`` is a different lane, or empty, does not match.
+    """
+    if not reattach_used or not identity_supplied(req):
+        return False
+    if not outcome_reg or reg_id != outcome_reg:
+        return False
+    return _registry_parent_thread(reg_id) == lane
+
+
 def _lane_seat_followup_gate(
     req: FollowupProjectAskRequest,
     lane_pin: dict | None = None,
@@ -364,7 +395,21 @@ def _lane_seat_followup_gate(
     holder = lane_seat_holder(snap, lane)
     holder_reg = str(holder.get("registration_id") or "").strip() or None
     _chat, reg_id, _exe, _cdp = identity_keys(req)
+    reattach_used = bool(isinstance(lane_pin, dict) and lane_pin.get("reattach_used"))
+    outcome_reg = (
+        str(lane_pin.get("outcome_reg") or "").strip()
+        if isinstance(lane_pin, dict)
+        else ""
+    )
     if reg_id and holder_reg and reg_id != holder_reg:
+        if _reattach_same_lane_carve_out(
+            req,
+            lane,
+            reg_id,
+            reattach_used=reattach_used,
+            outcome_reg=outcome_reg,
+        ):
+            return req, None, None
         emit_followup_event(
             cdp_ask_followup_refused_seat_mismatch(
                 lane=lane,
