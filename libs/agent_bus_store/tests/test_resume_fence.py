@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
+from agent_bus_store.db.connection import connect
 from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
 from agent_bus_store.resume_fence_store import fold_fence
 
@@ -154,6 +155,18 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
         r.get("tool") == "GetDynamicTools"
         for r in bundle["read_set"]["readable"]["mcp_allow"]
     )
+    with connect() as conn:
+        poured_row = conn.execute(
+            """
+            SELECT payload_json FROM resume_fence_events
+            WHERE fence_id = ? AND event = 'poured'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (bundle["fence"]["fence_id"],),
+        ).fetchone()
+    assert poured_row is not None
+    poured_payload = json.loads(str(poured_row["payload_json"]))
+    assert poured_payload["skills_to_use_count"] == 2
     folded = fold_fence(bundle["fence"]["fence_id"])
     assert folded is not None
     assert folded.state == "released"

@@ -15,6 +15,7 @@ from implement_admission.closeout_helpers import cortex_files_root
 
 _SCRATCHBOARDS_HEADING = "## Scratchboards"
 _SKILLS_HEADING = "## Skills"
+_SKILLS_HEADING_RE = re.compile(r"^## Skills[ \t]*$", re.M)
 _CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>`]+")
 _BACKTICK_SLUG_RE = re.compile(r"`/?([A-Za-z0-9][A-Za-z0-9._-]*)`")
 _BARE_SLUG_RE = re.compile(r"^/?([A-Za-z0-9][A-Za-z0-9._-]*)")
@@ -67,53 +68,82 @@ def _normalize_skill_slug(token: str) -> str | None:
     return match.group(1)
 
 
+def _skills_section_chunk(card_text: str) -> str | None:
+    """Return body under a line-anchored ``## Skills`` heading, else None."""
+    match = _SKILLS_HEADING_RE.search(card_text or "")
+    if not match:
+        return None
+    return card_text[match.end() :].split("## ", 1)[0]
+
+
 def extract_card_skills(card_text: str) -> list[str]:
     """Return skill slugs under ``## Skills`` in card order.
 
     Accepts bullet and table rows. Leading ``/`` and ``(fallback …)`` suffixes
     are stripped the same way ``merge_house_pool_skills`` normalizes pool
     ``must_load`` cells. Missing or empty sections yield ``[]`` — never raise.
-    Malformed rows are skipped.
+    Malformed rows are skipped. Table note cells are ignored (slug = cell 0
+    only). Plain prose lines under the section are skipped.
     """
-    if not card_text or _SKILLS_HEADING not in card_text:
+    chunk = _skills_section_chunk(card_text)
+    if chunk is None:
         return []
-    chunk = card_text.split(_SKILLS_HEADING, 1)[1].split("## ", 1)[0]
     ordered: list[str] = []
     seen: set[str] = set()
+
+    def _remember(slug: str) -> None:
+        key = slug.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append(slug)
+
     for raw_line in chunk.splitlines():
         line = raw_line.strip()
         if not line or _TABLE_RULE_RE.fullmatch(line):
             continue
-        candidate: str | None = None
-        backtick = _BACKTICK_SLUG_RE.search(line)
-        if backtick:
-            candidate = backtick.group(1)
-        elif line.startswith("|"):
+        if line.startswith("|"):
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if not cells or cells[0].lower() in _TABLE_HEADER_CELLS:
                 continue
-            candidate = _normalize_skill_slug(cells[0])
-        elif line[:1] in "-*":
-            body = line[1:].strip()
-            for sep in (" — ", " – ", " - "):
-                if sep in body:
-                    body = body.split(sep, 1)[0].strip()
-                    break
-            nested = _BACKTICK_SLUG_RE.search(body)
-            candidate = nested.group(1) if nested else _normalize_skill_slug(body)
-        if not candidate:
+            cell0 = cells[0]
+            backtick = _BACKTICK_SLUG_RE.search(cell0)
+            if backtick:
+                _remember(backtick.group(1))
+            else:
+                normalized = _normalize_skill_slug(cell0)
+                if normalized:
+                    _remember(normalized)
             continue
-        key = candidate.lower()
-        if key in seen:
+        if line[:1] not in "-*":
             continue
-        seen.add(key)
-        ordered.append(candidate)
+        body = line[1:].strip()
+        for sep in (" — ", " – ", " - "):
+            if sep in body:
+                body = body.split(sep, 1)[0].strip()
+                break
+        found = _BACKTICK_SLUG_RE.findall(body)
+        if found:
+            for slug in found:
+                _remember(slug)
+            continue
+        normalized = _normalize_skill_slug(body)
+        if normalized:
+            _remember(normalized)
     return ordered
 
 
 def missing_required_headings(card_text: str) -> list[str]:
     """Headings required on every continuity card (``card-schema.md``)."""
-    return [heading for heading in _REQUIRED_HEADINGS if heading not in card_text]
+    missing: list[str] = []
+    for heading in _REQUIRED_HEADINGS:
+        if heading == _SKILLS_HEADING:
+            if _SKILLS_HEADING_RE.search(card_text or "") is None:
+                missing.append(heading)
+            continue
+        if heading not in card_text:
+            missing.append(heading)
+    return missing
 
 
 def validate_continuity_card(card_text: str) -> list[str]:
@@ -125,10 +155,9 @@ def validate_continuity_card(card_text: str) -> list[str]:
         body = card_text.split(_SCRATCHBOARDS_HEADING, 1)[1].split("## ", 1)[0].strip()
         if not body:
             errors.append("empty_scratchboards_section")
-    if _SKILLS_HEADING in card_text:
-        body = card_text.split(_SKILLS_HEADING, 1)[1].split("## ", 1)[0].strip()
-        if not body:
-            errors.append("empty_skills_section")
+    skills_chunk = _skills_section_chunk(card_text)
+    if skills_chunk is not None and not skills_chunk.strip():
+        errors.append("empty_skills_section")
     return errors
 
 

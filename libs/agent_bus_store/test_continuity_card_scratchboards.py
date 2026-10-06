@@ -87,6 +87,7 @@ def test_extract_card_skills_table_slash_and_paren() -> None:
 | --- | --- |
 | /outbound-voice-spec (fallback .claude/skills/…) | Fonzi |
 | prose-discipline (local) | SMS |
+| prose-discipline | pair with `outbound-voice-spec` |
 | not a slug row because spaces everywhere | skip |
 
 ## Stance
@@ -96,6 +97,45 @@ x
         "outbound-voice-spec",
         "prose-discipline",
     ]
+
+
+def test_extract_card_skills_heading_is_line_anchored() -> None:
+    card = """
+See ## Skills in the footer.
+Also ## Skills Used receipts.
+- `checkpoint-discipline`
+- `ulg-for-llms`
+
+## Stance
+x
+"""
+    assert extract_card_skills(card) == []
+
+
+def test_extract_card_skills_multi_backtick_bullet() -> None:
+    card = """
+## Skills
+- `outbound-voice-spec` + `prose-discipline` — Fonzi pair
+
+## Stance
+x
+"""
+    assert extract_card_skills(card) == [
+        "outbound-voice-spec",
+        "prose-discipline",
+    ]
+
+
+def test_extract_card_skills_skips_prose_lines() -> None:
+    card = """
+## Skills
+Load `card-schema.md` before drafting.
+- `liaison`
+
+## Stance
+x
+"""
+    assert extract_card_skills(card) == ["liaison"]
 
 
 def test_extract_card_skills_malformed_rows_skipped() -> None:
