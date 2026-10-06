@@ -301,8 +301,15 @@ _INHIBIT_EVENT_INACTIVE = 1
 
 
 def _bind_inhibit_globals(wire: Wire) -> tuple[int, int, int]:
-    """Return (compositor_id, seat_id, inhibit_manager_id). Fail closed if manager missing."""
+    """Return (compositor_id, seat_id, inhibit_manager_id). Fail closed if manager missing.
+
+    Inhibit does not bind the fixed toplevel ids 3–8 that ``list``/``activate`` use.
+    After ``get_registry(2)`` the next client id must be 3 — jumping to
+    ``_NEXT_CLIENT_ID`` (9) is a gap and Cosmic rejects it as ``Invalid new_id: 9``
+    (a:38402).
+    """
     wire.send(1, 1, struct.pack("<I", _REGISTRY))
+    wire.next_id = _REGISTRY + 1
     cb = wire.alloc()
     wire.roundtrip(cb)
     missing = [i for i in ("wl_compositor", "wl_seat", _INHIBIT_IFACE) if i not in wire.globals]
