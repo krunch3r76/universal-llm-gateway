@@ -12,11 +12,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from durable_io.atomic import durable_write_text
-from fastapi import HTTPException
 from universal_logging import get_logger
 
-from ..db import cortex_conn, execute, json_encode, query
-from ..routes.assertions import _create_assertion_impl
+from ..claim_hash import compute_claim_hash
+from ..db import WRITE_LOCK, cortex_conn, execute, json_encode, query
 from ..routes.deadlines import _RESOLVED_OUTCOMES, _list_deadlines_impl
 from ..routes.session_journals import (
     _create_session_journal_impl,
@@ -36,6 +35,36 @@ def _op_deadlines(**_: object) -> dict[str, Any]:
     return _list_deadlines_impl()
 
 
+def _insert_deadline_resolution_assertion(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    claim: str,
+    evidence: str,
+    observed_at: str,
+    fulfillment_assertion_id: int | None,
+) -> int:
+    """Insert the RESOLVED assertion on *conn* without committing.
+
+    Caller owns the transaction so an outcome UPDATE failure rolls this row back.
+    """
+    cur = conn.execute(
+        "INSERT INTO assertions ("
+        "  entity_id, claim, confidence, confidence_score, evidence,"
+        "  derivation_type, observed_at, claim_hash, fulfillment_assertion_id"
+        ") VALUES (?, ?, 'confirmed', 1.0, ?, 'agent_observation', ?, ?, ?)",
+        (
+            entity_id,
+            claim,
+            evidence,
+            observed_at,
+            compute_claim_hash(entity_id, claim),
+            fulfillment_assertion_id,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
 def _op_deadline_resolve(
     deadline_id: str | None = None,
     resolution_note: str | None = None,
@@ -50,7 +79,8 @@ def _op_deadline_resolve(
     ∀ deadline entity: two writes are required to stop it surfacing in
     deadlines() — a confirmed RESOLVED assertion on the deadline entity AND
     outcome in its attributes JSON. Agents historically forget the
-    second write; this op performs both reliably.
+    second write; this op performs both in one SQLite transaction. An
+    outcome UPDATE failure rolls the assertion insert back.
     """
     if not deadline_id:
         return {"error": "deadline_id is required"}
@@ -61,55 +91,47 @@ def _op_deadline_resolve(
     if outcome not in _RESOLVED_OUTCOMES:
         return {"error": f"outcome must be one of {sorted(_RESOLVED_OUTCOMES)}"}
 
-    # 1. Read current deadline entity and its attributes.
-    with cortex_conn() as conn:
-        rows = query(
-            conn,
-            "SELECT id, type, attributes FROM entities WHERE id = ? AND type = 'deadline'",
-            (deadline_id,),
-        )
-        if not rows:
-            return {
-                "error": f"Deadline entity not found or not type='deadline': {deadline_id}"
-            }
-
-        attrs_raw = rows[0]["attributes"]
-        current_attrs: dict[str, Any] = (
-            json.loads(attrs_raw) if isinstance(attrs_raw, str) and attrs_raw else {}
-        )
-
-    # 2. Write confirmed RESOLVED assertion on the deadline entity.
-    assertion_body: dict[str, Any] = {
-        "entity_id": deadline_id,
-        "claim": f"RESOLVED — {resolution_note}",
-        "confidence": "confirmed",
-        "evidence": evidence or f"deadline_resolve called; resolved_at={resolved_at}",
-        "derivation_type": "agent_observation",
-        "observed_at": datetime.now(UTC).isoformat(),
-        "confidence_score": 1.0,
-    }
-    if fulfilling_assertion_id is not None:
-        assertion_body["fulfillment_assertion_id"] = fulfilling_assertion_id
-
-    try:
-        assertion_result = _create_assertion_impl(assertion_body)
-    except HTTPException as exc:
-        return {"error": f"Assertion write failed: {exc.detail}", "step": "assert"}
-
-    resolution_assertion_id = (assertion_result.get("item") or {}).get("id")
-
-    # 3. Merge outcome into current attributes (non-destructive merge).
-    merged_attrs = {**current_attrs, "outcome": outcome}
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    claim = f"RESOLVED — {resolution_note}"
+    evidence_text = evidence or f"deadline_resolve called; resolved_at={resolved_at}"
+    observed_at = datetime.now(UTC).isoformat()
+    resolution_assertion_id: int | None = None
     outcome_set = False
+
+    # Read, assertion insert, and outcome merge share one connection. ``execute``
+    # commits; on outcome failure the context rolls the insert back.
     try:
         with cortex_conn() as conn:
-            execute(
+            rows = query(
                 conn,
-                "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
-                (json_encode(merged_attrs), now, deadline_id),
+                "SELECT id, type, attributes FROM entities WHERE id = ? AND type = 'deadline'",
+                (deadline_id,),
             )
-        outcome_set = True
+            if not rows:
+                return {
+                    "error": f"Deadline entity not found or not type='deadline': {deadline_id}"
+                }
+
+            attrs_raw = rows[0]["attributes"]
+            current_attrs: dict[str, Any] = (
+                json.loads(attrs_raw) if isinstance(attrs_raw, str) and attrs_raw else {}
+            )
+            merged_attrs = {**current_attrs, "outcome": outcome}
+            now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with WRITE_LOCK:
+                resolution_assertion_id = _insert_deadline_resolution_assertion(
+                    conn,
+                    entity_id=deadline_id,
+                    claim=claim,
+                    evidence=evidence_text,
+                    observed_at=observed_at,
+                    fulfillment_assertion_id=fulfilling_assertion_id,
+                )
+                execute(
+                    conn,
+                    "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
+                    (json_encode(merged_attrs), now, deadline_id),
+                )
+            outcome_set = True
     except sqlite3.Error as exc:
         logger.warning("deadline_resolve outcome update failed: %s", exc)
         record(
@@ -117,6 +139,8 @@ def _op_deadline_resolve(
             deadline_id=deadline_id,
             error=str(exc),
         )
+        resolution_assertion_id = None
+        outcome_set = False
 
     logger.info(
         "deadline_resolve: %s — assertion=%s outcome=%s outcome_set=%s",
