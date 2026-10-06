@@ -174,14 +174,18 @@ def _assert_cursor_keyboard(chosen: dict) -> dict:
 
 
 def _require_cursor_keyboard(chosen: dict, *, retries: int = 0) -> dict:
-    """Abort before keys if a browser still holds activation (maestro CSE specimen)."""
+    """Abort before keys if Cursor Agents does not hold the keyboard.
+
+    Re-activate on every call — activate-ok at t0 does not cover a human click
+    during the Ctrl+N settle sleep (a:38364 double-paste after focus steal).
+    """
     last: dict = {}
+    title = str(chosen.get("title") or "")
     for attempt in range(retries + 1):
+        _focus_window(title, "cursor", settle_s=0.25)
         last = _assert_cursor_keyboard(chosen)
         if last.get("ok"):
             return last
-        if attempt < retries:
-            _focus_window(str(chosen.get("title") or ""), "cursor")
     raise SystemExit(
         json.dumps({"ok": False, "phase": "focus", **last}, default=str)
     )
