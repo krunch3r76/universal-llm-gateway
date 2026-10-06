@@ -372,7 +372,9 @@ def keyboard_shortcuts_inhibit_hold(*, hold_stdin: bool = True) -> dict[str, Any
     surface = wire.alloc()
     inhibit = wire.alloc()
     wire.send(compositor, 0, struct.pack("<I", surface))  # wl_compositor.create_surface
-    wire.send(mgr, 1, struct.pack("<III", inhibit, seat, surface))  # inhibit(new_id, seat, surface)
+    # zwp_keyboard_shortcuts_inhibit_manager_v1.inhibit_shortcuts(id, surface, seat)
+    # — surface before seat (a:38402; Cosmic: expected wl_surface but got wl_seat).
+    wire.send(mgr, 1, struct.pack("<III", inhibit, surface, seat))
     wire.send(surface, 6, b"")  # wl_surface.commit — surface must exist before keys route
     problem = _wait_inhibit_active(wire, inhibit)
     if problem:
@@ -419,7 +421,7 @@ def keyboard_shortcuts_inhibit_session() -> Iterator[dict[str, Any]]:
     surface = wire.alloc()
     inhibit = wire.alloc()
     wire.send(compositor, 0, struct.pack("<I", surface))
-    wire.send(mgr, 1, struct.pack("<III", inhibit, seat, surface))
+    wire.send(mgr, 1, struct.pack("<III", inhibit, surface, seat))
     wire.send(surface, 6, b"")
     problem = _wait_inhibit_active(wire, inhibit)
     if problem:
