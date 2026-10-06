@@ -120,10 +120,15 @@ def followup_by_address_body(
     parent_thread: str,
     prompt_text: str,
     chat_url: str,
+    registration_id: str | None = None,
 ) -> dict[str, Any]:
     """Followup JSON with stored ``chat_url`` and ``reattach`` for a parked lane."""
     body = followup_body(parent_thread=parent_thread, prompt_text=prompt_text)
-    return {**body, "chat_url": chat_url, "reattach": True}
+    out: dict[str, Any] = {**body, "chat_url": chat_url, "reattach": True}
+    reg = (registration_id or "").strip()
+    if reg:
+        out["registration_id"] = reg
+    return out
 
 
 async def post_followup_by_address(
@@ -131,6 +136,7 @@ async def post_followup_by_address(
     parent_thread: str,
     prompt_text: str,
     chat_url: str,
+    registration_id: str | None = None,
 ) -> dict[str, Any]:
     """POST followups with ``chat_url`` and ``reattach: true``.
 
@@ -140,6 +146,7 @@ async def post_followup_by_address(
         parent_thread=parent_thread,
         prompt_text=prompt_text,
         chat_url=chat_url,
+        registration_id=registration_id,
     )
     base = project_ask_base()
     if not base:

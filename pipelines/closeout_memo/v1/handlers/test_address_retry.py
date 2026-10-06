@@ -63,6 +63,32 @@ def test_followup_by_address_body_includes_reattach_and_url() -> None:
     assert body == {**base, "chat_url": _STORED, "reattach": True}
 
 
+def test_followup_by_address_body_includes_registration_id_when_set() -> None:
+    base = followup_body(parent_thread="999888777", prompt_text="MEMO")
+    body = followup_by_address_body(
+        parent_thread="999888777",
+        prompt_text="MEMO",
+        chat_url=_STORED,
+        registration_id="reg-stored",
+    )
+    assert body == {
+        **base,
+        "chat_url": _STORED,
+        "reattach": True,
+        "registration_id": "reg-stored",
+    }
+
+
+def test_followup_by_address_body_omits_registration_id_when_empty() -> None:
+    body = followup_by_address_body(
+        parent_thread="999888777",
+        prompt_text="MEMO",
+        chat_url=_STORED,
+        registration_id="  ",
+    )
+    assert "registration_id" not in body
+
+
 @pytest.mark.asyncio
 async def test_lane_cse_none_retries_by_stored_address_and_delivers(
     memo_ledger: None,
@@ -78,8 +104,12 @@ async def test_lane_cse_none_retries_by_stored_address_and_delivers(
         calls.append("attended")
         return _attended_404(_STORED)
 
+    address_kwargs: dict[str, Any] | None = None
+
     async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
+        nonlocal address_kwargs
         calls.append("followup_by_address")
+        address_kwargs = dict(kwargs)
         return {
             "timed_out": False,
             "body": {
@@ -104,6 +134,8 @@ async def test_lane_cse_none_retries_by_stored_address_and_delivers(
         followup_by_address=followup_by_address,
     )
     assert calls == ["followup", "attended", "followup_by_address"]
+    assert address_kwargs is not None
+    assert address_kwargs.get("registration_id") == "reg-stored"
     assert outcome["delivered"] is True
     assert outcome["request_had_identity"] is True
     assert outcome["address_retry"] is True
@@ -284,6 +316,83 @@ async def test_attended_503_skips_retry(
     assert outcome["needs_fallback"] is True
     skip = [p for name, p in record_events if name == "address_retry"][-1]
     assert skip["reason"] == "lane_cse_probe_error"
+
+
+@pytest.mark.asyncio
+async def test_seat_holder_without_registration_id_retries_chat_url_only(
+    memo_ledger: None,
+) -> None:
+    address_kwargs: dict[str, Any] | None = None
+
+    async def followup(**kwargs: Any) -> dict[str, Any]:
+        return _lane_cse_none()
+
+    async def attended(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "status_code": 404,
+            "body": {
+                "state": "none",
+                "code": "lane_cse_none",
+                "seat_holder": {"chat_url": _STORED, "evidence_class": "registry_row"},
+            },
+        }
+
+    async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
+        nonlocal address_kwargs
+        address_kwargs = dict(kwargs)
+        return {
+            "timed_out": False,
+            "body": {"ok": True, "receipt": "dom_committed", "url": _STORED},
+        }
+
+    outcome = await apply_decision(
+        memo_ids=["m1"],
+        wake_lane="999888777",
+        prompt_text="MEMO",
+        followup=followup,
+        harvest=_noop_harvest,
+        attended=attended,
+        followup_by_address=followup_by_address,
+    )
+    assert outcome["delivered"] is True
+    assert address_kwargs is not None
+    assert address_kwargs.get("chat_url") == _STORED
+    assert address_kwargs.get("registration_id") is None
+
+
+@pytest.mark.asyncio
+async def test_operator_seat_mismatch_on_retry_falls_back_two_followups_only(
+    memo_ledger: None,
+) -> None:
+    calls: list[str] = []
+
+    async def followup(**kwargs: Any) -> dict[str, Any]:
+        calls.append("followup")
+        return _lane_cse_none()
+
+    async def attended(**kwargs: Any) -> dict[str, Any]:
+        calls.append("attended")
+        return _attended_404(_STORED)
+
+    async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
+        calls.append("followup_by_address")
+        return {
+            "timed_out": False,
+            "body": {"ok": False, "error": "operator_seat_mismatch"},
+        }
+
+    outcome = await apply_decision(
+        memo_ids=["m1"],
+        wake_lane="999888777",
+        prompt_text="MEMO",
+        followup=followup,
+        harvest=_noop_harvest,
+        attended=attended,
+        followup_by_address=followup_by_address,
+    )
+    assert calls == ["followup", "attended", "followup_by_address"]
+    assert outcome["needs_fallback"] is True
+    assert outcome["error"] == "operator_seat_mismatch"
 
 
 @pytest.mark.asyncio

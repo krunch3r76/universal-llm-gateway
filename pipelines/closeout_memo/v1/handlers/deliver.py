@@ -98,10 +98,14 @@ async def apply_decision(
         if not isinstance(attended_body, dict):
             attended_body = None
         holder_url: str | None = None
+        holder_registration_id: str | None = None
         if status_code == 404 and isinstance(attended_body, dict):
             holder = attended_body.get("seat_holder")
             if isinstance(holder, dict):
                 holder_url = str(holder.get("chat_url") or "").strip() or None
+                holder_registration_id = (
+                    str(holder.get("registration_id") or "").strip() or None
+                )
         if holder_url:
             reattach_chat_url = holder_url
             address_retry = True
@@ -116,6 +120,7 @@ async def apply_decision(
                 parent_thread=wake_lane,
                 prompt_text=prompt_text,
                 chat_url=holder_url,
+                registration_id=holder_registration_id,
             )
             body = result.get("body") if isinstance(result, dict) else None
             kind = classify_followup(

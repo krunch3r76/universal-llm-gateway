@@ -12,7 +12,7 @@ import pytest
 
 from cdp_ask.execution_store import LANE_HARD_LIMIT, ExecutionStore
 from cdp_ask.followup import execute_followup
-from cdp_ask.followup_reattach import ensure_cse_attached
+from cdp_ask.followup_reattach import ReattachOutcome, ensure_cse_attached
 from cdp_ask.models import FollowupProjectAskRequest
 
 pytestmark = pytest.mark.offline
@@ -1391,3 +1391,77 @@ async def test_identity_omitted_dormant_attendance_wakes_the_seat(
     assert resp.ok is True
     assert resp.reattach_used is True
     relaunch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_parked_lane_stored_identity_with_reattach_reaches_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Address-retry shape: parent_thread + chat_url + holder registration_id + reattach."""
+    store = ExecutionStore()
+    lane = "12286"
+    reg = _reg("reg-stored-parked")
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": reg.registration_id,
+                "parent_thread": lane,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+            }
+        ],
+        "rows": [],
+        "observed_at": "t",
+    }
+
+    async def _snap() -> dict[str, Any]:
+        return snap
+
+    monkeypatch.setattr(store, "active_work_snapshot", _snap)
+    _patch_list_active(monkeypatch, reg=reg)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    ensure = AsyncMock(
+        return_value=ReattachOutcome(
+            ok=True,
+            registration_id=reg.registration_id,
+            cdp_url=reg.cdp_url,
+            lane_created=False,
+        )
+    )
+    monkeypatch.setattr("cdp_ask.followup.ensure_cse_attached", ensure)
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    paste = AsyncMock(
+        return_value={
+            "send_verified": True,
+            "receipt": "dom_paste",
+            "streaming_at_paste": False,
+            "url": CSE_A,
+            "pasted_at": 1.0,
+        }
+    )
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_A,
+            registration_id=reg.registration_id,
+            reattach=True,
+        ),
+        store,
+    )
+    ensure.assert_awaited_once()
+    paste.assert_awaited_once()
+    assert resp.ok is True
+    assert resp.reattach_used is True

@@ -40,6 +40,7 @@ def classify_followup(
         "lane_not_attached",
         "lane_cse_ambiguous",
         "lane_cse_none",
+        "operator_seat_mismatch",
         "seat_unavailable",
         *_REATTACH_FALLBACK,
     }:
