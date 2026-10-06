@@ -693,8 +693,11 @@ async def test_emit_upstream_overload_friction_dedupes(
     posts: list[dict[str, Any]] = []
 
     class _Client:
-        async def post(self, path: str, json: dict) -> Any:
+        async def post(self, path: str, json: dict, headers: dict) -> Any:
             del path
+            assert headers.get("X-ULG-Seat") == "stargate"
+            assert headers.get("X-ULG-Caller") == "cdp_generate_worker"
+            assert headers.get("X-ULG-Surface") == "code"
             posts.append(json)
             return type("Resp", (), {"status_code": 200, "text": "ok"})()
 
