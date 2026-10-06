@@ -2932,3 +2932,141 @@ def test_park_harvest_continue_owed_attended_row_after_reply(
     ledger = CursorDispatchLedger.instance()
     row = _attended_parked_harvest_row(ledger)
     assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+
+
+_PROSE_DONE_NEST_CLOSEOUT = """\
+status: complete
+G1 and G2 stay DONE.
+stop: ROW_HOP
+NEXT_ADMIT: harvest {harvest_id}
+"""
+
+
+def _stamp_prose_done_nest_row(
+    ledger: CursorDispatchLedger,
+    *,
+    harvest_execution_id: str = _FULL_ID,
+    footer_done: bool = False,
+) -> dict:
+    body = _PROSE_DONE_NEST_CLOSEOUT.format(harvest_id=harvest_execution_id)
+    if footer_done:
+        body = body + "\nstop: DONE\n"
+    tokens = ["ROW_HOP", "DONE"] if footer_done else ["ROW_HOP"]
+    req = _req(
+        dispatch_id="nest-prose-done",
+        execution_id=harvest_execution_id,
+        thread_id="9965",
+    )
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent="cursor",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        contract="implement",
+        source_repo="/repo",
+        lease_key="/repo",
+        work_key=_WORK_KEY,
+        source_ref=_WORK_KEY,
+    )
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"nest_under": "pred-hop-1"},
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    _terminal_row(ledger, closeout_tokens=tokens)
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "closeout_body": body,
+            "closeout_stop_tokens": tokens,
+        },
+    )
+    return _refresh_row(ledger, "pred-hop-1")
+
+
+def test_lift_hold_tokens_excludes_prose_done() -> None:
+    """a:38298: table/prose DONE is not a lift hold (designed footer only)."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _lift_hold_tokens,
+    )
+
+    row = {
+        "record_json": json.dumps(
+            {
+                "closeout_body": "G1 and G2 stay DONE.\nstop: ROW_HOP\n",
+                "closeout_stop_tokens": ["ROW_HOP"],
+            }
+        )
+    }
+    assert "DONE" not in _lift_hold_tokens(row)
+
+
+def test_lift_hold_tokens_includes_footer_stop_done() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _lift_hold_tokens,
+    )
+
+    row = {
+        "record_json": json.dumps(
+            {
+                "closeout_body": "G1 and G2 stay DONE.\nstop: DONE\n",
+                "closeout_stop_tokens": ["DONE"],
+            }
+        )
+    }
+    assert "DONE" in _lift_hold_tokens(row)
+
+
+def test_hop_body_not_refused_terminal_nest_when_prose_done_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38298: prose DONE must not block AC7 lift once lineage head is terminal."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        hop_body_build_refused,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _stamp_g2_row(ledger)
+    rec = json.loads(row["record_json"])
+    rec["closeout_body"] = (
+        "G1 and G2 stay DONE.\n" + str(rec.get("closeout_body") or "")
+    )
+    row["record_json"] = json.dumps(rec)
+    rec = json.loads(row["record_json"])
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._execution_id_target_for_parent",
+        lambda *_a, **_k: ("nest-terminal", True),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._named_target_is_terminal",
+        lambda *_a, **_k: False,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._row_hop_tokens_allow_lift",
+        lambda *_a, **_k: True,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.conductor_has_live_nested",
+        lambda **_k: False,
+    )
+    assert not hop_body_build_refused(row, rec)
+
+
+def test_next_admit_blocked_when_footer_stop_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38298: designed stop: DONE still forbids successor body."""
+    ledger = CursorDispatchLedger.instance()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
+    row = _stamp_prose_done_nest_row(ledger, footer_done=True)
+    assert build_hop_team_dispatch_body(row) is None

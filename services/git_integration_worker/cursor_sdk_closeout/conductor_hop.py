@@ -893,12 +893,18 @@ _LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
 
 def _lift_hold_tokens(row: dict[str, Any]) -> frozenset[str]:
     """Footer stop tokens plus tokens written in the closeout prose."""
-    from claude_bundles.conductor_stop import parse_stop_tokens
+    from claude_bundles.conductor_stop import (
+        parse_designed_stop_tokens,
+        parse_stop_tokens,
+    )
 
     tokens = set(_closeout_tokens_from_row(row))
     body = _closeout_body_from_row(row)
     if body:
-        tokens.update(parse_stop_tokens(body).tokens)
+        prose = parse_stop_tokens(body)
+        designed = parse_designed_stop_tokens(body)
+        tokens.update(designed.tokens)
+        tokens.update(prose.tokens - {"DONE"})
     return frozenset(tokens)
 
 
