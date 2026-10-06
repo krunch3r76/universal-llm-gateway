@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import mcp.types as mt
@@ -92,6 +93,8 @@ def apply_life_sandbox_default(
     Not path-shape inference across stores — /mcp/life has one durable file store.
     Absolute paths are left alone so host-mount ingress can still resolve.
     Recognized Share URI schemes are left alone (workspaces:// still refuses later).
+    Empty cortex repo-named stubs are handled after this by
+    ``life_cortex_repo_stub_alias`` (a:38194).
     """
     cleaned = sandbox.strip()
     if surface != "life" or cleaned:
@@ -108,6 +111,67 @@ def apply_life_sandbox_default(
     if Path(raw).is_absolute():
         return cleaned
     return "cortex"
+
+
+def _is_empty_cortex_repo_stub(stub: Path) -> bool:
+    """True when *stub* is missing or a directory with no files (dirs-only)."""
+    if not stub.exists():
+        return True
+    if not stub.is_dir():
+        return False
+    return not any(path.is_file() for path in stub.rglob("*"))
+
+
+def life_cortex_repo_stub_alias(
+    *,
+    surface: str,
+    sandbox: str,
+    path: str,
+    for_write: bool,
+    cortex_root: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """Alias or refuse life cortex paths that land on an empty repo-named stub.
+
+    Specimen a:38194: ``/data/files/universal-llm-gateway`` is dirs-only while
+    ``workspaces://universal-llm-gateway/...`` serves the real checkout. Reads
+    alias to workspaces; writes refuse with a teaching error (no silent redirect
+    onto the shared-checkout write lease).
+
+    Returns ``(sandbox_override, error)``. Both None means no change.
+    """
+    from implement_admission.closeout_helpers import cortex_files_root
+    from implement_admission.scheme_resolve import parse_schemed_path
+
+    if surface != "life" or sandbox.strip() != "cortex":
+        return None, None
+    raw = path.strip()
+    if not raw:
+        return None, None
+    parsed = parse_schemed_path(raw)
+    if parsed.scheme not in (None, "cortex") or Path(raw).is_absolute():
+        return None, None
+    parts = [part for part in parsed.rel_path.split("/") if part]
+    if not parts:
+        return None, None
+    repo = parts[0]
+    if repo not in _known_workspaces_repo_names():
+        return None, None
+    root = (cortex_root or cortex_files_root()).resolve()
+    if not _is_empty_cortex_repo_stub(root / repo):
+        return None, None
+    share = (
+        f"workspaces://{repo}/{'/'.join(parts[1:])}"
+        if len(parts) > 1
+        else f"workspaces://{repo}"
+    )
+    if for_write:
+        return None, (
+            f"Path {raw!r} lands on an empty cortex stub for repo {repo!r}. "
+            f"Repository content is served via {share} (sandbox=workspaces). "
+            "Life workspaces writes stay on the life write grant / /mcp/code — "
+            "do not write into the cortex stub."
+        )
+    return "workspaces", None
 
 
 def fs_missing_sandbox_hint(path: str = "", *, surface: str = "") -> str:
