@@ -25,6 +25,8 @@ import socket
 import struct
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 _REGISTRY, _CB_GLOBALS, _TL_LIST, _TL_INFO, _TL_MGR, _SEAT, _CB_LIST = (
@@ -292,6 +294,143 @@ def activate(wire: Wire, handle: int) -> None:
     wire.roundtrip(wire.alloc())
 
 
+_INHIBIT_IFACE = "zwp_keyboard_shortcuts_inhibit_manager_v1"
+_INHIBIT_MGR_VER = 1
+_INHIBIT_EVENT_ACTIVE = 0
+_INHIBIT_EVENT_INACTIVE = 1
+
+
+def _bind_inhibit_globals(wire: Wire) -> tuple[int, int, int]:
+    """Return (compositor_id, seat_id, inhibit_manager_id). Fail closed if manager missing."""
+    wire.send(1, 1, struct.pack("<I", _REGISTRY))
+    cb = wire.alloc()
+    wire.roundtrip(cb)
+    missing = [i for i in ("wl_compositor", "wl_seat", _INHIBIT_IFACE) if i not in wire.globals]
+    if missing:
+        raise SystemExit(
+            json.dumps({"ok": False, "error": "inhibit_globals_missing", "missing": missing})
+        )
+    compositor = wire.alloc()
+    seat = wire.alloc()
+    mgr = wire.alloc()
+    wire.bind("wl_compositor", compositor, 4)
+    wire.bind("wl_seat", seat, 7)
+    wire.bind(_INHIBIT_IFACE, mgr, _INHIBIT_MGR_VER)
+    wire.roundtrip(wire.alloc())
+    return compositor, seat, mgr
+
+
+def _wait_inhibit_active(wire: Wire, inhibit_id: int, *, timeout_s: float = 4.0) -> str | None:
+    """Return None when active, else a failure reason string."""
+    deadline = time.monotonic() + timeout_s
+    active = False
+    while time.monotonic() < deadline:
+        cb = wire.alloc()
+        wire.send(1, 0, struct.pack("<I", cb))
+        done = False
+        while not done:
+            for obj, op, body in wire._events():
+                wire._handle(obj, op, body)
+                if obj == inhibit_id:
+                    if op == _INHIBIT_EVENT_ACTIVE:
+                        active = True
+                    elif op == _INHIBIT_EVENT_INACTIVE:
+                        return "inactive_before_active"
+                if obj == cb and op == 0:
+                    done = True
+                    break
+            if not done:
+                try:
+                    chunk = wire.sock.recv(65536)
+                except TimeoutError:
+                    break
+                if not chunk:
+                    return "compositor_closed"
+                wire.buf += chunk
+        if active:
+            return None
+        time.sleep(0.05)
+    return "no_active_event"
+
+
+def keyboard_shortcuts_inhibit_hold(*, hold_stdin: bool = True) -> dict[str, Any]:
+    """Acquire zwp_keyboard_shortcuts_inhibit until stdin closes (Route 1 hop window).
+
+    Creates a committed wl_surface, inhibits compositor shortcuts on the default seat,
+    prints a one-line JSON verdict on stdout, then blocks until EOF on stdin (when
+    ``hold_stdin``) or returns immediately after acquire (for unit tests).
+    """
+    wire = Wire()
+    compositor, seat, mgr = _bind_inhibit_globals(wire)
+    surface = wire.alloc()
+    inhibit = wire.alloc()
+    wire.send(compositor, 0, struct.pack("<I", surface))  # wl_compositor.create_surface
+    wire.send(mgr, 1, struct.pack("<III", inhibit, seat, surface))  # inhibit(new_id, seat, surface)
+    wire.send(surface, 6, b"")  # wl_surface.commit — surface must exist before keys route
+    problem = _wait_inhibit_active(wire, inhibit)
+    if problem:
+        wire.send(inhibit, 0, b"")
+        wire.send(surface, 0, b"")
+        raise SystemExit(
+            json.dumps({"ok": False, "error": "inhibit_not_active", "reason": problem})
+        )
+    print(json.dumps({"ok": True, "state": "active", "route": 1}), flush=True)
+    outcome: dict[str, Any] = {"ok": True, "state": "released"}
+    try:
+        if hold_stdin and not sys.stdin.isatty():
+            import select
+
+            while True:
+                r, _, _ = select.select([sys.stdin, wire.sock], [], [], 0.5)
+                if wire.sock in r:
+                    for obj, op, body in wire._events():
+                        wire._handle(obj, op, body)
+                        if obj == inhibit and op == _INHIBIT_EVENT_INACTIVE:
+                            outcome = {
+                                "ok": False,
+                                "error": "inhibit_inactive",
+                                "phase": "focus",
+                            }
+                            return outcome
+                if sys.stdin in r and not sys.stdin.read(1):
+                    break
+    finally:
+        wire.send(inhibit, 0, b"")  # zwp_keyboard_shortcuts_inhibit_v1.destroy
+        wire.send(surface, 0, b"")  # wl_surface.destroy
+        try:
+            wire.roundtrip(wire.alloc())
+        except SystemExit:
+            pass
+    return outcome
+
+
+@contextmanager
+def keyboard_shortcuts_inhibit_session() -> Iterator[dict[str, Any]]:
+    """In-process inhibit for tests; on a real host use ``inhibit-hold`` subprocess."""
+    wire = Wire()
+    compositor, seat, mgr = _bind_inhibit_globals(wire)
+    surface = wire.alloc()
+    inhibit = wire.alloc()
+    wire.send(compositor, 0, struct.pack("<I", surface))
+    wire.send(mgr, 1, struct.pack("<III", inhibit, seat, surface))
+    wire.send(surface, 6, b"")
+    problem = _wait_inhibit_active(wire, inhibit)
+    if problem:
+        wire.send(inhibit, 0, b"")
+        wire.send(surface, 0, b"")
+        raise RuntimeError(problem)
+    meta = {"ok": True, "state": "active", "route": 1, "wire": wire, "inhibit": inhibit, "surface": surface}
+    try:
+        yield meta
+    finally:
+        wire.send(inhibit, 0, b"")
+        wire.send(surface, 0, b"")
+        try:
+            wire.roundtrip(wire.alloc())
+        except SystemExit:
+            pass
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -323,7 +462,15 @@ def main() -> int:
     )
     ac.add_argument("--identifier", default="")
     ac.add_argument("--title", default="")
+    sub.add_parser(
+        "inhibit-hold",
+        help="hold zwp_keyboard_shortcuts_inhibit until stdin EOF (Route 1 glass hop)",
+    )
     args = p.parse_args()
+    if args.cmd == "inhibit-hold":
+        result = keyboard_shortcuts_inhibit_hold(hold_stdin=True)
+        print(json.dumps(result), flush=True)
+        return 0 if result.get("ok") else 3
     wire = Wire()
     rows = toplevels(wire)
     if args.cmd == "list":

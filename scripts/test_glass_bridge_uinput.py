@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import sys
@@ -107,3 +108,118 @@ def test_glass_open_aborts_before_keys_when_browser_holds_keyboard(
                             "hello", repo=str(_REPO), dry_run=False
                         )
     assert "browser_activated" in str(caught.value)
+
+
+@pytest.mark.offline
+def test_glass_launch_acquires_inhibit_before_uinput(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Route 1: compositor inhibit must start before the first chord."""
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    mod = _load_orchestrator_keystroke()
+    chosen = {"title": "Cursor Agents", "identifier": "abc"}
+    order: list[str] = []
+
+    class _FakeUInput:
+        def __init__(self, *args, **kwargs):
+            order.append("uinput")
+
+        def write(self, *args, **kwargs):
+            return None
+
+        def syn(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class _FakeProc:
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self) -> None:
+            return None
+
+    @contextlib.contextmanager
+    def _fake_inhibit():
+        order.append("inhibit")
+        yield {"ok": True, "state": "active", "route": 1, "_proc": _FakeProc()}
+
+    with patch.object(mod, "UInput", _FakeUInput):
+        with patch.object(mod, "_compositor_shortcuts_inhibit", _fake_inhibit):
+            with patch.object(mod, "_pick_agents_window", return_value=chosen):
+                with patch.object(
+                    mod,
+                    "_focus_window",
+                    return_value={"ok": True, "focused": True},
+                ):
+                    with patch.object(
+                        mod, "_require_cursor_keyboard", return_value={"ok": True}
+                    ):
+                        with patch.object(mod, "_wl_copy", return_value=None):
+                            with patch.object(mod, "_new_glass_agent", lambda ui: order.append("chord")):
+                                with patch.object(mod, "_paste", lambda ui: None):
+                                    with patch.object(mod, "_submit_composer", lambda ui: order.append("submit")):
+                                        out = mod.launch_glass_chat_with_message(
+                                            "hello", repo=str(_REPO), dry_run=False
+                                        )
+    assert order.index("inhibit") < order.index("uinput") < order.index("chord")
+    assert "submit" in order
+    assert out.get("inhibit", {}).get("route") == 1
+
+
+@pytest.mark.offline
+def test_glass_launch_mid_keyboard_fail_skips_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    mod = _load_orchestrator_keystroke()
+    chosen = {"title": "Cursor Agents"}
+    submit_calls: list[str] = []
+
+    class _FakeProc:
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self) -> None:
+            return None
+
+    @contextlib.contextmanager
+    def _fake_inhibit():
+        yield {"ok": True, "_proc": _FakeProc()}
+
+    def _fail_after_ctrl_n(*args, **kwargs):
+        if not getattr(_fail_after_ctrl_n, "seen", False):
+            _fail_after_ctrl_n.seen = True
+            return {"ok": True}
+        raise SystemExit(json.dumps({"ok": False, "phase": "focus", "reason": "cursor_not_activated"}))
+
+    _fail_after_ctrl_n.seen = False
+
+    with patch.object(mod, "_compositor_shortcuts_inhibit", _fake_inhibit):
+        with patch.object(mod, "_pick_agents_window", return_value=chosen):
+            with patch.object(mod, "_focus_window", return_value={"ok": True}):
+                with patch.object(mod, "_require_cursor_keyboard", side_effect=_fail_after_ctrl_n):
+                    with patch.object(
+                        mod,
+                        "_ui",
+                        return_value=type("UI", (), {"close": lambda self: None})(),
+                    ):
+                        with patch.object(mod, "_new_glass_agent", lambda ui: None):
+                            with patch.object(
+                                mod,
+                                "_submit_composer",
+                                lambda ui: submit_calls.append("submit"),
+                            ):
+                                with pytest.raises(SystemExit) as caught:
+                                    mod.launch_glass_chat_with_message(
+                                        "hello", repo=str(_REPO), dry_run=False
+                                    )
+    assert submit_calls == []
+    assert "phase" in str(caught.value) and "focus" in str(caught.value)
