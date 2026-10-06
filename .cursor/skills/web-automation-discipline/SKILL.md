@@ -1,7 +1,7 @@
 ---
 name: web-automation-discipline
-description: "Before Playwright/CDP form fills, uploads, or multi-step SPA interactions on authenticated sites — probe-first selectors, file-chooser hooks, seat routing, production anti-patterns."
-trigger_match_terms: ["CDP automation", "browser automation", "chosen.js", "expect_file_chooser", "file upload", "form fill", "governmentjobs", "neogov", "playwright", "web-automation-discipline"]
+description: "Before Playwright/CDP form fills, uploads, place/checkout clicks, or multi-step SPA interactions on authenticated sites — probe-first selectors, file-chooser hooks, seat routing, Place→Orders verify, production anti-patterns."
+trigger_match_terms: ["CDP automation", "browser automation", "chosen.js", "expect_file_chooser", "file upload", "form fill", "governmentjobs", "neogov", "playwright", "web-automation-discipline", "Place Order", "PLACE null", "orders verify", "DoubleDash"]
 generator_version: "1.0.0"
 ---
 
@@ -103,11 +103,23 @@ Prefer: `aria-label` on remove links (`Remove cover letter …`), `h3:text-is(�
 
 ## Verify
 
-Completion = **observed on the target page after reload**, not absence of Playwright error.
+Completion = **observed on the target page after reload**, not absence of Playwright error and not a tool-print timeout.
 
 - Upload flows: navigate to **Review** (or equivalent summary), read filename line.
 - Capture `inner_text` snippet or screenshot path in closeout.
 - Required-attachment banners may lag — if file appears on Review but banner persists, note as `partial` and flag for operator glance.
+
+### Place / checkout mutation (hop law)
+
+After any Place / Submit Order click (or equivalent money-moving confirm):
+
+1. Outcome is ternary: `placed` | `not_placed` | `unknown` — never binary from the tool print alone.
+2. `PLACE null` / Playwright async timeout / tool-print silence ⇒ `unknown` until the site Orders surface is read.
+3. Before any place or not-placed claim: observe terminal confirmation. DoorDash: `/orders` (or live order card) **and** a DoubleDash / order UUID. No UUID ⇒ not `placed`.
+4. While outcome is `unknown`: no next hunt, no second Place, no cancel-to-retry.
+5. Operator `checkpoint` during shop ⇒ **STOP** all shop acts (no rehunt, no Place). Resume-protocol detail lives on `checkpoint-discipline`; this skill binds the mutation halt.
+
+Class: mutation without terminal verify (related a:32030). Specimen a:38478 — Place clicked ~2:06 PT, tool returned PLACE null, seat reported not placed; live DoubleDash `08fc8248` had already charged.
 
 ## Anti-patterns (binding)
 
@@ -124,6 +136,9 @@ Completion = **observed on the target page after reload**, not absence of Playwr
 | Infer browser dead from absent CDP port activity | `--remote-debugging-pipe` and Xvfb holds are invisible to port watchers (6008 CLOSEOUT-4) |
 | Launch new persistent context when CDP attach works | Duplicate parallel browsers; wrong session (6008/6032) |
 | Incremental extract by raw DOM index on virtual-scroll list | Index shift under lazy render; anchor on prior content string (6032) |
+| Treat Place tool timeout / `PLACE null` as `not_placed` | False negative; live order already charged; seat hunts again (a:38478) |
+| Claim placed / not-placed without Orders + order-UUID read after Place | Mutation without terminal verify (class a:32030) |
+| Continue shop acts after operator `checkpoint` | Halt ignored; further Place/hunt risk (mutation stop here; protocol on `checkpoint-discipline`) |
 
 ## Escalation
 
