@@ -28,12 +28,7 @@ from cortex_store.openapi_mcp.schema_channel import SCHEMA_CHANNEL_DEFAULT
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-UNBOUND_BASELINE: frozenset[str] = frozenset(
-    {
-        "claim_alignment",
-        "graph_reach",
-    }
-)
+UNBOUND_BASELINE: frozenset[str] = frozenset()
 
 
 @pytest.mark.offline

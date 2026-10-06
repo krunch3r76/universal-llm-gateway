@@ -163,21 +163,13 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "next: review the spreading activation results for structurally connected "
         "assertions the original search wouldn't find directly"
     ),
-    "graph_reach": (
-        "structural blast-radius via relationships/session_edges — for semantic "
-        "contradiction search use claim_alignment (or analyze_impact alias)"
-    ),
     "impact": (
         "structural blast-radius via relationships/session_edges — for semantic "
-        "contradiction search use claim_alignment (or analyze_impact alias)"
-    ),
-    "claim_alignment": (
-        "semantic claim↔entity alignment / contradiction search — for structural "
-        "graph reach use graph_reach (or impact alias)"
+        "contradiction search use analyze_impact"
     ),
     "analyze_impact": (
         "semantic claim↔entity alignment / contradiction search — for structural "
-        "graph reach use graph_reach (or impact alias)"
+        "graph reach use impact"
     ),
     "assertion_state": (
         "drill down: assertions(entity_id=…, confidence=confirmed) "
@@ -276,12 +268,14 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "list_edge_types": "edge_types",
     "get_edge_types": "edge_types",
     "decision_status": "assertion_state",
-    "get_impact": "graph_reach",
-    "impact_analysis": "graph_reach",
-    "relationship_impact": "graph_reach",
-    "check_impact": "claim_alignment",
-    "semantic_impact": "claim_alignment",
-    "assertion_align": "claim_alignment",
+    "graph_reach": "impact",
+    "claim_alignment": "analyze_impact",
+    "get_impact": "impact",
+    "impact_analysis": "impact",
+    "relationship_impact": "impact",
+    "check_impact": "analyze_impact",
+    "semantic_impact": "analyze_impact",
+    "assertion_align": "analyze_impact",
     "resolve_chunk": "resolve_assertion_chunk",
     "chunk_resolve": "resolve_assertion_chunk",
 }

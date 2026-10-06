@@ -32,7 +32,6 @@ _DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
     # Batch D — clear required-error SOT from handler bodies
     "activate": frozenset({"entity_ids"}),
     "analyze_impact": frozenset({"entity_id", "claim"}),
-    "claim_alignment": frozenset({"entity_id", "claim"}),
     "assemble_transcript": frozenset({"jsonl_path", "session_id"}),
     "assertion_get": frozenset({"assertion_id"}),
     "assertion_state": frozenset({"entity_id"}),
@@ -56,7 +55,6 @@ _DOC_REQUIRED_BY_OP: Mapping[str, frozenset[str]] = {
     "fill_gaps": frozenset({"findings"}),
     "friction": frozenset({"owner", "note"}),
     "impact": frozenset({"entity_id"}),
-    "graph_reach": frozenset({"entity_id"}),
     "observe": frozenset({"claim"}),
     "relationship_delete": frozenset({"relationship_id"}),
     "relationship_update": frozenset({"relationship_id"}),

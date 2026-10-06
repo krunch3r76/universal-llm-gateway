@@ -79,13 +79,19 @@ def test_shadow_would_reject_unknown_param(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.offline
 def test_shadow_unmapped_for_unstamped_op(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _capture(monkeypatch)
-    _install("graph_reach", {"ok": True})
-    result = execute_op("graph_reach", {"any": "value"}, caller="cursor-sdk")
-    assert result.get("ok") is True
-    event = _shadow_events(captured)[-1]
-    assert event["outcome"] == "unmapped"
-    assert event["error_locs"] == []
-    assert event["tool"] == "graph_reach"
+    synthetic = "__shadow_unmapped_synthetic_op__"
+    _OPS._specs[synthetic] = "ops_misc:_op_stats"  # type: ignore[attr-defined]
+    try:
+        _install(synthetic, {"ok": True})
+        result = execute_op(synthetic, {"any": "value"}, caller="cursor-sdk")
+        assert result.get("ok") is True
+        event = _shadow_events(captured)[-1]
+        assert event["outcome"] == "unmapped"
+        assert event["error_locs"] == []
+        assert event["tool"] == synthetic
+    finally:
+        del _OPS._specs[synthetic]  # type: ignore[attr-defined]
+        _OPS._cache.pop(synthetic, None)  # type: ignore[attr-defined]
 
 
 @pytest.mark.offline

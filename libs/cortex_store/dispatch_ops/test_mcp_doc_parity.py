@@ -66,14 +66,7 @@ def _op_param_tokens(op: str, text: str) -> list[str]:
 
     # Word-boundary: avoid ``resolve`` matching inside ``deadline_resolve``.
     m = re.search(rf"(?<![\w]){re.escape(op)}\s+\(([^)]*)\)", text)
-    if m:
-        return [t.strip() for t in m.group(1).split(",") if t.strip()]
-    # Alias ops share the canonical line: ``impact (...) (aliases: graph_reach)``.
-    alias_re = re.compile(
-        rf"\w+\s+\(([^)]*)\)\s+\(aliases:\s*[^)]*\b{re.escape(op)}\b"
-    )
-    m = alias_re.search(text)
-    assert m is not None, f"{op} missing as primary op or alias"
+    assert m is not None, f"{op} missing as primary op in tools doc"
     return [t.strip() for t in m.group(1).split(",") if t.strip()]
 
 
@@ -119,20 +112,6 @@ def test_ac3_entity_get_intents_and_params() -> None:
     ops = parse_tool_definition_ops_from_source(tools_text)
     assert "section" in ops["entity_get"]
     assert "full_body" in ops["entity_get"]
-
-
-@pytest.mark.offline
-def test_ac4_alias_annotations() -> None:
-    tools_text = _TOOLS_PY.read_text(encoding="utf-8")
-    assert "(aliases: graph_reach)" in tools_text
-    assert "(aliases: claim_alignment)" in tools_text
-    assert (
-        "graph_reach"
-        not in tools_text.split("(aliases: graph_reach)")[0].split("\n")[-1]
-    )
-    documented = parse_tool_definition_ops_from_source(tools_text)
-    assert "graph_reach" in documented
-    assert "claim_alignment" in documented
 
 
 @pytest.mark.offline
