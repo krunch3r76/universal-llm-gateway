@@ -142,15 +142,8 @@ def closeout_source_ref(body: str) -> str | None:
     ref = data.get("source_ref")
     if isinstance(ref, str) and ref.strip().startswith(("cortex://", "workspaces://")):
         return ref.strip()
-    evidence = data.get("evidence_uris")
-    if not isinstance(evidence, dict):
-        return None
-    paths = evidence.get("artifact_paths")
-    if not isinstance(paths, list):
-        return None
-    for item in paths:
-        if isinstance(item, str) and item.startswith(("cortex://", "workspaces://")):
-            return item
+    # Do not fall through evidence_uris.artifact_paths — an inline-splice
+    # envelope listing an unrelated artifact would replace the body (15474 B4).
     return None
 
 

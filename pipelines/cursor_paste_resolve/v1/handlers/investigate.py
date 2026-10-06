@@ -35,6 +35,12 @@ _REQUEST_TIMEOUT = 30.0
 InvestigateHop = Callable[..., Awaitable[dict[str, Any]]]
 
 
+def _poll_hint_has_after_turn(dispatched: dict[str, Any]) -> bool:
+    hint = dispatched.get("poll_hint")
+    args = hint.get("arguments") if isinstance(hint, dict) else None
+    return isinstance(args, dict) and isinstance(args.get("after_turn"), int)
+
+
 def _step(payload: dict[str, Any], *, error: str | None = None) -> StepOutput:
     return StepOutput(raw=json.dumps(payload, default=str), json=payload, error=error)
 
@@ -210,12 +216,14 @@ async def default_investigate_hop(
 
         execution_id = str(dispatched.get("execution_id") or "")
         # Mint/coord thread is not the CLOSEOUT home — poll_hint names the worker.
+        # Keep admit-time after_turn from the hint; re-pin only when the hint
+        # omitted it (a late tip read can sit past a fast CLOSEOUT — review 15474 B1).
         wait_thread, wait_after = poll_hint_wait_target(
             dispatched,
             fallback_thread=thread_id,
             fallback_after=after_turn,
         )
-        if wait_thread != thread_id:
+        if wait_thread != thread_id and not _poll_hint_has_after_turn(dispatched):
             wait_after = await latest_turn_number(bus, wait_thread, headers)
         closeout = await wait_sdk_closeout(
             bus,

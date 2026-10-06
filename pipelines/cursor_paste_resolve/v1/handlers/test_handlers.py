@@ -646,6 +646,164 @@ def test_poll_hint_wait_target_prefers_worker_thread() -> None:
     assert after == 1
 
 
+@pytest.mark.asyncio
+async def test_default_investigate_hop_keeps_poll_hint_after_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """15474 B1/B3 — worker ≠ mint must not re-pin past admit-time after_turn."""
+    tips = {"100": 0, "200": 5}
+    wait_pin: dict[str, object] = {}
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    async def fake_latest(
+        _bus: object, thread_id: str, _headers: dict[str, str]
+    ) -> int:
+        return tips[thread_id]
+
+    async def fake_post(
+        _client: object,
+        path: str,
+        body: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        if path == "/threads":
+            return {"id": "100"}
+        if path == "/api/v1/team/dispatch":
+            return {
+                "execution_id": "exec-1",
+                "poll_hint": {
+                    "arguments": {"thread": "200", "after_turn": 1},
+                },
+            }
+        return {"error": f"unexpected path {path}"}
+
+    async def fake_wait(
+        _bus: object,
+        thread_id: str,
+        *,
+        headers: dict[str, str],
+        after_turn: int,
+        execution_id: str,
+    ) -> dict[str, object]:
+        wait_pin["thread"] = thread_id
+        wait_pin["after_turn"] = after_turn
+        wait_pin["execution_id"] = execution_id
+        return {"ok": True, "splice": "surfaces: pinned"}
+
+    monkeypatch.setattr(investigate_mod, "agent_bus_headers", lambda: {"Authorization": "Bearer x"})
+    monkeypatch.setattr(investigate_mod, "make_async_client", lambda *a, **k: _Client())
+    monkeypatch.setattr(investigate_mod, "post_json", fake_post)
+    monkeypatch.setattr(investigate_mod, "latest_turn_number", fake_latest)
+    monkeypatch.setattr(investigate_mod, "wait_sdk_closeout", fake_wait)
+
+    out = await investigate_mod.default_investigate_hop(
+        bound={"kind": "friction", "assertion_id": 1},
+        model="cursor/claude-opus-5-5",
+        prompt="probe",
+    )
+    assert out["ok"] is True
+    assert out["wait_thread_id"] == "200"
+    assert wait_pin["thread"] == "200"
+    assert wait_pin["after_turn"] == 1
+    assert wait_pin["execution_id"] == "exec-1"
+
+
+@pytest.mark.asyncio
+async def test_default_investigate_hop_repins_when_hint_omits_after_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tips = {"100": 0, "200": 3}
+    wait_pin: dict[str, object] = {}
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    async def fake_latest(
+        _bus: object, thread_id: str, _headers: dict[str, str]
+    ) -> int:
+        return tips[thread_id]
+
+    async def fake_post(
+        _client: object,
+        path: str,
+        body: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        if path == "/threads":
+            return {"id": "100"}
+        if path == "/api/v1/team/dispatch":
+            return {
+                "execution_id": "exec-2",
+                "poll_hint": {"arguments": {"thread": "200"}},
+            }
+        return {"error": f"unexpected path {path}"}
+
+    async def fake_wait(
+        _bus: object,
+        thread_id: str,
+        *,
+        headers: dict[str, str],
+        after_turn: int,
+        execution_id: str,
+    ) -> dict[str, object]:
+        wait_pin["thread"] = thread_id
+        wait_pin["after_turn"] = after_turn
+        return {"ok": True, "splice": "surfaces: repin"}
+
+    monkeypatch.setattr(investigate_mod, "agent_bus_headers", lambda: {"Authorization": "Bearer x"})
+    monkeypatch.setattr(investigate_mod, "make_async_client", lambda *a, **k: _Client())
+    monkeypatch.setattr(investigate_mod, "post_json", fake_post)
+    monkeypatch.setattr(investigate_mod, "latest_turn_number", fake_latest)
+    monkeypatch.setattr(investigate_mod, "wait_sdk_closeout", fake_wait)
+
+    out = await investigate_mod.default_investigate_hop(
+        bound={"kind": "friction", "assertion_id": 2},
+        model="cursor/claude-opus-5-5",
+        prompt="probe",
+    )
+    assert out["ok"] is True
+    assert wait_pin["thread"] == "200"
+    assert wait_pin["after_turn"] == 3
+
+
+def test_resolve_turn_text_inline_splice_not_stolen_by_artifact_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """15474 B4 — artifact_paths must not replace an inline INVESTIGATE_SPLICE."""
+    share = tmp_path / "universal-llm-gateway" / "tmp" / "reviews" / "closeouts"
+    share.mkdir(parents=True)
+    (share / "other.md").write_text("no splice here\n", encoding="utf-8")
+    monkeypatch.setattr(
+        investigate_wait_mod,
+        "workspaces_root",
+        lambda: tmp_path / "universal-llm-gateway",
+    )
+    inline = f"{SPLICE_START}\nsurfaces: inline\n{SPLICE_END}"
+    text = investigate_wait_mod.resolve_turn_text({"body": inline})
+    assert extract_investigate_splice(text) == "surfaces: inline"
+    envelope = json.dumps(
+        {
+            "summary": "inline closeout",
+            "evidence_uris": {
+                "artifact_paths": [
+                    "workspaces://universal-llm-gateway/tmp/reviews/closeouts/other.md"
+                ]
+            },
+        }
+    )
+    assert investigate_wait_mod.closeout_source_ref(envelope) is None
+
+
 def test_resolve_turn_text_follows_workspaces_source_ref(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
