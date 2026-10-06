@@ -3049,10 +3049,6 @@ def test_hop_body_not_refused_terminal_nest_when_prose_done_only(
         lambda *_a, **_k: False,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop._row_hop_tokens_allow_lift",
-        lambda *_a, **_k: True,
-    )
-    monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.conductor_has_live_nested",
         lambda **_k: False,
     )
@@ -3070,3 +3066,209 @@ def test_next_admit_blocked_when_footer_stop_done(
     )
     row = _stamp_prose_done_nest_row(ledger, footer_done=True)
     assert build_hop_team_dispatch_body(row) is None
+
+
+def test_fold_summon_kwargs_attended_resolved() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _fold_summon_kwargs,
+    )
+
+    assert _fold_summon_kwargs(
+        {
+            "summon_mode": "attended",
+            "summoning_thread_id": "15324",
+            "generation_options": {"summon_mode": "attended"},
+        }
+    ) == {"summon_mode": "attended", "summoning_thread_id": "15324"}
+
+
+def test_fold_summon_kwargs_attended_unresolved_falls_back_to_away() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _fold_summon_kwargs,
+    )
+
+    assert _fold_summon_kwargs({"summon_mode": "attended"}) == {
+        "summon_mode": None,
+        "summoning_thread_id": None,
+    }
+
+
+def test_fold_summon_kwargs_legacy_row_omits_summon() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _fold_summon_kwargs,
+    )
+
+    assert _fold_summon_kwargs({}) == {
+        "summon_mode": None,
+        "summoning_thread_id": None,
+    }
+
+
+def test_mission_open_unresolved_attended_uses_away_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3: attended without summoning id folds as away ⇒ mission not open."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        mission_open_for_row,
+    )
+
+    _install_mission_open_summon_oracle_fold(monkeypatch)
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["PARKED_TRANSPORT"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "summon_mode": "attended",
+            "generation_options": {"summon_mode": "attended"},
+        },
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    assert not mission_open_for_row(
+        row, closeout_tokens=frozenset({"PARKED_TRANSPORT"})
+    )
+
+
+def test_lift_hold_designed_footer_done_without_stamped_done_token() -> None:
+    """Designed ``stop: DONE`` in body only — not via ``closeout_stop_tokens`` shortcut."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _lift_hold_tokens,
+    )
+
+    row = {
+        "record_json": json.dumps(
+            {
+                "closeout_body": "status: complete\nstop: DONE\n",
+                "closeout_stop_tokens": ["ROW_HOP"],
+            }
+        )
+    }
+    assert "DONE" in _lift_hold_tokens(row)
+
+
+def test_build_hop_body_prose_done_nest_without_fold_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
+    row = _stamp_prose_done_nest_row(ledger)
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    ):
+        assert build_hop_team_dispatch_body(row) is not None
+
+
+def test_mark_todo_done_skips_when_attended_fold_keeps_g5_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        mark_todo_done_on_mission_close,
+    )
+
+    _install_mission_open_summon_oracle_fold(monkeypatch)
+    updates: list[dict] = []
+
+    class _Runtime:
+        def dispatch(self, op: str, payload: dict) -> dict:
+            updates.append({"op": op, **payload})
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "implement_admission.closeout_runtime.get_runtime",
+        lambda: _Runtime(),
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["DONE"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "summon_mode": "attended",
+            "summoning_thread_id": "15324",
+            "generation_options": {"summon_mode": "attended"},
+        },
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    mark_todo_done_on_mission_close(row, closeout_tokens=frozenset({"DONE"}))
+    assert updates == []
+
+
+def test_build_hop_body_under_attended_entry_gate_g5_15324_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """15324 probe: attended fold entry gate G5 and hop body still builds."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _live_entry_gate_for_row,
+    )
+
+    _install_mission_open_summon_oracle_fold(monkeypatch)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    scoreboard_body = (
+        "# Scoreboard\n\n"
+        "## Gated deliverables\n\n"
+        "| ID | Deliverable | Status |\n"
+        "| G5 | Implement | CLAIMED |\n"
+        "| G6 | Review | CLAIMED |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        scoreboard_body, encoding="utf-8"
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "summon_mode": "attended",
+            "summoning_thread_id": "15324",
+            "generation_options": {"summon_mode": "attended"},
+        },
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    assert _live_entry_gate_for_row(row, scoreboard_body) == "G5"
+    assert build_hop_team_dispatch_body(row) is not None
+
+
+@pytest.mark.asyncio
+async def test_path_c_sweep_admits_once_prose_done_parent_nest_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Path C: parent prose DONE + terminal nest ⇒ one admit (38298 lift predicate)."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_nested_dispatch(
+        ledger,
+        dispatch_id=_FULL_ID,
+        nest_under="pred-hop-1",
+        status="completed",
+    )
+    row = _stamp_g2_row(ledger)
+    rec = json.loads(row["record_json"])
+    rec["closeout_body"] = (
+        "G1 and G2 stay DONE.\n" + str(rec.get("closeout_body") or "")
+    )
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"closeout_body": rec["closeout_body"]},
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "succ-path-c"}))
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+            return_value=_TRUTHY_SNAP,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+        deferred = await release_deferred_conductor_hops()
+    assert post_mock.await_count + deferred == 1
