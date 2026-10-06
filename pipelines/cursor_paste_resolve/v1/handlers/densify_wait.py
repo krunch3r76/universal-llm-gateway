@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -33,6 +34,11 @@ _WAIT_TIMEOUT = 55.0
 # httpx client timeout must exceed the blocking wait= slice or the first poll
 # raises wait_transport while the admitted producer is still running.
 WAIT_CLIENT_TIMEOUT = _WAIT_TIMEOUT + 15.0
+
+
+def wait_transport_backoff_s(round_index: int) -> float:
+    """Cap post-admit transport retries so connection-refused cannot spin 24 rounds."""
+    return float(min(2**round_index, 10))
 
 
 def wait_snapshot_fixture(**overrides: Any) -> dict[str, Any]:
@@ -145,7 +151,7 @@ async def wait_sdk_closeout(
     }
     if execution_id:
         params["execution_id"] = execution_id
-    for _ in range(_WAIT_ROUNDS):
+    for round_index in range(_WAIT_ROUNDS):
         try:
             resp = await bus.get(
                 f"/threads/{thread_id}/wait",
@@ -155,6 +161,7 @@ async def wait_sdk_closeout(
         except Exception as exc:
             last_transport = f"wait transport_error: {exc}"
             if execution_id:
+                await asyncio.sleep(wait_transport_backoff_s(round_index))
                 continue
             return {
                 "ok": False,

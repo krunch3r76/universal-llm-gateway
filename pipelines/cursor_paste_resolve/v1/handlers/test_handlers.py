@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import yaml
 from systems.pipeline.core.pipeline_config import PipelineSpec
 from work_key_grammar import is_valid_work_key_scheme
 
 from . import densify as densify_mod
+from . import densify_wait as densify_wait_mod
 from . import launch
 from ._message import (
     CURSOR_SDK_MODEL,
@@ -31,6 +33,7 @@ from .densify_wait import (
     WAIT_SNAPSHOT_KEYS,
     wait_sdk_closeout,
     wait_snapshot_fixture,
+    wait_transport_backoff_s,
 )
 from .launch import CursorPasteLaunchHandler, bridge_argv, paste_thread_name
 
@@ -635,8 +638,39 @@ class _AlwaysTransportBus:
         raise TimeoutError("")
 
 
+class _ConnectThenCompleteBus(_WaitBus):
+    def __init__(self, *args: object, raises: int = 5, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._raises_left = raises
+
+    async def get(
+        self,
+        path: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _Resp:
+        if path.endswith("/wait") and self._raises_left:
+            self._raises_left -= 1
+            self.paths.append(path)
+            raise httpx.ConnectError("connection refused")
+        return await super().get(path, params, headers)
+
+
+@pytest.fixture
+def instant_wait_backoff(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    sleeps: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(densify_wait_mod.asyncio, "sleep", _sleep)
+    return sleeps
+
+
 @pytest.mark.asyncio
-async def test_wait_sdk_closeout_retries_transport_after_admit() -> None:
+async def test_wait_sdk_closeout_retries_transport_after_admit(
+    instant_wait_backoff: list[float],
+) -> None:
     splice = f"{SPLICE_START}\nsurfaces: live\n{SPLICE_END}"
     bus = _TransportThenCompleteBus(
         wait_snapshot_fixture(
@@ -672,7 +706,9 @@ async def test_wait_sdk_closeout_transport_fail_closed_before_admit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wait_sdk_closeout_transport_exhausted_after_admit() -> None:
+async def test_wait_sdk_closeout_transport_exhausted_after_admit(
+    instant_wait_backoff: list[float],
+) -> None:
     bus = _AlwaysTransportBus()
     out = await wait_sdk_closeout(
         bus,
@@ -684,3 +720,28 @@ async def test_wait_sdk_closeout_transport_exhausted_after_admit() -> None:
     assert out["ok"] is False
     assert out["failure_class"] == "wait_transport"
     assert len(bus.paths) == 24
+    assert instant_wait_backoff == [wait_transport_backoff_s(i) for i in range(24)]
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_connect_error_backoff_then_complete(
+    instant_wait_backoff: list[float],
+) -> None:
+    splice = f"{SPLICE_START}\nsurfaces: live\n{SPLICE_END}"
+    bus = _ConnectThenCompleteBus(
+        wait_snapshot_fixture(
+            qualifying_reply_turn=2, complete=True, status="complete"
+        ),
+        {"turn_number": 2, "from": "cursor-sdk", "body": splice},
+        raises=5,
+    )
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=0,
+        execution_id="exec-admitted",
+    )
+    assert out["ok"] is True
+    assert instant_wait_backoff == [wait_transport_backoff_s(i) for i in range(5)]
+    assert bus.paths.count("/threads/99/wait") == 6
