@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from claude_bundles.chat_reply_wait import _in_flight
+from claude_bundles.cse_idle_probe import in_flight_from_state
 from claude_bundles.project_ask import strip_thinking_prefix
 
 # The harvest routine lives beside this module as real JavaScript so it can be
@@ -47,7 +47,7 @@ async def harvest_turns(
             }
         )
     raw["turns"] = turns
-    raw["in_flight"] = _in_flight(raw)
+    raw["in_flight"] = in_flight_from_state(raw)
     raw.pop("incomplete_dom", None)
     user_count = sum(1 for row in turns if row.get("author") == "user")
     raw["user_turn_count"] = user_count

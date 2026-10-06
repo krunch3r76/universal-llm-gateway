@@ -38,6 +38,7 @@ from claude_bundles.project_ask import (
     send_prompt,
 )
 from claude_bundles.project_chrome import project_url
+from claude_bundles.reply_anchor import ReplyAnchor, anchor_marker
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 
@@ -276,23 +277,21 @@ async def project_followup_on_page(
     """
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
     require_review_verdict = (purpose or "").strip().lower() == "review"
-    caller_before: dict = {}
-    induction_baseline: dict | None = None
+    anchor: ReplyAnchor | None = None
     try:
-        from claude_bundles.induction_reply_baseline import work_reply_before
-
-        caller_before = await harvest_assistant(page, min_msg_chars=10)
-        induction_baseline = await send_prompt(
+        probe = ReplyAnchor(anchor_marker(prompt))
+        anchor = probe.after(await harvest_assistant(page, min_msg_chars=10, anchor=probe))
+        await send_prompt(
             page,
             prompt,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=satellite_execution_id,
             await_induction_reply=True,
         )
-        before = work_reply_before(caller_before, induction_baseline)
         state = await wait_assistant_reply(
             page,
-            before=before,
+            anchor=anchor,
+            tail_hold=True,
             timeout_s=timeout_s,
             poll_ms=500,
             min_growth=min_growth,
@@ -360,13 +359,12 @@ async def project_followup_on_page(
             error=str(exc),
         )
     except SkillReceiptUnverifiedError as exc:
-        if not exc.submitted:
+        if not exc.submitted or anchor is None:
             raise
         return await _harvest_after_skill_receipt_unverified(
             page,
             exc=exc,
-            caller_before=caller_before,
-            induction_baseline=induction_baseline,
+            anchor=anchor,
             project_uuid=project_uuid or "",
             project_url=dest,
             model_info={"ok": True, "step": "followup"},
@@ -467,22 +465,21 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
-            from claude_bundles.induction_reply_baseline import work_reply_before
-
-            caller_before = await harvest_assistant(page, min_msg_chars=10)
-            induction_baseline = await send_prompt(
+            probe = ReplyAnchor(anchor_marker(prompts[0]))
+            anchor = probe.after(await harvest_assistant(page, min_msg_chars=10, anchor=probe))
+            await send_prompt(
                 page,
                 prompts[0],
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
                 await_induction_reply=True,
             )
-            before = work_reply_before(caller_before, induction_baseline)
             await _emit_page_url(on_harvest, page)
             try:
                 state = await wait_assistant_reply(
                     page,
-                    before=before,
+                    anchor=anchor,
+                    tail_hold=True,
                     timeout_s=timeout_s,
                     poll_ms=500,
                     min_growth=min_growth,

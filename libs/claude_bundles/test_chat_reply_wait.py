@@ -6,15 +6,19 @@ import asyncio
 import time
 
 import pytest
+from chat_harvest.chrome import is_prompt_echo
 
-from claude_bundles.chat_reply_wait import (
-    HarvestIncompleteError,
-    _complete_enough,
-    _cowork_complete_enough,
-    _in_flight,
-    _is_user_prompt_echo,
-    wait_assistant_reply,
+from claude_bundles.chat_reply_wait import HarvestIncompleteError, wait_assistant_reply
+from claude_bundles.cse_idle_probe import in_flight_from_state
+from claude_bundles.reply_completion import (
+    complete_enough as _complete_enough,
 )
+from claude_bundles.reply_completion import (
+    cowork_complete_enough as _cowork_complete_enough,
+)
+
+_in_flight = in_flight_from_state
+_is_user_prompt_echo = is_prompt_echo
 
 pytestmark = pytest.mark.offline
 
@@ -84,6 +88,36 @@ def test_in_flight_detects_stop_streaming_tool_pause() -> None:
     assert _in_flight(_state(streaming=True))
     assert _in_flight(_state(tool_pause=True))
     assert not _in_flight(_state())
+
+
+@pytest.mark.parametrize(
+    ("streaming", "stop", "tool_pause"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, False),
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
+    ],
+)
+def test_in_flight_from_state_matches_legacy_triple(
+    streaming: bool, stop: bool, tool_pause: bool
+) -> None:
+    state = {
+        "streaming": streaming,
+        "stop": stop,
+        "tool_pause": tool_pause,
+    }
+    legacy = bool(streaming or stop or tool_pause)
+    assert in_flight_from_state(state) is legacy
+
+
+@pytest.mark.parametrize("state", [{}, {"streaming": None}, {"stop": 0}])
+def test_in_flight_from_state_missing_keys_falsy(state: dict) -> None:
+    assert in_flight_from_state(state) is False
 
 
 @pytest.mark.asyncio
@@ -767,3 +801,192 @@ async def test_timestamp_tick_on_badge_does_not_refresh(advance_clock) -> None:
             stable_polls=2,
         )
     assert advance_clock["t"] <= 1_003.0
+
+
+@pytest.mark.asyncio
+async def test_wait_rejects_anchor_and_before_together() -> None:
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    page = _FakePage([])
+    with pytest.raises(ValueError, match="not both"):
+        await wait_assistant_reply(
+            page,
+            before={"n": 0, "body_len": 0},
+            anchor=ReplyAnchor(marker="x"),
+        )
+
+
+def test_tail_hold_vetoes_tool_row_completion() -> None:
+    body = "Mid reply prose.\nLoaded tools\nLoaded tools"
+    state = _state(body_len=len(body), n=1, body=body)
+    kwargs = {
+        "base_len": 0,
+        "base_n": 0,
+        "min_growth": 1,
+        "min_body": 1,
+        "tail_hold": True,
+    }
+    assert _complete_enough(state, **kwargs) is False
+
+
+@pytest.mark.asyncio
+async def test_tail_hold_tool_row_then_prose_completes(advance_clock) -> None:
+    """Doubled tool-row tail must not complete until prose lands (tail_hold)."""
+    tool_tail = "Mid reply prose.\nLoaded tools\nLoaded tools"
+    prose = tool_tail + "\n\nFinal answer after tools finished."
+    page = _FakePage(
+        [_state(body_len=len(tool_tail), n=1, body=tool_tail) for _ in range(3)]
+        + [_state(body_len=len(prose), n=1, body=prose) for _ in range(3)]
+    )
+    state = await wait_assistant_reply(
+        page,
+        before=_state(body_len=0, n=0),
+        tail_hold=True,
+        timeout_s=30,
+        poll_ms=500,
+        stable_polls=2,
+    )
+    assert "Final answer" in state["body"]
+
+
+@pytest.mark.asyncio
+async def test_structural_quiet_tier_a_does_not_complete_tool_row_with_stop(
+    advance_clock, structural_quiet_n
+) -> None:
+    """Tier A escape must not complete a landed tool-row tail while stop is up."""
+    body = "Working prose.\nAgent Bus\nAgent Bus"
+    quiet = {
+        **_cowork_quiet_state(body_len=len(body), body=body),
+        "stop": True,
+    }
+    page = _FakePage([quiet] * 12)
+    with pytest.raises(HarvestIncompleteError, match="tail_hold unresolved"):
+        await wait_assistant_reply(
+            page,
+            before=_state(body_len=0, n=0),
+            tail_hold=True,
+            timeout_s=1,
+            poll_ms=500,
+            min_growth=50,
+            min_body=200,
+            stable_polls=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_anchor_miss_idle_classifies_observer_unverified(
+    advance_clock,
+) -> None:
+    from cdp_ask.models import classify_stall_stage
+    from cdp_ask.unverifiable import converse_stall_stage, is_unverifiable_stall
+
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    page = _FakePage(
+        [
+            {
+                **_state(body_len=0, n=0),
+                "anchored": True,
+                "anchor_found": False,
+                "anchor_matches": 0,
+            }
+        ]
+        * 6
+    )
+    anchor = ReplyAnchor(marker="missing-marker-xyz", prior_matches=0)
+    with pytest.raises(HarvestIncompleteError) as exc:
+        await wait_assistant_reply(
+            page,
+            anchor=anchor,
+            tail_hold=True,
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    msg = str(exc.value)
+    assert exc.value.anchor_found is False
+    assert "anchor not found at idle budget" in msg
+    assert classify_stall_stage(msg) == "unknown"
+    assert converse_stall_stage(msg, conv_ok=False) == "observer_unverified"
+    assert is_unverifiable_stall(
+        "observer_unverified", msg, url="https://claude.ai/cowork/cse_x"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tail_hold_changing_badge_key_runs_past_timeout(advance_clock) -> None:
+    """Progress-key refresh extends idle budget past timeout_s for tail_hold."""
+    tool_a = "Mid reply prose here.\nAgent Bus\nAgent Bus"
+    tool_b = "Mid reply prose here.\nLoaded tools\nLoaded tools"
+    changing = [
+        _state(
+            body_len=len(tool_a if i % 2 == 0 else tool_b),
+            n=1,
+            body=tool_a if i % 2 == 0 else tool_b,
+        )
+        for i in range(8)
+    ]
+    quiet = [_state(body_len=len(tool_a), n=1, body=tool_a) for _ in range(6)]
+    page = _FakePage(changing + quiet)
+    with pytest.raises(HarvestIncompleteError, match="tail_hold unresolved") as exc:
+        await wait_assistant_reply(
+            page,
+            before=_state(body_len=0, n=0),
+            tail_hold=True,
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    assert exc.value.tail_hold is True
+    assert advance_clock["t"] >= 1_006.0
+
+
+@pytest.mark.asyncio
+async def test_before_without_tail_hold_completes_specimen_body(
+    advance_clock,
+) -> None:
+    """Legacy before= path completes on specimen-shaped steer answer (no tail_hold)."""
+    body = (
+        "Steer answer prose here with Agent Bus label twice below.\n"
+        "Agent Bus\nAgent Bus"
+    )
+    done = [_state(body_len=len(body), n=2, body=body) for _ in range(3)]
+    state = await wait_assistant_reply(
+        _FakePage(done),
+        before=_state(body_len=0, n=0),
+        timeout_s=30,
+        poll_ms=500,
+        stable_polls=2,
+    )
+    assert state["n"] == 2
+    assert "Steer answer" in state["body"]
+
+
+@pytest.mark.asyncio
+async def test_tail_hold_idle_expiry_classifies_observer_unverified(
+    advance_clock,
+) -> None:
+    from cdp_ask.models import classify_stall_stage
+    from cdp_ask.unverifiable import converse_stall_stage, is_unverifiable_stall
+
+    body = "Reply ends on tool row.\nAgent Bus\nAgent Bus"
+    page = _FakePage([_state(body_len=len(body), n=1, body=body)] * 8)
+    with pytest.raises(HarvestIncompleteError) as exc:
+        await wait_assistant_reply(
+            page,
+            before=_state(body_len=0, n=0),
+            tail_hold=True,
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    msg = str(exc.value)
+    assert exc.value.tail_hold is True
+    assert "tail_hold unresolved at idle budget" in msg
+    assert classify_stall_stage(msg) == "unknown"
+    assert (
+        converse_stall_stage(msg, conv_ok=False) == "observer_unverified"
+    )
+    assert is_unverifiable_stall(
+        "observer_unverified", msg, url="https://claude.ai/cowork/cse_x"
+    )

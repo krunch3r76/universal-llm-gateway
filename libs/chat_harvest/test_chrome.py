@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from chat_harvest.chrome import (
     RELAY_ENVELOPE_SUBJECT_RE,
     badge_scrape_change_key,
+    ends_with_tool_row,
     is_chrome_only,
     is_failed_relay_envelope_subject,
     is_prompt_echo,
@@ -203,3 +206,45 @@ def test_strip_chrome_keeps_code_punctuation_lines() -> None:
     cleaned = strip_chrome(text)
     assert "}" in cleaned
     assert "---" in cleaned
+
+
+SPECIMEN_A36886_TAIL = """\
+Some assistant prose here.
+
+Loaded tools
+Loaded tools
+"""
+
+
+def test_ends_with_tool_row_specimen_a36886() -> None:
+    assert ends_with_tool_row(SPECIMEN_A36886_TAIL)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Used toys integration, ran 8 commands, loaded tools · 1 note\n"
+        "Used toys integration, ran 8 commands, loaded tools · 1 note",
+        "Listed scheduled tasks · 1 note\nListed scheduled tasks · 1 note",
+        "Agent Bus\nAgent Bus",
+        "Agent Bus\n\ue027\nAgent Bus\njust now",
+    ],
+)
+def test_ends_with_tool_row_true_cases(body: str) -> None:
+    assert ends_with_tool_row(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Listed scheduled tasks · 1 note",
+        "Updated the spec.",
+        "Updated the spec.\nUpdated the spec.",
+        "Updated the spec, ran the tests.",
+        "}\n}",
+        "Thanks!\nThanks!",
+        "Claude responded: Approved\nApproved",
+    ],
+)
+def test_ends_with_tool_row_false_cases(body: str) -> None:
+    assert not ends_with_tool_row(body)

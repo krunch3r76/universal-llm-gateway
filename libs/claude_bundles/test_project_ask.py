@@ -564,7 +564,7 @@ async def test_combined_message_does_not_wait_for_induction_reply() -> None:
     assert baseline is None
     capture.assert_not_awaited()
 
-    caller = {"n": 0, "body_len": 0, "body": ""}
+    pre_anchor = {"n": 0, "body_len": 0, "body": "", "anchor_matches": 0}
     wait = AsyncMock(
         return_value={"body": "desk answer", "body_len": 40, "n": 1, "url": page.url}
     )
@@ -576,7 +576,7 @@ async def test_combined_message_does_not_wait_for_induction_reply() -> None:
         ),
         patch(
             "claude_bundles.project_ask.harvest_assistant",
-            new=AsyncMock(return_value=caller),
+            new=AsyncMock(return_value=pre_anchor),
         ),
         patch(
             "claude_bundles.project_ask.send_prompt",
@@ -604,7 +604,10 @@ async def test_combined_message_does_not_wait_for_induction_reply() -> None:
         )
     assert result.body == "desk answer"
     assert wait.await_count == 1
-    assert wait.await_args.kwargs["before"] == caller
+    wait_kwargs = wait.await_args.kwargs
+    assert wait_kwargs.get("anchor") is not None
+    assert wait_kwargs.get("tail_hold") is True
+    assert "before" not in wait_kwargs
 
 
 @pytest.mark.asyncio
@@ -829,49 +832,3 @@ async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> 
     assert "Question. Is the desk memo" in draft
     attest.assert_not_called()
 
-
-def test_induction_ack_is_not_complete_against_its_own_baseline() -> None:
-    """purpose=ask seals the skill ack when base_n is the pre-send snapshot."""
-    from claude_bundles.chat_reply_wait import _complete_enough
-    from claude_bundles.induction_reply_baseline import work_reply_before
-
-    ack = {
-        "n": 1,
-        "body_len": 80,
-        "body": "There's no substantive question in your message yet",
-        "streaming": False,
-        "stop": False,
-    }
-    caller_before = {"n": 0, "body_len": 0}
-    assert (
-        _complete_enough(
-            ack,
-            base_len=0,
-            base_n=caller_before["n"],
-            min_growth=1,
-            min_body=1,
-        )
-        is True
-    )
-    baseline = work_reply_before(caller_before, ack)
-    assert (
-        _complete_enough(
-            ack,
-            base_len=0,
-            base_n=baseline["n"],
-            min_growth=1,
-            min_body=1,
-        )
-        is False
-    )
-    work = {**ack, "n": 2, "body": "Desk memo answer", "body_len": 17}
-    assert (
-        _complete_enough(
-            work,
-            base_len=ack["body_len"],
-            base_n=baseline["n"],
-            min_growth=1,
-            min_body=1,
-        )
-        is True
-    )
