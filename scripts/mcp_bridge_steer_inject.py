@@ -481,6 +481,8 @@ def append_spool_entry(
     """Register a pending steer entry (GIW deposit path). Returns ``entry_id``.
 
     The lock is held inside this producer so two deposits cannot drop a row.
+    When a pending row already exists for *authority_turn_id*, returns that
+    row's ``entry_id`` and skips the append (recovery vs deposit race).
     The spool file is replaced via a unique temp name.
     """
     eid = entry_id or uuid.uuid4().hex
@@ -489,6 +491,12 @@ def append_spool_entry(
         data = _load_spool(path)
         data["dispatch_id"] = dispatch_id
         pending = list(data.get("pending") or [])
+        for raw in pending:
+            if not isinstance(raw, dict):
+                continue
+            if str(raw.get("authority_turn_id") or "") == authority_turn_id:
+                existing = str(raw.get("entry_id") or "")
+                return existing if existing else eid
         pending.append(
             {
                 "entry_id": eid,

@@ -140,7 +140,7 @@ def _age_pending(spool: Path, dispatch_id: str) -> None:
 def _deposit(spool: Path, dispatch_id: str, entry_id: str, directive: str) -> None:
     append_spool_entry(
         dispatch_id,
-        authority_turn_id="9",
+        authority_turn_id=entry_id,
         directive=directive,
         ttl_s=300,
         spool_dir=spool,
@@ -312,7 +312,7 @@ def test_append_spool_entry_concurrent_keeps_both(tmp_path: Path) -> None:
         try:
             append_spool_entry(
                 "disp-race",
-                authority_turn_id="1",
+                authority_turn_id=entry_id,
                 directive=entry_id,
                 ttl_s=300,
                 spool_dir=tmp_path,
@@ -330,6 +330,32 @@ def test_append_spool_entry_concurrent_keeps_both(tmp_path: Path) -> None:
     data = json.loads(spool_path(tmp_path, "disp-race").read_text(encoding="utf-8"))
     assert {row["entry_id"] for row in data["pending"]} == {f"e-{i}" for i in range(8)}
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_append_spool_entry_same_authority_turn_id_dedupes(tmp_path: Path) -> None:
+    """Recovery vs deposit race: one pending row per authority_turn_id."""
+    first = append_spool_entry(
+        "disp-dedupe",
+        authority_turn_id="turn-9",
+        directive="first",
+        ttl_s=300,
+        spool_dir=tmp_path,
+        entry_id="entry-a",
+    )
+    second = append_spool_entry(
+        "disp-dedupe",
+        authority_turn_id="turn-9",
+        directive="second",
+        ttl_s=300,
+        spool_dir=tmp_path,
+        entry_id="entry-b",
+    )
+    assert first == "entry-a"
+    assert second == "entry-a"
+    data = json.loads(spool_path(tmp_path, "disp-dedupe").read_text(encoding="utf-8"))
+    assert len(data["pending"]) == 1
+    assert data["pending"][0]["entry_id"] == "entry-a"
+    assert data["pending"][0]["directive"] == "first"
 
 
 def test_ledger_read_uses_env_sqlite(

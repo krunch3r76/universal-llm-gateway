@@ -20,7 +20,9 @@ from scripts.mcp_bridge_steer_inject import (
     PendingSteer,
     append_spool_entry,
     claim_pending,
+    consume_next_steer_envelope,
     mark_delivered,
+    read_delivery_ack,
 )
 from services.git_integration_worker.cursor_sdk_park_for_restart import ParkRefusal
 from services.git_integration_worker.cursor_sdk_steer_inject import (
@@ -782,8 +784,9 @@ def test_preflight_ac10_execution_id_not_live(ledger_env: Any) -> None:
 async def test_inject_admit_grace_spool_before_live_register(
     ledger_env: Any, spool: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Admitted row with thread_id deposits before register_live_run; claim once."""
+    """Admitted row deposits before register_live_run; bridge consumer delivers once."""
     _ledger_admit(ledger_env, dispatch_id="disp-grace", execution_id="exec-grace")
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_LEDGER_ENV", str(ledger_env._db_path))
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_steer_inject._deposit_authority_turn",
         lambda **_k: "41",
@@ -810,19 +813,15 @@ async def test_inject_admit_grace_spool_before_live_register(
     from scripts.mcp_bridge_steer_inject import spool_path
 
     assert spool_path(spool, "disp-grace").is_file()
-    pending = claim_pending("disp-grace", spool_dir=spool)
-    assert pending is not None
-    assert pending.directive == "hold the ruling"
-    register_live_run(
-        dispatch_id="disp-grace",
-        thread_id="10479",
-        source_repo="/tmp/repo",
-        run=object(),
+    envelope = consume_next_steer_envelope(
+        "disp-grace", spool_dir=spool, delivered_via="mcp_bridge"
     )
-    try:
-        assert claim_pending("disp-grace", spool_dir=spool) is None
-    finally:
-        unregister_live_run(dispatch_id="disp-grace")
+    assert envelope is not None
+    assert "hold the ruling" in envelope
+    assert consume_next_steer_envelope("disp-grace", spool_dir=spool) is None
+    ack = read_delivery_ack("disp-grace", str(body["entry_id"]), spool_dir=spool)
+    assert ack is not None
+    assert ack.get("delivered_via") == "mcp_bridge"
 
 
 @pytest.mark.asyncio

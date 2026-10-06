@@ -68,7 +68,14 @@ def _execution_id_candidates(execution_id: str) -> list[dict[str, Any]]:
 
 
 def preflight_inject(submitted_id: str) -> InjectPreflight:
-    """Decide inject refusal for *submitted_id* without mutating state."""
+    """Decide inject refusal for *submitted_id* without mutating state.
+
+    ``queued`` rows pass preflight: the deposit is spooled immediately and
+    waits until the worker promotes the row. ``consume_next_steer_envelope``
+    delivers once the ledger status is ``admitted``, ``running``, or
+    ``parked_waiting``; TTL is relaxed while the row is live, so steers
+    spooled during ``queued`` are still delivered after the run starts.
+    """
     stripped = submitted_id.removeprefix(_CURSOR_SDK_DISPATCH_PREFIX)
     row = load_park_candidate_row(stripped)
     if row is not None:
