@@ -29,6 +29,13 @@ _LEADING_INLINE_BLOCK = re.compile(
     r"^(?:\r?\n)*<skills_inline>.*?</skills_inline>(?:\r?\n)*",
     re.DOTALL,
 )
+_USE_LINE_DELIVERY_RE = re.compile(
+    r"(?:-\s+)?Use the `?(?P<slug>[a-z0-9][-a-z0-9_]*)`? skill"
+    r"(?: \([^<\n]*\))?",
+    re.IGNORECASE,
+)
+_HOUSE_READ_FIRST_HEADING = "## House (read first)"
+_HOP_SUCCESSOR_HEADING = "# Hop on agent-bus:"
 
 
 def split_leading_slash_skills(text: str) -> tuple[list[str], str]:
@@ -58,6 +65,71 @@ def extract_inline_slugs_from_sealed(rest: str) -> list[str]:
     if "<skills_inline>" not in rest:
         return []
     return _INLINE_SKILL_SLUG.findall(rest)
+
+
+def _peel_house_read_first_block(rest: str) -> tuple[bool, str]:
+    """Consume a staged ``## House (read first)`` block when briefing follows."""
+    if not rest.lstrip("\r\n").startswith(_HOUSE_READ_FIRST_HEADING):
+        return False, rest
+    hop_marker = f"\n\n{_HOP_SUCCESSOR_HEADING}"
+    hop_idx = rest.find(hop_marker)
+    if hop_idx == -1:
+        return False, rest
+    return True, rest[hop_idx + 2 :]
+
+
+def peel_delivery_prefix(text: str) -> str:
+    """Strip leading delivery chrome for idempotency detection.
+
+    Peels authority, slash lines, inline XML, skill hash, review charter,
+    Use-the lines (backticks optional), and the House read-first block when
+    the hop briefing follows. Does not alter ``peel_sealed_cdp_skill_prefix``
+    attach/inline accounting.
+    """
+    rest = text
+    for _ in range(128):
+        if rest.startswith("\r\n"):
+            rest = rest[2:]
+            continue
+        if rest.startswith("\n"):
+            rest = rest[1:]
+            continue
+        auth = _LEADING_AUTHORITY.match(rest)
+        if auth is not None:
+            rest = rest[auth.end() :]
+            continue
+        tokens, after = split_leading_slash_skills(rest)
+        if tokens:
+            rest = after
+            continue
+        skill_hash = _LEADING_SKILL_HASH.match(rest)
+        if skill_hash is not None:
+            rest = rest[skill_hash.end() :]
+            continue
+        charter = _LEADING_REVIEW_CHARTER.match(rest)
+        if charter is not None:
+            rest = rest[charter.end() :]
+            continue
+        inline_match = _LEADING_INLINE_BLOCK.match(rest)
+        if inline_match is not None:
+            rest = rest[inline_match.end() :]
+            continue
+        peeled_house, after_house = _peel_house_read_first_block(rest)
+        if peeled_house:
+            rest = after_house
+            continue
+        line_end = rest.find("\n")
+        first = rest if line_end == -1 else rest[:line_end]
+        use_match = _USE_LINE_DELIVERY_RE.match(first)
+        if use_match is not None and use_match.group(0) == first.rstrip("\r"):
+            rest = rest[len(first) :]
+            if rest.startswith("\r\n"):
+                rest = rest[2:]
+            elif rest.startswith("\n"):
+                rest = rest[1:]
+            continue
+        break
+    return rest
 
 
 def peel_sealed_cdp_skill_prefix(

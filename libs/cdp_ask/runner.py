@@ -450,11 +450,27 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
     )
 
     if purpose_implies_mission(req.purpose, text):
-        text = ensure_operator_proxy_mission_prompt(
-            text,
-            standing_handoff_text=standing_handoff_text_for_prompt(text),
-            execution_id=resolve_stargate_execution_id(req),
-        )
+        from claude_bundles.cdp_model_endpoint_staging import ephemeral_uri_prefix
+        from claude_bundles.operator_proxy_mission import HOP_SUCCESSOR_TITLE
+        from claude_bundles.sealed_cdp_prefix import peel_delivery_prefix
+
+        exec_id = resolve_stargate_execution_id(req)
+        uri = (req.prompt_uri or "").strip()
+        skip_ensure = False
+        if uri and exec_id:
+            owned = ephemeral_uri_prefix(exec_id).rstrip("/") + "/"
+            if uri.startswith(owned) or uri.rstrip("/") == owned.rstrip("/"):
+                skip_ensure = True
+        if not skip_ensure and peel_delivery_prefix(text).lstrip().startswith(
+            HOP_SUCCESSOR_TITLE
+        ):
+            skip_ensure = True
+        if not skip_ensure:
+            text = ensure_operator_proxy_mission_prompt(
+                text,
+                standing_handoff_text=standing_handoff_text_for_prompt(text),
+                execution_id=exec_id,
+            )
         from claude_bundles.cowork_skill_delivery import (
             extract_cdp_required_authority,
             prepend_cdp_dispatch_skills,

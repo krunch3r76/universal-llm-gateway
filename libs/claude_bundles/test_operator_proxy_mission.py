@@ -154,7 +154,10 @@ def test_stage_then_resolve_prompt_does_not_double_hop_briefing(
     """Production path: staging ensure + resolve_prompt ensure stays single briefing."""
     from cdp_ask.models import SubmitProjectAskRequest
     from cdp_ask.runner import resolve_prompt
-    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+    from claude_bundles.cdp_model_endpoint_staging import (
+        ephemeral_dir,
+        stage_cdp_prompt_with_skills,
+    )
 
     root = tmp_path / "cortex_files"
     root.mkdir()
@@ -164,6 +167,85 @@ def test_stage_then_resolve_prompt_does_not_double_hop_briefing(
         execution_id=exec_id,
         prompt_text="TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n",
         purpose="operator-proxy",
+        skills=["ulg-architecture"],
+    )
+    assert staged.staged
+    staged_text = (ephemeral_dir(exec_id) / "prompt.md").read_text(encoding="utf-8")
+    assert "<skills_inline>" in staged_text
+    marker_at = staged_text.index("<!--cdp-required-skills:")
+    assert marker_at < staged_text.index("# Hop on agent-bus:")
+    assert staged_text[marker_at:].startswith("<!--cdp-required-skills:")
+    req = SubmitProjectAskRequest(
+        prompt_uri=staged.prompt_uri,
+        purpose="operator-proxy",
+        stargate_execution_id=exec_id,
+    )
+    with patch(
+        "claude_bundles.operator_proxy_hop_status.standing_handoff_path"
+    ) as path:
+        path.return_value.is_file.return_value = False
+        submitted = resolve_prompt(req)[0]
+    _assert_single_hop_briefing(submitted)
+    assert submitted.rstrip("\n") == staged_text.rstrip("\n")
+    assert "TYPE: CONTINUITY_HANDOFF" in submitted
+
+
+def test_ensure_preserves_author_use_line_under_hop_request_data() -> None:
+    body = (
+        "Use the `conductor` skill\n"
+        "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
+    )
+    out = ensure_operator_proxy_mission_prompt(body)
+    hop_data = out.split("## Hop request (data)", 1)[1].split("## Hard refusals", 1)[0]
+    assert "Use the `conductor` skill" in hop_data
+    assert "TYPE: CONTINUITY_HANDOFF" in hop_data
+
+
+def test_ensure_no_prefix_matches_pre_peek_render() -> None:
+    """Unprefixed bodies render once; caller data stays under Hop request (data)."""
+    body = "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
+    out = ensure_operator_proxy_mission_prompt(body)
+    assert out.count("# Hop on agent-bus:") == 1
+    hop_data = out.split("## Hop request (data)", 1)[1].split("## Hard refusals", 1)[0]
+    assert body.strip() in hop_data
+    assert ensure_operator_proxy_mission_prompt(out).rstrip("\n") == out.rstrip("\n")
+
+
+def test_ensure_idempotent_past_delivery_prefix_crlf_use_lines() -> None:
+    sidecar = "## Settled\nfrom mock\n"
+    body = "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
+    once = ensure_operator_proxy_mission_prompt(body, standing_handoff_text=sidecar)
+    marker = _mission_delivery_prefix(marker_only=True)
+    use_lines = _mission_delivery_prefix(use_lines_only=True).replace("\n", "\r\n")
+    prefixed = marker + use_lines + once
+    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    assert twice == prefixed.strip()
+    _assert_single_hop_briefing(twice)
+
+
+def test_stage_resolve_single_briefing_with_house_pool_inline(
+    tmp_path, monkeypatch
+) -> None:
+    """House block + inline must_load on continuity card — one hop briefing."""
+    from agent_bus_store.test_house_pools import _MANIFEST_BLOCK
+
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import resolve_prompt
+    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+
+    root = tmp_path / "cortex_files"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    card_path = root / "notes/system/threads/12286-continuity.md"
+    card_path.parent.mkdir(parents=True)
+    card_path.write_text(f"# card\n\n{_MANIFEST_BLOCK}\n", encoding="utf-8")
+    exec_id = "exec-hop-house-inline"
+    staged = stage_cdp_prompt_with_skills(
+        execution_id=exec_id,
+        prompt_text="TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n",
+        purpose="operator-proxy",
+        dispatch_thread_id="12286",
+        skills=["ulg-architecture"],
     )
     assert staged.staged
     req = SubmitProjectAskRequest(
@@ -177,7 +259,7 @@ def test_stage_then_resolve_prompt_does_not_double_hop_briefing(
         path.return_value.is_file.return_value = False
         submitted = resolve_prompt(req)[0]
     _assert_single_hop_briefing(submitted)
-    assert "TYPE: CONTINUITY_HANDOFF" in submitted
+    assert "## House (read first)" in submitted
 
 
 def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
