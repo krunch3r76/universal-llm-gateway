@@ -46,10 +46,51 @@ def test_send_mark_read_clears_inbox_not_outgoing(tmp_path) -> None:
             f"/turns/by-number?thread={thread_id}&turn_number={new_turn}"
         ).json()
         assert head["read_at"] is None
-        first = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=1"
-        ).json()
+        first = client.get(f"/turns/by-number?thread={thread_id}&turn_number=1").json()
         assert first["read_at"] is not None
+
+
+def test_send_mark_read_spares_same_seat_memo(tmp_path) -> None:
+    """a:38363 — CHECKPOINT mark_read must not stamp unpaid same-from MEMO."""
+    with TestClient(_app(tmp_path)) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "mr-same-seat-memo",
+                "from": "cursor",
+                "to": "cursor",
+                "subject": "MEMO fold a:38362 into liaison ## Rows",
+                "body": "unpaid successor work",
+            },
+        )
+        thread_id = create.json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "web",
+                "to": "cursor",
+                "subject": "inbox ping",
+                "body": "clear me",
+            },
+        )
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT 15441 pre-ide-hop",
+                "body": "hop tip",
+                "mark_read": True,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["marked_read"] == 1
+        memo = client.get(f"/turns/by-number?thread={thread_id}&turn_number=1").json()
+        assert memo["read_at"] is None
+        inbox = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
+        assert inbox["read_at"] is not None
 
 
 def test_send_mark_read_skips_to_all(tmp_path) -> None:
@@ -186,8 +227,6 @@ def test_bulk_through_turn_web_anthropic_marks_to_web(tmp_path) -> None:
         )
         assert resp.status_code == 200
         assert resp.json()["marked_read"] == 1
-        marked = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=1"
-        ).json()
+        marked = client.get(f"/turns/by-number?thread={thread_id}&turn_number=1").json()
         assert marked["to"] == "web"
         assert marked["read_at"] is not None
