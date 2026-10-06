@@ -6,18 +6,22 @@ import json
 import os
 import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bus_watch.ide_hop import (
     build_ide_hop_message,
+    fire_ide_hop,
     live_watcher_labels,
     remote_launch_command,
 )
 from bus_watch.ide_hop_landing import (
     AGENTS_WINDOW_TITLE,
+    find_transcript_with_hop_header,
     focus_title_for,
     hop_header_line,
+    land_find_needles,
     wait_for_landed_transcript,
 )
 
@@ -98,7 +102,8 @@ def _write_transcript(root: Path, tid: str, first_line: str, mtime: float) -> No
 
 
 def test_landing_requires_a_transcript_newer_than_the_fire(tmp_path: Path) -> None:
-    marker = "Liaison IDE hop (attended register) tip_cp=147."
+    """Without tip_cp, mtime gate still applies (resume-only needles are ambiguous)."""
+    marker = "Liaison IDE hop (attended register) no tip."
     fired = time.time()
     _write_transcript(tmp_path, "old-tab", f'{{"text": "{marker}"}}', fired - 600)
     assert (
@@ -122,6 +127,99 @@ def test_landing_requires_a_transcript_newer_than_the_fire(tmp_path: Path) -> No
         )
         == "new-tab"
     )
+
+
+def test_land_find_needles_prefers_tip_cp() -> None:
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    assert land_find_needles(marker) == ["tip_cp=17", marker]
+
+
+def test_find_transcript_hits_header_despite_old_mtime(tmp_path: Path) -> None:
+    """a:38362 — successor already carries tip_cp; mtime-before-fire must not hide it."""
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    fired = time.time()
+    _write_transcript(
+        tmp_path,
+        "d195e491-1405-4536-8af2-2496b7b785b5",
+        f'{{"role":"user","text":"resume 15420\\n{marker}"}}',
+        fired - 120,
+    )
+    assert (
+        find_transcript_with_hop_header(marker, tmp_path)
+        == "d195e491-1405-4536-8af2-2496b7b785b5"
+    )
+    assert (
+        wait_for_landed_transcript(
+            marker,
+            since_epoch=fired,
+            transcripts_dir=tmp_path,
+            timeout_s=0.05,
+            poll_s=0.01,
+        )
+        == "d195e491-1405-4536-8af2-2496b7b785b5"
+    )
+
+
+def test_wait_false_negative_recovered_by_find_pass(tmp_path: Path) -> None:
+    """a:38356 class — wait mtime-misses a tip_cp header; recovery pass still ok."""
+    marker = "Liaison IDE hop (attended register) tip_cp=2. LOAD the liaison skill."
+    fired = time.time()
+    _write_transcript(
+        tmp_path,
+        "b728d49e-a9db-44a3-a5bb-3953c4f5ba03",
+        f'{{"text":"resume 15441\\n{marker}"}}',
+        fired - 600,
+    )
+    # Unique tip_cp path inside wait now lands; recovery API is the same scan.
+    assert find_transcript_with_hop_header(marker, tmp_path) == (
+        "b728d49e-a9db-44a3-a5bb-3953c4f5ba03"
+    )
+    assert (
+        wait_for_landed_transcript(
+            marker,
+            since_epoch=fired,
+            transcripts_dir=tmp_path,
+            timeout_s=0.05,
+            poll_s=0.01,
+        )
+        == "b728d49e-a9db-44a3-a5bb-3953c4f5ba03"
+    )
+
+
+def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
+    tmp_path: Path,
+) -> None:
+    """a:38362 — wait None while header present ⇒ ok via find; ¬ glass-launch ask."""
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    message = f"resume 15420\n\n{marker}\nNOW: test\n"
+    tid = "d195e491-1405-4536-8af2-2496b7b785b5"
+    _write_transcript(
+        tmp_path,
+        tid,
+        f'{{"role":"user","text":"resume 15420\\n{marker}"}}',
+        time.time() - 90,
+    )
+    proc = MagicMock(returncode=0, stdout='{"ok": true, "phase": "glass-launch"}', stderr="")
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.subprocess.run", return_value=proc),
+        patch("bus_watch.ide_hop.wait_for_landed_transcript", return_value=None),
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels") as toplevels_mock,
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host="orion-node",
+            landing_timeout_s=0.01,
+        )
+    assert out["ok"] is True
+    assert out["landed_transcript_id"] == tid
+    assert out["landed_via"] == "find_transcript"
+    assert "glass-launch" not in (out.get("fix") or "")
+    toplevels_mock.assert_not_called()
 
 
 def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> None:

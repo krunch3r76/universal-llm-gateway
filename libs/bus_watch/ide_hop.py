@@ -47,7 +47,7 @@ from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_landing import (
-    AGENTS_WINDOW_APP_ID,
+    find_transcript_with_hop_header,
     focus_title_for,
     hop_header_line,
     wait_for_landed_transcript,
@@ -592,12 +592,20 @@ def fire_ide_hop(
     # read it). Parse the whole payload; fall back to the last line for a remote
     # that ever emits single-line JSON.
     keystroke = _parse_keystroke_stdout(proc.stdout)
+    marker = hop_header_line(message)
     landed_id = wait_for_landed_transcript(
-        hop_header_line(message),
+        marker,
         since_epoch=fired_at,
         transcripts_dir=AGENT_TRANSCRIPTS,
         timeout_s=landing_timeout_s,
     )
+    landed_via = "wait"
+    if landed_id is None:
+        # a:38356 / a:38362 — one find-transcript pass before any operator page.
+        # Header presence (tip_cp / hop line) is land proof; compositor Agents-only
+        # is diagnostic only. Never recommend glass-launch / Ctrl+N when this hits.
+        landed_id = find_transcript_with_hop_header(marker, AGENT_TRANSCRIPTS)
+        landed_via = "find_transcript"
     if landed_id is None:
         toplevels = remote_toplevels(gui_host)
         cursor_windows = (
@@ -611,18 +619,23 @@ def fire_ide_hop(
             "keystroke": keystroke,
             "toplevels": toplevels,
             "cursor_windows": cursor_windows,
+            "find_transcript": None,
             "fix": (
-                "no new Cursor chat carries the hop header — Ctrl+n (lowercase) / paste / "
-                f"Ctrl+Enter did not submit, or keys hit another window; "
-                f"focus was {focus_title!r} on {gui_host}. Check cursor_windows: "
-                "a lone 'Cursor Agents' toplevel with no editor window, or a "
-                "Cursor backend error, both activate cleanly and still land nothing."
+                "no Cursor chat carries the hop header after wait + one find-transcript "
+                "pass — Ctrl+n / paste / Ctrl+Enter did not submit, or keys hit another "
+                f"window; focus was {focus_title!r} on {gui_host}. cursor_windows is "
+                "diagnostic only (Agents-only toplevel ≠ proof of miss). "
+                "Do NOT re-fire glass-launch / Ctrl+N — that double-pastes when the "
+                "first sequence partially ran or focus moved (a:38364). "
+                "OPERATOR_GATE with message_path for a single manual paste if still "
+                "missing after a short re-poll of find-transcript."
             ),
             **result,
         }
     return {
         "ok": True,
         "landed_transcript_id": landed_id,
+        "landed_via": landed_via,
         "keystroke": keystroke,
         **result,
     }
