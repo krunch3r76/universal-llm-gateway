@@ -4,6 +4,22 @@ description: "On coding sessions — file existence, canonicality, authorship, d
 
 # Git Posture & Truth Substrate
 
+## Dirty ≠ blocker (operator 2026-10-06)
+
+```
+dirty(checkout) ⇏ halt(land ∨ recycle ∨ finish ∨ continue)
+foreign_dirty ⇒ ¬stage_in_my_commit ∧ ¬checkout_HEAD_-- ∧ ¬stash
+foreign_dirty ⇏ "leave dirt alone" as a closeout product ∨ work halt
+```
+
+Path-explicit staging protects peer bytes. It does **not** make porcelain a
+gate. Do not narrate "left unrelated dirt alone" as evidence of discipline —
+that phrase is noise. Name foreign dirty paths only when they collide with
+*your* land paths (then § Pre-land dirty tree: commit overlapping → merge →
+keep-both). `restart-drain-discipline`: a dirty tree never skips a needed
+restart. Specimen over-read: a:38445 tab treated charter "leave ide_hop WIP"
+plus this skill's "never clobber" as a standing halt and re-announced it.
+
 ## When to read
 
 Read on:
@@ -65,7 +81,8 @@ dirty ∩ incoming:
   conflict ⇒ keep both
 ¬ stash
 ¬ checkout HEAD -- / restore / reset --hard
-peer ∩ ¬incoming: leave it (isolate); merge proceeds
+peer ∩ ¬incoming: omit from *this* commit/stage; merge proceeds
+  (¬ "halt until clean"; ¬ closeout line "left dirt alone")
 ```
 
 FF only when those incoming paths are clean. A collide is a merge commit with
@@ -206,9 +223,11 @@ work-complete (`decision:go-live-proof-loop`).
 **Anti-patterns this kills:** treating uncommitted-but-restarted code as illicit
 “live-ahead-of-HEAD”; refusing to propagate because tree is dirty; building FATAL
 gates that equate `served ≠ git HEAD` with a broken fleet when the shared
-checkout is intentionally dirty and was restarted. Served-vs-HEAD deltas on a
-dirty live checkout are **topology-expected**; ownership / handoff of foreign WIP
-is a separate courtesy problem, not proof that live-without-commit is defective.
+checkout is intentionally dirty and was restarted; narrating “left dirt alone”
+as a finishing claim. Served-vs-HEAD deltas on a dirty live checkout are
+**topology-expected**; ownership / handoff of foreign WIP is path-explicit
+staging discipline (§ Dirty ≠ blocker), not a halt and not proof that
+live-without-commit is defective.
 
 Doctrine: `decision:checkout-disk-is-executable`.
 
