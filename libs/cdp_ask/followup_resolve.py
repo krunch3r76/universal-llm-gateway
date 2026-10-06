@@ -324,6 +324,7 @@ def _in_flight_off_holder(lane_body: dict) -> list[str]:
 def _lane_seat_followup_gate(
     req: FollowupProjectAskRequest,
     lane_pin: dict | None = None,
+    snap: dict | None = None,
 ) -> tuple[FollowupProjectAskRequest, FollowupProjectAskResponse | None, str | None]:
     """When ``parent_thread`` is set, bind or refuse against the seat-axis holder.
 
@@ -333,27 +334,33 @@ def _lane_seat_followup_gate(
     ``seat_holder_dormant``), ``lane_cse_unattached``, and
     ``lane_cse_probe_error``. ``lane_pin`` carries the first probe across a
     reattach retry so one followup sees one page set.
+
+    Prefer an in-process ``snap`` (``ExecutionStore.active_work_snapshot``) —
+    same substrate as ``resolve_attended(parent_thread=…)``. HTTP
+    ``read_cdp_lane_snapshot`` is only for callers that have no store; inside
+    cdp-ask that GET needs ``PROJECT_ASK_URL`` and is the a:37880 failure mode.
     """
     lane = (req.parent_thread or "").strip()
     if not lane:
         return req, None, None
-    try:
-        snap = read_cdp_lane_snapshot()
-    except Exception as exc:
-        # identity_supplied short-circuit is below the GET. A thrown snapshot
-        # must not block a named CSE paste (a:37604); mismatch still needs a snap.
-        if identity_supplied(req):
-            return req, None, None
-        return (
-            req,
-            fail_followup(
-                "seat_unavailable",
-                detail=(
-                    f"active-work seat projection unreachable ({type(exc).__name__})"
+    if snap is None:
+        try:
+            snap = read_cdp_lane_snapshot()
+        except Exception as exc:
+            # identity_supplied short-circuit is below the GET. A thrown snapshot
+            # must not block a named CSE paste (a:37604); mismatch still needs a snap.
+            if identity_supplied(req):
+                return req, None, None
+            return (
+                req,
+                fail_followup(
+                    "seat_unavailable",
+                    detail=(
+                        f"active-work seat projection unreachable ({type(exc).__name__})"
+                    ),
                 ),
-            ),
-            None,
-        )
+                None,
+            )
     holder = lane_seat_holder(snap, lane)
     holder_reg = str(holder.get("registration_id") or "").strip() or None
     _chat, reg_id, _exe, _cdp = identity_keys(req)
@@ -504,8 +511,26 @@ async def resolve_followup_target(
     TargetBinding | None,
 ]:
     """Resolve to a single attached CSE target or return a typed error response."""
+    # In-process occupancy — never HTTP self-GET (a:37880 / PROJECT_ASK_URL).
+    try:
+        lane_snap: dict | None = await store.active_work_snapshot()
+    except Exception as exc:
+        lane = (req.parent_thread or "").strip()
+        if lane and not identity_supplied(req):
+            return (
+                None,
+                fail_followup(
+                    "seat_unavailable",
+                    detail=(
+                        f"active-work seat projection unreachable ({type(exc).__name__})"
+                    ),
+                ),
+                "parent_thread",
+                None,
+            )
+        lane_snap = None
     req, lane_err, lane_path = await asyncio.to_thread(
-        _lane_seat_followup_gate, req, lane_pin
+        _lane_seat_followup_gate, req, lane_pin, lane_snap
     )
     if lane_err is not None:
         return None, lane_err, "parent_thread", None

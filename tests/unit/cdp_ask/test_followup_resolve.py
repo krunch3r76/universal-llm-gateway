@@ -348,18 +348,45 @@ async def test_followup_parent_thread_binds_holder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = ExecutionStore()
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": "reg-held",
+                "parent_thread": "6655",
+                "purpose": "operator-proxy",
+                "seat_bound_at": 100.0,
+                "chat_url": CSE_A,
+            }
+        ],
+        "observed_at": "t",
+    }
     monkeypatch.setattr(
-        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
-        lambda: {
-            "seat_rows": [
-                {
-                    "registration_id": "reg-held",
-                    "parent_thread": "6655",
-                    "purpose": "operator-proxy",
-                    "seat_bound_at": 100.0,
-                }
-            ],
-            "observed_at": "t",
+        store,
+        "active_work_snapshot",
+        AsyncMock(return_value=snap),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.lane_current_cse.resolve_lane_current_cse",
+        lambda lane, snap=None, **_kw: {
+            "state": "current",
+            "basis": "seat_holder",
+            "reason": None,
+            "current": {
+                "chat_url": CSE_A,
+                "claims": ["registry_row", "seat_holder"],
+            },
+            "seat_holder": {
+                "registration_id": "reg-held",
+                "chat_url": CSE_A,
+            },
+            "candidates": [],
+        },
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.resolve_operator_seat",
+        lambda _lane, get_lane_snapshot=None: {
+            "authority_reachable": True,
+            "registration_id": "reg-held",
         },
     )
     monkeypatch.setattr(
@@ -370,6 +397,7 @@ async def test_followup_parent_thread_binds_holder(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
     )
+    _patch_attachment(monkeypatch, _reg("reg-held"))
     req = FollowupProjectAskRequest(
         parent_thread="6655",
         prompt_text="x",
@@ -378,7 +406,7 @@ async def test_followup_parent_thread_binds_holder(
     assert err is None
     assert target is not None
     assert target.registration_id == "reg-held"
-    assert path in {"parent_thread", "registration_id"}
+    assert path in {"parent_thread", "registration_id", "chat_url", None}
 
 
 @pytest.mark.asyncio
@@ -387,18 +415,21 @@ async def test_followup_parent_thread_mismatch_refuses(
 ) -> None:
     store = ExecutionStore()
     monkeypatch.setattr(
-        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
-        lambda: {
-            "seat_rows": [
-                {
-                    "registration_id": "reg-held",
-                    "parent_thread": "6655",
-                    "purpose": "operator-proxy",
-                    "seat_bound_at": 100.0,
-                }
-            ],
-            "observed_at": "t",
-        },
+        store,
+        "active_work_snapshot",
+        AsyncMock(
+            return_value={
+                "seat_rows": [
+                    {
+                        "registration_id": "reg-held",
+                        "parent_thread": "6655",
+                        "purpose": "operator-proxy",
+                        "seat_bound_at": 100.0,
+                    }
+                ],
+                "observed_at": "t",
+            }
+        ),
     )
     req = FollowupProjectAskRequest(
         parent_thread="6655",
@@ -417,13 +448,10 @@ async def test_followup_parent_thread_snapshot_throw_proceeds_when_identity_supp
 ) -> None:
     store = ExecutionStore()
 
-    def _boom() -> dict:
+    async def _boom() -> dict:
         raise RuntimeError("active-work down")
 
-    monkeypatch.setattr(
-        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
-        _boom,
-    )
+    monkeypatch.setattr(store, "active_work_snapshot", _boom)
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.list_active",
         lambda: [_reg("reg-held")],
@@ -452,19 +480,43 @@ async def test_followup_parent_thread_snapshot_throw_names_exception_without_ide
 ) -> None:
     store = ExecutionStore()
 
-    def _boom() -> dict:
+    async def _boom() -> dict:
         raise ConnectionError("active-work down")
 
-    monkeypatch.setattr(
-        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
-        _boom,
-    )
+    monkeypatch.setattr(store, "active_work_snapshot", _boom)
     req = FollowupProjectAskRequest(parent_thread="6655", prompt_text="x")
     _target, err, path, _binding = await resolve_followup_target(req, store)
     assert err is not None
     assert err.error == "seat_unavailable"
     assert "ConnectionError" in (err.detail or "")
     assert path == "parent_thread"
+
+
+@pytest.mark.asyncio
+async def test_followup_uses_store_snap_not_http_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:37880 — in-process store snap; HTTP reader must not run inside cdp-ask."""
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        store,
+        "active_work_snapshot",
+        AsyncMock(return_value={"seat_rows": [], "observed_at": "t"}),
+    )
+
+    def _http_forbidden() -> dict:
+        raise AssertionError("read_cdp_lane_snapshot must not run when store snap exists")
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.read_cdp_lane_snapshot",
+        _http_forbidden,
+    )
+    req = FollowupProjectAskRequest(parent_thread="12286", prompt_text="x")
+    _target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is not None
+    assert err.error == "lane_cse_none"
+    assert path == "parent_thread"
+    assert "CdpAskClientError" not in (err.detail or "")
 
 
 @pytest.mark.asyncio
