@@ -127,7 +127,7 @@ as `in_flight`. Terminal unrelayed ⇒ leg 3, not a second start
 snap for terminal producer + qualifying turn — not leftover incomplete-slice
 fields left in `state.json` after the complete write.
 
-**Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 dedicated `tail --label L`
+**Atomic arm (IDE):** leg 1 `start …` (SMS off by default; `--page` only on explicit human-wake ask — a:38432) → leg 2 dedicated `tail --label L`
 background (exit-on-complete default; ¬ `--forever`; **always leg 2** — IDE
 Shell slots unlimited ghosts; panel visibility irrelevant). No
 `notify_on_output`: the shell completion is the one harvest turn (friction

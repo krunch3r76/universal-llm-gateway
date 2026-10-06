@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Poll agent-bus until a consult reply lands; page operator once.
+"""Poll agent-bus until a consult reply lands; wake the attending seat.
 
 CDP generates are bound to ``dispatch_thread_id``. Completion is
 ``proof_reply_from`` on that thread. ``streaming=false`` on the Cowork page
@@ -8,13 +8,18 @@ turn whose archive is only a tool badge (``Loaded tools, ran a command``)
 is ``producer_terminal_no_reply``, not the reply. Read the archive before
 re-dispatching.
 
+Consult completion is an **agent wake**, not a human Fi page (a:38432).
+Default: print closeout only. ``--page`` is opt-in SMS for an explicit
+operator human-wake ask — not the ordinary arm. Attended SoT remains
+``watch-supervise.sh tail`` on the owning Glass tab.
+
 Prefer detached arm via scripts/watch-supervise.sh (a:32280) so Cursor Shell
 abort cannot kill the poller. In-window wake = supervise tail of the log
 (default exit-on-complete when state.json status=complete; --forever debug-only).
 
 Usage:
   scripts/watch-supervise.sh start --label '6341-close' -- \\
-    scripts/watch-bus-consult-and-page.py --thread 6341 --after-turn 54 --no-page
+    scripts/watch-bus-consult-and-page.py --thread 6341 --after-turn 54
   scripts/watch-supervise.sh tail --label '6341-close'   # exits on complete; notify on 'consult complete'
   scripts/watch-bus-consult-tmux.sh --thread 6341 --after-turn 54 --label '6341 close-arc'
 """
@@ -209,9 +214,17 @@ def main() -> int:
         help="optional closeout body file for park/harvest stall context",
     )
     parser.add_argument(
+        "--page",
+        action="store_true",
+        help=(
+            "opt-in SMS via email-bridge /pager/notify (explicit human-wake only; "
+            "default is agent wake via supervise tail — a:38432)"
+        ),
+    )
+    parser.add_argument(
         "--no-page",
         action="store_true",
-        help="print closeout only; do not SMS",
+        help="deprecated noop — SMS is off by default; kept so existing arms stay valid",
     )
     parser.add_argument(
         "--wait-slice-seconds",
@@ -454,7 +467,7 @@ def main() -> int:
                 qualifying_reply_turn=reply_turn,
                 subject=subject,
             )
-        if not args.no_page:
+        if args.page:
             page_subject = f"ULG consult done — {args.label}"
             page_body = (
                 f"thread {thread_id} · turn {reply_turn}"
