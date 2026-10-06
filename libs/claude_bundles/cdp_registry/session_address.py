@@ -109,22 +109,49 @@ def _append_lane_less_episode(
     )
 
 
-def bind_session_address(
+def bind_chat_url_only(
     registration_id: str,
     *,
     chat_url: str,
     execution_id: str | None = None,
     target_id: str | None = None,
 ) -> bool:
+    """Persist CSE ``chat_url`` without seating or holder upsert.
+
+    Reattach uses this until ``commit_reattach_driving_seat`` after the second
+    seat gate and lane acquire. The idempotent re-bind branch does not upsert.
+    """
+    return bind_session_address(
+        registration_id,
+        chat_url=chat_url,
+        execution_id=execution_id,
+        target_id=target_id,
+        defer_seat_commit=True,
+    )
+
+
+def bind_session_address(
+    registration_id: str,
+    *,
+    chat_url: str,
+    execution_id: str | None = None,
+    target_id: str | None = None,
+    defer_seat_commit: bool = False,
+) -> bool:
     """Persist CSE ``chat_url`` on the registry row (safety property — arc 6885).
 
     Idempotent: blank *chat_url* is a no-op. Survives ``released`` /
     ``orphaned_retry`` because those transitions copy the row dict.
     Returns True when the row was found and updated (or already matched).
+
+    ``defer_seat_commit`` writes the URL only. Seat bind and holder upsert wait
+    for ``commit_reattach_driving_seat``.
     """
     url = (chat_url or "").strip()
     if not url or "/cowork/cse_" not in url:
         return False
+    bound_row: dict[str, Any] | None = None
+    released_rows: list[dict[str, Any]] = []
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(registration_id)
@@ -142,15 +169,16 @@ def bind_session_address(
                 updated=updated,
                 execution_id=execution_id,
             )
-            from services.git_integration_worker.cse_session_holders import (
-                upsert_holder_remote,
-            )
+            if not defer_seat_commit:
+                from services.git_integration_worker.cse_session_holders import (
+                    upsert_holder_remote,
+                )
 
-            upsert_holder_remote(
-                chat_url=url,
-                registration_id=registration_id,
-                execution_id=execution_id,
-            )
+                upsert_holder_remote(
+                    chat_url=url,
+                    registration_id=registration_id,
+                    execution_id=execution_id,
+                )
             return True
         if prior and row_execution_in_flight(row):
             # A seat driving a live execution is addressed by that execution's
@@ -176,20 +204,21 @@ def bind_session_address(
         updated["chat_url_bound_at"] = time.time()
         active[registration_id] = updated
         _store.write_active(active)
-        bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
-        if bound_row is not None or released_rows:
-            _store.require_seat_authority(operation="bind_session_address")
-            _store.write_active(active)
-            _store.append_seat_transition_journal(
-                registration_id=registration_id,
-                seat_lane=str((bound_row or {}).get("seat_lane") or ""),
-                seat_bound_at=(bound_row or {}).get("seat_bound_at"),
-                superseded=[
-                    str(r.get("registration_id") or "")
-                    for r in released_rows
-                    if r.get("registration_id")
-                ],
-            )
+        if not defer_seat_commit:
+            bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
+            if bound_row is not None or released_rows:
+                _store.require_seat_authority(operation="bind_session_address")
+                _store.write_active(active)
+                _store.append_seat_transition_journal(
+                    registration_id=registration_id,
+                    seat_lane=str((bound_row or {}).get("seat_lane") or ""),
+                    seat_bound_at=(bound_row or {}).get("seat_bound_at"),
+                    superseded=[
+                        str(r.get("registration_id") or "")
+                        for r in released_rows
+                        if r.get("registration_id")
+                    ],
+                )
         _store.append_log(
             "session_address_bound",
             {
@@ -197,6 +226,7 @@ def bind_session_address(
                 "chat_url": url,
                 "execution_id": execution_id,
                 "target_id": target_id,
+                "defer_seat_commit": defer_seat_commit,
             },
         )
         _append_lane_less_episode(
@@ -205,6 +235,8 @@ def bind_session_address(
             updated=active[registration_id],
             execution_id=execution_id,
         )
+    if defer_seat_commit:
+        return True
     _emit_seat_axis_events(bound_row, released_rows)
     from services.git_integration_worker.cse_session_holders import upsert_holder_remote
 
@@ -274,6 +306,95 @@ def restore_session_address(
             },
         )
     return "restored"
+
+
+def _open_seat_holder(
+    active: dict[str, dict[str, Any]], lane: str
+) -> tuple[str | None, float | None]:
+    """Open seat on *lane* with the greatest ``seat_bound_at``, else vacant."""
+    lane_key = (lane or "").strip()
+    if not lane_key:
+        return None, None
+    best_id: str | None = None
+    best_ts: float | None = None
+    for rid, row in active.items():
+        if not isinstance(row, dict) or not seat_open(row, lane_key):
+            continue
+        raw = row.get("seat_bound_at")
+        try:
+            ts = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            ts = 0.0
+        if best_ts is None or ts > best_ts:
+            best_id = str(row.get("registration_id") or rid)
+            best_ts = ts
+    return best_id, best_ts
+
+
+def open_lane_seat_holder(lane: str) -> tuple[str | None, float | None]:
+    """Read the lane's open seat holder ``(registration_id, seat_bound_at)``."""
+    return _open_seat_holder(_store.load_active(), lane)
+
+
+def commit_reattach_driving_seat(
+    registration_id: str,
+    *,
+    chat_url: str,
+    lane: str,
+    snapshot_holder_id: str | None,
+    snapshot_seat_bound_at: float | None,
+    execution_id: str | None = None,
+) -> str:
+    """Seat and upsert after reattach, or refuse when the lane seat moved.
+
+    Under ``ports_lock``, the open holder ``(registration_id, seat_bound_at)``
+    must still match the reattach snapshot. A mismatch returns ``refused``
+    without seating or upserting. A missing registry row returns ``committed``
+    without writing: the chat_url bind did not persist a row. Otherwise
+    ``apply_driving_seat_bind`` then best-effort ``upsert_holder_remote``.
+    """
+    rid = (registration_id or "").strip()
+    url = (chat_url or "").strip()
+    lane_key = (lane or "").strip()
+    if not rid or not url:
+        return "missing"
+    bound_row: dict[str, Any] | None = None
+    released_rows: list[dict[str, Any]] = []
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return "committed"
+        if lane_key:
+            current_id, current_bound = _open_seat_holder(active, lane_key)
+            if (current_id, current_bound) != (
+                snapshot_holder_id,
+                snapshot_seat_bound_at,
+            ):
+                return "refused"
+        bound_row, released_rows = apply_driving_seat_bind(active, rid)
+        if bound_row is not None or released_rows:
+            _store.require_seat_authority(operation="commit_reattach_driving_seat")
+            _store.write_active(active)
+            _store.append_seat_transition_journal(
+                registration_id=rid,
+                seat_lane=str((bound_row or {}).get("seat_lane") or ""),
+                seat_bound_at=(bound_row or {}).get("seat_bound_at"),
+                superseded=[
+                    str(r.get("registration_id") or "")
+                    for r in released_rows
+                    if r.get("registration_id")
+                ],
+            )
+    _emit_seat_axis_events(bound_row, released_rows)
+    from services.git_integration_worker.cse_session_holders import upsert_holder_remote
+
+    upsert_holder_remote(
+        chat_url=url,
+        registration_id=rid,
+        execution_id=execution_id,
+    )
+    return "committed"
 
 
 def _next_seat_bound_at(ts: float, released: list[dict[str, Any]]) -> float:
