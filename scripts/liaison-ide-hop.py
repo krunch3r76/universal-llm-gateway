@@ -233,6 +233,7 @@ def main() -> int:
         remote_repo=args.remote_repo,
         dry_run=args.dry_run,
         no_raise=args.no_raise,
+        departing_transcript_id=args.transcript_id,
     )
     out["arm_labels"] = labels
     out["seal"] = seal

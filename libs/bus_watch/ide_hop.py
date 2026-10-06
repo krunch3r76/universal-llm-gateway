@@ -51,6 +51,7 @@ from bus_watch.ide_hop_landing import (
     focus_title_for,
     hop_header_line,
     hop_land_identity,
+    list_resume_transcript_ids,
     wait_for_landed_transcript,
 )
 from bus_watch.liaison_digest import effective_policy
@@ -507,6 +508,7 @@ def fire_ide_hop(
     dry_run: bool = False,
     no_raise: bool = False,
     landing_timeout_s: float = 30.0,
+    departing_transcript_id: str | None = None,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
@@ -522,6 +524,7 @@ def fire_ide_hop(
     owns that scheme (10588). ``no_raise`` skips activate only when the operator
     is on the window and says so. ``ok`` means **landed**: a new agent transcript
     carrying the hop header appeared after the keystrokes — sent keys are not a hop.
+    ``departing_transcript_id`` is never accepted as land (15456#4 F2).
     After ``ok`` the hop script must ``retire_departing_tab`` (loops, pollers, tails, ``ide:``
     lock). UpdateGoal only if a leftover native goal is still injecting wakes.
     """
@@ -569,14 +572,18 @@ def fire_ide_hop(
         return {"ok": False, "phase": "session_locked", **locked, **result}
     marker = hop_header_line(message)
     land_root, tip_cp = hop_land_identity(message, root_id=root_id)
+    departing = (departing_transcript_id or "").strip() or None
+    exclude = {departing} if departing else set()
     # Prefer skip when the exact land already exists (15456 ask 2) — do not Ctrl+N.
+    # Never treat the departing tab as that land (15456#4 F2).
     pre_id, pre_tel = find_transcript_with_hop_header(
         marker,
         AGENT_TRANSCRIPTS,
         root_id=land_root,
         tip_cp=tip_cp,
+        exclude_ids=exclude,
     )
-    if pre_id is not None and tip_cp is not None:
+    if pre_id is not None and tip_cp is not None and pre_id != departing:
         return {
             "ok": True,
             "landed_transcript_id": pre_id,
@@ -585,6 +592,9 @@ def fire_ide_hop(
             "keystroke": None,
             **result,
         }
+    pre_existing: set[str] | None = None
+    if tip_cp is None and land_root:
+        pre_existing = list_resume_transcript_ids(land_root, AGENT_TRANSCRIPTS)
     fired_at = time.time()
     try:
         proc = subprocess.run(
@@ -618,6 +628,8 @@ def fire_ide_hop(
         timeout_s=landing_timeout_s,
         root_id=land_root,
         tip_cp=tip_cp,
+        pre_existing_ids=pre_existing,
+        exclude_ids=exclude,
     )
     landed_via = "wait"
     if landed_id is None:
@@ -629,8 +641,12 @@ def fire_ide_hop(
             AGENT_TRANSCRIPTS,
             root_id=land_root,
             tip_cp=tip_cp,
+            exclude_ids=exclude,
         )
         landed_via = "find_transcript"
+    if landed_id is not None and departing and landed_id == departing:
+        landed_id = None
+        landed_via = "wait"
     if landed_id is None:
         toplevels = remote_toplevels(gui_host)
         cursor_windows = (

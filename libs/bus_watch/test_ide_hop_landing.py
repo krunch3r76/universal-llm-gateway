@@ -110,9 +110,29 @@ def _write_transcript(root: Path, tid: str, first_line: str, mtime: float) -> No
 
 
 def _land_line(root: str, tip: int) -> str:
+    """Minimal JSONL first line (text field) for offline fixtures."""
     return (
         f'{{"role":"user","text":"resume {root}\\n'
         f'Liaison IDE hop (attended register) tip_cp={tip}. LOAD the liaison skill."}}'
+    )
+
+
+def _wrapped_land_line(root: str, tip: int, *, now_extra: str = "") -> str:
+    """Hub shape: message.content[].text with timestamp + user_query wrapper."""
+    body = (
+        f"resume {root}\n"
+        f"Liaison IDE hop (attended register) tip_cp={tip}. LOAD the liaison skill.\n"
+        f"NOW: test{now_extra}\n"
+    )
+    text = (
+        "<timestamp>Tuesday, Oct 6, 2026, 10:45 AM (UTC-7)</timestamp>\n"
+        f"<user_query>\n{body}</user_query>"
+    )
+    return json.dumps(
+        {
+            "role": "user",
+            "message": {"content": [{"type": "text", "text": text}]},
+        }
     )
 
 
@@ -190,12 +210,56 @@ def test_case_c_quoted_review_without_liaison_does_not_match() -> None:
     )
 
 
+def test_tip_in_now_row_does_not_match() -> None:
+    """15456#4 F1 — tip_cp on NOW must not satisfy land for a different Liaison tip."""
+    line = _wrapped_land_line("15420", 16, now_extra=" verify tip_cp=17 land")
+    assert first_line_matches_land(
+        line, root_id="15420", tip_cp=16, marker="unused"
+    )
+    assert not first_line_matches_land(
+        line, root_id="15420", tip_cp=17, marker="unused"
+    )
+
+
+def test_wrapped_user_query_real_shape_matches() -> None:
+    """15456#4 F3 — hub <user_query> wrapper must still land (specimen d195e491)."""
+    line = _wrapped_land_line("15420", 17)
+    assert first_line_matches_land(
+        line, root_id="15420", tip_cp=17, marker="unused"
+    )
+
+
+def test_quoted_full_hop_in_review_does_not_match() -> None:
+    """15456#4 F1 — review quoting a full hop still fails: resume is not first body line."""
+    quoted = (
+        "CDP review of hop:\n"
+        "```\n"
+        "resume 15420\n"
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill.\n"
+        "```\n"
+    )
+    payload = {
+        "role": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"<user_query>\n{quoted}</user_query>",
+                }
+            ]
+        },
+    }
+    assert not first_line_matches_land(
+        json.dumps(payload), root_id="15420", tip_cp=17, marker="unused"
+    )
+
+
 def test_case_d_exact_land_hits_despite_old_mtime(tmp_path: Path) -> None:
-    """F2 — exact (root, tip) lands without mtime; recovery keeps tipless mtime (F3)."""
+    """Exact (root, tip) lands without mtime; tipless find keeps since_epoch."""
     marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
     fired = time.time()
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
-    _write_transcript(tmp_path, tid, _land_line("15420", 17), fired - 120)
+    _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), fired - 120)
     found, tel = find_transcript_with_hop_header(
         marker, tmp_path, root_id="15420", tip_cp=17
     )
@@ -212,7 +276,6 @@ def test_case_d_exact_land_hits_despite_old_mtime(tmp_path: Path) -> None:
         tip_cp=17,
     )
     assert found == tid
-    # F3 — tipless find must still honour since_epoch (old marker ≠ land).
     tipless_marker = "Liaison IDE hop (attended register) no tip."
     _write_transcript(
         tmp_path,
@@ -239,12 +302,38 @@ def test_find_rejects_wrong_root_even_when_tip_matches(tmp_path: Path) -> None:
     assert tel["matches"] == 0
 
 
+def test_find_excludes_departing_transcript(tmp_path: Path) -> None:
+    """15456#4 F2 — departing tab must not win pre_existing / find."""
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
+    successor = "d195e491-1405-4536-8af2-2496b7b785b5"
+    _write_transcript(tmp_path, departing, _wrapped_land_line("15420", 17), time.time())
+    found, tel = find_transcript_with_hop_header(
+        marker,
+        tmp_path,
+        root_id="15420",
+        tip_cp=17,
+        exclude_ids={departing},
+    )
+    assert found is None
+    assert tel["matches"] == 0
+    _write_transcript(tmp_path, successor, _wrapped_land_line("15420", 17), time.time())
+    found, tel = find_transcript_with_hop_header(
+        marker,
+        tmp_path,
+        root_id="15420",
+        tip_cp=17,
+        exclude_ids={departing},
+    )
+    assert found == successor
+
+
 def test_fire_ide_hop_pre_existing_skips_keystroke(tmp_path: Path) -> None:
     """15456 ask 2 — exact land already present ⇒ ok via pre_existing, no Ctrl+N."""
     marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
-    _write_transcript(tmp_path, tid, _land_line("15420", 17), time.time() - 90)
+    _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
     with (
         patch("bus_watch.ide_hop.durable_write_text"),
         patch("bus_watch.ide_hop.session_unreachable", return_value=None),
@@ -265,6 +354,35 @@ def test_fire_ide_hop_pre_existing_skips_keystroke(tmp_path: Path) -> None:
     run_mock.assert_not_called()
 
 
+def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
+    """15456#4 F2 — departing tab alone must not skip keystroke as pre_existing."""
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    message = f"resume 15420\n\n{marker}\nNOW: test\n"
+    departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
+    _write_transcript(
+        tmp_path, departing, _wrapped_land_line("15420", 17), time.time() - 90
+    )
+    proc = MagicMock(returncode=0, stdout='{"ok": true}', stderr="")
+    with (
+        patch("bus_watch.ide_hop.durable_write_text"),
+        patch("bus_watch.ide_hop.session_unreachable", return_value=None),
+        patch("bus_watch.ide_hop.subprocess.run", return_value=proc) as run_mock,
+        patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
+        patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
+    ):
+        out = fire_ide_hop(
+            message,
+            root_id="15420",
+            seal={"ok": True, "bus_turn": 1},
+            gui_host="orion-node",
+            landing_timeout_s=0.01,
+            departing_transcript_id=departing,
+        )
+    assert out["ok"] is False
+    assert out["phase"] == "not_landed"
+    run_mock.assert_called_once()
+
+
 def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     tmp_path: Path,
 ) -> None:
@@ -272,7 +390,7 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
-    _write_transcript(tmp_path, tid, _land_line("15420", 17), time.time() - 90)
+    _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
     proc = MagicMock(returncode=0, stdout='{"ok": true, "phase": "glass-launch"}', stderr="")
     with (
         patch("bus_watch.ide_hop.durable_write_text"),
@@ -305,6 +423,21 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     assert out["landed_via"] == "find_transcript"
     assert "glass-launch" not in (out.get("fix") or "")
     toplevels_mock.assert_not_called()
+
+
+def test_real_d195e491_first_line_matches_when_present() -> None:
+    """Decisive falsifier completeness: hub specimen first line vs tip_cp=17."""
+    path = Path(
+        "/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/"
+        "agent-transcripts/d195e491-1405-4536-8af2-2496b7b785b5/"
+        "d195e491-1405-4536-8af2-2496b7b785b5.jsonl"
+    )
+    if not path.is_file():
+        pytest.skip("specimen transcript not on this host")
+    first = path.read_text(encoding="utf-8").splitlines()[0]
+    assert first_line_matches_land(
+        first, root_id="15420", tip_cp=17, marker="unused"
+    )
 
 
 def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> None:

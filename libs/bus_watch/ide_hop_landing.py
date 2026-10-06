@@ -12,10 +12,10 @@ agents window as ``app_id=cursor`` / ``title="Cursor Agents"`` (no repo, no SSH
 marker in the title) — and a hop is ``landed`` only when a new agent transcript
 carrying the hop header appears; sent keys are not a delivered hop.
 
-Land identity (CDP 15456#2 / a:38362 amend): ``resume <root>`` + ``tip_cp=N`` with a
-non-digit boundary + ``Liaison IDE hop`` on the first user line. Bare ``tip_cp=N``
-substring match is refused — it false-oks number-prefix, other-root, and quoted
-review tabs (F1).
+Land identity (CDP 15456#4): decode the first JSONL user row, strip ``<user_query>``,
+require ``resume <R>`` as the first body line and ``tip_cp=N(?!\\d)`` on the
+``Liaison IDE hop`` line only — not raw-line regex anywhere in Standing/NOW (F1).
+Exclude the departing transcript id on every path (F2).
 """
 
 from __future__ import annotations
@@ -28,8 +28,9 @@ from typing import Any
 
 AGENTS_WINDOW_TITLE = "Cursor Agents"
 AGENTS_WINDOW_APP_ID = "cursor"
-_TIP_CP_VALUE_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
-_RESUME_RE = re.compile(r"(?:^|[\s\"])resume\s+(\d+)(?:\s|[\"\\n]|$)")
+_USER_QUERY_RE = re.compile(
+    r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL | re.IGNORECASE
+)
 
 
 def focus_title_for(policy_override: str | None = None) -> str:
@@ -54,18 +55,60 @@ def hop_header_line(message: str) -> str:
 def hop_land_identity(
     message: str, *, root_id: str | None = None
 ) -> tuple[str | None, int | None]:
-    """``(root_id, tip_cp)`` from the hop paste — tip from the Liaison line, root from resume."""
+    """``(root_id, tip_cp)`` from the hop paste — tip from the Liaison line only."""
     tip: int | None = None
     header = hop_header_line(message)
-    tip_m = _TIP_CP_VALUE_RE.search(header)
+    tip_m = re.search(r"tip_cp=(\d+)(?!\d)", header)
     if tip_m:
         tip = int(tip_m.group(1))
     root = (root_id or "").strip() or None
     if root is None:
-        resume_m = _RESUME_RE.search(message or "")
-        if resume_m:
-            root = resume_m.group(1)
+        for line in (message or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("resume "):
+                parts = stripped.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    root = parts[1]
+                break
     return root, tip
+
+
+def extract_hop_body_text(first_line: str) -> str | None:
+    """User text from a transcript JSONL first line, with ``<user_query>`` stripped.
+
+    Real hub rows wrap the paste in ``<timestamp>…</timestamp>\\n<user_query>…``;
+    land needles live inside that wrapper (15456#4 F3).
+    """
+    text = (first_line or "").strip()
+    if not text:
+        return None
+    try:
+        row = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(row, dict):
+        return text
+    content = (row.get("message") or {}).get("content")
+    if isinstance(content, list):
+        parts = [
+            str(block.get("text") or "")
+            for block in content
+            if isinstance(block, dict)
+        ]
+        joined = "\n".join(parts)
+    else:
+        joined = str(row.get("text") or row.get("content") or "")
+    if not joined:
+        return None
+    m = _USER_QUERY_RE.search(joined)
+    if m:
+        return m.group(1).strip()
+    # Partial wrapper (stream still open): take everything after <user_query>.
+    lower = joined.lower()
+    idx = lower.find("<user_query>")
+    if idx >= 0:
+        return joined[idx + len("<user_query>") :].strip()
+    return joined.strip()
 
 
 def first_line_matches_land(
@@ -75,27 +118,34 @@ def first_line_matches_land(
     tip_cp: int | None,
     marker: str,
 ) -> bool:
-    """True when the first JSONL line is an exact land for this hop.
+    """True when the decoded hop body is an exact land for this hop.
 
-    With tip: require ``Liaison IDE hop``, ``resume <root>``, and ``tip_cp=N(?!\\d)``.
-    Without tip: require the full marker substring (mtime gated by the caller).
+    With tip: first body line is ``resume <root>`` (alone); ``tip_cp=N`` only on a
+    line that starts with ``Liaison IDE hop``. Without tip: full marker substring
+    in the body (mtime gated by the caller).
     """
+    body = extract_hop_body_text(first_line)
+    if body is None:
+        return False
     if tip_cp is not None:
         if not root_id:
             return False
-        if "Liaison IDE hop" not in first_line:
+        lines = body.splitlines()
+        if not lines:
             return False
-        # Bound resume so resume 154201 does not match root 15420.
-        if not re.search(
-            rf"(?:^|[\s\"])resume\s+{re.escape(root_id)}(?:\s|[\"\\n]|$)",
-            first_line,
-        ):
+        first = lines[0].strip()
+        if first != f"resume {root_id}":
             return False
-        if not re.search(rf"tip_cp={tip_cp}(?!\d)", first_line):
+        for line in lines:
+            if not line.startswith("Liaison IDE hop"):
+                continue
+            tip_m = re.search(r"tip_cp=(\d+)(?!\d)", line)
+            if tip_m and int(tip_m.group(1)) == tip_cp:
+                return True
             return False
-        return True
+        return False
     text = (marker or "").strip()
-    return bool(text) and text in first_line
+    return bool(text) and text in body
 
 
 def land_find_telemetry(
@@ -127,20 +177,25 @@ def find_transcript_with_hop_header(
     root_id: str | None = None,
     tip_cp: int | None = None,
     since_epoch: float | None = None,
+    exclude_ids: set[str] | frozenset[str] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """Transcript id whose first JSONL line is an exact land for this hop.
 
     Tip hops: exact ``(root, tip)`` — no mtime gate (re-hop / JSONL lag / clock skew).
     Tipless hops: full ``marker`` substring **and** ``mtime >= since_epoch - 1`` when
-    ``since_epoch`` is set (recovery must not undo the wait mtime check — F3).
+    ``since_epoch`` is set. ``exclude_ids`` drops the departing tab (15456#4 F2).
     """
     empty_tel = land_find_telemetry(
         root_id=root_id, tip_cp=tip_cp, marker=marker, matches=0
     )
     if not transcripts_dir.is_dir():
         return None, empty_tel
+    skip = exclude_ids or set()
     rows: list[tuple[float, str, str]] = []
     for path in transcripts_dir.glob("*/*.jsonl"):
+        tid = path.parent.name
+        if tid in skip:
+            continue
         try:
             with path.open(encoding="utf-8") as fh:
                 first_line = fh.readline()
@@ -153,7 +208,7 @@ def find_transcript_with_hop_header(
             first_line, root_id=root_id, tip_cp=tip_cp, marker=marker
         ):
             continue
-        rows.append((mtime, path.parent.name, first_line[:160]))
+        rows.append((mtime, tid, first_line[:160]))
     tel = land_find_telemetry(
         root_id=root_id,
         tip_cp=tip_cp,
@@ -168,20 +223,21 @@ def find_transcript_with_hop_header(
 
 
 def list_resume_transcript_ids(root_id: str, transcripts_dir: Path) -> set[str]:
-    """Ids whose first line mentions ``resume <root_id>`` — pre-fire baseline for tipless."""
+    """Ids whose decoded body starts with ``resume <root_id>`` — tipless pre-fire baseline."""
     found: set[str] = set()
     if not root_id or not transcripts_dir.is_dir():
         return found
-    needle = re.compile(
-        rf"(?:^|[\s\"])resume\s+{re.escape(root_id)}(?:\s|[\"\\n]|$)"
-    )
     for path in transcripts_dir.glob("*/*.jsonl"):
         try:
             with path.open(encoding="utf-8") as fh:
                 first_line = fh.readline()
         except OSError:
             continue
-        if needle.search(first_line):
+        body = extract_hop_body_text(first_line)
+        if body is None:
+            continue
+        first = body.splitlines()[0].strip() if body.splitlines() else ""
+        if first == f"resume {root_id}":
             found.add(path.parent.name)
     return found
 
@@ -196,13 +252,15 @@ def wait_for_landed_transcript(
     root_id: str | None = None,
     tip_cp: int | None = None,
     pre_existing_ids: set[str] | None = None,
+    exclude_ids: set[str] | frozenset[str] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """Transcript id whose first user message is an exact land for this hop.
 
     Tip hops: exact ``(root, tip)`` without mtime. Tipless: mtime after fire, or a
-    new id not in ``pre_existing_ids`` that carries the full marker (15456 ask 2).
+    new id not in ``pre_existing_ids`` that carries the full marker.
     """
     deadline = time.monotonic() + timeout_s
+    skip = set(exclude_ids or ())
     last_tel = land_find_telemetry(
         root_id=root_id, tip_cp=tip_cp, marker=marker, matches=0
     )
@@ -214,13 +272,14 @@ def wait_for_landed_transcript(
                 root_id=root_id,
                 tip_cp=tip_cp,
                 since_epoch=None if tip_cp is not None else since_epoch,
+                exclude_ids=skip,
             )
             if found is not None:
                 return found, last_tel
             if tip_cp is None and pre_existing_ids is not None:
                 for path in transcripts_dir.glob("*/*.jsonl"):
                     tid = path.parent.name
-                    if tid in pre_existing_ids:
+                    if tid in pre_existing_ids or tid in skip:
                         continue
                     try:
                         with path.open(encoding="utf-8") as fh:
@@ -299,6 +358,7 @@ def wait_for_induction_landed(
 __all__ = [
     "AGENTS_WINDOW_APP_ID",
     "AGENTS_WINDOW_TITLE",
+    "extract_hop_body_text",
     "find_transcript_with_hop_header",
     "first_line_matches_land",
     "focus_title_for",
