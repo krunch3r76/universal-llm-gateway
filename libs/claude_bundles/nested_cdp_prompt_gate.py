@@ -15,22 +15,29 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Literal
 
 from implement_admission.closeout_helpers import cortex_files_root
 
 # Citation + binding lines the authoring seat must leave on the author body.
 _RETRIEVAL_REPORT_LINE = re.compile(r"(?im)^retrieval_report:\s*(cortex://\S+)\s*$")
-_REPORT_TARGET_LINE = re.compile(r"(?im)^target:\s*(\S+)\s*$")
-_REPORT_TARGET_LINE_ANY = re.compile(r"(?im)^target:\s*.+$")
-_ACCEPTED_TARGET_SHAPES = (
-    "todo:<id>",
-    "friction:<n>",
-    "gate_path=<NAME>",
-    "G1|G2|G4|G6",
-    "adversarial-spec",
-    "delivery-review",
+# Strict: column-0 ``target:`` + one token on the same line (no newline in gap).
+_REPORT_TARGET_STRICT = re.compile(r"(?im)^target:[ \t]*(\S+)[ \t]*$")
+# Loose: any line that looks like an indented/bulleted/bolded binding attempt.
+_REPORT_TARGET_LOOSE = re.compile(
+    r"(?im)^[ \t]*(?:[-*>][ \t]*)?\**target:(.*)$"
 )
 _BODY_TODO = re.compile(r"(?i)\btodo:([\w.-]+)\b")
+
+# Human hint strings; kept in sync with ``body_target_tokens`` (see tests).
+_BINDABLE_TARGET_HINTS: tuple[str, ...] = (
+    "todo:<id> anywhere in author body",
+    "friction:<n> anywhere in author body",
+    "line-start gate_path=<X> (also bare <X>)",
+    "line-start You are the G1|G2|G4|G6",
+    "line-start Genre: adversarial spec → adversarial-spec",
+    "line-start job=delivery-review → delivery-review",
+)
 
 # Spec-skeptic / G4 — line-anchored role declarations only (A1).
 _SKEPTIC_SHAPE = re.compile(
@@ -102,17 +109,51 @@ def parse_retrieval_report_uri(text: str) -> str | None:
     return match.group(1).strip()
 
 
+def _report_lines_outside_fences(report_body: str) -> list[str]:
+    """Physical lines, skipping fenced code blocks."""
+    lines: list[str] = []
+    in_fence = False
+    for line in (report_body or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            lines.append(line)
+    return lines
+
+
+def _first_target_binding(report_body: str) -> tuple[
+    Literal["absent", "valid", "invalid"], str | None, str | None
+]:
+    """Classify the first target-like line (outside fences, before first ``##``).
+
+    Returns (state, token_or_none, raw_line_for_errors).
+    """
+    before_heading = (report_body or "").split("##", 1)[0]
+    for line in _report_lines_outside_fences(before_heading):
+        loose = _REPORT_TARGET_LOOSE.match(line)
+        if loose is None:
+            continue
+        strict = _REPORT_TARGET_STRICT.match(line)
+        if strict is not None:
+            return "valid", strict.group(1).strip(), line
+        return "invalid", None, line
+    return "absent", None, None
+
+
 def parse_report_target(report_body: str) -> str | None:
-    """Return the first ``target:`` token from a report sidecar, else None."""
-    match = _REPORT_TARGET_LINE.search(report_body or "")
-    if match is None:
-        return None
-    return match.group(1).strip()
+    """Return the bound ``target:`` token when the first binding line is valid."""
+    state, token, _raw = _first_target_binding(report_body)
+    if state == "valid":
+        return token
+    return None
 
 
 def has_report_target_line(report_body: str) -> bool:
-    """True when a ``target:`` line is present (valid or malformed)."""
-    return bool(_REPORT_TARGET_LINE_ANY.search(report_body or ""))
+    """True when a target-like line is present (valid or malformed)."""
+    state, _, _ = _first_target_binding(report_body)
+    return state != "absent"
 
 
 def body_target_tokens(author_body: str) -> set[str]:
@@ -133,6 +174,16 @@ def body_target_tokens(author_body: str) -> set[str]:
     if re.search(r"(?im)^job\s*=\s*delivery-review\b", text):
         tokens.add("delivery-review")
     return tokens
+
+
+def bindable_target_hints() -> tuple[str, ...]:
+    """Generic bind hints aligned with ``body_target_tokens`` (a:38299 review)."""
+    return _BINDABLE_TARGET_HINTS
+
+
+def _truncate_line_repr(line: str, *, limit: int = 80) -> str:
+    text = line if len(line) <= limit else line[: limit - 3] + "..."
+    return repr(text)
 
 
 def missing_report_sections(report_body: str) -> list[str]:
@@ -239,25 +290,34 @@ def enforce_retrieval_report(author_body: str) -> str:
             f"retrieval_report {uri} empty sections: {', '.join(empty)}",
             code="nested_cdp_retrieval_report_empty_section",
         )
-    target = parse_report_target(report)
-    if target is None and has_report_target_line(report):
-        shapes = ", ".join(_ACCEPTED_TARGET_SHAPES)
+    state, target, raw_line = _first_target_binding(report)
+    allowed = body_target_tokens(author_body)
+    accepted = sorted(allowed)
+    if state == "invalid":
+        line_bit = _truncate_line_repr(raw_line or "")
+        hint = "; ".join(bindable_target_hints())
         raise NestedCdpPromptGateError(
-            f"retrieval_report {uri} `target:` must be exactly one token "
-            f"(no prose or extra words on the line); accepted shapes: {shapes} "
-            "(a:38299)",
+            f"retrieval_report {uri} malformed `target:` line {line_bit} "
+            f"(column-0, one token, no indent/bullet); author body accepts "
+            f"{accepted!r}; bind shapes: {hint} (a:38299)",
             code="nested_cdp_retrieval_report_target_invalid",
         )
-    if not target:
+    if state == "absent":
         raise NestedCdpPromptGateError(
             f"retrieval_report {uri} requires `target:` binding the prompt "
             "(todo:… / G4 / gate_path=… / adversarial-spec) (a:37183 A3)",
             code="nested_cdp_retrieval_report_target_required",
         )
-    allowed = body_target_tokens(author_body)
+    assert target is not None
     allowed_folded = {token.casefold() for token in allowed}
     if target.casefold() not in allowed_folded:
-        accepted = sorted(allowed)
+        if not allowed:
+            raise NestedCdpPromptGateError(
+                f"retrieval_report {uri} saw target token {target!r}; author body "
+                "declares no bindable token; add todo:<id>/friction:<n> or a "
+                "line-start gate declaration to the author body (a:38299)",
+                code="nested_cdp_retrieval_report_target_mismatch",
+            )
         raise NestedCdpPromptGateError(
             f"retrieval_report {uri} saw target token {target!r}; author body "
             f"accepts {accepted!r} (a:37183 A3)",

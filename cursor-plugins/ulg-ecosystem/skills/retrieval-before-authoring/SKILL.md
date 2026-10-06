@@ -64,8 +64,8 @@ Bibliography-only hits (citation line / related-work mention of a paper with no 
 7. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
    Falsifier: on that step: inference laundered as a corpus citation.
 
-8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment. Nested CDP (`team_dispatch(model=cdp/…)` / `cse_session(op=followup)` / G1·G2·G4·G6): sidecar `cortex://notes/…/retrieval-report.md` — `## Queries`, `## Yields`, `## Choice-to-evidence` (each non-empty; `weak_match` / null yields); **`target:` is one token only** on its own line (good: `target: friction:38297`; bad: `target: todo:foo plus prose`); `friction:<n>` anywhere in the **author** body also binds; cite with `retrieval_report: cortex://…` on its own author line (a:37183 · `nested_cdp_prompt_gate`).
-   Falsifier: on that step: dispatch without the report bundle, nested CDP without `retrieval_report:`, or a multi-token / prose `target:` line.
+8. **Dispatch and report.** Post queries, yields, choice-to-evidence, falsifier. Nested CDP sidecar `cortex://notes/…/retrieval-report.md`: `## Queries`, `## Yields`, `## Choice-to-evidence` (non-empty); **`target:` one token, column 0** (no indent/bullet); `target:` must equal one token the author body yields: any `todo:<id>` / `friction:<n>` anywhere, or line-start `gate_path=<X>` (also bare `<X>`), `You are the G1|G2|G4|G6`, `Genre: adversarial spec` → `adversarial-spec`, `job=delivery-review` → `delivery-review`; `retrieval_report: cortex://…` on its own author line (a:37183 · `nested_cdp_prompt_gate`).
+   Falsifier: on that step: no report bundle, nested CDP without `retrieval_report:`, or malformed `target:` (multi-token, prose, indent).
 
 ## Falsifier
 

@@ -12,6 +12,8 @@ from claude_bundles.cdp_model_endpoint_staging import (
 )
 from claude_bundles.nested_cdp_prompt_gate import (
     NestedCdpPromptGateError,
+    bindable_target_hints,
+    body_target_tokens,
     empty_report_sections,
     enforce_nested_cdp_prompt_gates,
     enforce_retrieval_report,
@@ -188,25 +190,145 @@ def test_report_target_mismatch_refuses(
     assert "todo:demo" in msg
 
 
-def test_report_target_multi_token_refuses_invalid(
+def _report_preamble(*lines: str) -> str:
+    block = "\n".join(lines)
+    return f"""# Retrieval report
+{block}
+
+## Queries
+- q
+
+## Yields
+- x
+
+## Choice-to-evidence
+| a | b |
+|---|---|
+| c | d |
+"""
+
+
+def _enforce_report_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report: str,
+    author: str = _SKEPTIC_BODY,
+) -> str | NestedCdpPromptGateError:
+    uri = _write_report(tmp_path, monkeypatch, body=report)
+    body = f"retrieval_report: {uri}\n{author}"
+    try:
+        return enforce_retrieval_report(body)
+    except NestedCdpPromptGateError as exc:
+        return exc
+
+
+@pytest.mark.parametrize(
+    ("preamble", "expected_code"),
+    [
+        ("target: todo:demo", None),
+        ("target: todo:demo\r\n", None),
+        ("target: todo:foo plus prose", "nested_cdp_retrieval_report_target_invalid"),
+        ("target: todo:foo plus prose\r\n", "nested_cdp_retrieval_report_target_invalid"),
+        ("Target: TODO:DEMO", None),
+        ("   target: todo:demo", "nested_cdp_retrieval_report_target_invalid"),
+        ("- target: todo:demo", "nested_cdp_retrieval_report_target_invalid"),
+        ("**target: todo:demo", "nested_cdp_retrieval_report_target_invalid"),
+        ("target:", "nested_cdp_retrieval_report_target_invalid"),
+        ("target:   ", "nested_cdp_retrieval_report_target_invalid"),
+        ("target:\ntodo:demo", "nested_cdp_retrieval_report_target_invalid"),
+        ("target:\n\n---", "nested_cdp_retrieval_report_target_invalid"),
+        (
+            "target: todo:foo plus prose\ntarget: todo:demo",
+            "nested_cdp_retrieval_report_target_invalid",
+        ),
+        (
+            "```\ntarget: todo:other\n```",
+            "nested_cdp_retrieval_report_target_required",
+        ),
+    ],
+)
+def test_report_target_line_param(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    preamble: str,
+    expected_code: str | None,
+) -> None:
+    report = _report_preamble(preamble)
+    author = _SKEPTIC_BODY
+    if "TODO:DEMO" in preamble:
+        author = (
+            "Genre: adversarial spec review. You are the G4 skeptic for todo:demo.\n"
+        )
+    outcome = _enforce_report_body(tmp_path, monkeypatch, report, author)
+    if expected_code is None:
+        assert isinstance(outcome, str)
+    else:
+        assert isinstance(outcome, NestedCdpPromptGateError)
+        assert outcome.code == expected_code
+
+
+def test_report_target_invalid_message_lists_body_tokens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bad = _COMPLETE_REPORT.replace(
-        "target: todo:demo", "target: todo:foo plus prose"
+    report = _report_preamble("target: todo:foo plus prose")
+    exc = _enforce_report_body(tmp_path, monkeypatch, report)
+    assert isinstance(exc, NestedCdpPromptGateError)
+    msg = str(exc)
+    assert "todo:demo" in msg
+    assert exc.code == "nested_cdp_retrieval_report_target_invalid"
+
+
+def test_report_target_casefold_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _report_preamble("target: TODO:DEMO")
+    uri = _enforce_report_body(tmp_path, monkeypatch, report)
+    assert isinstance(uri, str)
+
+
+def test_report_target_in_fence_ignored_when_preamble_valid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _report_preamble(
+        "target: todo:demo",
+        "```",
+        "target: todo:other",
+        "```",
     )
-    uri = _write_report(tmp_path, monkeypatch, body=bad)
-    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
-    with pytest.raises(NestedCdpPromptGateError) as exc:
-        enforce_retrieval_report(body)
-    assert exc.value.code == "nested_cdp_retrieval_report_target_invalid"
+    uri = _enforce_report_body(tmp_path, monkeypatch, report)
+    assert isinstance(uri, str)
 
 
-def test_report_target_single_token_still_passes(
+def test_report_target_mismatch_empty_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    report = _report_preamble("target: todo:demo")
     uri = _write_report(tmp_path, monkeypatch)
-    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
-    assert enforce_retrieval_report(body) == uri
+    author = f"retrieval_report: {uri}\nPlain width via citation only.\n"
+    assert is_nested_width_shaped(author)
+    exc = _enforce_report_body(tmp_path, monkeypatch, report, author)
+    assert isinstance(exc, NestedCdpPromptGateError)
+    assert exc.code == "nested_cdp_retrieval_report_target_mismatch"
+    assert "no bindable token" in str(exc)
+
+
+def test_bindable_hints_align_with_body_target_tokens() -> None:
+    sample = (
+        "todo:alpha friction:99\n"
+        "gate_path=SKEPTIC\n"
+        "You are the G4\n"
+        "Genre: adversarial spec\n"
+        "job=delivery-review\n"
+    )
+    tokens = body_target_tokens(sample)
+    assert "todo:alpha" in tokens
+    assert "friction:99" in tokens
+    assert "gate_path=SKEPTIC" in tokens
+    assert "SKEPTIC" in tokens
+    assert "G4" in tokens
+    assert "adversarial-spec" in tokens
+    assert "delivery-review" in tokens
+    assert bindable_target_hints()
 
 
 def test_report_target_required_when_line_absent(
@@ -316,6 +438,41 @@ def test_stage_refuses_skeptic_without_report(
             purpose="review",
         )
     assert exc.value.code == "nested_cdp_retrieval_report_required"
+
+
+def test_stage_refuses_target_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _report_preamble("target: todo:foo plus prose")
+    uri = _write_report(tmp_path, monkeypatch, body=report)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex-root"))
+    _passthrough_skills(monkeypatch)
+    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
+    with pytest.raises(CdpStagingError) as exc:
+        stage_cdp_prompt_with_skills(
+            execution_id="exec-target-invalid",
+            prompt_text=body,
+            purpose="review",
+        )
+    assert exc.value.code == "nested_cdp_retrieval_report_target_invalid"
+
+
+@pytest.mark.asyncio
+async def test_execute_followup_returns_target_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdp_ask.followup import execute_followup
+    from cdp_ask.models import FollowupProjectAskRequest
+
+    report = _report_preamble("target: todo:foo plus prose")
+    uri = _write_report(tmp_path, monkeypatch, body=report)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex-root"))
+    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
+    req = FollowupProjectAskRequest(prompt_text=body)
+    store = pytest.importorskip("unittest.mock").MagicMock()
+    resp = await execute_followup(req, store)
+    assert resp.ok is False
+    assert resp.error == "nested_cdp_retrieval_report_target_invalid"
 
 
 def test_stage_admits_skeptic_with_report(
