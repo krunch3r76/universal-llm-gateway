@@ -11,8 +11,8 @@ import yaml
 from systems.pipeline.core.pipeline_config import PipelineSpec
 from work_key_grammar import is_valid_work_key_scheme
 
-from . import densify as densify_mod
-from . import densify_wait as densify_wait_mod
+from . import investigate as investigate_mod
+from . import investigate_wait as investigate_wait_mod
 from . import launch
 from ._message import (
     CURSOR_SDK_MODEL,
@@ -21,14 +21,14 @@ from ._message import (
     classify_invocation_tokens,
     compose_message,
     cursor_sdk_dispatch_body,
-    densify_sdk_model,
-    extract_densify_splice,
+    extract_investigate_splice,
+    investigate_sdk_model,
     parse_compose_options,
     team_dispatch_admit_shape,
     work_key_for,
 )
-from .densify import CursorPasteDensifyHandler
-from .densify_wait import (
+from .investigate import CursorPasteInvestigateHandler
+from .investigate_wait import (
     WAIT_CLIENT_TIMEOUT,
     WAIT_SNAPSHOT_KEYS,
     wait_sdk_closeout,
@@ -46,12 +46,12 @@ def test_pipeline_yaml_loads() -> None:
     data = yaml.safe_load(_YAML.read_text(encoding="utf-8"))
     spec = PipelineSpec(**data)
     assert spec.id == "cursor-paste-resolve"
-    assert spec.steps[0].type == "cursor_paste_resolve_densify_v1"
+    assert spec.steps[0].type == "cursor_paste_resolve_investigate_v1"
     assert spec.steps[1].type == "cursor_paste_resolve_compose_v1"
     assert spec.steps[2].type == "cursor_paste_resolve_launch_v1"
     opts = spec.options.to_context_dict()
     assert "launch_target" in opts
-    assert "densify" in opts
+    assert "investigate" in opts
     assert "tab_model" in opts
 
 
@@ -328,33 +328,33 @@ def test_paste_thread_prefix() -> None:
     assert name == "paste-080910"
 
 
-def test_classify_folds_densify_and_refuses_two_in_set() -> None:
+def test_classify_folds_investigate_and_refuses_two_in_set() -> None:
     ok = classify_invocation_tokens(["glass", "orion-node", "opus"])
-    assert ok == {"window": "glass", "host": "orion-node", "densify": "opus"}
+    assert ok == {"window": "glass", "host": "orion-node", "investigate": "opus"}
     aliases = classify_invocation_tokens(["cursor/claude-fable-5-1"])
-    assert aliases == {"densify": "fable"}
+    assert aliases == {"investigate": "fable"}
     two = classify_invocation_tokens(["opus", "fable"])
-    assert isinstance(two, str) and "densify" in two
+    assert isinstance(two, str) and "investigate" in two
     two_tab = classify_invocation_tokens(["tab-opus", "tab-fable"])
     assert isinstance(two_tab, str) and "tab" in two_tab
     unknown = classify_invocation_tokens(["wayland"])
     assert isinstance(unknown, str) and "neither" in unknown
 
 
-def test_classify_peels_bare_sdk_when_window_and_densify() -> None:
+def test_classify_peels_bare_sdk_when_window_and_investigate() -> None:
     peeled = classify_invocation_tokens(["glass", "orion-node", "opus", "cursor_sdk"])
     assert peeled == {
         "window": "glass",
         "host": "orion-node",
-        "densify": "opus",
+        "investigate": "opus",
     }
     sdk_write = classify_invocation_tokens(["cursor_sdk", "opus"])
-    assert sdk_write == {"launch_target": "cursor_sdk", "densify": "opus"}
+    assert sdk_write == {"launch_target": "cursor_sdk", "investigate": "opus"}
     steal = classify_invocation_tokens(["glass", "orion-node", "opus", "no-paste"])
     assert steal == {
         "window": "glass",
         "host": "orion-node",
-        "densify": "opus",
+        "investigate": "opus",
         "launch_target": "cursor_sdk",
     }
     ambiguous = classify_invocation_tokens(["glass", "orion-node", "cursor_sdk"])
@@ -363,54 +363,54 @@ def test_classify_peels_bare_sdk_when_window_and_densify() -> None:
     assert isinstance(two_launch, str) and "launch_target" in two_launch
 
 
-def test_parse_folds_pipeline_densify_and_tab_model() -> None:
+def test_parse_folds_pipeline_investigate_and_tab_model() -> None:
     bound = parse_compose_options(
         {
             "kind": "friction",
             "assertion_id": 1,
-            "densify": "cursor/claude-opus-5-5",
+            "investigate": "cursor/claude-opus-5-5",
             "tab_model": "tab-opus",
         }
     )
-    assert bound["densify"] == "opus"
+    assert bound["investigate"] == "opus"
     assert bound["tab_model"] == "opus"
     two = parse_compose_options(
-        {"kind": "friction", "assertion_id": 1, "densify": ["opus", "fable"]}
+        {"kind": "friction", "assertion_id": 1, "investigate": ["opus", "fable"]}
     )
-    assert isinstance(two, str) and "densify" in two
+    assert isinstance(two, str) and "investigate" in two
 
 
-def test_densify_sdk_model_ids() -> None:
-    assert densify_sdk_model("opus") == "cursor/claude-opus-5-5"
-    assert densify_sdk_model("fable") == "cursor/claude-fable-5-1"
-    assert densify_sdk_model("") == ""
+def test_investigate_sdk_model_ids() -> None:
+    assert investigate_sdk_model("opus") == "cursor/claude-opus-5-5"
+    assert investigate_sdk_model("fable") == "cursor/claude-fable-5-1"
+    assert investigate_sdk_model("") == ""
 
 
-def test_extract_densify_splice() -> None:
+def test_extract_investigate_splice() -> None:
     text = f"noise\n{SPLICE_START}\nsurfaces: a\n{SPLICE_END}\nmore"
-    assert extract_densify_splice(text) == "surfaces: a"
-    assert extract_densify_splice("no delimiters") == ""
+    assert extract_investigate_splice(text) == "surfaces: a"
+    assert extract_investigate_splice("no delimiters") == ""
 
 
-def test_compose_message_prepends_densify_keeps_implementer() -> None:
+def test_compose_message_prepends_investigate_keeps_implementer() -> None:
     impl = "IMPLEMENTER-BODY\n"
     out = compose_message(
         "friction",
         99,
         "",
         impl,
-        densify_model="cursor/claude-opus-5-5",
-        densify_splice="surfaces: x",
+        investigate_model="cursor/claude-opus-5-5",
+        investigate_splice="surfaces: x",
         tab_model="opus",
     )
     assert impl in out
-    assert out.index("<densify origin=cursor-sdk") < out.index(impl)
+    assert out.index("<investigate origin=cursor-sdk") < out.index(impl)
     assert out.index(impl) < out.index("tab-opus")
     assert "cdp/fable-5.1" in out
     assert out.endswith("same model_identity as this Glass tab).\n")
 
 
-def test_cursor_sdk_model_pin_unchanged_when_densify_set() -> None:
+def test_cursor_sdk_model_pin_unchanged_when_investigate_set() -> None:
     body = cursor_sdk_dispatch_body(
         kind="friction",
         assertion_id=7,
@@ -423,17 +423,17 @@ def test_cursor_sdk_model_pin_unchanged_when_densify_set() -> None:
         {
             "kind": "friction",
             "assertion_id": 7,
-            "densify": "opus",
+            "investigate": "opus",
             "launch_target": "cursor_sdk",
         }
     )
-    assert bound["densify"] == "opus"
+    assert bound["investigate"] == "opus"
     assert bound["launch_target"] == "cursor_sdk"
 
 
 @pytest.mark.asyncio
-async def test_densify_skip_when_unset() -> None:
-    handler = CursorPasteDensifyHandler()
+async def test_investigate_skip_when_unset() -> None:
+    handler = CursorPasteInvestigateHandler()
     ctx = SimpleNamespace(
         options={"kind": "friction", "assertion_id": 1},
         outputs={},
@@ -445,7 +445,7 @@ async def test_densify_skip_when_unset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_densify_422_is_quoted_not_swapped(monkeypatch) -> None:
+async def test_investigate_422_is_quoted_not_swapped(monkeypatch) -> None:
     async def fake_get(
         _client: object, _tool: str, _arguments: dict
     ) -> dict[str, object]:
@@ -466,12 +466,12 @@ async def test_densify_422_is_quoted_not_swapped(monkeypatch) -> None:
         async def __aexit__(self, *args: object) -> bool:
             return False
 
-    monkeypatch.setattr(densify_mod, "make_async_client", lambda *a, **k: _Client())
-    monkeypatch.setattr(densify_mod, "cortex_dispatch", fake_get)
-    handler = CursorPasteDensifyHandler()
+    monkeypatch.setattr(investigate_mod, "make_async_client", lambda *a, **k: _Client())
+    monkeypatch.setattr(investigate_mod, "cortex_dispatch", fake_get)
+    handler = CursorPasteInvestigateHandler()
     handler.hop = hop  # type: ignore[method-assign]
     ctx = SimpleNamespace(
-        options={"kind": "friction", "assertion_id": 1, "densify": "fable"},
+        options={"kind": "friction", "assertion_id": 1, "investigate": "fable"},
         outputs={},
     )
     out = await handler.execute(SimpleNamespace(handler_inputs={}), ctx)
@@ -663,7 +663,7 @@ def instant_wait_backoff(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     async def _sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    monkeypatch.setattr(densify_wait_mod.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(investigate_wait_mod.asyncio, "sleep", _sleep)
     return sleeps
 
 

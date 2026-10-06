@@ -1,11 +1,11 @@
-"""cursor_paste_resolve v1 handlers — densify, compose, then launch."""
+"""cursor_paste_resolve v1 handlers — investigate, compose, then launch."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from .compose import CursorPasteComposeHandler
-from .densify import CursorPasteDensifyHandler
+from .investigate import CursorPasteInvestigateHandler
 from .launch import CursorPasteLaunchHandler
 
 if TYPE_CHECKING:
@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 def register_handlers(router: DomainRouter) -> None:
     router.register_domain_handler_class(
         "cursor_paste_resolve",
-        "cursor_paste_resolve_densify_v1",
-        CursorPasteDensifyHandler,
+        "cursor_paste_resolve_investigate_v1",
+        CursorPasteInvestigateHandler,
     )
     router.register_domain_handler_class(
         "cursor_paste_resolve",

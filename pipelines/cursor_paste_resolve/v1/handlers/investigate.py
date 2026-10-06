@@ -1,4 +1,4 @@
-"""Densify hop — optional cursor-sdk investigate before compose writes the paste file."""
+"""Investigate hop — optional cursor-sdk recon before compose writes the paste file."""
 
 from __future__ import annotations
 
@@ -18,25 +18,25 @@ from transport_utils import (
 from ._cortex import cortex_dispatch
 from ._message import (
     MAESTRO_MEMO_THREAD,
-    densify_ask_prompt,
-    densify_dispatch_body,
-    densify_sdk_model,
+    investigate_ask_prompt,
+    investigate_dispatch_body,
+    investigate_sdk_model,
     parse_compose_options,
 )
-from .densify_wait import WAIT_CLIENT_TIMEOUT, latest_turn_number, wait_sdk_closeout
+from .investigate_wait import WAIT_CLIENT_TIMEOUT, latest_turn_number, wait_sdk_closeout
 from .launch import agent_bus_headers, cursor_sdk_refuse_payload, post_json
 
 _REQUEST_TIMEOUT = 30.0
-DensifyHop = Callable[..., Awaitable[dict[str, Any]]]
+InvestigateHop = Callable[..., Awaitable[dict[str, Any]]]
 
 
 def _step(payload: dict[str, Any], *, error: str | None = None) -> StepOutput:
     return StepOutput(raw=json.dumps(payload, default=str), json=payload, error=error)
 
 
-class CursorPasteDensifyHandler(BaseHandler):
-    step_type = "cursor_paste_resolve_densify_v1"
-    hop: DensifyHop | None = None
+class CursorPasteInvestigateHandler(BaseHandler):
+    step_type = "cursor_paste_resolve_investigate_v1"
+    hop: InvestigateHop | None = None
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
@@ -44,20 +44,20 @@ class CursorPasteDensifyHandler(BaseHandler):
         bound = parse_compose_options(opts)
         if isinstance(bound, str):
             return _step({"ok": False, "error": bound}, error=bound)
-        densify = bound["densify"]
-        if not densify:
+        investigate = bound["investigate"]
+        if not investigate:
             return _step(
                 {
                     "ok": True,
                     "skipped": True,
                     "splice": "",
                     "model": "",
-                    "densify": "",
+                    "investigate": "",
                 }
             )
-        model = densify_sdk_model(densify)
+        model = investigate_sdk_model(investigate)
         if not model:
-            err = f"unknown densify fold {densify!r}"
+            err = f"unknown investigate fold {investigate!r}"
             return _step({"ok": False, "error": err}, error=err)
 
         async with make_async_client(
@@ -79,24 +79,24 @@ class CursorPasteDensifyHandler(BaseHandler):
                 error=str(err),
             )
 
-        prompt = densify_ask_prompt(bound["kind"], bound["assertion_id"], row)
-        hop = self.hop if self.hop is not None else default_densify_hop
+        prompt = investigate_ask_prompt(bound["kind"], bound["assertion_id"], row)
+        hop = self.hop if self.hop is not None else default_investigate_hop
         result = await hop(bound=bound, model=model, prompt=prompt)
         if not result.get("ok"):
-            err = str(result.get("error") or "densify hop failed")
+            err = str(result.get("error") or "investigate hop failed")
             payload = {
                 "ok": False,
                 "error": err,
                 "failure_class": result.get("failure_class") or "hop_failed",
                 "http_status": result.get("http_status"),
                 "model": model,
-                "densify": densify,
+                "investigate": investigate,
                 "dispatch": result.get("dispatch"),
             }
             return _step(payload, error=err)
         splice = str(result.get("splice") or "").strip()
         if not splice:
-            err = "densify hop returned an empty splice"
+            err = "investigate hop returned an empty splice"
             return _step(
                 {
                     "ok": False,
@@ -111,7 +111,7 @@ class CursorPasteDensifyHandler(BaseHandler):
             {
                 "ok": True,
                 "skipped": False,
-                "densify": densify,
+                "investigate": investigate,
                 "model": model,
                 "splice": splice,
                 "dispatch_thread_id": result.get("dispatch_thread_id"),
@@ -120,7 +120,7 @@ class CursorPasteDensifyHandler(BaseHandler):
         )
 
 
-async def default_densify_hop(
+async def default_investigate_hop(
     *,
     bound: dict[str, Any],
     model: str,
@@ -135,7 +135,7 @@ async def default_densify_hop(
     headers = agent_bus_headers()
     if headers is None:
         payload = cursor_sdk_refuse_payload(
-            reason="AGENT_BUS_TOKEN unset — cannot mint a densify thread",
+            reason="AGENT_BUS_TOKEN unset — cannot mint an investigate thread",
             admit={"model": model, "job": "investigate"},
         )
         return {
@@ -147,7 +147,7 @@ async def default_densify_hop(
     async with make_async_client(
         DEFAULT_AGENT_BUS_URL, timeout=WAIT_CLIENT_TIMEOUT
     ) as bus:
-        slug = f"cursor-paste-densify-{kind}-{assertion_id}"
+        slug = f"cursor-paste-investigate-{kind}-{assertion_id}"
         mint = await post_json(
             bus,
             "/threads",
@@ -178,7 +178,7 @@ async def default_densify_hop(
             }
         after_turn = await latest_turn_number(bus, thread_id, headers)
 
-        body = densify_dispatch_body(
+        body = investigate_dispatch_body(
             kind=kind,
             assertion_id=assertion_id,
             prompt=prompt,
@@ -216,7 +216,7 @@ async def default_densify_hop(
                 "ok": False,
                 "failure_class": closeout.get("failure_class") or "wait_failed",
                 "http_status": closeout.get("http_status"),
-                "error": closeout.get("error") or "densify wait failed",
+                "error": closeout.get("error") or "investigate wait failed",
                 "dispatch": dispatched,
                 "dispatch_thread_id": thread_id,
             }

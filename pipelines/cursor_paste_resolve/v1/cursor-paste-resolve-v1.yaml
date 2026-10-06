@@ -1,7 +1,7 @@
-# cursor-paste-resolve — densify (optional), compose, then launch.
+# cursor-paste-resolve — investigate (optional), compose, then launch.
 #
 # Compose is identical for launch_target ∈ {glass, ide, cursor_sdk}.
-# Densify is a prior cursor-sdk investigate hop when options.densify is set.
+# Investigate is a prior cursor-sdk hop when options.investigate is set.
 # Launch is the last step: Glass/IDE shells scripts/cursor-bridge-launch.py
 # open-tab (the paste chord). cursor_sdk POSTs /api/v1/team/dispatch with
 # CURSOR_SDK_MODEL (cursor/grok-4.7) unchanged.
@@ -16,7 +16,7 @@
 #              "host": "orion-node"|"jupiter",   # required for glass/ide launch
 #              "notify": "maestro"|absent,
 #              "launch_target": "glass"|"ide"|"cursor_sdk"|absent,
-#              "densify": "opus"|"fable"|absent, # SDK investigate hop
+#              "investigate": "opus"|"fable"|absent, # SDK investigate hop
 #              "tab_model": "opus"|"fable"|absent,  # Glass Ctrl+/ query
 #              "dispatch_thread_id": "<minted>", # cursor_sdk write executor
 #            })
@@ -27,7 +27,7 @@ version: "1.0"
 type: cursor_paste_resolve
 category: cursor_paste_resolve
 description: >
-  optional densify investigate hop, then assertion_get + implementer read +
+  optional investigate hop, then assertion_get + implementer read +
   write tmp/prompts/cursor-paste-<kind>-<id>.md, then optional Glass/IDE
   script launch or cursor_sdk team_dispatch admit.
 output: launch
@@ -38,9 +38,9 @@ options:
     type: string
     description: glass | ide | cursor_sdk; empty = compose only
     default: ""
-  densify:
+  investigate:
     type: string
-    description: opus | fable; empty = skip densify hop
+    description: opus | fable; empty = skip investigate hop
     default: ""
   tab_model:
     type: string
@@ -48,17 +48,17 @@ options:
     default: ""
 
 steps:
-  - name: densify
-    type: cursor_paste_resolve_densify_v1
+  - name: investigate
+    type: cursor_paste_resolve_investigate_v1
     handler_outputs:
-      splice: densify.json.splice
-      model: densify.json.model
+      splice: investigate.json.splice
+      model: investigate.json.model
 
   - name: compose
     type: cursor_paste_resolve_compose_v1
     handler_inputs:
-      densify_splice: densify.json.splice
-      densify_model: densify.json.model
+      investigate_splice: investigate.json.splice
+      investigate_model: investigate.json.model
     handler_outputs:
       message_path: compose.json.message_path
       kind: compose.json.kind

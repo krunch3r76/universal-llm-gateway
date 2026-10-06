@@ -70,17 +70,22 @@ class CursorPasteComposeHandler(BaseHandler):
                 error=str(err),
             )
 
-        densify_out = _densify_json(context)
-        if bound["densify"]:
+        investigate_out = _investigate_json(context)
+        if bound["investigate"]:
             if (
-                densify_out.get("ok") is not True
-                or not str(densify_out.get("splice") or "").strip()
+                investigate_out.get("ok") is not True
+                or not str(investigate_out.get("splice") or "").strip()
             ):
                 err = str(
-                    densify_out.get("error") or "densify hop did not produce a splice"
+                    investigate_out.get("error")
+                    or "investigate hop did not produce a splice"
                 )
                 return _step(
-                    {"ok": False, "error": err, "densify": densify_out or None},
+                    {
+                        "ok": False,
+                        "error": err,
+                        "investigate": investigate_out or None,
+                    },
                     error=err,
                 )
 
@@ -92,15 +97,15 @@ class CursorPasteComposeHandler(BaseHandler):
         rel = f"tmp/prompts/cursor-paste-{bound['kind']}-{bound['assertion_id']}.md"
         dest = workspaces_root() / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        densify_model = str(densify_out.get("model") or "")
-        densify_splice = str(densify_out.get("splice") or "")
+        investigate_model = str(investigate_out.get("model") or "")
+        investigate_splice = str(investigate_out.get("splice") or "")
         body = compose_message(
             bound["kind"],
             bound["assertion_id"],
             bound["notify"],
             implementer,
-            densify_model=densify_model,
-            densify_splice=densify_splice,
+            investigate_model=investigate_model,
+            investigate_splice=investigate_splice,
             tab_model=bound["tab_model"],
         )
         dest.write_text(body, encoding="utf-8")
@@ -112,7 +117,7 @@ class CursorPasteComposeHandler(BaseHandler):
             "host": bound["host"],
             "notify": bound["notify"],
             "launch_target": bound["launch_target"],
-            "densify": bound["densify"],
+            "investigate": bound["investigate"],
             "tab_model": bound["tab_model"],
             "message_path": str(dest),
             "implementer_uri": IMPLEMENTER_URI,
@@ -121,8 +126,8 @@ class CursorPasteComposeHandler(BaseHandler):
         return _step(payload)
 
 
-def _densify_json(context: Any) -> dict[str, Any]:
+def _investigate_json(context: Any) -> dict[str, Any]:
     outputs = getattr(context, "outputs", {}) or {}
-    densify = outputs.get("densify")
-    json_out = getattr(densify, "json", None) if densify is not None else None
+    investigate = outputs.get("investigate")
+    json_out = getattr(investigate, "json", None) if investigate is not None else None
     return json_out if isinstance(json_out, dict) else {}

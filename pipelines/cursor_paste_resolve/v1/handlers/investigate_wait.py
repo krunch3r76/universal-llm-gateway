@@ -1,4 +1,4 @@
-"""Wait + turn fetch for the densify hop (agent-bus wait snapshot has no body)."""
+"""Wait + turn fetch for the investigate hop (agent-bus wait snapshot has no body)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 
 from implement_admission.closeout_helpers import cortex_files_root
 
-from ._message import extract_densify_splice
+from ._message import extract_investigate_splice
 
 # Keys returned by libs/agent_bus_store/routes/wait.py `_snapshot`. No turn text.
 WAIT_SNAPSHOT_KEYS = frozenset(
@@ -187,7 +187,7 @@ async def wait_sdk_closeout(
             return {
                 "ok": False,
                 "failure_class": "producer_terminal",
-                "error": "densify hop producer_terminal",
+                "error": "investigate hop producer_terminal",
                 "wait": last,
             }
         if status in {"no_new_turn", "predicate_unmet"}:
@@ -203,12 +203,12 @@ async def wait_sdk_closeout(
                 "wait": last,
             }
         body = await fetch_qualifying_body(bus, thread_id, reply_turn, headers)
-        splice = extract_densify_splice(body)
+        splice = extract_investigate_splice(body)
         if not splice:
             return {
                 "ok": False,
                 "failure_class": "empty_splice",
-                "error": "densify hop returned an empty splice",
+                "error": "investigate hop returned an empty splice",
                 "wait": last,
                 "body": body[:400],
             }
@@ -222,6 +222,6 @@ async def wait_sdk_closeout(
     return {
         "ok": False,
         "failure_class": "wait_exhausted",
-        "error": "densify hop wait exhausted without a splice",
+        "error": "investigate hop wait exhausted without a splice",
         "wait": last,
     }
