@@ -120,6 +120,8 @@ def select_lane_current(
     claimed: list[dict[str, Any]],
     holder_url: str | None,
     holder_live: bool = False,
+    *,
+    attended_idle_ok: bool = False,
 ) -> tuple[str, str | None, str | None, dict[str, Any] | None]:
     """Pick current/ambiguous/none over already-claimed identities.
 
@@ -153,6 +155,17 @@ def select_lane_current(
     if holder_key and holder_page is not None:
         if holder_live:
             return "current", "seat_holder", None, holder_page
+        # Harvested generate left the Maestro tab open and idle. That page is
+        # the operator seat. A hygiene_drain provenance stays a refusal.
+        if (
+            attended_idle_ok
+            and holder_page.get("in_flight") is False
+            and holder_page.get("probe_ok") is True
+            and holder_page.get("provenance_reason") != "hygiene_drain"
+        ):
+            page = dict(holder_page)
+            page["evidence_class"] = "live_binding"
+            return "current", "attended_idle", None, page
         return "ambiguous", None, "seat_holder_dormant", None
     if len(unknown) > 0:
         return "ambiguous", None, "probe_incomplete", None
@@ -165,6 +178,29 @@ def select_lane_current(
         # the hygiene_drain page in a:37834.
         return "ambiguous", None, "no_live_signal", None
     return "none", None, "no_claimed_live_page", None
+
+
+_HARVESTED_STATUSES = frozenset({"completed", "failed", "aborted"})
+
+
+def _harvested_holder(snap: dict | None, registration_id: str | None) -> bool:
+    """True when this seat's tracked generate has already reached a terminal row."""
+    rid = (registration_id or "").strip()
+    if not rid or not isinstance(snap, dict):
+        return False
+    rows = snap.get("rows")
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("registration_id") or "").strip() != rid:
+            continue
+        status = str(row.get("status") or "").strip()
+        stream = str(row.get("stream_state") or "").strip()
+        if status in _HARVESTED_STATUSES or stream.startswith("terminal:"):
+            return True
+    return False
 
 
 def _iso_utc(now_s: float) -> str:
@@ -397,9 +433,17 @@ def _resolve(
             }
         )
 
-    state, basis, reason, current = select_lane_current(
-        claimed, holder_url, holder_live=holder_live
+    attended_idle_ok = _harvested_holder(
+        snap, (seat or {}).get("registration_id") if isinstance(seat, dict) else None
     )
+    state, basis, reason, current = select_lane_current(
+        claimed,
+        holder_url,
+        holder_live=holder_live,
+        attended_idle_ok=attended_idle_ok,
+    )
+    if basis == "attended_idle" and isinstance(seat, dict):
+        seat = {**seat, "evidence_class": "live_binding"}
     stale: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     if state == "current" and current is not None:
@@ -407,7 +451,7 @@ def _resolve(
             "not_in_flight"
             if basis == "in_flight"
             else "not_seat_holder"
-            if basis == "seat_holder"
+            if basis in {"seat_holder", "attended_idle"}
             else None
         )
         if stale_reason is not None:

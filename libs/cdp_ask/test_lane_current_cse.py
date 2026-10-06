@@ -786,6 +786,153 @@ def test_dormant_holder_open_idle_is_not_current() -> None:
     assert body["current"] is None
 
 
+# a:38216 — same seat as an in-flight generate, idle after harvest.
+A38216_URL = "https://claude.ai/cowork/cse_01XDUWbh3t7aShgbefu12M6R"
+A38216_REG = "d6a4cdc38e16405dbaf92ee90f882d94"
+
+
+def test_a38216_idle_attended_after_harvest_is_live_binding() -> None:
+    """Open idle holder after a terminal generate is current, not stored association.
+
+    Breaks when the tracked generate is still in flight (streaming) — that path
+    stays basis in_flight — and when provenance is hygiene_drain.
+    """
+
+    def pages():
+        yield 9226, A38216_URL, "ws://9226"
+
+    def probe(_port: int, _ws: str) -> tuple[dict[str, Any] | None, bool]:
+        return {"streaming": False, "stop": False, "tool_pause": False}, True
+
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": A38216_REG,
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+                "chat_url": A38216_URL,
+            }
+        ],
+        "rows": [
+            {
+                "registration_id": A38216_REG,
+                "execution_id": "hop-harvest",
+                "status": "completed",
+                "stream_state": "terminal:hop-harvest",
+                "parent_thread": LANE,
+            }
+        ],
+    }
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=pages,
+        probe_page=probe,
+        provenance_for=lambda url: (
+            {
+                "parent_thread_claim": LANE,
+                "reason": "idle_exit",
+                "registration_id": A38216_REG,
+            }
+            if url == A38216_URL
+            else None
+        ),
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: A38216_URL if rid == A38216_REG else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "current"
+    assert body["basis"] == "attended_idle"
+    assert body["current"]["chat_url"] == A38216_URL
+    assert body["current"]["evidence_class"] == "live_binding"
+    assert body["seat_holder"]["evidence_class"] == "live_binding"
+    assert body["seat_holder"]["registration_id"] == A38216_REG
+
+
+def test_a38216_hygiene_drain_stays_refused_after_harvest() -> None:
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": A38216_REG,
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+                "chat_url": A38216_URL,
+            }
+        ],
+        "rows": [
+            {
+                "registration_id": A38216_REG,
+                "status": "completed",
+                "stream_state": "terminal:hop-harvest",
+            }
+        ],
+    }
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=lambda: iter([(9226, A38216_URL, "ws://9226")]),
+        probe_page=lambda _p, _w: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda url: (
+            {
+                "parent_thread_claim": LANE,
+                "reason": "hygiene_drain",
+                "registration_id": A38216_REG,
+            }
+            if url == A38216_URL
+            else None
+        ),
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: A38216_URL if rid == A38216_REG else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "ambiguous"
+    assert body["reason"] == "seat_holder_dormant"
+    assert body["current"] is None
+
+
+def test_a38216_closed_page_stays_unclaimed() -> None:
+    """Holder URL absent from the open probe stays none (closed page)."""
+    snap = {
+        "seat_rows": [
+            {
+                "registration_id": A38216_REG,
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+                "chat_url": A38216_URL,
+            }
+        ],
+        "rows": [
+            {
+                "registration_id": A38216_REG,
+                "status": "completed",
+                "stream_state": "terminal:hop-harvest",
+            }
+        ],
+    }
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=lambda: iter([]),
+        probe_page=lambda _p, _w: (None, False),
+        provenance_for=lambda _url: None,
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: A38216_URL if rid == A38216_REG else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "none"
+    assert body["reason"] == "no_claimed_live_page"
+    assert body["seat_holder"]["evidence_class"] == "stored_association"
+
+
 @pytest.mark.parametrize(
     "kwargs,expect_current",
     [
