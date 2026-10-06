@@ -21,10 +21,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-AGENT_TRANSCRIPTS = (
-    Path.home()
-    / ".cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts"
+from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.ide_budget_exclude import (
+    AGENT_TRANSCRIPTS,
+    BUDGET_EXCLUDE_QUIESCENT_S,
+    active_budget_excludes,
+    budget_exclude_path,
+    pin_retired_resume_transcript,
 )
+
 IDE_BUDGET_SOURCE = "ide.transcript"
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TIP_CP_RE = re.compile(r"tip_cp=(\d+)")
@@ -66,7 +71,10 @@ def first_line_matches(
 
 
 def newest_resume_transcript(
-    root_id: str, transcripts_dir: Path = AGENT_TRANSCRIPTS
+    root_id: str,
+    transcripts_dir: Path = AGENT_TRANSCRIPTS,
+    *,
+    exclude: set[str] | frozenset[str] | None = None,
 ) -> str | None:
     """Transcript id of the tab most recently writing under ``resume <root>``.
 
@@ -74,9 +82,30 @@ def newest_resume_transcript(
     (the hop helper prefers the highest ``tip_cp=`` for a different question —
     which tab to checkpoint against). Falls back to this when the seat lock has
     no ``ide:<transcript_id>`` holder, e.g. an attended tab that never claimed.
+    ``exclude`` drops hop-retired ids (a:38328) still writing under the same opener.
     """
-    rows = first_line_matches(f"resume {root_id}", transcripts_dir)
+    blocked = exclude or set()
+    rows = [
+        row
+        for row in first_line_matches(f"resume {root_id}", transcripts_dir)
+        if row[2] not in blocked
+    ]
     return max(rows, key=lambda row: row[1])[2] if rows else None
+
+
+def resume_match_count(
+    root_id: str,
+    transcripts_dir: Path = AGENT_TRANSCRIPTS,
+    *,
+    exclude: set[str] | frozenset[str] | None = None,
+) -> int:
+    """How many ``resume <root>`` tabs remain after hop-retire excludes."""
+    blocked = exclude or set()
+    return sum(
+        1
+        for row in first_line_matches(f"resume {root_id}", transcripts_dir)
+        if row[2] not in blocked
+    )
 
 
 def measure_transcript(path: Path) -> dict[str, Any]:
@@ -125,6 +154,8 @@ def measure_ide_tab(
     policy: dict[str, Any],
     *,
     transcripts_dir: Path = AGENT_TRANSCRIPTS,
+    watch_dir: Path = WATCH_DIR,
+    now: float | None = None,
 ) -> dict[str, Any] | None:
     """Resolve the live IDE tab for ``root_id`` and estimate its window use.
 
@@ -132,9 +163,23 @@ def measure_ide_tab(
     ``window_limit_tokens`` is ``policy.ide_window_tokens`` — the operator picks the
     tab model in the picker, so the harness cannot read it; the default is the
     256k class the house has been running on (Grok 4.7).
+
+    Seat-lock ``ide:<uuid>`` is the budget identity. Resume-mtime is display-only
+    fallback and must not drive CONTEXT_BUDGET when multiple resume tabs exist
+    (a:38328).
     """
-    transcript_id = ide_holder_transcript(lock) or newest_resume_transcript(
-        root_id, transcripts_dir
+    locked = ide_holder_transcript(lock)
+    excluded = active_budget_excludes(
+        root_id,
+        transcripts_dir=transcripts_dir,
+        watch_dir=watch_dir,
+        now=now,
+    )
+    matches = resume_match_count(
+        root_id, transcripts_dir, exclude=excluded
+    )
+    transcript_id = locked or newest_resume_transcript(
+        root_id, transcripts_dir, exclude=excluded
     )
     if not transcript_id:
         return None
@@ -145,7 +190,9 @@ def measure_ide_tab(
     per_call = int(policy.get("ide_tokens_per_tool_call") or 1500)
     return {
         "transcript_id": transcript_id,
-        "holder_basis": "seat_lock" if ide_holder_transcript(lock) else "resume_mtime",
+        "holder_basis": "seat_lock" if locked else "resume_mtime",
+        "resume_match_count": matches,
+        "excluded_resume_ids": sorted(excluded),
         "used_tokens": estimate_tokens(measure, tokens_per_tool_call=per_call),
         "window_limit_tokens": int(policy.get("ide_window_tokens") or 256_000),
         "tokens_per_tool_call": per_call,
@@ -206,7 +253,10 @@ def ide_holder_idle_s(
 
 __all__ = [
     "AGENT_TRANSCRIPTS",
+    "BUDGET_EXCLUDE_QUIESCENT_S",
     "IDE_BUDGET_SOURCE",
+    "active_budget_excludes",
+    "budget_exclude_path",
     "estimate_tokens",
     "first_line_matches",
     "ide_holder_idle_s",
@@ -215,4 +265,6 @@ __all__ = [
     "measure_ide_tab",
     "measure_transcript",
     "newest_resume_transcript",
+    "pin_retired_resume_transcript",
+    "resume_match_count",
 ]

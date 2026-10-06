@@ -25,6 +25,7 @@ import psutil
 
 from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR, release_fable_lock
 from bus_watch.go_under import stop_attended_loops
+from bus_watch.ide_budget_exclude import pin_retired_resume_transcript
 
 GOAL_RELEASE = (
     "LIAISON_HOP_TAB_GOAL_RELEASE: If a native Cursor goal is active on this tab, "
@@ -178,6 +179,25 @@ def retire_departing_tab(
         "stopped_tab_background": stop_tab_background(transcript_id),
         "goal": GOAL_RELEASE,
     }
+    # Keep the departing tab out of resume-mtime budget selection (a:38328).
+    # Pin must never block seat release — a raised pin leaves ide:<old> locked
+    # and recreates the specimen false CONTEXT_BUDGET (review N1, agent-bus:15424).
+    tid = str(transcript_id or "").strip()
+    if not tid and holder.startswith("ide:"):
+        tid = holder.split(":", 1)[1]
+    if tid:
+        try:
+            result["budget_exclude"] = pin_retired_resume_transcript(
+                root, tid, watch_dir=watch_dir
+            )
+        except Exception as exc:  # noqa: BLE001 — bookkeeping must not abort release
+            result["budget_exclude"] = {
+                "ok": False,
+                "reason": f"pin_failed:{type(exc).__name__}",
+                "error": str(exc)[:200],
+            }
+    else:
+        result["budget_exclude"] = {"ok": False, "reason": "no_transcript_id"}
     if holder.startswith("ide:"):
         result["seat_release"] = release(holder, pid=None, root_id=root)
     else:

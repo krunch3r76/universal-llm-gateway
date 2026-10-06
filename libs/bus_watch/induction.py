@@ -113,6 +113,17 @@ def _budget_pct(budget: dict[str, Any]) -> int:
     return round(100 * used / limit)
 
 
+def _budget_identity_suffix(budget: dict[str, Any]) -> str:
+    """Compact holder_basis + transcript so a seat can falsify against the UI %."""
+    basis = budget.get("holder_basis")
+    tid = budget.get("transcript_id")
+    if not basis and not tid:
+        return ""
+    if basis and tid:
+        return f" · {basis}/{tid}"
+    return f" · {basis or tid}"
+
+
 def _attended_ide_budget(digest: dict[str, Any]) -> bool:
     budget = digest.get("budget") or {}
     return (
@@ -130,6 +141,7 @@ def _ide_hop_event_line(digest: dict[str, Any], now_row: str) -> str | None:
         return None
     root_id = (digest.get("root") or {}).get("id")
     cmd = ide_hop_command(root_id, now_row)
+    # Identity rides the CONTEXT_BUDGET line only — keep HOP under the byte cap.
     return f"HOP {cmd} · {_budget_pct(budget)}% · ide.transcript"
 
 
@@ -153,6 +165,7 @@ def _events(digest: dict[str, Any]) -> list[str]:
             step = "→ CHECKPOINT, release the seat; the ticker spawns the successor"
         items.append(
             f"{budget['stop_class']} {pct}% ({budget.get('source')}) {step}"
+            f"{_budget_identity_suffix(budget)}"
         )
         hop_line = _ide_hop_event_line(digest, now_row)
         if hop_line:
@@ -419,6 +432,8 @@ def _fit(lines: list[str], cap: int) -> str:
                     for i in range(len(lines) - 2, 0, -1)
                     if lines[i].startswith("Event:")
                     and not lines[i].startswith("Event: CONTEXT_BUDGET")
+                    and not lines[i].startswith("Event: HOP")
+                    and not lines[i].startswith("Event: CHECKPOINT")
                     and not lines[i].startswith("Event: wake")
                 ),
                 None,
@@ -508,6 +523,8 @@ def _fit_cse(lines: list[str], cap: int) -> str:
                     for i in range(len(lines) - 2, 0, -1)
                     if lines[i].startswith("Event:")
                     and not lines[i].startswith("Event: CONTEXT_BUDGET")
+                    and not lines[i].startswith("Event: HOP")
+                    and not lines[i].startswith("Event: CHECKPOINT")
                     and not lines[i].startswith("Event: wake")
                 ),
                 None,
