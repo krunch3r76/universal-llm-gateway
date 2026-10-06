@@ -116,6 +116,63 @@ def test_followup_stamp_does_not_replace_in_flight_execution(
     assert gate["reg-1"]["execution_state"]["execution_id"] == "exec-live"
 
 
+def test_settled_failed_followup_not_in_flight_rows() -> None:
+    now = time.time()
+    active = {
+        "reg-fu": {
+            "execution_state": {
+                "execution_id": "followup:abc",
+                "state": "failed",
+                "kind": "followup",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            }
+        }
+    }
+    assert es.in_flight_rows(active, now=now) == {}
+
+
+def test_in_flight_entry_missing_kind_defaults_restart_gate_busy() -> None:
+    assert es.in_flight_entry_contributes_restart_gate_busy(
+        {"execution_id": "e1", "state": "streaming"}
+    )
+    assert es.in_flight_entry_contributes_restart_gate_busy(
+        {"execution_id": "e1", "state": "streaming", "kind": None}
+    )
+    assert es.in_flight_entry_contributes_restart_gate_busy(
+        {"execution_id": "e1", "state": "streaming", "kind": ""}
+    )
+
+
+def test_in_flight_rows_two_registrations_mixed_restart_gate() -> None:
+    now = time.time()
+    active = {
+        "reg-fu": {
+            "execution_state": {
+                "execution_id": "followup:abc",
+                "state": "streaming",
+                "kind": "followup",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            }
+        },
+        "reg-ex": {
+            "execution_state": {
+                "execution_id": "exec-1",
+                "state": "streaming",
+                "kind": "execution",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            }
+        },
+    }
+    gate = es.in_flight_rows_for_restart_gate(active, now=now)
+    assert set(gate) == {"reg-ex"}
+
+
 def test_row_drain_protection_still_sees_followup_in_flight() -> None:
     from claude_bundles.cdp_registry.dormant_drain import row_drain_protection
 

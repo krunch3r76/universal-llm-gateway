@@ -371,6 +371,188 @@ async def test_drain_state_execution_in_flight_is_restart_busy(
 
 
 @pytest.mark.asyncio
+async def test_drain_state_mixed_followup_and_execution_registrations_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = time.time()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-fu": {
+                "execution_state": {
+                    "execution_id": "followup:abc",
+                    "state": "streaming",
+                    "kind": "followup",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+            },
+            "reg-ex": {
+                "execution_state": {
+                    "execution_id": "exec-1",
+                    "state": "streaming",
+                    "kind": "execution",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+                "holder": "operator",
+                "purpose": "ask",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.drain_state_snapshot()
+    assert snap["busy"] is True
+    assert len(snap["in_flight"]) == 2
+    assert len(snap["holders"]) == 1
+    assert snap["holders"][0]["op_id"] == "exec-1"
+
+
+@pytest.mark.asyncio
+async def test_drain_state_followup_only_effective_count_restart_gate_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = time.time()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-fu": {
+                "execution_state": {
+                    "execution_id": "followup:abc",
+                    "state": "streaming",
+                    "kind": "followup",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.drain_state_snapshot()
+    assert snap["effective_count"] == 0
+    assert snap["in_flight_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_drain_state_registry_unreadable_fail_closed_with_followup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom() -> dict[str, object]:
+        raise OSError("registry down")
+
+    monkeypatch.setattr("claude_bundles.cdp_registry_store.load_active", _boom)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.drain_state_snapshot()
+    assert snap["busy"] is True
+    assert snap["drain_busy_reason"] == "registry_unreadable"
+
+
+@pytest.mark.asyncio
+async def test_drain_state_unseated_pending_overrides_followup_only_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = time.time()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-fu": {
+                "execution_state": {
+                    "execution_id": "followup:abc",
+                    "state": "streaming",
+                    "kind": "followup",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    await store.create(holder="test", purpose="ask")
+    snap = await store.drain_state_snapshot()
+    assert snap["busy"] is True
+    assert snap["drain_busy_reason"] == "unseated_pending"
+
+
+@pytest.mark.asyncio
+async def test_drain_state_expired_execution_and_live_followup_restart_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cdp_registry import execution_state as es
+
+    now = time.time()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-ex": {
+                "execution_state": {
+                    "execution_id": "exec-old",
+                    "state": "streaming",
+                    "kind": "execution",
+                    "started_at": now - es.EXECUTION_IN_FLIGHT_TTL_S - 1,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+            },
+            "reg-fu": {
+                "execution_state": {
+                    "execution_id": "followup:abc",
+                    "state": "streaming",
+                    "kind": "followup",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.drain_state_snapshot()
+    assert snap["busy"] is False
+    assert snap["drain_busy_reason"] == "idle"
+    assert len(snap["in_flight"]) == 1
+    assert snap["in_flight"][0]["kind"] == "followup"
+
+
+def test_drain_projection_missing_kind_defaults_busy() -> None:
+    from cdp_ask.work_projection import drain_projection
+
+    in_flight = [
+        {
+            "registration_id": "reg-1",
+            "execution_id": "exec-1",
+            "state": "streaming",
+        }
+    ]
+    snap = drain_projection([], [], None, in_flight=in_flight)
+    assert snap["busy"] is True
+    assert snap["drain_busy_reason"] == "in_flight_recorded"
+
+
+@pytest.mark.asyncio
 async def test_drain_state_snapshot_reports_attachments_without_busy_impact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

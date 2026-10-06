@@ -342,6 +342,86 @@ def test_cdp_ask_inflight_witness_idle_when_only_followup_rows(
     )
     report = _run(CdpAskInFlightWitness().observe("cdp_ask"))
     assert report.verdict == "idle"
+    assert report.detail is not None
+    assert len(report.detail["in_flight"]) == 1
+    assert report.detail["in_flight"][0]["kind"] == "followup"
+    assert report.holders == []
+
+
+def test_cdp_ask_inflight_witness_mixed_rows_busy_execution_holder_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from scripts.model_manager.ui.controller.cdp_ask_inflight_witness import (
+        CdpAskInFlightWitness,
+    )
+
+    now = time.time()
+    active = {
+        "reg-fu": {
+            "execution_state": {
+                "execution_id": "followup:abc",
+                "state": "streaming",
+                "kind": "followup",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            },
+        },
+        "reg-ex": {
+            "execution_state": {
+                "execution_id": "exec-1",
+                "state": "streaming",
+                "kind": "execution",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            },
+            "holder": "operator",
+            "purpose": "ask",
+        },
+    }
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.cdp_ask_inflight_witness._read_active",
+        lambda: (active, "local:test"),
+    )
+    report = _run(CdpAskInFlightWitness().observe("cdp_ask"))
+    assert report.verdict == "busy"
+    assert report.holders
+    assert len(report.holders) == 1
+    assert report.holders[0]["op_id"] == "exec-1"
+    assert report.detail is not None
+    assert len(report.detail["in_flight"]) == 2
+
+
+def test_cdp_ask_inflight_witness_missing_kind_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from scripts.model_manager.ui.controller.cdp_ask_inflight_witness import (
+        CdpAskInFlightWitness,
+    )
+
+    now = time.time()
+    active = {
+        "reg-ex": {
+            "execution_state": {
+                "execution_id": "exec-1",
+                "state": "streaming",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            },
+        }
+    }
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.cdp_ask_inflight_witness._read_active",
+        lambda: (active, "local:test"),
+    )
+    report = _run(CdpAskInFlightWitness().observe("cdp_ask"))
+    assert report.verdict == "busy"
 
 
 def test_cdp_ask_inflight_witness_busy_when_execution_in_flight(
