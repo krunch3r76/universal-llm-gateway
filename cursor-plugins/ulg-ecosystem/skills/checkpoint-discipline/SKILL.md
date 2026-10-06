@@ -116,6 +116,8 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 
 **Operator-facing:** `orchestrator_continuity` resume opens with the picture in `operator-posture` Rule 3 (aim, Where we left off, already, object and move order, Are / Going, `In one line:`). Where we left off quotes the tape tail; an unsealed or overflowed pour says so instead of skipping. Been is not spoken. The next-pickup is the Going line. Tip turn, `seal_status`, `summary_row_source`, `fence_id`, and `head_sha` are a skippable receipts line after that picture. The fence id and the commit hash do not open the reply. `tick_charter` → the aim sentence, then wave · in-flight · next pickup.
 
+**Placed ≠ pending (resume orientation):** When tip Next-pickup names a shop/spend-lane STOP and a passive await of an already-placed delivery, keep those as three facts — Object (what the window carries — here, the halt), Are (shop lane STOP — no hunt/Place/cancel), Delivery (order already placed; await only). In the operator-posture opening: placed order → Already; shop STOP → Are; await-only → Going. Forbidden paraphrase: `halted on <placed order>` (collapses A with B). Required shape: `<order> already placed; shop lane stopped; awaiting delivery only.` Specimen: a:38482 · agent-bus:9758#276.
+
 **IDE tab (attended Cursor only — `operator-posture`):** explicit IDE `resume <n>` ⇒ `{n} {slug}`; `checkpoint <n>` or CHECKPOINT post to thread `n` ⇒ `. {n} {slug}`. Headless / agent-only continuity ⇒ no-op.
 
 ## MONITOR / mission resume — fast successor (BINDING — 2026-08-02)
