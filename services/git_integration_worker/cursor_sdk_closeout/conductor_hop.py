@@ -992,11 +992,20 @@ def mission_open_for_row(
             fold_deps_with_ledger,
         )
 
+        rec = _record_data(row)
+        generation_options = dict(rec.get("generation_options") or {})
+        summon_mode = generation_options.get("summon_mode")
+        if summon_mode is None and rec.get("summon_mode"):
+            summon_mode = rec.get("summon_mode")
+        summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip() or None
+
         fold = fold_scoreboard(
             slug,
             deps=fold_deps_with_ledger(
                 f"todo:{slug}",
                 repo=_fold_repo(row),
+                summon_mode=summon_mode if summon_mode is not None else None,
+                summoning_thread_id=summoning_thread_id,
             ),
             write_journal=False,
         )

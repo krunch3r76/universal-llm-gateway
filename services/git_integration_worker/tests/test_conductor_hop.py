@@ -2789,3 +2789,146 @@ def test_utc_closeout_instant_returns_non_empty_iso_timestamp() -> None:
     instant = _utc_closeout_instant()
     assert instant
     assert "T" in instant
+
+
+_ATTENDED_FOLD_ROW_STATUS = {
+    "G1": "DONE",
+    "G2": "DONE",
+    "G3": "DONE",
+    "G4": "DONE",
+    "G5": "CLAIMED",
+    "G6": "CLAIMED",
+    "G7": "CLAIMED",
+}
+_AWAY_FOLD_ROW_STATUS = {f"G{i}": "DONE" for i in range(1, 8)}
+
+
+class _MissionOpenFoldOracleCortex:
+    def entity_get(self, entity_id: str, **kwargs: object) -> dict[str, object]:
+        _ = entity_id, kwargs
+        return {"id": entity_id, "attributes": {}}
+
+    def list_relationships(
+        self, entity_id: str, *, type_id: str | None = None
+    ) -> list[dict[str, object]]:
+        _ = entity_id, type_id
+        return []
+
+
+def _install_mission_open_summon_oracle_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oracle from 15336 independent confirm: attended vs omitted fold row_status."""
+    from types import SimpleNamespace
+
+    from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
+
+    def tracking_fold_deps(
+        source_ref: str,
+        *,
+        repo: Path,
+        summon_mode: str | None = None,
+        summoning_thread_id: str | None = None,
+    ) -> FoldDeps:
+        return FoldDeps(
+            cortex=_MissionOpenFoldOracleCortex(),
+            source_ref=source_ref,
+            repo=repo,
+            summon_mode=summon_mode,
+            summoning_thread_id=summoning_thread_id,
+        )
+
+    def oracle_fold_scoreboard(
+        slug: str,
+        *,
+        deps: FoldDeps,
+        write_journal: bool = False,
+    ) -> SimpleNamespace:
+        _ = slug, write_journal
+        summon = (deps.summon_mode or "").strip().lower().replace("-", "_")
+        if summon == "attended" and deps.summoning_thread_id:
+            status = dict(_ATTENDED_FOLD_ROW_STATUS)
+        else:
+            status = dict(_AWAY_FOLD_ROW_STATUS)
+        return SimpleNamespace(row_status=status)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_nested_witness.fold_deps_with_ledger",
+        tracking_fold_deps,
+    )
+    monkeypatch.setattr(
+        "implement_admission.conductor_witness.fold_scoreboard",
+        oracle_fold_scoreboard,
+    )
+
+
+def test_mission_open_for_row_attended_fold_keeps_g5_g7_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38297 oracle: attended summon ⇒ G5–G7 CLAIMED ⇒ mission still open."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        mission_open_for_row,
+    )
+
+    _install_mission_open_summon_oracle_fold(monkeypatch)
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["PARKED_TRANSPORT"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={
+            "summon_mode": "attended",
+            "summoning_thread_id": "15324",
+            "generation_options": {"summon_mode": "attended"},
+        },
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    assert mission_open_for_row(row, closeout_tokens=frozenset({"PARKED_TRANSPORT"}))
+
+
+def test_mission_open_for_row_away_fold_when_summon_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38297 oracle: omitted summon ⇒ all G DONE ⇒ mission closed."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        mission_open_for_row,
+    )
+
+    _install_mission_open_summon_oracle_fold(monkeypatch)
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["PARKED_TRANSPORT"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "15324"},
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    assert not mission_open_for_row(
+        row, closeout_tokens=frozenset({"PARKED_TRANSPORT"})
+    )
+
+
+def _attended_parked_harvest_row(ledger: CursorDispatchLedger) -> dict:
+    req = _req(dispatch_id="pred-park-attended", thread_id="10065")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT", "CONSULT_PENDING"],
+            "closeout_turn": 48,
+            "closeout_harvest_owed": True,
+            "summoning_thread_id": "9638",
+            "summon_mode": "attended",
+            "generation_options": {"summon_mode": "attended"},
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    return _refresh_row(ledger, req.dispatch_id)
+
+
+def test_park_harvest_continue_owed_attended_row_after_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38297: production-shaped parked row admits continue once reply ∧ attended fold."""
+    _install_mission_open_summon_oracle_fold(monkeypatch)
+    ledger = CursorDispatchLedger.instance()
+    row = _attended_parked_harvest_row(ledger)
+    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
