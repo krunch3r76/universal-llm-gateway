@@ -86,6 +86,7 @@ class CdpAskInFlightWitness:
 
     async def observe(self, service: str) -> WitnessReport:
         from claude_bundles.cdp_registry.execution_state import (
+            in_flight_rows,
             in_flight_rows_for_restart_gate,
         )
 
@@ -98,9 +99,23 @@ class CdpAskInFlightWitness:
                 note=f"registry read failed: {type(exc).__name__}: {exc}",
             )
         now = time.time()
+        all_in_flight = in_flight_rows(active, now=now)
         restart_gate = in_flight_rows_for_restart_gate(active, now=now)
         holders: list[dict[str, Any]] = []
         rows: list[dict[str, Any]] = []
+        for rid, row in all_in_flight.items():
+            entry = row.get("execution_state") or {}
+            eid = str(entry.get("execution_id") or "")
+            rows.append(
+                {
+                    "registration_id": rid,
+                    "execution_id": eid,
+                    "state": entry.get("state"),
+                    "kind": str(entry.get("kind") or "execution"),
+                    "age_s": round(now - float(entry.get("started_at") or now)),
+                    "chat_url": row.get("chat_url"),
+                }
+            )
         for rid, row in restart_gate.items():
             entry = row.get("execution_state") or {}
             eid = str(entry.get("execution_id") or "")
@@ -114,15 +129,6 @@ class CdpAskInFlightWitness:
             if subject:
                 holder["subject_preview"] = subject
             holders.append(holder)
-            rows.append(
-                {
-                    "registration_id": rid,
-                    "execution_id": eid,
-                    "state": entry.get("state"),
-                    "age_s": round(now - float(entry.get("started_at") or now)),
-                    "chat_url": row.get("chat_url"),
-                }
-            )
         detail = {"in_flight": rows, "source": where, "row_count": len(active)}
         if holders:
             return WitnessReport(

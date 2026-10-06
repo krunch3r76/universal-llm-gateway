@@ -51,8 +51,8 @@ _REGISTRY_CAPACITY_SCOPE = (
     "active+retained registry Chrome hosts (ports/profiles), this host"
 )
 _EFFECTIVE_COUNT_SCOPE = (
-    "restart-drain in-flight count: registry execution_state rows + unseated "
-    "pending executions; NOT admission"
+    "restart-drain in-flight count: restart-gate execution_state rows + "
+    "unseated pending executions; NOT admission"
 )
 _IN_FLIGHT_COUNT_SCOPE = (
     "registry active.json rows whose execution_state is seated/streaming, this host"
@@ -285,11 +285,7 @@ def drain_projection(
         item
         for item in in_flight
         if in_flight_entry_contributes_restart_gate_busy(
-            {
-                "kind": item.get("kind") or "execution",
-                "execution_id": item.get("execution_id"),
-                "state": item.get("state"),
-            }
+            {**item, "kind": item.get("kind") or "execution"}
         )
     ]
     occupancy_data = (
@@ -412,7 +408,9 @@ def drain_projection(
     decl.transcript(
         "unseated_pending", reason="execution ids admitted before a row exists"
     )
-    decl.transcript("holders", reason="census-shaped holders derived from in_flight")
+    decl.transcript(
+        "holders", reason="census-shaped holders derived from restart-gate in_flight"
+    )
     for name, reason in {
         "busy": "derived: restart-gate in_flight rows or unseated pending non-empty, or registry unreadable",
         "drain_busy_reason": "derived drain-state reason",
