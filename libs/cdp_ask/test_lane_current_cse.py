@@ -851,6 +851,116 @@ def test_a38216_idle_attended_after_harvest_is_live_binding() -> None:
     assert body["seat_holder"]["registration_id"] == A38216_REG
 
 
+def test_a38228_idle_without_admission_rows_is_live_binding() -> None:
+    """Production active-work ``rows`` omit completed generates.
+
+    Breaks when idle resolve still requires a terminal admission row: the
+    attested tab stays ``seat_holder_dormant`` / ``stored_association`` and
+    identity-less followup never sees ``live_binding``.
+    """
+    snap = {
+        "rows": [],
+        "seat_rows": [
+            {
+                "registration_id": A38216_REG,
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+            }
+        ],
+    }
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=lambda: iter([(9226, A38216_URL, "ws://9226")]),
+        probe_page=lambda _p, _w: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda url: (
+            {
+                "parent_thread_claim": LANE,
+                "reason": "idle_exit",
+                "registration_id": A38216_REG,
+            }
+            if url == A38216_URL
+            else None
+        ),
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: A38216_URL if rid == A38216_REG else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["state"] == "current"
+    assert body["basis"] == "attended_idle"
+    assert body["current"]["evidence_class"] == "live_binding"
+    assert body["current"]["chat_url"] == A38216_URL
+    assert body["seat_holder"]["evidence_class"] == "live_binding"
+
+
+def test_a38228_identity_less_followup_binds_idle_page() -> None:
+    """Identity-less followup copies the idle live page; it does not ask for chat_url."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+    from cdp_ask.models import FollowupProjectAskRequest
+
+    snap = {
+        "rows": [],
+        "observed_at": "t",
+        "seat_rows": [
+            {
+                "registration_id": A38216_REG,
+                "parent_thread": LANE,
+                "purpose": "operator-proxy",
+                "seat_bound_at": 1.0,
+                "source": "registry",
+            }
+        ],
+    }
+    body = resolve_lane_current_cse(
+        LANE,
+        snap=snap,
+        list_pages=lambda: iter([(9226, A38216_URL, "ws://9226")]),
+        probe_page=lambda _p, _w: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+        provenance_for=lambda url: (
+            {
+                "parent_thread_claim": LANE,
+                "reason": "idle_exit",
+                "registration_id": A38216_REG,
+            }
+            if url == A38216_URL
+            else None
+        ),
+        list_active=lambda: [],
+        chat_url_for_registration=lambda rid: A38216_URL if rid == A38216_REG else None,
+        purpose_for_registration=lambda _rid: "operator-proxy",
+        now=lambda: 1_700_000_000.0,
+    )
+    assert body["current"]["evidence_class"] == "live_binding"
+
+    req = FollowupProjectAskRequest(prompt_text="memo", parent_thread=LANE)
+    from unittest.mock import patch
+
+    with patch(
+        "cdp_ask.followup_resolve.resolve_operator_seat",
+        return_value={
+            "authority_reachable": True,
+            "registration_id": A38216_REG,
+            "chat_url": A38216_URL,
+        },
+    ):
+        bound, err, _path = _lane_seat_followup_gate(
+            req,
+            {"body": body},
+            snap,
+        )
+    assert err is None
+    assert bound.chat_url == A38216_URL
+    assert bound.registration_id == A38216_REG
+
+
 def test_a38216_hygiene_drain_stays_refused_after_harvest() -> None:
     snap = {
         "seat_rows": [

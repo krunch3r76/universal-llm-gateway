@@ -433,9 +433,12 @@ def _resolve(
             }
         )
 
-    attended_idle_ok = _harvested_holder(
-        snap, (seat or {}).get("registration_id") if isinstance(seat, dict) else None
-    )
+    # Admission ``rows`` keep only pending/running executions. A harvested
+    # operator seat is absent from that list, so a terminal row cannot be the
+    # idle signal. The seat registration plus an open idle page (and a
+    # provenance that is not hygiene_drain) is the attestation.
+    seat_rid = (seat or {}).get("registration_id") if isinstance(seat, dict) else None
+    attended_idle_ok = bool(seat_rid) or _harvested_holder(snap, seat_rid)
     state, basis, reason, current = select_lane_current(
         claimed,
         holder_url,
