@@ -2,7 +2,7 @@
 name: checkpoint-discipline
 description: "Fire/verify CHECKPOINTs on standing roots: lean path (pre_consolidate=false, grok tip author), tip supersede, lean resume, role:root stamp, RESUME footer."
 skill_category: orchestration
-trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "pre_consolidate", "lean checkpoint", "grok tip author", "standing root", "Windows log", "unbound checkpoint", "bare checkpoint"]
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "pre_consolidate", "lean checkpoint", "grok tip author", "standing root", "Windows log", "unbound checkpoint", "bare checkpoint", "spend-risk", "checkpoint stop"]
 ---
 
 # Checkpoint Discipline
@@ -23,6 +23,8 @@ About to fire, verify, or resume a CHECKPOINT; standing-root continuity; charter
 CHECKPOINT := reconstitution index ∧ deliberative steering
 ¬ completeness authority
 empty(Next-pickup) ⇏ arc_complete
+spend_risk_lane ∧ operator(checkpoint) ⇒ hard_STOP(shop_acts)
+¬ (checkpoint ∧ continue_hunt)
 ```
 
 Done/close-arc claims: also load `agent-bus-discipline` § R12.
@@ -31,13 +33,33 @@ Done/close-arc claims: also load `agent-bus-discipline` § R12.
 
 | Utterance | Action |
 |---|---|
-| `checkpoint <n>` / `checkpoint <slug>` | House resolved this turn — § Pipeline CHECKPOINT. Tab `. {n} {slug}`. ¬ resume. |
-| `checkpoint` / `/checkpoint` | Same when this tab can name `transcript_id` and resolve `thread` (sidecar, session join, prior Window) — quote both. |
+| `checkpoint <n>` / `checkpoint <slug>` | House resolved this turn — § Pipeline CHECKPOINT. Tab `. {n} {slug}`. ¬ resume. On a spend-risk lane: also § Spend-risk halt. |
+| `checkpoint` / `/checkpoint` | Same when this tab can name `transcript_id` and resolve `thread` (sidecar, session join, prior Window) — quote both. On a spend-risk lane: also § Spend-risk halt. |
 | ¬`transcript_id` | Say so and stop. ¬ guess · ¬ mint a house · ¬ write a foreign root. |
 
 `bound(tab)` ⇔ a thread id acquired by an **operator verb in this tab** (`resume <n|slug>` · `checkpoint <n|slug>` · `/agent-bus {n|slug}`) **∨** this tab already posted a CHECKPOINT under this `transcript_id`. Cheapest proxy: (i) tab title `{n} {slug}` or `. {n} {slug}`; (ii) a CP posted from this `transcript_id` this session; (iii) `continuity(op=…)` has a `thread=` the seat can name without guessing. **Not binders:** recency · adjacency · a thread this tab merely read · "the only active root" · a thread id that merely appears in context.
 
 `/orchestrate` births a root (`orchestration-lanes` § Root birth). The `checkpoint` verb does not.
+
+## Spend-risk halt (BINDING — specimen a:38479 · agent-bus:9758)
+
+`spend_risk_lane` ⇔ this house/window can Place, cancel, checkout, or otherwise commit money (shop-for-me, delivery carts, merchant checkout, tip/refund screens). Coding arcs and non-spend continuity are out of this section.
+
+```
+∀ spend_risk_lane:
+  operator_says(checkpoint ∨ /checkpoint ∨ checkpoint <n|slug>)
+  ⇒ STOP shop acts until the operator names the next verb
+```
+
+| Forbidden after that utterance (until a new operator verb) | Still required |
+|---|---|
+| Menu / cart / restaurant hunt | Fire and verify the CHECKPOINT (§ Pipeline) when `transcript_id` + house resolve |
+| Place / re-Place / "try another store" | Tip Next-pickup names the halt (no shop act until operator names the next verb) |
+| Cancel-to-burn or invent cancel-vs-keep when the operator cannot afford loss | Reply that the lane is stopped; quote any already-live order only as status, not as WIP to finish |
+
+**¬** `checkpoint` ≡ save-then-continue. The reconstitution index posts; the spend lane does not keep acting. Specimen: 9758 lunch halt — operator said checkpoint; seat kept hunting after a PLACE-null false negative; operator had to STOP and point at the live Peri order.
+
+Falsifier: after this utterance on a spend-risk lane, the seat Places, hunts, or cancels before the operator names the next verb.
 
 ## Spine vs enrollment
 
