@@ -319,6 +319,21 @@ def _link_operator_venv(home: Path, real: Path) -> None:
         )
 
 
+# Opt-in. Unset means do not arm the native postToolUse steer hook.
+# A GIW restart on master must not install it fleet-wide (a:38129).
+ULG_STEER_NATIVE_HOOK_ENV = "ULG_STEER_NATIVE_HOOK"
+_STEER_HOOK_TIMEOUT_S = 5
+
+
+def _steer_native_hook_enabled() -> bool:
+    return os.environ.get(ULG_STEER_NATIVE_HOOK_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def steer_native_hook_command() -> str:
     """Absolute command the SDK user hook runs for native-tool steer delivery."""
     script = (
@@ -327,22 +342,33 @@ def steer_native_hook_command() -> str:
     return f"{sys.executable} {script}"
 
 
+def _steer_hook_entry(command: str) -> dict:
+    return {"command": command, "failClosed": False, "timeout": _STEER_HOOK_TIMEOUT_S}
+
+
 def _install_steer_native_hook(cursor_dir: Path) -> None:
-    """Install postToolUse hook into the dispatch HOME.
+    """Install postToolUse hook into the dispatch HOME when opted in.
 
     The local SDK agent loads user hooks from ``$HOME/.cursor/hooks.json``.
     Dispatch HOME is that HOME, so the hook is visible to the headless agent
-    and not to the operator IDE. MCP tool names (``MCP:``) are ignored inside
-    the hook so the stdio bridge remains the MCP delivery path.
+    and not to the operator IDE. Default is off (``ULG_STEER_NATIVE_HOOK``
+    unset). When off, a previously written entry for this command is removed
+    so a restart does not leave the hook armed. MCP tool names (``MCP:``)
+    are ignored inside the hook so the stdio bridge remains the MCP delivery
+    path. ``failClosed`` is false and ``timeout`` is short so a hook failure
+    or stall does not block the tool result.
     """
+    command = steer_native_hook_command()
+    path = cursor_dir / "hooks.json"
+    if not _steer_native_hook_enabled():
+        _remove_steer_native_hook(path, command)
+        return
     script = (
         Path(__file__).resolve().parents[2] / "scripts" / "mcp_bridge_steer_hook.py"
     )
     if not script.is_file():
         logger.warning("dispatch_home: steer hook script absent at %s", script)
         return
-    command = steer_native_hook_command()
-    path = cursor_dir / "hooks.json"
     data: dict = {"version": 1, "hooks": {}}
     if path.is_file():
         try:
@@ -357,14 +383,49 @@ def _install_steer_native_hook(cursor_dir: Path) -> None:
     post = hooks.get("postToolUse")
     if not isinstance(post, list):
         post = []
-    if not any(
-        isinstance(item, dict) and item.get("command") == command for item in post
-    ):
-        post.append({"command": command})
-    hooks["postToolUse"] = post
+    entry = _steer_hook_entry(command)
+    replaced = False
+    updated: list = []
+    for item in post:
+        if isinstance(item, dict) and item.get("command") == command:
+            updated.append(entry)
+            replaced = True
+        else:
+            updated.append(item)
+    if not replaced:
+        updated.append(entry)
+    hooks["postToolUse"] = updated
     data["hooks"] = hooks
     data["version"] = data.get("version") or 1
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _remove_steer_native_hook(path: Path, command: str) -> None:
+    """Drop this command from postToolUse. Missing or foreign files stay."""
+    if not path.is_file():
+        return
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    if not isinstance(loaded, dict):
+        return
+    hooks = loaded.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+    post = hooks.get("postToolUse")
+    if not isinstance(post, list):
+        return
+    kept = [
+        item
+        for item in post
+        if not (isinstance(item, dict) and item.get("command") == command)
+    ]
+    if len(kept) == len(post):
+        return
+    hooks["postToolUse"] = kept
+    loaded["hooks"] = hooks
+    path.write_text(json.dumps(loaded, indent=2) + "\n", encoding="utf-8")
 
 
 def setup_cursor_dispatch_home(

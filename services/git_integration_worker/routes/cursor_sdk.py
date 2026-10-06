@@ -2289,7 +2289,8 @@ async def _deliver_sdk_closeout(
             apply_steer_undelivered_closeout,
         )
 
-        steered_body = apply_steer_undelivered_closeout(
+        steered_body = await asyncio.to_thread(
+            apply_steer_undelivered_closeout,
             delivery.body,
             dispatch_id=req.dispatch_id,
         )

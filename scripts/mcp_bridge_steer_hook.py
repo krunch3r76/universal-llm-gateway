@@ -4,36 +4,43 @@
 The cursor-sdk local executor maps that field onto
 ``HookAdditionalContext`` for the tool result the model reads. MCP tool
 names (``MCP:``) return an empty object so the stdio bridge still delivers.
+
+Fail open: import errors, lock contention, and handler exceptions write
+``{}`` so the tool result still reaches the model.
 """
 
 from __future__ import annotations
 
-import json
 import sys
-from pathlib import Path
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-from scripts.mcp_bridge_steer_inject import (  # noqa: E402
-    native_tool_steer_hook_response,
-)
 
 
 def main() -> None:
-    raw = sys.stdin.read()
     try:
-        payload = json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    try:
+        import json
+        from pathlib import Path
+
+        _repo_root = Path(__file__).resolve().parent.parent
+        if str(_repo_root) not in sys.path:
+            sys.path.insert(0, str(_repo_root))
+
+        from scripts.mcp_bridge_steer_inject import (  # noqa: E402
+            native_tool_steer_hook_response,
+        )
+
+        raw = sys.stdin.read()
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
         response = native_tool_steer_hook_response(payload)
+        sys.stdout.write(json.dumps(response if isinstance(response, dict) else {}))
     except Exception:
-        response = {}
-    sys.stdout.write(json.dumps(response))
+        try:
+            sys.stdout.write("{}")
+        except Exception:
+            return
 
 
 if __name__ == "__main__":

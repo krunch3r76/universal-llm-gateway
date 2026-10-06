@@ -156,7 +156,7 @@ def _maybe_inject_steer(
     dispatch_id = os.environ.get(CURSOR_SDK_DISPATCH_ID_ENV, "").strip()
     if not dispatch_id:
         return message
-    envelope = consume_next_steer_envelope(dispatch_id)
+    envelope = consume_next_steer_envelope(dispatch_id, delivered_via="mcp_bridge")
     if not envelope:
         return message
     return append_steer_text(message, envelope)
