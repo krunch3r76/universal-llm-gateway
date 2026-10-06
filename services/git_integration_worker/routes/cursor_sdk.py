@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from threading import Event as _ThreadEvent
 from threading import Thread
@@ -647,16 +648,24 @@ def _stamp_model_knobs_from_outcome(
 
 
 def _outcome_stream_event_fields(outcome: SdkRunOutcome) -> dict[str, Any]:
-    fields: dict[str, Any] = {}
-    if outcome.provider_status is not None:
-        fields["provider_status"] = outcome.provider_status
-    if outcome.first_output_s is not None:
-        fields["first_output_s"] = outcome.first_output_s
-    if outcome.last_output_s is not None:
-        fields["last_output_s"] = outcome.last_output_s
-    if outcome.first_toolcall_s is not None:
-        fields["first_toolcall_s"] = outcome.first_toolcall_s
-    return fields
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        StreamCapture,
+        stream_capture_forensics_fields,
+    )
+
+    return stream_capture_forensics_fields(
+        StreamCapture(
+            tool_calls=(),
+            provider_error=outcome.provider_error,
+            provider_status=outcome.provider_status,
+            first_output_s=outcome.first_output_s,
+            last_output_s=outcome.last_output_s,
+            first_toolcall_s=outcome.first_toolcall_s,
+            measures_interaction_output_offsets=(
+                outcome.measures_interaction_output_offsets
+            ),
+        )
+    )
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
@@ -980,9 +989,16 @@ class SdkRunAbortedError(RuntimeError):
     remote shell legs) may have continued or partially applied.
     """
 
-    def __init__(self, message: str, *, forensics: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        forensics: dict[str, Any],
+        stream_forensics: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.forensics = forensics
+        self.stream_forensics = dict(stream_forensics or {})
 
 
 class _LiveToolCallCounter:
@@ -1425,7 +1441,6 @@ def _run_sdk_sync(
                     "dispatch_id."
                 ),
             }
-            forensics.update(stream_capture_forensics_fields(stream_capture))
             return forensics
 
         try:
@@ -1472,19 +1487,11 @@ def _run_sdk_sync(
                     "get_usage": capture_local_get_usage(agent),
                 },
             )
-            stream_capture = StreamCapture(
-                tool_calls=stream_capture.tool_calls,
+            stream_capture = replace(
+                stream_capture,
                 usage=usage_record.usage,
                 usage_capture_status=usage_record.usage_capture_status,
                 usage_total_derived=False,
-                sdk_request_id=stream_capture.sdk_request_id,
-                request_id_source=stream_capture.request_id_source,
-                lines=stream_capture.lines,
-                provider_error=stream_capture.provider_error,
-                provider_status=stream_capture.provider_status,
-                first_output_s=stream_capture.first_output_s,
-                last_output_s=stream_capture.last_output_s,
-                first_toolcall_s=stream_capture.first_toolcall_s,
             )
             persist_dispatch_usage(
                 CursorDispatchLedger.instance(),
@@ -1585,6 +1592,9 @@ def _run_sdk_sync(
                 first_output_s=stream_capture.first_output_s,
                 last_output_s=stream_capture.last_output_s,
                 first_toolcall_s=stream_capture.first_toolcall_s,
+                measures_interaction_output_offsets=(
+                    stream_capture.measures_interaction_output_offsets
+                ),
             )
         except WorktreeMintError:
             raise
@@ -1601,7 +1611,11 @@ def _run_sdk_sync(
             # Friction 23050: wrap any mid-flight abort (APITimeoutError /
             # bridge ReadTimeout / dying SDK) with partial forensics so the
             # failure envelope does not destroy all knowledge of the run.
-            raise SdkRunAbortedError(str(exc), forensics=_abort_forensics(exc)) from exc
+            raise SdkRunAbortedError(
+                str(exc),
+                forensics=_abort_forensics(exc),
+                stream_forensics=stream_capture_forensics_fields(stream_capture),
+            ) from exc
         finally:
             retain_heartbeat_through_closeout(ctx.dispatch_id, hb_thread, hb_stop)
             unregister_live_run(dispatch_id=ctx.dispatch_id)
@@ -3208,7 +3222,7 @@ async def _finalize_bridge_abort_partial(
         error=fail_error,
         worker_error_code=fail_code,
         degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
-        forensics=forensics,
+        stream_forensics=exc.stream_forensics,
     )
     env_data: dict[str, Any] = {
         "status": "partial",
@@ -3322,6 +3336,11 @@ async def _finalize_failed(
         else (error if error is not None else f"{code}: {message}")
     )
     degraded_reasons = degraded_reasons_from_exception(exc) if exc is not None else ()
+    stream_forensics = (
+        exc.stream_forensics
+        if isinstance(exc, SdkRunAbortedError)
+        else None
+    )
     emit_sdk_worker_failed(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
@@ -3329,7 +3348,7 @@ async def _finalize_failed(
         error=effective_error,
         worker_error_code=effective_code,
         degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
-        forensics=forensics,
+        stream_forensics=stream_forensics,
     )
     env_data = dict(data) if data else {}
     if degraded_reasons:

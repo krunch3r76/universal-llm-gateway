@@ -88,7 +88,7 @@ def test_failed_event_carries_forensics_from_abort_dict(
         thread_id="t1",
         execution_id="e1",
         error="bridge abort",
-        forensics=forensics,
+        stream_forensics=forensics,
     )
     assert len(captured) == 1
     event = captured[0]

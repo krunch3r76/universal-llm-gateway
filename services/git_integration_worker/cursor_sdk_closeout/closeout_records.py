@@ -56,6 +56,7 @@ class SdkRunOutcome:
     first_output_s: float | None = None
     last_output_s: float | None = None
     first_toolcall_s: float | None = None
+    measures_interaction_output_offsets: bool = True
 
 
 @dataclass(frozen=True)

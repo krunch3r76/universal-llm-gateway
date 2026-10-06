@@ -1071,6 +1071,46 @@ def test_provider_error_status_structured_with_run_identity(
     }
 
 
+def test_provider_status_omits_null_agent_and_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(capture_mod, "_utc_capture_at", lambda: "2026-10-06T15:42:00Z")
+
+    @dataclass
+    class _Msg:
+        type: str = "status"
+        status: str = "ERROR"
+        message: str = "aborted"
+
+    run = _FakeRunWithEvents(events_list=[_FakeStreamEvent(sdk_message=_Msg())])
+    result = observe_run_stream(
+        run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.provider_status is not None
+    assert "agent_id" not in result.provider_status
+    assert "run_id" not in result.provider_status
+
+
+def test_provider_status_message_capped_at_500_chars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(capture_mod, "_utc_capture_at", lambda: "2026-10-06T15:42:00Z")
+    huge = "x" * 10_000
+
+    @dataclass
+    class _Msg:
+        type: str = "status"
+        status: str = "ERROR"
+        message: str = huge
+
+    run = _FakeRunWithEvents(events_list=[_FakeStreamEvent(sdk_message=_Msg())])
+    result = observe_run_stream(
+        run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.provider_error is not None
+    assert len(result.provider_error) == 500
+
+
 def test_stream_output_offsets_null_without_deltas() -> None:
     run = _FakeRunWithEvents(
         events_list=[
@@ -1103,7 +1143,7 @@ def test_stream_output_offsets_set_with_deltas_and_toolcall(
     def _monotonic() -> float:
         return next(ticks)
 
-    monkeypatch.setattr(capture_mod.time, "monotonic", _monotonic)
+    monkeypatch.setattr(capture_mod, "_monotonic_clock", _monotonic)
     run = _FakeRunWithEvents(
         events_list=[
             _FakeStreamEvent(interaction_update=_Delta("text-delta", "a")),
@@ -1123,6 +1163,129 @@ def test_stream_output_offsets_set_with_deltas_and_toolcall(
     assert result.first_output_s == 1.2
     assert result.last_output_s == 2.5
     assert result.first_toolcall_s == 3.0
+
+
+def test_first_toolcall_s_on_running_tool_message_not_terminal_emit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = iter([10.0, 15.0])
+
+    def _monotonic() -> float:
+        return next(ticks)
+
+    monkeypatch.setattr(capture_mod, "_monotonic_clock", _monotonic)
+    run = _FakeRunWithEvents(
+        events_list=[
+            _FakeStreamEvent(
+                sdk_message=_FakeToolCallMessage(
+                    call_id="c-run",
+                    name="fs",
+                    status="running",
+                )
+            ),
+        ]
+    )
+    result = observe_run_stream(
+        run, dispatch_id="d-run", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.first_toolcall_s == 5.0
+
+
+def test_stream_fallback_omits_output_offsets_from_forensics_export() -> None:
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        stream_capture_forensics_fields,
+    )
+
+    run = _FakeRun(
+        messages=[
+            _FakeToolCallMessage(
+                call_id="c1", name="fs", status="completed", result={"ok": True}
+            ),
+        ]
+    )
+    result = observe_run_stream(
+        run, dispatch_id="d-fallback", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.measures_interaction_output_offsets is False
+    exported = stream_capture_forensics_fields(result)
+    assert "first_output_s" not in exported
+    assert "last_output_s" not in exported
+
+
+def test_abort_stream_forensics_separate_from_shared_forensics_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from services.git_integration_worker.cursor_sdk_events import emit_sdk_worker_failed
+    from services.git_integration_worker.routes.cursor_sdk import (
+        SdkRunAbortedError,
+        _format_bridge_abort_sidecar,
+    )
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        stream_capture_forensics_fields,
+    )
+
+    capture = StreamCapture(
+        tool_calls=(),
+        provider_error="provider sentence",
+        provider_status={
+            "status": "ERROR",
+            "message": "provider sentence",
+            "at": "2026-10-06T15:42:00Z",
+        },
+        first_output_s=1.0,
+        last_output_s=2.0,
+        first_toolcall_s=3.0,
+    )
+    stream_forensics = stream_capture_forensics_fields(capture)
+    forensics = {
+        "cause": "ReadTimeout",
+        "stream_tool_call_count": 2,
+        "last_tool_calls": [],
+    }
+    exc = SdkRunAbortedError(
+        "abort",
+        forensics=forensics,
+        stream_forensics=stream_forensics,
+    )
+    for key in (
+        "provider_error",
+        "provider_status",
+        "first_output_s",
+        "last_output_s",
+        "first_toolcall_s",
+    ):
+        assert key not in exc.forensics
+
+    sidecar = _format_bridge_abort_sidecar(
+        dispatch_id="d-sep",
+        forensics=exc.forensics,
+        tool_call_count=2,
+    )
+    sidecar_json = json.loads(sidecar.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+    for key in (
+        "provider_status",
+        "first_output_s",
+        "last_output_s",
+        "first_toolcall_s",
+    ):
+        assert key not in sidecar_json
+
+    captured: list[Any] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events._emit",
+        captured.append,
+    )
+    emit_sdk_worker_failed(
+        dispatch_id="d1",
+        thread_id="t1",
+        execution_id="e1",
+        error="abort",
+        stream_forensics=exc.stream_forensics,
+    )
+    assert captured[0].payload["first_output_s"] == 1.0
+    assert captured[0].payload["provider_status"]["message"] == "provider sentence"
 
 
 def test_finalize_stream_capture_preserves_forensics_fields() -> None:

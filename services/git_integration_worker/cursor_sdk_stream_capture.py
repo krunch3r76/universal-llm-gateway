@@ -67,6 +67,11 @@ __all__ = [
 logger = get_logger(__name__)
 
 _TERMINAL_TOOL_CALL_STATUSES = {"completed", "error"}
+_PROVIDER_STATUS_MESSAGE_MAX = 500
+
+
+def _monotonic_clock() -> float:
+    return time.monotonic()
 
 
 @dataclass(frozen=True)
@@ -83,7 +88,11 @@ def _provider_status_mapping(
 ) -> Mapping[str, Any] | None:
     if record is None:
         return None
-    return asdict(record)
+    payload = dict(asdict(record))
+    for key in ("agent_id", "run_id"):
+        if payload.get(key) is None:
+            payload.pop(key, None)
+    return payload
 
 
 @dataclass(frozen=True)
@@ -129,6 +138,9 @@ class StreamCapture:
     first_output_s: float | None = None
     last_output_s: float | None = None
     first_toolcall_s: float | None = None
+    # False on ``run.stream()`` fallback — output-offset fields are omitted, not
+    # null, from exported forensics/event payloads.
+    measures_interaction_output_offsets: bool = True
 
     @property
     def tool_call_count(self) -> int:
@@ -150,10 +162,11 @@ def stream_capture_forensics_fields(
         out["provider_error"] = capture.provider_error
     if capture.provider_status is not None:
         out["provider_status"] = dict(capture.provider_status)
-    if capture.first_output_s is not None:
-        out["first_output_s"] = capture.first_output_s
-    if capture.last_output_s is not None:
-        out["last_output_s"] = capture.last_output_s
+    if capture.measures_interaction_output_offsets:
+        if capture.first_output_s is not None:
+            out["first_output_s"] = capture.first_output_s
+        if capture.last_output_s is not None:
+            out["last_output_s"] = capture.last_output_s
     if capture.first_toolcall_s is not None:
         out["first_toolcall_s"] = capture.first_toolcall_s
     return out
@@ -363,6 +376,8 @@ def _note_provider_status(
     text = str(getattr(message, "message", "") or "").strip()
     if not text:
         return
+    if len(text) > _PROVIDER_STATUS_MESSAGE_MAX:
+        text = text[:_PROVIDER_STATUS_MESSAGE_MAX]
     holder[:] = [
         ProviderStatusRecord(
             agent_id=_optional_id(getattr(message, "agent_id", None)),
@@ -379,12 +394,15 @@ def _process_tool_call_message(
     *,
     latest: dict[str, Any],
     emit_fn: Callable[[str, Any], None],
+    note_first_tool_call: Callable[[], None] | None = None,
 ) -> None:
     if getattr(message, "type", "") != "tool_call":
         return
     call_id = getattr(message, "call_id", "") or ""
     if not call_id:
         return
+    if note_first_tool_call is not None:
+        note_first_tool_call()
     latest[call_id] = message
     if str(getattr(message, "status", "")) in _TERMINAL_TOOL_CALL_STATUSES:
         emit_fn(call_id, message)
@@ -420,25 +438,28 @@ def observe_run_stream(
     captured_request: list[tuple[str, str]] = []
     retained: list[RunLine] = []
     provider_status_holder: list[ProviderStatusRecord] = []
-    t0 = time.monotonic()
+    t0 = _monotonic_clock()
     first_output_s: float | None = None
     last_output_s: float | None = None
     first_toolcall_s: float | None = None
+    measures_interaction_output_offsets = True
+
+    def _note_first_tool_call_message() -> None:
+        nonlocal first_toolcall_s
+        if first_toolcall_s is None:
+            first_toolcall_s = round(_monotonic_clock() - t0, 3)
 
     def _note_output_delta(piece: Any) -> None:
         nonlocal first_output_s, last_output_s
         kind = str(getattr(piece, "type", "") or "")
         if kind not in {"text-delta", "thinking-delta"}:
             return
-        offset = round(time.monotonic() - t0, 3)
+        offset = round(_monotonic_clock() - t0, 3)
         if first_output_s is None:
             first_output_s = offset
         last_output_s = offset
 
     def _emit(call_id: str, message: Any) -> None:
-        nonlocal first_toolcall_s
-        if first_toolcall_s is None:
-            first_toolcall_s = round(time.monotonic() - t0, 3)
         observation = _observation_from_message(message)
         if density_harness is not None:
             try:
@@ -535,9 +556,13 @@ def observe_run_stream(
                         )
                     else:
                         _process_tool_call_message(
-                            sdk_message, latest=latest, emit_fn=_emit
+                            sdk_message,
+                            latest=latest,
+                            emit_fn=_emit,
+                            note_first_tool_call=_note_first_tool_call_message,
                         )
         else:
+            measures_interaction_output_offsets = False
             for message in run.stream():
                 _note_provider_status(message, provider_status_holder)
                 retain_stream_prose(
@@ -552,7 +577,12 @@ def observe_run_stream(
                     token_delta_sum=token_delta_sum,
                     on_usage=on_usage,
                 )
-                _process_tool_call_message(message, latest=latest, emit_fn=_emit)
+                _process_tool_call_message(
+                    message,
+                    latest=latest,
+                    emit_fn=_emit,
+                    note_first_tool_call=_note_first_tool_call_message,
+                )
     except Exception as exc:  # noqa: BLE001 — stream capture must never break the dispatch
         logger.warning(
             "cursor sdk stream capture interrupted: dispatch_id=%s err=%s",
@@ -599,6 +629,7 @@ def observe_run_stream(
         first_output_s=first_output_s,
         last_output_s=last_output_s,
         first_toolcall_s=first_toolcall_s,
+        measures_interaction_output_offsets=measures_interaction_output_offsets,
     )
 
 
@@ -618,19 +649,10 @@ def finalize_request_id_capture(
         request_id = getattr(run, "request_id", None)
     if not request_id:
         return capture
-    return StreamCapture(
-        tool_calls=capture.tool_calls,
-        usage=capture.usage,
-        usage_capture_status=capture.usage_capture_status,
-        usage_total_derived=capture.usage_total_derived,
+    return replace(
+        capture,
         sdk_request_id=str(request_id),
         request_id_source="post_wait",
-        lines=capture.lines,
-        provider_error=capture.provider_error,
-        provider_status=capture.provider_status,
-        first_output_s=capture.first_output_s,
-        last_output_s=capture.last_output_s,
-        first_toolcall_s=capture.first_toolcall_s,
     )
 
 
@@ -642,19 +664,11 @@ def finalize_stream_capture_usage(
 ) -> StreamCapture:
     """Apply post-wait ``run.usage`` / ``result.usage`` as authority over stream."""
     record = finalize_dispatch_usage(capture, run=run, result=result)
-    return StreamCapture(
-        tool_calls=capture.tool_calls,
+    return replace(
+        capture,
         usage=record.usage,
         usage_capture_status=record.usage_capture_status,
         usage_total_derived=False,
-        sdk_request_id=capture.sdk_request_id,
-        request_id_source=capture.request_id_source,
-        lines=capture.lines,
-        provider_error=capture.provider_error,
-        provider_status=capture.provider_status,
-        first_output_s=capture.first_output_s,
-        last_output_s=capture.last_output_s,
-        first_toolcall_s=capture.first_toolcall_s,
     )
 
 

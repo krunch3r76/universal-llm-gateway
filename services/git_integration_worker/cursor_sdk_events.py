@@ -635,7 +635,7 @@ def emit_sdk_worker_completed(
         "tool_call_count=%s result_bytes=%s outcome=%s resolved_model=%s "
         "usage_capture_status=%s usage=%s request_id=%s sdk_request_id=%s "
         "request_id_source=%s sdk_run_id=%s sdk_agent_id=%s degraded_reasons=%s "
-        "first_output_s=%s first_toolcall_s=%s",
+        "first_output_s=%s last_output_s=%s first_toolcall_s=%s",
         dispatch_id,
         thread_id,
         duration_s,
@@ -652,26 +652,27 @@ def emit_sdk_worker_completed(
         sdk_agent_id,
         degraded_reasons,
         first_output_s,
+        last_output_s,
         first_toolcall_s,
     )
 
 
 def _stream_forensics_event_kwargs(
     *,
+    stream_forensics: Mapping[str, Any] | None = None,
     provider_status: dict[str, Any] | Mapping[str, Any] | None = None,
     first_output_s: float | None = None,
     last_output_s: float | None = None,
     first_toolcall_s: float | None = None,
-    forensics: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Merge explicit stream forensics with an abort forensics dict."""
+    """Build optional stream-forensics payload keys for terminal worker events."""
     out: dict[str, Any] = {}
-    if forensics is not None:
-        raw_status = forensics.get("provider_status")
+    if stream_forensics is not None:
+        raw_status = stream_forensics.get("provider_status")
         if isinstance(raw_status, Mapping):
             out["provider_status"] = dict(raw_status)
         for key in ("first_output_s", "last_output_s", "first_toolcall_s"):
-            val = forensics.get(key)
+            val = stream_forensics.get(key)
             if isinstance(val, (int, float)):
                 out[key] = float(val)
     if provider_status is not None:
@@ -3110,15 +3111,15 @@ def emit_sdk_worker_failed(
     first_output_s: float | None = None,
     last_output_s: float | None = None,
     first_toolcall_s: float | None = None,
-    forensics: Mapping[str, Any] | None = None,
+    stream_forensics: Mapping[str, Any] | None = None,
 ) -> None:
     """Publish structured worker-runtime failure with layer and error code detail."""
     stream_fields = _stream_forensics_event_kwargs(
+        stream_forensics=stream_forensics,
         provider_status=provider_status,
         first_output_s=first_output_s,
         last_output_s=last_output_s,
         first_toolcall_s=first_toolcall_s,
-        forensics=forensics,
     )
     _emit(
         FrontierSdkWorkerFailed(
