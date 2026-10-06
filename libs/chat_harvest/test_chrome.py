@@ -239,6 +239,7 @@ def test_ends_with_tool_row_true_cases(body: str) -> None:
     [
         "Listed scheduled tasks · 1 note",
         "Updated the spec.",
+        "Updated the spec.\nUpdated the spec.",
         "Updated the spec, ran the tests.",
         "}\n}",
         "Thanks!\nThanks!",

@@ -258,7 +258,7 @@ def ends_with_tool_row(body: str) -> bool:
     if _is_badge_line(t):
         return True
     if p and t == p and any(ch.isalpha() for ch in t) and len(t) <= 80:
-        collapsed = t.rstrip(".").rstrip()
+        collapsed = t.rstrip()
         while collapsed.endswith("..."):
             collapsed = collapsed[:-3].rstrip()
         while collapsed.endswith("…"):

@@ -280,9 +280,7 @@ async def project_followup_on_page(
     anchor: ReplyAnchor | None = None
     try:
         probe = ReplyAnchor(anchor_marker(prompt))
-        anchor = probe.after(
-            await harvest_assistant(page, min_msg_chars=10, anchor=probe)
-        )
+        anchor = probe.after(await harvest_assistant(page, min_msg_chars=10, anchor=probe))
         await send_prompt(
             page,
             prompt,
@@ -467,11 +465,8 @@ async def run_project_conversation(
                         error=f"model select failed: {model_info}",
                     )
                 ]
-            anchor: ReplyAnchor | None = None
             probe = ReplyAnchor(anchor_marker(prompts[0]))
-            anchor = probe.after(
-                await harvest_assistant(page, min_msg_chars=10, anchor=probe)
-            )
+            anchor = probe.after(await harvest_assistant(page, min_msg_chars=10, anchor=probe))
             await send_prompt(
                 page,
                 prompts[0],

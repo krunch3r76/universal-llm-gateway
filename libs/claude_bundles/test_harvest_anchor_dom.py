@@ -118,3 +118,84 @@ async def test_cowork_route_fixture_runs_extended_selectors() -> None:
     state = await _harvest_cowork_url(html, args=_anchor_args())
     assert state.get("cowork_cse") is True
     assert state.get("anchor_found") is True
+
+
+_FIXTURE_A_FINAL_REPLY = f"""
+<!doctype html><html><body>
+<div data-testid="human-turn">Old prompt text from prior dispatch</div>
+<div data-testid="assistant-message">Old assistant reply with enough characters.</div>
+<div data-testid="human-turn"><h2>You said:</h2> {_MARKER}</div>
+<div data-testid="assistant-message">Mid-loop prose before tools.\\nLoaded tools\\nLoaded tools</div>
+<div data-testid="human-turn">Foreign operator steer without stamp</div>
+<div data-testid="assistant-message">Steer answer prose here with Agent Bus label twice below.\\nAgent Bus\\nAgent Bus</div>
+<div data-testid="assistant-message">Final sealed answer prose after the steer turn.</div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_fixture_a_final_reply_is_body() -> None:
+    state = await _harvest_html(_FIXTURE_A_FINAL_REPLY, args=_anchor_args())
+    assert state.get("n") == 3
+    assert "Final sealed answer" in state.get("body", "")
+
+
+_NESTED_ASSISTANT_HTML = f"""
+<!doctype html><html><body>
+<div data-testid="human-turn"><h2>You said:</h2> {_MARKER}</div>
+<div data-testid="assistant-message">
+  <div data-testid="assistant-message">Inner assistant reply with enough characters here.</div>
+</div>
+<div class="font-claude-response">Later selector match with sufficient text length.</div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_nested_assistant_uses_page_order_last() -> None:
+    state = await _harvest_html(_NESTED_ASSISTANT_HTML, args=_anchor_args())
+    assert state.get("anchor_found") is True
+    assert state.get("n") == 2
+    assert "Later selector match" in state.get("body", "")
+
+
+_STALE_CARD_HTML = f"""
+<!doctype html><html><body>
+<div data-testid="human-turn">{_MARKER}</div>
+<div data-testid="assistant-message" data-cdp-artifact-card="0">
+  Old reply with a stale artifact card stamp on the turn node itself.
+</div>
+<div data-testid="human-turn">{_MARKER} second</div>
+<div data-testid="assistant-message">
+  <button>Fresh bind document title here Document · MD</button>
+  Current reply body long enough for harvest window selection.
+</div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_clears_stale_card_stamp_on_old_turn() -> None:
+    state = await _harvest_html(_STALE_CARD_HTML, args=_anchor_args(priorMatches=1))
+    assert state.get("anchor_found") is True
+    cards = state.get("artifact_cards") or []
+    assert len(cards) == 1
+    assert cards[0]["title"] == "Fresh bind document title here"
+
+
+_INDUCTION_OUTSIDE_WINDOW = f"""
+<!doctype html><html><body>
+<div data-testid="assistant-message">Skill induction acknowledgement turn is here.</div>
+<div data-testid="human-turn"><h2>You said:</h2> {_MARKER}</div>
+<div data-testid="assistant-message">Answer to our sealed prompt with enough length.</div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_induction_turn_outside_window() -> None:
+    state = await _harvest_html(_INDUCTION_OUTSIDE_WINDOW, args=_anchor_args())
+    assert state.get("anchor_found") is True
+    assert state.get("n") == 1
+    assert "Answer to our sealed" in state.get("body", "")
+    assert "induction acknowledgement" not in state.get("body", "")

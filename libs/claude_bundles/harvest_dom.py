@@ -121,7 +121,10 @@ _HARVEST_JS = """
     }
     let windowEls = [];
     if (anchorFound && anchorEl) {
-      const ordered = pruneContained(assistantCandidates).sort(documentOrder);
+      const withoutUserWrap = assistantCandidates.filter(
+        (el) => !userOrdered.some((u) => el.contains(u))
+      );
+      const ordered = pruneContained(withoutUserWrap).sort(documentOrder);
       windowEls = ordered.filter((el) => {
         if (documentOrder(el, anchorEl) <= 0) return false;
         if (el.contains(anchorEl) || anchorEl.contains(el)) return false;
