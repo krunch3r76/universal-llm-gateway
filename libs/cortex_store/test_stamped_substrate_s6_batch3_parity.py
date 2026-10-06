@@ -494,7 +494,7 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Handler uses separate commits (ops_journals.py); typed route is passthrough only."""
+    """Outcome UPDATE failure rolls back the RESOLVED assertion (one transaction)."""
     import cortex_store.dispatch_ops.ops_journals as dj_mod
 
     original_execute = dj_mod.execute
@@ -541,7 +541,8 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     )
     assert dispatch_snap == typed_snap
     assert dispatch_snap[0]["attributes"].get("outcome") != "met"
-    assert dispatch_snap[1] >= 1
+    assert dispatch_snap[1] == 0
+    assert typed_snap[1] == 0
 
 
 @pytest.mark.offline
