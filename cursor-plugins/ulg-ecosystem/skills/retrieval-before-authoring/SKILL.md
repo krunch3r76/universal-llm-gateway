@@ -64,8 +64,8 @@ Bibliography-only hits (citation line / related-work mention of a paper with no 
 7. **Justify.** Cite the retrieved finding behind each design choice or mark `my judgment, no corpus support`.
    Falsifier: on that step: inference laundered as a corpus citation.
 
-8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment. For a nested CDP prompt (`team_dispatch(model=cdp/…)` / `cse_session(op=followup)` / conductor G1·G2·G4·G6), the report is a **sidecar artifact**, not chat prose: write `cortex://notes/…/retrieval-report.md` with a `target:` line binding the prompt (`todo:…` / `G4` / `gate_path=SKEPTIC` / `adversarial-spec`), headings `## Queries`, `## Yields`, `## Choice-to-evidence` (each section non-empty; include `weak_match` / null off-topic yields), and put `retrieval_report: cortex://…` on its own line in the **author** prompt body so admit can refuse a missing, unbound, or incomplete bundle (a:37183 · A1–A4 · `nested_cdp_prompt_gate`).
-   Falsifier: on that step: dispatch without the report bundle, or a nested CDP prompt without a resolvable `retrieval_report:` citation bound by `target:`.
+8. **Dispatch and report.** Fire the prompt; post queries + yield, prompt text, choice-to-evidence table, cheapest falsifying experiment. Nested CDP (`team_dispatch(model=cdp/…)` / `cse_session(op=followup)` / G1·G2·G4·G6): sidecar `cortex://notes/…/retrieval-report.md` — `## Queries`, `## Yields`, `## Choice-to-evidence` (each non-empty; `weak_match` / null yields); **`target:` is one token only** on its own line (good: `target: friction:38297`; bad: `target: todo:foo plus prose`); `friction:<n>` anywhere in the **author** body also binds; cite with `retrieval_report: cortex://…` on its own author line (a:37183 · `nested_cdp_prompt_gate`).
+   Falsifier: on that step: dispatch without the report bundle, nested CDP without `retrieval_report:`, or a multi-token / prose `target:` line.
 
 ## Falsifier
 

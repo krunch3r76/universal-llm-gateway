@@ -21,6 +21,15 @@ from implement_admission.closeout_helpers import cortex_files_root
 # Citation + binding lines the authoring seat must leave on the author body.
 _RETRIEVAL_REPORT_LINE = re.compile(r"(?im)^retrieval_report:\s*(cortex://\S+)\s*$")
 _REPORT_TARGET_LINE = re.compile(r"(?im)^target:\s*(\S+)\s*$")
+_REPORT_TARGET_LINE_ANY = re.compile(r"(?im)^target:\s*.+$")
+_ACCEPTED_TARGET_SHAPES = (
+    "todo:<id>",
+    "friction:<n>",
+    "gate_path=<NAME>",
+    "G1|G2|G4|G6",
+    "adversarial-spec",
+    "delivery-review",
+)
 _BODY_TODO = re.compile(r"(?i)\btodo:([\w.-]+)\b")
 
 # Spec-skeptic / G4 — line-anchored role declarations only (A1).
@@ -99,6 +108,11 @@ def parse_report_target(report_body: str) -> str | None:
     if match is None:
         return None
     return match.group(1).strip()
+
+
+def has_report_target_line(report_body: str) -> bool:
+    """True when a ``target:`` line is present (valid or malformed)."""
+    return bool(_REPORT_TARGET_LINE_ANY.search(report_body or ""))
 
 
 def body_target_tokens(author_body: str) -> set[str]:
@@ -226,6 +240,14 @@ def enforce_retrieval_report(author_body: str) -> str:
             code="nested_cdp_retrieval_report_empty_section",
         )
     target = parse_report_target(report)
+    if target is None and has_report_target_line(report):
+        shapes = ", ".join(_ACCEPTED_TARGET_SHAPES)
+        raise NestedCdpPromptGateError(
+            f"retrieval_report {uri} `target:` must be exactly one token "
+            f"(no prose or extra words on the line); accepted shapes: {shapes} "
+            "(a:38299)",
+            code="nested_cdp_retrieval_report_target_invalid",
+        )
     if not target:
         raise NestedCdpPromptGateError(
             f"retrieval_report {uri} requires `target:` binding the prompt "
@@ -235,9 +257,10 @@ def enforce_retrieval_report(author_body: str) -> str:
     allowed = body_target_tokens(author_body)
     allowed_folded = {token.casefold() for token in allowed}
     if target.casefold() not in allowed_folded:
+        accepted = sorted(allowed)
         raise NestedCdpPromptGateError(
-            f"retrieval_report {uri} target={target!r} does not bind "
-            f"author body tokens {sorted(allowed)!r} (a:37183 A3)",
+            f"retrieval_report {uri} saw target token {target!r}; author body "
+            f"accepts {accepted!r} (a:37183 A3)",
             code="nested_cdp_retrieval_report_target_mismatch",
         )
     return uri

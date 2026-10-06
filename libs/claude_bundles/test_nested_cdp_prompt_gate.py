@@ -183,6 +183,41 @@ def test_report_target_mismatch_refuses(
     with pytest.raises(NestedCdpPromptGateError) as exc:
         enforce_retrieval_report(body)
     assert exc.value.code == "nested_cdp_retrieval_report_target_mismatch"
+    msg = str(exc.value)
+    assert "todo:other" in msg
+    assert "todo:demo" in msg
+
+
+def test_report_target_multi_token_refuses_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = _COMPLETE_REPORT.replace(
+        "target: todo:demo", "target: todo:foo plus prose"
+    )
+    uri = _write_report(tmp_path, monkeypatch, body=bad)
+    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
+    with pytest.raises(NestedCdpPromptGateError) as exc:
+        enforce_retrieval_report(body)
+    assert exc.value.code == "nested_cdp_retrieval_report_target_invalid"
+
+
+def test_report_target_single_token_still_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = _write_report(tmp_path, monkeypatch)
+    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
+    assert enforce_retrieval_report(body) == uri
+
+
+def test_report_target_required_when_line_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_target = _COMPLETE_REPORT.replace("target: todo:demo\n", "")
+    uri = _write_report(tmp_path, monkeypatch, body=no_target)
+    body = f"retrieval_report: {uri}\n{_SKEPTIC_BODY}"
+    with pytest.raises(NestedCdpPromptGateError) as exc:
+        enforce_retrieval_report(body)
+    assert exc.value.code == "nested_cdp_retrieval_report_target_required"
 
 
 def test_yields_subheading_table_is_not_empty_section(
