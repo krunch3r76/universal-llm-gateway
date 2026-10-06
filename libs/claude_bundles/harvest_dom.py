@@ -11,7 +11,7 @@ from chat_harvest.assistant_source_text import with_assistant_source_text
 # innerText of .katex is rendered math (a:37508). assistantSourceText is
 # injected by with_assistant_source_text after the opening brace.
 _HARVEST_JS = """
-({ minMsgChars }) => {
+({ minMsgChars, anchorMarker = '', priorMatches = 0, userSelectors = [] }) => {
   const url = location.href || '';
   const isCoworkCse = /\\/cowork\\/cse_/.test(url);
   const baseSelectors = [
@@ -27,26 +27,122 @@ _HARVEST_JS = """
         '[role="article"]',
       ]
     : [];
+  const normalizeAnchorText = (text) =>
+    (text || '').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, ' ').trim();
+  const excludedUserNode = (el) => {
+    if (!el) return true;
+    if (el.isContentEditable) return true;
+    if (el.closest('[contenteditable="true"]')) return true;
+    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+    if (testid.includes('composer') || testid.includes('input')) return true;
+    if (el.getAttribute('role') === 'textbox') return true;
+    return false;
+  };
+  const documentOrder = (a, b) => {
+    const pos = a.compareDocumentPosition(b);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  };
+  const pruneContained = (nodes) => {
+    return nodes.filter(
+      (el) => !nodes.some((other) => other !== el && other.contains(el))
+    );
+  };
+  const markerNorm = normalizeAnchorText(anchorMarker);
+  const anchoredMode = !!markerNorm;
+  let anchorFound = false;
+  let anchorMatches = 0;
+  let foreignUserTurns = 0;
+  let anchorEl = null;
   const seen = new Set();
   const msgs = [];
   const assistantEls = [];
-  for (const sel of [...baseSelectors, ...coworkSelectors]) {
-    for (const el of document.querySelectorAll(sel)) {
-      if (seen.has(el)) continue;
-      seen.add(el);
-      const t = assistantSourceText(el);
-      // Temp (a:27801): Cowork [role=article] matches user turns ("You said:…").
-      // Skip those so wait keeps polling until a real assistant body appears.
-      if (/^You said:\\s*/i.test(t)) continue;
-      if (t.length > minMsgChars) {
-        msgs.push(t);
-        assistantEls.push(el);
+  if (!anchoredMode) {
+    for (const sel of [...baseSelectors, ...coworkSelectors]) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        const t = assistantSourceText(el);
+        if (/^You said:\\s*/i.test(t)) continue;
+        if (t.length > minMsgChars) {
+          msgs.push(t);
+          assistantEls.push(el);
+        }
       }
+    }
+  } else {
+    const userCandidates = [];
+    const userSeen = new Set();
+    const userSels = [
+      ...(userSelectors || []),
+      '[role="article"]',
+    ];
+    for (const sel of userSels) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (userSeen.has(el) || excludedUserNode(el)) continue;
+        const t = (el.innerText || '').trim();
+        if (!t) continue;
+        if (sel === '[role="article"]' && !/^You said:\\s*/i.test(t)) continue;
+        userSeen.add(el);
+        userCandidates.push(el);
+      }
+    }
+    const userOrdered = pruneContained(userCandidates).sort(documentOrder);
+    let matchCount = 0;
+    for (const el of userOrdered) {
+      const t = normalizeAnchorText(el.innerText || '');
+      if (markerNorm && t.includes(markerNorm)) {
+        matchCount += 1;
+        anchorEl = el;
+      }
+    }
+    anchorMatches = matchCount;
+    anchorFound = matchCount > priorMatches;
+    if (anchorFound && anchorEl) {
+      for (const el of userOrdered) {
+        if (documentOrder(el, anchorEl) > 0) {
+          const t = normalizeAnchorText(el.innerText || '');
+          if (!markerNorm || !t.includes(markerNorm)) foreignUserTurns += 1;
+        }
+      }
+    }
+    const assistantCandidates = [];
+    const asstSeen = new Set();
+    for (const sel of [...baseSelectors, ...coworkSelectors]) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (asstSeen.has(el)) continue;
+        asstSeen.add(el);
+        const t = assistantSourceText(el);
+        if (/^You said:\\s*/i.test(t)) continue;
+        if (t.length <= minMsgChars) continue;
+        assistantCandidates.push(el);
+      }
+    }
+    let windowEls = [];
+    if (anchorFound && anchorEl) {
+      const ordered = pruneContained(assistantCandidates).sort(documentOrder);
+      windowEls = ordered.filter((el) => {
+        if (documentOrder(el, anchorEl) <= 0) return false;
+        if (el.contains(anchorEl) || anchorEl.contains(el)) return false;
+        return true;
+      });
+    }
+    for (const el of windowEls) {
+      msgs.push(assistantSourceText(el));
+      assistantEls.push(el);
     }
   }
   const body = msgs.length ? msgs[msgs.length - 1] : '';
   const artifactCards = [];
-  const lastTurnEl = assistantEls.length ? assistantEls[assistantEls.length - 1] : null;
+  let lastTurnEl = assistantEls.length ? assistantEls[assistantEls.length - 1] : null;
+  if (anchoredMode) {
+    for (const el of document.querySelectorAll('[data-cdp-artifact-card]')) {
+      if (!lastTurnEl || !lastTurnEl.contains(el)) {
+        el.removeAttribute('data-cdp-artifact-card');
+      }
+    }
+  }
   if (lastTurnEl) {
     const cardSeen = new Set();
     const CARD_KIND_RE = /\\bdocument\\s*[·•]\\s*md\\b/i;
@@ -227,7 +323,7 @@ _HARVEST_JS = """
       '[class*="spinner" i],[aria-busy="true"],[data-testid*="progress" i]'
     );
   const taskMapIdle = taskMapPresent ? !taskMapWorking : false;
-  return {
+  const result = {
     url,
     cowork_cse: isCoworkCse,
     body,
@@ -245,6 +341,13 @@ _HARVEST_JS = """
     task_map_idle: taskMapIdle,
     artifact_cards: artifactCards,
   };
+  if (anchoredMode) {
+    result.anchored = true;
+    result.anchor_found = anchorFound;
+    result.anchor_matches = anchorMatches;
+    result.foreign_user_turns = foreignUserTurns;
+  }
+  return result;
 }
 """
 
