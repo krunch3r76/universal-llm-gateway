@@ -10,8 +10,11 @@ not an agent-bus thread. Resume = ``page.goto(chat_url)``.
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
@@ -37,6 +40,8 @@ class ReattachOutcome:
     relaunched: bool = False
     page: Any | None = None
     pw: Any | None = None
+    prior_chat_url: str | None = None
+    reattach_bound_chat_url: str | None = None
 
 
 def _lane_order(
@@ -159,12 +164,39 @@ async def _bind_or_drop(
     chat_url: str,
     page: Any,
     pw: Any,
-) -> str | None:
-    """Bind, or close *page* and return ``attachment.conflict`` when a live holder remains."""
+) -> tuple[str | None, str | None, str | None]:
+    """Bind, or close *page* and return ``(error, prior_chat_url, bound_chat_url)``."""
+    prior = (cdp_registry.chat_url_for_registration(registration_id) or "").strip() or None
     err = _bind_chat_url(registration_id, chat_url)
     if err:
         await _teardown_attempt(page, pw)
-    return err
+        return err, prior, None
+    return None, prior, chat_url
+
+
+def restore_borrowed_chat_url_on_refusal(outcome: ReattachOutcome) -> None:
+    """Compare-and-restore a borrow bind when followup refuses after reattach."""
+    if not outcome.ok or outcome.lane_created or outcome.relaunched:
+        return
+    reg_id = (outcome.registration_id or "").strip()
+    prior = (outcome.prior_chat_url or "").strip() or None
+    bound = (outcome.reattach_bound_chat_url or "").strip() or None
+    if not reg_id or not bound or not prior:
+        return
+    if normalize_cse_url(prior) == normalize_cse_url(bound):
+        return
+    current = (cdp_registry.chat_url_for_registration(reg_id) or "").strip()
+    if normalize_cse_url(current) != normalize_cse_url(bound):
+        logger.info(
+            "reattach refusal teardown: skip chat_url restore for %s "
+            "(current=%r expected bound=%r)",
+            reg_id,
+            current or None,
+            bound,
+        )
+        return
+    with contextlib.suppress(Exception):
+        cdp_registry.bind_session_address(reg_id, chat_url=prior)
 
 
 async def _disconnect_playwright(pw: Any | None) -> None:
@@ -198,7 +230,10 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
     found = await find_page_on_lane(reg.cdp_url, chat_url)
     if found is not None:
         page, pw = found
-        if err := await _bind_or_drop(reg.registration_id, chat_url, page, pw):
+        err, prior, bound = await _bind_or_drop(
+            reg.registration_id, chat_url, page, pw
+        )
+        if err:
             return ReattachOutcome(ok=False, error=err, relaunched=True)
         return ReattachOutcome(
             ok=True,
@@ -207,6 +242,8 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
             relaunched=True,
             page=page,
             pw=pw,
+            prior_chat_url=prior,
+            reattach_bound_chat_url=bound,
         )
     opened = await _navigate_new_page(reg, chat_url)
     if opened is None:
@@ -259,7 +296,10 @@ async def ensure_cse_attached(
         found = await find_page_on_lane(lane.cdp_url, chat_url)
         if found is not None:
             page, pw = found
-            if err := await _bind_or_drop(lane.registration_id, chat_url, page, pw):
+            err, prior, bound = await _bind_or_drop(
+                lane.registration_id, chat_url, page, pw
+            )
+            if err:
                 return ReattachOutcome(ok=False, error=err)
             return ReattachOutcome(
                 ok=True,
@@ -268,12 +308,17 @@ async def ensure_cse_attached(
                 lane_created=False,
                 page=page,
                 pw=pw,
+                prior_chat_url=prior,
+                reattach_bound_chat_url=bound,
             )
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
             continue
         page, pw = opened
-        if err := await _bind_or_drop(lane.registration_id, chat_url, page, pw):
+        err, prior, bound = await _bind_or_drop(
+            lane.registration_id, chat_url, page, pw
+        )
+        if err:
             return ReattachOutcome(ok=False, error=err)
         return ReattachOutcome(
             ok=True,
@@ -282,6 +327,8 @@ async def ensure_cse_attached(
             lane_created=False,
             page=page,
             pw=pw,
+            prior_chat_url=prior,
+            reattach_bound_chat_url=bound,
         )
 
     if not allow_mint:
@@ -298,7 +345,8 @@ async def ensure_cse_attached(
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error="reattach_navigate_failed")
     page, pw = opened
-    if err := await _bind_or_drop(reg.registration_id, chat_url, page, pw):
+    err, prior, bound = await _bind_or_drop(reg.registration_id, chat_url, page, pw)
+    if err:
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error=err)
     return ReattachOutcome(
@@ -308,4 +356,6 @@ async def ensure_cse_attached(
         lane_created=True,
         page=page,
         pw=pw,
+        prior_chat_url=prior,
+        reattach_bound_chat_url=bound,
     )

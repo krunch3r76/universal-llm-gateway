@@ -39,6 +39,7 @@ from cdp_ask.followup_reattach import (
     _teardown_attempt,
     ensure_cse_attached,
     find_page_on_lane,
+    restore_borrowed_chat_url_on_refusal,
 )
 from cdp_ask.followup_receipts import (
     apply_receipt_caps,
@@ -183,6 +184,7 @@ async def _reattach_teardown(
     outcome: ReattachOutcome | None,
     *,
     retain_lane: bool,
+    restore_borrowed_chat_url: bool = False,
 ) -> None:
     """Tear down reattach side-effects — park woken seats, drop minted lanes.
 
@@ -191,6 +193,8 @@ async def _reattach_teardown(
     """
     if outcome is None or not outcome.ok:
         return
+    if restore_borrowed_chat_url:
+        restore_borrowed_chat_url_on_refusal(outcome)
     if retain_lane:
         await _disconnect_playwright(outcome.pw)
         return
@@ -256,7 +260,11 @@ async def execute_followup(
             req, store, lane_pin=lane_pin
         )
         if err is not None:
-            await _reattach_teardown(reattach_outcome, retain_lane=req.retain_lane)
+            await _reattach_teardown(
+                reattach_outcome,
+                retain_lane=req.retain_lane,
+                restore_borrowed_chat_url=True,
+            )
             return fail_followup(
                 err.error or "followup_failed",
                 detail=err.detail,
@@ -277,7 +285,11 @@ async def execute_followup(
     extra = response_extra(reattach_used=reattach_used, lane_created=lane_created)
 
     if not await _acquire_lane(target.registration_id):
-        await _reattach_teardown(reattach_outcome, retain_lane=req.retain_lane)
+        await _reattach_teardown(
+            reattach_outcome,
+            retain_lane=req.retain_lane,
+            restore_borrowed_chat_url=True,
+        )
         return fail_followup(
             "lane_busy",
             detail="concurrent followup to same registration_id",
