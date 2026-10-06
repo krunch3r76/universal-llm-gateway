@@ -2,7 +2,7 @@
 name: checkpoint-discipline
 description: "Fire/verify CHECKPOINTs on standing roots: lean path (pre_consolidate=false, grok tip author), tip supersede, lean resume, role:root stamp, RESUME footer."
 skill_category: orchestration
-trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "pre_consolidate", "lean checkpoint", "grok tip author", "standing root", "Windows log", "unbound checkpoint", "bare checkpoint"]
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "pre_consolidate", "lean checkpoint", "grok tip author", "standing root", "Windows log", "unbound checkpoint", "bare checkpoint", "spend-risk", "checkpoint stop"]
 ---
 
 # Checkpoint Discipline
@@ -23,6 +23,8 @@ About to fire, verify, or resume a CHECKPOINT; standing-root continuity; charter
 CHECKPOINT := reconstitution index ∧ deliberative steering
 ¬ completeness authority
 empty(Next-pickup) ⇏ arc_complete
+spend_risk_lane ∧ operator(checkpoint) ⇒ hard_STOP(mutating_shop_acts) until operator_verb(later_turn)
+spend_risk_lane ⇒ ¬ (checkpoint ∧ same_message_verb ⇒ execute_that_verb)
 ```
 
 Done/close-arc claims: also load `agent-bus-discipline` § R12.
@@ -31,13 +33,35 @@ Done/close-arc claims: also load `agent-bus-discipline` § R12.
 
 | Utterance | Action |
 |---|---|
-| `checkpoint <n>` / `checkpoint <slug>` | House resolved this turn — § Pipeline CHECKPOINT. Tab `. {n} {slug}`. ¬ resume. |
-| `checkpoint` / `/checkpoint` | Same when this tab can name `transcript_id` and resolve `thread` (sidecar, session join, prior Window) — quote both. |
-| ¬`transcript_id` | Say so and stop. ¬ guess · ¬ mint a house · ¬ write a foreign root. |
+| `checkpoint <n>` / `checkpoint <slug>` | House resolved this turn — § Pipeline CHECKPOINT. Tab `. {n} {slug}`. ¬ resume. On a spend-risk lane: also § Spend-risk halt. |
+| `checkpoint` / `/checkpoint` | Same when this tab can name `transcript_id` and resolve `thread` (sidecar, session join, prior Window) — quote both. On a spend-risk lane: also § Spend-risk halt. |
+| ¬`transcript_id` | Say so and stop. ¬ guess · ¬ mint a house · ¬ write a foreign root. On a spend-risk lane: also § Spend-risk halt. |
 
 `bound(tab)` ⇔ a thread id acquired by an **operator verb in this tab** (`resume <n|slug>` · `checkpoint <n|slug>` · `/agent-bus {n|slug}`) **∨** this tab already posted a CHECKPOINT under this `transcript_id`. Cheapest proxy: (i) tab title `{n} {slug}` or `. {n} {slug}`; (ii) a CP posted from this `transcript_id` this session; (iii) `continuity(op=…)` has a `thread=` the seat can name without guessing. **Not binders:** recency · adjacency · a thread this tab merely read · "the only active root" · a thread id that merely appears in context.
 
 `/orchestrate` births a root (`orchestration-lanes` § Root birth). The `checkpoint` verb does not.
+
+## Spend-risk halt (BINDING — specimen a:38479 · agent-bus:9758)
+
+`spend_risk_lane` ⇔ this window's Object / WIP names a cart, checkout, or live order, **or** the house Objective names spend (shop-for-me, delivery, merchant checkout). Capability alone (e.g. a coding arc debugging a Place script) does not qualify.
+
+```
+∀ spend_risk_lane:
+  operator_says(checkpoint ∨ /checkpoint ∨ checkpoint <n|slug>)
+  ⇒ STOP mutating shop acts until a later operator turn names the next verb
+  ∧ (checkpoint ∧ X in the same message ⇒ record X on tip Next-pickup only; ¬ execute X)
+```
+
+| Forbidden after that utterance (until a later operator turn) | Still required / allowed |
+|---|---|
+| Menu / cart / restaurant hunt | Fire and verify the CHECKPOINT (§ Pipeline) when `transcript_id` + house resolve |
+| Place / re-Place / "try another store" | Asking tab's tip brief (§ Pipeline step 2) states the halt; tip Next-pickup names halt (no shop act until a later operator verb) — ¬ execute a same-message companion verb |
+| Cancel, opening a cancel flow, or offering cancel-vs-keep | Reply that the lane is stopped; quote any already-live order only as status, not as WIP to finish |
+| Any other mutating shop act | Read-only order-status /orders views are allowed (not required); they are not shop acts |
+
+**¬** `checkpoint` ≡ save-then-continue. The reconstitution index posts; the spend lane does not keep acting. Same-message companions (specimen: "checkpoint and hunt for something else") are tip residue only — they do not lift the halt. Specimen: 9758 lunch halt — operator said checkpoint; seat kept hunting after a PLACE-null false negative, then opened cancel-vs-keep; operator had to STOP and point at the live Peri order.
+
+Falsifier: after that utterance on a spend-risk lane, the seat Places, hunts, cancels, opens a cancel flow, or offers cancel-vs-keep before a **later** operator turn names the next verb — including when the checkpoint message itself named a companion verb (e.g. hunt).
 
 ## Spine vs enrollment
 
