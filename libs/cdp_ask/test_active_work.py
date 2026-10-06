@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -299,6 +300,74 @@ async def test_active_work_endpoint_busy(
             ],
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_drain_state_followup_only_not_restart_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = time.time()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-fu": {
+                "execution_state": {
+                    "execution_id": "followup:abc",
+                    "state": "streaming",
+                    "kind": "followup",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+                "holder": "operator",
+                "purpose": "operator-proxy",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.drain_state_snapshot()
+    assert snap["busy"] is False
+    assert snap["drain_busy_reason"] == "idle"
+    assert len(snap["in_flight"]) == 1
+    assert snap["in_flight"][0]["kind"] == "followup"
+    assert snap["holders"] == []
+
+
+@pytest.mark.asyncio
+async def test_drain_state_execution_in_flight_is_restart_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = time.time()
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-ex": {
+                "execution_state": {
+                    "execution_id": "exec-1",
+                    "state": "streaming",
+                    "kind": "execution",
+                    "started_at": now - 10,
+                    "updated_at": now,
+                    "holder_pid": 1,
+                },
+                "holder": "operator",
+                "purpose": "ask",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.drain_state_snapshot()
+    assert snap["busy"] is True
+    assert snap["drain_busy_reason"] == "in_flight_recorded"
+    assert snap["holders"]
 
 
 @pytest.mark.asyncio

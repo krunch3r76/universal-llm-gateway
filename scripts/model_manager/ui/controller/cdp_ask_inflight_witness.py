@@ -85,7 +85,9 @@ class CdpAskInFlightWitness:
     """``InFlightWitness`` over the cdp_ask host's registry ``execution_state`` rows."""
 
     async def observe(self, service: str) -> WitnessReport:
-        from claude_bundles.cdp_registry.execution_state import in_flight_rows
+        from claude_bundles.cdp_registry.execution_state import (
+            in_flight_rows_for_restart_gate,
+        )
 
         try:
             active, where = await asyncio.to_thread(_read_active)
@@ -96,10 +98,10 @@ class CdpAskInFlightWitness:
                 note=f"registry read failed: {type(exc).__name__}: {exc}",
             )
         now = time.time()
-        in_flight = in_flight_rows(active, now=now)
+        restart_gate = in_flight_rows_for_restart_gate(active, now=now)
         holders: list[dict[str, Any]] = []
         rows: list[dict[str, Any]] = []
-        for rid, row in in_flight.items():
+        for rid, row in restart_gate.items():
             entry = row.get("execution_state") or {}
             eid = str(entry.get("execution_id") or "")
             subject = " ".join(

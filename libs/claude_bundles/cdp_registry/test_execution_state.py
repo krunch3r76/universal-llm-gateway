@@ -24,3 +24,58 @@ def test_execution_state_for_execution_id_ttl_expired() -> None:
     _rid, entry, freshness = hit
     assert freshness == "expired_by_ttl"
     assert entry["state"] == "streaming"
+
+
+def test_followup_in_flight_excluded_from_restart_gate_rows() -> None:
+    now = time.time()
+    active = {
+        "reg-fu": {
+            "execution_state": {
+                "execution_id": "followup:abc",
+                "state": "streaming",
+                "kind": "followup",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            }
+        }
+    }
+    assert "reg-fu" in es.in_flight_rows(active, now=now)
+    assert es.in_flight_rows_for_restart_gate(active, now=now) == {}
+
+
+def test_execution_in_flight_included_in_restart_gate_rows() -> None:
+    now = time.time()
+    active = {
+        "reg-ex": {
+            "execution_state": {
+                "execution_id": "exec-1",
+                "state": "streaming",
+                "kind": "execution",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            }
+        }
+    }
+    assert es.in_flight_rows_for_restart_gate(active, now=now) == active
+
+
+def test_row_drain_protection_still_sees_followup_in_flight() -> None:
+    from claude_bundles.cdp_registry.dormant_drain import row_drain_protection
+
+    now = time.time()
+    row = {
+        "execution_state": {
+            "execution_id": "followup:abc",
+            "state": "streaming",
+            "kind": "followup",
+            "started_at": now - 10,
+            "updated_at": now,
+            "holder_pid": 1,
+        }
+    }
+    assert (
+        row_drain_protection(row, registration_id="reg-fu", now=now)
+        == "execution_in_flight"
+    )

@@ -277,6 +277,21 @@ def drain_projection(
     payload, _ = admission_projection(rows, execution_ids)
     in_flight = list(in_flight or [])
     unseated = list(unseated_pending or [])
+    from claude_bundles.cdp_registry.execution_state import (
+        in_flight_entry_contributes_restart_gate_busy,
+    )
+
+    restart_gate_in_flight = [
+        item
+        for item in in_flight
+        if in_flight_entry_contributes_restart_gate_busy(
+            {
+                "kind": item.get("kind") or "execution",
+                "execution_id": item.get("execution_id"),
+                "state": item.get("state"),
+            }
+        )
+    ]
     occupancy_data = (
         occupancy.snapshot()
         if occupancy is not None
@@ -303,10 +318,10 @@ def drain_projection(
         live_cse_target_count = live_cse_count
     live_port_count = occupancy_data.get("live_port_count")
     registry_capacity_count = occupancy_data.get("registry_capacity_count")
-    effective = len(in_flight) + len(unseated)
+    effective = len(restart_gate_in_flight) + len(unseated)
     if registry_error is not None:
         busy_reason = "registry_unreadable"
-    elif in_flight:
+    elif restart_gate_in_flight:
         busy_reason = "in_flight_recorded"
     elif unseated:
         busy_reason = "unseated_pending"
@@ -320,7 +335,7 @@ def drain_projection(
             "registry_error": registry_error,
             "in_flight": in_flight,
             "unseated_pending": unseated,
-            "holders": holders_from_in_flight(in_flight),
+            "holders": holders_from_in_flight(restart_gate_in_flight),
             "occupancy_freshness": freshness,
             "occupancy_source": occupancy_data.get("source"),
             "occupancy_error": occupancy_data.get("error"),
@@ -399,7 +414,7 @@ def drain_projection(
     )
     decl.transcript("holders", reason="census-shaped holders derived from in_flight")
     for name, reason in {
-        "busy": "derived: in_flight rows or unseated pending non-empty, or registry unreadable",
+        "busy": "derived: restart-gate in_flight rows or unseated pending non-empty, or registry unreadable",
         "drain_busy_reason": "derived drain-state reason",
         "busy_source": "authority the busy flag derives from",
         "registry_error": "last registry read error, else null",

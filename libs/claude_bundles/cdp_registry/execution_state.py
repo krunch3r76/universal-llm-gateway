@@ -25,6 +25,9 @@ Projections that must derive from this field, never from process memory:
 .row_drain_protection`` (``execution_in_flight``), the manage restart witness
 (``cdp_ask_inflight_witness``), and ``ExecutionStore`` hydration at boot.
 
+Restart-gate busy (non-force ``sync_restart cdp_ask``) excludes in-flight rows
+with ``kind=followup``; hygiene and ``in_flight_rows`` still count them.
+
 Invariant (the pattern another process-local gate can adopt)::
 
     gate G judges busy(work) ⇒ ∃ durable record R (fold + append log):
@@ -85,7 +88,9 @@ __all__ = [
     "execution_state_for_execution_id",
     "execution_state_of",
     "expire_stale_in_flight",
+    "in_flight_entry_contributes_restart_gate_busy",
     "in_flight_rows",
+    "in_flight_rows_for_restart_gate",
     "row_execution_in_flight",
     "row_for_execution_id",
     "set_execution_state",
@@ -180,6 +185,15 @@ def row_execution_in_flight(
     return entry
 
 
+def in_flight_entry_contributes_restart_gate_busy(entry: dict[str, Any]) -> bool:
+    """True when an in-flight ``execution_state`` entry blocks cdp_ask restart.
+
+    Followup paste stamps (``kind=followup``) remain in ``in_flight_rows`` for
+    hygiene but must not defer non-force recycle when no generate/ask work exists.
+    """
+    return str(entry.get("kind") or "execution") != "followup"
+
+
 def in_flight_rows(
     active: dict[str, dict[str, Any]], *, now: float | None = None
 ) -> dict[str, dict[str, Any]]:
@@ -190,6 +204,19 @@ def in_flight_rows(
         for rid, row in active.items()
         if isinstance(row, dict) and row_execution_in_flight(row, now=ts) is not None
     }
+
+
+def in_flight_rows_for_restart_gate(
+    active: dict[str, dict[str, Any]], *, now: float | None = None
+) -> dict[str, dict[str, Any]]:
+    """In-flight rows that defer cdp_ask non-force restart (excludes ``followup``)."""
+    ts = time.time() if now is None else now
+    out: dict[str, dict[str, Any]] = {}
+    for rid, row in in_flight_rows(active, now=ts).items():
+        entry = row_execution_in_flight(row, now=ts)
+        if entry is not None and in_flight_entry_contributes_restart_gate_busy(entry):
+            out[rid] = row
+    return out
 
 
 def set_execution_state(

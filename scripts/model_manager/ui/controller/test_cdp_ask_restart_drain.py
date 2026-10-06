@@ -313,6 +313,71 @@ def test_busy_witness_outranks_idle_witness() -> None:
     ]
 
 
+def test_cdp_ask_inflight_witness_idle_when_only_followup_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from scripts.model_manager.ui.controller.cdp_ask_inflight_witness import (
+        CdpAskInFlightWitness,
+    )
+
+    now = time.time()
+    active = {
+        "reg-fu": {
+            "execution_state": {
+                "execution_id": "followup:abc",
+                "state": "streaming",
+                "kind": "followup",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            },
+            "holder": "operator",
+        }
+    }
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.cdp_ask_inflight_witness._read_active",
+        lambda: (active, "local:test"),
+    )
+    report = _run(CdpAskInFlightWitness().observe("cdp_ask"))
+    assert report.verdict == "idle"
+
+
+def test_cdp_ask_inflight_witness_busy_when_execution_in_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from scripts.model_manager.ui.controller.cdp_ask_inflight_witness import (
+        CdpAskInFlightWitness,
+    )
+
+    now = time.time()
+    active = {
+        "reg-ex": {
+            "execution_state": {
+                "execution_id": "exec-1",
+                "state": "streaming",
+                "kind": "execution",
+                "started_at": now - 10,
+                "updated_at": now,
+                "holder_pid": 1,
+            },
+            "holder": "operator",
+            "purpose": "ask",
+        }
+    }
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.cdp_ask_inflight_witness._read_active",
+        lambda: (active, "local:test"),
+    )
+    report = _run(CdpAskInFlightWitness().observe("cdp_ask"))
+    assert report.verdict == "busy"
+    assert report.holders
+    assert report.holders[0]["op_id"] == "exec-1"
+
+
 def test_busy_report_probe_failure_mirrors_evaluate() -> None:
     witness = _StaticWitness(
         WitnessReport(
