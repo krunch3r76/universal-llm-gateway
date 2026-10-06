@@ -48,6 +48,7 @@ def _op_deadline_resolve(
     evidence: str | None = None,
     fulfilling_assertion_id: int | None = None,
     outcome: str = "met",
+    force: bool = True,
     **_: object,
 ) -> dict[str, Any]:
     """Atomically close a deadline entity: write confirmed assertion + set outcome.
@@ -69,6 +70,23 @@ def _op_deadline_resolve(
     claim = f"RESOLVED — {resolution_note}"
     evidence_text = evidence or f"deadline_resolve called; resolved_at={resolved_at}"
     observed_at = datetime.now(UTC).isoformat()
+    # Cheap existence check before belief-guard embeddings. The locked
+    # re-read below is still authoritative under BEGIN IMMEDIATE.
+    probe = cortex_conn()
+    try:
+        probe_rows = query(
+            probe,
+            "SELECT id FROM entities WHERE id = ? AND type = 'deadline'",
+            (deadline_id,),
+        )
+    finally:
+        probe.close()
+    if not probe_rows:
+        return {
+            "error": (
+                f"Deadline entity not found or not type='deadline': {deadline_id}"
+            )
+        }
     assertion_body = AssertionCreate(
         entity_id=deadline_id,
         claim=claim,
@@ -78,6 +96,9 @@ def _op_deadline_resolve(
         observed_at=observed_at,
         confidence_score=1.0,
         fulfillment_assertion_id=fulfilling_assertion_id,
+        # Default force skips the belief guard so a later opposite outcome
+        # (met after missed, or the reverse) is not 409'd by the prior note.
+        force=force,
     )
     side_effect_out: dict[str, object] = {}
     try:
@@ -154,15 +175,16 @@ def _op_deadline_resolve(
                 )
             finally:
                 conn.close()
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, HTTPException) as exc:
         logger.warning("deadline_resolve transaction failed: %s", exc)
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
         record(
             "mcp.cortex.deadline.outcome.failed",
             deadline_id=deadline_id,
-            error=str(exc),
+            error=str(detail),
         )
         return {
-            "error": f"deadline_resolve transaction failed: {exc}",
+            "error": f"deadline_resolve transaction failed: {detail}",
             "step": "transaction",
         }
 

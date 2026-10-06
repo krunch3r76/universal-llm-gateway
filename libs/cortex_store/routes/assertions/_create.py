@@ -406,7 +406,7 @@ def prepare_assertion_write(
             conn.close()
         return PreparedAssertionWrite(
             claim_hash="",
-            quality_score=prepared.quality_score,
+            quality_score=validation.quality_score,
             review_status=review_status,
             validation_warnings=validation_warnings,
             contradiction_warnings_out=None,
@@ -491,7 +491,7 @@ def prepare_assertion_write(
                     response.status_code = status.HTTP_200_OK
                     return PreparedAssertionWrite(
                         claim_hash=claim_hash,
-                        quality_score=prepared.quality_score,
+                        quality_score=validation.quality_score,
                         review_status=review_status,
                         validation_warnings=validation_warnings,
                         contradiction_warnings_out=contradiction_warnings_out,

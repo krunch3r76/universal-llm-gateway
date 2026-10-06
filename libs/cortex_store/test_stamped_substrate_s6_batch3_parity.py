@@ -610,6 +610,25 @@ def test_deadline_resolve_near_dup_outcome_failure_rolls_back(
         return original_execute(conn, sql, params)
 
     monkeypatch.setattr(dj_mod, "execute", execute_guard)
+    import cortex_store.routes.assertions._create as create_mod
+
+    near_dup_commits: list[bool] = []
+    original_record = create_mod.record_near_duplicate
+
+    def record_spy(
+        conn: Any,
+        assertion_id: int,
+        duplicate_of: int,
+        score: float,
+        *,
+        commit: bool = True,
+    ) -> None:
+        near_dup_commits.append(commit)
+        return original_record(
+            conn, assertion_id, duplicate_of, score, commit=commit
+        )
+
+    monkeypatch.setattr(create_mod, "record_near_duplicate", record_spy)
     deadline_id = "deadline:s6-batch3-neardup"
     prior = "RESOLVED — met on 2026-10-05"
     body = {
@@ -626,6 +645,7 @@ def test_deadline_resolve_near_dup_outcome_failure_rolls_back(
     dispatch_raw = execute_op("deadline_resolve", {"deadline_id": deadline_id, **body})
     assert dispatch_raw.get("step") == "transaction"
     assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == before
+    assert near_dup_commits == [False]
 
     typed_client = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="typed_dl_neardup"
@@ -637,6 +657,130 @@ def test_deadline_resolve_near_dup_outcome_failure_rolls_back(
     assert resp.status_code == 200
     assert resp.json().get("step") == "transaction"
     assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == before_typed
+    assert near_dup_commits == [False, False]
+
+
+@pytest.mark.offline
+def test_create_py_ruff_f821_clean() -> None:
+    """Undefined names in assertion create fail the F821 gate."""
+    import subprocess
+    import sys
+
+    target = (
+        Path(__file__).resolve().parent / "routes" / "assertions" / "_create.py"
+    )
+    ruff = Path(sys.executable).with_name("ruff")
+    proc = subprocess.run(
+        [str(ruff), "check", "--select", "F821", str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+@pytest.mark.offline
+def test_deadline_resolve_missing_skips_prepare(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing deadline returns before belief-guard prepare."""
+    import cortex_store.dispatch_ops.ops_journals as dj_mod
+
+    def refuse_prepare(*_a: object, **_k: object) -> None:
+        raise AssertionError("prepare_assertion_write ran for a missing deadline")
+
+    monkeypatch.setattr(dj_mod, "prepare_assertion_write", refuse_prepare)
+    bind_db = tmp_path / "cortex_dispatch_dl_missing.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    result = execute_op(
+        "deadline_resolve",
+        {
+            "deadline_id": "deadline:does-not-exist",
+            "resolution_note": "note",
+            "resolved_at": "2026-10-06T12:00:00Z",
+            "outcome": "met",
+        },
+    )
+    assert "error" in result
+    assert "not found" in result["error"]
+
+
+@pytest.mark.offline
+def test_deadline_resolve_force_skips_belief_block(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opposite-outcome re-resolve is not blocked when force stays default."""
+    import cortex_store.routes.assertions._create as create_mod
+    from cortex_store.belief_guard import WriteGuardResult
+
+    seen: dict[str, bool] = {}
+    original = create_mod.guard_assertion_write
+
+    def guard(
+        conn: Any, entity_id: str, claim: str, *, force: bool = False
+    ) -> WriteGuardResult:
+        seen["force"] = force
+        if not force:
+            return WriteGuardResult(
+                allowed=False,
+                block_detail={"error": "contradiction_detected"},
+            )
+        return original(conn, entity_id, claim, force=force)
+
+    monkeypatch.setattr(create_mod, "guard_assertion_write", guard)
+    deadline_id = "deadline:s6-batch3-force"
+    bind_db = tmp_path / "cortex_dispatch_dl_force.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    result = execute_op(
+        "deadline_resolve",
+        {
+            "deadline_id": deadline_id,
+            "resolution_note": "missed the window",
+            "resolved_at": "2026-10-06T12:00:00Z",
+            "outcome": "defaulted",
+        },
+    )
+    assert result.get("outcome_set") is True, result
+    assert seen.get("force") is True
+
+
+@pytest.mark.offline
+def test_deadline_resolve_http_exception_is_transaction_step(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTPException inside the locked write maps to step=transaction."""
+    import cortex_store.dispatch_ops.ops_journals as dj_mod
+
+    def boom(*_a: object, **_k: object) -> tuple[bool, int, None]:
+        raise HTTPException(status_code=409, detail="injected write conflict")
+
+    monkeypatch.setattr(dj_mod, "_write_assertion_locked", boom)
+    deadline_id = "deadline:s6-batch3-httperr"
+    bind_db = tmp_path / "cortex_dispatch_dl_httperr.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    result = execute_op(
+        "deadline_resolve",
+        {
+            "deadline_id": deadline_id,
+            "resolution_note": "note",
+            "resolved_at": "2026-10-06T12:00:00Z",
+            "outcome": "met",
+        },
+    )
+    assert result.get("step") == "transaction"
+    assert "injected write conflict" in result.get("error", "")
+    assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == 0
 
 
 @pytest.mark.offline
@@ -680,6 +824,7 @@ def test_deadline_resolve_embed_query_outside_write_lock(
             "resolution_note": "met on 2026-10-06",
             "resolved_at": "2026-10-06T12:00:00Z",
             "outcome": "met",
+            "force": False,
         },
     )
     assert result.get("outcome_set") is True, result
