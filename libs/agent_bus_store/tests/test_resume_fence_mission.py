@@ -86,6 +86,16 @@ def test_build_mission_block_includes_residue_and_window(bus_db) -> None:
     assert "FIX-18" in (mission.get("residue") or "")
     assert mission["handoff"]["todo"] == "todo:continuity-resume-fence"
     assert mission["bus_tail"] == ["10223#1"]
+    assert mission["house_unread"] == [
+        {
+            "turn": 1,
+            "from": "cursor",
+            "to": "house",
+            "subject": "INFO relay",
+            "body": "TYPE: INFO",
+        }
+    ]
+    assert any("house_unread" in step for step in mission["handoff"]["steps"])
 
 
 def test_handoff_steps_thread_slug_and_out_of_scope(bus_db) -> None:
@@ -145,6 +155,38 @@ def test_handoff_omits_rename_when_slug_missing(bus_db) -> None:
         thread_slug=None,
     )
     assert not any("rename_chat" in step for step in mission["handoff"]["steps"])
+
+
+def test_house_unread_includes_same_from_note(bus_db) -> None:
+    create_turn(
+        thread_id="10223",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="NOTE a:38216 specimen",
+        body="TYPE: NOTE\nfrom: 15266",
+        status="open",
+    )
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-note",
+    )
+    notes = [row for row in mission["house_unread"] if row["turn"] == 3]
+    assert notes == [
+        {
+            "turn": 3,
+            "from": "cursor",
+            "to": "web-anthropic",
+            "subject": "NOTE a:38216 specimen",
+            "body": "TYPE: NOTE\nfrom: 15266",
+        }
+    ]
 
 
 def test_mission_marker_preview_is_subset(bus_db) -> None:

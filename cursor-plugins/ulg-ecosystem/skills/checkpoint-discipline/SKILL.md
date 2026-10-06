@@ -100,8 +100,8 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 **Attended resume:** The continuity card ## Skills lists slugs. After resume, read that section and Use each slug before the first move.
 
 1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
-2. Pour bundle via layer 0; tip body is inlined. **¬** `fetch_unread` / ambient widen before bundle. **¬** `last=1` as tip (latest turn may be closeout).
-3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
+2. Pour bundle via layer 0; tip body is inlined. **¬** `fetch_unread` / ambient widen **before** bundle. **¬** `last=1` as tip (latest turn may be closeout).
+3. **House unread (BINDING):** after pour, read `mission.house_unread`. `get()` every omitted ¬CHECKPOINT row. `from=self` does **not** skip NOTE/MEMO (specimen 15120#55). Empty list ⇒ `fetch_unread(thread=T, compact=true)` once to confirm. Closeout-memo subjects stay compact. ¬ auto-widen on `has_earlier_turns`.
 4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume. Leftover conductor workers that landed as grandchildren of a coord stub (9676/9677 class) are **not** Child lanes — cite `agent-bus:{worker}` on the root CHECKPOINT or `lane_bind` the worker to the root. `conductor_coord_split_refused` retires the class going forward.
 5. **Verbal tape pour (STRUCTURAL — pickup stack layer 2c):** `continuity(op=resume)` is the sole pour — `resume_envelope` on the bundle carries last-session verbal tape (`scope=last_session`, interval between prior CHECKPOINT and tip CHECKPOINT). After `checkpoint_highlight` and `consolidate_summary_row`, synthesize `resume_envelope.tape_verbal` into orientation before operator-facing prose. **`thread_get(thread, include_resume=true)`** opt-in only when debugging envelope without resume. **¬** a separate `tape()` call on resume unless debugging. **`spine≠root`:** `resume_envelope` omitted — bounded packet / CLOSEOUT / sidecar only; `tape` returns 403.
 6. Then: card (shape) → **own `## Pools` row** (when present) → `{id}-transcript-projection.md` if named → scoreboard gated lane if named → name the purpose → one named hop (runbook body · sidecar · probe); widen only per the table below. **¬** load `## Windows` on resume. **¬** treat a fat continuity-doc as the constitution. Catch-up *card* + runbook association: Use the `continuity-thread-shaping` skill.
@@ -109,7 +109,7 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 | Widen when | Fetch |
 |---|---|
 | Operator asks / `--all` / `--context N` | As asked |
-| Unread `from≠self` ∧ subject ¬CHECKPOINT | That body (+ optional context) |
+| Unread on **this** house thread ∧ subject ¬CHECKPOINT | That body (`mission.house_unread` / `get`). `from=self` does not skip NOTE/MEMO |
 | Tip lacks Next-pickup / Anchor / stale vs known child activity | Prior 2–3 CPs or named sidecar |
 | Review / audit of whole-history | Fetch role:root CHECKPOINT turns (server-rendered `## Windows` on read; schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |

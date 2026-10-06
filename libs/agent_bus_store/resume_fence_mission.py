@@ -8,11 +8,18 @@ from typing import Any
 from cortex_store.transcript_cp_anchors import window_anchors_from_text
 from cortex_store.transcript_projection_membership import extract_cp_object
 
-from .checkpoint_projection import extract_authored_residue
+from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, extract_authored_residue
 from .db.connection import connect
 
 _SKETCHBOARD_SUFFIX = "-resume-fence-sketchboard.md"
 _INFO_SUBJECT_RE = re.compile(r"\bINFO\b", re.IGNORECASE)
+_MUST_READ_SUBJECT_RE = re.compile(
+    r"(?i)(?:\bNOTE\b|\bMEMO\b|\bLIAISON\b|\bINFO\b|^TYPE:)",
+)
+_CLOSEOUT_MEMO_RE = re.compile(r"(?i)^closeout memo")
+_UNREAD_LIST_CAP = 24
+_UNREAD_BODY_CAP = 8
+_UNREAD_BODY_CHARS = 4000
 
 
 def _sketchboard_in_tip(tip_body: str) -> str | None:
@@ -41,6 +48,49 @@ def _window_anchor(tip_body: str) -> dict[str, Any] | None:
         "transcript_id": transcript_id,
         "turns_at_cp": turns_at_cp,
     }
+
+
+def house_unread_turns(thread_id: str) -> list[dict[str, Any]]:
+    """Unread non-CHECKPOINT turns on the house root for resume pickup.
+
+    Compact list always. Inline ``body`` for NOTE/MEMO/LIAISON/INFO/TYPE
+    (not closeout-memo noise). ``from=self`` does not drop a NOTE.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT turn_number, from_agent, to_agent, subject, body
+            FROM turns
+            WHERE thread = ?
+              AND read_at IS NULL
+              AND status != 'superseded'
+              AND NOT ({CHECKPOINT_SUBJECT_SQL})
+            ORDER BY turn_number ASC
+            LIMIT ?
+            """,
+            (thread_id, _UNREAD_LIST_CAP),
+        ).fetchall()
+    items: list[dict[str, Any]] = []
+    bodies = 0
+    for row in rows:
+        subject = str(row["subject"] or "")
+        body = str(row["body"] or "")
+        entry: dict[str, Any] = {
+            "turn": int(row["turn_number"]),
+            "from": str(row["from_agent"] or ""),
+            "to": str(row["to_agent"] or ""),
+            "subject": subject,
+            "body": None,
+        }
+        must_read = bool(
+            _MUST_READ_SUBJECT_RE.search(subject) or body.lstrip().startswith("TYPE:")
+        )
+        closeout_noise = bool(_CLOSEOUT_MEMO_RE.match(subject))
+        if must_read and not closeout_noise and bodies < _UNREAD_BODY_CAP:
+            entry["body"] = body[:_UNREAD_BODY_CHARS]
+            bodies += 1
+        items.append(entry)
+    return items
 
 
 def _bus_tail_turns(
@@ -110,6 +160,10 @@ def build_mission_block(
         [
             "fold bus_tail INFO turns",
             (
+                "read mission.house_unread; get() omitted ¬CHECKPOINT "
+                "bodies; empty list ⇒ fetch_unread(thread=T, compact=true) once"
+            ),
+            (
                 "orientation: aim, Where we left off, already, object, "
                 "Are/Going, In one line; receipts after"
             ),
@@ -136,6 +190,7 @@ def build_mission_block(
             thread_id,
             after_turn=supersedes_num,
         ),
+        "house_unread": house_unread_turns(thread_id),
         "window_anchor": window,
         "lifecycle": {
             "clone_mode": "B" if window else "A",
@@ -186,6 +241,7 @@ def _extract_resume_open(card_text: str | None) -> str | None:
 
 __all__ = [
     "build_mission_block",
+    "house_unread_turns",
     "mission_marker_preview",
     "sketchboard_uri",
 ]

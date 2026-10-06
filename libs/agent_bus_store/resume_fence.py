@@ -19,7 +19,11 @@ from .house_pools import (
     parse_pools,
 )
 from .resume_fence_emit import fence_writes_then_emit
-from .resume_fence_mission import build_mission_block, mission_marker_preview
+from .resume_fence_mission import (
+    build_mission_block,
+    house_unread_turns,
+    mission_marker_preview,
+)
 from .resume_fence_store import (
     append_fence_event,
     find_open_fence,
@@ -187,6 +191,10 @@ def _derive_read_set(
         entities.append(entity_doc)
 
     bus_turns = [f"{thread_id}#{tip_turn}"]
+    for item in house_unread_turns(thread_id):
+        ref = f"{thread_id}#{item['turn']}"
+        if ref not in bus_turns:
+            bus_turns.append(ref)
     if supersedes_turn:
         with connect() as conn:
             row = conn.execute(
@@ -207,7 +215,7 @@ def _derive_read_set(
         },
         {
             "tool": "agent_bus_read",
-            "ops": ["get", "thread_get"],
+            "ops": ["get", "thread_get", "fetch_unread"],
             "thread": thread_id,
         },
         {

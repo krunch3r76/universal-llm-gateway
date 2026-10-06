@@ -117,6 +117,9 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     mcp_allow = bundle["read_set"]["readable"]["mcp_allow"]
     continuity = next(r for r in mcp_allow if r["tool"] == "continuity")
     assert "tape_read" in continuity["ops"]
+    bus_read = next(r for r in mcp_allow if r["tool"] == "agent_bus_read")
+    assert "fetch_unread" in bus_read["ops"]
+    assert bundle["mission"]["house_unread"] == []
     assert bundle["read_set"]["readable"]["bus_threads"] == ["10223"]
     citable_threads = bundle["read_set"]["citable"]["bus_threads"]
     assert "10223" in citable_threads

@@ -25,8 +25,9 @@ sketchboard, card, or prior-tab prose. Paths are bundle keys.
 | 3 highlight | `mission.highlight` | Quote as-is — the tip's own extract, not a seat summary |
 | 4 summary_row | `mission.summary_row` · `resume_envelope.summary_row_source` · `.summary_row_as_of_turn` | Settled · live · next. `as_of_turn < tip.turn_number ⇒ label stale`; tip wins |
 | 5 open line | `mission.resume_open` → `mission.open_line` | `open_line: null` is **normal** (card regex miss), not "no mission" — fall to `resume_open`, then row 2. Never fill the gap from a sketchboard |
-| 6 secondary stale | `read_set.citable` ids with turn < tip | Sketchboard · log rows · earlier CPs are secondary: cite by id as `(superseded by #<tip>)`, ¬ paraphrase into Been→Are→Going |
-| 7 handoff | `mission.handoff` · `mission.residue` · `mission.window_anchor` · `mission.bus_tail` · `mission.lifecycle.clone_mode` | `window_anchor` ⇒ Mode B identity (transcript_id · turns@cp); fold `bus_tail`; verbal tape from `continuity(op=resume)` only — ¬ second `tape(scope=window)`; `handoff` replaces external mission paste |
+| 6 house_unread | `mission.house_unread` | Unread ¬CHECKPOINT turns on this root. Read every inlined `body`. `get()` omitted ¬CHECKPOINT rows. `from=self` does **not** skip NOTE/MEMO. Empty list ⇒ `fetch_unread(thread=T, compact=true)` once. Closeout-memo subjects stay compact. Specimen: 15120#55 missed because pickup skipped same-from NOTE |
+| 7 secondary stale | `read_set.citable` ids with turn < tip | Sketchboard · log rows · earlier CPs are secondary: cite by id as `(superseded by #<tip>)`, ¬ paraphrase into Been→Are→Going |
+| 8 handoff | `mission.handoff` · `mission.residue` · `mission.window_anchor` · `mission.bus_tail` · `mission.lifecycle.clone_mode` | `window_anchor` ⇒ Mode B identity (transcript_id · turns@cp); fold `bus_tail`; verbal tape from `continuity(op=resume)` only — ¬ second `tape(scope=window)`; `handoff` replaces external mission paste |
 
 Read order in the fenced tab: this block, top-down, before any sketchboard, card, or prior-tab prose. A lower row does not outrank the tip.
 Spoken reply: `operator-posture` Rule 3, which starts at the aim. This block does not open that reply. Fence id and head sha join the receipts line.
