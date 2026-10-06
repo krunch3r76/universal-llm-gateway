@@ -60,18 +60,21 @@ from cdp_ask.models import (
 from cdp_ask.runner import resolve_followup_prompt
 
 _lane_locks: dict[str, asyncio.Lock] = {}
+_lane_targets: dict[str, str] = {}
 _inflight_guard = asyncio.Lock()
 _REATTACH_ELIGIBLE_ERRORS = frozenset(
     {"cse_not_found_on_lane", "lane_not_attached", "attended_dormant"}
 )
 
 
-async def _acquire_lane(registration_id: str) -> bool:
+async def _acquire_lane(registration_id: str, *, target_chat_url: str | None = None) -> bool:
     async with _inflight_guard:
         lock = _lane_locks.setdefault(registration_id, asyncio.Lock())
         if lock.locked():
             return False
         await lock.acquire()
+        if target_chat_url:
+            _lane_targets[registration_id] = target_chat_url
         return True
 
 
@@ -110,6 +113,19 @@ def _release_lane(registration_id: str) -> None:
     lock = _lane_locks.get(registration_id)
     if lock and lock.locked():
         lock.release()
+    _lane_targets.pop(registration_id, None)
+
+
+def _skip_borrow_restore_for_inflight_paste(outcome: ReattachOutcome) -> bool:
+    """Skip restore when another followup holds the lane lock on this bind."""
+    reg_id = (outcome.registration_id or "").strip()
+    bound = (outcome.reattach_bound_chat_url or "").strip()
+    if not reg_id or not bound:
+        return False
+    if not lane_in_flight(reg_id):
+        return False
+    held = (_lane_targets.get(reg_id) or "").strip()
+    return normalize_cse_url(held) == normalize_cse_url(bound)
 
 
 async def _resolve_holder(req: FollowupProjectAskRequest, store: ExecutionStore) -> str:
@@ -185,6 +201,7 @@ async def _reattach_teardown(
     *,
     retain_lane: bool,
     restore_borrowed_chat_url: bool = False,
+    skip_inflight_restore: bool = False,
 ) -> None:
     """Tear down reattach side-effects — park woken seats, drop minted lanes.
 
@@ -193,7 +210,10 @@ async def _reattach_teardown(
     """
     if outcome is None or not outcome.ok:
         return
-    if restore_borrowed_chat_url:
+    if restore_borrowed_chat_url and not (
+        skip_inflight_restore
+        and _skip_borrow_restore_for_inflight_paste(outcome)
+    ):
         restore_borrowed_chat_url_on_refusal(outcome)
     if retain_lane:
         await _disconnect_playwright(outcome.pw)
@@ -256,9 +276,17 @@ async def execute_followup(
             # resolve must use the attached host's registration_id, not a stale
             # value from the address retry.
             req = req.model_copy(update={"registration_id": outcome_reg})
-        target, err, resolution_path, target_binding = await resolve_followup_target(
-            req, store, lane_pin=lane_pin
-        )
+        try:
+            target, err, resolution_path, target_binding = (
+                await resolve_followup_target(req, store, lane_pin=lane_pin)
+            )
+        except BaseException:
+            await _reattach_teardown(
+                reattach_outcome,
+                retain_lane=req.retain_lane,
+                restore_borrowed_chat_url=True,
+            )
+            raise
         if err is not None:
             await _reattach_teardown(
                 reattach_outcome,
@@ -284,11 +312,14 @@ async def execute_followup(
         binding = "explicit"
     extra = response_extra(reattach_used=reattach_used, lane_created=lane_created)
 
-    if not await _acquire_lane(target.registration_id):
+    if not await _acquire_lane(
+        target.registration_id, target_chat_url=target.chat_url
+    ):
         await _reattach_teardown(
             reattach_outcome,
             retain_lane=req.retain_lane,
             restore_borrowed_chat_url=True,
+            skip_inflight_restore=True,
         )
         return fail_followup(
             "lane_busy",
@@ -304,6 +335,7 @@ async def execute_followup(
     )
 
     pw = None
+    paste_delivered = False
     try:
         found = await find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
@@ -350,6 +382,7 @@ async def execute_followup(
             return resp
 
         paste = await send_followup_paste_half(page, prompt)
+        paste_delivered = True
         receipt = paste.get("receipt")
         streaming = paste.get("streaming_at_paste")
         url = paste.get("url") or target.chat_url
@@ -423,5 +456,9 @@ async def execute_followup(
     finally:
         if pw is not None:
             await pw.stop()
-        await _reattach_teardown(reattach_outcome, retain_lane=req.retain_lane)
+        await _reattach_teardown(
+            reattach_outcome,
+            retain_lane=req.retain_lane,
+            restore_borrowed_chat_url=reattach_used and not paste_delivered,
+        )
         _release_lane(target.registration_id)

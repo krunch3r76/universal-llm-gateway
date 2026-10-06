@@ -91,6 +91,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
         "backfill_orphaned_retry_chat_urls",
     ),
     "bind_session_address": (".session_address", "bind_session_address"),
+    "restore_session_address": (".session_address", "restore_session_address"),
     "bind_driving_seat": (".session_address", "bind_driving_seat"),
     "apply_driving_seat_bind": (".session_address", "apply_driving_seat_bind"),
     "attachment_for_chat_url": (".session_address", "attachment_for_chat_url"),

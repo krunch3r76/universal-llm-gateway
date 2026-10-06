@@ -216,6 +216,66 @@ def bind_session_address(
     return True
 
 
+def restore_session_address(
+    registration_id: str,
+    *,
+    expected_chat_url: str,
+    restore_to: str | None,
+) -> str:
+    """Atomically revert or clear a borrow bind under ``ports_lock``.
+
+    Does not call ``apply_driving_seat_bind`` or ``upsert_holder_remote``.
+    """
+    rid = (registration_id or "").strip()
+    expected_norm = normalize_cse_url(expected_chat_url or "")
+    if not rid or not expected_norm:
+        return "missing"
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return "missing_row"
+        current = str(row.get("chat_url") or "").strip()
+        if normalize_cse_url(current) != expected_norm:
+            return "rebound"
+        if row_execution_in_flight(row):
+            return "in_flight"
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return "missing_row"
+        current = str(row.get("chat_url") or "").strip()
+        if normalize_cse_url(current) != expected_norm:
+            return "rebound"
+        updated = dict(row)
+        target_restore = (restore_to or "").strip() or None
+        if target_restore:
+            try:
+                assert_attachment_unique(
+                    active, target_restore, registration_id=rid
+                )
+            except ProtocolError:
+                target_restore = None
+        if target_restore:
+            updated["chat_url"] = target_restore
+            updated["chat_url_bound_at"] = time.time()
+        else:
+            updated.pop("chat_url", None)
+            updated.pop("chat_url_bound_at", None)
+        active[rid] = updated
+        _store.write_active(active)
+        _store.append_log(
+            "session_address_restored",
+            {
+                "registration_id": rid,
+                "expected_chat_url": expected_chat_url,
+                "restore_to": target_restore,
+                "prior_chat_url": current,
+            },
+        )
+    return "restored"
+
+
 def _next_seat_bound_at(ts: float, released: list[dict[str, Any]]) -> float:
     """Monotonic seat provenance: strictly after every predecessor closed in this bind."""
     floor = ts

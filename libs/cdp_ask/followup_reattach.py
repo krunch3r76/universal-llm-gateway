@@ -14,11 +14,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.skills_ui_panel import connect_cdp
+
+logger = logging.getLogger(__name__)
 
 _CSE_PATH_MARKER = "/cowork/cse_"
 
@@ -127,15 +127,19 @@ def _bind_chat_url(registration_id: str, chat_url: str) -> str | None:
     from claude_bundles.cdp_lane_reaper import release_dead_chat_url_holders
     from universal_protocol.errors import ProtocolError
 
-    def _once() -> None:
-        cdp_registry.bind_session_address(registration_id, chat_url=chat_url)
+    def _once() -> str | None:
+        if not cdp_registry.bind_session_address(registration_id, chat_url=chat_url):
+            return "attachment.refused"
+        return None
 
     try:
-        _once()
+        refused = _once()
     except ProtocolError as exc:
         if exc.code != "attachment.conflict":
             raise
     else:
+        if refused:
+            return refused
         return None
 
     store = cdp_registry._store
@@ -151,11 +155,13 @@ def _bind_chat_url(registration_id: str, chat_url: str) -> str | None:
     if not reaped:
         return "attachment.conflict"
     try:
-        _once()
+        refused = _once()
     except ProtocolError as exc:
         if exc.code == "attachment.conflict":
             return "attachment.conflict"
         raise
+    if refused:
+        return refused
     return None
 
 
@@ -175,28 +181,42 @@ async def _bind_or_drop(
 
 
 def restore_borrowed_chat_url_on_refusal(outcome: ReattachOutcome) -> None:
-    """Compare-and-restore a borrow bind when followup refuses after reattach."""
+    """Compare-and-restore a borrow bind when followup refuses after reattach.
+
+    A process crash between bind and teardown leaves the borrow on the registry
+    row; recovery is the next bind or the reaper — not automatic on restart.
+    """
     if not outcome.ok or outcome.lane_created or outcome.relaunched:
         return
     reg_id = (outcome.registration_id or "").strip()
     prior = (outcome.prior_chat_url or "").strip() or None
     bound = (outcome.reattach_bound_chat_url or "").strip() or None
-    if not reg_id or not bound or not prior:
+    if not reg_id or not bound:
         return
-    if normalize_cse_url(prior) == normalize_cse_url(bound):
+    if prior and normalize_cse_url(prior) == normalize_cse_url(bound):
         return
-    current = (cdp_registry.chat_url_for_registration(reg_id) or "").strip()
-    if normalize_cse_url(current) != normalize_cse_url(bound):
+    status = cdp_registry.restore_session_address(
+        reg_id,
+        expected_chat_url=bound,
+        restore_to=prior,
+    )
+    if status == "restored":
         logger.info(
-            "reattach refusal teardown: skip chat_url restore for %s "
-            "(current=%r expected bound=%r)",
+            "reattach refusal teardown: session_address_restored reg=%s restore_to=%r",
             reg_id,
-            current or None,
-            bound,
+            prior,
         )
-        return
-    with contextlib.suppress(Exception):
-        cdp_registry.bind_session_address(reg_id, chat_url=prior)
+    elif status == "rebound":
+        logger.info(
+            "reattach refusal teardown: skip chat_url restore for %s (rebound)",
+            reg_id,
+        )
+    else:
+        logger.warning(
+            "reattach refusal teardown: session_address restore status=%s reg=%s",
+            status,
+            reg_id,
+        )
 
 
 async def _disconnect_playwright(pw: Any | None) -> None:
