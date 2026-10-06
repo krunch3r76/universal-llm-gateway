@@ -1,4 +1,4 @@
-"""Fail-closed inject preflight — 404 unknown, 409 not-live before deposit."""
+"""Fail-closed inject preflight — 404 unknown, 409 terminal/ambiguous, admit grace before live register."""
 
 from __future__ import annotations
 
@@ -11,9 +11,11 @@ from services.git_integration_worker.cursor_sdk_park_preflight import (
     _TERMINAL_ROW_STATUSES,
     load_park_candidate_row,
 )
-from services.git_integration_worker.cursor_sdk_supersede import is_dispatch_live
 
 _CURSOR_SDK_DISPATCH_PREFIX = "cursor-sdk:dispatch:"
+
+# Admit window before register_live_run; callers that honor retryable retry.
+AWAITING_THREAD_RETRY_AFTER_S = 5
 
 
 class InjectRefusal(StrEnum):
@@ -21,11 +23,13 @@ class InjectRefusal(StrEnum):
 
     NOT_FOUND = "NOT_FOUND"
     NOT_LIVE = "NOT_LIVE"
+    AWAITING_THREAD = "AWAITING_THREAD"
 
 
 REFUSAL_HTTP: dict[InjectRefusal, tuple[int, bool]] = {
     InjectRefusal.NOT_FOUND: (404, False),
     InjectRefusal.NOT_LIVE: (409, False),
+    InjectRefusal.AWAITING_THREAD: (503, True),
 }
 
 
@@ -44,17 +48,10 @@ def _preflight_one_row(row: dict[str, Any]) -> InjectPreflight:
             row=row,
             detail=f"row status={status!r}",
         )
-    dispatch_key = str(row["dispatch_id"])
-    if not is_dispatch_live(dispatch_id=dispatch_key):
-        return InjectPreflight(
-            refusal=InjectRefusal.NOT_LIVE,
-            row=row,
-            detail="no live bridge run registered in this process",
-        )
     thread_id = row.get("thread_id")
     if not thread_id:
         return InjectPreflight(
-            refusal=InjectRefusal.NOT_LIVE,
+            refusal=InjectRefusal.AWAITING_THREAD,
             row=row,
             detail="thread_id not yet recorded",
         )
@@ -96,17 +93,19 @@ def preflight_inject(submitted_id: str) -> InjectPreflight:
             row=None,
             detail=f"ambiguous execution_id: {n} live rows share this execution_id",
         )
-    detail = (
-        failed[0].detail
-        if len(candidates) == 1
-        else "no live row for this execution_id"
+    if len(candidates) == 1:
+        return failed[0]
+    return InjectPreflight(
+        refusal=InjectRefusal.NOT_LIVE,
+        row=None,
+        detail="no live row for this execution_id",
     )
-    return InjectPreflight(refusal=InjectRefusal.NOT_LIVE, row=None, detail=detail)
 
 
 __all__ = [
     "InjectPreflight",
     "InjectRefusal",
+    "AWAITING_THREAD_RETRY_AFTER_S",
     "REFUSAL_HTTP",
     "preflight_inject",
 ]

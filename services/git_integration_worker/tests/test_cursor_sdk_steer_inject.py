@@ -325,7 +325,9 @@ async def test_inject_preflight_not_live(
     )
     ledger.mark_running(dispatch_id="disp-idle")
     pre = preflight_inject("disp-idle")
-    assert pre.refusal is InjectRefusal.NOT_LIVE
+    assert pre.refusal is None
+    assert pre.row is not None
+    assert pre.row["dispatch_id"] == "disp-idle"
 
 
 @pytest.mark.asyncio
@@ -771,9 +773,82 @@ def test_preflight_ac9_not_found(ledger_env: Any) -> None:
 def test_preflight_ac10_execution_id_not_live(ledger_env: Any) -> None:
     _ledger_admit(ledger_env, dispatch_id="D", execution_id="X")
     pre = preflight_inject("X")
-    assert pre.refusal is InjectRefusal.NOT_LIVE
-    assert pre.row is None
-    assert pre.detail == "no live bridge run registered in this process"
+    assert pre.refusal is None
+    assert pre.row is not None
+    assert pre.row["dispatch_id"] == "D"
+
+
+@pytest.mark.asyncio
+async def test_inject_admit_grace_spool_before_live_register(
+    ledger_env: Any, spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admitted row with thread_id deposits before register_live_run; claim once."""
+    _ledger_admit(ledger_env, dispatch_id="disp-grace", execution_id="exec-grace")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject._deposit_authority_turn",
+        lambda **_k: "41",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.steer_spool_dir",
+        lambda: spool,
+    )
+    pre = preflight_inject("disp-grace")
+    assert pre.refusal is None
+    status, body = await inject_one_dispatch(
+        dispatch_id="disp-grace",
+        directive="hold the ruling",
+        reason="admit grace",
+        actor="cursor",
+        ttl_s=300,
+    )
+    assert status == 202
+    assert body["inject_state"] == "pending"
+    from scripts.mcp_bridge_steer_inject import spool_path
+
+    assert spool_path(spool, "disp-grace").is_file()
+    pending = claim_pending("disp-grace", spool_dir=spool)
+    assert pending is not None
+    assert pending.directive == "hold the ruling"
+    register_live_run(
+        dispatch_id="disp-grace",
+        thread_id="10479",
+        source_repo="/tmp/repo",
+        run=object(),
+    )
+    try:
+        assert claim_pending("disp-grace", spool_dir=spool) is None
+    finally:
+        unregister_live_run(dispatch_id="disp-grace")
+
+
+@pytest.mark.asyncio
+async def test_inject_missing_thread_retryable(
+    ledger_env: Any,
+) -> None:
+    _ledger_admit(ledger_env, dispatch_id="disp-nothread", execution_id="exec-nt")
+    conn = ledger_env._connect()
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET thread_id='' WHERE dispatch_id=?",
+        ("disp-nothread",),
+    )
+    conn.commit()
+    pre = preflight_inject("disp-nothread")
+    assert pre.refusal is InjectRefusal.AWAITING_THREAD
+    status, body = await inject_one_dispatch(
+        dispatch_id="disp-nothread",
+        directive="wait",
+        reason="test",
+        actor="cursor",
+        ttl_s=300,
+    )
+    assert status == 503
+    assert body["retryable"] is True
+    assert body["code"] == "CURSOR_INJECT_AWAITING_THREAD"
+    assert body["data"]["retry_after_s"] == 5
 
 
 def test_preflight_ac11_pk_beats_execution_id_collision(ledger_env: Any) -> None:

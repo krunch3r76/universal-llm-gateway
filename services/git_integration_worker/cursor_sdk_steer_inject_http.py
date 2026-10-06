@@ -13,6 +13,7 @@ from services.git_integration_worker.cursor_sdk_steer_inject import (
     recover_undelivered_steer_from_thread,
 )
 from services.git_integration_worker.cursor_sdk_steer_inject_preflight import (
+    AWAITING_THREAD_RETRY_AFTER_S,
     REFUSAL_HTTP,
     InjectRefusal,
     preflight_inject,
@@ -49,7 +50,10 @@ async def inject_one_dispatch(
     actor: str,
     ttl_s: int | None,
 ) -> tuple[int, dict[str, Any]]:
-    """Deposit a steer directive on a live dispatch; 202 + pending handle."""
+    """Deposit a steer directive on a non-terminal dispatch; 202 + pending handle.
+
+    A registered live run is not required: the spool is claimed later by the bridge.
+    """
     if not directive.strip():
         return 422, error_envelope(
             code="CURSOR_INJECT_DIRECTIVE_REQUIRED",
@@ -65,15 +69,19 @@ async def inject_one_dispatch(
             message = f"inject refused: NOT_FOUND: {dispatch_id}"
         else:
             message = pre.detail or f"inject refused: {pre.refusal.value}"
-        echo_id = (
-            str(pre.row["dispatch_id"]) if pre.row is not None else dispatch_id
-        )
+        echo_id = str(pre.row["dispatch_id"]) if pre.row is not None else dispatch_id
+        data: dict[str, Any] = {
+            "dispatch_id": echo_id,
+            "refusal": pre.refusal.value,
+        }
+        if pre.refusal is InjectRefusal.AWAITING_THREAD:
+            data["retry_after_s"] = AWAITING_THREAD_RETRY_AFTER_S
         return status, error_envelope(
             code=f"CURSOR_INJECT_{pre.refusal.value}",
             message=message,
             source=_SOURCE,
             retryable=retryable,
-            data={"dispatch_id": echo_id, "refusal": pre.refusal.value},
+            data=data,
         )
     assert pre.row is not None
     resolved = str(pre.row["dispatch_id"])
