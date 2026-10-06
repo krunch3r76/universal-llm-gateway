@@ -18,7 +18,8 @@ from universal_logging import get_logger
 from ..db import WRITE_LOCK, cortex_conn, execute, json_encode, query
 from ..models import AssertionCreate
 from ..routes.assertions._create import (
-    create_assertion,
+    _write_assertion_locked,
+    prepare_assertion_write,
     start_new_assertion_side_effects,
 )
 from ..routes.deadlines import _RESOLVED_OUTCOMES, _list_deadlines_impl
@@ -79,6 +80,13 @@ def _op_deadline_resolve(
         fulfillment_assertion_id=fulfilling_assertion_id,
     )
     side_effect_out: dict[str, object] = {}
+    try:
+        prepared = prepare_assertion_write(assertion_body, Response())
+    except HTTPException as exc:
+        return {
+            "error": f"Assertion write failed: {exc.detail}",
+            "step": "assert",
+        }
 
     try:
         with WRITE_LOCK:
@@ -106,24 +114,39 @@ def _op_deadline_resolve(
                 )
                 merged_attrs = {**current_attrs, "outcome": outcome}
                 now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-                try:
-                    created = create_assertion(
+                if prepared.early is not None and prepared.early.item is not None:
+                    resolution_assertion_id = prepared.early.item.id
+                else:
+                    was_new, new_id, _near = _write_assertion_locked(
+                        conn,
                         assertion_body,
-                        Response(),
-                        conn=conn,
+                        claim_hash=prepared.claim_hash,
+                        quality_score=prepared.quality_score,
+                        review_status=prepared.review_status,
+                        contradiction_warnings_out=prepared.contradiction_warnings_out,
+                        entrenchment=prepared.entrenchment,
+                        predicate_form_to_store=prepared.predicate_form_to_store,
+                        normalize_result=prepared.normalize_result,
+                        raw_pf=prepared.raw_pf,
+                        norm_dec=prepared.norm_dec,
+                        cand_fp=prepared.cand_fp,
+                        norm_ver=prepared.norm_ver,
                         commit=False,
-                        hold_lock=False,
-                        side_effect_out=side_effect_out,
                     )
-                except HTTPException as exc:
-                    conn.rollback()
-                    return {
-                        "error": f"Assertion write failed: {exc.detail}",
-                        "step": "assert",
-                    }
-                resolution_assertion_id = (
-                    created.item.id if created.item is not None else None
-                )
+                    resolution_assertion_id = new_id
+                    if was_new:
+                        side_effect_out.update(
+                            item_id=new_id,
+                            claim=assertion_body.claim,
+                            entity_id=assertion_body.entity_id,
+                            confidence=assertion_body.confidence,
+                            derivation_type=assertion_body.derivation_type
+                            or "inference",
+                            entrenchment_score=prepared.entrenchment,
+                            observed_at=assertion_body.observed_at,
+                            prospective_summary=assertion_body.prospective_summary,
+                            events_json=assertion_body.events_json,
+                        )
                 execute(
                     conn,
                     "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
