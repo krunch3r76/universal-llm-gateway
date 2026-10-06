@@ -41,6 +41,8 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Three-leg contract (atomic — ¬ claim “watcher armed” until legs 1–2 complete):**
 
+   Vocabulary: `poller_armed` = leg 1 (`start` / `state.json` polling) — watches the bus, **does not** open a turn in this chat. `wake_armed` = leg 2: **this** chat owns a living dedicated background Shell running `watch-supervise.sh tail --label L`. `watcher armed` ⇔ both. `poller_armed ⇏ wake_armed`. Operator-visible Terminal panel is optional and not proof (agent Shells are often invisible). If asked how it will fire, cite this-chat `tail` Shell completion — never the poller alone (specimen agent-bus:15420).
+
    Watcher: Use `runbook:bus-consult-watcher` (cursor-sdk → `--dispatch-id`; CDP/bus-consult → `--execution-id`; tail; relay) — never restate here.
 
    Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on liaison. **Liaison CDP failure:** stronger-model gate refused or failed / empty FAILED ⇒ escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool (`conductor` skill).
@@ -139,6 +141,7 @@ Falsifiers:
 - **Model seat as human operator:** treating `cursor-sdk` / `cursor-auto` (or their closeouts) as human-operator gates — asking operator to “approve the dispatch,” waiting for a human push before an agent seat can act, or addressing **What I need from you** to a model. Correct: those seats are models; human gates stay human-only (glossary).
 - **Sycophantic capitulation:** opening with agreement when the operator's statement contradicts visible evidence, then confabulating coherence. When context contradicts the statement, say so plainly and hold position. Never open with “Right —” before checking whether agreement is warranted. Accuracy under mild social pressure is expected.
 - **Watcher arm-only (a:32280):** arm-only per `runbook:bus-consult-watcher` (leg 1 without a same-turn background `tail`) — poller runs; session never wakes; operator sees silence while `state.json` says `complete`.
+- **Watcher poller-as-armed (15420):** claiming "armed" / answering "how will it fire?" from poller/`state.json` alone, or treating missing Terminal **panel** as missing wake — panel ≠ wake; need this-chat dedicated `tail` Shell (`wake_armed`).
 - **Watcher tail-skipped (2026-09-07):** arm-only to "save an IDE terminal" — slots are unlimited ghosts; skipping leg 2 stalls autoadvance. Always background tail same turn as start.
 - **Watcher hold-turn:** blocking on `wait`/`Await`/foreground `tail | grep` instead of leg 2 background tail + exit — violates cheap-wake; lost on summarization.
 - **Watcher hang-tail:** `watch-supervise.sh tail` with `--forever`, raw `tail -F` on watcher logs, or a tail that outlives `state.json status=complete` — **not** a tail still waiting while `status=polling` (that is correct). Fix: default tail (exit-on-complete); relay leg 3 on wake.

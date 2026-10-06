@@ -89,6 +89,7 @@ When a bus-consult / dispatch-closeout arm misfires:
 | **Hang-tail** | `tail --forever`, raw `tail -F` on watcher log, or tail still running **after** `state.json status=complete` — **not** tail waiting while `status=polling` |
 | **Killed-tail** | IDE/supervisor killed the wake tail while the poller stayed up (a:36552, a:35526). Poller may later print `consult complete` / `closeout turn=` with **no** living tail ⇒ this chat never wakes |
 | **Tab-orphan** | Resume / new IDE tab reports a prior-tab poller label as armed without same-turn leg 2 on **this** tab (a:38172 · agent-bus:15266). Pollers survive retire (house or tab label); tab tails die with the departing chat — `prior_tab_poller_alive ⇏ this_tab_wake_armed` |
+| **Poller-as-armed** | Seat says "watcher armed" / answers "how will it fire?" from `start` / `state.json` / status=polling alone, with no this-chat living `tail` Shell (agent-bus:15420 2026-10-06 — operator: no Terminal panel). Vocabulary: `poller_armed` ≠ `wake_armed`; panel optional; dedicated `tail` Shell required |
 | **Wake-no-relay** | Leg 2 fired; turn closed without `get` + operator translate (leg 3) |
 | **Wrong target** | Wrong script family, bad `after_turn`, omitted `poll_hint.after_turn`, invalid flags, false `complete` |
 
@@ -100,18 +101,21 @@ On any class — **same turn** before close:
 2. **`assert` on `runbook:bus-consult-watcher`** — specimen + falsifier candidate.
 3. **¬ `todo:`** — accumulate; consolidate only on commission/triage.
 
-**Killed-tail / Tab-orphan recovery (binding — a:36552 · a:38172):**
+**Killed-tail / Tab-orphan / Poller-as-armed recovery (binding — a:36552 · a:38172 · 15420):**
 `poller_alive ⇏ wake_armed` (and `prior_tab_poller_alive ⇏ this_tab_wake_armed`).
 When the IDE tail dies (Shell abort, kill, elapsed fail) **or** on `resume` /
 hop successor / new IDE tab where **this** chat never owned the tail, and
 `state.json` is still `polling`/`predicate_unmet`, **same turn** re-arm leg 2
-for **owned** labels only: `watch-supervise.sh tail --label L` background, no
-`notify_on_output`. Owned = label starts with `{root}-` or `house-{root}-`, or
-`state.thread == root`, or the tip CHECKPOINT names `L` — same ownership test as
+for **owned** labels only: a **dedicated** Shell running
+`watch-supervise.sh tail --label L` background, no `notify_on_output`
+(¬ bundle with `pkill -f` matching that argv). Owned = label starts with
+`{root}-` or `house-{root}-`, or `state.thread == root`, or the tip CHECKPOINT
+names `L` — same ownership test as
 `libs/bus_watch/ide_hop_retire.py::departing_watcher_labels` plus house labels
 and CHECKPOINT-named labels. Do **not** attach tails for every polling file under
 `tmp/watchers/` (shared dir; foreign tails get superseded). The shell completion
-is the wake. Do not wait for a later chat question to discover `consult complete`
+is the wake — not the Cursor Terminal panel (often invisible; not required).
+Do not wait for a later chat question to discover `consult complete`
 in the log. If complete already printed with no tail attached: `get` the
 qualifying turn + relay now (leg 3); do not keep reporting the dispatch/densify
 as `in_flight`. Terminal unrelayed ⇒ leg 3, not a second start
@@ -123,11 +127,14 @@ as `in_flight`. Terminal unrelayed ⇒ leg 3, not a second start
 snap for terminal producer + qualifying turn — not leftover incomplete-slice
 fields left in `state.json` after the complete write.
 
-**Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 `tail --label L` background
-(exit-on-complete default; ¬ `--forever`; **always leg 2** — IDE terminal slots
-unlimited ghosts). No `notify_on_output`: the shell completion is the one
-harvest turn (friction 37400) → exit the admit turn → leg 3 on that completion.
-SoT: `runbook:bus-consult-watcher` · `runbook:bus-consult-watcher-terminal-harness` · posture: `operator-posture` Rule 2.
+**Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 dedicated `tail --label L`
+background (exit-on-complete default; ¬ `--forever`; **always leg 2** — IDE
+Shell slots unlimited ghosts; panel visibility irrelevant). No
+`notify_on_output`: the shell completion is the one harvest turn (friction
+37400) → exit the admit turn → leg 3 on that completion. Say `watcher armed`
+only when both legs hold; otherwise `poller_armed`. SoT:
+`runbook:bus-consult-watcher` · `runbook:bus-consult-watcher-terminal-harness` ·
+posture: `operator-posture` Rule 2.
 
 ## Pre-flight before reply
 

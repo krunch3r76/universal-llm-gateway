@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # Detached supervisor for agent-bus watchers (a:32280).
 # Owns poller lifetime outside Cursor Shell; IDE seat tails the log.
-# Attended wake: the IDE shell that runs ``tail`` exits on complete. That
+#
+# Vocabulary (binding — runbook:bus-consult-watcher):
+#   poller_armed = ``start`` (watches bus; state.json). Does NOT open a chat turn.
+#   wake_armed   = this-chat background Shell running ``tail --label L``.
+#   watcher armed ⇔ poller_armed ∧ wake_armed.
+#   poller_armed ⇏ wake_armed. prior_tab_poller ⇏ this_tab_wake (a:38172).
+# Attended wake: the IDE Shell that runs ``tail`` exits on complete. That
 # completion is the one harvest turn. Do not also set notify_on_output
-# (friction 37400; runbook:bus-consult-watcher).
+# (friction 37400; runbook:bus-consult-watcher + terminal-harness).
+# Operator-visible Terminal panel is optional and not proof — agent Shell
+# status=running on a dedicated ``tail`` command is wake_armed.
 #
 # IDE harness (operator 2026-09-07): background tail (leg 2) is required for
 # autoadvance — fire it every arm; IDE terminal slots have no practical limit.
+# Dedicated Shell for ``tail`` (do not bundle with pkill -f matching argv).
 # Exit-on-complete when state.json status=complete. While status=polling, tail
 # waiting is correct — not hang-tail. Hang-tail = --forever / tail -F / still
 # running after complete only.
@@ -30,7 +39,7 @@ UNIVERSAL_PYTHON="${HOME}/.venvs/universal/bin/python"
 mkdir -p "$WATCH_DIR"
 
 usage() {
-  sed -n '2,21p' "$0"
+  sed -n '2,30p' "$0"
   exit 2
 }
 
