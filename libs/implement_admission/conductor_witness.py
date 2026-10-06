@@ -32,6 +32,7 @@ from implement_admission.conductor_score_table import (
 from implement_admission.conductor_witness_defaults import (
     DefaultWitnessCortex,
     DefaultWitnessGit,
+    WitnessCortexUnavailable,
     closeout_witnesses_for_slug,
 )
 from implement_admission.conductor_witness_table import (
@@ -62,6 +63,7 @@ from implement_admission.events_conductor_witness import (
 
 __all__ = [
     "DefaultWitnessCortex",
+    "WitnessCortexUnavailable",
     "DefaultWitnessGit",
     "FoldDeps",
     "FoldResult",
@@ -179,6 +181,8 @@ def _scoreboard_rows(
         entity = deps.cortex.entity_get(source_ref, intent="full")
         raw_attrs = entity.get("attributes") if isinstance(entity, dict) else None
         attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
+    except WitnessCortexUnavailable:
+        raise
     except Exception:  # noqa: BLE001 — fold is advisory; G-ladder is the floor
         attrs = {}
     return resolve_scoreboard_rows(attrs)
@@ -211,6 +215,55 @@ def _render_folded_body(
     return "\n".join(out) + ("\n" if body.endswith("\n") else "")
 
 
+def _fold_cortex_unavailable(
+    slug: str,
+    *,
+    raw_body: str,
+    exc: WitnessCortexUnavailable,
+    files_root: Path,
+    write_journal: bool,
+) -> FoldResult:
+    """Cortex unread: every row is FOLD_FAILED, including G7 after a land.
+
+    A swallowed read used to leave G7 OPEN, which looks like the land was
+    never witnessed. The failure is the fold status and the missing-witness
+    text.
+    """
+    from implement_admission.conductor_score_journal import G_ROWS, forward_mutate_tip
+
+    rows = rows_in_tip(raw_body) or G_ROWS
+    detail = str(exc)
+    row_status = {row_id: "FOLD_FAILED" for row_id in rows}
+    missing = {row_id: detail for row_id in rows}
+    folded_body = _render_folded_body(raw_body, row_status, rows)
+    journal_applied = False
+    if folded_body != raw_body and write_journal:
+        result = forward_mutate_tip(
+            slug,
+            next_body=folded_body,
+            seat="fold",
+            dispatch_id=None,
+            reason="witness_fold",
+            rows=tuple(rows),
+            delta=f"cortex unread: {detail}",
+            files_root=files_root,
+        )
+        journal_applied = result.rejected_reason is None
+    return FoldResult(
+        slug=slug,
+        raw_body=raw_body,
+        folded_body=folded_body,
+        row_status=row_status,
+        witnesses={row_id: None for row_id in rows},
+        witnessed_done=frozenset(),
+        rows_claimed=frozenset(),
+        entry_gate=rows[0],
+        missing_witnesses=missing,
+        journal_applied=journal_applied,
+        tip_sha=tip_sha256(folded_body),
+    )
+
+
 def resolve_entry_gate_from_fold(fold: FoldResult) -> str:
     """First scoreboard row whose folded status is not DONE."""
     rows = tuple(fold.row_status.keys())
@@ -233,14 +286,23 @@ def fold_scoreboard(
     if prior is None:
         return None
     raw_body = prior[0]
-    rows = _scoreboard_rows(slug, deps=deps, files_root=root, tip_body=raw_body)
-    witnesses = row_witnesses(
-        slug,
-        tip_body=raw_body,
-        deps=deps,
-        files_root=root,
-        rows=rows,
-    )
+    try:
+        rows = _scoreboard_rows(slug, deps=deps, files_root=root, tip_body=raw_body)
+        witnesses = row_witnesses(
+            slug,
+            tip_body=raw_body,
+            deps=deps,
+            files_root=root,
+            rows=rows,
+        )
+    except WitnessCortexUnavailable as exc:
+        return _fold_cortex_unavailable(
+            slug,
+            raw_body=raw_body,
+            exc=exc,
+            files_root=root,
+            write_journal=write_journal,
+        )
     witnessed_done = frozenset(
         row_id for row_id, w in witnesses.items() if w is not None
     )

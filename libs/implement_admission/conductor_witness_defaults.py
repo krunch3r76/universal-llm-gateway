@@ -19,7 +19,12 @@ from implement_admission.conductor_witness_types import (
 )
 
 _BUS_TIMEOUT_S = 8.0
+_CORTEX_TIMEOUT_S = 15.0
 _TURNS_PAGE = 80
+
+
+class WitnessCortexUnavailable(RuntimeError):
+    """Cortex API read failed. Fold must not report a clean OPEN."""
 
 
 def _parse_iso(raw: str | None) -> datetime | None:
@@ -70,20 +75,43 @@ def score_resurface_in_turns(
     return False
 
 
+def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Read cortex through the API (UDS or HTTP). Never open the sqlite file."""
+    from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+
+    try:
+        with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT_S) as client:
+            resp = client.post(
+                "/dispatch", json={"tool": tool, "arguments": arguments}
+            )
+            if resp.status_code >= 400:
+                raise WitnessCortexUnavailable(
+                    f"cortex {tool} HTTP {resp.status_code}: {resp.text[:300]}"
+                )
+            payload = resp.json()
+    except WitnessCortexUnavailable:
+        raise
+    except (OSError, ValueError) as exc:
+        raise WitnessCortexUnavailable(f"cortex {tool} failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise WitnessCortexUnavailable(f"cortex {tool} returned a non-object")
+    if payload.get("error"):
+        raise WitnessCortexUnavailable(f"cortex {tool}: {payload.get('error')}")
+    return payload
+
+
 class DefaultWitnessCortex:
-    """Production cortex reader for conductor witness fold."""
+    """Production cortex reader for conductor witness fold.
+
+    Reads go through the cortex API. Dispatch HOME cannot open the sqlite
+    file (``unable to open database file``); a down API raises
+    ``WitnessCortexUnavailable`` so the fold can report failure.
+    """
 
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:
-        from cortex_store.card import get_entity_card
-        from cortex_store.db import cortex_conn
-
-        intent = kwargs.pop("intent", "card")
-        with cortex_conn() as conn:
-            if intent == "card":
-                return get_entity_card(conn, entity_id=entity_id)
-            from cortex_store.entity_read import get_entity_impl
-
-            return get_entity_impl(conn, entity_id=entity_id, **kwargs)
+        arguments: dict[str, Any] = {"entity_id": entity_id}
+        arguments.update(kwargs)
+        return _cortex_dispatch("entity_get", arguments)
 
     def list_relationships(
         self,
@@ -91,10 +119,14 @@ class DefaultWitnessCortex:
         *,
         type_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        from cortex_store.routes.relationships import list_relationships
-
-        result = list_relationships(entity_id=entity_id, type_id=type_id, limit=200)
-        return [item.model_dump() for item in result.items]
+        arguments: dict[str, Any] = {"entity_id": entity_id, "limit": 200}
+        if type_id is not None:
+            arguments["type_id"] = type_id
+        payload = _cortex_dispatch("relationships", arguments)
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise WitnessCortexUnavailable("cortex relationships: missing items")
+        return [item for item in items if isinstance(item, dict)]
 
 
 class DefaultWitnessGit:
@@ -193,4 +225,7 @@ def closeout_witnesses_for_slug(
     if body is None:
         tip = read_tip(slug, files_root=root)
         body = tip[0] if tip else ""
-    return row_witnesses(slug, tip_body=body or "", deps=deps, files_root=root)
+    try:
+        return row_witnesses(slug, tip_body=body or "", deps=deps, files_root=root)
+    except WitnessCortexUnavailable:
+        raise
