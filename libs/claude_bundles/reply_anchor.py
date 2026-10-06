@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
+
 def _has_alnum(text: str) -> bool:
     return any(ch.isalnum() for ch in text)
 _UNIQUE_LINE_RE = re.compile(r"#\d+-unique:\s*\S+")
@@ -34,7 +35,7 @@ def anchor_marker(prompt: str) -> str:
     return marker
 
 
-def unique_anchor(prompt: str) -> "ReplyAnchor":
+def unique_anchor(prompt: str) -> ReplyAnchor:
     """Anchor for a prompt whose first line is ``#N-unique:…``."""
     match = _UNIQUE_LINE_RE.search(prompt or "")
     if not match:

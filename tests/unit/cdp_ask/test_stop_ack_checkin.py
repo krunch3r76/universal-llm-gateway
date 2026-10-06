@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from cdp_ask.execution_store import ExecutionRecord, ExecutionStore
 from cdp_ask.models import FollowupProjectAskResponse
 from cdp_ask.stop_ack_checkin import (
@@ -17,13 +16,13 @@ from cdp_ask.stop_ack_checkin import (
     run_checkin_tick,
 )
 from claude_bundles.composer_submit import verification_marker
-from claude_bundles.reply_anchor import unique_anchor
+from claude_bundles.cse_session_fold import fold_pending_transitions
 from claude_bundles.cse_session_obligations import (
     get_open_stop_ack_owed_for_execution,
     mint_stop_ack_owed,
     sweep_stop_ack_owed_ttl,
 )
-from claude_bundles.cse_session_fold import fold_pending_transitions
+from claude_bundles.reply_anchor import unique_anchor
 
 pytestmark = pytest.mark.offline
 
