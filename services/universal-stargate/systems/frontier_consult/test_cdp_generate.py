@@ -1279,6 +1279,32 @@ def _live_operator_proxy_snap() -> dict[str, Any]:
     }
 
 
+def _review_body_over_min() -> str:
+    body = (
+        "## Question\n"
+        "Does the capture path drop frames?\n\n"
+        "```diff\n"
+        "+ kept = True\n"
+        "```\n\n"
+        "VERDICT: approve only if the fence covers the drop.\n"
+    )
+    pad = "context line.\n"
+    while len(body.encode("utf-8")) < 512:
+        body += pad
+    return body
+
+
+def _stub_missing_staged_file(monkeypatch: pytest.MonkeyPatch, mod: Any) -> None:
+    monkeypatch.setattr(
+        mod,
+        "staged_prompt_digest",
+        lambda _uri: {
+            "staged_prompt_byte_count": 1,
+            "staged_prompt_sha256": "0" * 64,
+        },
+    )
+
+
 def _stub_cdp_generate_after_gate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
@@ -1286,8 +1312,18 @@ def _stub_cdp_generate_after_gate(
 
     from systems.frontier_consult import cdp_generate as mod
 
-    monkeypatch.setattr(staging, "ephemeral_dir", lambda _eid: tmp_path)
+    from claude_bundles import cdp_review_prompt_gate as review_gate
+
+    def _ephemeral(execution_id: str):
+        return (
+            tmp_path
+            / "notes/system/ephemeral/cdp-endpoint"
+            / execution_id
+        )
+
+    monkeypatch.setattr(staging, "ephemeral_dir", _ephemeral)
     monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path)
+    monkeypatch.setattr(review_gate, "cortex_files_root", lambda: tmp_path)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
@@ -1381,7 +1417,7 @@ async def test_ac12_second_session_gate_hop_exempt_code_review_clear(
         model="cdp/opus-5.5",
         dispatch_thread_id="14394",
         parent_thread="14394",
-        prompt="Review the diff.\n",
+        prompt=_review_body_over_min(),
     )
     review_response = Response()
     review_result = await dispatch_cdp_generate(
@@ -1582,6 +1618,7 @@ async def test_dispatch_cdp_generate_forwards_parent_thread(
             prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
         ),
     )
+    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
@@ -1667,6 +1704,7 @@ async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
         )
 
     monkeypatch.setattr(mod, "_stage_inputs", _stage_inputs)
+    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(
         mod,
@@ -1714,10 +1752,11 @@ async def test_dispatch_cdp_generate_worker_purpose_defaults_to_ask(
         job="code-review",
         dispatch_thread_id="14638",
         model="cdp/opus-5.5",
-        prompt="Review the diff.\n",
+        prompt=_review_body_over_min(),
     )
     response = MagicMock()
     response.status_code = 202
+    _stub_missing_staged_file(monkeypatch, mod)
     await mod.dispatch_cdp_generate(
         request_id="req-purpose-default",
         body=body,
@@ -1792,6 +1831,7 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
             prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
         ),
     )
+    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
@@ -1965,6 +2005,7 @@ async def test_cdp_admit_registers_dispatch_link_row(
             },
         )(),
     )
+    _stub_missing_staged_file(monkeypatch, mod)
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
     monkeypatch.setattr(
@@ -2029,3 +2070,141 @@ async def test_cdp_admit_registers_dispatch_link_row(
     assert link["thread_id"] == thread_id
     assert link["pipeline_id"] == "cdp-generate"
     assert link["terminal_status"] is None
+
+
+_SPECIMEN_SIDECAR = (
+    "workspaces://universal-llm-gateway/tasks/review-packets/"
+    "a38142-stream-capture-code-review.md"
+)
+
+
+def _plant_sidecar(monkeypatch: pytest.MonkeyPatch, tmp_path: Any, body: str) -> None:
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from claude_bundles import cdp_review_prompt_gate as review_gate
+
+    ws = tmp_path / "ws"
+    rel = _SPECIMEN_SIDECAR.removeprefix("workspaces://")
+    path = ws / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(staging, "workspaces_root", lambda: ws)
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: tmp_path / "cortex")
+    monkeypatch.setattr(review_gate, "cortex_files_root", lambda: tmp_path / "cortex")
+
+
+@pytest.mark.asyncio
+async def test_review_prompt_placeholder_specimen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """a:38326 — 13-byte `# placeholder` code-review sidecar is 422.
+
+    Breaks when the gate runs after skill merge (byte count no longer 13),
+    when too_small wins over the placeholder code, or when details omit the
+    sidecar source.
+    """
+    from fastapi import Response
+
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    _plant_sidecar(monkeypatch, tmp_path, "# placeholder")
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        sidecar_ref=_SPECIMEN_SIDECAR,
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await dispatch_cdp_generate(
+            request_id="req-review-placeholder",
+            body=body,
+            response=Response(),
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.code == "review_prompt_placeholder"
+    details = exc.value.details or {}
+    assert details["prompt_byte_count"] == 13
+    assert len(details["prompt_sha256"]) == 64
+    assert details["source_ref"] == f"sidecar_ref={_SPECIMEN_SIDECAR}"
+    assert "cortex://" in details["fix_hint"]
+
+
+@pytest.mark.asyncio
+async def test_review_prompt_staged_digest_on_admit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A real review packet admits 202 and echoes the staged file digest.
+
+    Breaks when the receipt hashes the author body instead of the staged
+    file, or when a body at the 512-byte floor is still refused.
+    """
+    import hashlib
+
+    from fastapi import Response
+
+    from claude_bundles.cdp_review_prompt_gate import read_cortex_uri_bytes
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    _plant_sidecar(monkeypatch, tmp_path, _review_body_over_min())
+    _stub_cdp_generate_after_gate(monkeypatch, tmp_path / "cortex")
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="code-review",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="15426",
+        sidecar_ref=_SPECIMEN_SIDECAR,
+    )
+    response = Response()
+    result = await dispatch_cdp_generate(
+        request_id="req-review-pass",
+        body=body,
+        response=response,
+    )
+    assert response.status_code == 202
+    raw = read_cortex_uri_bytes(result["prompt_uri"])
+    assert result["staged_prompt_byte_count"] == len(raw)
+    assert result["staged_prompt_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["staged_prompt_byte_count"] >= 512
+
+
+@pytest.mark.asyncio
+async def test_staged_prompt_digest_on_freeform_admit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Non-review CDP generate still returns staged digest fields.
+
+    Breaks when the digest is attached only for code-review contracts.
+    """
+    import hashlib
+
+    from fastapi import Response
+
+    from claude_bundles import cdp_model_endpoint_staging as staging
+    from claude_bundles import cdp_review_prompt_gate as review_gate
+    from claude_bundles.cdp_review_prompt_gate import read_cortex_uri_bytes
+    from systems.frontier_consult.cdp_generate import dispatch_cdp_generate
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    cortex = tmp_path / "cortex"
+    monkeypatch.setattr(staging, "cortex_files_root", lambda: cortex)
+    monkeypatch.setattr(review_gate, "cortex_files_root", lambda: cortex)
+    _stub_cdp_generate_after_gate(monkeypatch, cortex)
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        job="freeform",
+        model="cdp/opus-5.5",
+        dispatch_thread_id="15426",
+        prompt="short freeform prompt\n",
+    )
+    response = Response()
+    result = await dispatch_cdp_generate(
+        request_id="req-freeform-digest",
+        body=body,
+        response=response,
+    )
+    assert response.status_code == 202
+    raw = read_cortex_uri_bytes(result["prompt_uri"])
+    assert result["staged_prompt_byte_count"] == len(raw)
+    assert result["staged_prompt_sha256"] == hashlib.sha256(raw).hexdigest()
+

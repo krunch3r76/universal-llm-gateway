@@ -24,6 +24,10 @@ from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
     stage_cdp_prompt_with_skills,
 )
+from claude_bundles.cdp_review_prompt_gate import (
+    enforce_review_prompt_gate,
+    staged_prompt_digest,
+)
 from claude_bundles.cdp_skill_profiles import infer_cdp_purpose
 from claude_bundles.chat_model_match import compose_cdp_model_with_effort
 from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
@@ -544,6 +548,12 @@ async def dispatch_cdp_generate(
         purpose = None
     gate_error_field = "session" if session_bound else "purpose"
     try:
+        enforce_review_prompt_gate(
+            contract=contract,
+            prompt_text=prompt if isinstance(prompt, str) else None,
+            sidecar_ref=sidecar_ref if isinstance(sidecar_ref, str) else None,
+            packet_path=packet_path if isinstance(packet_path, str) else None,
+        )
         staged = _stage_inputs(
             execution_id=execution_id,
             prompt=prompt,
@@ -555,7 +565,9 @@ async def dispatch_cdp_generate(
             dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
         )
     except CdpStagingError as exc:
-        if exc.code == "pool_blocked":
+        if exc.field:
+            field = exc.field
+        elif exc.code == "pool_blocked":
             field = "dispatch_thread_id"
         else:
             field = "skills" if str(exc.code).startswith("cdp_skills") else "prompt"
@@ -565,6 +577,7 @@ async def dispatch_cdp_generate(
             reason=exc.reason,
             status_code=422,
             code=exc.code,
+            details=exc.details,
         ) from exc
 
     mission_kind_raw = getattr(body, "mission_kind", None)
@@ -784,9 +797,12 @@ async def dispatch_cdp_generate(
         handoff_fields=handoff_fields,
     )
     response.status_code = 202
+    digest = staged_prompt_digest(staged.prompt_uri)
     return {
         "op": "generate",
         "status": "running",
+        "staged_prompt_byte_count": digest["staged_prompt_byte_count"],
+        "staged_prompt_sha256": digest["staged_prompt_sha256"],
         "execution_id": execution_id,
         "thread_id": str(thread_id),
         "thread": str(thread_id),

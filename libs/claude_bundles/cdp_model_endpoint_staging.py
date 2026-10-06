@@ -52,10 +52,19 @@ _CDP_SKILLS_PATH_SIM_REJECTED = "cdp_skills_path_sim_rejected"
 class CdpStagingError(ValueError):
     """Unstageable CDP prompt input (maps to HTTP 422)."""
 
-    def __init__(self, reason: str, *, code: str = "cdp_prompt_unstageable") -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        code: str = "cdp_prompt_unstageable",
+        details: dict | None = None,
+        field: str | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.code = code
+        self.details = details
+        self.field = field
 
 
 @dataclass(frozen=True, slots=True)
