@@ -264,6 +264,11 @@ def _op_view_render(
 
             if not root_id and mode in ("refresh", "full"):
                 root_id = _infer_root_id_from_derived_from(conn, document_id)
+            if mode in ("refresh", "full") and profile in _ROOT_REQUIRED_PROFILES and not root_id:
+                return _err(
+                    "view_root_required",
+                    f"root_id is required for profile {profile!r}",
+                )
 
             source_uri = doc.get("source_uri")
             if not source_uri:

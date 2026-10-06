@@ -541,19 +541,28 @@ def test_view_render_bodiless_post_refresh_requires_root_inference(
     monkeypatch.setattr(
         views_mod, "_infer_root_id_from_derived_from", lambda _c, _d: None
     )
-    with pytest.raises(AssertionError):
-        _run_parity_pair(
-            migrated_db_template,
-            tmp_path,
-            monkeypatch,
-            document_id=_DOC_ID,
-            root_id=_ROOT_ID,
-            seed_fn=seed,
-            assert_post_differs_from_pre=True,
-            assert_written_contains=_PENDING_REFRESH_CLAIM,
-            dispatch_call=lambda: execute_op("view_render", {"document_id": _DOC_ID}),
-            typed_call=lambda c: _typed_post_bodiless(c, f"/views/{_DOC_ID}/render"),
-        )
+    captured: dict[str, Any] = {}
+
+    def dispatch_call() -> dict[str, Any]:
+        captured["dispatch"] = execute_op("view_render", {"document_id": _DOC_ID})
+        return captured["dispatch"]
+
+    def typed_call(c: TestClient) -> tuple[dict[str, Any], int]:
+        captured["typed"] = _typed_post_bodiless(c, f"/views/{_DOC_ID}/render")
+        return captured["typed"]
+
+    _run_parity_pair(
+        migrated_db_template,
+        tmp_path,
+        monkeypatch,
+        document_id=_DOC_ID,
+        root_id=_ROOT_ID,
+        seed_fn=seed,
+        dispatch_call=dispatch_call,
+        typed_call=typed_call,
+    )
+    assert _error_code(captured["dispatch"]) == "view_root_required"
+    assert _error_code(captured["typed"][0]) == "view_root_required"
 
 
 @pytest.mark.offline
@@ -604,22 +613,32 @@ def test_view_render_full_without_root_id_requires_root_inference(
     monkeypatch.setattr(
         views_mod, "_infer_root_id_from_derived_from", lambda _c, _d: None
     )
-    with pytest.raises(AssertionError):
-        _run_parity_pair(
-            migrated_db_template,
-            tmp_path,
-            monkeypatch,
-            document_id=_DOC_ID,
-            root_id=_ROOT_ID,
-            seed_fn=seed,
-            assert_written_contains=_FULL_WITHOUT_ROOT_MARKER,
-            dispatch_call=lambda: execute_op(
-                "view_render", {"document_id": _DOC_ID, "mode": "full"}
-            ),
-            typed_call=lambda c: _typed_post(
-                c, f"/views/{_DOC_ID}/render", {"mode": "full"}
-            ),
+    captured: dict[str, Any] = {}
+
+    def dispatch_call() -> dict[str, Any]:
+        captured["dispatch"] = execute_op(
+            "view_render", {"document_id": _DOC_ID, "mode": "full"}
         )
+        return captured["dispatch"]
+
+    def typed_call(c: TestClient) -> tuple[dict[str, Any], int]:
+        captured["typed"] = _typed_post(
+            c, f"/views/{_DOC_ID}/render", {"mode": "full"}
+        )
+        return captured["typed"]
+
+    _run_parity_pair(
+        migrated_db_template,
+        tmp_path,
+        monkeypatch,
+        document_id=_DOC_ID,
+        root_id=_ROOT_ID,
+        seed_fn=seed,
+        dispatch_call=dispatch_call,
+        typed_call=typed_call,
+    )
+    assert _error_code(captured["dispatch"]) == "view_root_required"
+    assert _error_code(captured["typed"][0]) == "view_root_required"
 
 
 @pytest.mark.offline

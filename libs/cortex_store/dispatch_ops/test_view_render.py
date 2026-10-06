@@ -84,6 +84,24 @@ def test_idempotent_refresh_no_rev_bump(view_env: dict) -> None:
     assert second["view_rev"] == first["view_rev"]
 
 
+def test_full_root_required_when_inference_returns_none(view_env: dict, monkeypatch) -> None:
+    """Registered root-required view, mode=full, inference yields None."""
+    root_id, doc_id = _seed_case_and_doc(view_env)
+    reg = _op_view_render(
+        document_id=doc_id,
+        mode="register",
+        root_id=root_id,
+        view_profile="matter_charter",
+    )
+    assert "error" not in reg, reg
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_views._infer_root_id_from_derived_from",
+        lambda _conn, _doc: None,
+    )
+    result = _op_view_render(document_id=doc_id, mode="full")
+    assert result.get("code") == "view_root_required"
+
+
 def test_typed_errors(view_env: dict) -> None:
     missing = _op_view_render(document_id="document:missing", mode="register")
     assert missing.get("code") == "document_not_found"
