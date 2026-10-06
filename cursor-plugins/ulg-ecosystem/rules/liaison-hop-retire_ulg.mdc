@@ -32,8 +32,8 @@ same turn — **before** the `RETIRED → <transcript_id>` line. Skip `CreateGoa
 
 **Successor:** attach each ARM label (`watch-supervise.sh tail --label L`, background Shell,
 `block_until_ms 0`, no `notify_on_output`) + detach the heartbeat with
-`scripts/liaison-arm-loop.sh … --heartbeat 1200` then a separate monitored
-`tail -n0 -F tmp/watchers/liaison-loop-<root>.log` (`notify_on_output`
+`scripts/liaison-arm-loop.sh … --heartbeat 1200` then
+`scripts/liaison-monitor-loop.sh --log … --heartbeat …` (`notify_on_output`
 `^AGENT_LOOP_TICK_liaison`) — agent Shell must not be the `--loop` PID (a:38446).
 Do not `CreateGoal`. House pollers survive retire; tab tails die with the departing
 tab. The finish-watcher's shell completion is the harvest turn.
