@@ -54,6 +54,7 @@ from bus_watch.ide_hop_landing import (
     list_resume_transcript_ids,
     wait_for_landed_transcript,
 )
+from bus_watch.ide_hop_mutex import release_hop_mutex, try_acquire_hop_mutex
 from bus_watch.liaison_digest import effective_policy
 from bus_watch.state import read_state
 
@@ -576,14 +577,19 @@ def fire_ide_hop(
     exclude = {departing} if departing else set()
     # Prefer skip when the exact land already exists (15456 ask 2) — do not Ctrl+N.
     # Never treat the departing tab as that land (15456#4 F2).
+    # Tip hops: exact (root, tip). Tipless: only a *recent* land (partial hop /
+    # SIGTERM re-fire grace) — a:38364/a:38439; lifelong marker match is wrong.
+    partial_land_grace_s = 180.0
+    pre_since = None if tip_cp is not None else (time.time() - partial_land_grace_s)
     pre_id, pre_tel = find_transcript_with_hop_header(
         marker,
         AGENT_TRANSCRIPTS,
         root_id=land_root,
         tip_cp=tip_cp,
+        since_epoch=pre_since,
         exclude_ids=exclude,
     )
-    if pre_id is not None and tip_cp is not None and pre_id != departing:
+    if pre_id is not None and pre_id != departing:
         return {
             "ok": True,
             "landed_transcript_id": pre_id,
@@ -592,93 +598,101 @@ def fire_ide_hop(
             "keystroke": None,
             **result,
         }
+    mutex = try_acquire_hop_mutex(root_id)
+    if not mutex.get("ok"):
+        return {"ok": False, **mutex, **result}
     pre_existing: set[str] | None = None
     if tip_cp is None and land_root:
         pre_existing = list_resume_transcript_ids(land_root, AGENT_TRANSCRIPTS)
     fired_at = time.time()
     try:
-        proc = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", gui_host, cmd],
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "phase": "ssh_timeout", **result}
-    if proc.returncode != 0:
-        return {
-            "ok": False,
-            "phase": "keystroke",
-            "returncode": proc.returncode,
-            "stderr": proc.stderr[-1000:],
-            "stdout": proc.stdout[-1000:],
-            **result,
-        }
-    # The remote prints ``json.dumps(out, indent=2)``, so the last stdout line is
-    # a bare ``}`` — parsing only that line silently discarded the activate proof
-    # on every hop and left ``raw_stdout`` as the sole telemetry (hop 2026-09-15
-    # 05:12Z: diagnosis of a not_landed needed the focused handle and could not
-    # read it). Parse the whole payload; fall back to the last line for a remote
-    # that ever emits single-line JSON.
-    keystroke = _parse_keystroke_stdout(proc.stdout)
-    landed_id, land_tel = wait_for_landed_transcript(
-        marker,
-        since_epoch=fired_at,
-        transcripts_dir=AGENT_TRANSCRIPTS,
-        timeout_s=landing_timeout_s,
-        root_id=land_root,
-        tip_cp=tip_cp,
-        pre_existing_ids=pre_existing,
-        exclude_ids=exclude,
-    )
-    landed_via = "wait"
-    if landed_id is None:
-        # a:38356 / a:38362 — one find-transcript pass before any operator page.
-        # Exact (root, tip) land; compositor Agents-only is diagnostic only.
-        # Never recommend glass-launch / Ctrl+N when this hits.
-        landed_id, land_tel = find_transcript_with_hop_header(
+        try:
+            proc = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", gui_host, cmd],
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "phase": "ssh_timeout", **result}
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "phase": "keystroke",
+                "returncode": proc.returncode,
+                "stderr": proc.stderr[-1000:],
+                "stdout": proc.stdout[-1000:],
+                **result,
+            }
+        # The remote prints ``json.dumps(out, indent=2)``, so the last stdout line is
+        # a bare ``}`` — parsing only that line silently discarded the activate proof
+        # on every hop and left ``raw_stdout`` as the sole telemetry (hop 2026-09-15
+        # 05:12Z: diagnosis of a not_landed needed the focused handle and could not
+        # read it). Parse the whole payload; fall back to the last line for a remote
+        # that ever emits single-line JSON.
+        keystroke = _parse_keystroke_stdout(proc.stdout)
+        landed_id, land_tel = wait_for_landed_transcript(
             marker,
-            AGENT_TRANSCRIPTS,
+            since_epoch=fired_at,
+            transcripts_dir=AGENT_TRANSCRIPTS,
+            timeout_s=landing_timeout_s,
             root_id=land_root,
             tip_cp=tip_cp,
+            pre_existing_ids=pre_existing,
             exclude_ids=exclude,
         )
-        landed_via = "find_transcript"
-    if landed_id is not None and departing and landed_id == departing:
-        landed_id = None
         landed_via = "wait"
-    if landed_id is None:
-        toplevels = remote_toplevels(gui_host)
-        cursor_windows = (
-            [row for row in toplevels if row.get("app_id") == "cursor"]
-            if isinstance(toplevels, list)
-            else []
-        )
+        if landed_id is None:
+            # a:38356 / a:38362 — one find-transcript pass before any operator page.
+            # Exact (root, tip) land; compositor Agents-only is diagnostic only.
+            # Tipless: keep since_epoch so Sep-era foreign roots cannot match (a:38439).
+            # Never recommend glass-launch / Ctrl+N when this hits.
+            landed_id, land_tel = find_transcript_with_hop_header(
+                marker,
+                AGENT_TRANSCRIPTS,
+                root_id=land_root,
+                tip_cp=tip_cp,
+                since_epoch=None if tip_cp is not None else fired_at,
+                exclude_ids=exclude,
+            )
+            landed_via = "find_transcript"
+        if landed_id is not None and departing and landed_id == departing:
+            landed_id = None
+            landed_via = "wait"
+        if landed_id is None:
+            toplevels = remote_toplevels(gui_host)
+            cursor_windows = (
+                [row for row in toplevels if row.get("app_id") == "cursor"]
+                if isinstance(toplevels, list)
+                else []
+            )
+            return {
+                "ok": False,
+                "phase": "not_landed",
+                "keystroke": keystroke,
+                "toplevels": toplevels,
+                "cursor_windows": cursor_windows,
+                "land_find": land_tel,
+                "fix": (
+                    "no Cursor chat carries the exact hop land "
+                    f"(resume {land_root}, tip_cp={tip_cp}) after wait + one find-transcript "
+                    "pass — Ctrl+n / paste / Ctrl+Enter did not submit, or keys hit another "
+                    f"window; focus was {focus_title!r} on {gui_host}. cursor_windows is "
+                    "diagnostic only (Agents-only toplevel ≠ proof of miss). "
+                    "Do NOT re-fire glass-launch / Ctrl+N — that double-pastes when the "
+                    "first sequence partially ran or focus moved (a:38364 / a:38439). "
+                    "OPERATOR_GATE with message_path for a single manual paste if still "
+                    "missing after a short re-poll of find-transcript."
+                ),
+                **result,
+            }
         return {
-            "ok": False,
-            "phase": "not_landed",
-            "keystroke": keystroke,
-            "toplevels": toplevels,
-            "cursor_windows": cursor_windows,
+            "ok": True,
+            "landed_transcript_id": landed_id,
+            "landed_via": landed_via,
             "land_find": land_tel,
-            "fix": (
-                "no Cursor chat carries the exact hop land "
-                f"(resume {land_root}, tip_cp={tip_cp}) after wait + one find-transcript "
-                "pass — Ctrl+n / paste / Ctrl+Enter did not submit, or keys hit another "
-                f"window; focus was {focus_title!r} on {gui_host}. cursor_windows is "
-                "diagnostic only (Agents-only toplevel ≠ proof of miss). "
-                "Do NOT re-fire glass-launch / Ctrl+N — that double-pastes when the "
-                "first sequence partially ran or focus moved (a:38364). "
-                "OPERATOR_GATE with message_path for a single manual paste if still "
-                "missing after a short re-poll of find-transcript."
-            ),
+            "keystroke": keystroke,
             **result,
         }
-    return {
-        "ok": True,
-        "landed_transcript_id": landed_id,
-        "landed_via": landed_via,
-        "land_find": land_tel,
-        "keystroke": keystroke,
-        **result,
-    }
+    finally:
+        release_hop_mutex(root_id)

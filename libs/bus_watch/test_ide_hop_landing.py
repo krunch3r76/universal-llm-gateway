@@ -521,3 +521,57 @@ def test_live_watcher_labels_skips_dead_predicate_unmet(tmp_path: Path) -> None:
     )
     labels = live_watcher_labels("10479", watch_dir=tmp_path)
     assert labels == []
+
+
+def test_tipless_land_requires_resume_root_not_marker_alone() -> None:
+    """a:38439 — shared Liaison template must not match a foreign root."""
+    marker = "Liaison IDE hop (attended register). LOAD the liaison skill (do not skim)."
+    foreign = (
+        '{"role":"user","text":"resume 12286\\n'
+        f'{marker}\\nNOW: old"}}'
+    )
+    ours = (
+        '{"role":"user","text":"resume 15420\\n'
+        f'{marker}\\nNOW: collective"}}'
+    )
+    assert not first_line_matches_land(
+        foreign, root_id="15420", tip_cp=None, marker=marker
+    )
+    assert first_line_matches_land(
+        ours, root_id="15420", tip_cp=None, marker=marker
+    )
+
+
+def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
+    tmp_path: Path,
+) -> None:
+    """find_transcript without tip must not revive Sep-era foreign hops."""
+    marker = "Liaison IDE hop (attended register). LOAD the liaison skill (do not skim)."
+    fired = time.time()
+    foreign = (
+        f'{{"role":"user","text":"resume 12286\\n{marker}\\nNOW: old"}}'
+    )
+    ours = (
+        f'{{"role":"user","text":"resume 15420\\n{marker}\\nNOW: collective"}}'
+    )
+    _write_transcript(tmp_path, "old-foreign", foreign, fired - 600)
+    found, tel = find_transcript_with_hop_header(
+        marker,
+        tmp_path,
+        root_id="15420",
+        tip_cp=None,
+        since_epoch=fired,
+    )
+    assert found is None
+    assert tel["matches"] == 0
+    assert "resume 15420" in tel["needles"]
+    _write_transcript(tmp_path, "new-ours", ours, fired + 1)
+    found, tel = find_transcript_with_hop_header(
+        marker,
+        tmp_path,
+        root_id="15420",
+        tip_cp=None,
+        since_epoch=fired,
+    )
+    assert found == "new-ours"
+    assert tel["matches"] == 1

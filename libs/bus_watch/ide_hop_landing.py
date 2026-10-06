@@ -121,8 +121,10 @@ def first_line_matches_land(
     """True when the decoded hop body is an exact land for this hop.
 
     With tip: first body line is ``resume <root>`` (alone); ``tip_cp=N`` only on a
-    line that starts with ``Liaison IDE hop``. Without tip: full marker substring
-    in the body (mtime gated by the caller).
+    line that starts with ``Liaison IDE hop``. Without tip: when ``root_id`` is set,
+    first body line must still be ``resume <root>`` (a:38386 / a:38439 — marker-only
+    matched foreign roots that share the Liaison template); then full marker
+    substring (mtime gated by the caller).
     """
     body = extract_hop_body_text(first_line)
     if body is None:
@@ -144,6 +146,10 @@ def first_line_matches_land(
                 return True
             return False
         return False
+    if root_id:
+        lines = body.splitlines()
+        if not lines or lines[0].strip() != f"resume {root_id}":
+            return False
     text = (marker or "").strip()
     return bool(text) and text in body
 
@@ -162,6 +168,10 @@ def land_find_telemetry(
         needles.append(f"resume {root_id}")
         needles.append(f"tip_cp={tip_cp}")
         needles.append("Liaison IDE hop")
+    elif root_id:
+        needles.append(f"resume {root_id}")
+        if (marker or "").strip():
+            needles.append(marker.strip())
     elif (marker or "").strip():
         needles.append(marker.strip())
     out: dict[str, Any] = {"needles": needles, "matches": matches}

@@ -218,11 +218,16 @@ def main() -> int:
     if not seal.get("ok"):
         print(json.dumps({"ok": False, "root": args.root, **seal}, indent=2))
         return 2
+    # Tip fingerprints land (a:38386 / a:38439). When the seat omits --tip-cp,
+    # bind seal bus_turn so tipless marker-only cannot match a foreign root.
+    tip_cp = args.tip_cp
+    if tip_cp is None and seal.get("bus_turn") is not None:
+        tip_cp = int(seal["bus_turn"])
     message = build_ide_hop_message(
         args.root,
         row=row,
         arm_labels=labels,
-        tip_cp_ordinal=args.tip_cp,
+        tip_cp_ordinal=tip_cp,
         register=tick_register(args.root),
     )
     out = fire_ide_hop(
