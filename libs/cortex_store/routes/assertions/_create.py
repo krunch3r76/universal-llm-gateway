@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, Response, status
@@ -189,7 +190,9 @@ def _write_assertion_locked(
 
         match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
         if match:
-            record_near_duplicate(conn, new_id, match.existing_id, match.score)
+            record_near_duplicate(
+                conn, new_id, match.existing_id, match.score, commit=commit
+            )
             near_dup_warning = NearDuplicateWarning(
                 existing_id=match.existing_id, score=match.score
             )
@@ -271,29 +274,32 @@ def start_new_assertion_side_effects(
     )
 
 
-@router.post("", response_model=AssertionCreateResponse, openapi_extra=x_mcp("assert"))
-def create_assertion(
-    body: AssertionCreate,
-    response: Response,
-    *,
-    conn: Any | None = None,
-    commit: bool = True,
-    hold_lock: bool = True,
-    side_effect_out: dict[str, object] | None = None,
-) -> AssertionCreateResponse:
-    """Create an assertion with quality validation and idempotent dedup.
+@dataclass
+class PreparedAssertionWrite:
+    """Guard and scoring results computed with no writer lock held."""
 
-    v2.4 enforcement: hard rejects return 422 with specific diagnostics.
-    Warnings route the assertion to staging (review_status='staged').
-    Quality score is computed and stored on every new assertion.
+    claim_hash: str
+    quality_score: float
+    review_status: str | None
+    validation_warnings: list[dict[str, str]] | None
+    contradiction_warnings_out: list[ContradictionConflict] | None
+    entrenchment: float
+    predicate_form_to_store: str | None
+    normalize_result: dict | None
+    raw_pf: object
+    norm_dec: object
+    cand_fp: object
+    norm_ver: object
+    early: AssertionCreateResponse | None = None
 
-    Auditor-validatability (Checks 1–3): when confidence='confirmed', advisory
-    warnings are appended to validation_warnings if evidence_uris is absent,
-    derivation_type is inference, or the claim lacks an embedded verbatim quote
-    for verbatim-expected derivation types. These do NOT block the write.
-    Pass acknowledge_audit_gaps=['no_evidence_uris'|'inference_confirmed'|'no_verbatim']
-    to suppress individual checks with documented intent.
-    See agent_skill:auditor-validatable-confidence.
+
+def prepare_assertion_write(
+    body: AssertionCreate, response: Response
+) -> PreparedAssertionWrite:
+    """Validation, belief guard, entrenchment, and predicate normalize.
+
+    Uses its own connection and does not acquire ``WRITE_LOCK``. The guard's
+    embedding call stays off the global writer lock.
     """
     if body.confidence not in _VALID_CONFIDENCE:
         raise HTTPException(
@@ -302,7 +308,6 @@ def create_assertion(
         )
 
     validation = validate_assertion(body)
-
     if validation.rejected:
         diagnostics = [
             {"field": d.field, "message": d.message} for d in validation.hard_reject
@@ -333,11 +338,6 @@ def create_assertion(
             {"field": d.field, "category": d.category, "message": d.message}
             for d in validation.warnings
         ]
-        logger.info(
-            "Assertion routed to staging (quality_score=%.2f): %s",
-            validation.quality_score,
-            body.entity_id,
-        )
 
     auditor_warnings = check_confirmed_validatability(
         confidence=body.confidence,
@@ -375,12 +375,6 @@ def create_assertion(
             validation_warnings = []
         validation_warnings.extend(provenance_warnings)
 
-    # Protocol guard: supersedes_id chains lineage ONLY when force=true. The CAS
-    # UPDATE that writes the target's superseded_by (below) is gated on
-    # `body.force and body.supersedes_id`. Without force, the parameter name
-    # implies supersession but the write is a silent sibling — the target row is
-    # left untouched. Surface a visible advisory rather than no-op silently.
-    # See todo:cortex-assert-supersedes-id-friction.
     if body.supersedes_id is not None and not body.force:
         if validation_warnings is None:
             validation_warnings = []
@@ -410,20 +404,30 @@ def create_assertion(
                 )
         finally:
             conn.close()
-        return AssertionCreateResponse(
-            was_new=False,
-            item=None,
-            dry_run=True,
-            would_write=True,
+        return PreparedAssertionWrite(
+            claim_hash="",
+            quality_score=prepared.quality_score,
+            review_status=review_status,
             validation_warnings=validation_warnings,
+            contradiction_warnings_out=None,
+            entrenchment=0.0,
+            predicate_form_to_store=None,
+            normalize_result=None,
+            raw_pf=None,
+            norm_dec=None,
+            cand_fp=None,
+            norm_ver=None,
+            early=AssertionCreateResponse(
+                was_new=False,
+                item=None,
+                dry_run=True,
+                would_write=True,
+                validation_warnings=validation_warnings,
+            ),
         )
 
     claim_hash = compute_claim_hash(body.entity_id, body.claim)
-
-    owns_conn = conn is None
-    if owns_conn:
-        conn = cortex_conn()
-    assert conn is not None
+    conn = cortex_conn()
     try:
         entities = query(
             conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
@@ -433,26 +437,20 @@ def create_assertion(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Entity not found: {body.entity_id}",
             )
-
         entity_type_row = query(
             conn, "SELECT type FROM entities WHERE id = ?", (body.entity_id,)
         )
         entity_type = str(entity_type_row[0]["type"]) if entity_type_row else None
-
-        # C2: Write-path contradiction check (entity-local, AGM G3)
         contradiction_warnings_out: list[ContradictionConflict] | None = None
         if body.force and body.supersedes_id is not None:
             sup_target = query(
-                conn,
-                "SELECT id FROM assertions WHERE id = ?",
-                (body.supersedes_id,),
+                conn, "SELECT id FROM assertions WHERE id = ?", (body.supersedes_id,)
             )
             if not sup_target:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=(f"supersedes_id assertion not found: {body.supersedes_id}"),
                 )
-
         guard = guard_assertion_write(
             conn, body.entity_id, body.claim, force=body.force
         )
@@ -474,7 +472,6 @@ def create_assertion(
                 )
                 for c in guard.contradiction_warnings
             ]
-
         if should_apply_recorder_known_state(body, entity_type=entity_type):
             known = check_recorder_known_state(conn, body)
             if known.already_known and known.matched_assertion_id is not None:
@@ -492,16 +489,29 @@ def create_assertion(
                         anchor=known.anchor,
                     )
                     response.status_code = status.HTTP_200_OK
-                    return AssertionCreateResponse(
-                        was_new=False,
-                        item=item,
+                    return PreparedAssertionWrite(
+                        claim_hash=claim_hash,
+                        quality_score=prepared.quality_score,
+                        review_status=review_status,
                         validation_warnings=validation_warnings,
-                        contradiction_warnings=contradiction_warnings_out,
-                        already_known=True,
-                        known_state_reason=known.known_state_reason,
-                        matched_assertion_id=known.matched_assertion_id,
+                        contradiction_warnings_out=contradiction_warnings_out,
+                        entrenchment=0.0,
+                        predicate_form_to_store=None,
+                        normalize_result=None,
+                        raw_pf=None,
+                        norm_dec=None,
+                        cand_fp=None,
+                        norm_ver=None,
+                        early=AssertionCreateResponse(
+                            was_new=False,
+                            item=item,
+                            validation_warnings=validation_warnings,
+                            contradiction_warnings=contradiction_warnings_out,
+                            already_known=True,
+                            known_state_reason=known.known_state_reason,
+                            matched_assertion_id=known.matched_assertion_id,
+                        ),
                     )
-
         entrenchment = compute_entrenchment(
             confidence=body.confidence,
             derivation_type=body.derivation_type or "inference",
@@ -510,11 +520,6 @@ def create_assertion(
             entity_id=body.entity_id,
             conn=conn,
         )
-
-        # v1.3 Q5: normalize caller-seeded predicate_form before INSERT.
-        # Runs outside WRITE_LOCK — normalize reads entities.id via DBEntityResolver
-        # (no writes). canonical_form is what gets stored; normalize_result drives
-        # the requires_human_review flag path inside the lock.
         predicate_form_to_store: str | None = None
         normalize_result: dict | None = None
         if body.predicate_form is not None:
@@ -523,8 +528,6 @@ def create_assertion(
                     body.entity_id, body.predicate_form, body.claim, conn
                 )
             )
-
-        # v1.3.1 ledger values (write-once, None when no predicate_form seeded)
         raw_pf = (
             normalize_result.get("raw_predicate_form") if normalize_result else None
         )
@@ -539,7 +542,68 @@ def create_assertion(
         norm_ver = (
             normalize_result.get("normalizer_version") if normalize_result else None
         )
+        return PreparedAssertionWrite(
+            claim_hash=claim_hash,
+            quality_score=validation.quality_score,
+            review_status=review_status,
+            validation_warnings=validation_warnings,
+            contradiction_warnings_out=contradiction_warnings_out,
+            entrenchment=entrenchment,
+            predicate_form_to_store=predicate_form_to_store,
+            normalize_result=normalize_result,
+            raw_pf=raw_pf,
+            norm_dec=norm_dec,
+            cand_fp=cand_fp,
+            norm_ver=norm_ver,
+        )
+    finally:
+        conn.close()
 
+
+@router.post("", response_model=AssertionCreateResponse, openapi_extra=x_mcp("assert"))
+def create_assertion(
+    body: AssertionCreate,
+    response: Response,
+    *,
+    conn: Any | None = None,
+    commit: bool = True,
+    hold_lock: bool = True,
+    side_effect_out: dict[str, object] | None = None,
+) -> AssertionCreateResponse:
+    """Create an assertion with quality validation and idempotent dedup.
+
+    v2.4 enforcement: hard rejects return 422 with specific diagnostics.
+    Warnings route the assertion to staging (review_status='staged').
+    Quality score is computed and stored on every new assertion.
+
+    Auditor-validatability (Checks 1–3): when confidence='confirmed', advisory
+    warnings are appended to validation_warnings if evidence_uris is absent,
+    derivation_type is inference, or the claim lacks an embedded verbatim quote
+    for verbatim-expected derivation types. These do NOT block the write.
+    Pass acknowledge_audit_gaps=['no_evidence_uris'|'inference_confirmed'|'no_verbatim']
+    to suppress individual checks with documented intent.
+    See agent_skill:auditor-validatable-confidence.
+    """
+    prepared = prepare_assertion_write(body, response)
+    if prepared.early is not None:
+        return prepared.early
+    claim_hash = prepared.claim_hash
+    review_status = prepared.review_status
+    validation_warnings = prepared.validation_warnings
+    contradiction_warnings_out = prepared.contradiction_warnings_out
+    entrenchment = prepared.entrenchment
+    predicate_form_to_store = prepared.predicate_form_to_store
+    normalize_result = prepared.normalize_result
+    raw_pf = prepared.raw_pf
+    norm_dec = prepared.norm_dec
+    cand_fp = prepared.cand_fp
+    norm_ver = prepared.norm_ver
+
+    owns_conn = conn is None
+    if owns_conn:
+        conn = cortex_conn()
+    assert conn is not None
+    try:
         near_dup_warning: NearDuplicateWarning | None = None
 
         def _locked_write() -> tuple[bool, int, NearDuplicateWarning | None]:
@@ -547,7 +611,7 @@ def create_assertion(
                 conn,
                 body,
                 claim_hash=claim_hash,
-                quality_score=validation.quality_score,
+                quality_score=prepared.quality_score,
                 review_status=review_status,
                 contradiction_warnings_out=contradiction_warnings_out,
                 entrenchment=entrenchment,

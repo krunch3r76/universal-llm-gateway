@@ -576,6 +576,117 @@ def test_deadline_resolve_twice_reuses_assertion(
     assert _deadline_attrs(cortex_db.cortex_conn(), deadline_id).get("outcome") == "met"
 
 
+def _seed_similar_resolved_claim(conn: sqlite3.Connection, deadline_id: str, claim: str) -> None:
+    from cortex_store.claim_hash import compute_claim_hash
+
+    claim_hash = compute_claim_hash(deadline_id, claim)
+    cur = conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, confidence_score, evidence, "
+        "derivation_type, observed_at, claim_hash) "
+        "VALUES (?, ?, 'confirmed', 1.0, 'prior', 'agent_observation', datetime('now'), ?)",
+        (deadline_id, claim, claim_hash),
+    )
+    conn.execute(
+        "INSERT INTO assertions_fts (assertion_id, entity_id, indexed_text) VALUES (?, ?, ?)",
+        (int(cur.lastrowid), deadline_id, claim),
+    )
+    conn.commit()
+
+
+@pytest.mark.offline
+def test_deadline_resolve_near_dup_outcome_failure_rolls_back(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A near-duplicate flag must not commit before the outcome UPDATE."""
+    import cortex_store.dispatch_ops.ops_journals as dj_mod
+
+    original_execute = dj_mod.execute
+
+    def execute_guard(conn: Any, sql: str, params: tuple[Any, ...] = ()) -> int:
+        if "UPDATE entities SET attributes" in sql:
+            raise sqlite3.OperationalError("injected outcome update failure")
+        return original_execute(conn, sql, params)
+
+    monkeypatch.setattr(dj_mod, "execute", execute_guard)
+    deadline_id = "deadline:s6-batch3-neardup"
+    prior = "RESOLVED — met on 2026-10-05"
+    body = {
+        "resolution_note": "met on 2026-10-06",
+        "resolved_at": "2026-10-06T12:00:00Z",
+        "outcome": "met",
+    }
+    bind_db = tmp_path / "cortex_dispatch_dl_neardup.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    _seed_similar_resolved_claim(cortex_db.cortex_conn(), deadline_id, prior)
+    before = _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id)
+    dispatch_raw = execute_op("deadline_resolve", {"deadline_id": deadline_id, **body})
+    assert dispatch_raw.get("step") == "transaction"
+    assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == before
+
+    typed_client = _isolated_client(
+        migrated_db_template, tmp_path, monkeypatch, suffix="typed_dl_neardup"
+    )
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    _seed_similar_resolved_claim(cortex_db.cortex_conn(), deadline_id, prior)
+    before_typed = _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id)
+    resp = typed_client.post(f"/deadlines/{deadline_id}/resolve", json=body)
+    assert resp.status_code == 200
+    assert resp.json().get("step") == "transaction"
+    assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == before_typed
+
+
+@pytest.mark.offline
+def test_deadline_resolve_embed_query_outside_write_lock(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Belief-guard embedding runs before WRITE_LOCK is acquired."""
+    import cortex_store.belief_guard as guard_mod
+    import cortex_store.dispatch_ops.ops_journals as dj_mod
+    from cortex_store.db import WRITE_LOCK
+
+    seen: dict[str, bool] = {}
+
+    def embed_query(text: str) -> list[float]:
+        seen["locked"] = WRITE_LOCK.locked()
+        return [0.0]
+
+    monkeypatch.setattr(guard_mod.cortex_embeddings, "is_configured", lambda: True)
+    monkeypatch.setattr(guard_mod.vector_store, "is_initialized", lambda: True)
+    monkeypatch.setattr(guard_mod.cortex_embeddings, "embed_query", embed_query)
+    monkeypatch.setattr(
+        guard_mod.vector_store,
+        "search_by_entity",
+        lambda embedding, entity_id, n: [],
+    )
+
+    deadline_id = "deadline:s6-batch3-embed-lock"
+    bind_db = tmp_path / "cortex_dispatch_dl_embed.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    _seed_similar_resolved_claim(
+        cortex_db.cortex_conn(), deadline_id, "RESOLVED — met on 2026-10-05"
+    )
+    result = execute_op(
+        "deadline_resolve",
+        {
+            "deadline_id": deadline_id,
+            "resolution_note": "met on 2026-10-06",
+            "resolved_at": "2026-10-06T12:00:00Z",
+            "outcome": "met",
+        },
+    )
+    assert result.get("outcome_set") is True, result
+    assert seen.get("locked") is False
+    assert dj_mod.WRITE_LOCK is WRITE_LOCK
+
+
 @pytest.mark.offline
 def test_batch3_router_resolution_no_shadow_baseline_routes(
     migrated_db_path: Path,

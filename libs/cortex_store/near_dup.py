@@ -98,8 +98,14 @@ def record_near_duplicate(
     assertion_id: int,
     duplicate_of: int,
     score: float,
+    *,
+    commit: bool = True,
 ) -> None:
-    """Record a near-duplicate flag between two assertions."""
+    """Record a near-duplicate flag between two assertions.
+
+    ``commit=False`` keeps the caller's transaction open. The default commits,
+    matching callers that are not inside a larger write.
+    """
     now = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         conn.execute(
@@ -107,7 +113,8 @@ def record_near_duplicate(
             "VALUES (?, ?, ?, ?)",
             (assertion_id, duplicate_of, score, now),
         )
-        conn.commit()
+        if commit:
+            conn.commit()
         logger.info(
             "Near-duplicate flagged: assertion %d ≈ assertion %d (score=%.4f)",
             assertion_id,
