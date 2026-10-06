@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -83,6 +84,100 @@ def test_ensure_idempotent_and_strips_legacy_slash_prefix() -> None:
     assert not legacy.startswith("/cdp-operator-proxy")
     assert "# Already chipped" in legacy
     assert legacy.startswith("# Hop on agent-bus:")
+
+
+def _mission_delivery_prefix(*, marker_only: bool = False, use_lines_only: bool = False) -> str:
+    from claude_bundles.cowork_skill_delivery import (
+        format_cdp_use_the_lines,
+        render_cdp_required_authority,
+    )
+
+    marker = render_cdp_required_authority(list(MISSION_SKILL_SLUGS))
+    use_lines = format_cdp_use_the_lines(list(MISSION_SKILL_SLUGS))
+    if marker_only:
+        return marker
+    if use_lines_only:
+        return use_lines
+    return marker + use_lines
+
+
+def _assert_single_hop_briefing(text: str) -> None:
+    assert text.count("# Hop on agent-bus:") == 1
+    assert text.count("## Hard refusals") == 1
+
+
+def test_ensure_idempotent_past_sealed_marker_and_use_lines() -> None:
+    sidecar = "## Settled\nfrom mock\n"
+    body = "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
+    once = ensure_operator_proxy_mission_prompt(
+        body,
+        standing_handoff_text=sidecar,
+    )
+    prefixed = _mission_delivery_prefix() + once
+    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    assert twice == prefixed.strip()
+    _assert_single_hop_briefing(twice)
+    assert "<!--cdp-required-skills:" in twice
+    for slug in MISSION_SKILL_SLUGS:
+        assert f"Use the `{slug}` skill" in twice
+
+
+def test_ensure_idempotent_past_sealed_marker_only() -> None:
+    sidecar = "## Settled\nfrom mock\n"
+    body = "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
+    once = ensure_operator_proxy_mission_prompt(
+        body,
+        standing_handoff_text=sidecar,
+    )
+    prefixed = _mission_delivery_prefix(marker_only=True) + once
+    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    assert twice == prefixed.strip()
+    _assert_single_hop_briefing(twice)
+
+
+def test_ensure_idempotent_past_use_lines_only() -> None:
+    sidecar = "## Settled\nfrom mock\n"
+    body = "TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n"
+    once = ensure_operator_proxy_mission_prompt(
+        body,
+        standing_handoff_text=sidecar,
+    )
+    prefixed = _mission_delivery_prefix(use_lines_only=True) + once
+    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    assert twice == prefixed.strip()
+    _assert_single_hop_briefing(twice)
+
+
+def test_stage_then_resolve_prompt_does_not_double_hop_briefing(
+    tmp_path, monkeypatch
+) -> None:
+    """Production path: staging ensure + resolve_prompt ensure stays single briefing."""
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import resolve_prompt
+    from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
+
+    root = tmp_path / "cortex_files"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    exec_id = "exec-hop-double-ensure"
+    staged = stage_cdp_prompt_with_skills(
+        execution_id=exec_id,
+        prompt_text="TYPE: CONTINUITY_HANDOFF\nthread_id: 12286\n",
+        purpose="operator-proxy",
+    )
+    assert staged.staged
+    req = SubmitProjectAskRequest(
+        prompt_uri=staged.prompt_uri,
+        purpose="operator-proxy",
+        stargate_execution_id=exec_id,
+    )
+    with patch(
+        "claude_bundles.operator_proxy_hop_status.standing_handoff_path"
+    ) as path:
+        path.return_value.is_file.return_value = False
+        submitted = resolve_prompt(req)[0]
+    _assert_single_hop_briefing(submitted)
+    assert "TYPE: CONTINUITY_HANDOFF" in submitted
 
 
 def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:

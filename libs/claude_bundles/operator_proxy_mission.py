@@ -10,8 +10,10 @@ delivered via staging Use-lines, not a leading ``/<slug>`` prefix here.
 
 from __future__ import annotations
 
+from claude_bundles.cdp_inline_read_cue import _SKILL_POINTER_LINE_RE
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import hop_successor_fields
+from claude_bundles.sealed_cdp_prefix import _LEADING_AUTHORITY
 
 # CONSUMERS = import-nomination (GIW loads purposes). INJECTORS = seat paste.
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
@@ -90,6 +92,35 @@ LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
 )
 
 HOP_SUCCESSOR_TITLE = "# Hop on agent-bus:"
+
+
+def _peek_past_delivery_prefixes(text: str) -> str:
+    """Strip leading sealed marker and Use-the lines for idempotency detection only."""
+    rest = text
+    for _ in range(128):
+        if rest.startswith("\r\n"):
+            rest = rest[2:]
+            continue
+        if rest.startswith("\n"):
+            rest = rest[1:]
+            continue
+        auth = _LEADING_AUTHORITY.match(rest)
+        if auth is not None:
+            rest = rest[auth.end() :]
+            continue
+        line_end = rest.find("\n")
+        first = rest if line_end == -1 else rest[:line_end]
+        match = _SKILL_POINTER_LINE_RE.match(first)
+        if match is not None and match.group(0) == first:
+            rest = rest[len(first) :]
+            if rest.startswith("\r\n"):
+                rest = rest[2:]
+            elif rest.startswith("\n"):
+                rest = rest[1:]
+            continue
+        break
+    return rest
+
 
 # Unfilled template. render_hop_successor_briefing substitutes the eight fields.
 # JSON examples keep their braces; only the named {field} tokens are replaced,
@@ -207,16 +238,17 @@ def ensure_operator_proxy_mission_prompt(
     body = (text or "").strip()
     _tokens, rest = split_leading_slash_skills(body)
     rest_body = rest.lstrip("\n")
-    if not rest_body.lstrip().startswith(HOP_SUCCESSOR_TITLE):
-        fields = hop_successor_fields(
-            rest_body,
-            standing_handoff_text=standing_handoff_text,
-            execution_id=execution_id,
-        )
-        rest_body = (
-            render_hop_successor_briefing(fields, caller_body=rest_body).strip() + "\n"
-        )
-    return rest_body
+    caller_body = _peek_past_delivery_prefixes(rest_body)
+    if caller_body.lstrip().startswith(HOP_SUCCESSOR_TITLE):
+        return rest_body
+    fields = hop_successor_fields(
+        caller_body,
+        standing_handoff_text=standing_handoff_text,
+        execution_id=execution_id,
+    )
+    return (
+        render_hop_successor_briefing(fields, caller_body=caller_body).strip() + "\n"
+    )
 
 
 def purpose_implies_mission(purpose: str | None, prompt: str | None = None) -> bool:
