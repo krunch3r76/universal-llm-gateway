@@ -314,19 +314,26 @@ async def ensure_cse_attached(
         open_lane_seat_holder(lane_key) if lane_key else (None, None)
     )
 
-    def _done(outcome: ReattachOutcome) -> ReattachOutcome:
+    def _done(
+        outcome: ReattachOutcome, *, refresh_seat: bool = False
+    ) -> ReattachOutcome:
         if not outcome.ok:
             return outcome
+        holder_id, bound_at = snap_holder, snap_bound
+        # Dormant relaunch calls bind_driving_seat and advances seat_bound_at.
+        # A snapshot taken before that wake fails the later commit CAS.
+        if refresh_seat and lane_key:
+            holder_id, bound_at = open_lane_seat_holder(lane_key)
         return replace(
             outcome,
             seat_snapshot_lane=lane_key or None,
-            seat_snapshot_holder_id=snap_holder,
-            seat_snapshot_bound_at=snap_bound,
+            seat_snapshot_holder_id=holder_id,
+            seat_snapshot_bound_at=bound_at,
         )
 
     woken = await _wake_dormant_seat(chat_url, holder=holder)
     if woken is not None:
-        return _done(woken)
+        return _done(woken, refresh_seat=True)
 
     lanes = list(cdp_registry.list_active())
     if restrict_to_registration_id:

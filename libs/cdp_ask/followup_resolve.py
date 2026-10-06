@@ -321,15 +321,6 @@ def _in_flight_off_holder(lane_body: dict) -> list[str]:
     ]
 
 
-def _registry_parent_thread(registration_id: str) -> str:
-    """Lane stamped on the registry row, or empty when the row is absent."""
-    active = cdp_registry._store.load_active()
-    row = active.get(registration_id)
-    if not isinstance(row, dict):
-        return ""
-    return str(row.get("parent_thread") or "").strip()
-
-
 def _reattach_same_lane_carve_out(
     req: FollowupProjectAskRequest,
     lane: str,
@@ -338,18 +329,33 @@ def _reattach_same_lane_carve_out(
     reattach_used: bool,
     outcome_reg: str,
 ) -> bool:
-    """Skip ``operator_seat_mismatch`` for a same-lane reattach host.
+    """Skip ``operator_seat_mismatch`` for a seat-eligible same-lane reattach host.
 
     Predicate: ``reattach_used`` and ``identity_supplied(req)`` and
     ``reg_id == outcome_reg`` (non-empty) and the registry row's
-    ``parent_thread`` equals *lane*. Identity omitted does not match.
-    A row whose ``parent_thread`` is a different lane, or empty, does not match.
+    ``parent_thread`` equals *lane*, purpose is an operator purpose, and
+    ``seat_open`` on that lane. A closed seat, a non-operator purpose, a
+    different lane, or a missing row does not match.
     """
     if not reattach_used or not identity_supplied(req):
         return False
     if not outcome_reg or reg_id != outcome_reg:
         return False
-    return _registry_parent_thread(reg_id) == lane
+    active = cdp_registry._store.load_active()
+    row = active.get(reg_id)
+    if not isinstance(row, dict):
+        return False
+    if str(row.get("parent_thread") or "").strip() != lane:
+        return False
+    # apply_driving_seat_bind no-ops on a closed seat or a non-operator purpose.
+    # Those rows must not skip operator_seat_mismatch.
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+    purpose = str(row.get("purpose") or "").strip()
+    if purpose not in OPERATOR_PURPOSES:
+        return False
+    return seat_open(row, lane)
 
 
 def _lane_seat_followup_gate(

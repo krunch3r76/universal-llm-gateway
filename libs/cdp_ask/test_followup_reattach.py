@@ -2743,3 +2743,202 @@ async def test_reattach_host_on_other_lane_still_mismatches(
     )
     assert resp.error == "operator_seat_mismatch"
     assert seat_open(reg._store.load_active()[holder.registration_id], lane)
+
+
+@pytest.mark.asyncio
+async def test_dormant_wake_resnapshots_seat_after_relaunch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wake advances seat_bound_at; the commit snapshot is the post-wake holder."""
+    from cdp_ask import followup_reattach as mod
+
+    seen: list[float] = []
+
+    def _holder(_lane: str) -> tuple[str, float]:
+        seen.append(float(len(seen) + 1))
+        return "seat-1", seen[-1]
+
+    async def _wake(_chat_url: str, *, holder: str) -> ReattachOutcome:
+        assert holder == "h"
+        return ReattachOutcome(
+            ok=True,
+            registration_id="seat-1",
+            relaunched=True,
+            reattach_bound_chat_url=CSE_A,
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.open_lane_seat_holder",
+        _holder,
+    )
+    monkeypatch.setattr(mod, "_wake_dormant_seat", _wake)
+    out = await ensure_cse_attached(
+        CSE_A, holder="h", parent_thread="15404", allow_mint=False
+    )
+    assert out.ok is True
+    assert seen == [1.0, 2.0]
+    assert out.seat_snapshot_holder_id == "seat-1"
+    assert out.seat_snapshot_bound_at == 2.0
+
+
+def test_closed_same_lane_seat_is_not_carved_out(isolated_registry: Path) -> None:
+    """A closed seat on the reattach lane still mismatches the open holder."""
+    from cdp_ask.followup_resolve import _lane_seat_followup_gate
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[borrowed.registration_id])
+        row["seat_closed_at"] = 5.0
+        active[borrowed.registration_id] = row
+        reg._store.write_active(active)
+    req = FollowupProjectAskRequest(
+        prompt_text="memo",
+        parent_thread=lane,
+        chat_url=CSE_TARGET_38282,
+        registration_id=borrowed.registration_id,
+        purpose="operator-proxy",
+    )
+    _out, err, _path = _lane_seat_followup_gate(
+        req,
+        {"reattach_used": True, "outcome_reg": borrowed.registration_id},
+        _snap_from_active(reg),
+    )
+    assert err is not None
+    assert err.error == "operator_seat_mismatch"
+    assert holder.registration_id != borrowed.registration_id
+
+
+def test_commit_noop_bind_returns_not_seated(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closed seat: apply_driving_seat_bind no-ops, so commit does not upsert."""
+    from claude_bundles.cdp_registry.session_address import (
+        commit_reattach_driving_seat,
+        open_lane_seat_holder,
+    )
+
+    lane = "15404"
+    reg, _holder, borrowed = _open_operator_pair(lane)
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        row = dict(active[borrowed.registration_id])
+        row["seat_closed_at"] = 5.0
+        active[borrowed.registration_id] = row
+        reg._store.write_active(active)
+    upserts = _upsert_spy(monkeypatch)
+    holder_id, bound_at = open_lane_seat_holder(lane)
+    status = commit_reattach_driving_seat(
+        borrowed.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=holder_id,
+        snapshot_seat_bound_at=bound_at,
+    )
+    assert status == "not_seated"
+    assert upserts == []
+
+
+def test_upsert_exception_still_reports_committed(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Holder upsert failure after the seat write does not unwind the commit."""
+    from claude_bundles.cdp_registry.models import seat_open
+    from claude_bundles.cdp_registry.session_address import (
+        commit_reattach_driving_seat,
+        open_lane_seat_holder,
+    )
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+
+    def _boom(**_kwargs: Any) -> bool:
+        raise RuntimeError("upsert down")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        _boom,
+    )
+    holder_id, bound_at = open_lane_seat_holder(lane)
+    status = commit_reattach_driving_seat(
+        borrowed.registration_id,
+        chat_url=CSE_TARGET_38282,
+        lane=lane,
+        snapshot_holder_id=holder_id,
+        snapshot_seat_bound_at=bound_at,
+    )
+    assert status == "committed"
+    active = reg._store.load_active()
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert active[holder.registration_id].get("seat_closed_at") is not None
+
+
+@pytest.mark.asyncio
+async def test_missing_page_skips_commit_and_restores_borrow(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Page gone before paste never seats the borrow and restores chat_url."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+    upserts = _upsert_spy(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=None)
+    )
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_TARGET_38282,
+            reattach=True,
+            purpose="operator-proxy",
+        ),
+        store,
+    )
+    assert resp.error == "cse_not_found_on_lane"
+    assert upserts == []
+    active = reg._store.load_active()
+    assert seat_open(active[holder.registration_id], lane)
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert reg.chat_url_for_registration(borrowed.registration_id) is None
+
+
+@pytest.mark.asyncio
+async def test_paste_failure_after_commit_keeps_borrow_chat_url(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the seat commits, a later paste failure does not restore chat_url."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    lane = "15404"
+    reg, holder, borrowed = _open_operator_pair(lane)
+    store = ExecutionStore()
+    _arm_split_borrow(monkeypatch, reg, borrowed.registration_id, store=store)
+
+    async def _boom(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("paste down")
+
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", _boom)
+    with pytest.raises(RuntimeError, match="paste down"):
+        await execute_followup(
+            FollowupProjectAskRequest(
+                prompt_text="memo",
+                parent_thread=lane,
+                chat_url=CSE_TARGET_38282,
+                reattach=True,
+                purpose="operator-proxy",
+            ),
+            store,
+        )
+    active = reg._store.load_active()
+    assert seat_open(active[borrowed.registration_id], lane)
+    assert active[holder.registration_id].get("seat_closed_at") is not None
+    assert reg.chat_url_for_registration(borrowed.registration_id) == CSE_TARGET_38282

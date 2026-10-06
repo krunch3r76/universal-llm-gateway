@@ -374,31 +374,8 @@ async def execute_followup(
 
     pw = None
     paste_delivered = False
+    seat_committed = False
     try:
-        if (
-            reattach_used
-            and reattach_outcome is not None
-            and reattach_outcome.ok
-            and (reattach_outcome.reattach_bound_chat_url or "").strip()
-        ):
-            try:
-                status = await asyncio.to_thread(
-                    _commit_reattach_seat,
-                    reattach_outcome,
-                    (req.parent_thread or "").strip(),
-                )
-            except Exception as exc:
-                return fail_followup(
-                    "reattach_seat_commit_failed",
-                    detail=f"{type(exc).__name__}: {exc}",
-                    **extra,
-                )
-            if status != "committed":
-                return fail_followup(
-                    "reattach_seat_changed",
-                    detail="lane seat holder changed since reattach",
-                    **extra,
-                )
         found = await find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
             resp = fail_followup(
@@ -442,6 +419,42 @@ async def execute_followup(
                 )
             )
             return resp
+
+        if (
+            reattach_used
+            and reattach_outcome is not None
+            and reattach_outcome.ok
+            and (reattach_outcome.reattach_bound_chat_url or "").strip()
+        ):
+            # Commit only once the page is the paste target. A cancel must not
+            # drop the seat write; chat-url restore is skipped after commit.
+            commit_work = asyncio.create_task(
+                asyncio.to_thread(
+                    _commit_reattach_seat,
+                    reattach_outcome,
+                    (req.parent_thread or "").strip(),
+                )
+            )
+            try:
+                status = await asyncio.shield(commit_work)
+            except asyncio.CancelledError:
+                status = await commit_work
+                if status == "committed":
+                    seat_committed = True
+                raise
+            except Exception as exc:
+                return fail_followup(
+                    "reattach_seat_commit_failed",
+                    detail=f"{type(exc).__name__}: {exc}",
+                    **extra,
+                )
+            if status != "committed":
+                return fail_followup(
+                    "reattach_seat_changed",
+                    detail="lane seat holder changed since reattach",
+                    **extra,
+                )
+            seat_committed = True
 
         paste = await send_followup_paste_half(page, prompt)
         paste_delivered = True
@@ -521,6 +534,8 @@ async def execute_followup(
         await _reattach_teardown(
             reattach_outcome,
             retain_lane=req.retain_lane,
-            restore_borrowed_chat_url=reattach_used and not paste_delivered,
+            restore_borrowed_chat_url=(
+                reattach_used and not paste_delivered and not seat_committed
+            ),
         )
         _release_lane(target.registration_id)

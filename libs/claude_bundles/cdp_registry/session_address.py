@@ -8,6 +8,7 @@ not the Jupiter registry; the pin is ``REGISTRATION_REGISTRY_SSH_ENV``
 from __future__ import annotations
 
 import contextlib
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -33,6 +34,8 @@ from .models import (
     _row_to_registration,
     seat_open,
 )
+
+logger = logging.getLogger(__name__)
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
@@ -348,10 +351,12 @@ def commit_reattach_driving_seat(
     """Seat and upsert after reattach, or refuse when the lane seat moved.
 
     Under ``ports_lock``, the open holder ``(registration_id, seat_bound_at)``
-    must still match the reattach snapshot. A mismatch returns ``refused``
+    must still match the reattach snapshot.     A mismatch returns ``refused``
     without seating or upserting. A missing registry row returns ``committed``
-    without writing: the chat_url bind did not persist a row. Otherwise
-    ``apply_driving_seat_bind`` then best-effort ``upsert_holder_remote``.
+    without writing: the chat_url bind did not persist a row. When
+    ``apply_driving_seat_bind`` no-ops (closed seat, empty lane, or non-operator
+    purpose) the result is ``not_seated`` and the holder is not upserted.
+    Otherwise the seat is written, then best-effort ``upsert_holder_remote``.
     """
     rid = (registration_id or "").strip()
     url = (chat_url or "").strip()
@@ -373,27 +378,34 @@ def commit_reattach_driving_seat(
             ):
                 return "refused"
         bound_row, released_rows = apply_driving_seat_bind(active, rid)
-        if bound_row is not None or released_rows:
-            _store.require_seat_authority(operation="commit_reattach_driving_seat")
-            _store.write_active(active)
-            _store.append_seat_transition_journal(
-                registration_id=rid,
-                seat_lane=str((bound_row or {}).get("seat_lane") or ""),
-                seat_bound_at=(bound_row or {}).get("seat_bound_at"),
-                superseded=[
-                    str(r.get("registration_id") or "")
-                    for r in released_rows
-                    if r.get("registration_id")
-                ],
-            )
+        if bound_row is None:
+            return "not_seated"
+        _store.require_seat_authority(operation="commit_reattach_driving_seat")
+        _store.write_active(active)
+        _store.append_seat_transition_journal(
+            registration_id=rid,
+            seat_lane=str(bound_row.get("seat_lane") or ""),
+            seat_bound_at=bound_row.get("seat_bound_at"),
+            superseded=[
+                str(r.get("registration_id") or "")
+                for r in released_rows
+                if r.get("registration_id")
+            ],
+        )
     _emit_seat_axis_events(bound_row, released_rows)
     from services.git_integration_worker.cse_session_holders import upsert_holder_remote
 
-    upsert_holder_remote(
-        chat_url=url,
-        registration_id=rid,
-        execution_id=execution_id,
-    )
+    try:
+        upsert_holder_remote(
+            chat_url=url,
+            registration_id=rid,
+            execution_id=execution_id,
+        )
+    except Exception:
+        logger.exception(
+            "commit_reattach_driving_seat upsert failed reg=%s; seat already written",
+            rid,
+        )
     return "committed"
 
 
