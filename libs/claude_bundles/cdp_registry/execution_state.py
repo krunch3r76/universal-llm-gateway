@@ -63,6 +63,9 @@ ExecutionState = Literal[
 ExecutionKind = Literal["execution", "followup"]
 
 FIELD = "execution_state"
+# Overlap hold when a followup paste must not replace a live execution entry.
+# Harvest reclaim reads this; restart-gate busy does not.
+FOLLOWUP_HOLD = "followup_hold"
 IN_FLIGHT_STATES: frozenset[str] = frozenset({"seated", "streaming"})
 SETTLED_STATES: frozenset[str] = frozenset(
     {"finished", "failed", "aborted", "awaiting_wake", "transferred", "expired"}
@@ -165,6 +168,28 @@ def _ttl_for(entry: dict[str, Any]) -> float:
     )
 
 
+def followup_hold_in_flight(
+    row: dict[str, Any], *, now: float | None = None
+) -> bool:
+    """True when a followup paste overlapped a live execution and is still in TTL.
+
+    The execution entry stays the restart-gate authority. This hold is the
+    harvest/drain signal that paste must not be dropped when the stamp is refused.
+    """
+    hold = row.get(FOLLOWUP_HOLD)
+    if not isinstance(hold, dict):
+        return False
+    if str(hold.get("kind") or "") != "followup":
+        return False
+    if str(hold.get("state") or "") not in IN_FLIGHT_STATES:
+        return False
+    started = hold.get("started_at")
+    if not isinstance(started, (int, float)):
+        return False
+    ts = time.time() if now is None else now
+    return ts - float(started) < FOLLOWUP_IN_FLIGHT_TTL_S
+
+
 def row_execution_in_flight(
     row: dict[str, Any], *, now: float | None = None
 ) -> dict[str, Any] | None:
@@ -258,6 +283,24 @@ def set_execution_state(
             and current["state"] in IN_FLIGHT_STATES
             and str(current.get("kind") or "execution") != "followup"
         ):
+            hold = {
+                "execution_id": eid,
+                "state": state,
+                "kind": kind,
+                "started_at": ts,
+                "updated_at": ts,
+                "holder_pid": os.getpid(),
+            }
+            if reason:
+                hold["reason"] = str(reason)
+            updated = dict(row)
+            updated[FOLLOWUP_HOLD] = hold
+            active[rid] = updated
+            _store.write_active(active)
+            _store.append_log(
+                "followup_hold",
+                {"registration_id": rid, **hold},
+            )
             return current
         if current is not None and current["execution_id"] == eid:
             previous = str(current["state"])

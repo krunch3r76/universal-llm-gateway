@@ -16,6 +16,7 @@ from claude_bundles.nested_cdp_prompt_gate import NestedCdpPromptGateError
 from claude_bundles.project_ask_conversation import send_followup_paste_half
 
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.followup_envelope import identity_supplied
 from cdp_ask.followup_dormant import (
     park_relaunched_host,
     reattach_chat_url,
@@ -269,12 +270,14 @@ async def execute_followup(
             if reattach_outcome and reattach_outcome.ok
             else ""
         )
-        if outcome_reg:
+        if outcome_reg and identity_supplied(req):
             # Successful reattach may move this lane's seat (mint, or borrow/wake
             # of a host on this lane); borrow on another lane moves that lane's
             # seat, and the gate below refuses against the true holder. Second
             # resolve must use the attached host's registration_id, not a stale
-            # value from the address retry.
+            # value from the address retry. An identity-omitted request stays
+            # omitted so the second resolve remains the attended-operator oracle
+            # (a dormant wake) instead of a registration-keyed CDP scan.
             req = req.model_copy(update={"registration_id": outcome_reg})
         try:
             target, err, resolution_path, target_binding = (

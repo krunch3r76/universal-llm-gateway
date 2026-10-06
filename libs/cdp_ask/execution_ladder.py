@@ -55,8 +55,12 @@ def _snapshot_harvest_row(registration_id: str) -> _HarvestSnap:
     row = cdp_registry._load_active().get(registration_id)
     if not isinstance(row, dict):
         return _HarvestSnap(False)
+    from claude_bundles.cdp_registry.execution_state import followup_hold_in_flight
+
     entry = cdp_registry.row_execution_in_flight(row)
     followup = isinstance(entry, dict) and entry.get("kind") == "followup"
+    if not followup:
+        followup = followup_hold_in_flight(row)
     return _HarvestSnap(followup)
 
 
