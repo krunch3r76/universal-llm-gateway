@@ -801,3 +801,59 @@ async def test_timestamp_tick_on_badge_does_not_refresh(advance_clock) -> None:
             stable_polls=2,
         )
     assert advance_clock["t"] <= 1_003.0
+
+
+@pytest.mark.asyncio
+async def test_wait_rejects_anchor_and_before_together() -> None:
+    from claude_bundles.reply_anchor import ReplyAnchor
+
+    page = _FakePage([])
+    with pytest.raises(ValueError, match="not both"):
+        await wait_assistant_reply(
+            page,
+            before={"n": 0, "body_len": 0},
+            anchor=ReplyAnchor(marker="x"),
+        )
+
+
+def test_tail_hold_vetoes_tool_row_completion() -> None:
+    body = "Mid reply prose.\nLoaded tools\nLoaded tools"
+    state = _state(body_len=len(body), n=1, body=body)
+    kwargs = {
+        "base_len": 0,
+        "base_n": 0,
+        "min_growth": 1,
+        "min_body": 1,
+        "tail_hold": True,
+    }
+    assert _complete_enough(state, **kwargs) is False
+
+
+@pytest.mark.asyncio
+async def test_tail_hold_idle_expiry_classifies_observer_unverified(
+    advance_clock,
+) -> None:
+    from cdp_ask.models import classify_stall_stage
+    from cdp_ask.unverifiable import converse_stall_stage, is_unverifiable_stall
+
+    body = "Reply ends on tool row.\nAgent Bus\nAgent Bus"
+    page = _FakePage([_state(body_len=len(body), n=1, body=body)] * 8)
+    with pytest.raises(HarvestIncompleteError) as exc:
+        await wait_assistant_reply(
+            page,
+            before=_state(body_len=0, n=0),
+            tail_hold=True,
+            timeout_s=2,
+            poll_ms=500,
+            stable_polls=2,
+        )
+    msg = str(exc.value)
+    assert exc.value.tail_hold is True
+    assert "tail_hold unresolved at idle budget" in msg
+    assert classify_stall_stage(msg) == "unknown"
+    assert (
+        converse_stall_stage(msg, conv_ok=False) == "observer_unverified"
+    )
+    assert is_unverifiable_stall(
+        "observer_unverified", msg, url="https://claude.ai/cowork/cse_x"
+    )

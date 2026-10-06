@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from chat_harvest.chrome import is_chrome_only, is_tool_status_body
+from chat_harvest.chrome import ends_with_tool_row, is_chrome_only, is_tool_status_body
 from review_verdict.grammar import has_parseable_verdict
 
 from claude_bundles.cse_idle_probe import in_flight_from_state
@@ -49,10 +49,13 @@ def complete_enough(
     min_body: int,
     ignore_in_flight: bool = False,
     require_review_verdict: bool = False,
+    tail_hold: bool = False,
 ) -> bool:
     """Structural turn complete — ¬ a prose-length gate."""
     del min_growth, min_body, base_len
     if badge_only_body(state):
+        return False
+    if tail_hold and ends_with_tool_row(str(state.get("body") or "")):
         return False
     if require_review_verdict and not has_parseable_verdict(
         str(state.get("body") or "")
@@ -74,6 +77,7 @@ def cowork_complete_enough(
     saw_working: bool,
     ignore_in_flight: bool = False,
     require_review_verdict: bool = False,
+    tail_hold: bool = False,
 ) -> bool:
     """URL-guarded Cowork fallback (24864) with positive new-turn guard."""
     if not _is_cowork_cse_url(state.get("url", "")):
@@ -84,6 +88,8 @@ def cowork_complete_enough(
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
     if cur_len < 1 or badge_only_body(state):
+        return False
+    if tail_hold and ends_with_tool_row(str(state.get("body") or "")):
         return False
     if require_review_verdict and not has_parseable_verdict(
         str(state.get("body") or "")
