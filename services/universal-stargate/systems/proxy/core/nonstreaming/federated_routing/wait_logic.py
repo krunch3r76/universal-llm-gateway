@@ -247,6 +247,7 @@ async def _wait_and_retry_selection(
     continuation_mode: ContinuationMode = "busy_block",
     cooldown_hold_key: Any | None = None,
     per_wake_cap_s: float | None = None,
+    defer_first_select: bool = False,
 ) -> tuple[Any, Any, int]:
     """
     Wait for federated state changes, then retry selection until success or timeout.
@@ -268,6 +269,9 @@ async def _wait_and_retry_selection(
     ``cooldown_hold_key`` / ``per_wake_cap_s`` support oscillation-breaker
     requeue: the loop sleeps out the hold before calling select again so a
     breaker-held victim cannot spin one select per zero-wait wake.
+
+    ``defer_first_select`` forces one state-change wait before the first select
+    so post-load retries cannot immediately re-pick an unchanged gateway.
     """
     from src.scheduling.events.routing import (
         RoutingDrainInitiated,
@@ -287,6 +291,7 @@ async def _wait_and_retry_selection(
     wait_start = time.monotonic()
     trace: Any = None
     last_drain_at: float | None = None
+    deferred_first_select = False
 
     _eviction_wait_queue_depth += 1
 
@@ -321,6 +326,13 @@ async def _wait_and_retry_selection(
                         state_version, sleep_s
                     )
                     continue
+
+            if defer_first_select and not deferred_first_select:
+                deferred_first_select = True
+                await federated_manager.wait_for_state_change(
+                    state_version, remaining
+                )
+                continue
 
             fresh_gateways = [
                 g

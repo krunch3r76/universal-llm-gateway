@@ -114,6 +114,7 @@ class _FakeFederatedManager:
         self._gateways = gateways or []
         self.clear_calls: list[tuple[Any, Any]] = []
         self.wait_timeouts: list[float] = []
+        self.loading_models: set[tuple[str, str]] = set()
 
     def get_all_gateways(self) -> list[Any]:
         return self._gateways
@@ -125,11 +126,13 @@ class _FakeFederatedManager:
         self.wait_timeouts.append(timeout)
         return None
 
-    def mark_loading_optimistic(self, _gateway_id: str, _model_id: Any) -> bool:
+    def mark_loading_optimistic(self, gateway_id: str, model_id: Any) -> bool:
+        self.loading_models.add((gateway_id, str(model_id)))
         return True
 
     def clear_model_loading_optimistic(self, gateway_id: str, model_id: Any) -> None:
         self.clear_calls.append((gateway_id, model_id))
+        self.loading_models.discard((gateway_id, str(model_id)))
 
 
 def _fed_gateway() -> FederatedGateway:
@@ -582,3 +585,203 @@ async def test_blocked_wait_cancelled_emits_and_clears_mark(
 
     assert token.released is True
     assert manager.clear_calls
+
+
+@pytest.mark.asyncio
+async def test_requeue_budget_exhaustion_preserves_peer_optimistic_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: A's timeout must not clear B's (G, M) mark set during A's wait."""
+    manager = _FakeFederatedManager([])
+    gw_id = "edge-jupiter-gateway"
+    peer_key = (gw_id, str(TARGET))
+
+    async def _blocked(**kwargs: Any) -> Any:
+        return eviction_mod.MasterEvictionResult(
+            outcome=eviction_mod.MasterEvictionOutcome.BLOCKED,
+            reason="cooldown_oscillation_breaker",
+            retry_after_s=10.0,
+            verdict_class="insufficient_transient",
+            gateway_id=gw_id,
+            victim_model_id=str(GEMMA),
+            requester="req-a",
+        )
+
+    async def _wait_then_timeout(**kwargs: Any) -> Any:
+        manager.loading_models.add(peer_key)
+        return None, _trace(), 50
+
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        _blocked,
+    )
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", _wait_then_timeout)
+
+    context = SimpleNamespace(
+        request_id="req-a",
+        selected_model=TARGET,
+        model_sticky=False,
+        capacity_token=_FakeToken(gw_id),
+        selected_gateway=None,
+        excluded_gateway_ids=set(),
+        _capacity_deadline_mono=time.monotonic() + 60.0,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await load_mod.finalize_selection_and_load(
+            context=context,
+            selected_gateway=_gateway(),
+            trace=_trace(),
+            event_bus=_FakeEventBus(),
+            federated_manager=manager,
+            federated_load_orchestrator=_FakeLoadOrchestrator(),
+            federation_forwarder=_FakeForwarder(),
+            routing_config={},
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=TARGET),
+            stability_tracker=SimpleNamespace(get_current_best=lambda _m: None),
+            routing_start_time=time.time(),
+            eviction_cooldown_s=120.0,
+            capacity_pool=_FakeCapacityPool(),
+        )
+
+    assert exc_info.value.detail["data"]["reason"] == "eviction_blocked_queue_timeout"
+    assert peer_key in manager.loading_models
+
+
+@pytest.mark.asyncio
+async def test_post_load_vram_spin_hits_requeue_depth_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B2: sticky VRAM refusal cannot recurse unboundedly."""
+    load_orchestrator = _FakeLoadOrchestrator()
+
+    async def _always_vram(*args: Any, **kwargs: Any) -> bool:
+        load_orchestrator.load_calls.append((args, kwargs))
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": ErrorCode.INSUFFICIENT_VRAM,
+                "retryable": True,
+                "message": "need 30262 have 11780",
+            },
+        )
+
+    load_orchestrator.ensure_model_loaded_on_remote = _always_vram  # type: ignore[method-assign]
+
+    reselected = _gateway(loaded=frozenset())
+    wait_mock = AsyncMock(return_value=(reselected, _trace(), 1))
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+    monkeypatch.setattr(
+        admission_mod, "acquire_admission_token", AsyncMock(return_value=reselected)
+    )
+    monkeypatch.setattr(
+        "systems.routing.selection.stargate_collector.federated_gateways_to_routing_candidates",
+        lambda gateways: [reselected],
+    )
+
+    async def _always_evict(**kwargs: Any) -> Any:
+        return eviction_mod.MasterEvictionResult(
+            outcome=eviction_mod.MasterEvictionOutcome.EVICTED,
+            gateway_id="edge-jupiter-gateway",
+            requester="req-spin",
+        )
+
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        _always_evict,
+    )
+
+    context = SimpleNamespace(
+        request_id="req-spin",
+        selected_model=TARGET,
+        model_sticky=False,
+        capacity_token=_FakeToken("edge-jupiter-gateway"),
+        selected_gateway=None,
+        excluded_gateway_ids=set(),
+        _capacity_deadline_mono=time.monotonic() + 60.0,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await load_mod.finalize_selection_and_load(
+            context=context,
+            selected_gateway=_gateway(),
+            trace=_trace(),
+            event_bus=_FakeEventBus(),
+            federated_manager=_FakeFederatedManager(
+                [
+                    SimpleNamespace(
+                        gateway_id="edge-jupiter-gateway",
+                        dispatchable=True,
+                        available_models=frozenset({TARGET, GEMMA}),
+                    )
+                ]
+            ),
+            federated_load_orchestrator=load_orchestrator,
+            federation_forwarder=_FakeForwarder(),
+            routing_config={"eviction_requeue_max_depth": 2},
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=TARGET),
+            stability_tracker=SimpleNamespace(get_current_best=lambda _m: None),
+            routing_start_time=time.time(),
+            eviction_cooldown_s=120.0,
+            capacity_pool=_FakeCapacityPool(),
+        )
+
+    detail = exc_info.value.detail
+    assert detail["code"] == ErrorCode.STICKY_CAPACITY
+    assert detail["data"]["requeue_max_depth"] == 2
+    assert len(load_orchestrator.load_calls) <= 3
+
+
+@pytest.mark.asyncio
+async def test_config_blocked_does_not_requeue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3: missing_federation_forwarder stays a fast 503, not a wait spin."""
+    load_orchestrator = _FakeLoadOrchestrator()
+    wait_mock = AsyncMock()
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
+
+    async def _config_block(**kwargs: Any) -> Any:
+        return eviction_mod.MasterEvictionResult(
+            outcome=eviction_mod.MasterEvictionOutcome.BLOCKED,
+            reason="missing_federation_forwarder",
+            verdict_class="insufficient_transient",
+            gateway_id="edge-jupiter-gateway",
+            requester="req-cfg",
+        )
+
+    monkeypatch.setattr(
+        "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
+        _config_block,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await load_mod.finalize_selection_and_load(
+            context=SimpleNamespace(
+                request_id="req-cfg",
+                selected_model=TARGET,
+                model_sticky=False,
+                capacity_token=None,
+                selected_gateway=None,
+                excluded_gateway_ids=set(),
+            ),
+            selected_gateway=_gateway(),
+            trace=_trace(),
+            event_bus=_FakeEventBus(),
+            federated_manager=_FakeFederatedManager([]),
+            federated_load_orchestrator=load_orchestrator,
+            federation_forwarder=_FakeForwarder(),
+            routing_config={},
+            decision_engine=SimpleNamespace(),
+            placement=SimpleNamespace(model_id=TARGET),
+            stability_tracker=SimpleNamespace(get_current_best=lambda _m: None),
+            routing_start_time=time.time(),
+            eviction_cooldown_s=120.0,
+            capacity_pool=_FakeCapacityPool(),
+        )
+
+    wait_mock.assert_not_awaited()
+    assert load_orchestrator.load_calls == []
+    assert exc_info.value.detail["data"]["reason"] == "missing_federation_forwarder"

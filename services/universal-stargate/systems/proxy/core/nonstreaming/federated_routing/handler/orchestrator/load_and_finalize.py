@@ -38,6 +38,9 @@ _RETRYABLE_LOAD_CODES = frozenset(
     }
 )
 
+# Sentinel: post-load path needs finalize-owned requeue (review B1).
+_POST_LOAD_NEEDS_REQUEUE = object()
+
 
 async def finalize_selection_and_load(
     *,
@@ -191,6 +194,7 @@ async def finalize_selection_and_load(
                     federated_manager is not None
                     and eviction_result.verdict_class
                     == AdmissionVerdict.INSUFFICIENT_TRANSIENT.value
+                    and eviction_result.reason == "cooldown_oscillation_breaker"
                 )
                 if not can_requeue:
                     raise_eviction_blocked_error(
@@ -206,6 +210,17 @@ async def finalize_selection_and_load(
                         or selected_gateway.name,
                         victim_model_id=eviction_result.victim_model_id,
                     )
+                if (
+                    optimistic_mark_gateway_id
+                    and optimistic_mark_model_id
+                    and federated_manager
+                ):
+                    federated_manager.clear_model_loading_optimistic(
+                        optimistic_mark_gateway_id, optimistic_mark_model_id
+                    )
+                    optimistic_mark_gateway_id = None
+                    optimistic_mark_model_id = None
+                    marked_loading = False
                 return await requeue_after_transient_eviction(
                     context=context,
                     federated_manager=federated_manager,
@@ -220,8 +235,6 @@ async def finalize_selection_and_load(
                     eviction_cooldown_s=eviction_cooldown_s,
                     capacity_pool=capacity_pool,
                     routing_key_tracker=routing_key_tracker,
-                    optimistic_mark_gateway_id=optimistic_mark_gateway_id,
-                    optimistic_mark_model_id=optimistic_mark_model_id,
                     continuation_mode="cooldown_blocked",
                     timeout_reason="eviction_blocked_queue_timeout",
                     cooldown_hold_key=hold_key,
@@ -274,6 +287,16 @@ async def finalize_selection_and_load(
                         error_data=result_to_error_data(eviction_result),
                         gateway_url=selected_gateway.ref.remote_stargate_url,
                     )
+                if (
+                    optimistic_mark_gateway_id
+                    and optimistic_mark_model_id
+                ):
+                    federated_manager.clear_model_loading_optimistic(
+                        optimistic_mark_gateway_id, optimistic_mark_model_id
+                    )
+                    optimistic_mark_gateway_id = None
+                    optimistic_mark_model_id = None
+                    marked_loading = False
                 return await requeue_after_transient_eviction(
                     context=context,
                     federated_manager=federated_manager,
@@ -288,33 +311,47 @@ async def finalize_selection_and_load(
                     eviction_cooldown_s=eviction_cooldown_s,
                     capacity_pool=capacity_pool,
                     routing_key_tracker=routing_key_tracker,
-                    optimistic_mark_gateway_id=optimistic_mark_gateway_id,
-                    optimistic_mark_model_id=optimistic_mark_model_id,
                     continuation_mode="execution_failure",
                     timeout_reason="eviction_execute_failure_queue_timeout",
                 )
 
         if federated_load_orchestrator:
-            requeued = await _ensure_remote_model_loaded(
+            load_outcome = await _ensure_remote_model_loaded(
                 context=context,
                 selected_gateway=selected_gateway,
                 federated_manager=federated_manager,
                 federated_load_orchestrator=federated_load_orchestrator,
-                federation_forwarder=federation_forwarder,
-                routing_config=routing_config,
-                decision_engine=decision_engine,
-                placement=placement,
-                event_bus=event_bus,
-                stability_tracker=stability_tracker,
-                routing_start_time=routing_start_time,
-                eviction_cooldown_s=eviction_cooldown_s,
-                capacity_pool=capacity_pool,
-                routing_key_tracker=routing_key_tracker,
-                optimistic_mark_gateway_id=optimistic_mark_gateway_id,
-                optimistic_mark_model_id=optimistic_mark_model_id,
             )
-            if requeued is not None:
-                return requeued
+            if load_outcome is _POST_LOAD_NEEDS_REQUEUE:
+                if (
+                    optimistic_mark_gateway_id
+                    and optimistic_mark_model_id
+                    and federated_manager
+                ):
+                    federated_manager.clear_model_loading_optimistic(
+                        optimistic_mark_gateway_id, optimistic_mark_model_id
+                    )
+                    optimistic_mark_gateway_id = None
+                    optimistic_mark_model_id = None
+                    marked_loading = False
+                assert federated_manager is not None
+                return await requeue_after_transient_eviction(
+                    context=context,
+                    federated_manager=federated_manager,
+                    federated_load_orchestrator=federated_load_orchestrator,
+                    federation_forwarder=federation_forwarder,
+                    routing_config=routing_config,
+                    decision_engine=decision_engine,
+                    placement=placement,
+                    event_bus=event_bus,
+                    stability_tracker=stability_tracker,
+                    routing_start_time=routing_start_time,
+                    eviction_cooldown_s=eviction_cooldown_s,
+                    capacity_pool=capacity_pool,
+                    routing_key_tracker=routing_key_tracker,
+                    continuation_mode="execution_failure",
+                    timeout_reason="eviction_queue_timeout_post_load_fail",
+                )
 
         context.selected_gateway = selected_gateway
         if event_bus:
@@ -396,27 +433,11 @@ async def _ensure_remote_model_loaded(
     selected_gateway: "Gateway",
     federated_manager: "FederatedGatewayManager | None",
     federated_load_orchestrator,
-    federation_forwarder: "FederatedRequestForwarder | None",
-    routing_config: dict[str, Any] | None,
-    decision_engine: "DecisionEngine",
-    placement: "Placement",
-    event_bus,
-    stability_tracker: "StickyPlacementTracker",
-    routing_start_time: float,
-    eviction_cooldown_s: float,
-    capacity_pool: "CapacityPool | None" = None,
-    routing_key_tracker: "RoutingKeyTracker | None" = None,
-    optimistic_mark_gateway_id: str | None = None,
-    optimistic_mark_model_id: Any = None,
-) -> tuple[str, None] | None:
-    """Load target model on remote gateway; requeue via finalize on transient errors.
+) -> object | None:
+    """Load remote model; return post-load requeue sentinel on retryable fail.
 
-    Returns the finalize result when a transient load failure triggered
-    requeue (caller must return it). Returns None when the model loaded
-    in place on the already-selected gateway.
+    Finalize owns mark release and the requeue call so peer marks are not wiped.
     """
-    from .eviction_requeue import requeue_after_transient_eviction
-
     try:
         await federated_load_orchestrator.ensure_model_loaded_on_remote(
             selected_gateway.ref,
@@ -432,27 +453,6 @@ async def _ensure_remote_model_loaded(
             and detail.get("retryable", False)
             and federated_manager is not None
         ):
-            # Re-enter finalize (evict-before-load) instead of loading the
-            # freshly selected gateway without an eviction step.
-            return await requeue_after_transient_eviction(
-                context=context,
-                federated_manager=federated_manager,
-                federated_load_orchestrator=federated_load_orchestrator,
-                federation_forwarder=federation_forwarder,
-                routing_config=routing_config,
-                decision_engine=decision_engine,
-                placement=placement,
-                event_bus=event_bus,
-                stability_tracker=stability_tracker,
-                routing_start_time=routing_start_time,
-                eviction_cooldown_s=eviction_cooldown_s,
-                capacity_pool=capacity_pool,
-                routing_key_tracker=routing_key_tracker,
-                optimistic_mark_gateway_id=optimistic_mark_gateway_id,
-                optimistic_mark_model_id=optimistic_mark_model_id,
-                continuation_mode="execution_failure",
-                timeout_reason="eviction_queue_timeout_post_load_fail",
-            )
-
+            return _POST_LOAD_NEEDS_REQUEUE
         raise
     return None
