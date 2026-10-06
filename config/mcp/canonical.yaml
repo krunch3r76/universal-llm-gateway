@@ -1690,7 +1690,7 @@ tools:
     is unstamped (read_at null) non-superseded turns plus unread_basis; it is
     not a recipient inbox, not CSE/chat consumption, and not send-latency or
     correspondent lag. Pass to= for a recipient-scoped count matching
-    fetch_unread. See agent_skill:agent-bus.\n"
+    fetch_unread. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:

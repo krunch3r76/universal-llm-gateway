@@ -83,11 +83,12 @@ def _child_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
     act = (
         _get(client, "/threads", status="active", limit=400, to=DIGEST_UNREAD_TO) or {}
     )
-    unr = (
-        _get(client, "/threads", has_unread=True, limit=100, to=DIGEST_UNREAD_TO) or {}
-    )
+    # Discovery stays thread-wide (blocked/waiting lanes with any unstamped
+    # turn). Those rows carry recipient=null and label unstamped; scoped
+    # act rows merge last so they win on overlap.
+    unr = _get(client, "/threads", has_unread=True, limit=100) or {}
     rows = list(
-        {str(t["id"]): t for s in (act, unr) for t in (s.get("threads") or [])}.values()
+        {str(t["id"]): t for s in (unr, act) for t in (s.get("threads") or [])}.values()
     )
     by_id = {str(t.get("id")): t for t in rows}
     by_parent: dict[str, list[dict[str, Any]]] = {}
