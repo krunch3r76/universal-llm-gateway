@@ -22,6 +22,9 @@ class MaestroInductFetchRunbookHandler(BaseHandler):
         if "runbook" in (resolve.get("skipped") or []):
             return StepOutput(raw="", json={"skipped": True})
         house = _clients.step_output_json(context.outputs, "fetch_house")
+        house_err = house.get("error") if isinstance(house.get("error"), dict) else None
+        if house_err and house_err.get("kind") == "files_root_unset":
+            return StepOutput(raw="", json={"error": house_err, "errors": [house_err]})
         uris = house.get("runbook_uris") or []
         if not uris:
             err = {"kind": "runbook_missing", "message": "no runbook URI on card"}

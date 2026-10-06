@@ -52,6 +52,31 @@ async def test_read_cortex_file_missing(tmp_path, monkeypatch) -> None:
     assert res["error"]["kind"] == "file_missing"
 
 
+async def test_compact_only_on_allowed_calls(
+    pipeline_executor, smoke_router, staged_cortex, cortex_files_root
+) -> None:
+    from .conftest import run_smoke
+
+    await run_smoke(pipeline_executor)
+    compact_turns = [
+        (m, p, params)
+        for m, p, params, _ in smoke_router.requests
+        if m == "GET"
+        and p == "/turns"
+        and params
+        and params.get("compact") == "true"
+    ]
+    assert compact_turns
+    for _m, _p, params in compact_turns:
+        assert params.get("thread") == "12286"
+        assert params.get("include_superseded") == "true"
+        assert "to" not in params
+    for m, p, params, _ in smoke_router.requests:
+        if m == "GET" and p == "/turns" and params:
+            if params.get("to") == "web-anthropic" or params.get("last") == "4":
+                assert params.get("compact") != "true"
+
+
 async def test_client_timeouts(mock_transport, monkeypatch) -> None:
     recorded: list[float | None] = []
 

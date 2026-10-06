@@ -253,6 +253,12 @@ def smoke_router(monkeypatch, request):
         return _Holder()
 
     async def _bus_get(path, *, params=None, deadline_epoch=None):
+        rem = clients._remaining(deadline_epoch)
+        if rem is not None and rem < clients.MIN_REQUEST_S:
+            return (
+                {"error": {"code": "deadline_exceeded", "message": "budget exhausted"}},
+                504,
+            )
         req = httpx.Request("GET", f"http://agent-bus{path}", params=params or {})
         resp = await router.handle(req)
         try:
@@ -262,6 +268,9 @@ def smoke_router(monkeypatch, request):
         return payload, resp.status_code
 
     async def _cortex_dispatch(tool, arguments, *, deadline_epoch=None):
+        rem = clients._remaining(deadline_epoch)
+        if rem is not None and rem < clients.MIN_REQUEST_S:
+            return {"error": "deadline_exceeded"}
         req = httpx.Request(
             "POST",
             "http://cortex/dispatch",
