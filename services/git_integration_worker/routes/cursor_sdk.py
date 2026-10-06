@@ -657,8 +657,7 @@ def _outcome_stream_event_fields(outcome: SdkRunOutcome) -> dict[str, Any]:
     fields = stream_capture_forensics_fields(
         StreamCapture(
             tool_calls=(),
-            # Classified at the emit call site; raw text is not a completed kwarg.
-            provider_error=None,
+            provider_error=outcome.provider_error,
             provider_status=outcome.provider_status,
             first_output_s=outcome.first_output_s,
             last_output_s=outcome.last_output_s,
@@ -668,6 +667,7 @@ def _outcome_stream_event_fields(outcome: SdkRunOutcome) -> dict[str, Any]:
             ),
         )
     )
+    # Classified at the emit call site; raw text is not a completed kwarg (a:38390).
     fields.pop("provider_error", None)
     return fields
 
