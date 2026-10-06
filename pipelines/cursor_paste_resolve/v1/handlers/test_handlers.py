@@ -337,6 +337,28 @@ def test_classify_folds_densify_and_refuses_two_in_set() -> None:
     assert isinstance(unknown, str) and "neither" in unknown
 
 
+def test_classify_peels_bare_sdk_when_window_and_densify() -> None:
+    peeled = classify_invocation_tokens(["glass", "orion-node", "opus", "cursor_sdk"])
+    assert peeled == {
+        "window": "glass",
+        "host": "orion-node",
+        "densify": "opus",
+    }
+    sdk_write = classify_invocation_tokens(["cursor_sdk", "opus"])
+    assert sdk_write == {"launch_target": "cursor_sdk", "densify": "opus"}
+    steal = classify_invocation_tokens(["glass", "orion-node", "opus", "no-paste"])
+    assert steal == {
+        "window": "glass",
+        "host": "orion-node",
+        "densify": "opus",
+        "launch_target": "cursor_sdk",
+    }
+    ambiguous = classify_invocation_tokens(["glass", "orion-node", "cursor_sdk"])
+    assert isinstance(ambiguous, str) and "paste" in ambiguous and "admit" in ambiguous
+    two_launch = classify_invocation_tokens(["cursor_sdk", "no-paste"])
+    assert isinstance(two_launch, str) and "launch_target" in two_launch
+
+
 def test_parse_folds_pipeline_densify_and_tab_model() -> None:
     bound = parse_compose_options(
         {

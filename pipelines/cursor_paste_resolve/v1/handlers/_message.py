@@ -16,7 +16,12 @@ IMPLEMENTER_REL = "notes/system/prompts/work-item-implementer-friction.md"
 WINDOW_TOKENS = frozenset({"glass", "ide"})
 HOST_TOKENS = frozenset({"orion-node", "jupiter"})
 NOTIFY_TOKENS = frozenset({"maestro"})
-LAUNCH_TARGET_TOKENS = frozenset({"cursor_sdk"})
+LAUNCH_STEAL_TOKENS = frozenset({"no-paste", "sdk-write", "admit"})
+LAUNCH_BARE_TOKEN = "cursor_sdk"
+LAUNCH_TARGET_TOKENS = frozenset({LAUNCH_BARE_TOKEN}) | LAUNCH_STEAL_TOKENS
+WINDOW_AND_SDK_AMBIGUOUS = (
+    "window and cursor_sdk both named — say paste (omit cursor_sdk) or admit (no-paste)"
+)
 DENSIFY_FOLD: dict[str, str] = {
     "opus": "opus",
     "claude-opus": "opus",
@@ -80,8 +85,15 @@ def _fold_option(
 
 
 def classify_invocation_tokens(tokens: list[str]) -> dict[str, str] | str:
-    """Classify slash tokens after kind+id. Two in one set refuses."""
+    """Classify slash tokens after kind+id. Two in one set refuses.
+
+    Bare ``cursor_sdk`` next to a densify token is densify substrate when a
+    window is also named — peel it as launch. Steal cues (``no-paste``,
+    ``sdk-write``, ``admit``) keep SDK write. Window + bare ``cursor_sdk``
+    with no densify is ambiguous.
+    """
     assigned: dict[str, str] = {}
+    launch_raw = ""
     for raw in tokens:
         token = str(raw).strip()
         if not token:
@@ -95,7 +107,8 @@ def classify_invocation_tokens(tokens: list[str]) -> dict[str, str] | str:
         elif token in NOTIFY_TOKENS:
             set_name, folded = "notify", token
         elif token in LAUNCH_TARGET_TOKENS:
-            set_name, folded = "launch_target", token
+            set_name, folded = "launch_target", "cursor_sdk"
+            launch_raw = token
         elif token in DENSIFY_FOLD:
             set_name, folded = "densify", DENSIFY_FOLD[token]
         elif token in TAB_FOLD:
@@ -105,6 +118,14 @@ def classify_invocation_tokens(tokens: list[str]) -> dict[str, str] | str:
         if set_name in assigned:
             return f"two tokens in set {set_name}"
         assigned[set_name] = folded
+    if "window" in assigned and assigned.get("launch_target") == "cursor_sdk":
+        if launch_raw in LAUNCH_STEAL_TOKENS:
+            return assigned
+        if launch_raw == LAUNCH_BARE_TOKEN and "densify" in assigned:
+            del assigned["launch_target"]
+            return assigned
+        if launch_raw == LAUNCH_BARE_TOKEN:
+            return WINDOW_AND_SDK_AMBIGUOUS
     return assigned
 
 
