@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from claude_bundles.chat_reply_wait import HARVEST_JS, _in_flight
+from claude_bundles.chat_reply_wait import HARVEST_JS
+from claude_bundles.cse_idle_probe import in_flight_from_state as _in_flight
 
 pytest.importorskip("playwright")
 from playwright.async_api import async_playwright  # noqa: E402

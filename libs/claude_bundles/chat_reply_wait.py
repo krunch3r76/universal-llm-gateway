@@ -35,14 +35,17 @@ import time
 from collections.abc import Awaitable, Callable
 
 from cdp_ask.structural_quiet import StructuralQuietTracker
-from chat_harvest.chrome import (
-    badge_scrape_change_key,
-    is_chrome_only,
-    is_tool_status_body,
-)
-from review_verdict.grammar import has_parseable_verdict
+from chat_harvest.chrome import badge_scrape_change_key, is_prompt_echo
 
+from claude_bundles.cse_idle_probe import in_flight_from_state
 from claude_bundles.harvest_dom import HARVEST_JS
+from claude_bundles.reply_completion import (
+    badge_only_body,
+    complete_enough,
+    cowork_complete_enough,
+    error_banner_message,
+    fatal_error_banner,
+)
 
 
 async def harvest_assistant(page, *, min_msg_chars: int = 40) -> dict:
@@ -73,133 +76,6 @@ class HarvestIncompleteError(RuntimeError):
         else:
             self.body = ""
         self.state = state
-
-
-def _is_cowork_cse_url(url: str) -> bool:
-    return "/cowork/cse_" in (url or "")
-
-
-def _in_flight(state: dict) -> bool:
-    """Cowork/tool liveness — Stop / streaming / tool_pause pause the idle clock.
-
-    ``streaming`` is the defense-in-depth backstop when ``stop`` is momentarily
-    false during generation (24873 R-amendment).
-    """
-    return bool(state.get("streaming") or state.get("stop") or state.get("tool_pause"))
-
-
-def _badge_only_body(state: dict) -> bool:
-    """True when the scrape is tool-badge chrome, not assistant prose.
-
-    Cowork drops ``data-is-streaming`` between tool calls. That pause is not
-    the end of the turn, and it is not the agent-bus proof reply.
-    """
-    body = str(state.get("body") or "")
-    return is_chrome_only(body) or is_tool_status_body(body)
-
-
-def _error_banner_message(state: dict, *, on_timeout: bool = False) -> str:
-    """Human-readable HarvestIncompleteError detail including matched banner text."""
-    kind = "error_banner on timeout" if on_timeout else "error_banner detected"
-    match = (state.get("error_banner_match") or "").strip()
-    text = (state.get("error_banner_text") or "").strip()
-    bits = [
-        kind,
-        f"url={state.get('url')}",
-        f"len={state.get('body_len')}",
-    ]
-    if match:
-        bits.append(f"match={match!r}")
-    if text and text.lower() != match.lower():
-        # Truncate so MCP/CLI errors stay skim-friendly.
-        bits.append(f"ctx={text[:200]!r}")
-    return " ".join(bits)
-
-
-def _fatal_error_banner(state: dict) -> bool:
-    """True when a banner is present AND the turn is idle (not recovering).
-
-    Transient Claude overlays (``Overloaded``, rate-limit) often coexist with
-    Stop/streaming while the product retries — aborting then orphans a live
-    Cowork task (friction 25654). Only fail-closed once ¬in_flight.
-
-    Callers must still prefer structural completion over this gate
-    (friction 25684): a lingering delay overlay after the answer landed is
-    not incompleteness.
-    """
-    return bool(state.get("error_banner")) and not _in_flight(state)
-
-
-def _complete_enough(
-    state: dict,
-    *,
-    base_len: int,
-    base_n: int,
-    min_growth: int,
-    min_body: int,
-    ignore_in_flight: bool = False,
-    require_review_verdict: bool = False,
-) -> bool:
-    """Structural turn complete — ¬ a prose-length gate.
-
-    ``min_growth`` / ``min_body`` remain for call-site compat; ignored here.
-    ``require_review_verdict`` (job=delivery-review): refuse skill-induction /
-    mid-tool prose that lacks a parseable verdict line (a:37156 / a:37034).
-    """
-    del min_growth, min_body, base_len
-    if _badge_only_body(state):
-        return False
-    if require_review_verdict and not has_parseable_verdict(
-        str(state.get("body") or "")
-    ):
-        return False
-    cur_len = state.get("body_len", 0)
-    cur_n = state.get("n", 0)
-    in_flight = _in_flight(state) and not ignore_in_flight
-    return bool(cur_n > base_n and cur_len > 0 and not in_flight)
-
-
-def _cowork_complete_enough(
-    state: dict,
-    *,
-    base_len: int,
-    base_n: int,
-    min_growth: int,
-    min_body: int,
-    saw_working: bool,
-    ignore_in_flight: bool = False,
-    require_review_verdict: bool = False,
-) -> bool:
-    """URL-guarded Cowork fallback (24864) with positive new-turn guard.
-
-    Global gate ``cur_n > base_n`` is preserved on Chat paths via
-    ``_complete_enough``. Cowork completion requires ``n`` growth (S1-c) —
-    body-length growth or working→idle alone must not terminalize.
-    """
-    if not _is_cowork_cse_url(state.get("url", "")):
-        return False
-    # Lingering delay overlays (Overloaded) must not veto Cowork completion
-    # once the turn is idle (friction 25684) — same as chat path.
-    if _in_flight(state) and not ignore_in_flight:
-        return False
-    del min_body, min_growth, saw_working
-    cur_len = state.get("body_len", 0)
-    cur_n = state.get("n", 0)
-    if cur_len < 1 or _badge_only_body(state):
-        return False
-    if require_review_verdict and not has_parseable_verdict(
-        str(state.get("body") or "")
-    ):
-        return False
-
-    grew_n = cur_n > base_n
-    # Body-length / working→idle without n growth must not terminalize (S1-c).
-    return bool(grew_n)
-
-
-def _is_user_prompt_echo(body: str) -> bool:
-    """True when harvested text is the Cowork user-turn chrome (a:27801)."""
-    return (body or "").lstrip().lower().startswith("you said:")
 
 
 async def wait_assistant_reply(
@@ -243,7 +119,7 @@ async def wait_assistant_reply(
     while True:
         state = await harvest_assistant(page, min_msg_chars=msg_floor)
         # Belt: even if HARVEST_JS still returns user chrome, do not complete.
-        if _is_user_prompt_echo(str(state.get("body") or "")):
+        if is_prompt_echo(str(state.get("body") or "")):
             state = {
                 **state,
                 "body": "",
@@ -254,13 +130,9 @@ async def wait_assistant_reply(
         if on_harvest is not None:
             await on_harvest(state)
         structural_quiet.observe(state)
-        # Never raise mid-poll on banner alone (friction 25654): Overloaded /
-        # rate-limit overlays often appear while Stop/streaming is still up, or
-        # briefly between product retries. Fail-closed only after idle timeout
-        # with match text attached.
         cur_len = state.get("body_len", 0)
         cur_n = state.get("n", 0)
-        in_flight = _in_flight(state)
+        in_flight = in_flight_from_state(state)
         tier_a_escape = structural_quiet.quiet_satisfied and cur_n > base_n
         tier_b_unlatch = structural_quiet.quiet_satisfied and cur_n <= base_n
         effective_in_flight = in_flight and not tier_a_escape
@@ -268,7 +140,7 @@ async def wait_assistant_reply(
         if state.get("task_map_working"):
             saw_working = True
 
-        if _badge_only_body(state):
+        if badge_only_body(state):
             badge_key = badge_scrape_change_key(str(state.get("body") or ""))
             if prev_badge_key is not None and badge_key != prev_badge_key:
                 idle_deadline = time.monotonic() + max(timeout_s, 1)
@@ -282,12 +154,8 @@ async def wait_assistant_reply(
             stable = 0
             cowork_stable = 0
         else:
-            # Structural / Cowork completion wins over a lingering delay overlay
-            # (Overloaded can remain in the DOM after the answer landed —
-            # friction 25684). Banner without a completed turn still holds
-            # stable counters so a delayed retry can resume before fail-closed.
             ignore_in_flight = tier_a_escape
-            if _complete_enough(
+            if complete_enough(
                 state,
                 base_len=base_len,
                 base_n=base_n,
@@ -303,7 +171,7 @@ async def wait_assistant_reply(
                 last_len = cur_len
                 if stable >= stable_polls:
                     return state
-            elif _cowork_complete_enough(
+            elif cowork_complete_enough(
                 state,
                 base_len=base_len,
                 base_n=base_n,
@@ -335,8 +203,7 @@ async def wait_assistant_reply(
     state = await harvest_assistant(page, min_msg_chars=msg_floor)
     if on_harvest is not None:
         await on_harvest(state)
-    # Prefer structural completion over banner fail-closed (25684).
-    if _complete_enough(
+    if complete_enough(
         state,
         base_len=base_len,
         base_n=base_n,
@@ -345,7 +212,7 @@ async def wait_assistant_reply(
         require_review_verdict=require_review_verdict,
     ):
         return state
-    if _cowork_complete_enough(
+    if cowork_complete_enough(
         state,
         base_len=base_len,
         base_n=base_n,
@@ -355,9 +222,9 @@ async def wait_assistant_reply(
         require_review_verdict=require_review_verdict,
     ):
         return state
-    if _fatal_error_banner(state):
+    if fatal_error_banner(state):
         raise HarvestIncompleteError(
-            _error_banner_message(state, on_timeout=True),
+            error_banner_message(state, on_timeout=True),
             state=state,
         )
     raise HarvestIncompleteError(

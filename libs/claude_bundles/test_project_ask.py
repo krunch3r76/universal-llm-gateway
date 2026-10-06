@@ -832,7 +832,7 @@ async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> 
 
 def test_induction_ack_is_not_complete_against_its_own_baseline() -> None:
     """purpose=ask seals the skill ack when base_n is the pre-send snapshot."""
-    from claude_bundles.chat_reply_wait import _complete_enough
+    from claude_bundles.reply_completion import complete_enough as _complete_enough
     from claude_bundles.induction_reply_baseline import work_reply_before
 
     ack = {

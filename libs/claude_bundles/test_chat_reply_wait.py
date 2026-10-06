@@ -6,15 +6,19 @@ import asyncio
 import time
 
 import pytest
+from chat_harvest.chrome import is_prompt_echo
 
-from claude_bundles.chat_reply_wait import (
-    HarvestIncompleteError,
-    _complete_enough,
-    _cowork_complete_enough,
-    _in_flight,
-    _is_user_prompt_echo,
-    wait_assistant_reply,
+from claude_bundles.chat_reply_wait import HarvestIncompleteError, wait_assistant_reply
+from claude_bundles.cse_idle_probe import in_flight_from_state
+from claude_bundles.reply_completion import (
+    complete_enough as _complete_enough,
 )
+from claude_bundles.reply_completion import (
+    cowork_complete_enough as _cowork_complete_enough,
+)
+
+_in_flight = in_flight_from_state
+_is_user_prompt_echo = is_prompt_echo
 
 pytestmark = pytest.mark.offline
 
@@ -84,6 +88,36 @@ def test_in_flight_detects_stop_streaming_tool_pause() -> None:
     assert _in_flight(_state(streaming=True))
     assert _in_flight(_state(tool_pause=True))
     assert not _in_flight(_state())
+
+
+@pytest.mark.parametrize(
+    ("streaming", "stop", "tool_pause"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (False, False, True),
+        (True, True, False),
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
+    ],
+)
+def test_in_flight_from_state_matches_legacy_triple(
+    streaming: bool, stop: bool, tool_pause: bool
+) -> None:
+    state = {
+        "streaming": streaming,
+        "stop": stop,
+        "tool_pause": tool_pause,
+    }
+    legacy = bool(streaming or stop or tool_pause)
+    assert in_flight_from_state(state) is legacy
+
+
+@pytest.mark.parametrize("state", [{}, {"streaming": None}, {"stop": 0}])
+def test_in_flight_from_state_missing_keys_falsy(state: dict) -> None:
+    assert in_flight_from_state(state) is False
 
 
 @pytest.mark.asyncio
