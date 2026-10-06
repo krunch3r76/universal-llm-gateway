@@ -13,6 +13,7 @@ from .sweep import sweep_once
 pytestmark = pytest.mark.offline
 
 _STORED = "https://claude.ai/cowork/cse_stored"
+_WAKE_LANE = "999888777"
 
 
 def _lane_cse_none() -> dict[str, Any]:
@@ -33,16 +34,16 @@ async def test_sweep_once_address_retries_on_due_scheduled_row(
         memo_key="giw:sweep-retry-1",
         kind="sdk_closeout",
         status="completed",
-        wake_lane="12286",
+        wake_lane=_WAKE_LANE,
         worker_thread="15091",
-        dispatch_thread="12286",
+        dispatch_thread="15091",
         dispatch_id="sweep-retry-1",
         emitted_at="2026-10-05T04:10:00Z",
     )
     payload = memo.model_dump()
     memo_id = payload["memo_id"]
     assert _ledger.insert_admit(payload) == "admitted"
-    _ledger.claim_admitted("12286", limit=5)
+    _ledger.claim_admitted(_WAKE_LANE, limit=5)
     _ledger.store_render([memo_id], text="MEMO", sha256="abc123")
     _ledger.schedule_retry([memo_id], delay_s=0, error="lane_busy:1")
 

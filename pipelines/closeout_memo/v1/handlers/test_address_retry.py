@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from . import deliver
 from ._transport import followup_body, followup_by_address_body
 from .deliver import apply_decision
 
 pytestmark = pytest.mark.offline
 
 _STORED = "https://claude.ai/cowork/cse_stored"
+_WAKE_LANE = "999888777"
 
 
 @pytest.fixture
@@ -21,14 +21,10 @@ def memo_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 
 
 @pytest.fixture
-def record_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    events: list[tuple[str, dict[str, Any]]] = []
-
-    def _emit(name: str, **payload: Any) -> None:
-        events.append((name, dict(payload)))
-
-    monkeypatch.setattr(deliver, "emit_closeout_memo", _emit)
-    return events
+def record_events(
+    closeout_memo_event_log: list[tuple[str, dict[str, Any]]],
+) -> list[tuple[str, dict[str, Any]]]:
+    return closeout_memo_event_log
 
 
 def _lane_cse_none() -> dict[str, Any]:
@@ -58,9 +54,9 @@ def _attended_404(chat_url: str | None = _STORED) -> dict[str, Any]:
 
 
 def test_followup_by_address_body_includes_reattach_and_url() -> None:
-    base = followup_body(parent_thread="12286", prompt_text="MEMO")
+    base = followup_body(parent_thread="999888777", prompt_text="MEMO")
     body = followup_by_address_body(
-        parent_thread="12286",
+        parent_thread="999888777",
         prompt_text="MEMO",
         chat_url=_STORED,
     )
@@ -100,7 +96,7 @@ async def test_lane_cse_none_retries_by_stored_address_and_delivers(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=harvest,
@@ -151,7 +147,7 @@ async def test_stored_association_streaming_skips_retry(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -183,7 +179,7 @@ async def test_attended_404_without_seat_holder_skips_retry(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -214,7 +210,7 @@ async def test_attended_404_empty_chat_url_skips_retry(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -244,7 +240,7 @@ async def test_attended_transport_failure_skips_retry(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -277,7 +273,7 @@ async def test_attended_503_skips_retry(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -309,7 +305,7 @@ async def test_retry_error_class_uses_decision_table_two_followups_only(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -343,7 +339,7 @@ async def test_retry_timeout_harvests_with_chat_url_no_third_followup(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=harvest,
@@ -376,7 +372,7 @@ async def test_attended_200_skips_retry(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
@@ -403,7 +399,7 @@ async def test_without_injection_lane_cse_none_single_followup_only(
 
     outcome = await apply_decision(
         memo_ids=["m1"],
-        wake_lane="12286",
+        wake_lane="999888777",
         prompt_text="MEMO",
         followup=followup,
         harvest=_noop_harvest,
