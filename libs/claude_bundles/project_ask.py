@@ -40,7 +40,6 @@ from claude_bundles.chat_reply_wait import (
     harvest_assistant,
     wait_assistant_reply,
 )
-from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     goto_fresh_compose,
@@ -62,7 +61,9 @@ from claude_bundles.cowork_output_download import (
     cortex_files_root_from_env,
     resolve_harvest_body,
 )
+from claude_bundles.cowork_skill_delivery import SkillReceiptUnverifiedError
 from claude_bundles.project_chrome import project_url
+from claude_bundles.reply_anchor import ReplyAnchor, anchor_marker
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _THINKING_LINE = re.compile(
@@ -707,8 +708,7 @@ async def _harvest_after_skill_receipt_unverified(
     page: Page,
     *,
     exc: SkillReceiptUnverifiedError,
-    caller_before: dict,
-    induction_baseline: dict | None,
+    anchor: ReplyAnchor,
     project_uuid: str,
     project_url: str,
     model_info: dict,
@@ -720,12 +720,10 @@ async def _harvest_after_skill_receipt_unverified(
     purpose: str,
 ) -> ProjectAskResult:
     """Collect the work reply when the message submitted but receipt failed (a:37716)."""
-    from claude_bundles.induction_reply_baseline import work_reply_before
-
-    before = work_reply_before(caller_before, induction_baseline)
     state = await wait_assistant_reply(
         page,
-        before=before,
+        anchor=anchor,
+        tail_hold=True,
         timeout_s=timeout_s,
         poll_ms=500,
         min_growth=min_growth,
@@ -780,8 +778,7 @@ async def project_ask_on_page(
     (a:37156 skill-induction seal).
     """
     dest = project_url(project_uuid)
-    caller_before: dict = {}
-    induction_baseline: dict | None = None
+    anchor: ReplyAnchor | None = None
     model_info: dict = {}
     try:
         model_info = await _compose_model_selected(
@@ -803,20 +800,21 @@ async def project_ask_on_page(
                 delete_after=None,
                 error=f"model select failed: {model_info}",
             )
-        from claude_bundles.induction_reply_baseline import work_reply_before
-
-        caller_before = await harvest_assistant(page, min_msg_chars=10)
-        induction_baseline = await send_prompt(
+        probe = ReplyAnchor(anchor_marker(prompt))
+        anchor = probe.after(
+            await harvest_assistant(page, min_msg_chars=10, anchor=probe)
+        )
+        await send_prompt(
             page,
             prompt,
             stargate_execution_id=stargate_execution_id,
             satellite_execution_id=str(execution_id or ""),
             await_induction_reply=True,
         )
-        before = work_reply_before(caller_before, induction_baseline)
         state = await wait_assistant_reply(
             page,
-            before=before,
+            anchor=anchor,
+            tail_hold=True,
             timeout_s=timeout_s,
             poll_ms=500,
             min_growth=min_growth,
@@ -934,13 +932,12 @@ async def project_ask_on_page(
             error=str(exc),
         )
     except SkillReceiptUnverifiedError as exc:
-        if not exc.submitted:
+        if not exc.submitted or anchor is None:
             raise
         return await _harvest_after_skill_receipt_unverified(
             page,
             exc=exc,
-            caller_before=caller_before,
-            induction_baseline=induction_baseline,
+            anchor=anchor,
             project_uuid=project_uuid,
             project_url=dest,
             model_info=model_info,

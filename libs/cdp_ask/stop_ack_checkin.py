@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -77,9 +78,10 @@ def parse_stop_ack(body: str) -> ParsedStopAck | None:
     return None
 
 
-def build_stop_ack_prompt() -> str:
-    """Scrapable check-in prompt containing the three ACK tokens."""
-    return _STOP_ACK_PROMPT
+def build_stop_ack_prompt(execution_id: str, nonce: str) -> str:
+    """Scrapable check-in prompt with a per-check-in unique marker line."""
+    unique = f"#1-unique: stop-ack-{execution_id}-{nonce}"
+    return f"{unique}\n{_STOP_ACK_PROMPT}"
 
 
 async def _default_execute_followup(
@@ -91,11 +93,18 @@ async def _default_execute_followup(
 
 
 async def _harvest_reply_body(
-    registration_id: str, chat_url: str | None
+    registration_id: str,
+    chat_url: str | None,
+    *,
+    prompt_text: str,
 ) -> str | None:
     """Best-effort assistant reply scrape after paste (short idle wait)."""
     from claude_bundles import cdp_registry
-    from claude_bundles.chat_reply_wait import wait_assistant_reply
+    from claude_bundles.chat_reply_wait import (
+        HarvestIncompleteError,
+        wait_assistant_reply,
+    )
+    from claude_bundles.reply_anchor import unique_anchor
 
     from cdp_ask.followup_reattach import find_page_on_lane
 
@@ -113,9 +122,12 @@ async def _harvest_reply_body(
     if found is None:
         return None
     page, pw = found
+    anchor = unique_anchor(prompt_text)
     try:
         state = await wait_assistant_reply(
             page,
+            anchor=anchor,
+            tail_hold=True,
             timeout_s=30,
             poll_ms=500,
             min_body=1,
@@ -124,6 +136,9 @@ async def _harvest_reply_body(
         )
         body = str(state.get("body") or state.get("last_body") or "")
         return body.strip() or None
+    except HarvestIncompleteError as exc:
+        partial = (exc.body or "").strip()
+        return partial or None
     except Exception:
         return None
     finally:
@@ -139,11 +154,13 @@ async def _attempt_checkin_paste(
     """Paste check-in on attached lane; returns (route, reply_body, lane_created)."""
     from cdp_ask.followup_resolve import resolve_followup_target
 
+    nonce = uuid.uuid4().hex[:12]
+    prompt_text = build_stop_ack_prompt(rec.execution_id, nonce)
     req = FollowupProjectAskRequest(
         execution_id=rec.execution_id,
         registration_id=rec.registration_id,
         purpose=rec.purpose,
-        prompt_text=build_stop_ack_prompt(),
+        prompt_text=prompt_text,
         reattach=False,
         min_receipt="dom_paste",
     )
@@ -161,6 +178,7 @@ async def _attempt_checkin_paste(
     body = await _harvest_reply_body(
         target.registration_id,
         getattr(resp, "url", None) or target.chat_url,
+        prompt_text=prompt_text,
     )
     return "paste", body, False
 

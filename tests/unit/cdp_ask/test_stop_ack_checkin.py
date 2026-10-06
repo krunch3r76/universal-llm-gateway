@@ -10,10 +10,14 @@ from cdp_ask.execution_store import ExecutionRecord, ExecutionStore
 from cdp_ask.models import FollowupProjectAskResponse
 from cdp_ask.stop_ack_checkin import (
     STOP_ACK_QUIET_S,
+    _harvest_reply_body,
+    build_stop_ack_prompt,
     is_stop_ack_candidate,
     parse_stop_ack,
     run_checkin_tick,
 )
+from claude_bundles.composer_submit import verification_marker
+from claude_bundles.reply_anchor import unique_anchor
 from claude_bundles.cse_session_obligations import (
     get_open_stop_ack_owed_for_execution,
     mint_stop_ack_owed,
@@ -266,3 +270,60 @@ def test_stop_ack_events_emit_mocked() -> None:
             )
         )
         assert sock.sendall.call_count == 3
+
+
+def test_build_stop_ack_prompt_unique_line_and_tokens() -> None:
+    prompt_a = build_stop_ack_prompt("exec-abc", "nonce1")
+    prompt_b = build_stop_ack_prompt("exec-abc", "nonce2")
+    assert prompt_a.startswith("#1-unique: stop-ack-exec-abc-nonce1")
+    assert "STOP-ACK intentional" in prompt_a
+    assert verification_marker(prompt_a) == "#1-unique: stop-ack-exec-abc-nonce1"
+    assert prompt_a != prompt_b
+
+
+@pytest.mark.asyncio
+async def test_harvest_reply_body_returns_partial_on_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.chat_reply_wait import HarvestIncompleteError
+
+    prompt = build_stop_ack_prompt("exec-1", "abc123")
+    anchor = unique_anchor(prompt)
+
+    page = AsyncMock()
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+
+    async def _find(*_a, **_k):
+        return page, pw
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.find_page_on_lane",
+        AsyncMock(side_effect=_find),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.list_active",
+        lambda: [
+            MagicMock(registration_id="reg-1", chat_url="https://claude.ai/cowork/cse_x"),
+        ],
+    )
+
+    async def _wait(*_a, **_k):
+        raise HarvestIncompleteError(
+            "tail_hold unresolved at idle budget: reply still ends on a tool row",
+            body="STOP-ACK intentional",
+            tail_hold=True,
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_reply_wait.wait_assistant_reply",
+        AsyncMock(side_effect=_wait),
+    )
+
+    body = await _harvest_reply_body(
+        "reg-1",
+        "https://claude.ai/cowork/cse_x",
+        prompt_text=prompt,
+    )
+    assert body == "STOP-ACK intentional"
+    assert anchor.marker in prompt
