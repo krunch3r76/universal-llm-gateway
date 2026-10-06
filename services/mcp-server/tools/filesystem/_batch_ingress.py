@@ -237,24 +237,36 @@ def resolve_copy_target_ingress(
     target_sandbox: str,
     source_sandbox: str,
     cortex_root: Path | None = None,
+    surface: str = "code",
 ) -> FsIngressResult:
-    """Resolve copy ``target`` the same way ``path`` ingress resolves sources.
+    """Resolve copy/move ``target`` the same way ``path`` ingress resolves sources.
 
     Schemed ``cortex://`` / ``workspaces://`` dests infer sandbox from the URI
     even when ``target_sandbox`` is omitted. A schemeless dest keeps the
     explicit ``target_sandbox`` or, if that is also empty, the source sandbox.
-    ``for_write=True`` so dests use the write-side creation gate.
+    ``for_write=True`` so dests use the write-side creation gate. Life dests
+    that land on an empty cortex repo stub refuse (review B2 on a:38194).
     """
     explicit = target_sandbox.strip() or None
     if explicit is None and parse_schemed_path(target).scheme is None:
         explicit = source_sandbox
     root = cortex_root if cortex_root is not None else cortex_files_root()
-    return resolve_fs_ingress(
+    ingress = resolve_fs_ingress(
         target,
         sandbox=explicit,
         cortex_root=root,
         for_write=True,
     )
+    _aliased, stub_err = life_cortex_repo_stub_alias(
+        surface=surface,
+        sandbox=ingress.sandbox,
+        path=ingress.rel_path,
+        for_write=True,
+        cortex_root=root,
+    )
+    if stub_err is not None:
+        raise ValueError(stub_err)
+    return ingress
 
 
 def remap_batch_files_keys(

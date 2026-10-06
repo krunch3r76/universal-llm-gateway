@@ -148,7 +148,7 @@ def life_cortex_repo_stub_alias(
     if not raw:
         return None, None
     parsed = parse_schemed_path(raw)
-    if parsed.scheme is not None or Path(raw).is_absolute():
+    if parsed.scheme not in (None, "cortex") or Path(raw).is_absolute():
         return None, None
     parts = [part for part in parsed.rel_path.split("/") if part]
     if not parts:

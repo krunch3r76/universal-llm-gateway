@@ -52,7 +52,7 @@ def test_agent_bus_wait_suffix_uses_320s_budget() -> None:
 
 
 def test_agent_bus_tip_fetch_compact_last_uses_short_budget() -> None:
-    """a:38194 — compact last=N must not burn the full 30s relay budget."""
+    """a:38194 — last=N must not burn the full 30s relay budget."""
     assert (
         resolve_timeout(
             "agent-bus",
@@ -61,7 +61,6 @@ def test_agent_bus_tip_fetch_compact_last_uses_short_budget() -> None:
         )
         == relay_mod._AGENT_BUS_TIP_FETCH_TIMEOUT
     )
-    # Query order must not matter.
     assert (
         resolve_timeout(
             "agent-bus",
@@ -69,6 +68,36 @@ def test_agent_bus_tip_fetch_compact_last_uses_short_budget() -> None:
             "/turns?last=3&thread=12286&compact=true",
         )
         == relay_mod._AGENT_BUS_TIP_FETCH_TIMEOUT
+    )
+    assert (
+        resolve_timeout("agent-bus", "GET", "/turns?thread=12286&last=3")
+        == relay_mod._AGENT_BUS_TIP_FETCH_TIMEOUT
+    )
+
+
+def test_agent_bus_tip_fetch_mark_read_keeps_default_timeout() -> None:
+    """N1 — mark_read must not fail-fast while the server still mutates pointers."""
+    assert (
+        resolve_timeout(
+            "agent-bus",
+            "GET",
+            "/turns?thread=1&compact=true&last=3&mark_read=true",
+        )
+        == 30.0
+    )
+
+
+def test_agent_bus_tip_fetch_timeout_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_RELAY_TIP_FETCH_TIMEOUT_S", "15")
+    assert (
+        resolve_timeout(
+            "agent-bus",
+            "GET",
+            "/turns?thread=12286&last=3",
+        )
+        == 15.0
     )
 
 

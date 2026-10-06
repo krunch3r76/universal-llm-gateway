@@ -165,12 +165,13 @@ def fs_impl(
         }
 
     copy_dest_sandbox = target_sandbox
-    if op == "copy" and target.strip():
+    if op in {"copy", "move"} and target.strip():
         try:
             dest_ingress = resolve_copy_target_ingress(
                 target,
                 target_sandbox=target_sandbox,
                 source_sandbox=effective_sandbox,
+                surface=surface,
             )
         except ValueError as exc:
             return {"error": str(exc)}

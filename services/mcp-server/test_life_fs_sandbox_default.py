@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tool_error_enricher import (
@@ -204,3 +206,71 @@ def test_life_empty_cortex_repo_stub_write_refuses(tmp_path, monkeypatch):
     assert err is not None
     assert "empty cortex stub" in err
     assert "workspaces://universal-llm-gateway" in err
+
+
+def test_life_nested_cortex_files_are_not_a_stub(tmp_path, monkeypatch):
+    """N3 — files two levels deep (agent-bus/attachments) keep cortex."""
+    from tools._project_paths import repo_roots
+
+    projects = tmp_path / "projects"
+    repo = projects / "agent-bus"
+    (repo / ".git").mkdir(parents=True)
+    cortex = tmp_path / "cortex"
+    nested = cortex / "agent-bus" / "attachments"
+    nested.mkdir(parents=True)
+    (nested / "a.md").write_text("kept\n", encoding="utf-8")
+
+    monkeypatch.setenv("PROJECT_ROOT", str(projects))
+    import tools._project_paths as paths_mod
+
+    paths_mod._PROJECT_ROOT = projects
+    assert "agent-bus" in {r.name for r in repo_roots(projects)}
+
+    aliased, err = life_cortex_repo_stub_alias(
+        surface="life",
+        sandbox="cortex",
+        path="agent-bus/attachments/a.md",
+        for_write=False,
+        cortex_root=cortex,
+    )
+    assert err is None
+    assert aliased is None
+    write_aliased, write_err = life_cortex_repo_stub_alias(
+        surface="life",
+        sandbox="cortex",
+        path="agent-bus/attachments/b.md",
+        for_write=True,
+        cortex_root=cortex,
+    )
+    assert write_err is None
+    assert write_aliased is None
+
+
+def test_life_copy_to_empty_cortex_stub_refuses(tmp_path, monkeypatch):
+    """B2 — copy dest into empty repo stub must not plant a file there."""
+    from tools.filesystem._batch_ingress import resolve_copy_target_ingress
+
+    projects = tmp_path / "projects"
+    repo = projects / "universal-llm-gateway"
+    (repo / ".git").mkdir(parents=True)
+    cortex = tmp_path / "cortex"
+    stub = cortex / "universal-llm-gateway" / "docs"
+    stub.mkdir(parents=True)
+    (cortex / "notes").mkdir()
+    (cortex / "notes" / "x.md").write_text("src\n", encoding="utf-8")
+
+    monkeypatch.setenv("PROJECT_ROOT", str(projects))
+    import tools._project_paths as paths_mod
+
+    paths_mod._PROJECT_ROOT = projects
+
+    with pytest.raises(ValueError, match="empty cortex stub"):
+        resolve_copy_target_ingress(
+            "universal-llm-gateway/x.md",
+            target_sandbox="",
+            source_sandbox="cortex",
+            cortex_root=cortex,
+            surface="life",
+        )
+    assert not (cortex / "universal-llm-gateway" / "x.md").exists()
+    assert not any(p.is_file() for p in (cortex / "universal-llm-gateway").rglob("*"))

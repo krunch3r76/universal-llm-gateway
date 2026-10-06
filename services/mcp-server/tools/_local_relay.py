@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 30.0
 # Tip fetch is index-tail (a:37201); when agent-bus wedges, burning the full
-# 30s budget on last=N compact starves the life seat (a:38194). Fail fast.
+# 30s budget on last=N starves the life seat (a:38194). Fail fast. Env override
+# ``MCP_RELAY_TIP_FETCH_TIMEOUT_S`` is read at resolve time (review N2 on 15287#2).
 _AGENT_BUS_TIP_FETCH_TIMEOUT = 8.0
 _MAX_ORPHAN_WORKERS = 4
 _ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
@@ -110,27 +111,35 @@ class _SlotToken:
         return True
 
 
+def _truthy_query(params: dict[str, list[str]], key: str) -> bool:
+    return any(value.lower() in {"1", "true", "yes"} for value in params.get(key, []))
+
+
 def _is_agent_bus_tip_fetch(path: str) -> bool:
-    """True for GET /turns?compact=true&last=N tip windows (query order-free)."""
+    """True for GET /turns tip windows: thread= + last=N, not mark_read.
+
+    Compact is optional (review B1 on a:38194). mark_read stays on the default
+    budget so a stall cannot orphan a server-side read-pointer move (N1).
+    """
     from urllib.parse import parse_qs
 
     base, _, query = path.partition("?")
     if base != "/turns" or not query:
         return False
     params = parse_qs(query, keep_blank_values=True)
-    if "last" not in params:
+    if "last" not in params or "thread" not in params:
         return False
-    return any(
-        value.lower() in {"1", "true", "yes"} for value in params.get("compact", [])
-    )
+    if _truthy_query(params, "mark_read"):
+        return False
+    return True
 
 
 def resolve_timeout(service: str, method: str, path: str) -> float:
     """Return the client budget for a local relay route.
 
     Exact (service, method, path) match wins; otherwise a suffix rule matches
-    parameterized routes whose path embeds an id; tip-fetch compact last=N uses
-    a short budget; otherwise the default budget.
+    parameterized routes whose path embeds an id; tip-fetch last=N uses a
+    short budget (env ``MCP_RELAY_TIP_FETCH_TIMEOUT_S``); otherwise default.
     """
     method = method.upper()
     exact = _ROUTE_TIMEOUTS.get((service, method, path))
@@ -141,7 +150,12 @@ def resolve_timeout(service: str, method: str, path: str) -> float:
         if service == svc and method == mth and path_no_query.endswith(suffix):
             return timeout
     if service == "agent-bus" and method == "GET" and _is_agent_bus_tip_fetch(path):
-        return _AGENT_BUS_TIP_FETCH_TIMEOUT
+        return float(
+            os.getenv(
+                "MCP_RELAY_TIP_FETCH_TIMEOUT_S",
+                str(_AGENT_BUS_TIP_FETCH_TIMEOUT),
+            )
+        )
     return _REQUEST_TIMEOUT
 
 
