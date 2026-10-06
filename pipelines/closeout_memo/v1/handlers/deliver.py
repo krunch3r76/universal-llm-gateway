@@ -115,6 +115,7 @@ async def apply_decision(
                 wake_lane=wake_lane,
                 outcome="attempted",
                 reason="lane_cse_none",
+                registration_id_sent=bool(holder_registration_id),
             )
             result = await followup_by_address(
                 parent_thread=wake_lane,

@@ -240,6 +240,16 @@ async def execute_followup(
             return reattach_err
         reattach_used = True
         lane_created = bool(reattach_outcome and reattach_outcome.lane_created)
+        outcome_reg = (
+            str(reattach_outcome.registration_id or "").strip()
+            if reattach_outcome and reattach_outcome.ok
+            else ""
+        )
+        if outcome_reg:
+            # Mint/borrow reattach may move the lane seat (bind_session_address →
+            # apply_driving_seat_bind). Second resolve must judge against the host
+            # we attached, not the stale registration_id from the address retry.
+            req = req.model_copy(update={"registration_id": outcome_reg})
         target, err, resolution_path, target_binding = await resolve_followup_target(
             req, store, lane_pin=lane_pin
         )

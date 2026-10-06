@@ -1465,3 +1465,142 @@ async def test_parked_lane_stored_identity_with_reattach_reaches_paste(
     paste.assert_awaited_once()
     assert resp.ok is True
     assert resp.reattach_used is True
+
+
+@pytest.mark.asyncio
+async def test_reattach_mint_syncs_registration_id_before_second_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When reattach mints host M, second resolve sees M not the stored reg R."""
+    from cdp_ask.followup_envelope import FollowupCandidate, fail_followup
+
+    store = ExecutionStore()
+    lane = "12286"
+    reg_m = _reg("reg-minted-M")
+    seen_regs: list[str | None] = []
+    events: list[Any] = []
+    target = FollowupCandidate(
+        registration_id=reg_m.registration_id,
+        chat_url=CSE_A,
+        holder="h",
+        purpose="operator-proxy",
+        cdp_url=reg_m.cdp_url,
+    )
+
+    async def _resolve(
+        req: FollowupProjectAskRequest,
+        _store: ExecutionStore,
+        *,
+        lane_pin: dict | None = None,
+    ):
+        seen_regs.append(req.registration_id)
+        if len(seen_regs) == 1:
+            return (
+                None,
+                fail_followup("cse_not_found_on_lane", url=CSE_A),
+                "chat_url",
+                None,
+            )
+        return target, None, "chat_url", None
+
+    monkeypatch.setattr("cdp_ask.followup.resolve_followup_target", _resolve)
+    monkeypatch.setattr(
+        "cdp_ask.followup.ensure_cse_attached",
+        AsyncMock(
+            return_value=ReattachOutcome(
+                ok=True,
+                registration_id=reg_m.registration_id,
+                cdp_url=reg_m.cdp_url,
+                lane_created=True,
+            )
+        ),
+    )
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    paste = AsyncMock(
+        return_value={
+            "send_verified": True,
+            "receipt": "dom_paste",
+            "streaming_at_paste": False,
+            "url": CSE_A,
+            "pasted_at": 1.0,
+        }
+    )
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
+
+    def _capture(ev: Any) -> None:
+        events.append(ev)
+
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", _capture)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_A,
+            registration_id="reg-stored-R",
+            reattach=True,
+        ),
+        store,
+    )
+    assert seen_regs == ["reg-stored-R", reg_m.registration_id]
+    assert resp.ok is True
+    assert resp.lane_created is True
+    assert resp.reattach_used is True
+    paste.assert_awaited_once()
+    assert not any(
+        getattr(e, "signal", None) == "cdp_ask.followup.refused_seat_mismatch"
+        for e in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_seat_holder_change_still_refuses_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Holder moved outside this followup's reattach still refuses at the gate."""
+    store = ExecutionStore()
+    lane = "12286"
+    events: list[Any] = []
+
+    async def _snap() -> dict[str, Any]:
+        return {
+            "seat_rows": [
+                {
+                    "registration_id": "reg-other-holder",
+                    "parent_thread": lane,
+                    "purpose": "operator-proxy",
+                    "seat_bound_at": 1.0,
+                }
+            ],
+            "rows": [],
+            "observed_at": "t",
+        }
+
+    monkeypatch.setattr(store, "active_work_snapshot", _snap)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.emit_followup_event",
+        lambda ev: events.append(ev),
+    )
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            prompt_text="memo",
+            parent_thread=lane,
+            chat_url=CSE_A,
+            registration_id="reg-stored-R",
+            reattach=True,
+        ),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.error == "operator_seat_mismatch"
+    assert any(
+        getattr(e, "signal", None) == "cdp_ask.followup.refused_seat_mismatch"
+        for e in events
+    )

@@ -144,6 +144,7 @@ async def test_lane_cse_none_retries_by_stored_address_and_delivers(
     retry_ev = [p for name, p in record_events if name == "address_retry"]
     assert retry_ev[-1]["outcome"] == "attempted"
     assert retry_ev[-1]["reason"] == "lane_cse_none"
+    assert retry_ev[-1]["registration_id_sent"] is True
     delivered_ev = [p for name, p in record_events if name == "delivered"]
     assert delivered_ev[-1]["address_retry"] is True
     assert delivered_ev[-1]["reattach_chat_url"] == _STORED
