@@ -5,15 +5,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bus_watch.digest_budget import GEAR_PRESETS, POLICY_DEFAULTS, build_budget_block, effective_policy
+from bus_watch.digest_budget import (
+    GEAR_PRESETS,
+    POLICY_DEFAULTS,
+    build_budget_block,
+    effective_policy,
+)
 from bus_watch.ide_budget import (
     IDE_BUDGET_SOURCE,
+    active_budget_excludes,
     ide_holder_idle_s,
     ide_holder_transcript,
     ide_transcript_probe_resolved,
     measure_ide_tab,
     measure_transcript,
     newest_resume_transcript,
+    pin_retired_resume_transcript,
 )
 from bus_watch.spawn_pending import idle_ide_forfeit
 
@@ -94,7 +101,11 @@ def test_measure_ide_tab_estimates_and_raises_stop_class(tmp_path: Path) -> None
     )
     policy = {"ide_window_tokens": 256_000, "ide_tokens_per_tool_call": 1500}
     ide = measure_ide_tab(
-        "10479", {"holder": f"ide:{_TID}"}, policy, transcripts_dir=tmp_path
+        "10479",
+        {"holder": f"ide:{_TID}"},
+        policy,
+        transcripts_dir=tmp_path,
+        watch_dir=tmp_path / "watchers",
     )
     assert ide is not None
     assert ide["holder_basis"] == "seat_lock"
@@ -107,6 +118,8 @@ def test_measure_ide_tab_estimates_and_raises_stop_class(tmp_path: Path) -> None
         scope="liaison_seat",
         epoch=ide["transcript_id"],
         as_of="2026-09-13T04:00:00Z",
+        transcript_id=ide["transcript_id"],
+        holder_basis=ide["holder_basis"],
         tool_calls=ide["tool_calls"],
     )
     assert budget["stop_class"] == "CONTEXT_BUDGET"
@@ -117,9 +130,81 @@ def test_measure_ide_tab_falls_back_to_resume_mtime(tmp_path: Path) -> None:
     _write_transcript(
         tmp_path, _TID, first_user="resume 10534", tool_calls=3, mtime=5.0
     )
-    ide = measure_ide_tab("10534", {"holder": None}, {}, transcripts_dir=tmp_path)
+    ide = measure_ide_tab(
+        "10534",
+        {"holder": None},
+        {},
+        transcripts_dir=tmp_path,
+        watch_dir=tmp_path / "watchers",
+    )
     assert ide is not None and ide["holder_basis"] == "resume_mtime"
-    assert measure_ide_tab("99999", {}, {}, transcripts_dir=tmp_path) is None
+    assert measure_ide_tab(
+        "99999",
+        {},
+        {},
+        transcripts_dir=tmp_path,
+        watch_dir=tmp_path / "watchers",
+    ) is None
+
+
+def test_resume_mtime_never_raises_context_budget_stop(tmp_path: Path) -> None:
+    """a:38328 — unclaimed / multi-tab resume must not steer CONTEXT_BUDGET hop."""
+    path = _write_transcript(
+        tmp_path, _TID, first_user="resume 15420", tool_calls=200, mtime=5.0
+    )
+    ide = measure_ide_tab(
+        "15420",
+        {"holder": None},
+        {"ide_window_tokens": 256_000, "ide_tokens_per_tool_call": 1500},
+        transcripts_dir=tmp_path,
+        watch_dir=tmp_path / "watchers",
+    )
+    assert ide is not None and ide["holder_basis"] == "resume_mtime"
+    budget = build_budget_block(
+        used_tokens=ide["used_tokens"],
+        window_limit_tokens=ide["window_limit_tokens"],
+        model="ide-tab",
+        source=IDE_BUDGET_SOURCE,
+        scope="liaison_seat",
+        epoch=ide["transcript_id"],
+        as_of="2026-10-06T16:00:00Z",
+        transcript_id=ide["transcript_id"],
+        holder_basis=ide["holder_basis"],
+        resume_match_count=ide["resume_match_count"],
+        tool_calls=ide["tool_calls"],
+    )
+    assert budget["stop_class"] is None
+    assert ide["used_tokens"] == path.stat().st_size // 4 + 200 * 1500
+
+
+def test_retired_hop_transcript_excluded_from_newest_resume(tmp_path: Path) -> None:
+    watch = tmp_path / "watchers"
+    watch.mkdir()
+    _write_transcript(
+        tmp_path, _OLD, first_user="resume 15420", tool_calls=50, mtime=30.0
+    )
+    _write_transcript(
+        tmp_path, _TID, first_user="resume 15420", tool_calls=2, mtime=10.0
+    )
+    assert newest_resume_transcript("15420", tmp_path) == _OLD
+    pin = pin_retired_resume_transcript("15420", _OLD, watch_dir=watch, now=40.0)
+    assert pin["ok"] is True
+    excluded = active_budget_excludes(
+        "15420", transcripts_dir=tmp_path, watch_dir=watch, now=40.0
+    )
+    assert _OLD in excluded
+    assert newest_resume_transcript("15420", tmp_path, exclude=excluded) == _TID
+    ide = measure_ide_tab(
+        "15420",
+        {"holder": None},
+        {},
+        transcripts_dir=tmp_path,
+        watch_dir=watch,
+        now=40.0,
+    )
+    assert ide is not None
+    assert ide["transcript_id"] == _TID
+    assert ide["excluded_resume_ids"] == [_OLD]
 
 
 def test_digest_estimate_never_raises_stop_class() -> None:

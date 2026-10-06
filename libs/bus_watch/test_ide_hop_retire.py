@@ -117,8 +117,13 @@ def test_retire_departing_tab_stops_loops_tails_and_releases(
         "stopped_tails",
         "stopped_tab_background",
         "goal",
+        "budget_exclude",
         "seat_release",
     }
+    assert result["budget_exclude"]["ok"] is True
+    assert result["budget_exclude"]["transcript_id"] == (
+        "7484bed2-ae52-436b-b428-b74056887478"
+    )
     assert released == [
         (
             "ide:7484bed2-ae52-436b-b428-b74056887478",

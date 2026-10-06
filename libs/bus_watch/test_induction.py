@@ -66,11 +66,14 @@ def test_induction_attended_context_budget_emits_hop_line() -> None:
                 "used_tokens": 305_000,
                 "window_limit_tokens": 500_000,
                 "source": "ide.transcript",
+                "holder_basis": "seat_lock",
+                "transcript_id": "866948bb-c66a-4220-82bd-56c43836e69e",
             },
         )
     )
     assert "HOP liaison-ide-hop.py --root " in text
     assert " · 61% · ide.transcript" in text
+    assert "seat_lock/866948bb-c66a-4220-82bd-56c43836e69e" in text
 
 
 def test_induction_attended_under_budget_harvest_not_hop() -> None:
@@ -97,6 +100,7 @@ def test_induction_names_context_budget_and_checkpoint() -> None:
                 "used_tokens": 220_000,
                 "window_limit_tokens": 256_000,
                 "source": "ide.transcript",
+                "holder_basis": "seat_lock",
                 "transcript_id": "f0fbd8f2-305a-48e8-8c61-1004ecfff015",
             },
             checkpoint_due=True,
@@ -107,6 +111,7 @@ def test_induction_names_context_budget_and_checkpoint() -> None:
         "CONTEXT_BUDGET 86% (ide.transcript) → CHECKPOINT, then liaison-ide-hop.py "
         "--root 10479 --row"
     ) in text
+    assert "seat_lock/f0fbd8f2-305a-48e8-8c61-1004ecfff015" in text
     assert "CHECKPOINT due" in text
     assert text.rstrip().endswith("go-under is overnight/departure only.")
     assert len(text.encode()) <= 700

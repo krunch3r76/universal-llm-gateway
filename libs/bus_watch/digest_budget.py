@@ -294,6 +294,8 @@ def seat_budget(
                 as_of=digest_ts,
                 transcript_id=ide["transcript_id"],
                 holder_basis=ide["holder_basis"],
+                resume_match_count=ide.get("resume_match_count"),
+                excluded_resume_ids=ide.get("excluded_resume_ids") or [],
                 tool_calls=ide["tool_calls"],
                 transcript_bytes=ide["bytes"],
                 tokens_per_tool_call=ide["tokens_per_tool_call"],
@@ -331,14 +333,24 @@ def build_budget_block(
 
     ``stop_class`` is raised only for sources that measure one seat's window —
     the GIW stream for a headless holder or the tab transcript for an IDE seat —
-    never for the cumulative ``digest.estimate``. Extra ``basis`` fields
-    (transcript id, tool calls, …) ride along so a reader can audit the number.
+    never for the cumulative ``digest.estimate``. IDE transcript stop requires
+    ``holder_basis=seat_lock`` (a:38328 — resume_mtime alone must not hop).
+    Extra ``basis`` fields (transcript id, tool calls, …) ride along so a
+    reader can audit the number.
     """
     ratio = used_tokens / window_limit_tokens if window_limit_tokens else 0.0
+    ide_bound = source != "ide.transcript" or basis.get("holder_basis") == "seat_lock"
+    multi_resume = (
+        source == "ide.transcript"
+        and basis.get("holder_basis") != "seat_lock"
+        and int(basis.get("resume_match_count") or 0) > 1
+    )
     stop_class = (
         "CONTEXT_BUDGET"
         if window_limit_tokens
         and source in _SEAT_SCOPED_SOURCES
+        and ide_bound
+        and not multi_resume
         and ratio >= _BUDGET_RATIO_THRESHOLD
         else None
     )
