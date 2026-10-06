@@ -146,12 +146,15 @@ cmd_start() {
   local existing
   existing="$(read_pid || true)"
   if pid_alive "${existing:-}"; then
+    # Reuse must still expose a log for same-turn leg 2 (a:38410).
+    [[ -f "$log_file" ]] || : >"$log_file"
     echo "reuse pid=$existing label=$safe (already running)"
     echo "log=$log_file"
     echo "state=$state_file"
     return 0
   fi
   rm -f "$pid_file"
+  # Create log before any arm wait so parallel leg-2 tail can attach (a:38410).
   : >"$log_file"
   local has_state=0
   for a in "$@"; do
@@ -243,10 +246,17 @@ cmd_tail() {
     echo "watch-supervise: --forever and --until-finish are different tails" >&2
     exit 2
   fi
-  if [[ ! -f "$log_file" ]]; then
-    echo "no log yet: $log_file" >&2
-    exit 1
-  fi
+  # Same-turn leg 1→2 can fire before start's `: >log` (~115ms specimen
+  # a:38410). Retry through the start arm window; fail-closed only after.
+  local waited=0
+  while [[ ! -f "$log_file" ]]; do
+    if [[ "$waited" -ge 150 ]]; then
+      echo "no log yet: $log_file" >&2
+      exit 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
   if [[ "$until_finish" -eq 1 ]]; then
     cd "$REPO"
     exec "$UNIVERSAL_PYTHON" -m bus_watch.finish_tail --log "$log_file" --state "$state_file"
