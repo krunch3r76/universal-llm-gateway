@@ -76,6 +76,103 @@ async def post_followup(
     return {"timed_out": False, "status_code": resp.status_code, "body": parsed}
 
 
+async def get_lane_attended(*, parent_thread: str) -> dict[str, Any]:
+    """GET ``/v1/project-ask/attended-operator`` for a lane.
+
+    Returns ``{status_code, body}``. JSON is parsed on 200, 404, 409, and 503.
+    Transport failure or non-JSON yields a body that makes address retry ineligible.
+    """
+    base = project_ask_base()
+    if not base:
+        return {
+            "status_code": 0,
+            "body": {"ok": False, "error": "seat_unavailable"},
+        }
+    try:
+        async with make_async_client(base, timeout=30.0) as client:
+            resp = await client.get(
+                "/v1/project-ask/attended-operator",
+                params={"parent_thread": parent_thread},
+            )
+    except httpx.TimeoutException:
+        return {"status_code": 0, "body": None}
+    except httpx.HTTPError as exc:
+        logger.warning("closeout memo attended-operator transport error: %s", exc)
+        return {
+            "status_code": 0,
+            "body": {
+                "ok": False,
+                "error": "seat_unavailable",
+                "detail": type(exc).__name__,
+            },
+        }
+    try:
+        parsed = resp.json()
+    except ValueError:
+        parsed = {"ok": False, "error": "other"}
+    if not isinstance(parsed, dict):
+        parsed = {"ok": False, "error": "other"}
+    return {"status_code": resp.status_code, "body": parsed}
+
+
+def followup_by_address_body(
+    *,
+    parent_thread: str,
+    prompt_text: str,
+    chat_url: str,
+) -> dict[str, Any]:
+    """Followup JSON with stored ``chat_url`` and ``reattach`` for a parked lane."""
+    body = followup_body(parent_thread=parent_thread, prompt_text=prompt_text)
+    return {**body, "chat_url": chat_url, "reattach": True}
+
+
+async def post_followup_by_address(
+    *,
+    parent_thread: str,
+    prompt_text: str,
+    chat_url: str,
+) -> dict[str, Any]:
+    """POST followups with ``chat_url`` and ``reattach: true``.
+
+    Returns ``{timed_out, status_code, body}`` like ``post_followup``.
+    """
+    body = followup_by_address_body(
+        parent_thread=parent_thread,
+        prompt_text=prompt_text,
+        chat_url=chat_url,
+    )
+    base = project_ask_base()
+    if not base:
+        return {
+            "timed_out": False,
+            "status_code": 0,
+            "body": {"ok": False, "error": "seat_unavailable"},
+        }
+    try:
+        async with make_async_client(base, timeout=FOLLOWUP_TIMEOUT_S) as client:
+            resp = await client.post("/v1/project-ask/followups", json=body)
+    except httpx.TimeoutException:
+        return {"timed_out": True, "status_code": 0, "body": None}
+    except httpx.HTTPError as exc:
+        logger.warning("closeout memo followup-by-address transport error: %s", exc)
+        return {
+            "timed_out": False,
+            "status_code": 0,
+            "body": {
+                "ok": False,
+                "error": "seat_unavailable",
+                "detail": type(exc).__name__,
+            },
+        }
+    try:
+        parsed = resp.json()
+    except ValueError:
+        parsed = {"ok": False, "error": "other"}
+    if not isinstance(parsed, dict):
+        parsed = {"ok": False, "error": "other"}
+    return {"timed_out": False, "status_code": resp.status_code, "body": parsed}
+
+
 def _seat_for_lane(parent_thread: str) -> tuple[str | None, str | None]:
     """registration_id, chat_url from the landed lane resolver. Never raises."""
     from cdp_ask.lane_current_cse import resolve_lane_current_cse
@@ -99,14 +196,17 @@ async def harvest_marker(
     marker: str,
     registration_id: str | None,
     parent_thread: str | None = None,
+    chat_url: str | None = None,
 ) -> bool | None:
     """True when the lane seat contains ``marker``.
 
     None when there is no seat to harvest. Callers must fall back instead of
     pasting again: a timeout with no target is how a landed paste gets duplicated.
+
+    When ``chat_url`` is given and ``registration_id`` is absent, harvest targets
+    that address instead of resolving the lane in-process.
     """
-    chat_url = None
-    if not registration_id and parent_thread:
+    if not registration_id and not chat_url and parent_thread:
         registration_id, chat_url = _seat_for_lane(parent_thread)
     if not registration_id and not chat_url:
         return None
