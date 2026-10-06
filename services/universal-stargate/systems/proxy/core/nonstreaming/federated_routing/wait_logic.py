@@ -245,6 +245,9 @@ async def _wait_and_retry_selection(
     starvation_drain_threshold_s: float = DEFAULT_STARVATION_DRAIN_THRESHOLD_S,
     drain_duration_s: float = DEFAULT_DRAIN_DURATION_S,
     continuation_mode: ContinuationMode = "busy_block",
+    cooldown_hold_key: Any | None = None,
+    per_wake_cap_s: float | None = None,
+    defer_first_select: bool = False,
 ) -> tuple[Any, Any, int]:
     """
     Wait for federated state changes, then retry selection until success or timeout.
@@ -262,6 +265,13 @@ async def _wait_and_retry_selection(
     or exceeding the initial drain_duration_s), the drain re-fires every
     drain_duration_s so the pause stays active across long waits rather than
     relying on an unrelated request to retrigger detection.
+
+    ``cooldown_hold_key`` / ``per_wake_cap_s`` support oscillation-breaker
+    requeue: the loop sleeps out the hold before calling select again so a
+    breaker-held victim cannot spin one select per zero-wait wake.
+
+    ``defer_first_select`` forces one state-change wait before the first select
+    so post-load retries cannot immediately re-pick an unchanged gateway.
     """
     from src.scheduling.events.routing import (
         RoutingDrainInitiated,
@@ -269,6 +279,9 @@ async def _wait_and_retry_selection(
         RoutingEvictionWaitResolved,
         RoutingEvictionWaitStarted,
         RoutingEvictionWaitTimeout,
+    )
+    from systems.routing.selection.decision.eviction_cooldown_policy import (
+        oscillation_hold_remaining_s,
     )
     from systems.routing.selection.stargate_collector import (
         federated_gateways_to_routing_candidates,
@@ -278,6 +291,7 @@ async def _wait_and_retry_selection(
     wait_start = time.monotonic()
     trace: Any = None
     last_drain_at: float | None = None
+    deferred_first_select = False
 
     _eviction_wait_queue_depth += 1
 
@@ -300,6 +314,25 @@ async def _wait_and_retry_selection(
                 break
 
             state_version = federated_manager.get_state_version()
+            remaining = max(0.1, timeout_s - (time.monotonic() - wait_start))
+            if per_wake_cap_s is not None:
+                remaining = min(remaining, max(0.1, per_wake_cap_s))
+
+            if cooldown_hold_key is not None:
+                hold_s = oscillation_hold_remaining_s(cooldown_hold_key)
+                if hold_s > 0.0:
+                    sleep_s = min(remaining, max(0.1, hold_s))
+                    await federated_manager.wait_for_state_change(
+                        state_version, sleep_s
+                    )
+                    continue
+
+            if defer_first_select and not deferred_first_select:
+                deferred_first_select = True
+                await federated_manager.wait_for_state_change(
+                    state_version, remaining
+                )
+                continue
 
             fresh_gateways = [
                 g
@@ -335,7 +368,9 @@ async def _wait_and_retry_selection(
                 return selected, trace, waited_ms
 
             still_transient = continuation_still_transient(
-                trace, mode=continuation_mode
+                trace,
+                mode=continuation_mode,
+                cooldown_hold_key=cooldown_hold_key,
             )
             if not still_transient:
                 # First-iteration (or later) bail: wait entered because the
@@ -383,7 +418,6 @@ async def _wait_and_retry_selection(
                 if drain_fired:
                     last_drain_at = time.monotonic()
 
-            remaining = max(0.1, timeout_s - (time.monotonic() - wait_start))
             await federated_manager.wait_for_state_change(state_version, remaining)
 
     except asyncio.CancelledError:

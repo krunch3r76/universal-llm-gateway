@@ -13,11 +13,8 @@ from universal_logging import get_logger
 from universal_protocol import ErrorCode
 
 from ....selection_errors import (
-    raise_capacity_error,
     raise_eviction_blocked_error,
 )
-from ...wait_continuation import clamp_eviction_wait_timeout
-from ...wait_logic import _wait_and_retry_selection
 
 if TYPE_CHECKING:
     from systems.federation.master.manager.federated_gateway_manager import (
@@ -33,6 +30,16 @@ if TYPE_CHECKING:
     from ...context import RequestContext
 
 logger = get_logger(__name__)
+
+_RETRYABLE_LOAD_CODES = frozenset(
+    {
+        ErrorCode.RESOURCE_UNAVAILABLE,
+        ErrorCode.INSUFFICIENT_VRAM,
+    }
+)
+
+# Sentinel: post-load path needs finalize-owned requeue (review B1).
+_POST_LOAD_NEEDS_REQUEUE = object()
 
 
 async def finalize_selection_and_load(
@@ -74,12 +81,19 @@ async def finalize_selection_and_load(
 
     try:
         from systems.routing.selection.decision import FeasibilityTier
+        from systems.routing.selection.decision.admission_verdict import (
+            AdmissionVerdict,
+        )
+        from systems.routing.selection.decision.eviction_cooldown_policy import (
+            CooldownOverrideKey,
+        )
 
         from .eviction_execution import (
             MasterEvictionOutcome,
             execute_master_eviction,
             result_to_error_data,
         )
+        from .eviction_requeue import requeue_after_transient_eviction
 
         selected_candidate = (
             next(
@@ -176,11 +190,55 @@ async def finalize_selection_and_load(
                 eviction_cooldown_s=eviction_cooldown_s,
             )
             if eviction_result.outcome == MasterEvictionOutcome.BLOCKED:
-                raise_eviction_blocked_error(
-                    str(model_id),
-                    selected_gateway.name,
-                    error_data=result_to_error_data(eviction_result),
-                    gateway_url=selected_gateway.ref.remote_stargate_url,
+                can_requeue = (
+                    federated_manager is not None
+                    and eviction_result.verdict_class
+                    == AdmissionVerdict.INSUFFICIENT_TRANSIENT.value
+                    and eviction_result.reason == "cooldown_oscillation_breaker"
+                )
+                if not can_requeue:
+                    raise_eviction_blocked_error(
+                        str(model_id),
+                        selected_gateway.name,
+                        error_data=result_to_error_data(eviction_result),
+                        gateway_url=selected_gateway.ref.remote_stargate_url,
+                    )
+                hold_key = None
+                if eviction_result.victim_model_id:
+                    hold_key = CooldownOverrideKey(
+                        gateway_id=eviction_result.gateway_id
+                        or selected_gateway.name,
+                        victim_model_id=eviction_result.victim_model_id,
+                    )
+                if (
+                    optimistic_mark_gateway_id
+                    and optimistic_mark_model_id
+                    and federated_manager
+                ):
+                    federated_manager.clear_model_loading_optimistic(
+                        optimistic_mark_gateway_id, optimistic_mark_model_id
+                    )
+                    optimistic_mark_gateway_id = None
+                    optimistic_mark_model_id = None
+                    marked_loading = False
+                return await requeue_after_transient_eviction(
+                    context=context,
+                    federated_manager=federated_manager,
+                    federated_load_orchestrator=federated_load_orchestrator,
+                    federation_forwarder=federation_forwarder,
+                    routing_config=routing_config,
+                    decision_engine=decision_engine,
+                    placement=placement,
+                    event_bus=event_bus,
+                    stability_tracker=stability_tracker,
+                    routing_start_time=routing_start_time,
+                    eviction_cooldown_s=eviction_cooldown_s,
+                    capacity_pool=capacity_pool,
+                    routing_key_tracker=routing_key_tracker,
+                    continuation_mode="cooldown_blocked",
+                    timeout_reason="eviction_blocked_queue_timeout",
+                    cooldown_hold_key=hold_key,
+                    per_wake_cap_s=eviction_result.retry_after_s,
                 )
             if eviction_result.outcome == MasterEvictionOutcome.EXECUTION_FAILED:
                 if event_bus:
@@ -222,6 +280,49 @@ async def finalize_selection_and_load(
                         )
                     )
 
+                if federated_manager is None:
+                    raise_eviction_blocked_error(
+                        str(model_id),
+                        selected_gateway.name,
+                        error_data=result_to_error_data(eviction_result),
+                        gateway_url=selected_gateway.ref.remote_stargate_url,
+                    )
+                if (
+                    optimistic_mark_gateway_id
+                    and optimistic_mark_model_id
+                ):
+                    federated_manager.clear_model_loading_optimistic(
+                        optimistic_mark_gateway_id, optimistic_mark_model_id
+                    )
+                    optimistic_mark_gateway_id = None
+                    optimistic_mark_model_id = None
+                    marked_loading = False
+                return await requeue_after_transient_eviction(
+                    context=context,
+                    federated_manager=federated_manager,
+                    federated_load_orchestrator=federated_load_orchestrator,
+                    federation_forwarder=federation_forwarder,
+                    routing_config=routing_config,
+                    decision_engine=decision_engine,
+                    placement=placement,
+                    event_bus=event_bus,
+                    stability_tracker=stability_tracker,
+                    routing_start_time=routing_start_time,
+                    eviction_cooldown_s=eviction_cooldown_s,
+                    capacity_pool=capacity_pool,
+                    routing_key_tracker=routing_key_tracker,
+                    continuation_mode="execution_failure",
+                    timeout_reason="eviction_execute_failure_queue_timeout",
+                )
+
+        if federated_load_orchestrator:
+            load_outcome = await _ensure_remote_model_loaded(
+                context=context,
+                selected_gateway=selected_gateway,
+                federated_manager=federated_manager,
+                federated_load_orchestrator=federated_load_orchestrator,
+            )
+            if load_outcome is _POST_LOAD_NEEDS_REQUEUE:
                 if (
                     optimistic_mark_gateway_id
                     and optimistic_mark_model_id
@@ -233,103 +334,24 @@ async def finalize_selection_and_load(
                     optimistic_mark_gateway_id = None
                     optimistic_mark_model_id = None
                     marked_loading = False
-
-                if context.capacity_token:
-                    await context.capacity_token.release()
-                    context.capacity_token = None
-
-                rc = routing_config or {}
-                config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
-                timeout_s = clamp_eviction_wait_timeout(context, config_timeout)
-                starvation_drain_threshold_s = float(
-                    rc.get("starvation_drain_threshold_s", 15.0)
-                )
-                drain_duration_s = float(rc.get("drain_duration_s", 30.0))
-
-                selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
-                    federated_manager=federated_manager,
-                    decision_engine=decision_engine,
-                    placement=placement,
+                assert federated_manager is not None
+                return await requeue_after_transient_eviction(
                     context=context,
-                    event_bus=event_bus,
-                    timeout_s=timeout_s,
-                    stability_tracker=stability_tracker,
-                    capacity_pool=capacity_pool,
-                    routing_key_tracker=routing_key_tracker,
-                    starvation_drain_threshold_s=starvation_drain_threshold_s,
-                    drain_duration_s=drain_duration_s,
-                    continuation_mode="execution_failure",
-                )
-                if selected_gateway is None:
-                    raise_capacity_error(
-                        str(model_id),
-                        {
-                            "reason": "eviction_execute_failure_queue_timeout",
-                            "waited_ms": waited_ms,
-                        },
-                    )
-
-                from systems.routing.selection.stargate_collector import (
-                    federated_gateways_to_routing_candidates,
-                )
-
-                from .admission import acquire_admission_token
-
-                fresh_gateways = [
-                    g
-                    for g in federated_manager.get_all_gateways()
-                    if g.dispatchable
-                ]
-                gateways_for_routing = [
-                    g
-                    for g in federated_gateways_to_routing_candidates(fresh_gateways)
-                    if g.name not in (context.excluded_gateway_ids or set())
-                ]
-                selected_gateway = await acquire_admission_token(
-                    context=context,
-                    selected_gateway=selected_gateway,
-                    gateways_for_routing=gateways_for_routing,
-                    routing_config=routing_config,
-                    event_bus=event_bus,
-                    capacity_pool=capacity_pool,
-                    stability_tracker=stability_tracker,
-                    allowed_gateway_ids_override=None,
-                    overflow_origin_gateway=None,
-                    overflow_depth_before=0,
-                )
-
-                return await finalize_selection_and_load(
-                    context=context,
-                    selected_gateway=selected_gateway,
-                    trace=trace,
-                    event_bus=event_bus,
                     federated_manager=federated_manager,
                     federated_load_orchestrator=federated_load_orchestrator,
                     federation_forwarder=federation_forwarder,
                     routing_config=routing_config,
                     decision_engine=decision_engine,
                     placement=placement,
+                    event_bus=event_bus,
                     stability_tracker=stability_tracker,
                     routing_start_time=routing_start_time,
                     eviction_cooldown_s=eviction_cooldown_s,
                     capacity_pool=capacity_pool,
                     routing_key_tracker=routing_key_tracker,
+                    continuation_mode="execution_failure",
+                    timeout_reason="eviction_queue_timeout_post_load_fail",
                 )
-
-        if federated_load_orchestrator:
-            await _ensure_remote_model_loaded(
-                context=context,
-                selected_gateway=selected_gateway,
-                federated_manager=federated_manager,
-                federated_load_orchestrator=federated_load_orchestrator,
-                routing_config=routing_config,
-                decision_engine=decision_engine,
-                placement=placement,
-                event_bus=event_bus,
-                stability_tracker=stability_tracker,
-                capacity_pool=capacity_pool,
-                routing_key_tracker=routing_key_tracker,
-            )
 
         context.selected_gateway = selected_gateway
         if event_bus:
@@ -411,15 +433,11 @@ async def _ensure_remote_model_loaded(
     selected_gateway: "Gateway",
     federated_manager: "FederatedGatewayManager | None",
     federated_load_orchestrator,
-    routing_config: dict[str, Any] | None,
-    decision_engine: "DecisionEngine",
-    placement: "Placement",
-    event_bus,
-    stability_tracker: "StickyPlacementTracker",
-    capacity_pool: "CapacityPool | None" = None,
-    routing_key_tracker: "RoutingKeyTracker | None" = None,
-) -> None:
-    """Load target model on remote gateway with retry path for transient load errors."""
+) -> object | None:
+    """Load remote model; return post-load requeue sentinel on retryable fail.
+
+    Finalize owns mark release and the requeue call so peer marks are not wiped.
+    """
     try:
         await federated_load_orchestrator.ensure_model_loaded_on_remote(
             selected_gateway.ref,
@@ -429,44 +447,12 @@ async def _ensure_remote_model_loaded(
         )
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {}
+        code = detail.get("code")
         if (
-            detail.get("code") == ErrorCode.RESOURCE_UNAVAILABLE
+            code in _RETRYABLE_LOAD_CODES
             and detail.get("retryable", False)
             and federated_manager is not None
         ):
-            rc = routing_config or {}
-            timeout_s = rc.get("eviction_wait_timeout_s", 300.0)
-            starvation_drain_threshold_s = float(
-                rc.get("starvation_drain_threshold_s", 15.0)
-            )
-            drain_duration_s = float(rc.get("drain_duration_s", 30.0))
-            selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
-                federated_manager=federated_manager,
-                decision_engine=decision_engine,
-                placement=placement,
-                context=context,
-                event_bus=event_bus,
-                timeout_s=timeout_s,
-                stability_tracker=stability_tracker,
-                capacity_pool=capacity_pool,
-                routing_key_tracker=routing_key_tracker,
-                starvation_drain_threshold_s=starvation_drain_threshold_s,
-                drain_duration_s=drain_duration_s,
-            )
-            if selected_gateway is None:
-                raise_capacity_error(
-                    str(context.selected_model),
-                    {
-                        "reason": "eviction_queue_timeout_post_load_fail",
-                        "waited_ms": waited_ms,
-                    },
-                )
-            await federated_load_orchestrator.ensure_model_loaded_on_remote(
-                selected_gateway.ref,
-                context.selected_model,
-                sticky=context.model_sticky,
-                request_id=context.request_id,
-            )
-            return
-
+            return _POST_LOAD_NEEDS_REQUEUE
         raise
+    return None
