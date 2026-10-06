@@ -13,35 +13,64 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
    (`closeout turn=` / `consult complete`) is one harvest. Backup = `--loop` heartbeat **1200s
    (20 min)** only while a finish watcher is already live or a row is playable. `--interval S`
    overrides that heartbeat only.
-5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
-   reason `liaison <root> tick`, debounce 15000). Any tab model may seat the liaison (skill § Seat model).
-   This tab becomes the one liaison seat: the loop claims the seat lock as `ide:<transcript_id>` — resolve it
-   with `scripts/liaison-ide-hop.py --find-transcript` on the tab's **first user message**. That is
-   `resume <root>` when the operator typed resume first (this tab's specimen: `931b214d…`);
-   `"/liaison <root>"` only when that slash line is the first turn — bare `"/liaison"` can resolve a
-   **foreign** tab (specimen `866948bb…`).
-   `"loop": "refused"` with `reason=held_preempt_requested` ⇒ a headless successor holds it and will park
-   within one poll — re-arm after ~60 s; `reason=held` ⇒ another **attended tab** holds the seat — stay a
-   worker tab (own legs and turns; no loop, no scoreboard Rows fold, no CHECKPOINT on the root) unless the
-   operator's word moves the seat here: a fresh-tab `resume <root>` (other workstation) or "take over" ⇒ add
-   `--take-over` to the command below, then re-arm after the live loop releases (~60 s):
+5. **Arm the loop — detach, then monitor the log** (a:38446). Do **not** run
+   `liaison-tick.py --loop` as the agent Shell itself (`block_until_ms: 0` on that
+   python process). SIGTERM/harvest exit of a Shell-owned loop is a
+   `system_notification` wake that displaces LOCKED harvest SMS (specimen 15420
+   after #115). Any tab model may seat the liaison (skill § Seat model).
+   This tab becomes the one liaison seat: the loop claims the seat lock as
+   `ide:<transcript_id>` — resolve it with `scripts/liaison-ide-hop.py
+   --find-transcript` on the tab's **first user message**. That is `resume
+   <root>` when the operator typed resume first (this tab's specimen:
+   `931b214d…`); `"/liaison <root>"` only when that slash line is the first turn
+   — bare `"/liaison"` can resolve a **foreign** tab (specimen `866948bb…`).
+   `"loop": "refused"` / arm JSON `ok:false` with lock held ⇒ a headless
+   successor holds it and will park within one poll — re-arm after ~60 s;
+   `reason=held` ⇒ another **attended tab** holds the seat — stay a worker tab
+   (own legs and turns; no loop, no scoreboard Rows fold, no CHECKPOINT on the
+   root) unless the operator's word moves the seat here: a fresh-tab `resume
+   <root>` (other workstation) or "take over" ⇒ add `--take-over` to the arm
+   command, then re-arm after the live loop releases (~60 s):
+
+   **(a) Spawn** — short Shell (foreground OK; must exit 0 immediately after arm):
 
    ```bash
-   cd /mnt/torus/projects/universal-llm-gateway && ~/.venvs/universal/bin/python scripts/liaison-tick.py \
-     --root <root> --register <register> --holder ide:<transcript_id> --loop --poll 60 --heartbeat ${INTERVAL:-1200}
+   cd /mnt/torus/projects/universal-llm-gateway && \
+     scripts/liaison-arm-loop.sh \
+       --root <root> --register <register> --holder ide:<transcript_id> \
+       --poll 60 --heartbeat ${INTERVAL:-1200}
    ```
 
-   Title the shell `Loop liaison <root>: tick`. Record the PID in the scoreboard `## Loop` row.
-   Digest consumers read the **last** stdout line of `--once` (sitecustomize prints validation lines first).
+   Quote the JSON last line (`ok`, `pid`, `log`). Record `pid` in the scoreboard
+   `## Loop` row.
+
+   **(b) Monitor** — separate background Shell (`block_until_ms: 0`,
+   `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`, reason
+   `liaison <root> tick`, debounce 15000). Title `Loop liaison <root>: tick`:
+
+   ```bash
+   tail -n0 -F tmp/watchers/liaison-loop-<root>.log
+   ```
+
+   Tick wakes come from the log tail. Killing the python loop does **not** exit
+   this Shell — that is the point. Digest consumers still read the **last**
+   stdout line of `--once` (sitecustomize prints validation lines first).
 6. **First tick now** — run § Tick protocol on the `--once` digest from step 3 so the first server tick is
    not cold. End the turn; wakes arrive as `AGENT_LOOP_TICK_liaison` notifications.
 
-Stop (loop kill / park, **no hop**): kill the loop PID, post CHECKPOINT. `UpdateGoal(complete)` only if
-a leftover native goal is still injecting wakes, or the house objective is actually met.
+Stop (loop kill / park, **no hop**): SIGTERM the loop `pid` from the arm JSON /
+`tmp/watchers/liaison-loop-<root>.pid` (or
+`pkill -f 'liaison-tick[.]py --root <R> --loop'`), then stop the log-tail Shell
+if this tab is leaving. Post CHECKPOINT. `UpdateGoal(complete)` only if a
+leftover native goal is still injecting wakes, or the house objective is
+actually met. If a loop-abort `system_notification` still arrives: restate the
+LOCKED harvest body, or say nothing new if already relayed — never a
+loop-status-only reply (a:38446).
 
 Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, `watch-supervise`
 tails, and `ide:` lock (`retire_departing_tab`); house pollers survive. JSON + stderr emit
 `LIAISON_HOP_TAB_GOAL_RELEASE`. **Same turn, before `RETIRED →`:** if a native goal is
 active, `CallDynamicTool(cursor, UpdateGoal, {"status":"complete"})` (legacy
 continuation-wake). Successor **attaches** `tail --label` per ARM label +
-`--loop --heartbeat 1200`; skip `CreateGoal`. Answer `RETIRED → <id>`; never harvest.
+`liaison-arm-loop.sh` then `tail -F` the loop log (`--heartbeat 1200`); skip
+`CreateGoal`. Answer `RETIRED → <id>`; never harvest.

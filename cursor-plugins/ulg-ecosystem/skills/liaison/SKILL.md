@@ -68,9 +68,14 @@ override; gear-3 headless successor is the fallback. The GIW doorbell schedule
 
 ## Tick protocol (one wake = one digest)
 
-Wake source: `AGENT_LOOP_TICK_liaison <json>` from the monitored background shell
-`scripts/liaison-tick.py --root R --loop` (armed by `/liaison`). The JSON is the whole read; do **not**
-fetch the bus to "double check". Read `digest.induction` **first** — the planted address for this wake
+Wake source: `AGENT_LOOP_TICK_liaison <json>` lines from the **log tail** of a detached
+`--loop` (armed by `/liaison` via `scripts/liaison-arm-loop.sh`, then
+`tail -n0 -F tmp/watchers/liaison-loop-<R>.log` with `notify_on_output`). The agent
+Shell must **not** be the `liaison-tick.py --loop` PID — that process is
+`setsid`+`nohup`'d so SIGTERM/harvest exit is not a `system_notification` that
+displaces LOCKED harvest SMS (a:38446 · specimen 15420 after #115). The JSON is
+the whole read; do **not** fetch the bus to "double check". Read
+`digest.induction` **first** — the planted address for this wake
 (`WAKE <root>` · `Event:` stops/watchers/lanes · `NOW:` · `Loaded already (do not re-read)` · `Standing:` ·
 one step; ≤ 700 bytes, `libs/bus_watch/induction.py`, operator bind 10479 #82/#118/#120). It is also the
 first key of every `DIGEST <root>` bus turn, so a woken claude.ai liaison reads the same address. Bind NOW
@@ -78,6 +83,11 @@ for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standin
 `--set induction_binds='["hopper paused (10479#210)"]'`, already-loaded skills in `induction_loaded`.
 Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+T) is the planned IDE
 transport; `cse_session(op=followup)` is the planned claude.ai transport — both are **planned / not yet wired**.
+
+**Loop-abort wakes (a:38446):** if a `system_notification` still reports the loop
+Shell/tail stopped after harvest, restate the LOCKED operator-facing body, or
+say nothing new when that body was already relayed this tab — never a
+loop-status-only reply ("Heartbeat loop stopped…").
 
 **After resume, before the first move:** The continuity card ## Skills lists slugs. After resume, read that
 section and Use each slug before the first move. Skip a slug named in the induction line `Loaded already
@@ -110,6 +120,8 @@ Binds. Later prose that conflicts with them loses.
 | Arm a tail and read each conductor turn | `tail --until-finish` — returns on closeout or stall-pop |
 | Rebuild start+tail for every in-flight lane at wake | Leave those turns on the bus until the finish |
 | PARKED_TRANSPORT + reply on thread, wait for "resume" or hand-admit via `team_dispatch` | One reconcile check, then GIW park-harvest continue if still unpaid |
+| Run `liaison-tick.py --loop` as the agent Shell (`block_until_ms: 0`) | `liaison-arm-loop.sh` (detach) + monitored `tail -F` the loop log (a:38446) |
+| Loop-abort wake → "Heartbeat loop stopped…" only | Restate LOCKED body, or silence if already relayed |
 
 ## Tick steps
 
@@ -220,12 +232,16 @@ first; `"/liaison <root>"` only when the slash line is first. Bare `"/liaison"` 
 CHECKPOINT on the root. Taking the seat from a live attended holder needs the operator's word: `resume <root>`
 typed in a fresh tab **is** that word (multi-workstation alternate) ⇒ claim with `--take-over` — the live loop
 sees `preempt_by`, exits, releases; retry within one poll (commit edb46bab). A `/liaison` without the word is
-`held` and stays a worker tab. Headless `sdk:` holders are preempted by any `ide:` claim. **Stopping a loop:**
-`pkill -f 'liaison-tick[.]py --root <R> --loop'` then `pgrep -fc` = 0 — the IDE Shell PID is the pipeline wrapper,
-not the python; killing it orphans the loop (specimen 04:11Z: two loops ping-ponged DIGEST turns every 30 s).
-The `[.]` matters: `pkill -f` matches the *whole* command line of every process, including the bash wrapper
-running your own `pkill` — a literal pattern kills the seat's shell first and the rest of the command never runs
-(specimen hop 13, 04:44Z: silent empty output; the loop did die and released the lock via `holder_pid`).
+`held` and stays a worker tab. Headless `sdk:` holders are preempted by any `ide:` claim. **Stopping a loop:** prefer SIGTERM on the pid in
+`tmp/watchers/liaison-loop-<R>.pid` (from `liaison-arm-loop.sh`). Else
+`pkill -f 'liaison-tick[.]py --root <R> --loop'` then `pgrep -fc` = 0. The
+attended monitor Shell is `tail -F` on the loop log — not the python; killing
+that Shell does not stop the loop, and killing the loop does not exit the tail
+(a:38446). Do not arm `--loop` as the agent Shell itself. The `[.]` matters:
+`pkill -f` matches the *whole* command line of every process, including the bash
+wrapper running your own `pkill` — a literal pattern kills the seat's shell first
+and the rest of the command never runs (specimen hop 13, 04:44Z: silent empty
+output; the loop did die and released the lock via `holder_pid`).
 The lock records `holder_pid`; only the claiming process (or `--release`, the operator override) can release, so
 an orphan exiting no longer drops the live lease. Model seats refresh the
 declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means

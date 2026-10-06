@@ -32,8 +32,8 @@ GOAL_RELEASE = (
     'CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"}) '
     "after liaison-ide-hop.py ok, before the RETIRED line — leftover continuation-wake only "
     "(11912 / 12088). Successor skips CreateGoal; attaches `tail --label` per ARM label + "
-    "`liaison-tick.py --loop --heartbeat 1200` "
-    "(20 min re-arm / watcher health)."
+    "`liaison-arm-loop.sh` then `tail -F` the loop log (`--heartbeat 1200`) — "
+    "agent Shell must not be the --loop PID (a:38446)."
 )
 
 
