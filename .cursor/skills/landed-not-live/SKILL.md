@@ -27,7 +27,7 @@ When the commission assigns restarts to the operator seat or forbids restarts, t
 
 1. **Operator-seat commission.** If Refuse line applies, skip executor discharge (steps 4–5); partial closeout with `{service, code_ref, holder: operator-seat}` per gap. Falsifier: executor restarted, armed intent, or minted propagate/friction under operator-seat commission.
 
-2. **Live before complete.** Run `fleet_liveness(code_ref=<land_sha>)` per touched consumer. All `liveness.answer=yes`, or each gap owned or discharged; else `partial` with `{holder, service, code_ref, proof_class}`. Falsifier: complete while liveness=no. Specimen cloud_proxy: path-prefix inference, no holder, RESIDUE footer, closed complete — obligation invisible to ticker.
+2. **Live before complete.** Run `fleet_liveness(code_ref=<land_sha>)` per touched consumer. `status_claim: complete` only when every touched consumer shows `liveness.answer=yes` (or was discharged by step 5). Any other gap → `partial`, listing each gap as `{holder, service, code_ref, proof_class}`. Falsifier: complete while any consumer has `liveness.answer=no` without step-5 discharge. Specimen cloud_proxy: path-prefix inference, no holder, RESIDUE footer, closed complete — obligation invisible to ticker.
 
 3. **Named holder.** `holder` ∈ {`cursor-sdk`, `cursor-auto`, `navigator`, `operator-seat`, minted row id} — never candidates-only. Falsifier: closeout without seat or row id.
 
@@ -37,7 +37,7 @@ When the commission assigns restarts to the operator seat or forbids restarts, t
 
 ## Falsifier
 
-Deployed-path lane closed complete while not live and obligations neither probe-discharged nor owned — except explicit operator-seat restart commission.
+Deployed-path lane closed complete while any touched consumer has `liveness.answer=no` without step-5 discharge.
 
 ## Composes with
 
