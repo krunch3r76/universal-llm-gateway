@@ -84,8 +84,11 @@ def test_idempotent_refresh_no_rev_bump(view_env: dict) -> None:
     assert second["view_rev"] == first["view_rev"]
 
 
-def test_full_root_required_when_inference_returns_none(view_env: dict, monkeypatch) -> None:
-    """Registered root-required view, mode=full, inference yields None."""
+@pytest.mark.parametrize("mode", ["full", "refresh"])
+def test_root_required_when_inference_returns_none(
+    view_env: dict, monkeypatch, mode: str
+) -> None:
+    """Registered root-required view; inference yields None on full and refresh."""
     root_id, doc_id = _seed_case_and_doc(view_env)
     reg = _op_view_render(
         document_id=doc_id,
@@ -98,8 +101,31 @@ def test_full_root_required_when_inference_returns_none(view_env: dict, monkeypa
         "cortex_store.dispatch_ops.ops_views._infer_root_id_from_derived_from",
         lambda _conn, _doc: None,
     )
-    result = _op_view_render(document_id=doc_id, mode="full")
+    result = _op_view_render(document_id=doc_id, mode=mode)
     assert result.get("code") == "view_root_required"
+    assert "reason" not in result
+
+
+def test_refresh_ambiguous_derived_from(view_env: dict) -> None:
+    """Two active derived_from edges are not reported as a missing root."""
+    root_id, doc_id = _seed_case_and_doc(view_env)
+    other = _op_entity_create(id="case:other-view", type="case", name="Other")
+    assert "error" not in other
+    reg = _op_view_render(
+        document_id=doc_id,
+        mode="register",
+        root_id=root_id,
+        view_profile="matter_charter",
+    )
+    assert "error" not in reg, reg
+    second = _op_relationship_create(
+        source_id=doc_id, target_id="case:other-view", type_id="derived_from"
+    )
+    assert "error" not in second or second.get("id") is not None
+    result = _op_view_render(document_id=doc_id, mode="refresh")
+    assert result.get("code") == "view_root_required"
+    assert result.get("reason") == "ambiguous_derived_from"
+    assert result.get("candidates") == ["case:other-view", "case:test-view"]
 
 
 def test_typed_errors(view_env: dict) -> None:
