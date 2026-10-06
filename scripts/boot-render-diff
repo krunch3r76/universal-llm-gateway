@@ -57,7 +57,9 @@ import hashlib
 import json
 import logging
 import sys
+import time
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -65,10 +67,28 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_DIR = REPO_ROOT / "tmp" / "boot-baselines"
 DEFAULT_AGENTS = ("cursor", "web")
 
+# Startup-window relay failures become one dict (``_row_count`` → 1) of a
+# few hundred bytes (plain-text 404 "Not Found" serializes to 99). A single
+# fetch in that band is not the signal: hub baselines contain healthy
+# cortex GETs there (boot-audit-counters 88 B, boot-continuity 97 B,
+# staging 113 B). The window is the case where every cortex GET matches.
+_RELAY_ERROR_FETCH_PREFIX = "cortex GET"
+_RELAY_ERROR_ROW_COUNT = 1
+_RELAY_ERROR_MAX_BYTES = 512
+_READY_PATH = "/boot-audit-counters"
+_READY_BUDGET_S = 20.0
+_READY_INTERVAL_S = 0.5
+
 # Families recognised by the seat model.  Used to distinguish
 # '{family}-{platform}' slugs (e.g. "claude-cursor") from bare platform slugs
 # (e.g. "cursor", "web").
 _KNOWN_FAMILIES = frozenset({"claude", "gpt", "grok", "gemini"})
+
+
+def _ensure_mcp_path() -> None:
+    mcp = str(REPO_ROOT / "services" / "mcp-server")
+    if mcp not in sys.path:
+        sys.path.insert(0, mcp)
 
 
 def _import_boot_runner() -> Any:
@@ -79,7 +99,7 @@ def _import_boot_runner() -> Any:
     stack up-front. Fails softly with a clear message when the package
     isn't reachable.
     """
-    sys.path.insert(0, str(REPO_ROOT / "services" / "mcp-server"))
+    _ensure_mcp_path()
     try:
         from tools.cortex_named_tools._boot_runner import (  # type: ignore[import-not-found]
             BootMode,
@@ -202,6 +222,69 @@ def _render_manifest(agent: str) -> dict[str, Any]:
     return _canonical_manifest(agent, result)
 
 
+def _fetch_matches_relay_error_fingerprint(fetch: dict[str, Any]) -> bool:
+    tool = str(fetch.get("tool") or "")
+    rows = fetch.get("rows")
+    nbytes = fetch.get("bytes")
+    return (
+        tool.startswith(_RELAY_ERROR_FETCH_PREFIX)
+        and rows == _RELAY_ERROR_ROW_COUNT
+        and isinstance(nbytes, int)
+        and 0 <= nbytes <= _RELAY_ERROR_MAX_BYTES
+    )
+
+
+def _manifest_has_relay_error_fetches(manifest: dict[str, Any]) -> list:
+    """Return cortex GET fetches that look like relay-error envelopes.
+
+    The boot runner's fetch records do not carry the relay ``error`` key,
+    so this uses the rows/bytes fingerprint. It returns those fetches only
+    when every cortex GET in the manifest matches — a mixed manifest with
+    one small healthy counter is not the startup window.
+    """
+    fetches = list(manifest.get("fetches") or [])
+    cortex_gets = [
+        fetch
+        for fetch in fetches
+        if str(fetch.get("tool") or "").startswith(_RELAY_ERROR_FETCH_PREFIX)
+    ]
+    if not cortex_gets:
+        return []
+    if all(_fetch_matches_relay_error_fingerprint(fetch) for fetch in cortex_gets):
+        return cortex_gets
+    return []
+
+
+def _default_cx(method: str, path: str) -> dict[str, Any]:
+    _ensure_mcp_path()
+    from tools._cortex_relay import cx  # type: ignore[import-not-found]
+
+    return cx(method, path)
+
+
+def _wait_cortex_ready(
+    *,
+    cx_fn: Callable[..., Any] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Poll GET /boot-audit-counters until the relay returns a non-error dict.
+
+    Ready means a dict with no top-level ``error``. Budget is 20 s so this
+    wait plus a two-agent render stays inside manage's 45 s subprocess cap.
+    """
+    probe = cx_fn or _default_cx
+    deadline = monotonic() + _READY_BUDGET_S
+    while True:
+        result = probe("GET", _READY_PATH)
+        if isinstance(result, dict) and "error" not in result:
+            return True
+        now = monotonic()
+        if now >= deadline:
+            return False
+        sleep(min(_READY_INTERVAL_S, max(0.0, deadline - now)))
+
+
 def _format_diff(old: str, new: str, agent: str) -> str:
     diff = difflib.unified_diff(
         old.splitlines(keepends=True),
@@ -221,6 +304,18 @@ def _diff_one(agent: str, *, seed_only: bool) -> int:
         print(f"boot-render-diff[{agent}]: render failed: {exc}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return -1
+
+    offending = _manifest_has_relay_error_fetches(manifest)
+    if offending:
+        detail = ", ".join(
+            f"{fetch.get('tool')} rows={fetch.get('rows')} bytes={fetch.get('bytes')}"
+            for fetch in offending
+        )
+        print(
+            f"boot-render-diff[{agent}]: skipped baseline update — "
+            f"relay-error fetches present: {detail}"
+        )
+        return 0
 
     current = _canonical_text(manifest)
     baseline = _load_baseline(agent)
@@ -276,6 +371,13 @@ def main(argv: list[str]) -> int:
         help="Overwrite existing baselines without comparing. Use after intentional render changes.",
     )
     args = parser.parse_args(argv)
+
+    if not _wait_cortex_ready():
+        print(
+            "boot-render-diff: skipped — cortex_api not ready "
+            "(GET /boot-audit-counters not ready within 20s)"
+        )
+        return 0
 
     agents = tuple(args.agent) if args.agent else DEFAULT_AGENTS
     failures = 0
