@@ -1,7 +1,7 @@
 ---
 name: claude-ai-bundle-sync
-description: "Keep claude.ai Customize → Skills a 1:1 catalog mirror. Entry: scripts/cortex/claude-ai-sync-jupiter (recon dumps /mnt/skills via cheap chat, then uninstalls extras, uploads missing, replaces stale). Command: /claude-ai-sync. Runbook SoT — not the Platform Skills API."
-trigger_match_terms: ["bundle", "claude-ai-bundle-sync", "claude-ai-sync", "claude-ai-sync-jupiter", "claude.ai", "claude_ai_bundle_sync", "claude_bundles", "covering", "customize skills", "dump-skills", "generation", "libs", "recon", "scripts", "skill", "subsystem", "sync"]
+description: "1:1 claude.ai Customize→Skills catalog sync. Entry: claude-ai-sync-jupiter mirror (dump /mnt/skills then uninstall/upload/replace). Command: /claude-ai-sync. Not the Platform Skills API."
+trigger_match_terms: ["bundle", "claude-ai-bundle-sync", "claude-ai-sync", "claude-ai-sync-jupiter", "claude.ai", "claude_ai_bundle_sync", "claude_bundles", "covering", "customize skills", "dump-skills", "generation", "libs", "mirror", "recon", "scripts", "skill", "subsystem", "sync"]
 generator_version: "1.0.0"
 ---
 
@@ -36,7 +36,7 @@ install does not cover it. The operator is never the standing sync seat.
 | **SOT (edit)** | `cursor-plugins/ulg-ecosystem/skills/{slug}/` when census · else `.cursor/skills/{slug}/` (shared_sync) · `.claude/skills/{slug}/` (life_local) | Authoritative body — hand-edit SoT only; catalog `resolve_sot` picks path |
 | **Entity** | `agent_skill:{slug}` via `source_uri` | Points at SOT; ¬ a parallel body store |
 | **Generated** | `/mnt/torus/gateway/claude-ai-sync/skills/{slug}/SKILL.md` (shared_sync only; override `CLAUDE_AI_SKILLS_STAGING`) | `gen_claude_bundles.py` render — **NEVER** hand-edit |
-| **UI** | claude.ai Customize → Skills | This runbook: regen → `recon` (1:1 apply) |
+| **UI** | claude.ai Customize → Skills | This runbook: regen → `mirror` (1:1 apply) |
 
 Cross-ref: `agent_skill:skill-document-writing` § SOT authority chain. Cross-ref: `agent_skill:claude-ai-skill-uninstall` for `extra_on_ui` drift. Incident class: patching a shared-sync `.claude/skills` render during an incident creates silent drift until the next regen overwrites it.
 
@@ -121,30 +121,32 @@ check. That scan cannot see body bytes (`stale_local` was never filled).
 | Did **we** last send these staged bytes? | Latest-wins **ledger** (slug → sha256 of uploaded bytes + time) after network `200` + `slug_echoed` | No Chrome |
 | Are Customize-mounted **bodies** current? | Dispatch ordinary **chat** to zip `/mnt/skills`, then hash **`skills/user/`** vs staged `SKILL.md` | One cheap code-exec chat + download |
 | What is on the **Skills table** right now? | Playwright `--status` name scrape | Chrome; presence/extras only |
-| Can Cowork **+ → Skills** pick each `shared_sync` target? | Composer attach matcher (`composer_skill_match.label_matches_slug`) + chip attest (a:27142). Live picker inventory is **not** part of `recon` | Offline unit; live compose tab parked (a:30502) |
+| Can Cowork **+ → Skills** pick each `shared_sync` target? | Composer attach matcher (`composer_skill_match.label_matches_slug`) + chip attest (a:27142). Live picker inventory is **not** part of `mirror` | Offline unit; live compose tab parked (a:30502) |
 
 **Dispatch path (BINDING):** every claude.ai web session mounts `/mnt/skills`
 (confirmed a23741 on `agent_skill:lead-seat-boot`). **Ordinary `/chat/` is
-the standing recon transport** — cheaper than CSE, and the 2026-08-25
+the standing dump transport for `mirror`** — cheaper than CSE, and the 2026-08-25
 `3ca35c99` dump landed a downloadable **Claude skills** ZIP from chat code
 exec (not Customize “Export all”, not Platform `/v1/skills`). Open a **fresh
 `/new` tab** so dump does not steal a live CSE stream.
 
 CSE (`team_dispatch model=cdp/…` / Cowork) is a **fallback** only when chat
-cannot see `/mnt/skills`. Do not default recon to CSE occupancy.
+cannot see `/mnt/skills`. Do not default `mirror` to CSE occupancy.
 
 **Future / untested:** Stargate `/v1/chat/completions` wrapper that returns
 the zip as an artifact. Do not treat that as live until proven.
 
-Fleet recon compares **`skills/user/` only**. `public/` + `examples/` are
+Fleet `mirror` compares **`skills/user/` only**. `public/` + `examples/` are
 Anthropic stock — persist on `artifact:claude-ai-container-skills` (and
 tree children) for CDP-leverage intel. `import-memory` lives under
 `examples/` — do not uninstall it as a fleet leftover.
 
 ```bash
 # standing: dump /mnt/skills then APPLY 1:1 (uninstall extras, upload missing, replace stale)
+scripts/cortex/claude-ai-sync-jupiter mirror
+scripts/cortex/claude-ai-sync-jupiter mirror --dry-run
+# deprecated alias (same action + pointer line):
 scripts/cortex/claude-ai-sync-jupiter recon
-scripts/cortex/claude-ai-sync-jupiter recon --dry-run
 
 # dump only (shared zip: tmp/reviews/claude-skills-latest.zip)
 scripts/cortex/claude-ai-sync-jupiter dump-skills
@@ -159,7 +161,8 @@ scripts/cortex/claude-ai-sync-jupiter dump-skills \
 # stock + user slug list (entity refresh): add --inventory
 ```
 
-`recon` **applies** the catalog 1:1 mirror (not report-only):
+`mirror` **applies** the catalog 1:1 library sync (not report-only).
+`recon` is a deprecated alias of `mirror` (≠ work-item `contract=recon`):
 
 | Zip field | Apply |
 |---|---|
@@ -175,7 +178,7 @@ Skip tree-root files (`manifest.json`). Never `--all --replace`.
 vs staged `SKILL.md`). It does **not** prove Cowork `+` → Skills can attach a
 slug (friction a:30502 — `life-operator-do-chain` in MATCH, attach undelivered).
 Cowork attach is a separate plane: collapsed H1/title matching in
-`composer_skill_match` plus composer-chip attest (a:27142). Do not report recon
+`composer_skill_match` plus composer-chip attest (a:27142). Do not report mirror
 complete as “Cowork can pick every shared_sync target.”
 
 **Non-census `shared_sync`:** SOT under `.cursor/skills/` is **not**
@@ -187,7 +190,7 @@ Playwright `status` stays for table-only work (first-time “is the panel even
 populated?”). It is not the content audit.
 
 Ledger write is still TODO on the upload success path — until then, the zip
-compare is the **library** content audit; `recon` applies it. Zip audit ≠
+compare is the **library** content audit; `mirror` applies it. Zip audit ≠
 Cowork attach proof.
 
 ### Step 2b — Preflight (Jupiter, before any upload)
@@ -335,11 +338,11 @@ Then open **Customize → Skills** in that Chrome session if not already on that
 |---|---|---|
 | SOT → bundle render | `gen_claude_bundles.py --check` | Missing SOT, bad descriptions, entity drift |
 | Local vs UI table | `claude-ai-sync-jupiter status` | Slugs missing on claude.ai, extra UI slugs |
-| Container user 1:1 | `claude-ai-sync-jupiter recon` | dump + uninstall extras + upload missing + replace stale (**library** only) |
+| Container user 1:1 | `claude-ai-sync-jupiter mirror` | dump + uninstall extras + upload missing + replace stale (**library** only) |
 | Cowork attach labels | `normalize_first_h1` at render/upload + `label_matches_slug` (a:30502) | Uploaded H1 is slug-prefix; literary SOT titles may stay |
 | Upload dry-run | `… upload --slugs SLUG --dry-run` (or `--all --dry-run` for new-only) | Which files would be staged |
 
-Ledger write on upload success is still TODO. Until then, `recon` is the
+Ledger write on upload success is still TODO. Until then, `mirror` is the
 library content audit. (`--all --replace` requires `--force-replace-all`.)
 Zip `mirrored` ≠ Cowork `+` → Skills attach-ready.
 
@@ -347,7 +350,7 @@ Zip `mirrored` ≠ Cowork `+` → Skills attach-ready.
 
 | Path | Role |
 |---|---|
-| `scripts/cortex/claude-ai-sync-jupiter` | SSH wrapper — **default entry for recon/dump-skills/status/upload/uninstall** |
+| `scripts/cortex/claude-ai-sync-jupiter` | SSH wrapper — **default entry for mirror/dump-skills/status/upload/uninstall** |
 | `scripts/cortex/dump_claude_container_skills.py` | Cheap `/chat/` dump of `/mnt/skills` (Jupiter CDP) |
 | `scripts/cortex/compare_claude_user_skills_zip.py` | Hash-compare `skills/user/` vs staged bundles (`--json` / `--inventory`) |
 | `scripts/cortex/reconcile_claude_user_skills.py` | Apply 1:1 from a zip (`--apply` / `--dry-run`) |

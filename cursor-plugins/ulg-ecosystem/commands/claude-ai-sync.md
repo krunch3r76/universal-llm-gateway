@@ -8,15 +8,16 @@ do not call `upload_claude_bundles_ui.py` on a machine without Jupiter CDP.
 **Skill:** `.cursor/skills/claude-ai-bundle-sync/SKILL.md`  
 **Cortex:** `decision:claude-ai-skill-upload-automation`  
 **Authority:** `config/skills.yaml` → `claude_ai_targets()`  
-**CDP host:** Jupiter. Every status / preflight / diagnose / dump / recon /
+**CDP host:** Jupiter. Every status / preflight / diagnose / dump / mirror /
 upload / uninstall goes through `scripts/cortex/claude-ai-sync-jupiter`.
 
 ## Subcommands
 
 | Invocation | Action |
 |---|---|
-| `/claude-ai-sync` | Default: regen check + **recon** (dump + 1:1 apply) |
-| `/claude-ai-sync recon` | Dump `/mnt/skills`, then uninstall extras / upload missing / replace stale |
+| `/claude-ai-sync` | Default: regen check + **mirror** (dump + 1:1 apply) |
+| `/claude-ai-sync mirror` | Dump `/mnt/skills`, then uninstall extras / upload missing / replace stale |
+| `/claude-ai-sync recon` | Deprecated alias of `mirror` (same action; prints one pointer line) |
 | `/claude-ai-sync dump-skills` | Dump only (`tmp/reviews/claude-skills-latest.zip`) |
 | `/claude-ai-sync status` | Playwright **name** scrape (presence/extras — not body bytes) |
 | `/claude-ai-sync preflight` | CDP + panel + Add → Upload menuitem (fail-closed) |
@@ -50,17 +51,19 @@ From repo root `/mnt/torus/projects/universal-llm-gateway`:
 
 Stop on `--check` failure; fix SOT/description issues before upload.
 
-### 3. Recon (dispatch chat zip — not table-first)
+### 3. Mirror (dispatch chat zip — not table-first)
 
 Ordinary `/chat/` code-exec is the standing dump. CSE is fallback only.
 `/v1/chat/completions` artifact grab is untested.
 
 ```bash
+scripts/cortex/claude-ai-sync-jupiter mirror
+scripts/cortex/claude-ai-sync-jupiter mirror --dry-run
+# deprecated alias (same action + pointer line):
 scripts/cortex/claude-ai-sync-jupiter recon
-scripts/cortex/claude-ai-sync-jupiter recon --dry-run
 ```
 
-`recon` applies the catalog 1:1 **library** mirror: uninstall `extra_in_user` (not stock),
+`mirror` applies the catalog 1:1 **library** mirror: uninstall `extra_in_user` (not stock),
 upload `missing_from_user`, replace `stale_content`. Stock copies under
 `user/` (`docx`, `import-memory`, …) are not extras.
 Zip `mirrored=true` is container `skills/user/` vs staged bodies — **not**

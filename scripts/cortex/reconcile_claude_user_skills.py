@@ -4,7 +4,7 @@
 Uninstall extras (not Anthropic stock), upload missing catalog slugs, replace
 stale bodies. Named slugs only — never ``--all --replace``.
 
-Run on Jupiter (Chrome CDP). Remote seats: ``claude-ai-sync-jupiter recon``.
+Run on Jupiter (Chrome CDP). Remote seats: ``claude-ai-sync-jupiter mirror``.
 """
 
 from __future__ import annotations
