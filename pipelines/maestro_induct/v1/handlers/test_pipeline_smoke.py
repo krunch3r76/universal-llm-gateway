@@ -302,7 +302,17 @@ def test_assemble_reserves_stamps_then_emit_near_cap(monkeypatch) -> None:
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
-    clients = mod._clients
+    # A prior load of this synthetic package caches submodules. Re-executing
+    # __init__.py does not rebind _clients onto the new module object, and
+    # importing it from __init__ would put _clients on the AC4 runtime walk.
+    cpath = init.parent / "_clients.py"
+    cspec = importlib.util.spec_from_file_location(
+        f"{spec.name}._clients",
+        cpath,
+    )
+    clients = importlib.util.module_from_spec(cspec)
+    sys.modules[cspec.name] = clients
+    cspec.loader.exec_module(clients)
     t0 = [1700000000.0]
 
     def now():
@@ -310,7 +320,10 @@ def test_assemble_reserves_stamps_then_emit_near_cap(monkeypatch) -> None:
         return t0[0]
 
     monkeypatch.setattr(clients, "now_epoch", now)
-    from .emit import MaestroInductEmitHandler
+    from .emit import MaestroInductEmitHandler, _clients as emit_clients
+
+    if emit_clients is not clients:
+        monkeypatch.setattr(emit_clients, "now_epoch", now)
 
     handler = MaestroInductEmitHandler()
     ctx = types.SimpleNamespace(
