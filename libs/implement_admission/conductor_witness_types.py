@@ -100,6 +100,7 @@ class FoldResult:
     blocked_rows: dict[str, str] = field(default_factory=dict)
     journal_applied: bool = False
     tip_sha: str | None = None
+    fold_failed: bool = False
 
 
 def row_status_in_tip(body: str, gid: str) -> str | None:

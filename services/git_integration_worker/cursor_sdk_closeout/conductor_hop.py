@@ -213,7 +213,7 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                     ),
                     write_journal=False,
                 )
-                if fold is not None:
+                if fold is not None and not fold.fold_failed:
                     gate_from_fold = resolve_entry_gate_from_fold(fold)
                     if gate_from_fold is None:
                         return None

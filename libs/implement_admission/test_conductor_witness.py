@@ -1286,8 +1286,9 @@ def test_sqlite_open_failure_surfaces_in_fold_and_closeout(
     """Dispatch HOME cannot open cortex sqlite (a:38306).
 
     ``cortex_conn`` raising ``unable to open database file`` must not leave
-    G7 OPEN. Reads go through the cortex API; an API failure is FOLD_FAILED
-    on the fold and ``WitnessCortexUnavailable`` from closeout.
+    G7 OPEN as a witnessed land, and must not journal ``FOLD_FAILED`` into
+    the tip. An API failure sets ``fold_failed`` and raises
+    ``WitnessCortexUnavailable`` from closeout.
     """
     import sqlite3
 
@@ -1333,12 +1334,92 @@ def test_sqlite_open_failure_surfaces_in_fold_and_closeout(
         source_ref=_SOURCE_REF,
         repo=tmp_path / "repo",
     )
-    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=True)
     assert fold is not None
+    assert fold.fold_failed is True
+    assert fold.journal_applied is False
+    assert fold.entry_gate == ""
+    assert fold.folded_body == tip
     assert fold.row_status["G7"] == "FOLD_FAILED"
     assert "cortex api unreachable" in fold.missing_witnesses["G7"]
-    assert "| G7 | land | FOLD_FAILED | |" in fold.folded_body
+    on_disk = (scoreboards / f"{_SLUG}-scoreboard.md").read_text(encoding="utf-8")
+    assert "FOLD_FAILED" not in on_disk
+    from implement_admission.conductor_witness import resolve_entry_gate_from_fold
+
+    assert resolve_entry_gate_from_fold(fold) is None
     with pytest.raises(WitnessCortexUnavailable, match="cortex api unreachable"):
         closeout_witnesses_for_slug(
             _SLUG, tip_body=tip, deps=deps, files_root=files_root
         )
+
+
+def test_connect_error_is_cortex_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """httpx.ConnectError is a transport outage, not a missing entity."""
+    import httpx
+
+    from implement_admission.conductor_witness_defaults import (
+        DefaultWitnessCortex,
+        WitnessCortexUnavailable,
+    )
+
+    class _Connect:
+        def __enter__(self) -> _Connect:
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def post(self, *_args: object, **_kwargs: object) -> None:
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_a, **_k: _Connect(),
+    )
+    with pytest.raises(WitnessCortexUnavailable, match="connection refused"):
+        DefaultWitnessCortex().entity_get("todo:missing-transport")
+
+
+def test_g1_skips_missing_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTP 404 on a derived_from target is a skip, not a fold outage."""
+    from implement_admission.conductor_witness_defaults import DefaultWitnessCortex
+    from implement_admission.conductor_witness_table import _witness_g1
+
+    class _Resp:
+        def __init__(self, code: int, payload: dict[str, Any]) -> None:
+            self.status_code = code
+            self.text = ""
+            self._payload = payload
+
+        def json(self) -> dict[str, Any]:
+            return self._payload
+
+    class _Client:
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def post(self, _path: str, json: dict[str, Any]) -> _Resp:  # noqa: A002
+            tool = json["tool"]
+            if tool == "relationships":
+                return _Resp(
+                    200,
+                    {
+                        "items": [
+                            {
+                                "id": 1,
+                                "target_id": "document:gone",
+                                "type_id": "derived_from",
+                            }
+                        ]
+                    },
+                )
+            return _Resp(404, {})
+
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_a, **_k: _Client(),
+    )
+    assert _witness_g1(source_ref=_SOURCE_REF, cortex=DefaultWitnessCortex()) is None

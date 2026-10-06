@@ -6,6 +6,7 @@ import hashlib
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from review_verdict.grammar import (
     _MERITS_RE,
@@ -322,13 +323,34 @@ def _g3_journal_written_at(slug: str, *, files_root: Path) -> str | None:
     return None
 
 
+def _entity_card(cortex: WitnessCortex, entity_id: str, **kwargs: Any) -> dict | None:
+    """Return the entity, or None when cortex reports it missing."""
+    from implement_admission.conductor_witness_defaults import WitnessEntityMissing
+
+    try:
+        doc = cortex.entity_get(entity_id, **kwargs)
+    except WitnessEntityMissing:
+        return None
+    if not isinstance(doc, dict) or not doc:
+        return None
+    return doc
+
+
 def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
+    from implement_admission.conductor_witness_defaults import WitnessEntityMissing
+
     todo_id = source_ref if source_ref.startswith("todo:") else source_ref
-    for rel in cortex.list_relationships(todo_id, type_id="derived_from"):
+    try:
+        relationships = cortex.list_relationships(todo_id, type_id="derived_from")
+    except WitnessEntityMissing:
+        return None
+    for rel in relationships:
         target = str(rel.get("target_id") or "")
         if not target.startswith("document:"):
             continue
-        doc = cortex.entity_get(target, intent="card")
+        doc = _entity_card(cortex, target, intent="card")
+        if doc is None:
+            continue
         attrs = doc.get("attributes") or {}
         kind = (
             str(attrs.get("consult_kind") or doc.get("consult_kind") or "")
@@ -336,7 +358,9 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
             .lower()
         )
         if kind != "architecture":
-            full = cortex.entity_get(target, intent="full")
+            full = _entity_card(cortex, target, intent="full")
+            if full is None:
+                continue
             full_attrs = full.get("attributes") or {}
             kind = (
                 str(full_attrs.get("consult_kind") or full.get("consult_kind") or kind)

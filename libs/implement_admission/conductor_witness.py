@@ -220,53 +220,43 @@ def _fold_cortex_unavailable(
     *,
     raw_body: str,
     exc: WitnessCortexUnavailable,
-    files_root: Path,
-    write_journal: bool,
 ) -> FoldResult:
-    """Cortex unread: every row is FOLD_FAILED, including G7 after a land.
+    """Cortex unread: flag the fold; leave the tip bytes alone.
 
-    A swallowed read used to leave G7 OPEN, which looks like the land was
-    never witnessed. The failure is the fold status and the missing-witness
-    text.
+    Journaling ``FOLD_FAILED`` or returning the first row as ``entry_gate``
+    made a transport blip look like live gate state (a:38306). Callers must
+    key off ``fold_failed`` and fall back to the on-disk board.
     """
-    from implement_admission.conductor_score_journal import G_ROWS, forward_mutate_tip
+    from implement_admission.conductor_score_journal import G_ROWS
 
     rows = rows_in_tip(raw_body) or G_ROWS
     detail = str(exc)
-    row_status = {row_id: "FOLD_FAILED" for row_id in rows}
-    missing = {row_id: detail for row_id in rows}
-    folded_body = _render_folded_body(raw_body, row_status, rows)
-    journal_applied = False
-    if folded_body != raw_body and write_journal:
-        result = forward_mutate_tip(
-            slug,
-            next_body=folded_body,
-            seat="fold",
-            dispatch_id=None,
-            reason="witness_fold",
-            rows=tuple(rows),
-            delta=f"cortex unread: {detail}",
-            files_root=files_root,
-        )
-        journal_applied = result.rejected_reason is None
     return FoldResult(
         slug=slug,
         raw_body=raw_body,
-        folded_body=folded_body,
-        row_status=row_status,
+        folded_body=raw_body,
+        row_status={row_id: "FOLD_FAILED" for row_id in rows},
         witnesses={row_id: None for row_id in rows},
         witnessed_done=frozenset(),
         rows_claimed=frozenset(),
-        entry_gate=rows[0],
-        missing_witnesses=missing,
-        journal_applied=journal_applied,
-        tip_sha=tip_sha256(folded_body),
+        entry_gate="",
+        missing_witnesses={row_id: detail for row_id in rows},
+        journal_applied=False,
+        tip_sha=tip_sha256(raw_body),
+        fold_failed=True,
     )
 
 
-def resolve_entry_gate_from_fold(fold: FoldResult) -> str:
-    """First scoreboard row whose folded status is not DONE."""
+def resolve_entry_gate_from_fold(fold: FoldResult) -> str | None:
+    """First scoreboard row whose folded status is not DONE.
+
+    A failed fold has no gate. Callers fall back to the on-disk board.
+    """
+    if fold.fold_failed:
+        return None
     rows = tuple(fold.row_status.keys())
+    if not rows:
+        return None
     for row_id in rows:
         if fold.row_status.get(row_id) != "DONE":
             return row_id
@@ -300,8 +290,6 @@ def fold_scoreboard(
             slug,
             raw_body=raw_body,
             exc=exc,
-            files_root=root,
-            write_journal=write_journal,
         )
     witnessed_done = frozenset(
         row_id for row_id, w in witnesses.items() if w is not None

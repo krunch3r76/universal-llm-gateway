@@ -229,6 +229,13 @@ def run_tail_mechanical(
             **_skipped_payload(reason="entity_missing", family="conductor"),
             "scoreboard_uri": ref.uri,
         }
+    if fold.fold_failed:
+        # Transient cortex outage must not rewrite Settled/Live/Next.
+        return {
+            **_skipped_payload(reason="scoreboard_unreadable", family="conductor"),
+            "scoreboard_uri": ref.uri,
+            "error": "witness_fold_failed",
+        }
 
     # Projection-only: an unapplied journal is the expected outcome here, so it
     # is not a rejection. fold.tip_sha describes the projected body, which was

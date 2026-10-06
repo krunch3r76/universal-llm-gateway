@@ -27,6 +27,10 @@ class WitnessCortexUnavailable(RuntimeError):
     """Cortex API read failed. Fold must not report a clean OPEN."""
 
 
+class WitnessEntityMissing(LookupError):  # noqa: N818 — pairs with WitnessCortexUnavailable
+    """Cortex has no such entity (HTTP 404). Not an outage."""
+
+
 def _parse_iso(raw: str | None) -> datetime | None:
     if not raw:
         return None
@@ -84,19 +88,31 @@ def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
             resp = client.post(
                 "/dispatch", json={"tool": tool, "arguments": arguments}
             )
+            if resp.status_code == 404:
+                raise WitnessEntityMissing(f"cortex {tool} HTTP 404")
             if resp.status_code >= 400:
                 raise WitnessCortexUnavailable(
                     f"cortex {tool} HTTP {resp.status_code}: {resp.text[:300]}"
                 )
             payload = resp.json()
-    except WitnessCortexUnavailable:
+    except (WitnessCortexUnavailable, WitnessEntityMissing):
         raise
     except (OSError, ValueError) as exc:
         raise WitnessCortexUnavailable(f"cortex {tool} failed: {exc}") from exc
+    except Exception as exc:
+        import httpx
+
+        if isinstance(exc, httpx.HTTPError):
+            raise WitnessCortexUnavailable(f"cortex {tool} failed: {exc}") from exc
+        raise
     if not isinstance(payload, dict):
         raise WitnessCortexUnavailable(f"cortex {tool} returned a non-object")
     if payload.get("error"):
-        raise WitnessCortexUnavailable(f"cortex {tool}: {payload.get('error')}")
+        err = str(payload.get("error"))
+        lowered = err.lower()
+        if "not found" in lowered or lowered.strip() in {"404", "missing"}:
+            raise WitnessEntityMissing(f"cortex {tool}: {err}")
+        raise WitnessCortexUnavailable(f"cortex {tool}: {err}")
     return payload
 
 

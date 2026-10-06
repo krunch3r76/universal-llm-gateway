@@ -230,6 +230,37 @@ def test_charter_missing_file_scoreboard_unreadable() -> None:
 
 
 @patch("handlers.tail_mechanical.fold_scoreboard")
+def test_fold_failed_does_not_rewrite_card(mock_fold: object, tmp_path: Path) -> None:
+    """Transient fold failure leaves the continuity card untouched."""
+    slug = "fold-down"
+    thread = "8891"
+    uri = conductor_board(tmp_path, slug)
+    card = continuity_card(tmp_path, thread)
+    before = card.read_text(encoding="utf-8")
+    mock_fold.return_value = FoldResult(
+        slug=slug,
+        raw_body="raw",
+        folded_body="raw",
+        row_status={"G1": "FOLD_FAILED", "G7": "FOLD_FAILED"},
+        witnesses={},
+        witnessed_done=frozenset(),
+        rows_claimed=frozenset(),
+        entry_gate="",
+        fold_failed=True,
+        journal_applied=False,
+    )
+    out = run_tail_mechanical(
+        thread=thread,
+        options={},
+        tip_body=f"Scoreboard: {uri}\n",
+        thread_tags=[f"scoreboard:{slug}"],
+        files_root=tmp_path,
+    )
+    assert out["reason"] == "scoreboard_unreadable"
+    assert card.read_text(encoding="utf-8") == before
+
+
+@patch("handlers.tail_mechanical.fold_scoreboard")
 def test_journal_rejected_never_raises(mock_fold: object, tmp_path: Path) -> None:
     """B1-6 — forward_mutate_tip rejection yields journal_rejected without raising."""
     slug = "journal-reject"

@@ -81,6 +81,31 @@ def test_witnessed_g1_done_not_degraded(monkeypatch) -> None:
     assert reason is None
 
 
+def test_witness_cortex_outage_is_partial(monkeypatch) -> None:
+    """Cortex down during grading is PARTIAL, not a failed closeout."""
+    from implement_admission.conductor_witness_defaults import WitnessCortexUnavailable
+
+    def _down(*_a: object, **_k: object) -> None:
+        raise WitnessCortexUnavailable("cortex api unreachable")
+
+    monkeypatch.setattr(
+        "implement_admission.conductor_witness.closeout_witnesses_for_slug",
+        _down,
+    )
+    reason = conductor_unwitnessed_done_degraded_reason(
+        body=_G1_DONE_NO_EDGE,
+        packet_text=_CONDUCTOR_PACKET,
+    )
+    assert reason == "witness_cortex_unavailable"
+    from implement_admission.spec import CloseoutStatus
+
+    from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+        _map_closeout_status,
+    )
+
+    assert _map_closeout_status(reason) == CloseoutStatus.PARTIAL
+
+
 def test_prepare_closeout_unwitnessed_done_partial(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "implement_admission.conductor_witness_defaults.DefaultWitnessCortex",

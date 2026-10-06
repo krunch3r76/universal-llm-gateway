@@ -131,8 +131,10 @@ def entry_gate_for_row(row: dict[str, Any], *, live: bool = True) -> str:
         from implement_admission.conductor_witness import resolve_entry_gate_from_fold
 
         fold = _fold_for_slug(slug, row)
-        if fold is not None:
-            return resolve_entry_gate_from_fold(fold)
+        if fold is not None and not fold.fold_failed:
+            gate = resolve_entry_gate_from_fold(fold)
+            if gate:
+                return gate
     except Exception as exc:  # noqa: BLE001 — fold is advisory
         logger.warning("hop progress entry_gate fold failed slug=%s err=%s", slug, exc)
     return UNPAID_ENTRY_GATE
