@@ -1,0 +1,14 @@
+{
+  "id": 78267,
+  "thread": "12286",
+  "turn_number": 138,
+  "from": "cursor",
+  "to": "web",
+  "subject": "CHECKPOINT 12286 b2a9c2b7",
+  "body": "## Derived (projected at post — do not hand-edit)\n\n### Child lanes\n- agent-bus:12515 · parallel · active · turn 3\n- agent-bus:12510 · sub_mission · active · turn 7\n- agent-bus:12509 · sub_mission · active · turn 4\n- agent-bus:12508 · sub_mission · active · turn 7\n- agent-bus:12506 · sub_mission · active · turn 7\n- agent-bus:12504 · sub_mission · active · turn 7\n- agent-bus:12501 · sub_mission · active · turn 4\n- agent-bus:12499 · sub_mission · active · turn 7\n_+33 more active · cap: checkpoint_projection_lanes.CHECKPOINT_MAX_CHILD_ROWS=8_\nchild_lanes: 41 active · 7 closed · registry: cortex://notes/system/threads/12286-transcript-projection.md\n\n### In-flight producers\nproducers: 26 in_flight · registry: cortex://notes/system/threads/12286-transcript-projection.md · basis: link.terminal_status=null ∧ linked_at≤24h (¬liveness)\n\n### Cited lanes\n_none cited_\n\n### Artifact anchors\n_none cited_\n\n### Entity / assertion rows\n- transcript:cursor-2026-09-22-082500-cdf · transcript:cursor-2026-09-22-082500-cdf\n\n## Windows (rendered at read — do not hand-edit)\n| cp_ordinal | turn | session_id | Arc | journal_row_id |\n| --- | --- | --- | --- | --- |\n| 15 | 116 |  |  |  |\n| 16 | 117 | cursor-2026-09-22-070600-f77 |  |  |\n| 17 | 123 |  |  |  |\n| 18 | 124 | cursor-2026-09-22-072800-ce7 |  |  |\n| 19 | 127 | cursor-2026-09-22-072800-ce7 |  |  |\n| 20 | 128 | cursor-2026-09-22-072800-ce7 |  |  |\n| 21 | 137 | cursor-2026-09-22-082500-cdf |  |  |\n| 22 | 138 | cursor-2026-09-22-082500-cdf |  |  |\n_+14 earlier windows omitted · cap: checkpoint_projection_lanes.CHECKPOINT_MAX_CHILD_ROWS=8_ · registry: cortex://notes/system/threads/12286-transcript-projection.md_\n\n## Residue (authored — cap ~800 chars)\n## Residue (authored — cap ~800 chars)\n\n## Anchor\nWindow: transcript_id=c8315f3c-bcb7-49da-9930-ce3cbe895dff · turns@cp=26 · channel=hop\nHarvest: transcript:cursor-2026-09-22-082500-cdf · messages_sha256:absent · codec:messages-v1 · surface:cursor\n\nMission: resume continuity house from this CHECKPOINT.\n\n— RESUME (any seat, no command): load checkpoint-discipline (tip resume + author workflow; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <roadmap path> [+ scoreboard gated lane if named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.",
+  "status": "open",
+  "supersedes_turn": 78266,
+  "created_at": "2026-09-22T09:47:14Z",
+  "read_at": "2026-09-22T10:50:01Z",
+  "attachments": null
+}

@@ -1,0 +1,70 @@
+# maestro-induct-v1 — read-only house maestro induction packet
+schema_version: 6
+id: maestro-induct
+version: "1.0"
+type: maestro_induct
+description: >
+  Mechanical assembly of the house maestro induction packet (card, checkpoint,
+  continuity, journal, runbook, scores, lanes, open consults, first_act,
+  reinduct). Read-only; no model step.
+output: emit
+options:
+  timeout_seconds: 10
+steps:
+  - name: resolve
+    type: maestro_induct_resolve_v1
+  - name: fetch_house
+    type: maestro_induct_fetch_house_v1
+    reads_from: [{step: resolve, fields: [json]}]
+  - name: fetch_checkpoint
+    type: maestro_induct_fetch_checkpoint_v1
+    reads_from: [{step: resolve, fields: [json]}]
+  - name: fetch_continuity
+    type: maestro_induct_fetch_continuity_v1
+    reads_from: [{step: resolve, fields: [json]}]
+  - name: fetch_journal
+    type: maestro_induct_fetch_journal_v1
+    reads_from: [{step: resolve, fields: [json]}]
+  - name: fetch_runbook
+    type: maestro_induct_fetch_runbook_v1
+    condition: "options.get('include_runbook', True)"
+    reads_from: [{step: resolve, fields: [json]}, {step: fetch_house, fields: [json]}]
+  - name: discover_scores
+    type: maestro_induct_discover_scores_v1
+    reads_from:
+      - {step: resolve, fields: [json]}
+      - {step: fetch_house, fields: [json]}
+      - {step: fetch_checkpoint, fields: [json]}
+  - name: fetch_scores
+    type: maestro_induct_fetch_scores_v1
+    reads_from: [{step: discover_scores, fields: [json]}]
+  - name: enumerate_lanes
+    type: maestro_induct_enumerate_lanes_v1
+    reads_from: [{step: resolve, fields: [json]}]
+  - name: fetch_lanes
+    type: maestro_induct_fetch_lanes_v1
+    condition: "options.get('include_lanes', True)"
+    reads_from:
+      - {step: enumerate_lanes, fields: [json]}
+      - {step: resolve, fields: [json]}
+  - name: fetch_consults
+    type: maestro_induct_fetch_consults_v1
+    reads_from:
+      - {step: enumerate_lanes, fields: [json]}
+      - {step: resolve, fields: [json]}
+  - name: assemble
+    type: maestro_induct_assemble_v1
+    reads_from:
+      - {step: resolve, fields: [json]}
+      - {step: fetch_house, fields: [json]}
+      - {step: fetch_checkpoint, fields: [json]}
+      - {step: fetch_continuity, fields: [json]}
+      - {step: fetch_journal, fields: [json]}
+      - {step: fetch_runbook, fields: [json]}
+      - {step: fetch_scores, fields: [json]}
+      - {step: enumerate_lanes, fields: [json]}
+      - {step: fetch_lanes, fields: [json]}
+      - {step: fetch_consults, fields: [json]}
+  - name: emit
+    type: maestro_induct_emit_v1
+    reads_from: [{step: assemble, fields: [json]}]

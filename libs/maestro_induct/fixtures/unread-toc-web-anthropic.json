@@ -1,0 +1,49 @@
+{
+  "_synthetic": true,
+  "threads": [
+    {
+      "thread": "12286",
+      "unread_count": 1,
+      "latest_turn_number": 900,
+      "slug": "12286",
+      "last_subject": "CONSULT_PENDING \u2014 G4 synthetic root consult",
+      "last_activity_at": "2026-10-06T09:00:00Z",
+      "parent_thread": "12286",
+      "lane_role": null
+    },
+    {
+      "thread": "12291",
+      "unread_count": 1,
+      "latest_turn_number": 12,
+      "slug": "12291",
+      "last_subject": "CONSULT_PENDING \u2014 G6 pre-land review on lane-B diff",
+      "last_activity_at": "2026-09-22T02:06:39Z",
+      "parent_thread": "12286",
+      "lane_role": "sub_mission"
+    },
+    {
+      "thread": "99999",
+      "unread_count": 1,
+      "latest_turn_number": 3,
+      "slug": "99999",
+      "last_subject": "CONSULT_PENDING \u2014 G2 synthetic outside",
+      "last_activity_at": "2026-09-22T01:00:00Z",
+      "parent_thread": null,
+      "lane_role": null
+    },
+    {
+      "thread": "15326",
+      "unread_count": 1,
+      "latest_turn_number": 23,
+      "slug": "15326",
+      "last_subject": "cdp generate \u2014 8855421d2808",
+      "last_activity_at": "2026-10-06T08:00:00Z",
+      "parent_thread": "12286",
+      "lane_role": "dispatch"
+    }
+  ],
+  "total_unread_threads": 4,
+  "total_unread_turns": 4,
+  "marked_read": false,
+  "truncated": false
+}

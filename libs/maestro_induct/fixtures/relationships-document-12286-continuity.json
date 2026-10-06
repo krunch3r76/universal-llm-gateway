@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": 9824,
+      "source_id": "document:12286-continuity",
+      "target_id": "todo:auto-conductor-parallel-admit",
+      "type_id": "related_to"
+    },
+    {
+      "id": 9821,
+      "source_id": "document:12286-continuity",
+      "target_id": "todo:maestro-induct-pipeline",
+      "type_id": "related_to"
+    },
+    {
+      "id": 9815,
+      "source_id": "document:12286-continuity",
+      "target_id": "todo:operator-observe-pipeline",
+      "type_id": "related_to"
+    },
+    {
+      "id": 9813,
+      "source_id": "document:12286-continuity",
+      "target_id": "todo:operator-ear-house-settle",
+      "type_id": "related_to"
+    },
+    {
+      "id": 9809,
+      "source_id": "document:12286-continuity",
+      "target_id": "todo:operator-ear-by-token",
+      "type_id": "related_to"
+    }
+  ]
+}
