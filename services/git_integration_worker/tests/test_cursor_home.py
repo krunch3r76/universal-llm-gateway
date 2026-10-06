@@ -485,3 +485,60 @@ def test_dispatch_home_keeps_existing_playwright_dir(
     assert occupied.is_dir()
     assert not occupied.is_symlink()
     assert (occupied / "local-marker").read_text(encoding="utf-8") == "keep"
+
+
+def test_steer_native_hook_off_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unset ULG_STEER_NATIVE_HOOK does not write hooks.json (fleet restart)."""
+    monkeypatch.delenv("ULG_STEER_NATIVE_HOOK", raising=False)
+    from services.git_integration_worker.cursor_home import _install_steer_native_hook
+
+    cursor = tmp_path / ".cursor"
+    cursor.mkdir()
+    _install_steer_native_hook(cursor)
+    assert not (cursor / "hooks.json").exists()
+
+
+def test_steer_native_hook_opt_in_fail_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opt-in writes failClosed false and a short timeout."""
+    monkeypatch.setenv("ULG_STEER_NATIVE_HOOK", "1")
+    from services.git_integration_worker.cursor_home import (
+        _install_steer_native_hook,
+        steer_native_hook_command,
+    )
+
+    cursor = tmp_path / ".cursor"
+    cursor.mkdir()
+    _install_steer_native_hook(cursor)
+    data = json.loads((cursor / "hooks.json").read_text(encoding="utf-8"))
+    entry = data["hooks"]["postToolUse"][0]
+    assert entry["command"] == steer_native_hook_command()
+    assert entry["failClosed"] is False
+    assert entry["timeout"] == 5
+
+
+def test_steer_native_hook_off_strips_prior_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later install with the flag unset removes a previously armed command."""
+    from services.git_integration_worker.cursor_home import (
+        _install_steer_native_hook,
+        steer_native_hook_command,
+    )
+
+    cursor = tmp_path / ".cursor"
+    cursor.mkdir()
+    monkeypatch.setenv("ULG_STEER_NATIVE_HOOK", "1")
+    _install_steer_native_hook(cursor)
+    monkeypatch.delenv("ULG_STEER_NATIVE_HOOK", raising=False)
+    _install_steer_native_hook(cursor)
+    data = json.loads((cursor / "hooks.json").read_text(encoding="utf-8"))
+    commands = [
+        item.get("command")
+        for item in data["hooks"]["postToolUse"]
+        if isinstance(item, dict)
+    ]
+    assert steer_native_hook_command() not in commands

@@ -1099,6 +1099,34 @@ def test_a3_delivered_closeout_omits_steer_undelivered(
     assert events == []
 
 
+def test_prose_closeout_gains_steer_trailer(
+    spool: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check-review prose (not a JSON object) still records undelivered steers."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_steer_inject.emit_frontier_event",
+        lambda _ev: None,
+    )
+    append_spool_entry(
+        "disp-prose",
+        authority_turn_id="5",
+        directive="lost",
+        ttl_s=300,
+        spool_dir=spool,
+        entry_id="entry-prose",
+    )
+    from services.git_integration_worker.cursor_sdk_steer_inject import (
+        apply_steer_undelivered_closeout,
+    )
+
+    out = apply_steer_undelivered_closeout(
+        "findings text\n", dispatch_id="disp-prose", spool_dir=spool
+    )
+    assert out.startswith("findings text\n")
+    assert "STEER_UNDELIVERED:" in out
+    assert "entry-prose" in out
+
+
 def test_ac19_sibling_payloads_omit_submitted_id() -> None:
     sp = SdkSteerInjectSpooled(
         dispatch_id="d",

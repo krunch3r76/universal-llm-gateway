@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import sqlite3
+import tempfile
 import time
 import uuid
 from collections.abc import Iterator
@@ -22,7 +23,10 @@ from pathlib import Path
 from typing import Any
 
 CURSOR_SDK_DISPATCH_ID_ENV = "CURSOR_SDK_DISPATCH_ID"
+CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 ULG_STEER_SPOOL_DIR_ENV = "ULG_STEER_SPOOL_DIR"
+_LOCK_NB_ATTEMPTS = 3
+_LOCK_NB_SLEEP_S = 0.05
 STEER_ENVELOPE_PREFIX = "ULG_STEER:"
 # Ledger CHECK set is cursor_dispatch_ledger.py:46-49. TTL relaxation applies
 # only while a model run is still in play. ``queued`` is active identity but
@@ -62,9 +66,19 @@ def _load_spool(path: Path) -> dict[str, Any]:
 
 def _write_spool(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
-    tmp.replace(path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, separators=(",", ":")))
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _entry_expired(raw: dict[str, Any], *, now: float) -> bool:
@@ -79,21 +93,51 @@ def _entry_expired(raw: dict[str, Any], *, now: float) -> bool:
     return now - dep_ts > ttl_s
 
 
-def _spool_root(spool_dir: Path | str | None) -> Path:
-    return Path(spool_dir or os.environ.get(ULG_STEER_SPOOL_DIR_ENV, ""))
+def _spool_root(spool_dir: Path | str | None) -> Path | None:
+    """Spool directory. Empty ``ULG_STEER_SPOOL_DIR`` is absent, not ``Path('')``."""
+    if spool_dir is not None and str(spool_dir).strip():
+        return Path(spool_dir)
+    raw = os.environ.get(ULG_STEER_SPOOL_DIR_ENV, "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+class _SpoolLockBusyError(Exception):
+    """Non-blocking lock was not acquired after the short retry."""
 
 
 @contextmanager
-def _spool_lock(path: Path) -> Iterator[None]:
-    """Exclusive lock so MCP and the native hook cannot claim the same row."""
+def _spool_lock(path: Path, *, nonblocking: bool = False) -> Iterator[None]:
+    """Exclusive lock so MCP and the native hook cannot claim the same row.
+
+    *nonblocking* is the hook path: ``LOCK_NB`` a few times, then
+    ``_SpoolLockBusyError`` so the hook can return ``{}`` instead of stalling
+    the tool result.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     handle = lock_path.open("a+")
+    acquired = False
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if nonblocking:
+            for attempt in range(_LOCK_NB_ATTEMPTS):
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    if attempt + 1 < _LOCK_NB_ATTEMPTS:
+                        time.sleep(_LOCK_NB_SLEEP_S)
+            if not acquired:
+                raise _SpoolLockBusyError
+        else:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            acquired = True
         yield
     finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        if acquired:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()
 
 
@@ -107,12 +151,12 @@ def steer_dispatch_is_live(dispatch_id: str) -> bool | None:
     """
     if not dispatch_id:
         return None
+    # stdlib read of the env pin. Do not import GIW: the hook must fail open
+    # when the worker package is missing or the ledger path is unset.
+    db_path = os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip()
+    if not db_path:
+        return None
     try:
-        from services.git_integration_worker.cursor_dispatch_ledger import (
-            resolve_cursor_sdk_dispatch_ledger_path,
-        )
-
-        db_path = resolve_cursor_sdk_dispatch_ledger_path()
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             row = conn.execute(
@@ -155,7 +199,7 @@ def claim_pending(
     Expired rows are skipped unless *allow_expired* (dispatch still live).
     """
     root = _spool_root(spool_dir)
-    if not dispatch_id or not str(root):
+    if not dispatch_id or root is None:
         return None
     path = spool_path(root, dispatch_id)
     if not path.is_file():
@@ -225,7 +269,7 @@ def mark_delivered(
 ) -> None:
     """Move a claimed entry from pending to delivered in the spool file."""
     root = _spool_root(spool_dir)
-    if not pending.dispatch_id or not str(root):
+    if not pending.dispatch_id or root is None:
         return
     path = spool_path(root, pending.dispatch_id)
     if not path.is_file():
@@ -239,6 +283,7 @@ def _mark_delivered_unlocked(
     pending: PendingSteer,
     *,
     delivered_at: str | None,
+    delivered_via: str | None = None,
 ) -> None:
     ts = delivered_at or datetime.now(UTC).isoformat()
     data = _load_spool(path)
@@ -248,7 +293,10 @@ def _mark_delivered_unlocked(
     moved = False
     for raw in pending_list:
         if not moved and str(raw.get("entry_id")) == pending.entry_id:
-            delivered_list.append({**raw, "delivered_at": ts, "claimed": True})
+            record = {**raw, "delivered_at": ts, "claimed": True}
+            if delivered_via:
+                record["delivered_via"] = delivered_via
+            delivered_list.append(record)
             moved = True
         else:
             kept.append(raw)
@@ -263,14 +311,24 @@ def consume_next_steer_envelope(
     *,
     spool_dir: Path | str | None = None,
     live: bool | None = None,
+    delivered_via: str | None = None,
+    lock_nonblocking: bool = False,
 ) -> str | None:
     """Claim, format, and mark one steer. Shared by the MCP bridge and native hook.
 
     *live* overrides the ledger read. None looks up the ledger. False refuses
     (dispatch ended). True delivers even when TTL has elapsed.
+    *delivered_via* is stored on the delivered row (``native_hook`` or
+    ``mcp_bridge``). The row is marked delivered when this returns, which is
+    before the model reads the tool result.
+
+    Terminal window (low): a ledger flip to completed/failed/cancelled after
+    the live read and before the mark can still record delivery. Closeout
+    expire only moves still-pending rows, so that row is omitted from
+    ``steer_undelivered``. The hook is fail-open; the window is one lock hold.
     """
     root = _spool_root(spool_dir)
-    if not dispatch_id or not str(root):
+    if not dispatch_id or root is None:
         return None
     path = spool_path(root, dispatch_id)
     if not path.is_file():
@@ -279,13 +337,20 @@ def consume_next_steer_envelope(
         live = steer_dispatch_is_live(dispatch_id)
     if live is False:
         return None
-    with _spool_lock(path):
-        pending = _claim_pending_unlocked(path, dispatch_id, allow_expired=live is True)
-        if pending is None:
-            return None
-        envelope = format_directive_envelope(pending)
-        _mark_delivered_unlocked(path, pending, delivered_at=None)
-        return envelope
+    try:
+        with _spool_lock(path, nonblocking=lock_nonblocking):
+            pending = _claim_pending_unlocked(
+                path, dispatch_id, allow_expired=live is True
+            )
+            if pending is None:
+                return None
+            envelope = format_directive_envelope(pending)
+            _mark_delivered_unlocked(
+                path, pending, delivered_at=None, delivered_via=delivered_via
+            )
+            return envelope
+    except _SpoolLockBusyError:
+        return None
 
 
 def expire_pending_entries(
@@ -301,7 +366,7 @@ def expire_pending_entries(
     Returns the moved records. Idempotent: a second call returns [].
     """
     root = _spool_root(spool_dir)
-    if not dispatch_id or not str(root):
+    if not dispatch_id or root is None:
         return []
     path = spool_path(root, dispatch_id)
     if not path.is_file():
@@ -331,7 +396,13 @@ def expire_pending_entries(
 
 
 def _native_tool_name(tool_name: str) -> bool:
-    """True for Shell/Read/Grep-class tools. MCP names stay on the bridge path."""
+    """True for Shell/Read/Grep-class tools. MCP names stay on the bridge path.
+
+    Names that start with ``MCP:`` are rejected here. Other MCP spellings
+    (no prefix) would be treated as native; that mis-route is low impact
+    because the bridge still delivers on the next ``tools/call`` only when
+    this hook did not already claim the row.
+    """
     name = tool_name.strip()
     if not name:
         return False
@@ -348,7 +419,9 @@ def native_tool_steer_hook_response(payload: dict[str, Any]) -> dict[str, Any]:
     dispatch_id = os.environ.get(CURSOR_SDK_DISPATCH_ID_ENV, "").strip()
     if not dispatch_id:
         return {}
-    envelope = consume_next_steer_envelope(dispatch_id)
+    envelope = consume_next_steer_envelope(
+        dispatch_id, delivered_via="native_hook", lock_nonblocking=True
+    )
     if not envelope:
         return {}
     return {"additional_context": envelope}
@@ -378,24 +451,29 @@ def append_spool_entry(
     spool_dir: Path | str,
     entry_id: str | None = None,
 ) -> str:
-    """Register a pending steer entry (GIW deposit path). Returns ``entry_id``."""
+    """Register a pending steer entry (GIW deposit path). Returns ``entry_id``.
+
+    The lock is held inside this producer so two deposits cannot drop a row.
+    The spool file is replaced via a unique temp name.
+    """
     eid = entry_id or uuid.uuid4().hex
     path = spool_path(spool_dir, dispatch_id)
-    data = _load_spool(path)
-    data["dispatch_id"] = dispatch_id
-    pending = list(data.get("pending") or [])
-    pending.append(
-        {
-            "entry_id": eid,
-            "authority_turn_id": authority_turn_id,
-            "directive": directive,
-            "deposited_at": datetime.now(UTC).isoformat(),
-            "ttl_s": ttl_s,
-            "claimed": False,
-        }
-    )
-    data["pending"] = pending
-    _write_spool(path, data)
+    with _spool_lock(path):
+        data = _load_spool(path)
+        data["dispatch_id"] = dispatch_id
+        pending = list(data.get("pending") or [])
+        pending.append(
+            {
+                "entry_id": eid,
+                "authority_turn_id": authority_turn_id,
+                "directive": directive,
+                "deposited_at": datetime.now(UTC).isoformat(),
+                "ttl_s": ttl_s,
+                "claimed": False,
+            }
+        )
+        data["pending"] = pending
+        _write_spool(path, data)
     return eid
 
 

@@ -274,6 +274,149 @@ def test_steer_live_statuses_match_ledger() -> None:
     assert "queued" not in STEER_LIVE_LEDGER_STATUSES
 
 
+def test_native_hook_records_delivered_via(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delivery is recorded before the model reads additional_context."""
+    _deposit(tmp_path, "disp-via", "e-via", "via ruling")
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-via")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    response = native_tool_steer_hook_response({"tool_name": "Shell"})
+    assert "via ruling" in response["additional_context"]
+    from scripts.mcp_bridge_steer_inject import read_delivery_ack
+
+    ack = read_delivery_ack("disp-via", "e-via", spool_dir=tmp_path)
+    assert ack is not None
+    assert ack.get("delivered_via") == "native_hook"
+
+
+def test_empty_spool_dir_env_does_not_resolve_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blank ULG_STEER_SPOOL_DIR is absent; consume does not read '.'."""
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, "  ")
+    assert consume_next_steer_envelope("disp-empty") is None
+
+
+def test_append_spool_entry_concurrent_keeps_both(tmp_path: Path) -> None:
+    """Two producers under the spool lock do not drop a row."""
+    import threading
+
+    errors: list[BaseException] = []
+
+    def _deposit(entry_id: str) -> None:
+        try:
+            append_spool_entry(
+                "disp-race",
+                authority_turn_id="1",
+                directive=entry_id,
+                ttl_s=300,
+                spool_dir=tmp_path,
+                entry_id=entry_id,
+            )
+        except BaseException as exc:  # noqa: BLE001 — test collects thread faults
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_deposit, args=(f"e-{i}",)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    data = json.loads(spool_path(tmp_path, "disp-race").read_text(encoding="utf-8"))
+    assert {row["entry_id"] for row in data["pending"]} == {f"e-{i}" for i in range(8)}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_ledger_read_uses_env_sqlite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Liveness reads CURSOR_SDK_DISPATCH_LEDGER with sqlite3, not a GIW import."""
+    import sqlite3
+
+    from scripts.mcp_bridge_steer_inject import (
+        CURSOR_SDK_DISPATCH_LEDGER_ENV,
+        steer_dispatch_is_live,
+    )
+
+    db = tmp_path / "ledger.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE cursor_sdk_dispatches (dispatch_id TEXT, status TEXT)")
+    conn.execute(
+        "INSERT INTO cursor_sdk_dispatches VALUES (?, ?)",
+        ("disp-live", "running"),
+    )
+    conn.execute(
+        "INSERT INTO cursor_sdk_dispatches VALUES (?, ?)",
+        ("disp-done", "completed"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_LEDGER_ENV, str(db))
+    assert steer_dispatch_is_live("disp-live") is True
+    assert steer_dispatch_is_live("disp-done") is False
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_LEDGER_ENV, "")
+    assert steer_dispatch_is_live("disp-live") is None
+
+
+def test_hook_lock_busy_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOCK_NB exhaustion returns {} and leaves the row pending."""
+    import fcntl
+
+    _deposit(tmp_path, "disp-busy", "e-busy", "held")
+    monkeypatch.setenv(CURSOR_SDK_DISPATCH_ID_ENV, "disp-busy")
+    monkeypatch.setenv(ULG_STEER_SPOOL_DIR_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject.steer_dispatch_is_live",
+        lambda _dispatch_id: True,
+    )
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject._LOCK_NB_ATTEMPTS",
+        1,
+    )
+    monkeypatch.setattr(
+        "scripts.mcp_bridge_steer_inject._LOCK_NB_SLEEP_S",
+        0,
+    )
+    path = spool_path(tmp_path, "disp-busy")
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    handle = lock_path.open("a+")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert native_tool_steer_hook_response({"tool_name": "Shell"}) == {}
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+    still = claim_pending("disp-busy", spool_dir=tmp_path)
+    assert still is not None
+    assert still.entry_id == "e-busy"
+
+
+def test_hook_main_fail_open_on_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Import failure inside main writes {}."""
+    import scripts.mcp_bridge_steer_hook as hook
+
+    real_import = __import__
+
+    def _guarded(name, *args, **kwargs):
+        if name == "scripts.mcp_bridge_steer_inject":
+            raise ImportError("steer inject missing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", _guarded)
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    monkeypatch.setattr(sys, "stdout", buf)
+    hook.main()
+    assert buf.getvalue() == "{}"
+
+
 def test_framing_roundtrip_one_mib_payload() -> None:
     big = "x" * (1024 * 1024)
     payload = _tools_call_response(text=big)

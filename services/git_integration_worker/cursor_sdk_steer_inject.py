@@ -349,8 +349,10 @@ def apply_steer_undelivered_closeout(
 ) -> str:
     """Expire pending steers and, when any remain, add ``steer_undelivered``.
 
-    A body that is not a JSON object is returned unchanged after the expire
-    (the event still fires). An empty pending list does not add the field.
+    A JSON object gains the field. Any other body (including check-review
+    prose) gains a ``STEER_UNDELIVERED:`` trailer. An empty pending list
+    does not change the body. Call this after ``closeout_for_job`` so the
+    trailer survives shaping.
     """
     rows = expire_undelivered_on_terminal(dispatch_id, spool_dir=spool_dir)
     if not rows:
@@ -358,11 +360,24 @@ def apply_steer_undelivered_closeout(
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
-        return body
-    if not isinstance(payload, dict):
-        return body
-    payload["steer_undelivered"] = steer_undelivered_field(rows)
-    return json.dumps(payload, separators=(",", ":"))
+        payload = None
+    if isinstance(payload, dict):
+        payload["steer_undelivered"] = steer_undelivered_field(rows)
+        return json.dumps(payload, separators=(",", ":"))
+    # check-review closeout is prose by the time this runs (closeout_for_job
+    # already shaped it). A JSON field would be dropped; append a trailer.
+    lines = ["STEER_UNDELIVERED:"]
+    for row in steer_undelivered_field(rows):
+        lines.append(
+            "- entry_id={entry_id} deposited_at={deposited_at} reason={reason}".format(
+                **row
+            )
+        )
+    trailer = "\n".join(lines)
+    if not body:
+        return trailer + "\n"
+    sep = "\n" if body.endswith("\n") else "\n\n"
+    return f"{body}{sep}{trailer}\n"
 
 
 def _fetch_thread_turns(thread_id: str) -> list[dict[str, Any]] | None:
