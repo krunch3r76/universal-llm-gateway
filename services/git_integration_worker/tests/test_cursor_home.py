@@ -503,8 +503,12 @@ def test_steer_native_hook_off_by_default(
 def test_steer_native_hook_opt_in_fail_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Opt-in writes failClosed false and a short timeout."""
+    """Opt-in writes failClosed false and a short timeout on a tested SDK."""
     monkeypatch.setenv("ULG_STEER_NATIVE_HOOK", "1")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.installed_cursor_sdk_version",
+        lambda: "1.0.31",
+    )
     from services.git_integration_worker.cursor_home import (
         _install_steer_native_hook,
         steer_native_hook_command,
@@ -532,8 +536,43 @@ def test_steer_native_hook_off_strips_prior_entry(
     cursor = tmp_path / ".cursor"
     cursor.mkdir()
     monkeypatch.setenv("ULG_STEER_NATIVE_HOOK", "1")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.installed_cursor_sdk_version",
+        lambda: "1.0.31",
+    )
     _install_steer_native_hook(cursor)
     monkeypatch.delenv("ULG_STEER_NATIVE_HOOK", raising=False)
+    _install_steer_native_hook(cursor)
+    data = json.loads((cursor / "hooks.json").read_text(encoding="utf-8"))
+    commands = [
+        item.get("command")
+        for item in data["hooks"]["postToolUse"]
+        if isinstance(item, dict)
+    ]
+    assert steer_native_hook_command() not in commands
+
+
+def test_steer_native_hook_untested_sdk_strips_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed cursor-sdk outside the tested set leaves the command out."""
+    from services.git_integration_worker.cursor_home import (
+        _install_steer_native_hook,
+        steer_native_hook_command,
+    )
+
+    cursor = tmp_path / ".cursor"
+    cursor.mkdir()
+    monkeypatch.setenv("ULG_STEER_NATIVE_HOOK", "1")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.installed_cursor_sdk_version",
+        lambda: "1.0.31",
+    )
+    _install_steer_native_hook(cursor)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.installed_cursor_sdk_version",
+        lambda: "9.9.9",
+    )
     _install_steer_native_hook(cursor)
     data = json.loads((cursor / "hooks.json").read_text(encoding="utf-8"))
     commands = [

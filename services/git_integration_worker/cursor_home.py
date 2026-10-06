@@ -321,8 +321,14 @@ def _link_operator_venv(home: Path, real: Path) -> None:
 
 # Opt-in. Unset means do not arm the native postToolUse steer hook.
 # A GIW restart on master must not install it fleet-wide (a:38129).
+# In-flight disarm is a file, not this env: ~/.gateway/steer-native-hook.disabled
+# (DATA_DIR overrides the parent). The hook reads it at runtime and returns {}
+# without consuming the spool row. This env is read only at HOME setup.
 ULG_STEER_NATIVE_HOOK_ENV = "ULG_STEER_NATIVE_HOOK"
 _STEER_HOOK_TIMEOUT_S = 5
+# additional_context delivery is proven only on these cursor-sdk releases.
+# Keep in lockstep with the pin in requirements.host.txt.
+STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS = frozenset({"1.0.31"})
 
 
 def _steer_native_hook_enabled() -> bool:
@@ -332,6 +338,20 @@ def _steer_native_hook_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def installed_cursor_sdk_version() -> str | None:
+    """Installed ``cursor-sdk`` dist version, or None when metadata is missing."""
+    try:
+        from importlib.metadata import version
+
+        return version("cursor-sdk")
+    except Exception:
+        return None
+
+
+def _steer_native_hook_sdk_tested() -> bool:
+    return installed_cursor_sdk_version() in STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS
 
 
 def steer_native_hook_command() -> str:
@@ -352,15 +372,17 @@ def _install_steer_native_hook(cursor_dir: Path) -> None:
     The local SDK agent loads user hooks from ``$HOME/.cursor/hooks.json``.
     Dispatch HOME is that HOME, so the hook is visible to the headless agent
     and not to the operator IDE. Default is off (``ULG_STEER_NATIVE_HOOK``
-    unset). When off, a previously written entry for this command is removed
-    so a restart does not leave the hook armed. MCP tool names (``MCP:``)
+    unset) or when the installed ``cursor-sdk`` version is outside
+    ``STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS``. Either case removes a previously
+    written entry for this command so a restart does not leave the hook armed.
+    MCP tool names (``MCP:``)
     are ignored inside the hook so the stdio bridge remains the MCP delivery
     path. ``failClosed`` is false and ``timeout`` is short so a hook failure
     or stall does not block the tool result.
     """
     command = steer_native_hook_command()
     path = cursor_dir / "hooks.json"
-    if not _steer_native_hook_enabled():
+    if not _steer_native_hook_enabled() or not _steer_native_hook_sdk_tested():
         _remove_steer_native_hook(path, command)
         return
     script = (

@@ -25,6 +25,9 @@ from typing import Any
 CURSOR_SDK_DISPATCH_ID_ENV = "CURSOR_SDK_DISPATCH_ID"
 CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 ULG_STEER_SPOOL_DIR_ENV = "ULG_STEER_SPOOL_DIR"
+# Sibling of ``steer-spool/`` under the gateway data dir (default ``~/.gateway``).
+# Present file disarms the native hook without consuming a pending spool row.
+NATIVE_HOOK_KILL_SENTINEL_NAME = "steer-native-hook.disabled"
 _LOCK_NB_ATTEMPTS = 3
 _LOCK_NB_SLEEP_S = 0.05
 STEER_ENVELOPE_PREFIX = "ULG_STEER:"
@@ -46,6 +49,19 @@ class PendingSteer:
     directive: str
     deposited_at: str
     ttl_s: int
+
+
+def native_hook_kill_sentinel_path() -> Path:
+    """In-flight kill switch. Exists ⇒ hook returns ``{}`` and leaves the row pending.
+
+    Default ``~/.gateway/steer-native-hook.disabled`` (``DATA_DIR`` overrides the
+    parent, same root as ``steer-spool/``). Checked at hook runtime, not at
+    dispatch HOME setup.
+    """
+    data_dir = Path(
+        os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))
+    ).expanduser()
+    return data_dir / NATIVE_HOOK_KILL_SENTINEL_NAME
 
 
 def spool_path(spool_dir: Path | str, dispatch_id: str) -> Path:
