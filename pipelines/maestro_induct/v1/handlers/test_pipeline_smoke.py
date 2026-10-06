@@ -320,7 +320,7 @@ def test_assemble_reserves_stamps_then_emit_near_cap(monkeypatch) -> None:
         return t0[0]
 
     monkeypatch.setattr(clients, "now_epoch", now)
-    from .emit import MaestroInductEmitHandler, _clients as emit_clients
+    from .emit import MaestroInductEmitHandler, _clients as emit_clients  # noqa: I001
 
     if emit_clients is not clients:
         monkeypatch.setattr(emit_clients, "now_epoch", now)
