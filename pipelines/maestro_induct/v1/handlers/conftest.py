@@ -55,6 +55,8 @@ class SmokeRouter:
         self.overrides = overrides or {}
         self.requests: list[tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]] = []
         self.unrouted: list[tuple[str, str]] = []
+        self.append_cp_after_tip: dict[str, Any] | None = None
+        self._tip_served = False
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         method = request.method.upper()
@@ -128,6 +130,14 @@ class SmokeRouter:
                 rows = rows[:last]
             if not include_sup:
                 rows = [t for t in rows if t.get("status") != "superseded"]
+            if (
+                self.append_cp_after_tip is not None
+                and params.get("after_turn") is None
+                and params.get("last") == "50"
+                and not self._tip_served
+            ):
+                self._tip_served = True
+                self.ladder.append(self.append_cp_after_tip)
             return httpx.Response(200, json={"turns": rows})
 
         self.unrouted.append((method, path))
@@ -196,8 +206,32 @@ def smoke_router(monkeypatch, request):
     param = getattr(request, "param", None) or {}
     top = param.get("top", 2571)
     superseded = param.get("superseded", frozenset({17, 35}))
+    if "cps" in param:
+        cps = param["cps"]
+    if param.get("cps_turns") is not None:
+        keep = set(param["cps_turns"])
+        cps = {k: v for k, v in cps.items() if k in keep}
     ladder = thread_ladder(root="12286", top=top, cps=cps, superseded=superseded)
+    drop = param.get("drop")
+    if drop:
+        lo, hi = drop
+        ladder = [t for t in ladder if not (lo <= int(t["turn_number"]) <= hi)]
     router = SmokeRouter(ladder=ladder)
+    if param.get("append_cp_after_tip"):
+        router.append_cp_after_tip = {
+            "id": 9_000_572,
+            "thread": "12286",
+            "turn_number": 2572,
+            "from": "cursor",
+            "to": "web-anthropic",
+            "subject": cp138["subject"],
+            "status": "open",
+            "supersedes_turn": None,
+            "created_at": "2026-09-22T00:12:00Z",
+            "read_at": None,
+            "body": None,
+            "attachments": None,
+        }
     mod = sys.modules.get("_pipeline_handlers_maestro_induct_v1")
     assert mod is not None, "handlers not loaded"
     clients = mod._clients

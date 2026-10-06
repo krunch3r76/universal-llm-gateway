@@ -73,7 +73,9 @@ class MaestroInductFetchCheckpointHandler(BaseHandler):
                 return StepOutput(raw="", json={"error": err, "errors": [err]})
             page_turns = payload.get("turns") or []
             if page_turns:
-                lowest = min(int(t.get("turn_number") or lowest) for t in page_turns)
+                # Cursor is the window floor. min(turn) stalls when a gap
+                # makes every returned turn sit above that floor.
+                lowest = a + 1
                 scanned_down_to = lowest
                 found_turn = pick_checkpoint_turn(page_turns)
             else:
@@ -81,10 +83,16 @@ class MaestroInductFetchCheckpointHandler(BaseHandler):
                 break
 
         if found_turn is None:
-            err = {
-                "kind": "checkpoint_not_found",
-                "scanned_down_to": scanned_down_to if scanned_down_to < 10**9 else 1,
-            }
+            if pages >= CP_MAX_PAGES:
+                err = {
+                    "kind": "checkpoint_scan_cap_reached",
+                    "scanned_down_to": scanned_down_to,
+                }
+            else:
+                err = {
+                    "kind": "checkpoint_not_found",
+                    "scanned_down_to": scanned_down_to if scanned_down_to < 10**9 else 1,
+                }
             return StepOutput(raw="", json={"error": err, "errors": [err]})
 
         by, st = await _clients.bus_get(

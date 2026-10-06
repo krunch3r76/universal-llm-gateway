@@ -80,11 +80,91 @@ async def test_smoke_checkpoint_in_tip_window(
     packet, _ = await run_smoke(pipeline_executor)
     assert packet["checkpoint"]["turn"] == 138
     after_pages = [
-        r
+        params
         for m, p, params, _ in smoke_router.requests
         if m == "GET" and p == "/turns" and params and params.get("after_turn") is not None
     ]
     assert after_pages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("smoke_router", [{"top": 10000}], indirect=True)
+async def test_smoke_checkpoint_scan_cap(
+    pipeline_executor, smoke_router, staged_cortex, cortex_files_root
+) -> None:
+    packet, content = await run_smoke(pipeline_executor)
+    err = packet["checkpoint"]["error"]
+    assert err["kind"] == "checkpoint_scan_cap_reached"
+    assert err["scanned_down_to"] == 1951
+    pages = [
+        params
+        for m, p, params, _ in smoke_router.requests
+        if m == "GET" and p == "/turns" and params and params.get("after_turn") is not None
+    ]
+    assert len(pages) == 8
+    assert any(e.get("kind") == "checkpoint_scan_cap_reached" for e in packet["meta"]["errors"])
+    assert len(content.encode("utf-8")) <= 12288
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("smoke_router", [{"top": 600, "cps": {}}], indirect=True)
+async def test_smoke_checkpoint_none_on_thread(
+    pipeline_executor, smoke_router, staged_cortex, cortex_files_root
+) -> None:
+    packet, _ = await run_smoke(pipeline_executor)
+    err = packet["checkpoint"]["error"]
+    assert err["kind"] == "checkpoint_not_found"
+    assert err["scanned_down_to"] == 1
+    turns = [
+        (m, p, params)
+        for m, p, params, _ in smoke_router.requests
+        if m == "GET" and p == "/turns" and params and params.get("compact") == "true"
+    ]
+    assert len(turns) == 2
+    assert turns[1][2].get("after_turn") == "0"
+    assert turns[1][2].get("last") == "550"
+    assert not any(p == "/turns/by-number" for _m, p, _params, _ in smoke_router.requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "smoke_router",
+    [{"top": 2571, "cps_turns": [138], "superseded": frozenset({138})}],
+    indirect=True,
+)
+async def test_smoke_checkpoint_superseded_latest_found(
+    pipeline_executor, smoke_router, staged_cortex, cortex_files_root
+) -> None:
+    packet, _ = await run_smoke(pipeline_executor)
+    assert packet["checkpoint"]["turn"] == 138
+    for m, p, params, _ in smoke_router.requests:
+        if m == "GET" and p == "/turns" and params and params.get("compact") == "true":
+            assert params.get("include_superseded") == "true"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("smoke_router", [{"append_cp_after_tip": True}], indirect=True)
+async def test_smoke_checkpoint_posted_mid_scan_unseen(
+    pipeline_executor, smoke_router, staged_cortex, cortex_files_root
+) -> None:
+    packet, _ = await run_smoke(pipeline_executor)
+    assert packet["checkpoint"]["turn"] == 138
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("smoke_router", [{"drop": (600, 1600)}], indirect=True)
+async def test_smoke_checkpoint_ladder_gaps(
+    pipeline_executor, smoke_router, staged_cortex, cortex_files_root
+) -> None:
+    packet, _ = await run_smoke(pipeline_executor)
+    assert packet["checkpoint"]["turn"] == 138
+    pages = [
+        (params.get("after_turn"), params.get("last"))
+        for m, p, params, _ in smoke_router.requests
+        if m == "GET" and p == "/turns" and params and params.get("after_turn") is not None
+    ]
+    assert ("521", "1000") in pages
+    assert pages[pages.index(("521", "1000")) + 1] == ("0", "521")
 
 
 @pytest.mark.asyncio
