@@ -5,9 +5,10 @@ The cursor-sdk local executor maps that field onto
 ``HookAdditionalContext`` for the tool result the model reads. MCP tool
 names (``MCP:``) return an empty object so the stdio bridge still delivers.
 
-In-flight kill switch: if ``~/.gateway/steer-native-hook.disabled`` exists
-(parent is ``DATA_DIR`` when set, same root as ``steer-spool/``), this
-process writes ``{}`` and does not consume the spool row. ``ULG_STEER_NATIVE_HOOK``
+In-flight kill switch: if the operator-gateway sentinel beside ``steer-spool/``
+(``ULG_STEER_SPOOL_DIR``'s parent + ``steer-native-hook.disabled``; default
+``~/.gateway/steer-native-hook.disabled``) exists, this process writes ``{}``
+and does not consume the spool row. ``ULG_STEER_NATIVE_HOOK``
 is read only when the dispatch HOME is set up, so a running agent keeps
 the hook until this sentinel is present.
 
@@ -34,10 +35,6 @@ def main() -> None:
             native_tool_steer_hook_response,
         )
 
-        if native_hook_kill_sentinel_path().is_file():
-            sys.stdout.write("{}")
-            return
-
         raw = sys.stdin.read()
         try:
             payload = json.loads(raw) if raw.strip() else {}
@@ -45,6 +42,9 @@ def main() -> None:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
+        if native_hook_kill_sentinel_path().is_file():
+            sys.stdout.write("{}")
+            return
         response = native_tool_steer_hook_response(payload)
         sys.stdout.write(json.dumps(response if isinstance(response, dict) else {}))
     except Exception:

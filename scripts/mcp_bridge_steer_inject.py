@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import pwd
 import sqlite3
 import tempfile
 import time
@@ -51,17 +52,27 @@ class PendingSteer:
     ttl_s: int
 
 
+def _operator_gateway_data_dir() -> Path:
+    """Gateway data root for paths that must not follow a swapped dispatch HOME."""
+    raw = os.environ.get("DATA_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
+
+
 def native_hook_kill_sentinel_path() -> Path:
     """In-flight kill switch. Exists ⇒ hook returns ``{}`` and leaves the row pending.
 
-    Default ``~/.gateway/steer-native-hook.disabled`` (``DATA_DIR`` overrides the
-    parent, same root as ``steer-spool/``). Checked at hook runtime, not at
-    dispatch HOME setup.
+    When ``ULG_STEER_SPOOL_DIR`` is set (production bridge launch), the sentinel
+    sits beside ``steer-spool/`` under the operator gateway dir, e.g.
+    ``~/.gateway/steer-native-hook.disabled``. Otherwise falls back to
+    ``DATA_DIR`` or the passwd-home ``~/.gateway``. Never ``Path.home()``.
+    Checked at hook runtime, not at dispatch HOME setup.
     """
-    data_dir = Path(
-        os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))
-    ).expanduser()
-    return data_dir / NATIVE_HOOK_KILL_SENTINEL_NAME
+    root = _spool_root(None)
+    if root is not None:
+        return root.parent / NATIVE_HOOK_KILL_SENTINEL_NAME
+    return _operator_gateway_data_dir() / NATIVE_HOOK_KILL_SENTINEL_NAME
 
 
 def spool_path(spool_dir: Path | str, dispatch_id: str) -> Path:

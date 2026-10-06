@@ -581,3 +581,19 @@ def test_steer_native_hook_untested_sdk_strips_entry(
         if isinstance(item, dict)
     ]
     assert steer_native_hook_command() not in commands
+
+
+def test_steer_native_hook_tested_set_includes_host_pin() -> None:
+    """requirements.host.txt cursor-sdk pin stays in STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS."""
+    from services.git_integration_worker.cursor_home import (
+        STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS,
+    )
+
+    req = Path(__file__).resolve().parents[3] / "requirements.host.txt"
+    pin: str | None = None
+    for line in req.read_text(encoding="utf-8").splitlines():
+        if line.startswith("cursor-sdk=="):
+            pin = line.split("==", 1)[1].strip()
+            break
+    assert pin is not None
+    assert pin in STEER_NATIVE_HOOK_TESTED_SDK_VERSIONS

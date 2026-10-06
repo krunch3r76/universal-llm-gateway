@@ -321,9 +321,10 @@ def _link_operator_venv(home: Path, real: Path) -> None:
 
 # Opt-in. Unset means do not arm the native postToolUse steer hook.
 # A GIW restart on master must not install it fleet-wide (a:38129).
-# In-flight disarm is a file, not this env: ~/.gateway/steer-native-hook.disabled
-# (DATA_DIR overrides the parent). The hook reads it at runtime and returns {}
-# without consuming the spool row. This env is read only at HOME setup.
+# In-flight disarm is a file beside steer-spool/ under the operator gateway dir
+# (ULG_STEER_SPOOL_DIR parent + steer-native-hook.disabled; default
+# ~/.gateway/steer-native-hook.disabled). The hook reads it at runtime and
+# returns {} without consuming the spool row. This env is read only at HOME setup.
 ULG_STEER_NATIVE_HOOK_ENV = "ULG_STEER_NATIVE_HOOK"
 _STEER_HOOK_TIMEOUT_S = 5
 # additional_context delivery is proven only on these cursor-sdk releases.
