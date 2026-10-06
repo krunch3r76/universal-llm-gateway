@@ -1278,3 +1278,67 @@ def test_run_to_completion_names_route_on_artifact_and_stops() -> None:
     assert "G4-REVIEW-nested-grok" in text
     assert "cdp_fail_route=<route>" in text
     assert "witness:BIND:" in text
+
+
+def test_sqlite_open_failure_surfaces_in_fold_and_closeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dispatch HOME cannot open cortex sqlite (a:38306).
+
+    ``cortex_conn`` raising ``unable to open database file`` must not leave
+    G7 OPEN. Reads go through the cortex API; an API failure is FOLD_FAILED
+    on the fold and ``WitnessCortexUnavailable`` from closeout.
+    """
+    import sqlite3
+
+    from implement_admission.conductor_witness_defaults import (
+        DefaultWitnessCortex,
+        WitnessCortexUnavailable,
+        closeout_witnesses_for_slug,
+    )
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr("cortex_store.db.cortex_conn", boom)
+
+    class _ApiDown:
+        def __enter__(self) -> _ApiDown:
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def post(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError("cortex api unreachable")
+
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_args, **_kwargs: _ApiDown(),
+    )
+
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Status | Stops |\n|---|---|---|---|\n"
+        "| G1 | frame | OPEN | |\n"
+        "| G7 | land | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    deps = FoldDeps(
+        cortex=DefaultWitnessCortex(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G7"] == "FOLD_FAILED"
+    assert "cortex api unreachable" in fold.missing_witnesses["G7"]
+    assert "| G7 | land | FOLD_FAILED | |" in fold.folded_body
+    with pytest.raises(WitnessCortexUnavailable, match="cortex api unreachable"):
+        closeout_witnesses_for_slug(
+            _SLUG, tip_body=tip, deps=deps, files_root=files_root
+        )
