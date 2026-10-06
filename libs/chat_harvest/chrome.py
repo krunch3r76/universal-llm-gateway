@@ -2,8 +2,9 @@
 
 ``strip_chrome`` and ``is_chrome_only`` drop phrase-list tool badges.
 ``is_tool_status_body`` is the shape gate the DOM wait ORs in, so a badge
-line outside that phrase list still holds the harvest. Callers are the
-chat reply wait and the chrome unit tests. No events or I/O.
+line outside that phrase list still holds the harvest. ``ends_with_tool_row``
+detects Cowork tool-group labels at the reply tail for the anchored harvest
+hold. Callers are the chat reply wait and the chrome unit tests. No events or I/O.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ _TRAILING_TIMESTAMP_RE = re.compile(
     r"^(just now|\d+\s+(second|minute|hour|day)s?\s+ago)\.?$",
     re.I,
 )
+_NOTE_SUFFIX_RE = re.compile(r"\s*·\s*\d+\s+notes?\s*$", re.I)
 
 # Agent-bus subjects for on-behalf CDP generate envelopes.
 RELAY_ENVELOPE_SUBJECT_RE = re.compile(
@@ -222,6 +224,51 @@ def _adjacent_symbol_line(lines: list[str], index: int) -> bool:
     if index > 0 and _is_symbol_only_line(lines[index - 1]):
         return True
     return index + 1 < len(lines) and _is_symbol_only_line(lines[index + 1])
+
+
+def _strip_note_suffix(line: str) -> str:
+    return _NOTE_SUFFIX_RE.sub("", line.strip()).strip()
+
+
+def _tail_lines_for_tool_row(body: str) -> tuple[list[str], list[int], str, str]:
+    """Non-symbol content lines with raw indices; last two after timestamp trim."""
+    raw = (body or "").split("\n")
+    start = 1 if raw and _RESPONDED_LABEL_RE.match(raw[0].strip()) else 0
+    kept: list[tuple[int, str]] = []
+    for index, line in enumerate(raw):
+        if index < start or not line.strip() or _is_symbol_only_line(line):
+            continue
+        kept.append((index, line.strip()))
+    while kept and _TRAILING_TIMESTAMP_RE.match(kept[-1][1]):
+        kept.pop()
+    if not kept:
+        return raw, [], "", ""
+    indices = [index for index, _ in kept]
+    texts = [_strip_note_suffix(text) for _, text in kept]
+    t = texts[-1]
+    p = texts[-2] if len(texts) >= 2 else ""
+    return raw, indices, t, p
+
+
+def ends_with_tool_row(body: str) -> bool:
+    """True when the last non-chrome line is a Cowork tool-group label row."""
+    raw, indices, t, p = _tail_lines_for_tool_row(body)
+    if not t:
+        return False
+    if _is_badge_line(t):
+        return True
+    if p and t == p and any(ch.isalpha() for ch in t) and len(t) <= 80:
+        collapsed = t.rstrip(".").rstrip()
+        while collapsed.endswith("..."):
+            collapsed = collapsed[:-3].rstrip()
+        while collapsed.endswith("…"):
+            collapsed = collapsed[:-1].rstrip()
+        if not collapsed.endswith((".", "?", "!", ":")):
+            return True
+    if _is_tool_status_line(t):
+        raw_index = indices[-1]
+        return _adjacent_symbol_line(raw, raw_index)
+    return False
 
 
 def is_tool_status_body(body: str) -> bool:
