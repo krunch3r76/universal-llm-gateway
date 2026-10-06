@@ -46,6 +46,12 @@ from bus_watch.digest_budget import agent_bus_bearer_headers
 from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
+from bus_watch.ide_hop_land import (
+    DEFAULT_LANDING_TIMEOUT_S,
+    mark_expired,
+    mark_fired,
+    mark_landed,
+)
 from bus_watch.ide_hop_landing import (
     find_transcript_with_hop_header,
     focus_title_for,
@@ -54,7 +60,12 @@ from bus_watch.ide_hop_landing import (
     list_resume_transcript_ids,
     wait_for_landed_transcript,
 )
-from bus_watch.ide_hop_mutex import release_hop_mutex, try_acquire_hop_mutex
+from bus_watch.ide_hop_mutex import (
+    release_hop_mutex,
+    release_window_mutex,
+    try_acquire_hop_mutex,
+    try_acquire_window_mutex,
+)
 from bus_watch.liaison_digest import effective_policy
 from bus_watch.state import read_state
 
@@ -508,8 +519,10 @@ def fire_ide_hop(
     remote_repo: str = DEFAULT_REMOTE_REPO,
     dry_run: bool = False,
     no_raise: bool = False,
-    landing_timeout_s: float = 30.0,
+    landing_timeout_s: float = DEFAULT_LANDING_TIMEOUT_S,
     departing_transcript_id: str | None = None,
+    on_fired: Any | None = None,
+    armed_since: Any | None = None,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
@@ -523,11 +536,14 @@ def fire_ide_hop(
     ``zcosmic_toplevel_manager_v1`` and verified activated before any key is
     sent. ``cursor --folder-uri`` / ``vscode-remote://`` is not used — Firefox
     owns that scheme (10588). ``no_raise`` skips activate only when the operator
-    is on the window and says so. ``ok`` means **landed**: a new agent transcript
-    carrying the hop header appeared after the keystrokes — sent keys are not a hop.
+    is on the window and says so.
+
+    Land proof (a:38474): after keystroke write ``state=fired``, call ``on_fired``
+    (script quiesces), then wait up to ``landing_timeout_s`` (default 600) with
+    fence-first then transcript fallback. ``ok`` means **landed**. Timeout →
+    ``phase=expired`` / OPERATOR_GATE — never ``not_landed`` re-fire.
     ``departing_transcript_id`` is never accepted as land (15456#4 F2).
-    After ``ok`` the hop script must ``retire_departing_tab`` (loops, pollers, tails, ``ide:``
-    lock). UpdateGoal only if a leftover native goal is still injecting wakes.
+    After ``ok`` the hop script must ``retire_departing_tab``.
     """
     if not seal.get("ok"):
         return {
@@ -592,19 +608,29 @@ def fire_ide_hop(
     if pre_id is not None and pre_id != departing:
         return {
             "ok": True,
+            "phase": "landed",
             "landed_transcript_id": pre_id,
             "landed_via": "pre_existing",
             "land_find": pre_tel,
             "keystroke": None,
             **result,
         }
-    mutex = try_acquire_hop_mutex(root_id)
+    # Root mutex TTL covers the long land window so a second fire cannot stack.
+    root_ttl = max(120.0, float(landing_timeout_s) + 30.0)
+    mutex = try_acquire_hop_mutex(root_id, ttl_s=root_ttl)
     if not mutex.get("ok"):
         return {"ok": False, **mutex, **result}
+    window = try_acquire_window_mutex(
+        gui_host, focus_title, root_id=root_id, ttl_s=root_ttl
+    )
+    if not window.get("ok"):
+        release_hop_mutex(root_id)
+        return {"ok": False, **window, **result}
     pre_existing: set[str] | None = None
     if tip_cp is None and land_root:
         pre_existing = list_resume_transcript_ids(land_root, AGENT_TRANSCRIPTS)
     fired_at = time.time()
+    hop_record: dict[str, Any] | None = None
     try:
         try:
             proc = subprocess.run(
@@ -631,6 +657,25 @@ def fire_ide_hop(
         # read it). Parse the whole payload; fall back to the last line for a remote
         # that ever emits single-line JSON.
         keystroke = _parse_keystroke_stdout(proc.stdout)
+        hop_record = mark_fired(
+            root=root_id,
+            tip_cp=tip_cp,
+            seal_bus_turn=seal.get("bus_turn"),
+            departing_transcript_id=departing,
+            fired_at=fired_at,
+            deadline_s=landing_timeout_s,
+            message_path=str(msg_path),
+        )
+        result["phase"] = "fired_pending"
+        result["hop_land"] = hop_record
+        if on_fired is not None:
+            try:
+                result["quiesce"] = on_fired()
+            except Exception as exc:  # noqa: BLE001 — land wait still proceeds
+                result["quiesce"] = {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                }
         landed_id, land_tel = wait_for_landed_transcript(
             marker,
             since_epoch=fired_at,
@@ -640,13 +685,12 @@ def fire_ide_hop(
             tip_cp=tip_cp,
             pre_existing_ids=pre_existing,
             exclude_ids=exclude,
+            armed_since=armed_since,
         )
-        landed_via = "wait"
+        landed_via = str((land_tel or {}).get("landed_via") or "wait")
+        proof = str((land_tel or {}).get("proof") or landed_via)
         if landed_id is None:
-            # a:38356 / a:38362 — one find-transcript pass before any operator page.
-            # Exact (root, tip) land; compositor Agents-only is diagnostic only.
-            # Tipless: keep since_epoch so Sep-era foreign roots cannot match (a:38439).
-            # Never recommend glass-launch / Ctrl+N when this hits.
+            # One final transcript pass (fence already polled inside wait).
             landed_id, land_tel = find_transcript_with_hop_header(
                 marker,
                 AGENT_TRANSCRIPTS,
@@ -656,10 +700,13 @@ def fire_ide_hop(
                 exclude_ids=exclude,
             )
             landed_via = "find_transcript"
+            proof = "transcript"
         if landed_id is not None and departing and landed_id == departing:
             landed_id = None
             landed_via = "wait"
         if landed_id is None:
+            if hop_record is not None:
+                hop_record = mark_expired(hop_record)
             toplevels = remote_toplevels(gui_host)
             cursor_windows = (
                 [row for row in toplevels if row.get("app_id") == "cursor"]
@@ -667,32 +714,40 @@ def fire_ide_hop(
                 else []
             )
             return {
+                **result,
                 "ok": False,
-                "phase": "not_landed",
+                "phase": "expired",
                 "keystroke": keystroke,
                 "toplevels": toplevels,
                 "cursor_windows": cursor_windows,
                 "land_find": land_tel,
+                "hop_land": hop_record,
                 "fix": (
-                    "no Cursor chat carries the exact hop land "
-                    f"(resume {land_root}, tip_cp={tip_cp}) after wait + one find-transcript "
-                    "pass — Ctrl+n / paste / Ctrl+Enter did not submit, or keys hit another "
-                    f"window; focus was {focus_title!r} on {gui_host}. cursor_windows is "
-                    "diagnostic only (Agents-only toplevel ≠ proof of miss). "
-                    "Do NOT re-fire glass-launch / Ctrl+N — that double-pastes when the "
-                    "first sequence partially ran or focus moved (a:38364 / a:38439). "
-                    "OPERATOR_GATE with message_path for a single manual paste if still "
-                    "missing after a short re-poll of find-transcript."
+                    "OPERATOR_GATE: no land proof "
+                    f"(resume {land_root}, tip_cp={tip_cp}) within "
+                    f"{landing_timeout_s:.0f}s of keystroke — fence armed row absent and "
+                    "transcript fallback empty. Do NOT re-fire glass-launch / Ctrl+N "
+                    "(a:38364 / a:38474). Manual paste once from message_path if still "
+                    "needed; departing tab stays quiesced."
                 ),
-                **result,
             }
+        if hop_record is not None:
+            proof_lit = "fence" if proof == "fence" else "transcript"
+            hop_record = mark_landed(
+                hop_record,
+                landed_transcript_id=landed_id,
+                proof=proof_lit,  # type: ignore[arg-type]
+            )
         return {
+            **result,
             "ok": True,
+            "phase": "landed",
             "landed_transcript_id": landed_id,
             "landed_via": landed_via,
             "land_find": land_tel,
+            "hop_land": hop_record,
             "keystroke": keystroke,
-            **result,
         }
     finally:
+        release_window_mutex(gui_host, focus_title)
         release_hop_mutex(root_id)

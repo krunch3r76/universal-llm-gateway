@@ -15,6 +15,7 @@ from bus_watch.ide_hop_retire import (
     _label_from_argv,
     departing_tail_pids,
     departing_watcher_labels,
+    quiesce_departing_tab,
     retire_departing_tab,
     stop_departing_tails,
 )
@@ -109,8 +110,10 @@ def test_retire_departing_tab_stops_loops_tails_and_releases(
     assert result["stopped_tails"] == [7]
     assert result["labels"] == ["11912-r1"]
     assert result["goal"] == GOAL_RELEASE
+    assert result["phase"] == "retired"
     assert set(result) == {
         "ok",
+        "phase",
         "root",
         "stopped_loops",
         "labels",

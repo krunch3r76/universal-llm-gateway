@@ -369,6 +369,18 @@ def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
         patch("bus_watch.ide_hop.subprocess.run", return_value=proc) as run_mock,
         patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
         patch("bus_watch.ide_hop.remote_toplevels", return_value=[]),
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch(
+            "bus_watch.ide_hop.mark_fired",
+            return_value={"root": "15420", "state": "fired"},
+        ),
+        patch(
+            "bus_watch.ide_hop.mark_expired",
+            return_value={"root": "15420", "state": "expired"},
+        ),
     ):
         out = fire_ide_hop(
             message,
@@ -377,9 +389,10 @@ def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
             gui_host="orion-node",
             landing_timeout_s=0.01,
             departing_transcript_id=departing,
+            armed_since=lambda *_a, **_k: [],
         )
     assert out["ok"] is False
-    assert out["phase"] == "not_landed"
+    assert out["phase"] == "expired"
     run_mock.assert_called_once()
 
 
@@ -410,6 +423,18 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
         ),
         patch("bus_watch.ide_hop.AGENT_TRANSCRIPTS", tmp_path),
         patch("bus_watch.ide_hop.remote_toplevels") as toplevels_mock,
+        patch("bus_watch.ide_hop.try_acquire_hop_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.try_acquire_window_mutex", return_value={"ok": True}),
+        patch("bus_watch.ide_hop.release_hop_mutex"),
+        patch("bus_watch.ide_hop.release_window_mutex"),
+        patch(
+            "bus_watch.ide_hop.mark_fired",
+            return_value={"root": "15420", "state": "fired"},
+        ),
+        patch(
+            "bus_watch.ide_hop.mark_landed",
+            return_value={"root": "15420", "state": "landed", "proof": "transcript"},
+        ),
     ):
         out = fire_ide_hop(
             message,
@@ -575,3 +600,90 @@ def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
     )
     assert found == "new-ours"
     assert tel["matches"] == 1
+
+
+def test_wait_lands_when_jsonl_appears_after_30s(tmp_path: Path, monkeypatch) -> None:
+    """AC1 — JSONL born well after the old 30s window still lands (a:38474)."""
+    marker = "Liaison IDE hop (attended register) tip_cp=75. LOAD the liaison skill."
+    tid = "6d365a29-dddf-4036-a6e0-2c8b5a7ea8df"
+    fired = time.time()
+    polls = {"n": 0}
+
+    def fake_sleep(_s: float) -> None:
+        polls["n"] += 1
+        if polls["n"] == 1:
+            # Simulate birth at +455s of wall time relative to fire — file appears mid-wait.
+            _write_transcript(
+                tmp_path, tid, _wrapped_land_line("15441", 75), fired + 455.0
+            )
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    found, tel = wait_for_landed_transcript(
+        marker,
+        since_epoch=fired,
+        transcripts_dir=tmp_path,
+        timeout_s=10.0,
+        poll_s=0.01,
+        root_id="15441",
+        tip_cp=75,
+        fence_first=True,
+        armed_since=lambda *_a, **_k: [],
+    )
+    assert found == tid
+    assert tel.get("proof") == "transcript"
+    assert polls["n"] >= 1
+
+
+def test_wait_fence_first_lands_before_jsonl(tmp_path: Path) -> None:
+    """Fence armed row proves land without any JSONL on disk."""
+    marker = "Liaison IDE hop (attended register) tip_cp=33. LOAD the liaison skill."
+    tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
+    fired = time.time()
+
+    def armed_since(root, *, since_epoch, exclude_transcript_ids=None):
+        assert root == "15420"
+        return [
+            {
+                "fence_id": "rf-test",
+                "transcript_id": tid,
+                "created_epoch": since_epoch + 1.0,
+            }
+        ]
+
+    found, tel = wait_for_landed_transcript(
+        marker,
+        since_epoch=fired,
+        transcripts_dir=tmp_path,
+        timeout_s=2.0,
+        poll_s=0.01,
+        root_id="15420",
+        tip_cp=33,
+        exclude_ids={"departing-tab"},
+        armed_since=armed_since,
+    )
+    assert found == tid
+    assert tel.get("proof") == "fence"
+    assert not (tmp_path / tid).exists()
+
+
+def test_wait_fence_excludes_departing_transcript(tmp_path: Path) -> None:
+    marker = "Liaison IDE hop (attended register) tip_cp=1. LOAD the liaison skill."
+    departing = "70d485fe-b09d-435c-8c50-d5dde2d9f9c4"
+    fired = time.time()
+
+    def armed_since(root, *, since_epoch, exclude_transcript_ids=None):
+        assert departing in (exclude_transcript_ids or set())
+        return []
+
+    found, _tel = wait_for_landed_transcript(
+        marker,
+        since_epoch=fired,
+        transcripts_dir=tmp_path,
+        timeout_s=0.05,
+        poll_s=0.01,
+        root_id="15441",
+        tip_cp=1,
+        exclude_ids={departing},
+        armed_since=armed_since,
+    )
+    assert found is None

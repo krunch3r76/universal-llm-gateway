@@ -433,12 +433,78 @@ def pour_terminal_release(*, fence_id: str) -> FenceState | None:
     )
 
 
+def _parse_created_at(raw: str | None) -> float | None:
+    """Parse journal ``created_at`` (``YYYY-MM-DD HH:MM:SS`` or ISO) to epoch."""
+    if not raw:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S.%f",
+    ):
+        try:
+            return datetime.strptime(text.replace("Z", ""), fmt).replace(tzinfo=UTC).timestamp()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def armed_fences_for_root_since(
+    root_thread: str,
+    *,
+    since_epoch: float,
+    exclude_transcript_ids: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only: ``armed`` rows for *root_thread* with ``created_at >= since_epoch``.
+
+    Used as fence-first hop land proof (a:38474). Does not arm or pour.
+    """
+    skip = exclude_transcript_ids or set()
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT fence_id, root_thread, transcript_id, event, payload_json, created_at
+            FROM resume_fence_events
+            WHERE root_thread = ? AND event = 'armed'
+            ORDER BY id ASC
+            """,
+            (str(root_thread),),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        tid = row["transcript_id"]
+        if tid is None or str(tid) in skip:
+            continue
+        created = _parse_created_at(row["created_at"])
+        if created is None or created < since_epoch:
+            continue
+        out.append(
+            {
+                "fence_id": str(row["fence_id"]),
+                "root_thread": str(row["root_thread"]),
+                "transcript_id": str(tid),
+                "event": "armed",
+                "created_at": row["created_at"],
+                "created_epoch": created,
+            }
+        )
+    return out
+
+
 __all__ = [
     "FenceState",
     "RESUME_FENCE_ADOPT_S",
     "RESUME_FENCE_IDLE_S",
     "adoption_ambiguous_count",
     "append_fence_event",
+    "armed_fences_for_root_since",
     "find_open_fence",
     "find_open_fence_for_agent",
     "fold_fence",
