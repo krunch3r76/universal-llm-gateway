@@ -12,9 +12,18 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..constraint_retryable import constraint_failure_is_retryable
 
 if TYPE_CHECKING:
+    from systems.routing.selection.decision.eviction_cooldown_policy import (
+        CooldownOverrideKey,
+    )
+
     from ..context import RequestContext
 
-ContinuationMode = Literal["busy_block", "execution_failure", "transient_capacity"]
+ContinuationMode = Literal[
+    "busy_block",
+    "execution_failure",
+    "transient_capacity",
+    "cooldown_blocked",
+]
 
 _TRANSIENT_CAPACITY_CONSTRAINTS: frozenset[str] = frozenset(
     {
@@ -64,8 +73,23 @@ def _candidate_has_transient_continuation_signal(candidate: Any) -> bool:
     return False
 
 
-def continuation_still_transient(trace: Any, *, mode: ContinuationMode) -> bool:
+def continuation_still_transient(
+    trace: Any,
+    *,
+    mode: ContinuationMode,
+    cooldown_hold_key: CooldownOverrideKey | None = None,
+) -> bool:
     """Mode-aware predicate for whether the eviction wait loop should continue."""
+    if mode == "cooldown_blocked":
+        if cooldown_hold_key is not None:
+            from systems.routing.selection.decision.eviction_cooldown_policy import (
+                oscillation_hold_remaining_s,
+            )
+
+            if oscillation_hold_remaining_s(cooldown_hold_key) > 0.0:
+                return True
+        mode = "execution_failure"
+
     candidates = getattr(trace, "candidates", None) or ()
     if mode == "busy_block":
         return any(

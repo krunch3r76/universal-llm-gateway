@@ -28,6 +28,9 @@ from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator impo
     eviction_execution as eviction_mod,
 )
 from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator import (  # noqa: E402
+    eviction_requeue as requeue_mod,
+)
+from systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator import (  # noqa: E402
     load_and_finalize as load_mod,
 )
 from systems.proxy.core.nonstreaming.federated_routing.wait_continuation import (  # noqa: E402
@@ -260,7 +263,7 @@ async def test_execution_failed_publishes_event_and_requeues_without_client_erro
         "systems.proxy.core.nonstreaming.federated_routing.handler.orchestrator.eviction_execution.execute_master_eviction",
         _exec_toggle,
     )
-    monkeypatch.setattr(load_mod, "_wait_and_retry_selection", wait_mock)
+    monkeypatch.setattr(requeue_mod, "_wait_and_retry_selection", wait_mock)
     admission_mock = AsyncMock(return_value=reselected)
     monkeypatch.setattr(admission_mod, "acquire_admission_token", admission_mock)
     monkeypatch.setattr(
@@ -335,7 +338,7 @@ async def test_execution_failed_deadline_exhaustion_raises_capacity_not_eviction
         _exec_failed,
     )
     monkeypatch.setattr(
-        load_mod,
+        requeue_mod,
         "_wait_and_retry_selection",
         AsyncMock(return_value=(None, _trace(), 5000)),
     )

@@ -69,6 +69,29 @@ def record_cooldown_override(
     _override_timestamps[key] = time.monotonic() if now is None else now
 
 
+def oscillation_hold_remaining_s(
+    key: CooldownOverrideKey,
+    *,
+    window_s: float = COOLDOWN_OVERRIDE_OSCILLATION_WINDOW_S,
+    now: float | None = None,
+) -> float:
+    """
+    Seconds left before ``key`` may be overridden again.
+
+    Expired entries are dropped on read so the process-global map shrinks
+    without a lock or background sweeper.
+    """
+    clock = time.monotonic() if now is None else now
+    prior = _override_timestamps.get(key)
+    if prior is None:
+        return 0.0
+    remaining = window_s - (clock - prior)
+    if remaining <= 0.0:
+        _override_timestamps.pop(key, None)
+        return 0.0
+    return remaining
+
+
 def oscillation_blocks_override(
     key: CooldownOverrideKey,
     *,
@@ -76,11 +99,7 @@ def oscillation_blocks_override(
     now: float | None = None,
 ) -> bool:
     """Return True when the same victim was overridden inside the oscillation window."""
-    clock = time.monotonic() if now is None else now
-    prior = _override_timestamps.get(key)
-    if prior is None:
-        return False
-    return (clock - prior) < window_s
+    return oscillation_hold_remaining_s(key, window_s=window_s, now=now) > 0.0
 
 
 def clear_cooldown_override_tracker() -> None:
