@@ -246,9 +246,11 @@ async def execute_followup(
             else ""
         )
         if outcome_reg:
-            # Mint/borrow reattach may move the lane seat (bind_session_address →
-            # apply_driving_seat_bind). Second resolve must judge against the host
-            # we attached, not the stale registration_id from the address retry.
+            # Successful reattach may move this lane's seat (mint, or borrow/wake
+            # of a host on this lane); borrow on another lane moves that lane's
+            # seat, and the gate below refuses against the true holder. Second
+            # resolve must use the attached host's registration_id, not a stale
+            # value from the address retry.
             req = req.model_copy(update={"registration_id": outcome_reg})
         target, err, resolution_path, target_binding = await resolve_followup_target(
             req, store, lane_pin=lane_pin
