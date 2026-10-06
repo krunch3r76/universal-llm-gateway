@@ -50,6 +50,7 @@ from bus_watch.ide_hop_landing import (
     find_transcript_with_hop_header,
     focus_title_for,
     hop_header_line,
+    hop_land_identity,
     wait_for_landed_transcript,
 )
 from bus_watch.liaison_digest import effective_policy
@@ -566,6 +567,24 @@ def fire_ide_hop(
     locked = session_unreachable(gui_host)
     if locked is not None:
         return {"ok": False, "phase": "session_locked", **locked, **result}
+    marker = hop_header_line(message)
+    land_root, tip_cp = hop_land_identity(message, root_id=root_id)
+    # Prefer skip when the exact land already exists (15456 ask 2) — do not Ctrl+N.
+    pre_id, pre_tel = find_transcript_with_hop_header(
+        marker,
+        AGENT_TRANSCRIPTS,
+        root_id=land_root,
+        tip_cp=tip_cp,
+    )
+    if pre_id is not None and tip_cp is not None:
+        return {
+            "ok": True,
+            "landed_transcript_id": pre_id,
+            "landed_via": "pre_existing",
+            "land_find": pre_tel,
+            "keystroke": None,
+            **result,
+        }
     fired_at = time.time()
     try:
         proc = subprocess.run(
@@ -592,19 +611,25 @@ def fire_ide_hop(
     # read it). Parse the whole payload; fall back to the last line for a remote
     # that ever emits single-line JSON.
     keystroke = _parse_keystroke_stdout(proc.stdout)
-    marker = hop_header_line(message)
-    landed_id = wait_for_landed_transcript(
+    landed_id, land_tel = wait_for_landed_transcript(
         marker,
         since_epoch=fired_at,
         transcripts_dir=AGENT_TRANSCRIPTS,
         timeout_s=landing_timeout_s,
+        root_id=land_root,
+        tip_cp=tip_cp,
     )
     landed_via = "wait"
     if landed_id is None:
         # a:38356 / a:38362 — one find-transcript pass before any operator page.
-        # Header presence (tip_cp / hop line) is land proof; compositor Agents-only
-        # is diagnostic only. Never recommend glass-launch / Ctrl+N when this hits.
-        landed_id = find_transcript_with_hop_header(marker, AGENT_TRANSCRIPTS)
+        # Exact (root, tip) land; compositor Agents-only is diagnostic only.
+        # Never recommend glass-launch / Ctrl+N when this hits.
+        landed_id, land_tel = find_transcript_with_hop_header(
+            marker,
+            AGENT_TRANSCRIPTS,
+            root_id=land_root,
+            tip_cp=tip_cp,
+        )
         landed_via = "find_transcript"
     if landed_id is None:
         toplevels = remote_toplevels(gui_host)
@@ -619,9 +644,10 @@ def fire_ide_hop(
             "keystroke": keystroke,
             "toplevels": toplevels,
             "cursor_windows": cursor_windows,
-            "find_transcript": None,
+            "land_find": land_tel,
             "fix": (
-                "no Cursor chat carries the hop header after wait + one find-transcript "
+                "no Cursor chat carries the exact hop land "
+                f"(resume {land_root}, tip_cp={tip_cp}) after wait + one find-transcript "
                 "pass — Ctrl+n / paste / Ctrl+Enter did not submit, or keys hit another "
                 f"window; focus was {focus_title!r} on {gui_host}. cursor_windows is "
                 "diagnostic only (Agents-only toplevel ≠ proof of miss). "
@@ -636,6 +662,7 @@ def fire_ide_hop(
         "ok": True,
         "landed_transcript_id": landed_id,
         "landed_via": landed_via,
+        "land_find": land_tel,
         "keystroke": keystroke,
         **result,
     }

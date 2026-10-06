@@ -11,6 +11,11 @@ compositor actually reports — ``ext_foreign_toplevel_list_v1`` on jupiter list
 agents window as ``app_id=cursor`` / ``title="Cursor Agents"`` (no repo, no SSH
 marker in the title) — and a hop is ``landed`` only when a new agent transcript
 carrying the hop header appears; sent keys are not a delivered hop.
+
+Land identity (CDP 15456#2 / a:38362 amend): ``resume <root>`` + ``tip_cp=N`` with a
+non-digit boundary + ``Liaison IDE hop`` on the first user line. Bare ``tip_cp=N``
+substring match is refused — it false-oks number-prefix, other-root, and quoted
+review tabs (F1).
 """
 
 from __future__ import annotations
@@ -19,11 +24,12 @@ import json
 import re
 import time
 from pathlib import Path
+from typing import Any
 
 AGENTS_WINDOW_TITLE = "Cursor Agents"
 AGENTS_WINDOW_APP_ID = "cursor"
-_TIP_CP_NEEDLE_RE = re.compile(r"tip_cp=\d+")
-_TIP_CP_VALUE_RE = re.compile(r"tip_cp=(\d+)")
+_TIP_CP_VALUE_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
+_RESUME_RE = re.compile(r"(?:^|[\s\"])resume\s+(\d+)(?:\s|[\"\\n]|$)")
 
 
 def focus_title_for(policy_override: str | None = None) -> str:
@@ -45,55 +51,139 @@ def hop_header_line(message: str) -> str:
     return message.strip().splitlines()[0] if message.strip() else ""
 
 
-def land_find_needles(marker: str) -> list[str]:
-    """Needles for header land-proof — unique ``tip_cp=N`` first, then the full marker.
+def hop_land_identity(
+    message: str, *, root_id: str | None = None
+) -> tuple[str | None, int | None]:
+    """``(root_id, tip_cp)`` from the hop paste — tip from the Liaison line, root from resume."""
+    tip: int | None = None
+    header = hop_header_line(message)
+    tip_m = _TIP_CP_VALUE_RE.search(header)
+    if tip_m:
+        tip = int(tip_m.group(1))
+    root = (root_id or "").strip() or None
+    if root is None:
+        resume_m = _RESUME_RE.search(message or "")
+        if resume_m:
+            root = resume_m.group(1)
+    return root, tip
 
-    ``tip_cp=N`` is preferred so a prior ``resume <R>`` tab cannot win the recovery
-    pass (a:38356 / a:38362). Full marker remains for hops that omit tip_cp.
+
+def first_line_matches_land(
+    first_line: str,
+    *,
+    root_id: str | None,
+    tip_cp: int | None,
+    marker: str,
+) -> bool:
+    """True when the first JSONL line is an exact land for this hop.
+
+    With tip: require ``Liaison IDE hop``, ``resume <root>``, and ``tip_cp=N(?!\\d)``.
+    Without tip: require the full marker substring (mtime gated by the caller).
     """
-    needles: list[str] = []
-    tip = _TIP_CP_NEEDLE_RE.search(marker or "")
-    if tip:
-        needles.append(tip.group(0))
+    if tip_cp is not None:
+        if not root_id:
+            return False
+        if "Liaison IDE hop" not in first_line:
+            return False
+        # Bound resume so resume 154201 does not match root 15420.
+        if not re.search(
+            rf"(?:^|[\s\"])resume\s+{re.escape(root_id)}(?:\s|[\"\\n]|$)",
+            first_line,
+        ):
+            return False
+        if not re.search(rf"tip_cp={tip_cp}(?!\d)", first_line):
+            return False
+        return True
     text = (marker or "").strip()
-    if text and text not in needles:
-        needles.append(text)
-    return needles
+    return bool(text) and text in first_line
+
+
+def land_find_telemetry(
+    *,
+    root_id: str | None,
+    tip_cp: int | None,
+    marker: str,
+    matches: int,
+    matched_first_line_head: str | None = None,
+) -> dict[str, Any]:
+    """Needles + match count for ok and not_landed (15456 ask 3)."""
+    needles: list[str] = []
+    if tip_cp is not None and root_id:
+        needles.append(f"resume {root_id}")
+        needles.append(f"tip_cp={tip_cp}")
+        needles.append("Liaison IDE hop")
+    elif (marker or "").strip():
+        needles.append(marker.strip())
+    out: dict[str, Any] = {"needles": needles, "matches": matches}
+    if matched_first_line_head is not None:
+        out["matched_first_line_head"] = matched_first_line_head[:160]
+    return out
 
 
 def find_transcript_with_hop_header(
     marker: str,
     transcripts_dir: Path,
-) -> str | None:
-    """Transcript id whose first JSONL line carries the hop header — no mtime gate.
+    *,
+    root_id: str | None = None,
+    tip_cp: int | None = None,
+    since_epoch: float | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Transcript id whose first JSONL line is an exact land for this hop.
 
-    Recovery after ``wait_for_landed_transcript`` times out: JSONL lag or an
-    Agents-only compositor view can leave ``phase=not_landed`` while the
-    successor already holds ``tip_cp=N`` / the hop header (a:38356, a:38362).
-    Among matches, highest ``tip_cp`` then newest mtime wins (same order as
-    ``find_transcript_id``).
+    Tip hops: exact ``(root, tip)`` — no mtime gate (re-hop / JSONL lag / clock skew).
+    Tipless hops: full ``marker`` substring **and** ``mtime >= since_epoch - 1`` when
+    ``since_epoch`` is set (recovery must not undo the wait mtime check — F3).
     """
+    empty_tel = land_find_telemetry(
+        root_id=root_id, tip_cp=tip_cp, marker=marker, matches=0
+    )
     if not transcripts_dir.is_dir():
-        return None
-    for needle in land_find_needles(marker):
-        rows: list[tuple[int, float, str]] = []
-        for path in transcripts_dir.glob("*/*.jsonl"):
-            try:
-                with path.open(encoding="utf-8") as fh:
-                    first_line = fh.readline()
-                mtime = path.stat().st_mtime
-            except OSError:
-                continue
-            if needle not in first_line:
-                continue
-            tip_m = _TIP_CP_VALUE_RE.search(first_line)
-            rows.append(
-                (int(tip_m.group(1)) if tip_m else -1, mtime, path.parent.name)
-            )
-        if rows:
-            rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
-            return rows[0][2]
-    return None
+        return None, empty_tel
+    rows: list[tuple[float, str, str]] = []
+    for path in transcripts_dir.glob("*/*.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if tip_cp is None and since_epoch is not None and mtime < since_epoch - 1.0:
+            continue
+        if not first_line_matches_land(
+            first_line, root_id=root_id, tip_cp=tip_cp, marker=marker
+        ):
+            continue
+        rows.append((mtime, path.parent.name, first_line[:160]))
+    tel = land_find_telemetry(
+        root_id=root_id,
+        tip_cp=tip_cp,
+        marker=marker,
+        matches=len(rows),
+        matched_first_line_head=rows[0][2] if rows else None,
+    )
+    if not rows:
+        return None, tel
+    rows.sort(key=lambda row: row[0], reverse=True)
+    return rows[0][1], tel
+
+
+def list_resume_transcript_ids(root_id: str, transcripts_dir: Path) -> set[str]:
+    """Ids whose first line mentions ``resume <root_id>`` — pre-fire baseline for tipless."""
+    found: set[str] = set()
+    if not root_id or not transcripts_dir.is_dir():
+        return found
+    needle = re.compile(
+        rf"(?:^|[\s\"])resume\s+{re.escape(root_id)}(?:\s|[\"\\n]|$)"
+    )
+    for path in transcripts_dir.glob("*/*.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+        except OSError:
+            continue
+        if needle.search(first_line):
+            found.add(path.parent.name)
+    return found
 
 
 def wait_for_landed_transcript(
@@ -103,40 +193,53 @@ def wait_for_landed_transcript(
     transcripts_dir: Path,
     timeout_s: float = 30.0,
     poll_s: float = 2.0,
-) -> str | None:
-    """Transcript id whose first user message carries ``marker`` (land proof).
+    root_id: str | None = None,
+    tip_cp: int | None = None,
+    pre_existing_ids: set[str] | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Transcript id whose first user message is an exact land for this hop.
 
-    Prefers a tab with mtime after ``since_epoch``. When ``marker`` carries a
-    unique ``tip_cp=N``, also accepts that header without the mtime gate so a
-    successor that already landed (partial prior fire / clock skew) is not
-    reported as ``not_landed`` (a:38362). ``None`` after ``timeout_s`` means no
-    hop-header transcript yet — callers run one find-transcript recovery pass
-    before paging the operator.
+    Tip hops: exact ``(root, tip)`` without mtime. Tipless: mtime after fire, or a
+    new id not in ``pre_existing_ids`` that carries the full marker (15456 ask 2).
     """
-    tip_needle = None
-    tip_m = _TIP_CP_NEEDLE_RE.search(marker or "")
-    if tip_m:
-        tip_needle = tip_m.group(0)
     deadline = time.monotonic() + timeout_s
+    last_tel = land_find_telemetry(
+        root_id=root_id, tip_cp=tip_cp, marker=marker, matches=0
+    )
     while True:
         if transcripts_dir.is_dir() and marker:
-            # Unique tip_cp: header presence is land proof (mtime optional).
-            if tip_needle:
-                found = find_transcript_with_hop_header(tip_needle, transcripts_dir)
-                if found is not None:
-                    return found
-            for path in transcripts_dir.glob("*/*.jsonl"):
-                try:
-                    if path.stat().st_mtime < since_epoch - 1.0:
+            found, last_tel = find_transcript_with_hop_header(
+                marker,
+                transcripts_dir,
+                root_id=root_id,
+                tip_cp=tip_cp,
+                since_epoch=None if tip_cp is not None else since_epoch,
+            )
+            if found is not None:
+                return found, last_tel
+            if tip_cp is None and pre_existing_ids is not None:
+                for path in transcripts_dir.glob("*/*.jsonl"):
+                    tid = path.parent.name
+                    if tid in pre_existing_ids:
                         continue
-                    with path.open(encoding="utf-8") as fh:
-                        first_line = fh.readline()
-                except OSError:
-                    continue
-                if marker in first_line:
-                    return path.parent.name
+                    try:
+                        with path.open(encoding="utf-8") as fh:
+                            first_line = fh.readline()
+                    except OSError:
+                        continue
+                    if first_line_matches_land(
+                        first_line, root_id=root_id, tip_cp=None, marker=marker
+                    ):
+                        tel = land_find_telemetry(
+                            root_id=root_id,
+                            tip_cp=None,
+                            marker=marker,
+                            matches=1,
+                            matched_first_line_head=first_line[:160],
+                        )
+                        return tid, tel
         if time.monotonic() >= deadline:
-            return None
+            return None, last_tel
         time.sleep(poll_s)
 
 
@@ -197,10 +300,13 @@ __all__ = [
     "AGENTS_WINDOW_APP_ID",
     "AGENTS_WINDOW_TITLE",
     "find_transcript_with_hop_header",
+    "first_line_matches_land",
     "focus_title_for",
     "hop_header_line",
+    "hop_land_identity",
     "induction_head_line",
-    "land_find_needles",
+    "land_find_telemetry",
+    "list_resume_transcript_ids",
     "transcript_byte_size",
     "wait_for_induction_landed",
     "wait_for_landed_transcript",
