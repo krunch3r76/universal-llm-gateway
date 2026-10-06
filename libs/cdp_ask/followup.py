@@ -315,6 +315,26 @@ async def execute_followup(
         binding = "explicit"
     extra = response_extra(reattach_used=reattach_used, lane_created=lane_created)
 
+    if (
+        reattach_used
+        and outcome_reg
+        and not identity_supplied(req)
+        and target.registration_id != outcome_reg
+    ):
+        await _reattach_teardown(
+            reattach_outcome,
+            retain_lane=req.retain_lane,
+            restore_borrowed_chat_url=True,
+        )
+        return fail_followup(
+            "reattach_seat_mismatch",
+            detail=(
+                f"second resolve registration_id {target.registration_id!r} "
+                f"does not match reattach host {outcome_reg!r}"
+            ),
+            **extra,
+        )
+
     if not await _acquire_lane(
         target.registration_id, target_chat_url=target.chat_url
     ):

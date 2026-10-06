@@ -138,6 +138,58 @@ async def test_followup_in_flight_before_mark_terminal_leaves_row_untouched(
 
 
 @pytest.mark.asyncio
+async def test_later_execution_clears_followup_hold_and_second_finish_dormant(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Overlap paste on E1, finish E1 (stays active), seat E2, finish E2 → dormant.
+
+    A hold must not outlive the execution that was in flight when the paste
+    overlapped. Seating E2 is a later stamp and drops the hold, so harvest
+    parks the row.
+    """
+    from claude_bundles.cdp_registry.execution_state import (
+        FOLLOWUP_HOLD,
+        set_execution_state,
+    )
+
+    seat = _seat(purpose="ask")
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", killed.append)
+    monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: True)
+    store, execution_id = await _running("ask", seat.registration_id)
+    await store.update_liveness(
+        execution_id,
+        streaming=True,
+        stop=False,
+        tool_pause=False,
+        liveness_observed_at=1.0,
+    )
+    set_execution_state(
+        seat.registration_id,
+        execution_id="followup:hold-f1",
+        state="streaming",
+        kind="followup",
+        reason="paste:overlap",
+    )
+    assert FOLLOWUP_HOLD in _row(seat.registration_id)
+    await finish_execution(store, execution_id, {"ok": True, "status": "completed"})
+    after_e1 = _row(seat.registration_id)
+    assert after_e1["status"] == "active"
+    assert FOLLOWUP_HOLD in after_e1
+    assert killed == []
+
+    store_e2 = ExecutionStore(reaper_interval_s=9999.0)
+    record_e2 = await store_e2.create(holder="harvest-test", purpose="ask")
+    await store_e2.set_registration_id(record_e2.execution_id, seat.registration_id)
+    assert FOLLOWUP_HOLD not in _row(seat.registration_id)
+    await finish_execution(
+        store_e2, record_e2.execution_id, {"ok": True, "status": "completed"}
+    )
+    assert _row(seat.registration_id)["status"] == "dormant"
+    assert _row(seat.registration_id).get("dormant_reason") == "bus_terminal_harvest"
+
+
+@pytest.mark.asyncio
 async def test_purpose_outside_ask_review_leaves_row_untouched(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

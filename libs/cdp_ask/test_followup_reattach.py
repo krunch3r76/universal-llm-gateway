@@ -2097,6 +2097,110 @@ async def test_refusal_teardown_skips_restore_when_host_rebound_before_teardown(
 
 
 @pytest.mark.asyncio
+async def test_identity_omitted_second_resolve_mismatch_restores_borrow(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitted identity: a second resolve that names another seat restores and does not paste."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.dormant import dormant_for_chat_url
+
+    from cdp_ask.followup_envelope import FollowupCandidate, fail_followup
+    from cdp_ask.models import FollowupCandidateInfo
+
+    borrowed = reg.register_lane(
+        holder="holder-borrow",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_session_address(
+        borrowed.registration_id, chat_url=CSE_PRIOR_38282
+    )
+    parked = reg.register_lane(
+        holder="holder-parked",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert reg.bind_session_address(parked.registration_id, chat_url=CSE_TARGET_38282)
+    reg._release_driver_lock(parked.registration_id)
+    assert (
+        reg.make_dormant(parked.registration_id, is_listening=lambda _port: False)
+        is not None
+    )
+
+    paste = AsyncMock()
+    monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_for_chat_url", dormant_for_chat_url
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_dormant.cdp_registry.dormant_for_chat_url",
+        dormant_for_chat_url,
+    )
+    calls = {"n": 0}
+    other_id = "reg-switched-tab"
+
+    async def _resolve(*_args: Any, **_kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            info = FollowupCandidateInfo(
+                registration_id=parked.registration_id,
+                chat_url=CSE_TARGET_38282,
+                holder="holder-parked",
+            )
+            return (
+                None,
+                fail_followup(
+                    "attended_dormant",
+                    candidates=[info],
+                    url=CSE_TARGET_38282,
+                ),
+                None,
+                None,
+            )
+        return (
+            FollowupCandidate(
+                registration_id=other_id,
+                chat_url=CSE_TARGET_38282,
+                holder="other",
+                purpose="operator-proxy",
+                cdp_url="http://127.0.0.1:9",
+                target_binding="resolver",
+            ),
+            None,
+            "attended_resolver",
+            "resolver",
+        )
+
+    async def _ensure(chat_url: str, **_kwargs: Any) -> ReattachOutcome:
+        assert reg.bind_session_address(borrowed.registration_id, chat_url=chat_url)
+        return ReattachOutcome(
+            ok=True,
+            registration_id=borrowed.registration_id,
+            cdp_url=borrowed.cdp_url,
+            prior_chat_url=CSE_PRIOR_38282,
+            reattach_bound_chat_url=chat_url,
+        )
+
+    monkeypatch.setattr("cdp_ask.followup.resolve_followup_target", _resolve)
+    monkeypatch.setattr("cdp_ask.followup.ensure_cse_attached", _ensure)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(prompt_text="memo"),
+        ExecutionStore(),
+    )
+    assert calls["n"] == 2
+    assert resp.ok is False
+    assert resp.error == "reattach_seat_mismatch"
+    assert resp.reattach_used is True
+    paste.assert_not_awaited()
+    assert reg.chat_url_for_registration(borrowed.registration_id) == CSE_PRIOR_38282
+
+
+@pytest.mark.asyncio
 async def test_unrelated_seat_holder_change_still_refuses_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

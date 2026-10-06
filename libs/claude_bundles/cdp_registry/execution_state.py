@@ -259,9 +259,11 @@ def set_execution_state(
     for the same execution writes nothing; the same state with a new reason
     (``resumed:boot`` on a row a predecessor left ``streaming``) is a receipt
     and refreshes ``holder_pid``. A different execution replaces the entry and
-    restarts ``started_at`` — one row drives one execution at a time. The
-    write is one ``active.json`` replace plus one ``execution_state`` journal
-    line under ``ports.lock``; the advisory event follows outside the lock.
+    restarts ``started_at`` — one row drives one execution at a time — and
+    drops ``followup_hold``. Settling the same execution leaves the hold so an
+    overlapping paste still blocks harvest. The write is one ``active.json``
+    replace plus one ``execution_state`` journal line under ``ports.lock``; the
+    advisory event follows outside the lock.
     """
     rid = str(registration_id or "").strip()
     eid = str(execution_id or "").strip()
@@ -321,6 +323,8 @@ def set_execution_state(
             entry["reason"] = str(reason)
         updated = dict(row)
         updated[FIELD] = entry
+        if current is None or current["execution_id"] != eid:
+            updated.pop(FOLLOWUP_HOLD, None)
         active[rid] = updated
         _store.write_active(active)
         _store.append_log(
