@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +32,7 @@ from .investigate import CursorPasteInvestigateHandler
 from .investigate_wait import (
     WAIT_CLIENT_TIMEOUT,
     WAIT_SNAPSHOT_KEYS,
+    poll_hint_wait_target,
     wait_sdk_closeout,
     wait_snapshot_fixture,
     wait_transport_backoff_s,
@@ -599,6 +601,73 @@ async def test_wait_sdk_closeout_producer_terminal_stops() -> None:
     assert out["ok"] is False
     assert out["failure_class"] == "producer_terminal"
     assert bus.paths == ["/threads/99/wait"]
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_terminal_producer_no_new_turn_fails_closed() -> None:
+    """a:38445 — do not spin when producer is terminal and status stays no_new_turn."""
+    bus = _WaitBus(
+        wait_snapshot_fixture(
+            status="no_new_turn",
+            complete=False,
+            qualifying_reply_turn=None,
+            turn_count=1,
+            producer={
+                "execution_id": "exec-1",
+                "state": "terminal",
+                "terminal_status": "completed",
+            },
+        )
+    )
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=1,
+        execution_id="exec-1",
+    )
+    assert out["ok"] is False
+    assert out["failure_class"] == "producer_terminal"
+    assert bus.paths == ["/threads/99/wait"]
+
+
+def test_poll_hint_wait_target_prefers_worker_thread() -> None:
+    thread, after = poll_hint_wait_target(
+        {
+            "thread_id": "15470",
+            "poll_hint": {
+                "arguments": {"thread": "15470", "after_turn": 1},
+            },
+        },
+        fallback_thread="15469",
+        fallback_after=0,
+    )
+    assert thread == "15470"
+    assert after == 1
+
+
+def test_resolve_turn_text_follows_workspaces_source_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    share = tmp_path / "universal-llm-gateway" / "tmp" / "reviews" / "closeouts"
+    share.mkdir(parents=True)
+    body_path = share / "x.md"
+    splice = f"{SPLICE_START}\nsurfaces: from-share\n{SPLICE_END}"
+    body_path.write_text(f"intro\n{splice}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        investigate_wait_mod,
+        "workspaces_root",
+        lambda: tmp_path / "universal-llm-gateway",
+    )
+    envelope = json.dumps(
+        {
+            "source_ref": "workspaces://universal-llm-gateway/tmp/reviews/closeouts/x.md",
+            "summary": "sidecar",
+        }
+    )
+    text = investigate_wait_mod.resolve_turn_text({"body": envelope})
+    assert "surfaces: from-share" in text
+    assert extract_investigate_splice(text) == "surfaces: from-share"
 
 
 def test_wait_client_timeout_exceeds_wait_slice() -> None:

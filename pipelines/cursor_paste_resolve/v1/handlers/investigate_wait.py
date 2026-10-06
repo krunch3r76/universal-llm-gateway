@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any
 
-from implement_admission.closeout_helpers import cortex_files_root
+from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
 from ._message import extract_investigate_splice
 
@@ -28,12 +29,15 @@ WAIT_SNAPSHOT_KEYS = frozenset(
     }
 )
 
-_SIDECAR_LINE = re.compile(r"^Sidecar:\s+(cortex://\S+)\s*$", re.MULTILINE)
+_SIDECAR_LINE = re.compile(
+    r"^Sidecar:\s+((?:cortex|workspaces)://\S+)\s*$", re.MULTILINE
+)
 _WAIT_ROUNDS = 24
 _WAIT_TIMEOUT = 55.0
 # httpx client timeout must exceed the blocking wait= slice or the first poll
 # raises wait_transport while the admitted producer is still running.
 WAIT_CLIENT_TIMEOUT = _WAIT_TIMEOUT + 15.0
+_ULG = "universal-llm-gateway"
 
 
 def wait_transport_backoff_s(round_index: int) -> float:
@@ -61,12 +65,55 @@ def wait_snapshot_fixture(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
-def read_cortex_share(uri: str) -> str | None:
-    if not uri.startswith("cortex://"):
+def poll_hint_wait_target(
+    dispatched: dict[str, Any],
+    *,
+    fallback_thread: str,
+    fallback_after: int,
+) -> tuple[str, int]:
+    """Worker thread + after_turn from team_dispatch poll_hint (not mint/coord)."""
+    hint = dispatched.get("poll_hint")
+    args = hint.get("arguments") if isinstance(hint, dict) else None
+    if not isinstance(args, dict):
+        args = {}
+    thread = str(
+        args.get("thread") or dispatched.get("thread_id") or fallback_thread
+    ).strip()
+    after = args.get("after_turn")
+    if not isinstance(after, int):
+        after = fallback_after
+    return thread or fallback_thread, after
+
+
+def producer_terminal_without_reply(snapshot: dict[str, Any]) -> bool:
+    """Pinned producer finished and wait still has no qualifying reply (a:38445)."""
+    reply = snapshot.get("qualifying_reply_turn")
+    if isinstance(reply, int) and reply >= 1:
+        return False
+    producer = snapshot.get("producer")
+    if isinstance(producer, dict) and str(producer.get("state") or "") == "terminal":
+        return True
+    for row in snapshot.get("producers") or []:
+        if isinstance(row, dict) and str(row.get("state") or "") == "terminal":
+            return True
+    return False
+
+
+def read_share_uri(uri: str) -> str | None:
+    """Read ``cortex://`` or ``workspaces://`` share text; refuse path escape."""
+    text = (uri or "").strip()
+    if text.startswith("cortex://"):
+        root = cortex_files_root().resolve()
+        path = (root / text.removeprefix("cortex://")).resolve()
+    elif text.startswith("workspaces://"):
+        rest = text.removeprefix("workspaces://")
+        projects = workspaces_root().resolve()
+        if projects.name == _ULG:
+            projects = projects.parent
+        path = (projects / rest).resolve()
+        root = projects
+    else:
         return None
-    rel = uri.removeprefix("cortex://")
-    root = cortex_files_root().resolve()
-    path = (root / rel).resolve()
     try:
         path.relative_to(root)
     except ValueError:
@@ -76,17 +123,53 @@ def read_cortex_share(uri: str) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
+def read_cortex_share(uri: str) -> str | None:
+    """Backward-compatible alias — prefer ``read_share_uri``."""
+    return read_share_uri(uri)
+
+
+def closeout_source_ref(body: str) -> str | None:
+    """``source_ref`` or first share URI in a cursor-sdk CLOSEOUT JSON envelope."""
+    text = (body or "").strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    ref = data.get("source_ref")
+    if isinstance(ref, str) and ref.strip().startswith(("cortex://", "workspaces://")):
+        return ref.strip()
+    evidence = data.get("evidence_uris")
+    if not isinstance(evidence, dict):
+        return None
+    paths = evidence.get("artifact_paths")
+    if not isinstance(paths, list):
+        return None
+    for item in paths:
+        if isinstance(item, str) and item.startswith(("cortex://", "workspaces://")):
+            return item
+    return None
+
+
 def resolve_turn_text(turn: dict[str, Any]) -> str:
-    """Inline body, else sidecar_uri / trailing Sidecar: pointer (auto-spill)."""
+    """Inline body, cortex/workspaces sidecar, or CLOSEOUT ``source_ref`` spill."""
     uri = str(turn.get("sidecar_uri") or "").strip()
     if uri:
-        spilled = read_cortex_share(uri)
+        spilled = read_share_uri(uri)
         if spilled:
             return spilled
     body = str(turn.get("body") or "")
     match = _SIDECAR_LINE.search(body)
     if match:
-        spilled = read_cortex_share(match.group(1))
+        spilled = read_share_uri(match.group(1))
+        if spilled:
+            return spilled
+    ref = closeout_source_ref(body)
+    if ref:
+        spilled = read_share_uri(ref)
         if spilled:
             return spilled
     return body
@@ -138,6 +221,9 @@ async def wait_sdk_closeout(
     """Poll wait `_snapshot`, then GET the qualifying turn body.
 
     ``producer_terminal`` fails closed on the first snapshot (no 24-round spin).
+    When wait status stays ``no_new_turn``/``predicate_unmet`` but the pinned
+    producer is already ``terminal``, fail closed the same way (a:38445) —
+    do not burn the round budget.
     After admit (``execution_id`` pinned), a transport error retries the wait
     round instead of fail-closing the hop.
     """
@@ -183,7 +269,11 @@ async def wait_sdk_closeout(
                 "error": str(last.get("error")),
             }
         status = str(last.get("status") or "")
-        if status == "producer_terminal":
+        if status == "producer_terminal" or (
+            status in {"no_new_turn", "predicate_unmet"}
+            and execution_id
+            and producer_terminal_without_reply(last)
+        ):
             return {
                 "ok": False,
                 "failure_class": "producer_terminal",

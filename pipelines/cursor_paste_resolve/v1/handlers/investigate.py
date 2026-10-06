@@ -23,7 +23,12 @@ from ._message import (
     investigate_sdk_model,
     parse_compose_options,
 )
-from .investigate_wait import WAIT_CLIENT_TIMEOUT, latest_turn_number, wait_sdk_closeout
+from .investigate_wait import (
+    WAIT_CLIENT_TIMEOUT,
+    latest_turn_number,
+    poll_hint_wait_target,
+    wait_sdk_closeout,
+)
 from .launch import agent_bus_headers, cursor_sdk_refuse_payload, post_json
 
 _REQUEST_TIMEOUT = 30.0
@@ -204,11 +209,19 @@ async def default_investigate_hop(
             }
 
         execution_id = str(dispatched.get("execution_id") or "")
+        # Mint/coord thread is not the CLOSEOUT home — poll_hint names the worker.
+        wait_thread, wait_after = poll_hint_wait_target(
+            dispatched,
+            fallback_thread=thread_id,
+            fallback_after=after_turn,
+        )
+        if wait_thread != thread_id:
+            wait_after = await latest_turn_number(bus, wait_thread, headers)
         closeout = await wait_sdk_closeout(
             bus,
-            thread_id,
+            wait_thread,
             headers=headers,
-            after_turn=after_turn,
+            after_turn=wait_after,
             execution_id=execution_id,
         )
         if not closeout.get("ok"):
@@ -219,10 +232,12 @@ async def default_investigate_hop(
                 "error": closeout.get("error") or "investigate wait failed",
                 "dispatch": dispatched,
                 "dispatch_thread_id": thread_id,
+                "wait_thread_id": wait_thread,
             }
         return {
             "ok": True,
             "splice": closeout.get("splice"),
             "dispatch": dispatched,
             "dispatch_thread_id": thread_id,
+            "wait_thread_id": wait_thread,
         }
