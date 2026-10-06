@@ -648,15 +648,17 @@ def _stamp_model_knobs_from_outcome(
 
 
 def _outcome_stream_event_fields(outcome: SdkRunOutcome) -> dict[str, Any]:
-    from services.git_integration_worker.cursor_sdk_stream_capture import (
-        StreamCapture,
-        stream_capture_forensics_fields,
-    )
+    """Kwargs safe to spread into ``emit_sdk_worker_completed``.
 
-    return stream_capture_forensics_fields(
+    Reuses stream-forensics offset gating (omit interaction offsets unless
+    measured) but drops raw ``provider_error`` — completed events take
+    ``provider_error_class`` stamped separately (a:38390; 15459#3).
+    """
+    fields = stream_capture_forensics_fields(
         StreamCapture(
             tool_calls=(),
-            provider_error=outcome.provider_error,
+            # Classified at the emit call site; raw text is not a completed kwarg.
+            provider_error=None,
             provider_status=outcome.provider_status,
             first_output_s=outcome.first_output_s,
             last_output_s=outcome.last_output_s,
@@ -666,6 +668,8 @@ def _outcome_stream_event_fields(outcome: SdkRunOutcome) -> dict[str, Any]:
             ),
         )
     )
+    fields.pop("provider_error", None)
+    return fields
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
