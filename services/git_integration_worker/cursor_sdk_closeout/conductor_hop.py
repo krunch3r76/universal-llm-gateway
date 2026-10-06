@@ -117,6 +117,24 @@ def _record_data(row: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _fold_summon_kwargs(rec: dict[str, Any]) -> dict[str, str | None]:
+    """Summon kwargs for ``fold_deps_with_ledger`` (matches hop body precedence).
+
+    Attended mode without a resolved ``summoning_thread_id`` falls back to the
+    away fold (legacy behavior).
+    """
+    generation_options = dict(rec.get("generation_options") or {})
+    summon_mode = generation_options.get("summon_mode")
+    if summon_mode is None and rec.get("summon_mode"):
+        summon_mode = rec.get("summon_mode")
+    summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip() or None
+    summon = str(summon_mode or "").strip().lower().replace("-", "_")
+    if summon == "attended" and not summoning_thread_id:
+        return {"summon_mode": None, "summoning_thread_id": None}
+    mode_out = str(summon_mode) if summon_mode is not None else None
+    return {"summon_mode": mode_out, "summoning_thread_id": summoning_thread_id}
+
+
 def _scoreboard_text_for_row(row: dict[str, Any]) -> tuple[str, str | None]:
     """Return ``(body, tip_sha)`` from the mission scoreboard when resolvable."""
     work_key = str(row.get("work_key") or "")
@@ -185,11 +203,13 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                     fold_deps_with_ledger,
                 )
 
+                rec = _record_data(row)
                 fold = fold_scoreboard(
                     slug,
                     deps=fold_deps_with_ledger(
                         f"todo:{slug}",
                         repo=_fold_repo(row),
+                        **_fold_summon_kwargs(rec),
                     ),
                     write_journal=False,
                 )
@@ -893,12 +913,18 @@ _LIFT_HOLD_TOKENS = EXIT_PERSIST_STOPS | frozenset(
 
 def _lift_hold_tokens(row: dict[str, Any]) -> frozenset[str]:
     """Footer stop tokens plus tokens written in the closeout prose."""
-    from claude_bundles.conductor_stop import parse_stop_tokens
+    from claude_bundles.conductor_stop import (
+        parse_designed_stop_tokens,
+        parse_stop_tokens,
+    )
 
     tokens = set(_closeout_tokens_from_row(row))
     body = _closeout_body_from_row(row)
     if body:
-        tokens.update(parse_stop_tokens(body).tokens)
+        prose = parse_stop_tokens(body)
+        designed = parse_designed_stop_tokens(body)
+        tokens.update(designed.tokens)
+        tokens.update(prose.tokens - {"DONE"})
     return frozenset(tokens)
 
 
@@ -992,11 +1018,13 @@ def mission_open_for_row(
             fold_deps_with_ledger,
         )
 
+        rec = _record_data(row)
         fold = fold_scoreboard(
             slug,
             deps=fold_deps_with_ledger(
                 f"todo:{slug}",
                 repo=_fold_repo(row),
+                **_fold_summon_kwargs(rec),
             ),
             write_journal=False,
         )
@@ -1180,9 +1208,14 @@ def _fold_mission(row: dict[str, Any]) -> Any:
             fold_deps_with_ledger,
         )
 
+        rec = _record_data(row)
         return fold_scoreboard(
             slug,
-            deps=fold_deps_with_ledger(f"todo:{slug}", repo=_fold_repo(row)),
+            deps=fold_deps_with_ledger(
+                f"todo:{slug}",
+                repo=_fold_repo(row),
+                **_fold_summon_kwargs(rec),
+            ),
             write_journal=False,
         )
     except Exception as exc:  # noqa: BLE001 — fold failure must not fail closeout
