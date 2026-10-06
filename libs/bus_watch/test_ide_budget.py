@@ -296,3 +296,30 @@ def test_gear_three_presets_grok_successor() -> None:
     )
     assert bound["successor_model_source"] == "override"
     assert bound["ide_window_tokens"] == 256_000
+
+
+def test_tip_cp_needle_requires_resume_root_and_digit_boundary(tmp_path: Path) -> None:
+    """a:38474 — bare tip_cp=N refuses; tip_cp=7 must not parse as 75."""
+    from bus_watch.ide_budget import first_line_matches, _TIP_CP_RE
+    from bus_watch.ide_hop import find_transcript_id
+
+    stale = "06712639-0000-0000-0000-000000000001"
+    _write_transcript(
+        tmp_path,
+        stale,
+        first_user=(
+            "resume 10534\n"
+            "Liaison IDE hop (autonomous register) tip_cp=75. LOAD skill.\n"
+        ),
+        tool_calls=0,
+        mtime=1.0,
+    )
+    assert first_line_matches("tip_cp=75", tmp_path) == []
+    assert find_transcript_id("tip_cp=75", tmp_path) is None
+    # Digit boundary on tip extract from a resume-root needle line.
+    assert _TIP_CP_RE.search("tip_cp=75 and more").group(1) == "75"
+    assert _TIP_CP_RE.search("tip_cp=7 ").group(1) == "7"
+    assert _TIP_CP_RE.search("tip_cp=7x") is None or _TIP_CP_RE.search("tip_cp=7x").group(1) == "7"
+    seven_line = "resume 15441 tip_cp=75 buried"  # tip_cp=7 must not match 75
+    assert _TIP_CP_RE.search("Liaison IDE hop tip_cp=7. LOAD").group(1) == "7"
+    assert int(_TIP_CP_RE.search("Liaison IDE hop tip_cp=75. LOAD").group(1)) == 75

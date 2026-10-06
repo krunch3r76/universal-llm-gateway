@@ -117,6 +117,11 @@ def tab_background_pids(transcript_id: str) -> list[int]:
         argv = proc.info.get("cmdline") or []
         if any("liaison-tick.py" in str(tok) for tok in argv):
             continue
+        # Supervise tails inherit the tab transcript id in env; killing them
+        # here would break quiesce ("keep tails") and race retire's dedicated
+        # stop_departing_tails path (a:38474 review B2 / agent-bus:15488#2).
+        if _is_supervise_tail(argv):
+            continue
         try:
             env = Path(f"/proc/{pid}/environ").read_bytes()
         except OSError:
@@ -127,7 +132,7 @@ def tab_background_pids(transcript_id: str) -> list[int]:
 
 
 def stop_tab_background(transcript_id: str) -> list[int]:
-    """SIGTERM every background process attached to this tab."""
+    """SIGTERM tab-attached background processes (not supervise tails)."""
     pids = tab_background_pids(transcript_id)
     for pid in pids:
         try:
@@ -154,6 +159,32 @@ def stop_departing_tails(
     return pids
 
 
+def quiesce_departing_tab(
+    root: str,
+    *,
+    transcript_id: str = "",
+    stop_loops: Callable[[str], list[int]] = stop_attended_loops,
+) -> dict[str, Any]:
+    """Stop arm/harvest loops after keystroke; keep tails, pollers, and ``ide:`` lock.
+
+    Fired-pending (a:38474): the departing tab must not dual-write while land is
+    still proving. Full ``retire_departing_tab`` runs only on landed.
+    """
+    return {
+        "ok": True,
+        "phase": "quiesced",
+        "root": root,
+        "stopped_loops": stop_loops(root),
+        "stopped_tails": [],
+        "stopped_tab_background": stop_tab_background(transcript_id),
+        "seat_release": {"ok": False, "reason": "quiesce_keeps_ide_lock"},
+        "goal": (
+            "LIAISON_HOP_TAB_QUIESCE: loops stopped after hop fire; tails and pollers "
+            "stay until land proof. Do not arm/harvest from this tab; do not Ctrl+N."
+        ),
+    }
+
+
 def retire_departing_tab(
     root: str,
     holder: str,
@@ -172,6 +203,7 @@ def retire_departing_tab(
     labels = labels_for(root, watch_dir)
     result: dict[str, Any] = {
         "ok": True,
+        "phase": "retired",
         "root": root,
         "stopped_loops": stop_loops(root),
         "labels": labels,
@@ -209,6 +241,7 @@ __all__ = [
     "GOAL_RELEASE",
     "departing_tail_pids",
     "departing_watcher_labels",
+    "quiesce_departing_tab",
     "retire_departing_tab",
     "stop_departing_tails",
 ]

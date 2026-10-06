@@ -177,13 +177,22 @@ Binds. Later prose that conflicts with them loses.
    that cannot seal does not keystroke. In-flight watcher ⇒ harvest in this tab; hop it only
    when this tab cannot continue. Hops do **not** stop because `lock.hops` equals 8; this-root
    cap is `policy.max_hops_per_night` on `liaison-fable-<root>.lock`. Attended hop is the
-   last action **only when hopping** (`policy.gui_host` required; `ok` = landed transcript).
+   last action **only when hopping** (`policy.gui_host` required; `ok` = landed).
    Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
-   **`ok` retires this tab (structural — do not rely on successor re-arm to quiet this tab):**
+   **Hop land phases (a:38474):** after keystroke the harness writes
+   `tmp/watchers/liaison-{root}.hop-land.json` (`state=fired`) and **quiesces**
+   (stop attended `--loop` / arm+harvest; keep tails + house pollers + `ide:` lock).
+   Land proof prefers resume-fence `armed` rows (`transcript_id` = new conversation id,
+   `created_at ≥ fired_at`, ≠ departing), then transcript fallback inside a long window
+   (default ≥600s — JSONL often births minutes later). `state=landed` ⇒ full retire.
+   Past deadline with no proof ⇒ `phase=expired` / **OPERATOR_GATE** with `message_path`
+   — **never** re-fire Ctrl+N (a:38364). Concurrent hops into one Agents window serialize
+   via the GUI-host window mutex.
+   **`ok` / `phase=landed` retires this tab (structural — do not rely on successor re-arm):**
    1. Harness (`retire_departing_tab`, `liaison-ide-hop.py` after `ok`): SIGTERM this root's
       attended `--loop`s; SIGTERM `watch-supervise.sh tail --label` for every tab tail that
       belongs to the root (house pollers survive); `--release` the `ide:<transcript_id>` seat.
-      `--forever` debug tails stay.
+      `--forever` debug tails stay. (Quiesce already stopped loops at `fired`.)
    2. Seat (Cursor-native; harness cannot): **`UpdateGoal(status=complete)`** only if a
       leftover native goal is still injecting wakes — ¬ mint a successor goal. Same turn,
       after `liaison-ide-hop.py` prints `ok` (stderr carries `LIAISON_HOP_TAB_GOAL_RELEASE`).

@@ -23,14 +23,98 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 AGENTS_WINDOW_TITLE = "Cursor Agents"
 AGENTS_WINDOW_APP_ID = "cursor"
+DEFAULT_LANDING_TIMEOUT_S = 600.0
 _USER_QUERY_RE = re.compile(
     r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL | re.IGNORECASE
 )
+
+
+def armed_fences_via_http(
+    root_id: str,
+    *,
+    since_epoch: float,
+    exclude_transcript_ids: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only land probe via agent-bus GET ``/threads/{id}/resume-fence``.
+
+    Hop shells do not set ``AGENT_BUS_DB_PATH`` (host default is
+    ``~/.agent-bus/messages.db``; the store's bare ``connect()`` opens
+    ``/data/messages.db`` and fails). The managed service owns the DB — probe
+    through its HTTP route (a:38474 review B1 / agent-bus:15488#2).
+    """
+    from bus_watch.digest_budget import agent_bus_bearer_headers
+    from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+    headers = agent_bus_bearer_headers()
+    if not headers:
+        raise RuntimeError("AGENT_BUS_TOKEN unset (env and ~/.gateway/mcp.yaml)")
+    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+        resp = client.get(
+            f"/threads/{root_id}/resume-fence",
+            params={"since_epoch": float(since_epoch)},
+            headers=headers,
+        )
+    resp.raise_for_status()
+    payload = resp.json()
+    rows = list(payload.get("armed") or []) if isinstance(payload, dict) else []
+    if exclude_transcript_ids:
+        skip = {str(x) for x in exclude_transcript_ids}
+        rows = [
+            r
+            for r in rows
+            if isinstance(r, dict) and str(r.get("transcript_id") or "") not in skip
+        ]
+    return rows
+
+
+def find_land_via_fence(
+    root_id: str,
+    *,
+    since_epoch: float,
+    exclude_ids: set[str] | frozenset[str] | None = None,
+    armed_since: Callable[..., list[dict[str, Any]]] | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Successor transcript id from resume-fence ``armed`` rows since *since_epoch*.
+
+    Fence arms at ``beforeSubmitPrompt`` with ``transcript_id = conversation_id``
+    — land proof that does not wait for JSONL birth (a:38474). Default probe is
+    the agent-bus HTTP route (not a direct SQLite open).
+    """
+    tel: dict[str, Any] = {
+        "proof": "fence",
+        "root_id": root_id,
+        "since_epoch": since_epoch,
+        "matches": 0,
+    }
+    if not root_id:
+        return None, tel
+    probe = armed_since if armed_since is not None else armed_fences_via_http
+    try:
+        rows = probe(
+            root_id,
+            since_epoch=since_epoch,
+            exclude_transcript_ids=exclude_ids,
+        )
+    except Exception as exc:  # noqa: BLE001 — land probe must not abort hop
+        tel["error"] = f"{type(exc).__name__}:{str(exc)[:160]}"
+        return None, tel
+    tel["matches"] = len(rows)
+    if not rows:
+        return None, tel
+    # Newest armed wins when several hops race.
+    best = max(rows, key=lambda r: float(r.get("created_epoch") or 0.0))
+    tid = str(best.get("transcript_id") or "")
+    if not tid:
+        return None, tel
+    tel["fence_id"] = best.get("fence_id")
+    tel["matched_transcript_id"] = tid
+    return tid, tel
 
 
 def focus_title_for(policy_override: str | None = None) -> str:
@@ -257,17 +341,21 @@ def wait_for_landed_transcript(
     *,
     since_epoch: float,
     transcripts_dir: Path,
-    timeout_s: float = 30.0,
+    timeout_s: float = DEFAULT_LANDING_TIMEOUT_S,
     poll_s: float = 2.0,
     root_id: str | None = None,
     tip_cp: int | None = None,
     pre_existing_ids: set[str] | None = None,
     exclude_ids: set[str] | frozenset[str] | None = None,
+    armed_since: Callable[..., list[dict[str, Any]]] | None = None,
+    fence_first: bool = True,
 ) -> tuple[str | None, dict[str, Any]]:
-    """Transcript id whose first user message is an exact land for this hop.
+    """Land id via fence journal (preferred) or exact transcript match.
 
-    Tip hops: exact ``(root, tip)`` without mtime. Tipless: mtime after fire, or a
-    new id not in ``pre_existing_ids`` that carries the full marker.
+    Fence-first: an ``armed`` row for ``root_id`` with ``created_at >= since_epoch``
+    and ``transcript_id`` not departing proves submit without waiting for JSONL
+    birth (a:38474; median JSONL lag ~118s, specimen +842s). Transcript scan is
+    the long-window fallback inside the same deadline (default ≥600s).
     """
     deadline = time.monotonic() + timeout_s
     skip = set(exclude_ids or ())
@@ -275,6 +363,17 @@ def wait_for_landed_transcript(
         root_id=root_id, tip_cp=tip_cp, marker=marker, matches=0
     )
     while True:
+        if fence_first and root_id:
+            fence_id, fence_tel = find_land_via_fence(
+                root_id,
+                since_epoch=since_epoch,
+                exclude_ids=skip,
+                armed_since=armed_since,
+            )
+            if fence_id is not None:
+                fence_tel["landed_via"] = "fence"
+                return fence_id, fence_tel
+            last_tel = {**last_tel, "fence": fence_tel}
         if transcripts_dir.is_dir() and marker:
             found, last_tel = find_transcript_with_hop_header(
                 marker,
@@ -285,6 +384,7 @@ def wait_for_landed_transcript(
                 exclude_ids=skip,
             )
             if found is not None:
+                last_tel = {**last_tel, "landed_via": "transcript", "proof": "transcript"}
                 return found, last_tel
             if tip_cp is None and pre_existing_ids is not None:
                 for path in transcripts_dir.glob("*/*.jsonl"):
@@ -306,6 +406,8 @@ def wait_for_landed_transcript(
                             matches=1,
                             matched_first_line_head=first_line[:160],
                         )
+                        tel["landed_via"] = "transcript"
+                        tel["proof"] = "transcript"
                         return tid, tel
         if time.monotonic() >= deadline:
             return None, last_tel
@@ -368,7 +470,9 @@ def wait_for_induction_landed(
 __all__ = [
     "AGENTS_WINDOW_APP_ID",
     "AGENTS_WINDOW_TITLE",
+    "DEFAULT_LANDING_TIMEOUT_S",
     "extract_hop_body_text",
+    "find_land_via_fence",
     "find_transcript_with_hop_header",
     "first_line_matches_land",
     "focus_title_for",

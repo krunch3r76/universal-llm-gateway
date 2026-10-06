@@ -20,6 +20,7 @@ from ...resume_fence_delivery import (
     read_delivery_view,
 )
 from ...resume_fence_store import (
+    armed_fences_for_root_since,
     fold_fence,
     journal_denied,
     maybe_expire_idle_fence,
@@ -132,9 +133,27 @@ async def create_resume_fence(
 async def get_thread_resume_bundle(
     thread_id: str,
     transcript_id: str | None = Query(None),
+    since_epoch: float | None = Query(
+        None,
+        description=(
+            "When set, return armed fence rows for this root with created_at >= "
+            "since_epoch (read-only land probe; no arm side effect)."
+        ),
+    ),
 ) -> dict[str, Any]:
-    """Return stored resume bundle or pouring / missing state."""
+    """Return stored resume bundle or pouring / missing state.
+
+    With ``since_epoch``, returns ``{"armed": [...]}`` from the journal only —
+    no arm, pour, or side effect (a:38474 fence-first hop land).
+    """
     thread_id = await asyncio.to_thread(normalize_thread_id, thread_id)
+    if since_epoch is not None:
+        armed = await asyncio.to_thread(
+            armed_fences_for_root_since,
+            thread_id,
+            since_epoch=float(since_epoch),
+        )
+        return {"state": "armed_since", "root_thread": thread_id, "armed": armed}
     key = pour_key(thread_id, transcript_id)
     in_flight = pour_in_flight(key)
     view = await asyncio.to_thread(read_delivery_view, thread_id, key[1])

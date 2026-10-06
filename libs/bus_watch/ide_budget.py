@@ -32,7 +32,8 @@ from bus_watch.ide_budget_exclude import (
 
 IDE_BUDGET_SOURCE = "ide.transcript"
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_TIP_CP_RE = re.compile(r"tip_cp=(\d+)")
+_TIP_CP_RE = re.compile(r"tip_cp=(\d+)(?!\d)")
+_TIP_CP_NEEDLE_RE = re.compile(r"^tip_cp=(\d+)$")
 
 
 def ide_holder_transcript(lock: dict[str, Any]) -> str | None:
@@ -51,10 +52,18 @@ def first_line_matches(
     """``(tip_cp, mtime, transcript_id)`` for every tab whose first user line
     contains ``needle``; ``tip_cp`` is ``-1`` when the opener carries none.
 
-    The seat cannot read its own tab id; the JSONL under agent-transcripts is
-    the only place it appears. Callers order the rows for their own question
-    (budget: mtime-newest; hop checkpoint: highest ``tip_cp``)."""
+    Bare ``tip_cp=N`` needles require the decoded body to start with
+    ``resume <root>`` and match ``tip_cp=N(?!\\d)`` — raw substring alone hit
+    stale foreign roots (a:38474 Sep-12 ``06712639`` / tip_cp=75). Other
+    needles keep substring match on the first JSONL line.
+    """
     if not transcripts_dir.is_dir():
+        return []
+    tip_only = _TIP_CP_NEEDLE_RE.match((needle or "").strip())
+    if tip_only is not None:
+        # Bare tip_cp=N is root-ambiguous — raw substring used to hit foreign
+        # hops (a:38474 Sep-12 ``06712639`` / tip_cp=75 on resume 10534). Land
+        # proof needs ``first_line_matches_land`` with an explicit root_id.
         return []
     rows: list[tuple[int, float, str]] = []
     for path in transcripts_dir.glob("*/*.jsonl"):
@@ -65,6 +74,7 @@ def first_line_matches(
         except OSError:
             continue
         if needle in first_line:
+            # Digit-boundary tip extract so tip_cp=7 ≠ tip_cp=75 in the JSONL line.
             m = _TIP_CP_RE.search(first_line)
             rows.append((int(m.group(1)) if m else -1, mtime, path.parent.name))
     return rows

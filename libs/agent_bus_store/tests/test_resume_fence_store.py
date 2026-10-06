@@ -135,3 +135,27 @@ def test_release_idempotent_when_not_open(fence_db) -> None:
     again = release_fence(fence_id=fid, release_turn=2)
     assert again is not None
     assert again.state == "released"
+
+
+def test_armed_fences_for_root_since(fence_db) -> None:
+    from agent_bus_store.resume_fence_store import armed_fences_for_root_since
+
+    fid = mint_fence_id()
+    append_fence_event(
+        fence_id=fid,
+        root_thread="15420",
+        event="armed",
+        transcript_id="0b84aeac-7a9e-480a-8291-ae032c0513b4",
+        payload={"source": "hook_prompt"},
+    )
+    # since far in the future → empty
+    assert armed_fences_for_root_since("15420", since_epoch=4_000_000_000.0) == []
+    rows = armed_fences_for_root_since("15420", since_epoch=0.0)
+    assert len(rows) == 1
+    assert rows[0]["transcript_id"] == "0b84aeac-7a9e-480a-8291-ae032c0513b4"
+    excluded = armed_fences_for_root_since(
+        "15420",
+        since_epoch=0.0,
+        exclude_transcript_ids={"0b84aeac-7a9e-480a-8291-ae032c0513b4"},
+    )
+    assert excluded == []

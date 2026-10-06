@@ -15,9 +15,9 @@ UpdateGoal only if a leftover native goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
 (``continuity(op=checkpoint, surface=cursor, transcript_id=...)``).
-``fire_ide_hop`` runs that same header scan once after ``wait_for_landed`` before
-returning ``phase=not_landed`` (a:38356 / a:38362); do not re-fire glass-launch
-when the hop header is already on a successor transcript.
+``fire_ide_hop`` writes a fired record, quiesces the departing tab, then waits
+(fence-first, then transcript, default ≥600s). ``phase=expired`` is OPERATOR_GATE
+with ``message_path`` — never re-fire Ctrl+N (a:38364 / a:38474).
 
 Substrate: libs/bus_watch/ide_hop.py (message + SSH keystroke on the GUI host),
 libs/bus_watch/ide_hop_retire.py (departing-tab teardown), and
@@ -43,7 +43,11 @@ from bus_watch.ide_hop import (
     seal_hop_window,
     tick_register,
 )
-from bus_watch.ide_hop_retire import GOAL_RELEASE, retire_departing_tab
+from bus_watch.ide_hop_retire import (
+    GOAL_RELEASE,
+    quiesce_departing_tab,
+    retire_departing_tab,
+)
 from bus_watch.judgment_rows import harvest_judgment_turns
 from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
@@ -230,6 +234,11 @@ def main() -> int:
         tip_cp_ordinal=tip_cp,
         register=tick_register(args.root),
     )
+    def _on_fired() -> dict:
+        return quiesce_departing_tab(
+            args.root, transcript_id=args.transcript_id
+        )
+
     out = fire_ide_hop(
         message,
         root_id=args.root,
@@ -239,6 +248,7 @@ def main() -> int:
         dry_run=args.dry_run,
         no_raise=args.no_raise,
         departing_transcript_id=args.transcript_id,
+        on_fired=None if args.dry_run else _on_fired,
     )
     out["arm_labels"] = labels
     out["seal"] = seal
@@ -255,6 +265,14 @@ def main() -> int:
                 holder=f"ide:{args.transcript_id}",
                 transcript_id=args.transcript_id,
             )
+    elif out.get("phase") == "expired":
+        # Quiesce already ran via on_fired; never re-fire.
+        out.setdefault("operator_gate", True)
+        out.setdefault(
+            "fix",
+            "OPERATOR_GATE: hop expired without land proof — paste once from "
+            f"message_path={out.get('message_path')}; do not Ctrl+N.",
+        )
     print(json.dumps(out, indent=2))
     if out.get("ok"):
         # Seat obligation — not inferable from JSON alone in long hop turns.

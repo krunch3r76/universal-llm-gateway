@@ -310,3 +310,103 @@ def test_ac7_force_still_refuses_when_seal_fails(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["phase"] == "seal_timeout"
+
+
+def test_fired_pending_quiesces_landed_retires_expired_gates(capsys) -> None:
+    """a:38474 — quiesce on fire path; retire only on landed; expired ⇒ gate, no re-fire."""
+    hop_mod = _load_hop_module()
+    calls: list[str] = []
+
+    def fake_fire(*_a, **kwargs):
+        on_fired = kwargs.get("on_fired")
+        if on_fired is not None:
+            calls.append("quiesce")
+            kwargs_result = on_fired()
+            assert kwargs_result.get("phase") == "quiesced"
+        # Script-level paths under test via returned phases.
+        return {"ok": True, "phase": "landed", "root": "10479", "quiesce": {"phase": "quiesced"}}
+
+    def fake_retire(root, holder, **_k):
+        calls.append("retire")
+        return {"ok": True, "phase": "retired"}
+
+    args = [a for a in _HOP_ARGS if a != "--dry-run"]
+    with (
+        patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
+        patch.object(hop_mod, "load_state", return_value={}),
+        patch.object(hop_mod, "effective_policy", return_value={}),
+        patch.object(hop_mod, "build_digest", return_value={}),
+        patch.object(hop_mod, "resolve_now_row", return_value=("R16 test", "arg")),
+        patch.object(hop_mod, "format_now_line", return_value="R16 test"),
+        patch.object(
+            hop_mod, "seal_hop_window", return_value={"ok": True, "phase": "sealed"}
+        ),
+        patch.object(hop_mod, "fire_ide_hop", side_effect=fake_fire),
+        patch.object(hop_mod, "retire_departing_tab", side_effect=fake_retire),
+        patch.object(hop_mod, "quiesce_departing_tab", side_effect=lambda *a, **k: {"ok": True, "phase": "quiesced"}),
+        patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(hop_mod, "tick_register", return_value="attended"),
+        patch.object(hop_mod, "policy_gui_host", return_value="jupiter"),
+        patch.object(hop_mod, "build_ide_hop_message", return_value="resume 10479\n"),
+        patch.object(sys, "argv", args),
+    ):
+        code = hop_mod.main()
+    assert code == 0
+    assert "retire" in calls
+    # on_fired is invoked inside fire_ide_hop; our fake_fire simulates that.
+    assert "quiesce" in calls
+    capsys.readouterr()  # drop landed JSON before expired run
+
+    # Expired: no retire, operator_gate, exit 2, fire not re-invoked as Ctrl+N.
+    fire_count = {"n": 0}
+
+    def fake_expired(*_a, **kwargs):
+        fire_count["n"] += 1
+        on_fired = kwargs.get("on_fired")
+        if on_fired is not None:
+            on_fired()
+        return {
+            "ok": False,
+            "phase": "expired",
+            "root": "10479",
+            "message_path": "/tmp/msg.md",
+        }
+
+    retire_called = {"n": 0}
+
+    def no_retire(*_a, **_k):
+        retire_called["n"] += 1
+        return {"ok": True}
+
+    with (
+        patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
+        patch.object(hop_mod, "load_state", return_value={}),
+        patch.object(hop_mod, "effective_policy", return_value={}),
+        patch.object(hop_mod, "build_digest", return_value={}),
+        patch.object(hop_mod, "resolve_now_row", return_value=("R16 test", "arg")),
+        patch.object(hop_mod, "format_now_line", return_value="R16 test"),
+        patch.object(
+            hop_mod, "seal_hop_window", return_value={"ok": True, "phase": "sealed"}
+        ),
+        patch.object(hop_mod, "fire_ide_hop", side_effect=fake_expired),
+        patch.object(hop_mod, "retire_departing_tab", side_effect=no_retire),
+        patch.object(
+            hop_mod,
+            "quiesce_departing_tab",
+            return_value={"ok": True, "phase": "quiesced"},
+        ),
+        patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(hop_mod, "tick_register", return_value="attended"),
+        patch.object(hop_mod, "policy_gui_host", return_value="jupiter"),
+        patch.object(hop_mod, "build_ide_hop_message", return_value="resume 10479\n"),
+        patch.object(sys, "argv", args),
+    ):
+        code = hop_mod.main()
+    assert code == 2
+    assert fire_count["n"] == 1
+    assert retire_called["n"] == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["phase"] == "expired"
+    assert payload.get("operator_gate") is True

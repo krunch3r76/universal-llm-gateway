@@ -18,6 +18,16 @@ trigger_match_terms:
 same turn — **before** the `RETIRED → <transcript_id>` line. Skip `CreateGoal` on pickup. Harness
 `retire_departing_tab` cannot call UpdateGoal (Cursor-native).
 
+## Land phases (a:38474)
+
+| Phase | Harness action | Seat action |
+|---|---|---|
+| `fired` / `fired_pending` | `quiesce_departing_tab` — stop `--loop` (arm/harvest); **keep** tails, pollers, `ide:` lock; write hop-land record | Do not arm/harvest; do not Ctrl+N |
+| `landed` | `retire_departing_tab` — stop tails, release `ide:`, pin budget-exclude | `UpdateGoal(complete)` if leftover goal; `RETIRED → <id>` |
+| `expired` | Stay quiesced; `OPERATOR_GATE` with `message_path` | Manual paste once if needed; **never** re-fire Ctrl+N (a:38364) |
+
+Land proof: resume-fence `armed` (preferred) then transcript fallback (≥600s window). Keystroke alone is not land.
+
 | Meaning | `UpdateGoal(complete)` on hop? |
 |---|---|
 | House arc / scoreboard fully closed | Yes (arc close) |
@@ -28,7 +38,7 @@ same turn — **before** the `RETIRED → <transcript_id>` line. Skip `CreateGoa
 **Tool (verbatim, only if a goal is active):** `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
 
 **Script cues:** `liaison-ide-hop.py` JSON field `goal_release`; stderr `LIAISON_HOP_TAB_GOAL_RELEASE` (see
-`libs/bus_watch/ide_hop_retire.GOAL_RELEASE`).
+`libs/bus_watch/ide_hop_retire.GOAL_RELEASE`). Quiesce cue: `LIAISON_HOP_TAB_QUIESCE`.
 
 **Successor:** attach each ARM label (`watch-supervise.sh tail --label L`, background Shell,
 `block_until_ms 0`, no `notify_on_output`) + detach the heartbeat with

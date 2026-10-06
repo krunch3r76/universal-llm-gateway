@@ -41,3 +41,22 @@ def test_hop_mutex_expires_after_ttl(tmp_path, monkeypatch) -> None:
     late = mutex_mod.try_acquire_hop_mutex("15420", ttl_s=30.0, now=t0 + 40.0)
     assert late["ok"] is True
     mutex_mod.release_hop_mutex("15420")
+
+
+def test_window_mutex_serializes_cross_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(mutex_mod, "WATCH_DIR", tmp_path)
+    first = mutex_mod.try_acquire_window_mutex(
+        "orion-node", "Cursor Agents", root_id="15441", ttl_s=120.0
+    )
+    assert first["ok"] is True
+    second = mutex_mod.try_acquire_window_mutex(
+        "orion-node", "Cursor Agents", root_id="15420", ttl_s=120.0
+    )
+    assert second["ok"] is False
+    assert second["phase"] == "hop_window_mutex_held"
+    mutex_mod.release_window_mutex("orion-node", "Cursor Agents")
+    third = mutex_mod.try_acquire_window_mutex(
+        "orion-node", "Cursor Agents", root_id="15420", ttl_s=120.0
+    )
+    assert third["ok"] is True
+    mutex_mod.release_window_mutex("orion-node", "Cursor Agents")
