@@ -9,6 +9,8 @@ from services.git_integration_worker.cursor_sdk_events import (
     FrontierSdkWorkerDispatched,
     FrontierSdkWorkerQueued,
     FrontierSdkWorkerResumed,
+    emit_sdk_worker_completed,
+    emit_sdk_worker_failed,
 )
 
 
@@ -31,6 +33,96 @@ def test_completed_event_carries_usage_and_knobs() -> None:
     assert event.payload["model_knobs_requested"] == {"fast": "true"}
     assert event.payload["usage"]["total_tokens"] == 120
     assert event.payload["usage_capture_status"] == "captured"
+
+
+def test_completed_event_carries_stream_forensics_fields() -> None:
+    provider_status = {
+        "agent_id": "agent-1",
+        "run_id": "run-1",
+        "status": "ERROR",
+        "message": "aborted",
+        "at": "2026-10-06T15:42:00Z",
+    }
+    event = FrontierSdkWorkerCompleted(
+        dispatch_id="d1",
+        thread_id="t1",
+        execution_id="e1",
+        duration_s=180.0,
+        tool_call_count=0,
+        result_bytes=0,
+        outcome="degraded",
+        resolved_model="cursor/composer-2.5",
+        provider_status=provider_status,
+        first_output_s=12.5,
+        last_output_s=45.0,
+        first_toolcall_s=None,
+    )
+    assert event.payload["provider_status"] == provider_status
+    assert event.payload["first_output_s"] == 12.5
+    assert event.payload["last_output_s"] == 45.0
+    assert "first_toolcall_s" not in event.payload
+
+
+def test_failed_event_carries_forensics_from_abort_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events._emit",
+        captured.append,
+    )
+    forensics = {
+        "cause": "ReadTimeout",
+        "provider_status": {
+            "agent_id": "agent-1",
+            "run_id": "run-1",
+            "status": "ERROR",
+            "message": "canceled",
+            "at": "2026-10-06T15:42:00Z",
+        },
+        "first_output_s": 5.0,
+        "last_output_s": 170.0,
+    }
+    emit_sdk_worker_failed(
+        dispatch_id="d1",
+        thread_id="t1",
+        execution_id="e1",
+        error="bridge abort",
+        forensics=forensics,
+    )
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.signal == "frontier.sdk.worker.failed"
+    assert event.payload["first_output_s"] == 5.0
+    assert event.payload["last_output_s"] == 170.0
+    assert event.payload["provider_status"]["run_id"] == "run-1"
+    assert "first_toolcall_s" not in event.payload
+
+
+def test_emit_completed_wrapper_forwards_stream_forensics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events._emit",
+        captured.append,
+    )
+    emit_sdk_worker_completed(
+        dispatch_id="d1",
+        thread_id="t1",
+        execution_id="e1",
+        duration_s=1.0,
+        tool_call_count=0,
+        result_bytes=0,
+        outcome="ok",
+        resolved_model="cursor/composer-2.5",
+        first_output_s=0.5,
+        first_toolcall_s=2.0,
+    )
+    event = captured[0]
+    assert event.payload["first_output_s"] == 0.5
+    assert event.payload["first_toolcall_s"] == 2.0
+    assert "last_output_s" not in event.payload
 
 
 def test_completed_event_null_usage_is_explicit() -> None:

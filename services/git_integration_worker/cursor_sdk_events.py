@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from universal_event_bus import Event, event_factory
@@ -310,6 +310,10 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
     provider_error_class: str | None = None,
+    provider_status: dict[str, Any] | None = None,
+    first_output_s: float | None = None,
+    last_output_s: float | None = None,
+    first_toolcall_s: float | None = None,
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
@@ -343,6 +347,14 @@ def FrontierSdkWorkerCompleted(  # noqa: N802
         payload["degraded_reasons"] = degraded_reasons
     if provider_error_class is not None:
         payload["provider_error_class"] = provider_error_class
+    if provider_status is not None:
+        payload["provider_status"] = provider_status
+    if first_output_s is not None:
+        payload["first_output_s"] = first_output_s
+    if last_output_s is not None:
+        payload["last_output_s"] = last_output_s
+    if first_toolcall_s is not None:
+        payload["first_toolcall_s"] = first_toolcall_s
     if asked_by is not None:
         payload["asked_by"] = asked_by
     if purpose is not None:
@@ -436,6 +448,10 @@ def FrontierSdkWorkerFailed(  # noqa: N802
     transport_error_kind: str | None = None,
     detail_summary: str | None = None,
     degraded_reasons: list[str] | None = None,
+    provider_status: dict[str, Any] | None = None,
+    first_output_s: float | None = None,
+    last_output_s: float | None = None,
+    first_toolcall_s: float | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -457,6 +473,14 @@ def FrontierSdkWorkerFailed(  # noqa: N802
         payload["detail_summary"] = detail_summary
     if degraded_reasons is not None:
         payload["degraded_reasons"] = degraded_reasons
+    if provider_status is not None:
+        payload["provider_status"] = provider_status
+    if first_output_s is not None:
+        payload["first_output_s"] = first_output_s
+    if last_output_s is not None:
+        payload["last_output_s"] = last_output_s
+    if first_toolcall_s is not None:
+        payload["first_toolcall_s"] = first_toolcall_s
     return Event(
         signal="frontier.sdk.worker.failed",
         payload=payload,
@@ -558,6 +582,10 @@ def emit_sdk_worker_completed(
     sdk_agent_id: str | None = None,
     degraded_reasons: list[str] | None = None,
     provider_error_class: str | None = None,
+    provider_status: dict[str, Any] | None = None,
+    first_output_s: float | None = None,
+    last_output_s: float | None = None,
+    first_toolcall_s: float | None = None,
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
@@ -591,6 +619,10 @@ def emit_sdk_worker_completed(
             sdk_agent_id=sdk_agent_id,
             degraded_reasons=degraded_reasons,
             provider_error_class=provider_error_class,
+            provider_status=provider_status,
+            first_output_s=first_output_s,
+            last_output_s=last_output_s,
+            first_toolcall_s=first_toolcall_s,
             asked_by=asked_by,
             purpose=purpose,
             story_id=story_id,
@@ -602,7 +634,8 @@ def emit_sdk_worker_completed(
         "cursor sdk worker completed: dispatch_id=%s thread_id=%s duration_s=%.3f "
         "tool_call_count=%s result_bytes=%s outcome=%s resolved_model=%s "
         "usage_capture_status=%s usage=%s request_id=%s sdk_request_id=%s "
-        "request_id_source=%s sdk_run_id=%s sdk_agent_id=%s degraded_reasons=%s",
+        "request_id_source=%s sdk_run_id=%s sdk_agent_id=%s degraded_reasons=%s "
+        "first_output_s=%s first_toolcall_s=%s",
         dispatch_id,
         thread_id,
         duration_s,
@@ -618,7 +651,38 @@ def emit_sdk_worker_completed(
         sdk_run_id,
         sdk_agent_id,
         degraded_reasons,
+        first_output_s,
+        first_toolcall_s,
     )
+
+
+def _stream_forensics_event_kwargs(
+    *,
+    provider_status: dict[str, Any] | Mapping[str, Any] | None = None,
+    first_output_s: float | None = None,
+    last_output_s: float | None = None,
+    first_toolcall_s: float | None = None,
+    forensics: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge explicit stream forensics with an abort forensics dict."""
+    out: dict[str, Any] = {}
+    if forensics is not None:
+        raw_status = forensics.get("provider_status")
+        if isinstance(raw_status, Mapping):
+            out["provider_status"] = dict(raw_status)
+        for key in ("first_output_s", "last_output_s", "first_toolcall_s"):
+            val = forensics.get(key)
+            if isinstance(val, (int, float)):
+                out[key] = float(val)
+    if provider_status is not None:
+        out["provider_status"] = dict(provider_status)
+    if first_output_s is not None:
+        out["first_output_s"] = first_output_s
+    if last_output_s is not None:
+        out["last_output_s"] = last_output_s
+    if first_toolcall_s is not None:
+        out["first_toolcall_s"] = first_toolcall_s
+    return out
 
 
 @event_factory
@@ -3042,8 +3106,20 @@ def emit_sdk_worker_failed(
     worker_error_code: str | None = None,
     detail_summary: str | None = None,
     degraded_reasons: list[str] | None = None,
+    provider_status: dict[str, Any] | None = None,
+    first_output_s: float | None = None,
+    last_output_s: float | None = None,
+    first_toolcall_s: float | None = None,
+    forensics: Mapping[str, Any] | None = None,
 ) -> None:
     """Publish structured worker-runtime failure with layer and error code detail."""
+    stream_fields = _stream_forensics_event_kwargs(
+        provider_status=provider_status,
+        first_output_s=first_output_s,
+        last_output_s=last_output_s,
+        first_toolcall_s=first_toolcall_s,
+        forensics=forensics,
+    )
     _emit(
         FrontierSdkWorkerFailed(
             dispatch_id=dispatch_id,
@@ -3054,6 +3130,7 @@ def emit_sdk_worker_failed(
             worker_error_code=worker_error_code,
             detail_summary=detail_summary or error,
             degraded_reasons=degraded_reasons,
+            **stream_fields,
         )
     )
     _register_terminal_emitted(dispatch_id)

@@ -1041,3 +1041,108 @@ def test_request_id_from_sdk_error() -> None:
     request_id, source = request_id_from_sdk_error(exc)
     assert request_id == "err-req-1"
     assert source == "error"
+
+
+def test_provider_error_status_structured_with_run_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_at = "2026-10-06T15:42:00Z"
+    monkeypatch.setattr(capture_mod, "_utc_capture_at", lambda: fixed_at)
+
+    @dataclass
+    class _Msg:
+        type: str = "status"
+        status: str = "ERROR"
+        message: str = "[unknown] [canceled] This operation was aborted"
+        agent_id: str = "agent-forensics"
+        run_id: str = "run-forensics"
+
+    run = _FakeRunWithEvents(events_list=[_FakeStreamEvent(sdk_message=_Msg())])
+    result = observe_run_stream(
+        run, dispatch_id="d-abort", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.provider_error == "[unknown] [canceled] This operation was aborted"
+    assert result.provider_status == {
+        "agent_id": "agent-forensics",
+        "run_id": "run-forensics",
+        "status": "ERROR",
+        "message": "[unknown] [canceled] This operation was aborted",
+        "at": fixed_at,
+    }
+
+
+def test_stream_output_offsets_null_without_deltas() -> None:
+    run = _FakeRunWithEvents(
+        events_list=[
+            _FakeStreamEvent(
+                interaction_update=_FakeTurnEndedMessage(
+                    usage={"input_tokens": 1, "output_tokens": 1}
+                )
+            ),
+        ]
+    )
+    result = observe_run_stream(
+        run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.first_output_s is None
+    assert result.last_output_s is None
+    assert result.first_toolcall_s is None
+
+
+def test_stream_output_offsets_set_with_deltas_and_toolcall(
+    monkeypatch: pytest.MonkeyPatch,
+    _capture_emitted: list[Any],
+) -> None:
+    @dataclass
+    class _Delta:
+        type: str
+        text: str = ""
+
+    ticks = iter([10.0, 11.2, 12.5, 13.0])
+
+    def _monotonic() -> float:
+        return next(ticks)
+
+    monkeypatch.setattr(capture_mod.time, "monotonic", _monotonic)
+    run = _FakeRunWithEvents(
+        events_list=[
+            _FakeStreamEvent(interaction_update=_Delta("text-delta", "a")),
+            _FakeStreamEvent(interaction_update=_Delta("thinking-delta", "b")),
+            _FakeStreamEvent(
+                sdk_message=_FakeToolCallMessage(
+                    call_id="c-off",
+                    name="fs",
+                    status="completed",
+                )
+            ),
+        ]
+    )
+    result = observe_run_stream(
+        run, dispatch_id="d-off", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.first_output_s == 1.2
+    assert result.last_output_s == 2.5
+    assert result.first_toolcall_s == 3.0
+
+
+def test_finalize_stream_capture_preserves_forensics_fields() -> None:
+    capture = StreamCapture(
+        tool_calls=(),
+        provider_error="provider sentence",
+        provider_status={
+            "agent_id": "a1",
+            "run_id": "r1",
+            "status": "ERROR",
+            "message": "provider sentence",
+            "at": "2026-10-06T15:42:00Z",
+        },
+        first_output_s=1.0,
+        last_output_s=2.0,
+        first_toolcall_s=3.0,
+    )
+    finalized = finalize_stream_capture_usage(capture)
+    assert finalized.provider_status == capture.provider_status
+    assert finalized.first_output_s == 1.0
+    assert finalized.last_output_s == 2.0
+    assert finalized.first_toolcall_s == 3.0
+    assert finalized.provider_error == "provider sentence"

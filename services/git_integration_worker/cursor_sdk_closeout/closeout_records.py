@@ -52,6 +52,10 @@ class SdkRunOutcome:
     model_knobs_emitted: dict[str, str] | None = None
     # Last stream ``type=status`` ERROR sentence (SDKStatusMessage.message).
     provider_error: str | None = None
+    provider_status: dict[str, Any] | None = None
+    first_output_s: float | None = None
+    last_output_s: float | None = None
+    first_toolcall_s: float | None = None
 
 
 @dataclass(frozen=True)

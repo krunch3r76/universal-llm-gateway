@@ -18,8 +18,10 @@ post-wait ``run.usage`` / ``result.usage`` as authority. Falls back to
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 
 from universal_event_bus import Event, event_factory
@@ -68,6 +70,23 @@ _TERMINAL_TOOL_CALL_STATUSES = {"completed", "error"}
 
 
 @dataclass(frozen=True)
+class ProviderStatusRecord:
+    agent_id: str | None
+    run_id: str | None
+    status: str
+    message: str
+    at: str
+
+
+def _provider_status_mapping(
+    record: ProviderStatusRecord | None,
+) -> Mapping[str, Any] | None:
+    if record is None:
+        return None
+    return asdict(record)
+
+
+@dataclass(frozen=True)
 class ToolCallObservation:
     call_id: str
     tool_name: str
@@ -104,6 +123,12 @@ class StreamCapture:
     # Last ``type=status`` ERROR message (SDKStatusMessage.message). Empty
     # RUNNING/other statuses are ignored. Wins over empty_assistant_turn.
     provider_error: str | None = None
+    # Last non-empty ERROR status with run identity (SDKStatusMessage fields).
+    provider_status: Mapping[str, Any] | None = None
+    # Monotonic offsets from stream drain start (seconds, rounded).
+    first_output_s: float | None = None
+    last_output_s: float | None = None
+    first_toolcall_s: float | None = None
 
     @property
     def tool_call_count(self) -> int:
@@ -112,6 +137,26 @@ class StreamCapture:
     @property
     def truncated_tool_calls(self) -> tuple[ToolCallObservation, ...]:
         return tuple(tc for tc in self.tool_calls if tc.truncated_any)
+
+
+def stream_capture_forensics_fields(
+    capture: StreamCapture | None,
+) -> dict[str, Any]:
+    """Optional abort/terminal event fields derived from a stream capture."""
+    if capture is None:
+        return {}
+    out: dict[str, Any] = {}
+    if capture.provider_error:
+        out["provider_error"] = capture.provider_error
+    if capture.provider_status is not None:
+        out["provider_status"] = dict(capture.provider_status)
+    if capture.first_output_s is not None:
+        out["first_output_s"] = capture.first_output_s
+    if capture.last_output_s is not None:
+        out["last_output_s"] = capture.last_output_s
+    if capture.first_toolcall_s is not None:
+        out["first_toolcall_s"] = capture.first_toolcall_s
+    return out
 
 
 def _json_bytes(value: Any) -> int:
@@ -290,15 +335,43 @@ def _record_usage_message(
             token_delta_sum[0] += tokens
 
 
-def _note_provider_status(message: Any, holder: list[str]) -> None:
-    """Keep the last non-empty ``type=status`` ERROR sentence."""
+def _utc_capture_at() -> str:
+    return (
+        datetime.now(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _optional_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _note_provider_status(
+    message: Any, holder: list[ProviderStatusRecord]
+) -> None:
+    """Keep the last non-empty ``type=status`` ERROR record."""
     if str(getattr(message, "type", "") or "") != "status":
         return
-    if str(getattr(message, "status", "") or "").upper() != "ERROR":
+    status = str(getattr(message, "status", "") or "")
+    if status.upper() != "ERROR":
         return
     text = str(getattr(message, "message", "") or "").strip()
-    if text:
-        holder[:] = [text]
+    if not text:
+        return
+    holder[:] = [
+        ProviderStatusRecord(
+            agent_id=_optional_id(getattr(message, "agent_id", None)),
+            run_id=_optional_id(getattr(message, "run_id", None)),
+            status=status,
+            message=text,
+            at=_utc_capture_at(),
+        )
+    ]
 
 
 def _process_tool_call_message(
@@ -346,9 +419,26 @@ def observe_run_stream(
     token_delta_sum = [0]
     captured_request: list[tuple[str, str]] = []
     retained: list[RunLine] = []
-    provider_errors: list[str] = []
+    provider_status_holder: list[ProviderStatusRecord] = []
+    t0 = time.monotonic()
+    first_output_s: float | None = None
+    last_output_s: float | None = None
+    first_toolcall_s: float | None = None
+
+    def _note_output_delta(piece: Any) -> None:
+        nonlocal first_output_s, last_output_s
+        kind = str(getattr(piece, "type", "") or "")
+        if kind not in {"text-delta", "thinking-delta"}:
+            return
+        offset = round(time.monotonic() - t0, 3)
+        if first_output_s is None:
+            first_output_s = offset
+        last_output_s = offset
 
     def _emit(call_id: str, message: Any) -> None:
+        nonlocal first_toolcall_s
+        if first_toolcall_s is None:
+            first_toolcall_s = round(time.monotonic() - t0, 3)
         observation = _observation_from_message(message)
         if density_harness is not None:
             try:
@@ -422,6 +512,7 @@ def observe_run_stream(
                 )
                 interaction = getattr(event, "interaction_update", None)
                 if interaction is not None:
+                    _note_output_delta(interaction)
                     _record_usage_message(
                         interaction,
                         turn_usages=turn_usages,
@@ -430,7 +521,7 @@ def observe_run_stream(
                     )
                 sdk_message = getattr(event, "sdk_message", None)
                 if sdk_message is not None:
-                    _note_provider_status(sdk_message, provider_errors)
+                    _note_provider_status(sdk_message, provider_status_holder)
                     if getattr(sdk_message, "type", "") == "request":
                         request_id = getattr(sdk_message, "request_id", None)
                         if request_id and not captured_request:
@@ -448,7 +539,7 @@ def observe_run_stream(
                         )
         else:
             for message in run.stream():
-                _note_provider_status(message, provider_errors)
+                _note_provider_status(message, provider_status_holder)
                 retain_stream_prose(
                     message,
                     dispatch_id=dispatch_id,
@@ -490,6 +581,11 @@ def observe_run_stream(
     derived = bool(usage and usage.get(TOTAL_DERIVED_KEY))
     sdk_request_id = captured_request[0][0] if captured_request else None
     request_id_source = captured_request[0][1] if captured_request else None
+    provider_record = (
+        provider_status_holder[-1] if provider_status_holder else None
+    )
+    provider_status = _provider_status_mapping(provider_record)
+    provider_error = provider_record.message if provider_record else None
     return StreamCapture(
         tool_calls=tuple(emitted[call_id] for call_id in latest),
         usage=public_usage(usage),
@@ -498,7 +594,11 @@ def observe_run_stream(
         sdk_request_id=sdk_request_id,
         request_id_source=request_id_source,
         lines=tuple(retained),
-        provider_error=provider_errors[-1] if provider_errors else None,
+        provider_error=provider_error,
+        provider_status=provider_status,
+        first_output_s=first_output_s,
+        last_output_s=last_output_s,
+        first_toolcall_s=first_toolcall_s,
     )
 
 
@@ -527,6 +627,10 @@ def finalize_request_id_capture(
         request_id_source="post_wait",
         lines=capture.lines,
         provider_error=capture.provider_error,
+        provider_status=capture.provider_status,
+        first_output_s=capture.first_output_s,
+        last_output_s=capture.last_output_s,
+        first_toolcall_s=capture.first_toolcall_s,
     )
 
 
@@ -547,6 +651,10 @@ def finalize_stream_capture_usage(
         request_id_source=capture.request_id_source,
         lines=capture.lines,
         provider_error=capture.provider_error,
+        provider_status=capture.provider_status,
+        first_output_s=capture.first_output_s,
+        last_output_s=capture.last_output_s,
+        first_toolcall_s=capture.first_toolcall_s,
     )
 
 

@@ -287,6 +287,7 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     finalize_request_id_capture,
     observe_run_stream,
     request_id_from_sdk_error,
+    stream_capture_forensics_fields,
 )
 from services.git_integration_worker.cursor_sdk_subagent_capture import (
     merge_stream_subagent_calls,
@@ -643,6 +644,19 @@ def _stamp_model_knobs_from_outcome(
     if outcome.model_knobs_emitted:
         return dict(outcome.model_knobs_emitted)
     return _stamp_model_knobs_requested(model, overrides)
+
+
+def _outcome_stream_event_fields(outcome: SdkRunOutcome) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    if outcome.provider_status is not None:
+        fields["provider_status"] = outcome.provider_status
+    if outcome.first_output_s is not None:
+        fields["first_output_s"] = outcome.first_output_s
+    if outcome.last_output_s is not None:
+        fields["last_output_s"] = outcome.last_output_s
+    if outcome.first_toolcall_s is not None:
+        fields["first_toolcall_s"] = outcome.first_toolcall_s
+    return fields
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
@@ -1390,7 +1404,7 @@ def _run_sdk_sync(
                     {"tool_name": tc.tool_name, "status": tc.status}
                     for tc in stream_capture.tool_calls[-3:]
                 ]
-            return {
+            forensics: dict[str, Any] = {
                 "cause": f"{type(exc).__name__}: {exc}",
                 "elapsed_s": round(time.monotonic() - run_started, 1),
                 "stream_tool_call_count": live_counter.value(),
@@ -1411,6 +1425,8 @@ def _run_sdk_sync(
                     "dispatch_id."
                 ),
             }
+            forensics.update(stream_capture_forensics_fields(stream_capture))
+            return forensics
 
         try:
             agent, run = start_or_resume_agent(
@@ -1465,6 +1481,10 @@ def _run_sdk_sync(
                 request_id_source=stream_capture.request_id_source,
                 lines=stream_capture.lines,
                 provider_error=stream_capture.provider_error,
+                provider_status=stream_capture.provider_status,
+                first_output_s=stream_capture.first_output_s,
+                last_output_s=stream_capture.last_output_s,
+                first_toolcall_s=stream_capture.first_toolcall_s,
             )
             persist_dispatch_usage(
                 CursorDispatchLedger.instance(),
@@ -1557,6 +1577,14 @@ def _run_sdk_sync(
                 stream_only_deviations=stream_deviations,
                 model_knobs_emitted=model_knobs_emitted,
                 provider_error=stream_capture.provider_error,
+                provider_status=(
+                    dict(stream_capture.provider_status)
+                    if stream_capture.provider_status is not None
+                    else None
+                ),
+                first_output_s=stream_capture.first_output_s,
+                last_output_s=stream_capture.last_output_s,
+                first_toolcall_s=stream_capture.first_toolcall_s,
             )
         except WorktreeMintError:
             raise
@@ -2372,6 +2400,7 @@ async def _deliver_sdk_closeout(
             sdk_agent_id=outcome.sdk_agent_id,
             degraded_reasons=completed_reasons,
             provider_error_class=captured_provider_error_class,
+            **_outcome_stream_event_fields(outcome),
             **association_fields,
         )
         turn_number = extract_turn_number(bus_result.body)
@@ -2544,6 +2573,7 @@ async def _deliver_sdk_closeout(
         sdk_agent_id=outcome.sdk_agent_id,
         degraded_reasons=completed_reasons,
         provider_error_class=captured_provider_error_class,
+        **_outcome_stream_event_fields(outcome),
         **association_fields,
     )
     await _terminate_link(
@@ -3178,6 +3208,7 @@ async def _finalize_bridge_abort_partial(
         error=fail_error,
         worker_error_code=fail_code,
         degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
+        forensics=forensics,
     )
     env_data: dict[str, Any] = {
         "status": "partial",
@@ -3298,6 +3329,7 @@ async def _finalize_failed(
         error=effective_error,
         worker_error_code=effective_code,
         degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
+        forensics=forensics,
     )
     env_data = dict(data) if data else {}
     if degraded_reasons:
