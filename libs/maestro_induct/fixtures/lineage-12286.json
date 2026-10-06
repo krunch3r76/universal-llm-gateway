@@ -1,0 +1,27 @@
+{
+  "thread_id": "12286",
+  "children": [
+    {
+      "thread_id": "9999",
+      "status": "active",
+      "turn_count": 3,
+      "lane_role": null,
+      "parent_thread_id": null
+    },
+    {
+      "thread_id": "12291",
+      "status": "active",
+      "turn_count": 12,
+      "lane_role": "sub_mission",
+      "parent_thread_id": "12286"
+    },
+    {
+      "thread_id": "12359",
+      "status": "active",
+      "turn_count": 6,
+      "lane_role": "sub_mission",
+      "parent_thread_id": "12286"
+    }
+  ],
+  "dispatch_links": []
+}

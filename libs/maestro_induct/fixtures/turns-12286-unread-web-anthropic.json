@@ -1,0 +1,18 @@
+{
+  "_synthetic": true,
+  "turns": [
+    {
+      "id": 900001,
+      "thread": "12286",
+      "turn_number": 900,
+      "from": "cursor",
+      "to": "web-anthropic",
+      "subject": "CONSULT_PENDING \u2014 G4 synthetic root consult",
+      "body": "TYPE: CONSULT_PENDING\n",
+      "status": "open",
+      "created_at": "2026-10-06T09:00:00Z",
+      "read_at": null,
+      "attachments": null
+    }
+  ]
+}

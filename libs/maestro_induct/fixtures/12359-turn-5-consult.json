@@ -1,0 +1,14 @@
+{
+  "id": 76909,
+  "thread": "12359",
+  "turn_number": 5,
+  "from": "cursor",
+  "to": "web-anthropic",
+  "subject": "CONSULT_PENDING — G2 ear bind routed thread 12366",
+  "body": "dispatch 8fc1129eead6-f13a27a9 fired handoff to web-anthropic on thread 12366 (packet tmp/prompts/maestro-induct-pipeline-g2-handoff.md). Harvest reply on 12359 required per worker-lane ear contract. NEXT_ADMIT: entry gate G3 after F1 frame sidecar hung on scoreboard. execution_id handoff thread 12366 after_turn 1.",
+  "status": "open",
+  "supersedes_turn": null,
+  "created_at": "2026-09-22T02:58:23Z",
+  "read_at": null,
+  "attachments": null
+}
