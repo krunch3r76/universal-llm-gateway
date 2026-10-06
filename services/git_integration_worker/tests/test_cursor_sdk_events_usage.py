@@ -125,6 +125,59 @@ def test_emit_completed_wrapper_forwards_stream_forensics(
     assert "last_output_s" not in event.payload
 
 
+def test_outcome_stream_fields_omit_raw_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38390 — error outcomes must not pass provider_error into completed emit."""
+    from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+        SdkRunOutcome,
+    )
+    from services.git_integration_worker.routes.cursor_sdk import (
+        _outcome_stream_event_fields,
+    )
+
+    outcome = SdkRunOutcome(
+        body="",
+        status="error",
+        duration_ms=141500,
+        tool_call_count=0,
+        provider_error="You've hit your usage limit",
+        provider_status={
+            "status": "ERROR",
+            "message": "You've hit your usage limit",
+        },
+        first_output_s=1.0,
+        last_output_s=2.0,
+        first_toolcall_s=None,
+        measures_interaction_output_offsets=True,
+    )
+    fields = _outcome_stream_event_fields(outcome)
+    assert "provider_error" not in fields
+    assert fields["provider_status"]["status"] == "ERROR"
+    assert fields["first_output_s"] == 1.0
+
+    captured: list[object] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events._emit",
+        captured.append,
+    )
+    emit_sdk_worker_completed(
+        dispatch_id="fa7fc6b6ddf5-2908a0e3",
+        thread_id="15459",
+        execution_id="e1",
+        duration_s=141.5,
+        tool_call_count=0,
+        result_bytes=43,
+        outcome="error",
+        resolved_model="cursor/composer-2.5",
+        provider_error_class="usage_limit",
+        **fields,
+    )
+    assert len(captured) == 1
+    assert captured[0].payload["provider_error_class"] == "usage_limit"
+    assert "provider_error" not in captured[0].payload
+
+
 def test_completed_event_null_usage_is_explicit() -> None:
     event = FrontierSdkWorkerCompleted(
         dispatch_id="d1",
