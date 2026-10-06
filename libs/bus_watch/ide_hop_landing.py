@@ -35,6 +35,44 @@ _USER_QUERY_RE = re.compile(
 )
 
 
+def armed_fences_via_http(
+    root_id: str,
+    *,
+    since_epoch: float,
+    exclude_transcript_ids: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read-only land probe via agent-bus GET ``/threads/{id}/resume-fence``.
+
+    Hop shells do not set ``AGENT_BUS_DB_PATH`` (host default is
+    ``~/.agent-bus/messages.db``; the store's bare ``connect()`` opens
+    ``/data/messages.db`` and fails). The managed service owns the DB — probe
+    through its HTTP route (a:38474 review B1 / agent-bus:15488#2).
+    """
+    from bus_watch.digest_budget import agent_bus_bearer_headers
+    from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+    headers = agent_bus_bearer_headers()
+    if not headers:
+        raise RuntimeError("AGENT_BUS_TOKEN unset (env and ~/.gateway/mcp.yaml)")
+    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+        resp = client.get(
+            f"/threads/{root_id}/resume-fence",
+            params={"since_epoch": float(since_epoch)},
+            headers=headers,
+        )
+    resp.raise_for_status()
+    payload = resp.json()
+    rows = list(payload.get("armed") or []) if isinstance(payload, dict) else []
+    if exclude_transcript_ids:
+        skip = {str(x) for x in exclude_transcript_ids}
+        rows = [
+            r
+            for r in rows
+            if isinstance(r, dict) and str(r.get("transcript_id") or "") not in skip
+        ]
+    return rows
+
+
 def find_land_via_fence(
     root_id: str,
     *,
@@ -45,7 +83,8 @@ def find_land_via_fence(
     """Successor transcript id from resume-fence ``armed`` rows since *since_epoch*.
 
     Fence arms at ``beforeSubmitPrompt`` with ``transcript_id = conversation_id``
-    — land proof that does not wait for JSONL birth (a:38474).
+    — land proof that does not wait for JSONL birth (a:38474). Default probe is
+    the agent-bus HTTP route (not a direct SQLite open).
     """
     tel: dict[str, Any] = {
         "proof": "fence",
@@ -55,14 +94,7 @@ def find_land_via_fence(
     }
     if not root_id:
         return None, tel
-    probe = armed_since
-    if probe is None:
-        try:
-            from agent_bus_store.resume_fence_store import armed_fences_for_root_since
-        except ImportError:
-            tel["error"] = "resume_fence_store_unavailable"
-            return None, tel
-        probe = armed_fences_for_root_since
+    probe = armed_since if armed_since is not None else armed_fences_via_http
     try:
         rows = probe(
             root_id,

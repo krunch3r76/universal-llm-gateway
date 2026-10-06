@@ -18,6 +18,7 @@ from bus_watch.ide_hop_retire import (
     quiesce_departing_tab,
     retire_departing_tab,
     stop_departing_tails,
+    tab_background_pids,
 )
 
 pytestmark = pytest.mark.offline
@@ -187,3 +188,63 @@ def test_retire_releases_seat_when_budget_pin_raises(
             {"pid": None, "root_id": "11912"},
         )
     ]
+
+
+def test_tab_background_pids_skips_supervise_tails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:38474 review B2 — quiesce/stop_tab_background must not kill wake tails."""
+    tid = "70d485fe-b09d-435c-8c50-d5dde2d9f9c4"
+    tail_argv = [
+        "bash",
+        "scripts/watch-supervise.sh",
+        "tail",
+        "--label",
+        "15441-close",
+    ]
+    other_argv = ["bash", "-lc", "sleep 999"]
+    envs = {
+        9001: f"FOO=1\0CURSOR_TRANSCRIPT={tid}\0".encode(),
+        9002: f"CURSOR_TRANSCRIPT={tid}\0".encode(),
+    }
+
+    class FakeProc:
+        def __init__(self, pid: int, cmdline: list[str]) -> None:
+            self.info = {"pid": pid, "cmdline": cmdline}
+
+    class FakeEnvironPath:
+        def __init__(self, path: str) -> None:
+            self._path = path
+
+        def read_bytes(self) -> bytes:
+            pid = int(self._path.split("/")[2])
+            return envs[pid]
+
+    monkeypatch.setattr(
+        "bus_watch.ide_hop_retire.psutil.process_iter",
+        lambda attrs: [FakeProc(9001, tail_argv), FakeProc(9002, other_argv)],
+    )
+    monkeypatch.setattr(
+        "bus_watch.ide_hop_retire.Path",
+        lambda p: FakeEnvironPath(str(p)),
+    )
+    monkeypatch.setattr(
+        "bus_watch.ide_hop_retire.psutil.Process",
+        lambda pid: type("P", (), {"ppid": lambda self: 1})(),
+    )
+    pids = tab_background_pids(tid)
+    assert 9001 not in pids
+    assert pids == [9002]
+
+
+def test_quiesce_keeps_tails_and_ide_lock() -> None:
+    result = quiesce_departing_tab(
+        "15441",
+        transcript_id="70d485fe-b09d-435c-8c50-d5dde2d9f9c4",
+        stop_loops=lambda root: [11] if root == "15441" else [],
+    )
+    assert result["phase"] == "quiesced"
+    assert result["stopped_loops"] == [11]
+    assert result["stopped_tails"] == []
+    assert result["seat_release"]["ok"] is False
+    assert "quiesce_keeps_ide_lock" in result["seat_release"]["reason"]

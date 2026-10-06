@@ -117,6 +117,11 @@ def tab_background_pids(transcript_id: str) -> list[int]:
         argv = proc.info.get("cmdline") or []
         if any("liaison-tick.py" in str(tok) for tok in argv):
             continue
+        # Supervise tails inherit the tab transcript id in env; killing them
+        # here would break quiesce ("keep tails") and race retire's dedicated
+        # stop_departing_tails path (a:38474 review B2 / agent-bus:15488#2).
+        if _is_supervise_tail(argv):
+            continue
         try:
             env = Path(f"/proc/{pid}/environ").read_bytes()
         except OSError:
@@ -127,7 +132,7 @@ def tab_background_pids(transcript_id: str) -> list[int]:
 
 
 def stop_tab_background(transcript_id: str) -> list[int]:
-    """SIGTERM every background process attached to this tab."""
+    """SIGTERM tab-attached background processes (not supervise tails)."""
     pids = tab_background_pids(transcript_id)
     for pid in pids:
         try:

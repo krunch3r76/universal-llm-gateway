@@ -22,6 +22,7 @@ from bus_watch.ide_hop import (
 )
 from bus_watch.ide_hop_landing import (
     AGENTS_WINDOW_TITLE,
+    find_land_via_fence,
     find_transcript_with_hop_header,
     first_line_matches_land,
     focus_title_for,
@@ -687,3 +688,71 @@ def test_wait_fence_excludes_departing_transcript(tmp_path: Path) -> None:
         armed_since=armed_since,
     )
     assert found is None
+
+
+def test_find_land_via_fence_default_probe_uses_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """a:38474 review B1 — default path must not open SQLite; HTTP route only."""
+    tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "state": "armed_since",
+                "root_thread": "15420",
+                "armed": [
+                    {
+                        "fence_id": 3509,
+                        "transcript_id": tid,
+                        "created_epoch": 100.5,
+                    },
+                    {
+                        "fence_id": 1,
+                        "transcript_id": "departing-tab",
+                        "created_epoch": 200.0,
+                    },
+                ],
+            }
+
+    class _Client:
+        def __enter__(self) -> "_Client":
+            return self
+
+        def __exit__(self, *_a: object) -> None:
+            return None
+
+        def get(self, path: str, *, params=None, headers=None):
+            seen["path"] = path
+            seen["params"] = params
+            seen["headers"] = headers
+            return _Resp()
+
+    monkeypatch.setattr(
+        "bus_watch.digest_budget.agent_bus_bearer_headers",
+        lambda: {"Authorization": "Bearer test-token"},
+    )
+    monkeypatch.setattr(
+        "transport_utils.make_sync_client",
+        lambda *_a, **_k: _Client(),
+    )
+    # If the old direct-store path is used, this would be imported — refuse it.
+    monkeypatch.setattr(
+        "agent_bus_store.resume_fence_store.armed_fences_for_root_since",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("direct DB probe")),
+        raising=False,
+    )
+    found, tel = find_land_via_fence(
+        "15420",
+        since_epoch=100.0,
+        exclude_ids={"departing-tab"},
+    )
+    assert found == tid
+    assert tel.get("proof") == "fence"
+    assert seen["path"] == "/threads/15420/resume-fence"
+    assert seen["params"] == {"since_epoch": 100.0}
+    assert seen["headers"] == {"Authorization": "Bearer test-token"}
