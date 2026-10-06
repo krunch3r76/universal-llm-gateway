@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Any
 
 from ..recipients import (
+    is_same_seat_memo_note,
     recipient_in_clause,
-    same_seat_memo_note_spare_clause,
     sender_auto_mark_clause,
 )
 from .connection import connect, now, write_connect
@@ -529,20 +529,36 @@ def mark_sender_unread_in_thread(
 
     Excludes broadcast ``all`` (global read_at clobber). Does not mark the
     outgoing turn — caller passes through_turn below the new turn number.
-    Spares same-seat MEMO/NOTE so hop CHECKPOINT ``mark_read`` cannot hide
-    unpaid successor work from ``mission.house_unread`` (a:38363).
+    Spares same-seat MEMO/NOTE (shared ``MEMO_NOTE_SUBJECT_RE`` with
+    house_unread) so hop CHECKPOINT ``mark_read`` cannot hide unpaid
+    successor work (a:38363).
     """
     mark_clause, mark_params = sender_auto_mark_clause(from_agent)
-    spare_clause, spare_params = same_seat_memo_note_spare_clause(from_agent)
     ts = now()
     with write_connect() as conn:
-        cur = conn.execute(
-            f"UPDATE turns SET read_at = ? "
+        candidates = conn.execute(
+            f"SELECT id, from_agent, to_agent, subject FROM turns "
             f"WHERE thread = ? AND {mark_clause} "
-            f"AND NOT {spare_clause} "
             f"AND turn_number <= ? AND read_at IS NULL "
             f"AND status != 'superseded'",
-            [ts, thread, *mark_params, *spare_params, through_turn],
+            [thread, *mark_params, through_turn],
+        ).fetchall()
+        to_mark = [
+            int(row["id"])
+            for row in candidates
+            if not is_same_seat_memo_note(
+                seat=from_agent,
+                from_agent=str(row["from_agent"] or ""),
+                to_agent=str(row["to_agent"] or ""),
+                subject=row["subject"],
+            )
+        ]
+        if not to_mark:
+            return 0
+        placeholders = ",".join("?" * len(to_mark))
+        cur = conn.execute(
+            f"UPDATE turns SET read_at = ? WHERE id IN ({placeholders})",
+            [ts, *to_mark],
         )
         marked = max(cur.rowcount, 0)
     if marked:

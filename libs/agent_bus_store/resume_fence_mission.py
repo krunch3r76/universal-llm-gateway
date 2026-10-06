@@ -10,12 +10,11 @@ from cortex_store.transcript_projection_membership import extract_cp_object
 
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, extract_authored_residue
 from .db.connection import connect
+from .recipients import MEMO_NOTE_SUBJECT_RE
 
 _SKETCHBOARD_SUFFIX = "-resume-fence-sketchboard.md"
 _INFO_SUBJECT_RE = re.compile(r"\bINFO\b", re.IGNORECASE)
-_MUST_READ_SUBJECT_RE = re.compile(
-    r"(?i)(?:\bNOTE\b|\bMEMO\b|\bLIAISON\b|\bINFO\b|^TYPE:)",
-)
+_MUST_READ_OTHER_RE = re.compile(r"(?i)(?:\bLIAISON\b|\bINFO\b|^TYPE:)")
 _CLOSEOUT_MEMO_RE = re.compile(r"(?i)^closeout memo")
 _UNREAD_LIST_CAP = 24
 _UNREAD_BODY_CAP = 8
@@ -83,7 +82,9 @@ def house_unread_turns(thread_id: str) -> list[dict[str, Any]]:
             "body": None,
         }
         must_read = bool(
-            _MUST_READ_SUBJECT_RE.search(subject) or body.lstrip().startswith("TYPE:")
+            MEMO_NOTE_SUBJECT_RE.search(subject)
+            or _MUST_READ_OTHER_RE.search(subject)
+            or body.lstrip().startswith("TYPE:")
         )
         closeout_noise = bool(_CLOSEOUT_MEMO_RE.match(subject))
         if must_read and not closeout_noise and bodies < _UNREAD_BODY_CAP:

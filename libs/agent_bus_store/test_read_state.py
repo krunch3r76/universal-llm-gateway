@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
@@ -50,16 +51,26 @@ def test_send_mark_read_clears_inbox_not_outgoing(tmp_path) -> None:
         assert first["read_at"] is not None
 
 
-def test_send_mark_read_spares_same_seat_memo(tmp_path) -> None:
-    """a:38363 — CHECKPOINT mark_read must not stamp unpaid same-from MEMO."""
+@pytest.mark.parametrize(
+    "slug,subject",
+    [
+        ("mr-same-seat-memo", "MEMO fold a:38362 into liaison ## Rows"),
+        ("mr-same-seat-note", "NOTE feature a:38362 specimen"),
+        ("mr-same-seat-memo-colon", "MEMO: fold unpaid successor work"),
+    ],
+)
+def test_send_mark_read_spares_same_seat_memo(
+    tmp_path, slug: str, subject: str
+) -> None:
+    """a:38363 — CHECKPOINT mark_read must not stamp unpaid same-from MEMO/NOTE."""
     with TestClient(_app(tmp_path)) as client:
         create = client.post(
             "/threads/with-turn",
             json={
-                "slug": "mr-same-seat-memo",
+                "slug": slug,
                 "from": "cursor",
                 "to": "cursor",
-                "subject": "MEMO fold a:38362 into liaison ## Rows",
+                "subject": subject,
                 "body": "unpaid successor work",
             },
         )
