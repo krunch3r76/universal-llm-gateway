@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -30,6 +31,14 @@ WAIT_SNAPSHOT_KEYS = frozenset(
 _SIDECAR_LINE = re.compile(r"^Sidecar:\s+(cortex://\S+)\s*$", re.MULTILINE)
 _WAIT_ROUNDS = 24
 _WAIT_TIMEOUT = 55.0
+# httpx client timeout must exceed the blocking wait= slice or the first poll
+# raises wait_transport while the admitted producer is still running.
+WAIT_CLIENT_TIMEOUT = _WAIT_TIMEOUT + 15.0
+
+
+def wait_transport_backoff_s(round_index: int) -> float:
+    """Cap post-admit transport retries so connection-refused cannot spin 24 rounds."""
+    return float(min(2**round_index, 10))
 
 
 def wait_snapshot_fixture(**overrides: Any) -> dict[str, Any]:
@@ -129,8 +138,11 @@ async def wait_sdk_closeout(
     """Poll wait `_snapshot`, then GET the qualifying turn body.
 
     ``producer_terminal`` fails closed on the first snapshot (no 24-round spin).
+    After admit (``execution_id`` pinned), a transport error retries the wait
+    round instead of fail-closing the hop.
     """
     last: dict[str, Any] = {}
+    last_transport: str | None = None
     params: dict[str, Any] = {
         "from_agent": "cursor-sdk",
         "wait": int(_WAIT_TIMEOUT),
@@ -139,7 +151,7 @@ async def wait_sdk_closeout(
     }
     if execution_id:
         params["execution_id"] = execution_id
-    for _ in range(_WAIT_ROUNDS):
+    for round_index in range(_WAIT_ROUNDS):
         try:
             resp = await bus.get(
                 f"/threads/{thread_id}/wait",
@@ -147,10 +159,14 @@ async def wait_sdk_closeout(
                 headers=headers,
             )
         except Exception as exc:
+            last_transport = f"wait transport_error: {exc}"
+            if execution_id:
+                await asyncio.sleep(wait_transport_backoff_s(round_index))
+                continue
             return {
                 "ok": False,
                 "failure_class": "wait_transport",
-                "error": f"wait transport_error: {exc}",
+                "error": last_transport,
             }
         try:
             last = resp.json() if resp.content else {}
@@ -197,6 +213,12 @@ async def wait_sdk_closeout(
                 "body": body[:400],
             }
         return {"ok": True, "body": body, "splice": splice, "wait": last}
+    if last_transport and not last:
+        return {
+            "ok": False,
+            "failure_class": "wait_transport",
+            "error": last_transport,
+        }
     return {
         "ok": False,
         "failure_class": "wait_exhausted",
