@@ -291,6 +291,8 @@ def retire_predecessor_identity(
     if not rid:
         return []
     released: list[str] = []
+    bound_row: dict[str, Any] | None = None
+    released_rows: list[dict[str, Any]] = []
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(rid)
@@ -317,6 +319,7 @@ def retire_predecessor_identity(
             closed["superseded_by"] = rid
             active[other_id] = closed
             released.append(str(other_id))
+            released_rows.append(closed)
         if row_ok:
             updated = dict(row)
             updated["parent_thread"] = lane
@@ -324,6 +327,7 @@ def retire_predecessor_identity(
             updated["seat_closed_at"] = None
             updated["seat_bound_at"] = ts
             active[rid] = updated
+            bound_row = updated
         elif not released:
             return []
         _store.require_seat_authority(operation="retire_predecessor_identity")
@@ -334,6 +338,7 @@ def retire_predecessor_identity(
             seat_bound_at=ts if row_ok else None,
             superseded=released,
         )
+    _emit_seat_axis_events(bound_row, released_rows)
     return released
 
 

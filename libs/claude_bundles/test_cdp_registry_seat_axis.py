@@ -128,6 +128,64 @@ def test_bind_emits_lane_bound_event(
     assert "cdp.seat.lane_bound" in captured
 
 
+def test_retire_predecessor_emits_lane_bound_and_released(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hop-birth retire reuses _emit_seat_axis_events like bind_driving_seat."""
+    from claude_bundles.cdp_registry.session_address import (
+        retire_predecessor_identity,
+    )
+
+    captured: list[Any] = []
+
+    def _capture(event: Any) -> None:
+        captured.append(event)
+
+    monkeypatch.setattr(reg._events, "emit", _capture)
+    pred = _mint_driving(holder="pred")
+    assert reg.bind_session_address(pred.registration_id, chat_url=_CSE)
+    succ = reg.register_lane(
+        holder="succ",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread=_LANE,
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    captured.clear()
+    released = retire_predecessor_identity(succ.registration_id)
+    assert pred.registration_id in released
+    signals = [getattr(e, "signal", "") or "" for e in captured]
+    assert "cdp.seat.lane_bound" in signals
+    assert "cdp.seat.lane_released" in signals
+    bound_events = [
+        e for e in captured if getattr(e, "signal", "") == "cdp.seat.lane_bound"
+    ]
+    assert len(bound_events) == 1
+    bound_payload = bound_events[0].payload or {}
+    assert bound_payload.get("registration_id") == succ.registration_id
+    assert bound_payload.get("seat_lane") == _LANE
+
+
+def test_retire_predecessor_empty_lane_emits_nothing(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claude_bundles.cdp_registry.session_address import (
+        retire_predecessor_identity,
+    )
+
+    captured: list[str] = []
+
+    def _capture(event: Any) -> None:
+        captured.append(getattr(event, "signal", "") or "")
+
+    monkeypatch.setattr(reg._events, "emit", _capture)
+    _mint_driving()
+    captured.clear()
+    assert retire_predecessor_identity("missing-registration-id") == []
+    assert captured == []
+
+
 def test_ensure_relaunches_dormant_open_seat_not_second_host(
     isolated_registry: Path,
 ) -> None:
