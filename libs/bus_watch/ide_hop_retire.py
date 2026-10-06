@@ -180,14 +180,24 @@ def retire_departing_tab(
         "goal": GOAL_RELEASE,
     }
     # Keep the departing tab out of resume-mtime budget selection (a:38328).
+    # Pin must never block seat release — a raised pin leaves ide:<old> locked
+    # and recreates the specimen false CONTEXT_BUDGET (review N1, agent-bus:15424).
     tid = str(transcript_id or "").strip()
     if not tid and holder.startswith("ide:"):
         tid = holder.split(":", 1)[1]
-    result["budget_exclude"] = (
-        pin_retired_resume_transcript(root, tid, watch_dir=watch_dir)
-        if tid
-        else {"ok": False, "reason": "no_transcript_id"}
-    )
+    if tid:
+        try:
+            result["budget_exclude"] = pin_retired_resume_transcript(
+                root, tid, watch_dir=watch_dir
+            )
+        except Exception as exc:  # noqa: BLE001 — bookkeeping must not abort release
+            result["budget_exclude"] = {
+                "ok": False,
+                "reason": f"pin_failed:{type(exc).__name__}",
+                "error": str(exc)[:200],
+            }
+    else:
+        result["budget_exclude"] = {"ok": False, "reason": "no_transcript_id"}
     if holder.startswith("ide:"):
         result["seat_release"] = release(holder, pid=None, root_id=root)
     else:

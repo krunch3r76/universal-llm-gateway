@@ -339,18 +339,13 @@ def build_budget_block(
     reader can audit the number.
     """
     ratio = used_tokens / window_limit_tokens if window_limit_tokens else 0.0
+    # resume_match_count rides in basis for audit only; seat_lock is the stop gate.
     ide_bound = source != "ide.transcript" or basis.get("holder_basis") == "seat_lock"
-    multi_resume = (
-        source == "ide.transcript"
-        and basis.get("holder_basis") != "seat_lock"
-        and int(basis.get("resume_match_count") or 0) > 1
-    )
     stop_class = (
         "CONTEXT_BUDGET"
         if window_limit_tokens
         and source in _SEAT_SCOPED_SOURCES
         and ide_bound
-        and not multi_resume
         and ratio >= _BUDGET_RATIO_THRESHOLD
         else None
     )

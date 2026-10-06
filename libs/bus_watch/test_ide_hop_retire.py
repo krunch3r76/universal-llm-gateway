@@ -153,3 +153,34 @@ def test_retire_skips_release_when_holder_is_not_ide() -> None:
         release=lambda *_a, **_k: {"ok": True},
     )
     assert result["seat_release"] == {"ok": False, "reason": "holder_not_ide"}
+
+
+def test_retire_releases_seat_when_budget_pin_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review N1 (agent-bus:15424) — pin failure must not leave ide:<old> locked."""
+    released: list[tuple] = []
+
+    def boom(*_a: object, **_k: object) -> dict:
+        raise OSError("watch_dir unwritable")
+
+    monkeypatch.setattr(
+        "bus_watch.ide_hop_retire.pin_retired_resume_transcript", boom
+    )
+    result = retire_departing_tab(
+        "11912",
+        "ide:7484bed2-ae52-436b-b428-b74056887478",
+        watch_dir=tmp_path,
+        stop_loops=lambda _r: [],
+        labels_for=lambda *_a, **_k: [],
+        stop_tails=lambda *_a, **_k: [],
+        release=lambda holder, **kw: released.append((holder, kw)) or {"ok": True},
+    )
+    assert result["budget_exclude"]["ok"] is False
+    assert result["budget_exclude"]["reason"].startswith("pin_failed:")
+    assert released == [
+        (
+            "ide:7484bed2-ae52-436b-b428-b74056887478",
+            {"pid": None, "root_id": "11912"},
+        )
+    ]
