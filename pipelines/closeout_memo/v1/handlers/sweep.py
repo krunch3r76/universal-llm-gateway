@@ -81,6 +81,8 @@ async def _recover_stale_admitted() -> None:
                 prompt_text=rendered.text,
                 followup=_transport.post_followup,
                 harvest=_transport.harvest_marker,
+                attended=_transport.get_lane_attended,
+                followup_by_address=_transport.post_followup_by_address,
             )
             if outcome.get("delivered"):
                 await _post_overflow(wake_lane, memo_ids, rendered.overflow_bus_text)
@@ -131,6 +133,8 @@ async def sweep_once() -> int:
                 prompt_text=text,
                 followup=_transport.post_followup,
                 harvest=_transport.harvest_marker,
+                attended=_transport.get_lane_attended,
+                followup_by_address=_transport.post_followup_by_address,
             )
         if outcome.get("delivered"):
             await _post_overflow(wake_lane, memo_ids, overflow)

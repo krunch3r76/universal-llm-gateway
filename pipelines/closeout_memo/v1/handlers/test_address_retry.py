@@ -6,11 +6,29 @@ from typing import Any
 
 import pytest
 
+from . import deliver
+from ._transport import followup_body, followup_by_address_body
 from .deliver import apply_decision
 
 pytestmark = pytest.mark.offline
 
 _STORED = "https://claude.ai/cowork/cse_stored"
+
+
+@pytest.fixture
+def memo_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("CLOSEOUT_MEMO_LEDGER", str(tmp_path / "memo.sqlite"))
+
+
+@pytest.fixture
+def record_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def _emit(name: str, **payload: Any) -> None:
+        events.append((name, dict(payload)))
+
+    monkeypatch.setattr(deliver, "emit_closeout_memo", _emit)
+    return events
 
 
 def _lane_cse_none() -> dict[str, Any]:
@@ -39,10 +57,22 @@ def _attended_404(chat_url: str | None = _STORED) -> dict[str, Any]:
     }
 
 
+def test_followup_by_address_body_includes_reattach_and_url() -> None:
+    base = followup_body(parent_thread="12286", prompt_text="MEMO")
+    body = followup_by_address_body(
+        parent_thread="12286",
+        prompt_text="MEMO",
+        chat_url=_STORED,
+    )
+    assert body == {**base, "chat_url": _STORED, "reattach": True}
+
+
 @pytest.mark.asyncio
-async def test_lane_cse_none_retries_by_stored_address_and_delivers() -> None:
+async def test_lane_cse_none_retries_by_stored_address_and_delivers(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
     calls: list[str] = []
-    retry_body: dict[str, Any] | None = None
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
         calls.append("followup")
@@ -54,8 +84,6 @@ async def test_lane_cse_none_retries_by_stored_address_and_delivers() -> None:
 
     async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
         calls.append("followup_by_address")
-        nonlocal retry_body
-        retry_body = dict(kwargs)
         return {
             "timed_out": False,
             "body": {
@@ -80,19 +108,26 @@ async def test_lane_cse_none_retries_by_stored_address_and_delivers() -> None:
         followup_by_address=followup_by_address,
     )
     assert calls == ["followup", "attended", "followup_by_address"]
-    assert retry_body == {
-        "parent_thread": "12286",
-        "prompt_text": "MEMO",
-        "chat_url": _STORED,
-    }
     assert outcome["delivered"] is True
     assert outcome["request_had_identity"] is True
     assert outcome["address_retry"] is True
     assert outcome["reattach_used"] is True
+    assert outcome["url"] == _STORED
+    retry_ev = [p for name, p in record_events if name == "address_retry"]
+    assert retry_ev[-1]["outcome"] == "attempted"
+    assert retry_ev[-1]["reason"] == "lane_cse_none"
+    delivered_ev = [p for name, p in record_events if name == "delivered"]
+    assert delivered_ev[-1]["address_retry"] is True
+    assert delivered_ev[-1]["reattach_chat_url"] == _STORED
+    assert delivered_ev[-1]["reattach_used"] is True
+    assert delivered_ev[-1]["lane_created"] is False
 
 
 @pytest.mark.asyncio
-async def test_stored_association_streaming_skips_retry() -> None:
+async def test_stored_association_streaming_skips_retry(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
     calls: list[str] = []
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
@@ -114,25 +149,28 @@ async def test_stored_association_streaming_skips_retry() -> None:
         calls.append("followup_by_address")
         return {}
 
-    async def harvest(**kwargs: Any) -> bool | None:
-        return None
-
     outcome = await apply_decision(
         memo_ids=["m1"],
         wake_lane="12286",
         prompt_text="MEMO",
         followup=followup,
-        harvest=harvest,
+        harvest=_noop_harvest,
         attended=attended,
         followup_by_address=followup_by_address,
     )
     assert calls == ["followup", "attended"]
     assert outcome["needs_fallback"] is True
     assert outcome["error"] == "lane_cse_none"
+    skip = [p for name, p in record_events if name == "address_retry"][-1]
+    assert skip["outcome"] == "skipped"
+    assert skip["reason"] == "stored_association_streaming"
 
 
 @pytest.mark.asyncio
-async def test_attended_404_without_seat_holder_skips_retry() -> None:
+async def test_attended_404_without_seat_holder_skips_retry(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
     calls: list[str] = []
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
@@ -143,28 +181,27 @@ async def test_attended_404_without_seat_holder_skips_retry() -> None:
         calls.append("attended")
         return _attended_404(chat_url=None)
 
-    async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
-        calls.append("followup_by_address")
-        return {}
-
-    async def harvest(**kwargs: Any) -> bool | None:
-        return None
-
     outcome = await apply_decision(
         memo_ids=["m1"],
         wake_lane="12286",
         prompt_text="MEMO",
         followup=followup,
-        harvest=harvest,
+        harvest=_noop_harvest,
         attended=attended,
-        followup_by_address=followup_by_address,
+        followup_by_address=_noop_followup_by_address,
     )
     assert calls == ["followup", "attended"]
     assert outcome["needs_fallback"] is True
+    skip = [p for name, p in record_events if name == "address_retry"][-1]
+    assert skip["outcome"] == "skipped"
+    assert skip["reason"] == "missing_seat_holder"
 
 
 @pytest.mark.asyncio
-async def test_retry_error_class_uses_decision_table_two_followups_only() -> None:
+async def test_attended_404_empty_chat_url_skips_retry(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
     calls: list[str] = []
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
@@ -172,7 +209,96 @@ async def test_retry_error_class_uses_decision_table_two_followups_only() -> Non
         return _lane_cse_none()
 
     async def attended(**kwargs: Any) -> dict[str, Any]:
-        return _attended_404(_STORED)
+        calls.append("attended")
+        return _attended_404("")
+
+    outcome = await apply_decision(
+        memo_ids=["m1"],
+        wake_lane="12286",
+        prompt_text="MEMO",
+        followup=followup,
+        harvest=_noop_harvest,
+        attended=attended,
+        followup_by_address=_noop_followup_by_address,
+    )
+    assert calls == ["followup", "attended"]
+    assert outcome["needs_fallback"] is True
+    skip = [p for name, p in record_events if name == "address_retry"][-1]
+    assert skip["reason"] == "empty_chat_url"
+
+
+@pytest.mark.asyncio
+async def test_attended_transport_failure_skips_retry(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    calls: list[str] = []
+
+    async def followup(**kwargs: Any) -> dict[str, Any]:
+        calls.append("followup")
+        return _lane_cse_none()
+
+    async def attended(**kwargs: Any) -> dict[str, Any]:
+        calls.append("attended")
+        return {"status_code": 0, "body": None}
+
+    outcome = await apply_decision(
+        memo_ids=["m1"],
+        wake_lane="12286",
+        prompt_text="MEMO",
+        followup=followup,
+        harvest=_noop_harvest,
+        attended=attended,
+        followup_by_address=_noop_followup_by_address,
+    )
+    assert calls == ["followup", "attended"]
+    assert outcome["needs_fallback"] is True
+    skip = [p for name, p in record_events if name == "address_retry"][-1]
+    assert skip["reason"] == "get_transport_failure"
+
+
+@pytest.mark.asyncio
+async def test_attended_503_skips_retry(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    calls: list[str] = []
+
+    async def followup(**kwargs: Any) -> dict[str, Any]:
+        calls.append("followup")
+        return _lane_cse_none()
+
+    async def attended(**kwargs: Any) -> dict[str, Any]:
+        calls.append("attended")
+        return {
+            "status_code": 503,
+            "body": {"code": "lane_cse_probe_error"},
+        }
+
+    outcome = await apply_decision(
+        memo_ids=["m1"],
+        wake_lane="12286",
+        prompt_text="MEMO",
+        followup=followup,
+        harvest=_noop_harvest,
+        attended=attended,
+        followup_by_address=_noop_followup_by_address,
+    )
+    assert calls == ["followup", "attended"]
+    assert outcome["needs_fallback"] is True
+    skip = [p for name, p in record_events if name == "address_retry"][-1]
+    assert skip["reason"] == "lane_cse_probe_error"
+
+
+@pytest.mark.asyncio
+async def test_retry_error_class_uses_decision_table_two_followups_only(
+    memo_ledger: None,
+) -> None:
+    calls: list[str] = []
+
+    async def followup(**kwargs: Any) -> dict[str, Any]:
+        calls.append("followup")
+        return _lane_cse_none()
 
     async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
         calls.append("followup_by_address")
@@ -181,16 +307,13 @@ async def test_retry_error_class_uses_decision_table_two_followups_only() -> Non
             "body": {"ok": False, "error": "lane_busy"},
         }
 
-    async def harvest(**kwargs: Any) -> bool | None:
-        return None
-
     outcome = await apply_decision(
         memo_ids=["m1"],
         wake_lane="12286",
         prompt_text="MEMO",
         followup=followup,
-        harvest=harvest,
-        attended=attended,
+        harvest=_noop_harvest,
+        attended=_attended_404_fn,
         followup_by_address=followup_by_address,
     )
     assert calls.count("followup") + calls.count("followup_by_address") == 2
@@ -199,16 +322,15 @@ async def test_retry_error_class_uses_decision_table_two_followups_only() -> Non
 
 
 @pytest.mark.asyncio
-async def test_retry_timeout_harvests_with_chat_url_no_third_followup() -> None:
+async def test_retry_timeout_harvests_with_chat_url_no_third_followup(
+    memo_ledger: None,
+) -> None:
     calls: list[str] = []
     harvest_kwargs: dict[str, Any] | None = None
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
         calls.append("followup")
         return _lane_cse_none()
-
-    async def attended(**kwargs: Any) -> dict[str, Any]:
-        return _attended_404(_STORED)
 
     async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
         calls.append("followup_by_address")
@@ -225,7 +347,7 @@ async def test_retry_timeout_harvests_with_chat_url_no_third_followup() -> None:
         prompt_text="MEMO",
         followup=followup,
         harvest=harvest,
-        attended=attended,
+        attended=_attended_404_fn,
         followup_by_address=followup_by_address,
     )
     assert calls == ["followup", "followup_by_address"]
@@ -235,7 +357,10 @@ async def test_retry_timeout_harvests_with_chat_url_no_third_followup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attended_200_skips_retry() -> None:
+async def test_attended_200_skips_retry(
+    memo_ledger: None,
+    record_events: list[tuple[str, dict[str, Any]]],
+) -> None:
     calls: list[str] = []
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
@@ -249,28 +374,26 @@ async def test_attended_200_skips_retry() -> None:
             "body": {"state": "current", "current": {"chat_url": "https://live"}},
         }
 
-    async def followup_by_address(**kwargs: Any) -> dict[str, Any]:
-        calls.append("followup_by_address")
-        return {}
-
-    async def harvest(**kwargs: Any) -> bool | None:
-        return None
-
     outcome = await apply_decision(
         memo_ids=["m1"],
         wake_lane="12286",
         prompt_text="MEMO",
         followup=followup,
-        harvest=harvest,
+        harvest=_noop_harvest,
         attended=attended,
-        followup_by_address=followup_by_address,
+        followup_by_address=_noop_followup_by_address,
     )
     assert calls == ["followup", "attended"]
     assert outcome["needs_fallback"] is True
+    skip = [p for name, p in record_events if name == "address_retry"][-1]
+    assert skip["reason"] == "get_200_current"
 
 
 @pytest.mark.asyncio
-async def test_without_injection_lane_cse_none_matches_prior_call_count() -> None:
+async def test_without_injection_lane_cse_none_single_followup_only(
+    memo_ledger: None,
+) -> None:
+    """Call count matches pre-U2 injection; error class is lane_cse_none not other."""
     calls = 0
 
     async def followup(**kwargs: Any) -> dict[str, Any]:
@@ -278,16 +401,25 @@ async def test_without_injection_lane_cse_none_matches_prior_call_count() -> Non
         calls += 1
         return _lane_cse_none()
 
-    async def harvest(**kwargs: Any) -> bool | None:
-        return None
-
     outcome = await apply_decision(
         memo_ids=["m1"],
         wake_lane="12286",
         prompt_text="MEMO",
         followup=followup,
-        harvest=harvest,
+        harvest=_noop_harvest,
     )
     assert calls == 1
     assert outcome["needs_fallback"] is True
     assert outcome["error"] == "lane_cse_none"
+
+
+async def _noop_harvest(**kwargs: Any) -> bool | None:
+    return None
+
+
+async def _noop_followup_by_address(**kwargs: Any) -> dict[str, Any]:
+    pytest.fail("followup_by_address must not run")
+
+
+async def _attended_404_fn(**kwargs: Any) -> dict[str, Any]:
+    return _attended_404(_STORED)

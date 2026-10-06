@@ -192,7 +192,7 @@ async def apply_decision(
             "memo_ids": memo_ids,
             "receipt": decision.receipt,
             "registration_id": registration_id,
-            "url": url,
+            "url": ledger_url,
             "resolution_path": resolution_path,
             "streaming_at_paste": streaming,
             "request_had_identity": address_retry,
