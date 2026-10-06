@@ -115,11 +115,11 @@ After any Place / Submit Order click (or equivalent money-moving confirm):
 
 1. Outcome is ternary: `placed` | `not_placed` | `unknown` — never binary from the tool print alone.
 2. `PLACE null` / Playwright async timeout / tool-print silence ⇒ `unknown` until the site Orders surface is read.
-3. Before any place or not-placed claim: observe terminal confirmation. DoorDash: `/orders` (or live order card) **and** a DoubleDash / order UUID. No UUID ⇒ not `placed`.
+3. Before any place or not-placed claim: observe terminal confirmation — the order/confirmation ID on the host's Orders surface. DoorDash: `/orders` (or live order card) **and** the order UUID (e.g. DoubleDash `08fc8248`). No UUID ⇒ stays `unknown` (never `not_placed`). `not_placed` requires an Orders read ≥15s after the click showing no order created after the click time, **and** the checkout surface still showing the cart unplaced or an error. Otherwise stay `unknown` and escalate to the operator. No retry.
 4. While outcome is `unknown`: no next hunt, no second Place, no cancel-to-retry.
-5. Operator `checkpoint` during shop ⇒ **STOP** all shop acts (no rehunt, no Place). Resume-protocol detail lives on `checkpoint-discipline`; this skill binds the mutation halt.
+5. Operator `checkpoint` during shop ⇒ **STOP** all shop acts (no rehunt, no Place). Reading Orders to resolve an unknown place outcome is exempt from the halt and comes before the checkpoint records place state. If it can't be read, the checkpoint records `unknown`, never `not_placed`. Resume-protocol detail lives on `checkpoint-discipline`; this skill binds the mutation halt.
 
-Class: mutation without terminal verify (related a:32030). Specimen a:38478 — Place clicked ~2:06 PT, tool returned PLACE null, seat reported not placed; live DoubleDash `08fc8248` had already charged.
+Class: mutation without terminal verify (related a:32030). Specimen a:38478 — Place clicked ~2:06 PT, tool returned PLACE null, seat reported not placed; live order UUID `08fc8248` had already placed.
 
 ## Anti-patterns (binding)
 
@@ -136,9 +136,11 @@ Class: mutation without terminal verify (related a:32030). Specimen a:38478 — 
 | Infer browser dead from absent CDP port activity | `--remote-debugging-pipe` and Xvfb holds are invisible to port watchers (6008 CLOSEOUT-4) |
 | Launch new persistent context when CDP attach works | Duplicate parallel browsers; wrong session (6008/6032) |
 | Incremental extract by raw DOM index on virtual-scroll list | Index shift under lazy render; anchor on prior content string (6032) |
-| Treat Place tool timeout / `PLACE null` as `not_placed` | False negative; live order already charged; seat hunts again (a:38478) |
+| Treat Place tool timeout / `PLACE null` as `not_placed` | False negative; live order already placed; seat hunts again (a:38478) |
 | Claim placed / not-placed without Orders + order-UUID read after Place | Mutation without terminal verify (class a:32030) |
+| Treat a too-early empty Orders read as `not_placed` | Double Place / double charge while the first submit is still in flight (a:38478 reverse) |
 | Continue shop acts after operator `checkpoint` | Halt ignored; further Place/hunt risk (mutation stop here; protocol on `checkpoint-discipline`) |
+| Record `not_placed` at checkpoint when Orders could not be read | Same false negative as PLACE-null (a:38478) |
 
 ## Escalation
 
