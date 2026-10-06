@@ -197,6 +197,10 @@ When CDP posts on-behalf and bus returns **409 `unread_turns_exist`**, remake af
 
 CLI parity: `--keep-chat` ≡ `delete_after=false`.
 
+## Lane CSE lookup — last_associated vs current (a:37788 / a:37834)
+
+`ThreadDetail.cse_chat_url` is `last_associated`. Current is `cse_session(op=resolve_attended, parent_thread=<lane>)` (`cse_current_probe` on ThreadDetail). If that probe is ambiguous, the standing-handoff CURRENT LEG `seat = Cowork CSE https://claude.ai/cowork/cse_<id> · registration_id <reg>` line is the hop-record authority — not ThreadDetail. `send_verified` / `dom_committed` prove satellite DOM, not that the operator is looking at that page. L2: skill § Current CSE for a lane.
+
 ## Warm follow-up — same CSE window (BINDING — 2026-07-31)
 
 **Receipt ladder (v1 live rungs):** `dom_paste` (composer empty of the needle, plus marker in composer-excluded committed-turn nodes or count growth + snippet) → `dom_committed` (marker survives a short settle in committed user-turn nodes — **not** `page.reload()`, which wipes unsent drafts). DOM on an automation-attached page proves **satellite-scope** rendering — never server commit, never attended-session visibility. Reserved (not implemented): `attended`, `server_transcript`, `human_visible`.

@@ -5728,7 +5728,7 @@ tools:
   flat_call_shape:
     tool: cse_session_resolve_attended
     substrate_qualified: user-vortex__cse_session_resolve_attended
-  fol_descriptor: "Read-only. parent_thread ⇒ live lane-current probe {state, basis, current, stale}; ThreadDetail.cse_chat_url is last-associated, never current. No parent_thread ⇒ attended-operator triple; dormant host is attended, not absent. See agent_skill:claude-ai-cdp-navigation.\n"
+  fol_descriptor: "Read-only. parent_thread ⇒ live lane-current probe {state, basis, current, stale}; ThreadDetail.cse_chat_url is last-associated, never current (then CURRENT LEG seat= hop-record). No parent_thread ⇒ attended-operator triple; dormant host is attended, not absent. See agent_skill:claude-ai-cdp-navigation.\n"
   json_schema:
     type: object
     properties:
