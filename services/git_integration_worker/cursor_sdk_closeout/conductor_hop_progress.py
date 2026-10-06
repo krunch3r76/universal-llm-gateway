@@ -93,14 +93,21 @@ def _fold_for_slug(slug: str, row: dict[str, Any]) -> Any | None:
 
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _fold_repo,
+        _fold_summon_kwargs,
+        _record_data,
     )
     from services.git_integration_worker.cursor_sdk_nested_witness import (
         fold_deps_with_ledger,
     )
 
+    rec = _record_data(row)
     return fold_scoreboard(
         slug,
-        deps=fold_deps_with_ledger(f"todo:{slug}", repo=_fold_repo(row)),
+        deps=fold_deps_with_ledger(
+            f"todo:{slug}",
+            repo=_fold_repo(row),
+            **_fold_summon_kwargs(rec),
+        ),
         write_journal=False,
     )
 
