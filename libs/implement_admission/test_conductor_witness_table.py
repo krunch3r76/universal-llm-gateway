@@ -326,6 +326,33 @@ def test_g6_bare_verdict_ratify_line_witnesses(tmp_path: Path) -> None:
     assert witnesses.get("G6") is not None
 
 
+def test_g6_archive_verdict_bind_witnesses_with_cited_sha(tmp_path: Path) -> None:
+    """Archive ``Verdict: BIND`` is G6-fold-only; shared grammar stays unchanged (a:38233)."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "# Pre-land archive\n\n"
+        "Verdict: BIND. All four claims match head deadbeef, no new defect.\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    uri = _write_review(files_root, review_body)
+    reason = _g6_review_failure_reason(
+        uri,
+        files_root=files_root,
+        tip_body=_review_tip(cited_sha=cited_sha, body=review_body),
+        artifact_id="R1",
+    )
+    assert reason is None
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+
+
 def test_g6_prose_ratify_withdrawn_verdict_reject_not_witness(tmp_path: Path) -> None:
     """Prose mentions RATIFY; only **Verdict:** **REJECT** binds — no G6 witness."""
     files_root = tmp_path / "cortex"
@@ -568,6 +595,59 @@ _BARE_SHA40 = "deadbeef" + "0" * 32
 
 def _sidecar_row(artifact_id: str, sha: str = _BARE_SHA40) -> str:
     return f"| {artifact_id} | {sha} on master | land witness |\n"
+
+
+def _sidecar_row_git(artifact_id: str, sha: str = _BARE_SHA40) -> str:
+    return f"| {artifact_id} | git:{sha} | land witness |\n"
+
+
+def test_artifact_map_ingests_git_prefixed_l1_sha() -> None:
+    """Sidecar ``git:<sha>`` normalizes to bare hex for G7 land slot (a:38233)."""
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + _sidecar_row_git("L1")
+    )
+    artifacts = _artifact_map(tip_body)
+    assert artifacts["L1"] == _BARE_SHA40
+
+
+class _MasterLandGit:
+    def is_ancestor(self, commit: str, ref: str) -> bool:
+        return ref == "master" and commit == _BARE_SHA40
+
+
+def test_g7_witnesses_from_git_prefixed_l1_sidecar(tmp_path: Path) -> None:
+    """G7 land reads L1 after G6 binds; ``git:`` prefix must not drop the sha."""
+    files_root = tmp_path / "cortex"
+    review_body = "VERDICT: RATIFY\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    tip_body += (
+        "## Sidecars (land)\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + _sidecar_row_git("L1")
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        nested_implement=_StubNestedImplement(has_commits=True),
+        git=_MasterLandGit(),
+        source_ref=_SOURCE_REF,
+        summon_mode="attended",
+        summoning_thread_id="10110",
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+    g7 = witnesses.get("G7")
+    assert g7 is not None
+    assert g7.detail == _BARE_SHA40
+    assert g7.source == f"git:{_BARE_SHA40}"
 
 
 def test_r2_c3_uri_resolves_bare_sha40_without_repo_or_files(tmp_path: Path) -> None:

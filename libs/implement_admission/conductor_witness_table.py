@@ -38,6 +38,7 @@ from implement_admission.evidence_verify import resolve_artifact_path
 _ARTIFACT_URI_RE = re.compile(
     r"^\|\s*(?P<id>[^|`\n]+?)\s*\|\s*(?:`(?P<cortex>cortex://[^`]+)`"
     r"|(?P<cortex_bare>cortex://[^\s|`]+)"
+    r"|`?(?P<git>git:(?P<git_sha>[0-9a-f]{7,40}))`?"
     r"|`?(?P<sha>[0-9a-f]{7,40})`?\s+on\s+master)",
     re.MULTILINE | re.IGNORECASE,
 )
@@ -152,6 +153,8 @@ def _artifact_map(tip_body: str) -> dict[str, str]:
         cortex_uri = match.group("cortex") or match.group("cortex_bare")
         if cortex_uri:
             artifacts[artifact_id] = cortex_uri
+        elif match.group("git_sha"):
+            artifacts[artifact_id] = match.group("git_sha").lower()
         elif match.group("sha"):
             artifacts[artifact_id] = match.group("sha").lower()
     return artifacts
@@ -242,6 +245,19 @@ def _g6_review_body_witnesses(
     )
 
 
+def _g6_parsed_is_archive_bind(parsed: ParsedVerdict) -> bool:
+    """Archive pre-land reviews stamp ``Verdict: BIND`` — G6-only, not shared grammar."""
+    if parsed.token is None:
+        return False
+    parts = parsed.token.strip().split()
+    if not parts:
+        return False
+    first = parts[0]
+    if first.endswith("."):
+        first = first[:-1]
+    return first.upper() == "BIND"
+
+
 def _g6_collect_standalone_verdict_lines(text: str) -> list[ParsedVerdict]:
     """Merits lines, gate-6 blocks, and whole-line ``VERDICT:`` — no prose-token fallback."""
     collected: list[ParsedVerdict] = []
@@ -280,6 +296,8 @@ def _g6_review_failure_reason(
         return "unrecognized review verdict"
     for parsed in collected:
         if parsed.action is VerdictAction.ADVANCE:
+            continue
+        if _g6_parsed_is_archive_bind(parsed):
             continue
         if parsed.reason == "unknown_verdict":
             return "unrecognized review verdict"
