@@ -447,6 +447,44 @@ def test_non_cdp_generate_failed_link_stays_predicate_unmet():
     )
 
 
+def test_sdk_completed_without_proof_is_producer_terminal():
+    """a:38447 — pinned completed link with no proof on waited thread fail-closes."""
+    thread = {
+        "status": ThreadStatus.ACTIVE,
+        "dispatch_links": [
+            {
+                "execution_id": "883d2ea2",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": "completed",
+            }
+        ],
+    }
+    comp = {"mode": "proof_reply_from", "from_agent": "cursor-sdk"}
+    # Specimen 15469: admit-only after worker CLOSEOUT completed elsewhere.
+    turns = [_turn(1, "dispatch", subject="cursor-sdk generate admitted")]
+    assert not is_complete(thread, turns, after_turn=0, completion=comp)
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=0,
+            completion=comp,
+            execution_id="883d2ea2",
+        )
+        == "producer_terminal"
+    )
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id="883d2ea2",
+        )
+        == "producer_terminal"
+    )
+
+
 def test_classify_producer_link_unknown_without_execution_id() -> None:
     assert classify_producer_link(execution_id=None, dispatch_links=[]) == {
         "execution_id": None,

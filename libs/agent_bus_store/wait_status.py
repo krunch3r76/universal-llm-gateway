@@ -406,6 +406,26 @@ def _failed_cdp_generate_link(
     return False
 
 
+def _completed_link_without_proof(
+    dispatch_links: list[dict[str, Any]] | None,
+    execution_id: str | None,
+) -> bool:
+    """Pinned execution completed with no qualifying proof on this thread (a:38447).
+
+    Distinct from M4: SDK ``failed`` must stay ``predicate_unmet`` /
+    ``no_new_turn``. Only ``terminal_status=completed`` fail-closes wait.
+    """
+    if not execution_id or not dispatch_links:
+        return False
+    for link in dispatch_links:
+        if (
+            link.get("execution_id") == execution_id
+            and link.get("terminal_status") == "completed"
+        ):
+            return True
+    return False
+
+
 def derive_status(
     thread_row: dict[str, Any],
     turns: list[dict[str, Any]],
@@ -424,6 +444,9 @@ def derive_status(
     ``predicate_unmet`` — predicate unmet but at least one later turn exists
     (turn_count already advanced; e.g. ``status:admitted`` while waiting for
     ``status:done``). Never derived from ``read_at``.
+    ``producer_terminal`` — pinned producer ended without a qualifying proof
+    reply: failed ``cdp-generate``, or any pipeline ``completed`` on the link
+    while this thread still has no proof (a:38447).
     """
     if is_complete(thread_row, turns, after_turn=after_turn, completion=completion):
         return "complete"
@@ -431,7 +454,10 @@ def derive_status(
     links = dispatch_links if dispatch_links is not None else thread_row.get(
         "dispatch_links"
     )
-    if mode == "proof_reply_from" and _failed_cdp_generate_link(links, execution_id):
+    if mode == "proof_reply_from" and (
+        _failed_cdp_generate_link(links, execution_id)
+        or _completed_link_without_proof(links, execution_id)
+    ):
         return "producer_terminal"
     if _any_turn_after(turns, after_turn=after_turn):
         return "predicate_unmet"
