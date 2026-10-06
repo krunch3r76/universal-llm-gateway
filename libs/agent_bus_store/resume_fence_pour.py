@@ -146,6 +146,7 @@ def assemble_resume_fence_in_txn(
             "head_sha": resolve_code_version(),
         },
         "mission": mission,
+        "skills_to_use": mission.get("skills_to_use") or [],
         "fence_carriage": {
             "fence_id": fence_id,
             "transcript_id": transcript_id,
@@ -208,11 +209,13 @@ def assemble_resume_fence_in_txn(
     bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
     mission_bytes = len(json.dumps(mission, ensure_ascii=False))
     readable = bundle["read_set"]["readable"]
+    skills_to_use = bundle["skills_to_use"]
     poured_payload: dict[str, Any] = {
         "bundle_bytes": bundle_bytes,
         "mission_bytes": mission_bytes,
         "card_inlined": False,
         "bundle_version": _BUNDLE_VERSION,
+        "skills_to_use_count": len(skills_to_use),
         "readable_counts": {
             "bus_threads": len(readable["bus_threads"]),
             "cortex_uris": len(readable["cortex_uris"]),

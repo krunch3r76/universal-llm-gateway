@@ -18,6 +18,7 @@ def test_render_priority_card_has_required_headings(root):
     body = render_priority_card(root)
     assert body is not None
     for heading in (
+        "## Skills",
         "## Stance",
         "## Why this house",
         "## Objective",
@@ -28,6 +29,7 @@ def test_render_priority_card_has_required_headings(root):
         "## House",
     ):
         assert heading in body
+    assert "`ulg-for-llms`" in body
     assert f"document:{root}-continuity" in body
 
 

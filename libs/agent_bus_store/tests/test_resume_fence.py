@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
+from agent_bus_store.db.connection import connect
 from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
 from agent_bus_store.resume_fence_store import fold_fence
 
@@ -28,6 +29,10 @@ Window: transcript_id=d556c84f-a1b2-c3d4-e5f6-7890abcdef12 turns@cp=120
 """
 
 _CARD = """
+## Skills
+- `outbound-voice-spec`
+- `prose-discipline`
+
 ## Sidecars
 cortex://notes/system/threads/10223-opportunities.md
 
@@ -110,6 +115,17 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     assert bundle["mission"]["fence_id"] == bundle["fence"]["fence_id"]
     assert bundle["mission"]["lifecycle"]["clone_mode"] in {"A", "B"}
     assert "handoff" in bundle["mission"]
+    assert bundle["skills_to_use"] == [
+        {
+            "slug": "outbound-voice-spec",
+            "use_line": "Use the `outbound-voice-spec` skill",
+        },
+        {
+            "slug": "prose-discipline",
+            "use_line": "Use the `prose-discipline` skill",
+        },
+    ]
+    assert bundle["mission"]["skills_to_use"] == bundle["skills_to_use"]
     assert "body" not in bundle["card"]
     assert bundle["card"]["read_via"]["path"] == bundle["card"]["uri"]
     assert "pools_row" not in bundle
@@ -139,6 +155,18 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
         r.get("tool") == "GetDynamicTools"
         for r in bundle["read_set"]["readable"]["mcp_allow"]
     )
+    with connect() as conn:
+        poured_row = conn.execute(
+            """
+            SELECT payload_json FROM resume_fence_events
+            WHERE fence_id = ? AND event = 'poured'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (bundle["fence"]["fence_id"],),
+        ).fetchone()
+    assert poured_row is not None
+    poured_payload = json.loads(str(poured_row["payload_json"]))
+    assert poured_payload["skills_to_use_count"] == 2
     folded = fold_fence(bundle["fence"]["fence_id"])
     assert folded is not None
     assert folded.state == "released"
