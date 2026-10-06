@@ -37,6 +37,11 @@ async def _harvest_html(html: str, *, args: dict | None = None) -> dict:
             await browser.close()
 
 
+_COUNT_CARD_STAMP_JS = """
+() => document.querySelectorAll('[data-cdp-artifact-card]').length
+"""
+
+
 async def _harvest_cowork_url(html: str, *, args: dict) -> dict:
     wrapped = f"<!doctype html><html><body>{html}</body></html>"
     async with async_playwright() as pw:
@@ -199,3 +204,84 @@ async def test_anchored_induction_turn_outside_window() -> None:
     assert state.get("n") == 1
     assert "Answer to our sealed" in state.get("body", "")
     assert "induction acknowledgement" not in state.get("body", "")
+
+
+# Bound (d): selector-visit order disagrees with document order; body must follow page order.
+_SELECTOR_VS_DOC_ORDER_HTML = f"""
+<!doctype html><html><body>
+<div data-testid="human-turn"><h2>You said:</h2> {_MARKER}</div>
+<div class="font-claude-response">Earlier font-claude match with sufficient text length.</div>
+<div data-testid="assistant-message">Later testid assistant reply wins by document order.</div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_page_order_beats_selector_visit_order() -> None:
+    """Removing .sort(documentOrder) on assistant window leaves font-claude last (wrong body)."""
+    state = await _harvest_html(_SELECTOR_VS_DOC_ORDER_HTML, args=_anchor_args())
+    assert state.get("anchor_found") is True
+    assert state.get("n") == 2
+    assert "Later testid assistant reply wins" in state.get("body", "")
+    assert "Earlier font-claude match" not in state.get("body", "")
+
+
+# Bound (e): stale stamp on pre-anchor turn; clearing loop must strip DOM attrs outside window.
+_STALE_CARD_OUTSIDE_WINDOW_HTML = f"""
+<!doctype html><html><body>
+<div data-testid="assistant-message" id="pre-anchor-turn">
+  <span id="stale-stamp" data-cdp-artifact-card="legacy">Stale card on old turn</span>
+  Pre-anchor assistant body long enough to match selectors outside window.
+</div>
+<div data-testid="human-turn"><h2>You said:</h2> {_MARKER}</div>
+<div data-testid="assistant-message">
+  <button>Window reply document title here Document · MD</button>
+  Current anchored window reply with enough characters for harvest.
+</div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_clears_card_stamp_dom_outside_harvest_window() -> None:
+    """Removing the clearing loop leaves data-cdp-artifact-card on #stale-stamp."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_STALE_CARD_OUTSIDE_WINDOW_HTML)
+            state = await page.evaluate(HARVEST_JS, _anchor_args())
+            stale_still_stamped = await page.evaluate(
+                "() => document.getElementById('stale-stamp')"
+                "?.hasAttribute('data-cdp-artifact-card') ?? false"
+            )
+            outside_window_stamps = await page.evaluate(_COUNT_CARD_STAMP_JS)
+        finally:
+            await browser.close()
+    assert state.get("anchor_found") is True
+    assert stale_still_stamped is False
+    assert outside_window_stamps == 1
+
+
+_COWORK_ARTICLE_WRAPPER_HTML = f"""
+<article role="article" data-testid="assistant-conversation-wrap">
+  <header>Thread chrome — not a You said block</header>
+  <div data-testid="human-turn"><h2>You said:</h2> {_MARKER}</div>
+  <div data-testid="assistant-turn">Cowork inner reply body long enough for harvest.</div>
+</article>
+"""
+
+
+@pytest.mark.asyncio
+async def test_anchored_cowork_rejects_article_wrapper_as_assistant_turn() -> None:
+    """Restoring filter order that keeps user-wrapping articles yields wrapper body / wrong n."""
+    state = await _harvest_cowork_url(
+        _COWORK_ARTICLE_WRAPPER_HTML, args=_anchor_args()
+    )
+    assert state.get("cowork_cse") is True
+    assert state.get("anchor_found") is True
+    assert state.get("n") == 1
+    body = state.get("body", "")
+    assert "Cowork inner reply body" in body
+    assert _MARKER not in body
+    assert "You said:" not in body
