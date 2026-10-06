@@ -15,6 +15,9 @@ UpdateGoal only if a leftover native goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
 (``continuity(op=checkpoint, surface=cursor, transcript_id=...)``).
+``fire_ide_hop`` runs that same header scan once after ``wait_for_landed`` before
+returning ``phase=not_landed`` (a:38356 / a:38362); do not re-fire glass-launch
+when the hop header is already on a successor transcript.
 
 Substrate: libs/bus_watch/ide_hop.py (message + SSH keystroke on the GUI host),
 libs/bus_watch/ide_hop_retire.py (departing-tab teardown), and
@@ -230,6 +233,7 @@ def main() -> int:
         remote_repo=args.remote_repo,
         dry_run=args.dry_run,
         no_raise=args.no_raise,
+        departing_transcript_id=args.transcript_id,
     )
     out["arm_labels"] = labels
     out["seal"] = seal
