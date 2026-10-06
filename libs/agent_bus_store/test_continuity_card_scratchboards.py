@@ -1,8 +1,9 @@
-"""Tests for continuity-card scratchboard section parsing."""
+"""Tests for continuity-card scratchboard and Skills section parsing."""
 
 from __future__ import annotations
 
 from agent_bus_store.continuity_card_scratchboards import (
+    extract_card_skills,
     extract_scratchboard_uris,
     missing_required_headings,
     scratchboard_uri,
@@ -12,6 +13,10 @@ from agent_bus_store.continuity_card_scratchboards import (
 pytestmark = __import__("pytest").mark.offline
 
 _CARD = """
+## Skills
+- `outbound-voice-spec`
+- `prose-discipline`
+
 ## Stance
 Use the `ulg-for-llms` skill.
 
@@ -58,3 +63,66 @@ def test_validate_continuity_card_ok() -> None:
 def test_missing_required_headings_flags_scratchboards() -> None:
     missing = missing_required_headings(_CARD.replace("## Scratchboards", ""))
     assert "## Scratchboards" in missing
+
+
+def test_missing_required_headings_flags_skills() -> None:
+    missing = missing_required_headings(_CARD.replace("## Skills", ""))
+    assert "## Skills" in missing
+    assert "missing_heading:skills" in validate_continuity_card(
+        _CARD.replace("## Skills\n- `outbound-voice-spec`\n- `prose-discipline`\n", "")
+    )
+
+
+def test_extract_card_skills_bullets_and_order() -> None:
+    assert extract_card_skills(_CARD) == [
+        "outbound-voice-spec",
+        "prose-discipline",
+    ]
+
+
+def test_extract_card_skills_table_slash_and_paren() -> None:
+    card = """
+## Skills
+| slug | note |
+| --- | --- |
+| /outbound-voice-spec (fallback .claude/skills/…) | Fonzi |
+| prose-discipline (local) | SMS |
+| not a slug row because spaces everywhere | skip |
+
+## Stance
+x
+"""
+    assert extract_card_skills(card) == [
+        "outbound-voice-spec",
+        "prose-discipline",
+    ]
+
+
+def test_extract_card_skills_malformed_rows_skipped() -> None:
+    card = """
+## Skills
+-
+| |
+| --- |
+| !!! |
+- `good-skill`
+
+## House
+x
+"""
+    assert extract_card_skills(card) == ["good-skill"]
+
+
+def test_extract_card_skills_missing_section() -> None:
+    assert extract_card_skills("## Stance\nUse ulg-for-llms\n") == []
+
+
+def test_extract_card_skills_empty_section() -> None:
+    card = "## Skills\n\n## Stance\nx\n"
+    assert extract_card_skills(card) == []
+    assert "empty_skills_section" in validate_continuity_card(
+        _CARD.replace(
+            "## Skills\n- `outbound-voice-spec`\n- `prose-discipline`\n",
+            "## Skills\n",
+        )
+    )

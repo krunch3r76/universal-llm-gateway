@@ -9,6 +9,7 @@ from cortex_store.transcript_cp_anchors import window_anchors_from_text
 from cortex_store.transcript_projection_membership import extract_cp_object
 
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, extract_authored_residue
+from .continuity_card_scratchboards import extract_card_skills
 from .db.connection import connect
 from .recipients import MEMO_NOTE_SUBJECT_RE
 
@@ -152,7 +153,17 @@ def build_mission_block(
         if row:
             supersedes_num = int(row["turn_number"])
 
+    skills = extract_card_skills(card_text or "")
+    skills_to_use = [
+        {"slug": slug, "use_line": f"Use the `{slug}` skill"} for slug in skills
+    ]
+
     steps: list[str] = ["continuity(op=resume) was first hop"]
+    if skills_to_use:
+        steps.append(
+            "Use each mission.skills_to_use slug now — before orientation "
+            "and before any act the slug governs"
+        )
     if thread_slug:
         steps.append(f"rename_chat → `{thread_id} {thread_slug}`")
     if tip_sketchboard:
@@ -184,6 +195,7 @@ def build_mission_block(
         "summary_row_as_of_turn": envelope.get("summary_row_as_of_turn"),
         "resume_open": _extract_resume_open(card_text),
         "pools_row": pools_row,
+        "skills_to_use": skills_to_use,
         "fence_id": fence_id,
         "residue": residue or None,
         "sketchboard_uri": sketchboard,
@@ -225,6 +237,7 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
         "sketchboard_uri": mission.get("sketchboard_uri"),
         "clone_mode": (mission.get("lifecycle") or {}).get("clone_mode"),
         "todo": handoff.get("todo"),
+        "skills_to_use": mission.get("skills_to_use") or [],
     }
 
 

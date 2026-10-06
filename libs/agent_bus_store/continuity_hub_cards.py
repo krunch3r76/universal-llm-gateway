@@ -14,6 +14,9 @@ _CARD_HEADER = """\
 
 Catch-up file for **agent-bus:{root}** (`{slug}`).
 
+## Skills
+- `ulg-for-llms`
+
 ## Stance
 Use the `ulg-for-llms` skill.
 

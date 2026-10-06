@@ -28,6 +28,10 @@ Window: transcript_id=d556c84f-a1b2-c3d4-e5f6-7890abcdef12 turns@cp=120
 """
 
 _CARD = """
+## Skills
+- `outbound-voice-spec`
+- `prose-discipline`
+
 ## Sidecars
 cortex://notes/system/threads/10223-opportunities.md
 
@@ -110,6 +114,17 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     assert bundle["mission"]["fence_id"] == bundle["fence"]["fence_id"]
     assert bundle["mission"]["lifecycle"]["clone_mode"] in {"A", "B"}
     assert "handoff" in bundle["mission"]
+    assert bundle["skills_to_use"] == [
+        {
+            "slug": "outbound-voice-spec",
+            "use_line": "Use the `outbound-voice-spec` skill",
+        },
+        {
+            "slug": "prose-discipline",
+            "use_line": "Use the `prose-discipline` skill",
+        },
+    ]
+    assert bundle["mission"]["skills_to_use"] == bundle["skills_to_use"]
     assert "body" not in bundle["card"]
     assert bundle["card"]["read_via"]["path"] == bundle["card"]["uri"]
     assert "pools_row" not in bundle

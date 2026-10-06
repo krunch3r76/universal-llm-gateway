@@ -13,4 +13,5 @@ Slot **order** = `operator-posture` Rule 3. This file owns **fill sources**. The
 | 7 `In one line:` | the aim again — outcome and constraint together | the hop · omit the label |
 | 7b Lane rules | card `## Rules` + named `runbook:*` bodies (walk the pointed todo; ¬ treat a status sentence on the runbook as SOT) | omit and follow a global skill omit-path |
 | 8 Receipts | one skippable line after the picture: tip CHECKPOINT turn# · `seal_status` · `summary_row_source` · `fence_id` · `head_sha` · leftover imprint assertion/edge ids. Label it a receipt. The fence id and the commit hash are this line. This is not the proof the tape was read | these facts leading the reply · chat as memory |
+| 8b Skills Used | `mission.skills_to_use` slugs actually Used before the first governed act (or `none` when the list was empty) | listing the card row without a Use · inventing slugs not in the pour |
 | 9 What I need from you | `OPERATOR_GATE` / `HOLD_MERGE` · hub deadlines | model-seat work · direction quiz |

@@ -21,6 +21,7 @@ sketchboard, card, or prior-tab prose. Paths are bundle keys.
 | Row | Source | Bind |
 |---|---|---|
 | 1 fence | `fence.fence_id` · `fence.state` · `fence.head_sha` | Read these to confirm the pour. `state=poured` (or the released terminal state) is the only "resumed" evidence. Speak `fence_id` and `head_sha` once, on the skippable receipts line after the picture. They do not open the reply |
+| 1b skills | `mission.skills_to_use` (also top-level `skills_to_use`) | Use each slug before row 2 and before any act the slug governs. Empty list is normal on legacy cards with no `## Skills` |
 | 2 tip + chain | `tip_checkpoint.turn_number` · `.body` · `.supersedes_turn` | Tip body **is** the mission — quote verbatim, never restate. Walk `supersedes_turn` back; a lower-numbered CP is superseded, not context |
 | 3 highlight | `mission.highlight` | Quote as-is — the tip's own extract, not a seat summary |
 | 4 summary_row | `mission.summary_row` · `resume_envelope.summary_row_source` · `.summary_row_as_of_turn` | Settled · live · next. `as_of_turn < tip.turn_number ⇒ label stale`; tip wins |

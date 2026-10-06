@@ -204,5 +204,66 @@ def test_mission_marker_preview_is_subset(bus_db) -> None:
     preview = mission_marker_preview(mission)
     assert preview["highlight"] == "hi"
     assert preview["clone_mode"] == "B"
+    assert preview["skills_to_use"] == []
     assert "handoff" not in preview
     assert "residue" not in preview
+
+
+_SKILLS_CARD = """
+## Skills
+- `outbound-voice-spec`
+- `prose-discipline`
+
+## Stance
+Use the `ulg-for-llms` skill.
+"""
+
+
+def test_mission_skills_to_use_from_card_and_step_order(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=_SKILLS_CARD,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-skills",
+        thread_slug="continuity",
+    )
+    assert mission["skills_to_use"] == [
+        {
+            "slug": "outbound-voice-spec",
+            "use_line": "Use the `outbound-voice-spec` skill",
+        },
+        {
+            "slug": "prose-discipline",
+            "use_line": "Use the `prose-discipline` skill",
+        },
+    ]
+    steps = mission["handoff"]["steps"]
+    assert steps[0] == "continuity(op=resume) was first hop"
+    assert steps[1] == (
+        "Use each mission.skills_to_use slug now — before orientation "
+        "and before any act the slug governs"
+    )
+    assert "rename_chat → `10223 continuity`" in steps
+    preview = mission_marker_preview(mission)
+    assert preview["skills_to_use"] == mission["skills_to_use"]
+
+
+def test_mission_no_skills_section_empty_list_no_step(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text="## Stance\nUse the `ulg-for-llms` skill.\n",
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-noskills",
+    )
+    assert mission["skills_to_use"] == []
+    assert not any("skills_to_use" in step for step in mission["handoff"]["steps"])
