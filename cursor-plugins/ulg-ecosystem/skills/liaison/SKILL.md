@@ -131,7 +131,7 @@ Binds. Later prose that conflicts with them loses.
    **in-session watcher**: **LOAD AND EXECUTE** `runbook:bus-consult-watcher` (all legs 1–3 — arm, wake,
    relay — before turn end; start-only / skipped tail / hold-turn = mis-arm). That watcher relays one
    consult reply or closeout. It is not a feed of the conductor's intermediate turns (§ Seat stays 5).
-   cursor-sdk closeout: **exactly one** of `--dispatch-id` or `--execution-id` (script exits if both; prefer
+   cursor-sdk closeout: prefer `--dispatch-id` (both ids from admit OK — script prefers
    `--dispatch-id`). CDP consult: `--execution-id` from admit. CDP producers: `cdp.generate.proof` carries
    `archive_uri`; on `delivery_failed`
    harvest the archive, not the bus.

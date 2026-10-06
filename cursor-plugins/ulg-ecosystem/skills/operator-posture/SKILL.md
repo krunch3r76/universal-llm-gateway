@@ -41,7 +41,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Three-leg contract (atomic — ¬ claim “watcher armed” until legs 1–2 complete):**
 
-   Watcher: Use `runbook:bus-consult-watcher` (arm with --execution-id from the admit; tail; relay) — never restate here.
+   Watcher: Use `runbook:bus-consult-watcher` (cursor-sdk → `--dispatch-id`; CDP/bus-consult → `--execution-id`; tail; relay) — never restate here.
 
    Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on liaison. **Liaison CDP failure:** stronger-model gate refused or failed / empty FAILED ⇒ escalate at once (`cdp_fail_route` `nested-grok` or `operator` on the scoreboard). Do not wait and do not retry the CDP pool (`conductor` skill).
 

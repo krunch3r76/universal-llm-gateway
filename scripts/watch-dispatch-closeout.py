@@ -14,8 +14,9 @@ Usage:
     scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
   scripts/watch-supervise.sh tail --label '74874-close'   # exits on complete; notify on closeout turn=
   scripts/watch-dispatch-closeout-tmux.sh --latest --label 'my arc'
-  scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
+    scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
   scripts/watch-dispatch-closeout.py --thread 9916 --execution-id 78b387c6-73e7-43f5-bd34-f05f413d3b45
+  # both from a team_dispatch admit is OK — --dispatch-id wins
   scripts/watch-dispatch-closeout.py --latest
 """
 
@@ -344,7 +345,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--execution-id",
-        help="team_dispatch execution_id (alias; matches frontier.sdk.worker.* events)",
+        help=(
+            "team_dispatch execution_id (alias when --dispatch-id absent; "
+            "ignored when both are set — prefer --dispatch-id)"
+        ),
     )
     parser.add_argument(
         "--after-turn",
@@ -409,8 +413,12 @@ def main() -> int:
     thread_id = str(args.thread or "").strip()
     dispatch_id = str(args.dispatch_id or "").strip()
     execution_id = str(args.execution_id or "").strip()
+    # Admit payloads return both ids; XOR-exit was a footgun (15266 / 10534).
     if dispatch_id and execution_id:
-        raise SystemExit("pass only one of --dispatch-id or --execution-id")
+        print(
+            "note: both --dispatch-id and --execution-id set; preferring --dispatch-id",
+            flush=True,
+        )
     watch_id = dispatch_id or execution_id
     if args.latest or not thread_id or not watch_id:
         latest_thread, latest_dispatch = _resolve_latest_dispatch()
