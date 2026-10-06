@@ -6,7 +6,11 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-from ..recipients import recipient_in_clause, sender_auto_mark_clause
+from ..recipients import (
+    is_same_seat_memo_note,
+    recipient_in_clause,
+    sender_auto_mark_clause,
+)
 from .connection import connect, now, write_connect
 from .threads import _next_auto_id
 
@@ -17,9 +21,7 @@ class SlugExists(Exception):  # noqa: N818
     def __init__(self, slug: str, existing_thread_id: str) -> None:
         self.slug = slug
         self.existing_thread_id = existing_thread_id
-        super().__init__(
-            f"Slug {slug!r} already exists on thread {existing_thread_id}"
-        )
+        super().__init__(f"Slug {slug!r} already exists on thread {existing_thread_id}")
 
 
 class UnreadTurnsExist(Exception):  # noqa: N818
@@ -296,7 +298,9 @@ def insert_turn(
     # Lazy: the trigger reads back through this module (get_turns).
     from ..continuity_consolidate_trigger import maybe_enqueue_continuity_consolidate
 
-    maybe_enqueue_continuity_consolidate(thread_id=thread, turn_number=turn_number, subject=subject)
+    maybe_enqueue_continuity_consolidate(
+        thread_id=thread, turn_number=turn_number, subject=subject
+    )
     return turn_id, ts, turn_number
 
 
@@ -378,9 +382,7 @@ def get_turns(
                 for row in rows:
                     if row["read_at"] is None:
                         row["read_at"] = ts
-                close_candidates = {
-                    r["thread"] for r in rows if r["id"] in unread_ids
-                }
+                close_candidates = {r["thread"] for r in rows if r["id"] in unread_ids}
 
         if compact:
             for row in rows:
@@ -455,7 +457,9 @@ def get_unread_thread_toc(
 
         rows = [
             dict(row)
-            for row in conn.execute(select_sql, [*inbox_params, *inbox_params]).fetchall()
+            for row in conn.execute(
+                select_sql, [*inbox_params, *inbox_params]
+            ).fetchall()
         ]
 
         if not all_threads and active_since is not None:
@@ -525,16 +529,36 @@ def mark_sender_unread_in_thread(
 
     Excludes broadcast ``all`` (global read_at clobber). Does not mark the
     outgoing turn — caller passes through_turn below the new turn number.
+    Spares same-seat MEMO/NOTE (shared ``MEMO_NOTE_SUBJECT_RE`` with
+    house_unread) so hop CHECKPOINT ``mark_read`` cannot hide unpaid
+    successor work (a:38363).
     """
     mark_clause, mark_params = sender_auto_mark_clause(from_agent)
     ts = now()
     with write_connect() as conn:
-        cur = conn.execute(
-            f"UPDATE turns SET read_at = ? "
+        candidates = conn.execute(
+            f"SELECT id, from_agent, to_agent, subject FROM turns "
             f"WHERE thread = ? AND {mark_clause} "
             f"AND turn_number <= ? AND read_at IS NULL "
             f"AND status != 'superseded'",
-            [ts, thread, *mark_params, through_turn],
+            [thread, *mark_params, through_turn],
+        ).fetchall()
+        to_mark = [
+            int(row["id"])
+            for row in candidates
+            if not is_same_seat_memo_note(
+                seat=from_agent,
+                from_agent=str(row["from_agent"] or ""),
+                to_agent=str(row["to_agent"] or ""),
+                subject=row["subject"],
+            )
+        ]
+        if not to_mark:
+            return 0
+        placeholders = ",".join("?" * len(to_mark))
+        cur = conn.execute(
+            f"UPDATE turns SET read_at = ? WHERE id IN ({placeholders})",
+            [ts, *to_mark],
         )
         marked = max(cur.rowcount, 0)
     if marked:
