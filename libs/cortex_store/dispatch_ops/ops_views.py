@@ -60,7 +60,18 @@ def _load_document(conn, document_id: str) -> dict[str, Any] | None:
     return dict(rows[0]) if rows else None
 
 
-def _infer_root_id_from_derived_from(conn, document_id: str) -> str | None:
+class AmbiguousDerivedFrom:
+    """Two or more active derived_from edges; not the same as a missing root."""
+
+    __slots__ = ("candidates",)
+
+    def __init__(self, candidates: list[str]) -> None:
+        self.candidates = candidates
+
+
+def _infer_root_id_from_derived_from(
+    conn, document_id: str
+) -> str | AmbiguousDerivedFrom | None:
     rows = query(
         conn,
         """
@@ -68,13 +79,16 @@ def _infer_root_id_from_derived_from(conn, document_id: str) -> str | None:
         WHERE from_entity = ?
           AND type = 'derived_from'
           AND active = 1
+        ORDER BY to_entity
         """,
         (document_id,),
     )
-    if len(rows) != 1:
+    targets = [str(row["to_entity"]) for row in rows if row.get("to_entity")]
+    if len(targets) > 1:
+        return AmbiguousDerivedFrom(targets)
+    if len(targets) != 1:
         return None
-    target = rows[0].get("to_entity")
-    return str(target) if target else None
+    return targets[0]
 
 
 def _section_stamps(
@@ -263,7 +277,15 @@ def _op_view_render(
                     return _err(exc.code, exc.message)
 
             if not root_id and mode in ("refresh", "full"):
-                root_id = _infer_root_id_from_derived_from(conn, document_id)
+                inferred = _infer_root_id_from_derived_from(conn, document_id)
+                if isinstance(inferred, AmbiguousDerivedFrom):
+                    return _err(
+                        "view_root_required",
+                        f"multiple active derived_from edges for {document_id!r}",
+                        reason="ambiguous_derived_from",
+                        candidates=inferred.candidates,
+                    )
+                root_id = inferred
             if mode in ("refresh", "full") and profile in _ROOT_REQUIRED_PROFILES and not root_id:
                 return _err(
                     "view_root_required",

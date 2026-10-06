@@ -348,6 +348,7 @@ def _run_parity_pair(
     seed_fn: Any,
     assert_post_differs_from_pre: bool = False,
     assert_written_contains: str | None = None,
+    assert_refusal_noop: bool = False,
 ) -> None:
     _freeze_view_snapshot_as_of(monkeypatch)
     bind_db = tmp_path / "dispatch.db"
@@ -377,6 +378,9 @@ def _run_parity_pair(
         pre_doc = next(r for r in pre["entities"] if r.get("id") == document_id)
         post_doc = next(r for r in post["entities"] if r.get("id") == document_id)
         assert post_doc != pre_doc, (pre_doc, post_doc)
+    if assert_refusal_noop:
+        assert post == pre, (pre, post)
+        assert dispatch_ev == []
 
     client, _, files_t = _isolated_client(
         migrated_db_template, tmp_path, monkeypatch, suffix="typed"
@@ -393,6 +397,9 @@ def _run_parity_pair(
     )
     typed_body = _normalize_view_body(typed_raw)
     assert typed_body == dispatch_body, (dispatch_body, typed_body, typed_status)
+    if assert_refusal_noop:
+        assert post_t == pre_t, (pre_t, post_t)
+        assert _events_snapshot(typed_events) == []
     assert post_t["files"] == post["files"]
     assert post_t["relationships"] == post["relationships"]
     assert post_t["entities"] == post["entities"]
@@ -558,6 +565,7 @@ def test_view_render_bodiless_post_refresh_requires_root_inference(
         document_id=_DOC_ID,
         root_id=_ROOT_ID,
         seed_fn=seed,
+        assert_refusal_noop=True,
         dispatch_call=dispatch_call,
         typed_call=typed_call,
     )
@@ -634,6 +642,7 @@ def test_view_render_full_without_root_id_requires_root_inference(
         document_id=_DOC_ID,
         root_id=_ROOT_ID,
         seed_fn=seed,
+        assert_refusal_noop=True,
         dispatch_call=dispatch_call,
         typed_call=typed_call,
     )
