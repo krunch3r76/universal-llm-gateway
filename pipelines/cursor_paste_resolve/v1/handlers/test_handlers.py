@@ -27,6 +27,7 @@ from ._message import (
 )
 from .densify import CursorPasteDensifyHandler
 from .densify_wait import (
+    WAIT_CLIENT_TIMEOUT,
     WAIT_SNAPSHOT_KEYS,
     wait_sdk_closeout,
     wait_snapshot_fixture,
@@ -595,3 +596,91 @@ async def test_wait_sdk_closeout_producer_terminal_stops() -> None:
     assert out["ok"] is False
     assert out["failure_class"] == "producer_terminal"
     assert bus.paths == ["/threads/99/wait"]
+
+
+def test_wait_client_timeout_exceeds_wait_slice() -> None:
+    # Wrong ordering / client vs wait= mismatch: httpx 30s vs wait=55 fail-closes.
+    assert WAIT_CLIENT_TIMEOUT > 55.0
+
+
+class _TransportThenCompleteBus(_WaitBus):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._raises_left = 1
+
+    async def get(
+        self,
+        path: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _Resp:
+        if path.endswith("/wait") and self._raises_left:
+            self._raises_left -= 1
+            self.paths.append(path)
+            raise TimeoutError("")
+        return await super().get(path, params, headers)
+
+
+class _AlwaysTransportBus:
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+
+    async def get(
+        self,
+        path: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _Resp:
+        self.paths.append(path)
+        raise TimeoutError("")
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_retries_transport_after_admit() -> None:
+    splice = f"{SPLICE_START}\nsurfaces: live\n{SPLICE_END}"
+    bus = _TransportThenCompleteBus(
+        wait_snapshot_fixture(
+            qualifying_reply_turn=2, complete=True, status="complete"
+        ),
+        {"turn_number": 2, "from": "cursor-sdk", "body": splice},
+    )
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=0,
+        execution_id="exec-admitted",
+    )
+    assert out["ok"] is True
+    assert out["splice"] == "surfaces: live"
+    assert bus.paths.count("/threads/99/wait") == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_transport_fail_closed_before_admit() -> None:
+    bus = _AlwaysTransportBus()
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=0,
+        execution_id="",
+    )
+    assert out["ok"] is False
+    assert out["failure_class"] == "wait_transport"
+    assert bus.paths == ["/threads/99/wait"]
+
+
+@pytest.mark.asyncio
+async def test_wait_sdk_closeout_transport_exhausted_after_admit() -> None:
+    bus = _AlwaysTransportBus()
+    out = await wait_sdk_closeout(
+        bus,
+        "99",
+        headers={"Authorization": "Bearer x"},
+        after_turn=0,
+        execution_id="exec-admitted",
+    )
+    assert out["ok"] is False
+    assert out["failure_class"] == "wait_transport"
+    assert len(bus.paths) == 24

@@ -23,7 +23,7 @@ from ._message import (
     densify_sdk_model,
     parse_compose_options,
 )
-from .densify_wait import latest_turn_number, wait_sdk_closeout
+from .densify_wait import WAIT_CLIENT_TIMEOUT, latest_turn_number, wait_sdk_closeout
 from .launch import agent_bus_headers, cursor_sdk_refuse_payload, post_json
 
 _REQUEST_TIMEOUT = 30.0
@@ -145,7 +145,7 @@ async def default_densify_hop(
             "error": payload["error"],
         }
     async with make_async_client(
-        DEFAULT_AGENT_BUS_URL, timeout=_REQUEST_TIMEOUT
+        DEFAULT_AGENT_BUS_URL, timeout=WAIT_CLIENT_TIMEOUT
     ) as bus:
         slug = f"cursor-paste-densify-{kind}-{assertion_id}"
         mint = await post_json(
