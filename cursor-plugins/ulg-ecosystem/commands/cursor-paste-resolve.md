@@ -1,6 +1,8 @@
 Open a Cursor agent to resolve one friction or assertion.
 
-Thin wrapper (specimen: `cursor-plugins/ulg-ecosystem/commands/path-sim.md`). Procedure lives in `runbook:cursor-paste-resolve`. Compose is `pipeline_id=cursor-paste-resolve`. Work-prompt SOT stays `cortex://notes/system/prompts/work-item-implementer-friction.md` — ¬ a skill. ¬ restate maestro paragraph bodies or bridge exports here.
+Thin wrapper (specimen: `cursor-plugins/ulg-ecosystem/commands/path-sim.md`). Procedure lives in `runbook:cursor-paste-resolve`. **Compose and launch are `pipeline_id=cursor-paste-resolve`** — not in-seat file assembly. Work-prompt SOT stays `cortex://notes/system/prompts/work-item-implementer-friction.md` — ¬ an `agent_skill`. ¬ restate maestro paragraph bodies or bridge exports here.
+
+**Glass/IDE keyboard paste is still supported**, via the pipeline. Default `launch_target` is the window (`glass` when omitted). The launch step shells `scripts/cursor-bridge-launch.py open-tab` (same chord as `runbook:cursor-bridge-paste`). Densify `opus`/`fable` is a prior cursor-sdk investigate hop — it is not Glass launch and does not steal paste.
 
 ## Invocation
 
@@ -39,10 +41,11 @@ Specimens: `glass orion-node opus cursor_sdk` (or “Glass … Opus on cursor_sd
 ## Steps
 
 1. Parse kind, id, window, host, notify, densify, tab; apply attachment for `launch_target`. An unresolved Glass/IDE host is a stop.
-2. `cite(runbook:cursor-paste-resolve)` — execute that runbook. Prefer `pipeline(op=run, pipeline_id=cursor-paste-resolve, options={kind, assertion_id, window, host, notify, launch_target, densify, tab_model})` for compose (and launch when `launch_target` is set). The pipeline does not call this command.
-3. If the pipeline stopped after the message file, cite `runbook:cursor-bridge-paste` for Glass/IDE.
-4. Report kind, id, window, host, maestro, `launch_target`, densify, tab_model, host source (explicit vs context), plus paste or admit fields from the runbook.
+2. `cite(runbook:cursor-paste-resolve)` — execute that runbook. Fire `pipeline(pipeline_id=cursor-paste-resolve, options={kind, assertion_id, window, host, notify, launch_target, densify, tab_model})` for compose **and** launch. Use `op=async` when densify or `launch_target=cursor_sdk` will outlive this turn. The pipeline does not call this command.
+3. **Watcher (binding).** Every cursor-sdk hop this command causes — densify, and `launch_target=cursor_sdk` write — needs `runbook:bus-consult-watcher` on that `--dispatch-id` before this turn exits (legs 1–2). Pipeline wait / `op=run` is not the watcher. Densify admit ≠ Glass paste.
+4. If the pipeline returned compose-only (`launch_target` empty), cite `runbook:cursor-bridge-paste` for Glass/IDE. When `launch_target=glass|ide`, the pipeline already ran the keystroke paste.
+5. Report kind, id, window, host, maestro, `launch_target`, densify, tab_model, host source (explicit vs context), paste or admit fields from the runbook, and each cursor_sdk `dispatch_id` + watcher label.
 
 ## Skills
 
-cite `runbook:cursor-paste-resolve` · cite `runbook:cursor-bridge-paste` when Glass/IDE paste is the second step
+This command has **no** `agent_skill`. cite `runbook:cursor-paste-resolve` · cite `runbook:bus-consult-watcher` on every cursor_sdk hop · cite `runbook:cursor-bridge-paste` only when Glass/IDE paste is a leftover compose-only second step
