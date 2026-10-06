@@ -70,8 +70,8 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         auto-approve reads. For post/reply/update/close/delete_* use agent_bus.
 
         Operations (identical semantics to the matching agent_bus ops):
-          thread_get   (thread, include_resume?)  — single ThreadDetail (spine=root threads include resume_envelope only when include_resume=true)
-          threads      (status?, tags?, lifecycle_state?, last?, has_unread?, query?)
+          thread_get   (thread, include_resume?, to?)  — single ThreadDetail (spine=root threads include resume_envelope only when include_resume=true). unread_count is unstamped non-superseded turns, not a recipient inbox / CSE consumption / send lag; pass to= for fetch_unread parity.
+          threads      (status?, tags?, lifecycle_state?, last?, has_unread?, query?, to?)
           job_state    (thread|thread_id?, job_id?, include_terminal?)  — Auto job-state route removed; found=false, reason=auto_job_state_removed. Code work is team_dispatch.
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list

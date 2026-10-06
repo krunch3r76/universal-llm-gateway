@@ -175,7 +175,7 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         {
             "id": t.get("id"),
             "slug": t.get("slug") or t.get("id"),
-            "unread": int(t.get("unread_count") or 0),
+            "unstamped": int(t.get("unread_count") or 0),
         }
         for t in query_agent_bus_threads()
         if (t.get("unread_count") or 0) > 0
@@ -244,7 +244,7 @@ def _derive_alerts(state: dict[str, Any], conn: Any) -> list[dict[str, str]]:
                 {
                     "sev": "warn",
                     "msg": f"Divergence — {slug} is open on BOTH a todo and an "
-                    f"unread bus thread",
+                    f"unstamped bus thread",
                     "tag": "two surfaces",
                 }
             )
@@ -268,7 +268,7 @@ def _derive_alerts(state: dict[str, Any], conn: Any) -> list[dict[str, str]]:
         alerts.append(
             {
                 "sev": "info",
-                "msg": f"{len(state['bus'])} unread bus threads across seats — "
+                "msg": f"{len(state['bus'])} unstamped bus threads across seats — "
                 f"coordination backlog",
                 "tag": "bus",
             }

@@ -331,7 +331,9 @@ async def hydrate_agent(
         "continuity": asyncio.create_task(
             _cortex_get(f"/boot-continuity?{continuity_qs}"),
         ),
-        "threads": asyncio.create_task(_bus_get("/threads?status=active")),
+        "threads": asyncio.create_task(
+            _bus_get(f"/threads?{urlencode({'status': 'active', 'to': normalized_agent})}")
+        ),
         "unread_turns": asyncio.create_task(_bus_get(f"/turns?{unread_qs}")),
         "todos": asyncio.create_task(_cortex_get(f"/boot-todos?{todo_qs}")),
         "agent_meta": asyncio.create_task(_fetch_agent_meta(normalized_agent)),
@@ -405,7 +407,11 @@ async def hydrate_agent(
             agent_meta = replace(agent_meta, capability_tier="inline-only")
 
     unread_threads = [
-        t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0
+        t
+        for t in threads
+        if isinstance(t, dict)
+        and t.get("unread_count", 0) > 0
+        and (t.get("unread_basis") or {}).get("recipient")
     ]
 
     if effective_model is not None:

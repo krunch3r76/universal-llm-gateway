@@ -221,7 +221,20 @@ async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None
     bus_fake = _Scripted(
         {
             "/threads?status=active": {
-                "threads": [{"id": 1, "slug": "session-close", "unread_count": 2}]
+                "threads": [
+                    {
+                        "id": 1,
+                        "slug": "session-close",
+                        "unread_count": 2,
+                        "unread_basis": {
+                            "basis": "read_at_null",
+                            "recipient": "gatherer",
+                            "includes_superseded": False,
+                            "as_of": "2026-04-19T12:00:00Z",
+                            "source": "agent_bus_store.threads",
+                        },
+                    }
+                ]
             },
             "/turns": {"turns": [{"id": 99, "body": "unread message"}]},
         }

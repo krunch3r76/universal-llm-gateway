@@ -41,7 +41,7 @@ def _lane(lid: str, *, unread: int = 0, terminal: bool = False) -> dict:
     }
 
 
-@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.digest_lanes._get")
 def test_child_lanes_merged_listing_excludes_status_all(mock_get: MagicMock) -> None:
     """GET /threads rejects status=all (422); merge active + has_unread instead."""
     root = "10479"
@@ -84,6 +84,10 @@ def test_child_lanes_merged_listing_excludes_status_all(mock_get: MagicMock) -> 
     assert not any(c.get("status") == "all" for c in calls)
     assert any(c.get("status") == "active" for c in calls)
     assert any(c.get("has_unread") is True for c in calls)
+    unr_calls = [c for c in calls if c.get("has_unread") is True]
+    act_calls = [c for c in calls if c.get("status") == "active"]
+    assert all("to" not in c for c in unr_calls)
+    assert all(c.get("to") == "cursor" for c in act_calls)
     nag = next(lane for lane in lanes if lane["id"] == "101")
     live = next(lane for lane in lanes if lane["id"] == "100")
     assert nag["nag"] is True
@@ -91,7 +95,7 @@ def test_child_lanes_merged_listing_excludes_status_all(mock_get: MagicMock) -> 
     assert lanes[-1]["id"] == "101"
 
 
-@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.digest_lanes._get")
 def test_lineage_lanes_includes_closed_grandchild(mock_get: MagicMock) -> None:
     """Closed OLN commission + implement grandchild are invisible to _child_lanes."""
 

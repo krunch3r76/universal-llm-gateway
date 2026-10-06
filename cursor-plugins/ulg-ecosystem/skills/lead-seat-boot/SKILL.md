@@ -48,10 +48,13 @@ Boot cards and orientation blocks NAME required-gate skills by canonical slugs �
 Trigger: session involves a todo entity tagged to a project.
 
 ```python
-agent_bus(tool="threads", arguments='{"project_tag":"<active-project>","status":"active"}')
+agent_bus(tool="threads", arguments='{"project_tag":"<active-project>","status":"active","to":"<active-seat>"}')
 ```
 
-`unread_count>0 ∧ (last_turn_to includes active seat ∨ topic intersects task) ∧ turn_age<4h ⇒ fetch/read before first infra-touching call`.
+Bare `unread_count` without `to=` is unstamped non-superseded turns, not inbox
+or CSE/chat consumption. Gate on the recipient-scoped value:
+
+`threads(to=<seat>).unread_count>0 ∧ (last_turn_to includes active seat ∨ topic intersects task) ∧ turn_age<4h ⇒ fetch/read before first infra-touching call`.
 
 Threads >24h old with no topic intersection may be deferred.
 

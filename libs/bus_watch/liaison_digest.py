@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
-
-import httpx
 
 from bus_watch.digest_budget import (
     GEAR_PRESETS,
@@ -33,6 +30,14 @@ from bus_watch.digest_budget import (
     health_probe,
     seat_budget,
 )
+from bus_watch.digest_lanes import (  # noqa: F401
+    _child_lanes,
+    _lane_row,
+    _lineage_lanes,
+    _merge_observe_lanes,
+    _unread_toc,
+)
+from bus_watch.digest_unread import DIGEST_UNREAD_TO, root_unread_key
 from bus_watch.events import emit_checkpoint_observed
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
 from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
@@ -43,7 +48,7 @@ from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.now_row_bind import ticker_owns_bind
-from bus_watch.quiet_reason import stamp_quiet_reason, usable_holder_id
+from bus_watch.quiet_reason import usable_holder_id
 from bus_watch.roster import fold_roster
 from bus_watch.spawn_pending import (
     build_attention_lanes,
@@ -58,64 +63,12 @@ _STARGATE_HEALTH = os.environ.get(
 )
 _GIW_HEALTH = os.environ.get("LIAISON_GIW_HEALTH", "http://127.0.0.1:8091/health")
 _WATCH_DIR = WATCH_DIR
-_TERMINAL_RE = re.compile(
-    r"CLOSEOUT|status:done|status:failed|status:needs-attended|SCORE_RESURFACE|"
-    r"stall-pop|PARKED|FAILED|CHECKPOINT|BRIDGE_ACK|Dispatch orphaned|holder_lost",
-    re.I,
-)
-_NAG_RE = re.compile(r"^branch-debt\b", re.I)
-_NAG_SENDERS = frozenset({"git-integration-worker"})
-# Per-tick fixed overhead the seat spends reading the digest and deciding.
 TICK_OVERHEAD_TOKENS = 3000
-_MAX_LANES = 25
-_MAX_LINEAGE = 40
 _SUBJECT_CAP = 120
-_WORKER_RE = re.compile(r"Worker thread `(\d+)`")
 _health = health_probe
 _fingerprint = digest_fingerprint
 # Module alias so hermetic tests can patch the tab lookup (it reads ~/.cursor).
 _measure_ide_tab = measure_ide_tab
-
-
-def _contract_from_thread(t: dict[str, Any]) -> str:
-    raw = t.get("contract")
-    if raw:
-        return str(raw).strip().lower()
-    for tag in t.get("tags") or []:
-        token = str(tag)
-        if token.startswith("contract:"):
-            return token.split(":", 1)[1].strip().lower()
-    return ""
-
-
-def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
-    subject = str(t.get("last_subject") or "")[:_SUBJECT_CAP]
-    row: dict[str, Any] = {
-        "id": str(t.get("id")),
-        "slug": t.get("slug"),
-        "status": t.get("status"),
-        "lifecycle": t.get("bus_lifecycle_state"),
-        "lane_role": t.get("lane_role"),
-        "turns": t.get("turn_count"),
-        "unread": t.get("unread_count"),
-        "last_from": t.get("last_turn_from"),
-        "last_subject": subject,
-        "contract": _contract_from_thread(t),
-        "tags": [str(tag) for tag in (t.get("tags") or [])],
-        "terminal": bool(_TERMINAL_RE.search(subject)),
-        "nag": bool(_NAG_RE.search(subject))
-        and t.get("last_turn_from") in _NAG_SENDERS,
-        "updated_at": t.get("updated_at"),
-    }
-    # A bare 8-hex subject prefix is not copied. The holder id is a dispatch
-    # id or a full execution id when the thread actually carries one.
-    execution_id = usable_holder_id(t.get("execution_id"))
-    dispatch_id = usable_holder_id(t.get("dispatch_id"))
-    if execution_id:
-        row["execution_id"] = execution_id
-    if dispatch_id:
-        row["dispatch_id"] = dispatch_id
-    return row
 
 
 def apply_projection_holder_ids(
@@ -149,118 +102,6 @@ def apply_projection_holder_ids(
             lane["execution_id"] = execution_id
 
 
-def _linked_worker_ids(client: httpx.Client, root: str) -> set[str]:
-    """Worker threads the root's admit turns point at (siblings, not children)."""
-    turns = _get(client, "/turns", thread=root, last=40) or {}
-    ids: set[str] = set()
-    for turn in turns.get("turns") or []:
-        for m in _WORKER_RE.finditer(str(turn.get("body") or "")):
-            ids.add(m.group(1))
-    return ids
-
-
-def _child_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
-    """Children, grandchildren, and admit-linked workers of ``root``; bounded."""
-    # fmt: off
-    act, unr = _get(client, "/threads", status="active", limit=400) or {}, _get(client, "/threads", has_unread=True, limit=100) or {}
-    rows = list({str(t["id"]): t for s in (act, unr) for t in (s.get("threads") or [])}.values())
-    # fmt: on
-    by_id = {str(t.get("id")): t for t in rows}
-    by_parent: dict[str, list[dict[str, Any]]] = {}
-    for t in rows:
-        parent = t.get("parent_thread")
-        if parent:
-            by_parent.setdefault(str(parent), []).append(t)
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    frontier = [root]
-    while frontier and len(out) < _MAX_LANES:
-        nxt: list[str] = []
-        for parent in frontier:
-            for t in by_parent.get(parent, []):
-                tid = str(t.get("id"))
-                if tid in seen:
-                    continue
-                seen.add(tid)
-                out.append(_lane_row(t))
-                nxt.append(tid)
-        frontier = nxt
-    for tid in _linked_worker_ids(client, root) - seen:
-        row = by_id.get(tid) or _get(client, f"/threads/{tid}")
-        if row and "_error" not in row:
-            seen.add(tid)
-            out.append(
-                {**_lane_row(row), "lane_role": row.get("lane_role") or "linked_worker"}
-            )
-    for lane in out:
-        stamp_quiet_reason(client, lane)
-    out.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
-    out.sort(key=lambda r: bool(r.get("nag")))
-    return out[:_MAX_LANES]
-
-
-def _lineage_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
-    """Closed-inclusive descendants via ``GET /threads/{id}/lineage``.
-
-    ``_child_lanes`` lists ``status=active`` + unread only — a closed
-    sub_mission (11693) and its implement grandchild (11697) vanish from
-    that set, so the closeout journal never sees the O→L→N task itself.
-    """
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    frontier = [root]
-    while frontier and len(out) < _MAX_LINEAGE:
-        nxt: list[str] = []
-        for parent in frontier:
-            lin = _get(client, f"/threads/{parent}/lineage") or {}
-            for child in lin.get("children") or []:
-                if not isinstance(child, dict):
-                    continue
-                tid = str(child.get("thread_id") or "")
-                if not tid or tid in seen or tid == root:
-                    continue
-                seen.add(tid)
-                row = _get(client, f"/threads/{tid}")
-                if row and "_error" not in row:
-                    out.append(_lane_row(row))
-                nxt.append(tid)
-        frontier = nxt
-    return out
-
-
-def _merge_observe_lanes(
-    live: list[dict[str, Any]], lineage: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    seen = {str(row.get("id")) for row in live if row.get("id")}
-    merged = list(live)
-    for row in lineage:
-        tid = str(row.get("id") or "")
-        if tid and tid not in seen:
-            seen.add(tid)
-            merged.append(row)
-    return merged
-
-
-def _unread_toc(client: httpx.Client, lane_ids: set[str]) -> list[dict[str, Any]]:
-    toc = _get(client, "/turns/unread-toc", to="cursor", limit=100) or {}
-    if "_error" in toc:
-        return [{"_error": toc["_error"]}]
-    rows = toc.get("threads") or toc.get("items") or toc.get("toc") or []
-    out = []
-    for row in rows:
-        tid = str(row.get("thread") or row.get("thread_id") or row.get("id") or "")
-        if tid in lane_ids:
-            out.append(
-                {
-                    "thread": tid,
-                    "unread": row.get("unread_count") or row.get("unread"),
-                    "last_subject": str(row.get("last_subject") or "")[:_SUBJECT_CAP],
-                    "last_activity_at": row.get("last_activity_at"),
-                }
-            )
-    return out
-
-
 def is_life_root(root: dict[str, Any]) -> bool:
     tags = root.get("tags")
     if isinstance(tags, str):
@@ -273,7 +114,7 @@ def build_digest(
 ) -> dict[str, Any]:
     """Assemble one digest; mutates ``state`` counters (ticks, est_tokens)."""
     with _bus() as client:
-        root = _get(client, f"/threads/{root_id}") or {}
+        root = _get(client, f"/threads/{root_id}", to=DIGEST_UNREAD_TO) or {}
         recent_turns, tip_checkpoint_turn, unread_turns = digest_root_surface(
             client, _get, root_id, root
         )
@@ -335,7 +176,7 @@ def build_digest(
             "id": root_id,
             "slug": root.get("slug"),
             "turns": root.get("turn_count"),
-            "unread": root.get("unread_count"),
+            root_unread_key(root): root.get("unread_count"),
             "last_subject": str(root.get("last_subject") or "")[:_SUBJECT_CAP],
             "recent_turns": recent_turns,
             "unread_turns": unread_turns,
