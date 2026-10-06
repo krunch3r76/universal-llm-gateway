@@ -24,10 +24,31 @@ from ...turns_models import (
     ThreadListResponse,
     ThreadStatus,
     ThreadSummaryResponse,
+    UnreadBasis,
 )
 from . import router
 
 _RESUME_ENVELOPE_TIMEOUT_S = 10.0
+
+
+_UNREAD_COUNT_DESC = (
+    "Unstamped (read_at null) non-superseded turns. Not a recipient inbox, "
+    "not CSE/chat consumption, and not send-latency or correspondent lag. "
+    "Pass to= for a recipient-scoped count that matches fetch_unread."
+)
+
+
+def _unread_basis(row: dict[str, Any]) -> UnreadBasis | None:
+    raw = row.get("unread_basis")
+    if not isinstance(raw, dict):
+        return None
+    return UnreadBasis(
+        basis=str(raw["basis"]),
+        recipient=raw.get("recipient"),
+        includes_superseded=bool(raw["includes_superseded"]),
+        as_of=datetime.fromisoformat(str(raw["as_of"]).replace("Z", "+00:00")),
+        source=str(raw["source"]),
+    )
 
 
 def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
@@ -39,6 +60,7 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
         summary=row["summary"],
         turn_count=row["turn_count"],
         unread_count=row["unread_count"],
+        unread_basis=_unread_basis(row),
         last_subject=row["last_subject"],
         last_turn_from=row["last_turn_from"],
         last_turn_to=row["last_turn_to"],
@@ -65,9 +87,9 @@ async def list_threads_route(
     has_unread: bool | None = Query(
         None,
         description=(
-            "When true, only return threads with at least one unread turn. "
-            "When false, only return threads with zero unread turns. Omit "
-            "for no unread filtering (default)."
+            "When true, only return threads with unread_count > 0. "
+            "When false, only return threads with unread_count == 0. "
+            "Omit for no unread filtering (default). " + _UNREAD_COUNT_DESC
         ),
     ),
     limit: int | None = Query(
@@ -86,6 +108,14 @@ async def list_threads_route(
         description=(
             "Case-insensitive substring match over slug, summary, and "
             "last_subject. Clamped to 200 characters server-side."
+        ),
+    ),
+    to: str | None = Query(
+        None,
+        description=(
+            "Recipient seat. When set, unread_count and has_unread use the "
+            "same recipient_in_clause rule as fetch_unread (include_team "
+            "except kaywan). " + _UNREAD_COUNT_DESC
         ),
     ),
 ) -> ThreadListResponse:
@@ -110,6 +140,7 @@ async def list_threads_route(
         has_unread=has_unread,
         limit=limit,
         query=query,
+        to=to,
     )
     return ThreadListResponse(threads=[_thread_detail(r) for r in rows])
 
@@ -128,10 +159,17 @@ async def get_thread_route(
             "resume_envelope (last-session verbal tape pour). Work threads omit it."
         ),
     ),
+    to: str | None = Query(
+        None,
+        description=(
+            "Recipient seat. When set, unread_count uses the same "
+            "recipient_in_clause rule as fetch_unread. " + _UNREAD_COUNT_DESC
+        ),
+    ),
 ) -> ThreadDetail:
     """Fetch one thread by id after normalizing numeric aliases first."""
     thread_id = normalize_thread_id(thread_id)
-    row = get_thread(thread_id)
+    row = get_thread(thread_id, to=to)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -169,6 +207,7 @@ async def get_thread_summary_route(
         summary=row["summary"],
         turn_count=row["turn_count"],
         unread_count=row["unread_count"],
+        unread_basis=_unread_basis(row),
         recent_subjects=row["recent_subjects"],
         tags=row.get("tags", []) or [],
         created_at=datetime.fromisoformat(row["created_at"]),

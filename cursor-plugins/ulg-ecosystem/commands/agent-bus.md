@@ -208,7 +208,9 @@ scripts/agent-bus wait --thread 9977 --after-turn 1 --from-agent cursor-sdk --un
 
 ## Thread Closure Protocol
 
-**Invariant**: closed threads MUST have `unread_count == 0`.
+**Invariant**: closed threads MUST have `unread_count == 0` (unstamped
+non-superseded turns; not a recipient inbox). Close stamps every turn's
+`read_at`, so the count is 0 with or without `to=`.
 
 When closing a thread, `update-thread --status closed` automatically marks all
 turns as read. This keeps the closed-thread list free of stale unread noise.

@@ -1686,7 +1686,11 @@ tools:
     substrate_qualified: user-vortex__agent_bus_threads
   fol_descriptor: "∀ args ∈ ThreadsArgs: threads(args) ⟹\n  result ∈ List[ThreadSummary]\n\
     \  ∧ |result| ≤ args.last (default 50 when last is unset).\nRead-only.
-    ¬side-effects. Response includes limit_applied and truncated. See agent_skill:agent_bus.\n"
+    ¬side-effects. Response includes limit_applied and truncated. unread_count
+    is unstamped (read_at null) non-superseded turns plus unread_basis; it is
+    not a recipient inbox, not CSE/chat consumption, and not send-latency or
+    correspondent lag. Pass to= for a recipient-scoped count matching
+    fetch_unread. See agent_skill:agent-bus.\n"
   json_schema:
     type: object
     properties:
@@ -1704,6 +1708,9 @@ tools:
         type: boolean
       query:
         type: string
+      to:
+        type: string
+        description: Recipient seat. When set, unread_count matches fetch_unread(to=).
   skill_uri: agent_skill:agent_bus
   seat_visibility:
   - mcp
@@ -2749,7 +2756,10 @@ tools:
     substrate_qualified: user-vortex__agent_bus_read_threads
   fol_descriptor: '∀ args ∈ ThreadsArgs: threads(args) ⟹ result ∈ List[ThreadSummary].
 
-    Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
+    Read-only. ¬side-effects. Read-only projection of agent_bus. unread_count
+    is unstamped (read_at null) non-superseded turns plus unread_basis; it is
+    not a recipient inbox, not CSE/chat consumption, and not send-latency or
+    correspondent lag. Pass to= for fetch_unread parity. See agent_skill:agent_bus.
 
     '
   json_schema:
@@ -2769,6 +2779,9 @@ tools:
         type: boolean
       query:
         type: string
+      to:
+        type: string
+        description: Recipient seat. When set, unread_count matches fetch_unread(to=).
   skill_uri: agent_skill:agent_bus
   seat_visibility:
   - mcp

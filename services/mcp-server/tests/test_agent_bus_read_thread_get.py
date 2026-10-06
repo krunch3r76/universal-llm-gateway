@@ -49,9 +49,26 @@ def test_thread_get_happy_path() -> None:
     assert result == detail
     relay.assert_called_once()
     assert "include_resume=false" in relay.call_args[0][2]
-    assert result["tags"] == ["role:root"]
-    assert result["turn_count"] == 12
-    assert "cursor_auto_job" not in result
+
+
+def test_thread_get_forwards_to_query() -> None:
+    detail = {
+        "id": "049",
+        "slug": "root-arc",
+        "status": "active",
+        "unread_count": 2,
+        "unread_basis": {
+            "basis": "read_at_null",
+            "recipient": "web",
+            "includes_superseded": False,
+            "as_of": "2026-10-06T00:00:00Z",
+            "source": "agent_bus_store.threads",
+        },
+    }
+    with patch("tools.agent_bus.threads.relay", return_value=detail) as relay:
+        result = _thread_get_impl(thread="049", to="web")
+    assert "to=web" in relay.call_args[0][2]
+    assert result["unread_basis"]["recipient"] == "web"
 
 
 def test_thread_get_includes_live_cursor_auto_job_phase() -> None:

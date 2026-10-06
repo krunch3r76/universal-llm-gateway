@@ -23,6 +23,7 @@ def _threads_impl(
     last: int | None = None,
     has_unread: bool | None = None,
     query: str | None = None,
+    to: str | None = None,
 ) -> dict[str, Any]:
     params: list[tuple[str, str]] = []
     if status != "all":
@@ -38,6 +39,8 @@ def _threads_impl(
         params.append(("has_unread", "true" if has_unread else "false"))
     if query:
         params.append(("query", query))
+    if to:
+        params.append(("to", to))
     qs = urlencode(params)
     path = f"/threads?{qs}" if qs else "/threads"
     result = relay("agent-bus", "GET", path)
@@ -200,6 +203,7 @@ def _threads_dispatch(
     last: int | None = None,
     has_unread: bool | None = None,
     query: str | None = None,
+    to: str | None = None,
 ) -> dict[str, Any]:
     return _threads_impl(
         status=status,
@@ -208,6 +212,7 @@ def _threads_dispatch(
         last=last,
         has_unread=has_unread,
         query=query,
+        to=to,
     )
 
 
@@ -223,13 +228,20 @@ def _enrich_with_cursor_auto_job(
     return detail
 
 
-def _thread_get_impl(*, thread: str, include_resume: bool = False) -> dict[str, Any]:
+def _thread_get_impl(
+    *, thread: str, include_resume: bool = False, to: str | None = None
+) -> dict[str, Any]:
     """Fetch one thread by id — relay GET /threads/{thread} → ThreadDetail."""
     if isinstance(thread, int):
         thread = str(thread)
     if not thread:
         return {"error": "thread_get requires: thread (str)"}
-    qs = urlencode({"include_resume": "true" if include_resume else "false"})
+    params: dict[str, str] = {
+        "include_resume": "true" if include_resume else "false"
+    }
+    if to:
+        params["to"] = to
+    qs = urlencode(params)
     result = relay("agent-bus", "GET", f"/threads/{thread}?{qs}")
     if not isinstance(result, dict):
         return {"error": f"agent-bus error: unexpected response for thread {thread!r}"}
@@ -258,10 +270,13 @@ def _thread_get_dispatch(
     *,
     thread: str | int = "",
     include_resume: bool = False,
+    to: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
-    return _thread_get_impl(thread=thread, include_resume=bool(include_resume))
+    return _thread_get_impl(
+        thread=thread, include_resume=bool(include_resume), to=to
+    )
 
 
 def _job_state_dispatch(

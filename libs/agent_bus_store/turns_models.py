@@ -434,6 +434,22 @@ class UnreadThreadTocRow(BaseModel):
     lane_role: str | None = None
 
 
+class UnreadBasis(BaseModel):
+    """Scope envelope for ``unread_count`` on thread list/detail.
+
+    ``unread_count`` is how many turns still have ``read_at`` null (excluding
+    superseded). It is not a recipient inbox, not CSE/chat consumption, and
+    not send-latency or correspondent lag. ``recipient`` is set when the
+    caller passed ``to=``.
+    """
+
+    basis: str
+    recipient: str | None = None
+    includes_superseded: bool
+    as_of: datetime
+    source: str
+
+
 class UnreadThreadToc(BaseModel):
     """Recipient-scoped unread inbox digest — windowed, enriched, bounded.
 
@@ -524,6 +540,11 @@ class ThreadDetail(BaseModel):
 
     ``resume_envelope`` is populated on ``GET /threads/{id}`` when
     ``include_resume=true`` and ``spine=root``. Work lanes omit it.
+
+    ``unread_count`` is unstamped (``read_at`` null) non-superseded turns.
+    It is not a recipient inbox, not CSE/chat consumption, and not a
+    send-latency or correspondent-lag signal. Pass ``to=`` for a
+    recipient-scoped count; ``unread_basis`` names the scope.
     """
 
     id: str
@@ -532,6 +553,7 @@ class ThreadDetail(BaseModel):
     summary: str | None = None
     turn_count: int
     unread_count: int
+    unread_basis: UnreadBasis | None = None
     last_subject: str | None = None
     last_turn_from: str | None = None
     last_turn_to: str | None = None
@@ -553,6 +575,7 @@ class ThreadSummaryResponse(BaseModel):
     summary: str | None = None
     turn_count: int
     unread_count: int
+    unread_basis: UnreadBasis | None = None
     recent_subjects: list[str]
     tags: list[str] = Field(default_factory=list)
     created_at: datetime

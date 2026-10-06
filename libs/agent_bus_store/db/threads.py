@@ -18,6 +18,7 @@ from ..turns_models import (
     TRIAGE_CONFIRM_TTL_SECONDS,
 )
 from .connection import connect, now, write_connect
+from .thread_unread import attach_unread_basis, unread_count_sql
 
 _QUERY_MAX_LEN = 200
 
@@ -70,15 +71,14 @@ def normalize_thread_id(raw: str) -> str:
     return raw
 
 
-def _thread_detail_sql() -> str:
-    return """\
+def _thread_detail_sql(*, recipient: str | None = None) -> tuple[str, list[str]]:
+    unread_expr, unread_params = unread_count_sql(recipient=recipient)
+    sql = f"""\
     SELECT
         t.id, t.slug, t.status, t.summary, t.created_at, t.updated_at,
         t.bus_lifecycle_state,
         COUNT(tu.id)                                        AS turn_count,
-        COALESCE(
-            SUM(CASE WHEN tu.read_at IS NULL THEN 1 ELSE 0 END), 0
-        )                                                   AS unread_count,
+        {unread_expr}                                       AS unread_count,
         (SELECT subject FROM turns
          WHERE thread = t.id ORDER BY turn_number DESC LIMIT 1) AS last_subject,
         (SELECT from_agent FROM turns
@@ -88,6 +88,7 @@ def _thread_detail_sql() -> str:
     FROM threads t
     LEFT JOIN turns tu ON tu.thread = t.id
     """
+    return sql, unread_params
 
 
 def load_dispatch_links(
@@ -283,6 +284,7 @@ def list_threads_v2(
     has_unread: bool | None = None,
     limit: int | None = None,
     query: str | None = None,
+    to: str | None = None,
 ) -> list[dict[str, Any]]:
     """List threads with optional status + lifecycle_state + AND-tag filter.
 
@@ -290,13 +292,14 @@ def list_threads_v2(
     `lifecycle_state`: exact match on bus_lifecycle_state. None = no filter.
     `has_unread`: when True, only return threads with at least one unread turn.
         When False, only return threads with zero unread turns. None = no
-        filter (default; preserves prior behaviour).
+        filter (default; preserves prior behaviour). Scoped to ``to`` when set.
     `limit`: cap result count. None = no cap. Applied after ORDER BY so the
         most recently updated threads are returned first.
     `query`: case-insensitive substring over slug, summary, and last_subject.
         Clamped to 200 chars; empty/whitespace-only is treated as no filter.
+    `to`: optional recipient; unread_count then matches fetch_unread(to=).
     """
-    base = _thread_detail_sql()
+    base, unread_params = _thread_detail_sql(recipient=to)
     params: list[Any] = []
     wheres: list[str] = []
     if status is not None:
@@ -348,6 +351,8 @@ def list_threads_v2(
         f"{base} {where_clause} GROUP BY t.id "
         f"{having_clause} ORDER BY t.updated_at DESC {limit_clause}"
     )
+    params = [*unread_params, *params]
+    as_of = now()
     with connect() as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
         tag_map = _load_thread_tags(conn, [r["id"] for r in rows])
@@ -358,14 +363,17 @@ def list_threads_v2(
 
         merge_lane_fields(rows)
         merge_cse_fields(rows)
+        attach_unread_basis(rows, recipient=to, as_of=as_of)
         return rows
 
 
-def get_thread(thread_id: str) -> dict[str, Any] | None:
+def get_thread(thread_id: str, *, to: str | None = None) -> dict[str, Any] | None:
     """Fetch thread detail without dispatch_links (used for non-lifecycle paths)."""
-    sql = f"{_thread_detail_sql()} WHERE t.id = ? GROUP BY t.id"
+    base, unread_params = _thread_detail_sql(recipient=to)
+    sql = f"{base} WHERE t.id = ? GROUP BY t.id"
+    as_of = now()
     with connect() as conn:
-        row = conn.execute(sql, (thread_id,)).fetchone()
+        row = conn.execute(sql, [*unread_params, thread_id]).fetchone()
         if row is None:
             return None
         detail = dict(row)
@@ -375,14 +383,17 @@ def get_thread(thread_id: str) -> dict[str, Any] | None:
 
         merge_lane_fields([detail])
         merge_cse_fields([detail])
+        attach_unread_basis([detail], recipient=to, as_of=as_of)
         return detail
 
 
 def get_thread_with_links(thread_id: str) -> dict[str, Any] | None:
     """Fetch thread detail including dispatch_links (for lifecycle-aware paths)."""
-    sql = f"{_thread_detail_sql()} WHERE t.id = ? GROUP BY t.id"
+    base, unread_params = _thread_detail_sql()
+    sql = f"{base} WHERE t.id = ? GROUP BY t.id"
+    as_of = now()
     with connect() as conn:
-        row = conn.execute(sql, (thread_id,)).fetchone()
+        row = conn.execute(sql, [*unread_params, thread_id]).fetchone()
         if row is None:
             return None
         detail = dict(row)
@@ -393,6 +404,7 @@ def get_thread_with_links(thread_id: str) -> dict[str, Any] | None:
 
         merge_lane_fields([detail])
         merge_cse_fields([detail])
+        attach_unread_basis([detail], recipient=None, as_of=as_of)
         return detail
 
 
