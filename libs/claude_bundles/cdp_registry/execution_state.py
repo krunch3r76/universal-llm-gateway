@@ -251,6 +251,14 @@ def set_execution_state(
         if row is None:
             return None
         current = execution_state_of(row)
+        if (
+            kind == "followup"
+            and current is not None
+            and str(current.get("execution_id") or "") != eid
+            and current["state"] in IN_FLIGHT_STATES
+            and str(current.get("kind") or "execution") != "followup"
+        ):
+            return current
         if current is not None and current["execution_id"] == eid:
             previous = str(current["state"])
             if previous == state and (reason or None) == current.get("reason"):

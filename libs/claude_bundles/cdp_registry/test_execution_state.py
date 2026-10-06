@@ -1,8 +1,34 @@
 from __future__ import annotations
 
+import contextlib
 import time
+from typing import Any
+
+import pytest
 
 from claude_bundles.cdp_registry import execution_state as es
+
+
+@pytest.fixture
+def memory_registry(monkeypatch: pytest.MonkeyPatch) -> dict[str, dict[str, Any]]:
+    active: dict[str, dict[str, Any]] = {
+        "reg-1": {"registration_id": "reg-1", "status": "active"},
+    }
+
+    @contextlib.contextmanager
+    def _ports_lock():
+        yield
+
+    monkeypatch.setattr(es._store, "ports_lock", _ports_lock)
+    monkeypatch.setattr(es._store, "load_active", lambda: dict(active))
+
+    def _write_active(data: dict[str, dict[str, Any]]) -> None:
+        active.clear()
+        active.update(data)
+
+    monkeypatch.setattr(es._store, "write_active", _write_active)
+    monkeypatch.setattr(es._store, "append_log", lambda *_a, **_k: None)
+    return active
 
 
 def test_execution_state_for_execution_id_ttl_expired() -> None:
@@ -59,6 +85,35 @@ def test_execution_in_flight_included_in_restart_gate_rows() -> None:
         }
     }
     assert es.in_flight_rows_for_restart_gate(active, now=now) == active
+
+
+def test_followup_stamp_does_not_replace_in_flight_execution(
+    memory_registry: dict[str, dict[str, Any]],
+) -> None:
+    """Followup paste must not clobber a live generate/ask execution on the same row."""
+    fixed = 1_700_000_000.0
+    es.set_execution_state(
+        "reg-1",
+        execution_id="exec-live",
+        state="streaming",
+        kind="execution",
+        now=fixed,
+    )
+    es.set_execution_state(
+        "reg-1",
+        execution_id="followup:abc123",
+        state="streaming",
+        kind="followup",
+        reason="paste:test",
+        now=fixed + 1,
+    )
+    entry = es.execution_state_of(memory_registry["reg-1"])
+    assert entry is not None
+    assert entry["execution_id"] == "exec-live"
+    assert entry["kind"] == "execution"
+    gate = es.in_flight_rows_for_restart_gate(memory_registry, now=fixed + 1)
+    assert "reg-1" in gate
+    assert gate["reg-1"]["execution_state"]["execution_id"] == "exec-live"
 
 
 def test_row_drain_protection_still_sees_followup_in_flight() -> None:
