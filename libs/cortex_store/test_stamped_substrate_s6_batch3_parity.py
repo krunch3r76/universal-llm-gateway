@@ -520,7 +520,9 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     dispatch_raw = execute_op(
         "deadline_resolve", {"deadline_id": deadline_id, **body}
     )
-    assert dispatch_raw.get("outcome_set") is False
+    assert dispatch_raw.get("step") == "transaction"
+    assert "error" in dispatch_raw
+    assert "outcome_set" not in dispatch_raw
     dispatch_body = _normalize_deadline_resolve(dispatch_raw)
     dispatch_snap = _deadline_failure_db_snapshot(
         cortex_db.cortex_conn(), deadline_id
@@ -531,9 +533,11 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     )
     _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
     resp = typed_client.post(f"/deadlines/{deadline_id}/resolve", json=body)
+    # Typed route returns the op dict; it does not map ``error`` to a status.
     assert resp.status_code == 200
     typed_raw = resp.json()
-    assert typed_raw.get("outcome_set") is False
+    assert typed_raw.get("step") == "transaction"
+    assert "error" in typed_raw
     typed_body = _normalize_deadline_resolve(typed_raw)
     assert dispatch_body == typed_body
     typed_snap = _deadline_failure_db_snapshot(
@@ -543,6 +547,33 @@ def test_deadline_resolve_dispatch_and_typed_match_on_outcome_failure(
     assert dispatch_snap[0]["attributes"].get("outcome") != "met"
     assert dispatch_snap[1] == 0
     assert typed_snap[1] == 0
+
+
+@pytest.mark.offline
+def test_deadline_resolve_twice_reuses_assertion(
+    migrated_db_template: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same note twice hits claim dedup and still sets outcome."""
+    deadline_id = "deadline:s6-batch3-dedup"
+    body = {
+        "deadline_id": deadline_id,
+        "resolution_note": "same note",
+        "resolved_at": "2026-10-05T12:00:00Z",
+        "outcome": "met",
+    }
+    bind_db = tmp_path / "cortex_dispatch_dl_dedup.db"
+    copy_template_db(migrated_db_template, bind_db)
+    bind_cortex_db(monkeypatch, bind_db)
+    _seed_deadline(cortex_db.cortex_conn(), deadline_id=deadline_id)
+    first = execute_op("deadline_resolve", body)
+    second = execute_op("deadline_resolve", body)
+    assert first.get("outcome_set") is True
+    assert second.get("outcome_set") is True
+    assert first["resolution_assertion_id"] == second["resolution_assertion_id"]
+    assert _resolved_assertion_count(cortex_db.cortex_conn(), deadline_id) == 1
+    assert _deadline_attrs(cortex_db.cortex_conn(), deadline_id).get("outcome") == "met"
 
 
 @pytest.mark.offline

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from typing import Any
 
 from fastapi import HTTPException, Response, status
 from openapi_mcp.binding import x_mcp
@@ -67,9 +68,218 @@ from ._shared import (
 )
 
 
+def _write_assertion_locked(
+    conn: Any,
+    body: AssertionCreate,
+    *,
+    claim_hash: str,
+    quality_score: float,
+    review_status: str | None,
+    contradiction_warnings_out: list[ContradictionConflict] | None,
+    entrenchment: float,
+    predicate_form_to_store: str | None,
+    normalize_result: dict | None,
+    raw_pf: object,
+    norm_dec: object,
+    cand_fp: object,
+    norm_ver: object,
+    commit: bool,
+) -> tuple[bool, int, NearDuplicateWarning | None]:
+    """Insert one assertion on *conn*. Caller holds ``WRITE_LOCK``.
+
+    ``commit=False`` leaves the transaction open so the caller can add
+    another write (deadline outcome) before committing. ``INSERT OR IGNORE``
+    plus the active-row select keeps a duplicate claim on the existing id.
+    """
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO assertions ("
+        "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
+        "  chunk_id, chunk_id_schema, derivation_type, reasoning_summary, observed_at,"
+        "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
+        "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
+        "  prospective_summary, events_json, artifact_uri, artifact_storage,"
+        "  entrenchment_score, predicate_form, "
+        "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version,"
+        "attributes"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            body.entity_id,
+            body.claim,
+            body.confidence,
+            body.confidence_score,
+            body.evidence,
+            json_encode(body.evidence_uris),
+            body.seeded_by,
+            body.chunk_id,
+            body.chunk_id_schema,
+            body.derivation_type or "inference",
+            body.reasoning_summary,
+            body.observed_at,
+            body.valid_from,
+            body.valid_until,
+            body.is_atomic,
+            body.is_decontextualized,
+            claim_hash,
+            body.resolution_status,
+            body.fulfillment_assertion_id,
+            quality_score,
+            review_status,
+            body.prospective_summary,
+            body.events_json,
+            body.artifact_uri,
+            body.artifact_storage,
+            entrenchment,
+            predicate_form_to_store,
+            raw_pf,
+            norm_dec,
+            cand_fp,
+            norm_ver,
+            json_encode(body.attributes),
+        ),
+    )
+
+    was_new = cur.rowcount > 0
+    new_id = int(cur.lastrowid or 0)
+    near_dup_warning: NearDuplicateWarning | None = None
+
+    if was_new:
+        if body.force and body.supersedes_id:
+            now_str = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            sup_cur = conn.execute(
+                "UPDATE assertions SET superseded_by = ?, valid_until = ?, "
+                "updated_at = ? WHERE id = ? AND superseded_by IS NULL",
+                (new_id, now_str, now_str, body.supersedes_id),
+            )
+            if sup_cur.rowcount == 0:
+                conn.rollback()
+                existing = query(
+                    conn,
+                    "SELECT superseded_by FROM assertions WHERE id = ?",
+                    (body.supersedes_id,),
+                )
+                if not existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=(
+                            f"supersedes_id assertion {body.supersedes_id} "
+                            f"no longer exists (deleted concurrently)"
+                        ),
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Assertion {body.supersedes_id} is already "
+                        f"superseded by {existing[0].get('superseded_by')}; "
+                        f"call POST /assertions/supersede with force=true "
+                        f"to override an existing supersedence chain"
+                    ),
+                )
+
+        if contradiction_warnings_out:
+            c2_notes = "; ".join(
+                f"Semantic contradiction: #{c.assertion_id} "
+                f"(sim={c.similarity:.2f}, "
+                f"source={c.retrieval_source or 'cosine'})"
+                for c in contradiction_warnings_out
+            )
+            conn.execute(
+                "UPDATE assertions SET review_notes = ? WHERE id = ?",
+                (c2_notes, new_id),
+            )
+
+        match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
+        if match:
+            record_near_duplicate(conn, new_id, match.existing_id, match.score)
+            near_dup_warning = NearDuplicateWarning(
+                existing_id=match.existing_id, score=match.score
+            )
+
+        contradiction = check_contradictions(conn, body.entity_id, body.claim)
+        if contradiction.flagged:
+            conn.execute(
+                "UPDATE assertions SET review_status = ?, "
+                "review_notes = CASE WHEN review_notes IS NOT NULL "
+                "THEN review_notes || '; ' || ? ELSE ? END "
+                "WHERE id = ?",
+                (
+                    "flagged",
+                    contradiction.review_notes,
+                    contradiction.review_notes,
+                    new_id,
+                ),
+            )
+            logger.info(
+                "Assertion %d flagged: contradiction with %s via edge #%s",
+                new_id,
+                contradiction.contradicting_entity,
+                contradiction.edge_id,
+            )
+
+        if normalize_result and normalize_result.get("requires_human_review"):
+            _flag_predicate_normalize_review(conn, new_id, normalize_result)
+
+        recompute_entity_substantiation_status(conn, body.entity_id)
+        if review_status != "staged":
+            materialize_graduated_lifecycle(conn, body.entity_id)
+    else:
+        existing_rows = query(
+            conn,
+            "SELECT id FROM assertions "
+            "WHERE entity_id = ? AND claim_hash = ? AND superseded_by IS NULL",
+            (body.entity_id, claim_hash),
+        )
+        if existing_rows:
+            new_id = int(existing_rows[0]["id"])
+
+    if commit:
+        conn.commit()
+    return was_new, new_id, near_dup_warning
+
+
+def start_new_assertion_side_effects(
+    *,
+    item_id: int,
+    claim: str,
+    entity_id: str,
+    confidence: str,
+    derivation_type: str,
+    entrenchment_score: float,
+    observed_at: str | None,
+    prospective_summary: str | None,
+    events_json: object,
+) -> None:
+    """FTS, enrichment, predicate extract, and embedding after a committed insert."""
+    threading.Thread(
+        target=reindex_assertion_fts, args=(item_id,), daemon=True
+    ).start()
+    dispatch_assertion_enrichment_background(
+        item_id, claim, entity_id, confidence
+    )
+    dispatch_predicate_extract_background(item_id, claim, entity_id)
+    _embed_assertion_background(
+        item_id,
+        {
+            "claim": claim,
+            "entity_id": entity_id,
+            "confidence": confidence,
+            "derivation_type": derivation_type,
+            "entrenchment_score": entrenchment_score,
+            "observed_at": observed_at,
+            "prospective_summary": prospective_summary,
+            "events_json": events_json,
+        },
+    )
+
+
 @router.post("", response_model=AssertionCreateResponse, openapi_extra=x_mcp("assert"))
 def create_assertion(
-    body: AssertionCreate, response: Response
+    body: AssertionCreate,
+    response: Response,
+    *,
+    conn: Any | None = None,
+    commit: bool = True,
+    hold_lock: bool = True,
+    side_effect_out: dict[str, object] | None = None,
 ) -> AssertionCreateResponse:
     """Create an assertion with quality validation and idempotent dedup.
 
@@ -210,7 +420,10 @@ def create_assertion(
 
     claim_hash = compute_claim_hash(body.entity_id, body.claim)
 
-    conn = cortex_conn()
+    owns_conn = conn is None
+    if owns_conn:
+        conn = cortex_conn()
+    assert conn is not None
     try:
         entities = query(
             conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
@@ -329,149 +542,29 @@ def create_assertion(
 
         near_dup_warning: NearDuplicateWarning | None = None
 
-        with WRITE_LOCK:
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO assertions ("
-                "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
-                "  chunk_id, chunk_id_schema, derivation_type, reasoning_summary, observed_at,"
-                "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
-                "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
-                "  prospective_summary, events_json, artifact_uri, artifact_storage,"
-                "  entrenchment_score, predicate_form, "
-                "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version,"
-                "attributes"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    body.entity_id,
-                    body.claim,
-                    body.confidence,
-                    body.confidence_score,
-                    body.evidence,
-                    json_encode(body.evidence_uris),
-                    body.seeded_by,
-                    body.chunk_id,
-                    body.chunk_id_schema,
-                    body.derivation_type or "inference",
-                    body.reasoning_summary,
-                    body.observed_at,
-                    body.valid_from,
-                    body.valid_until,
-                    body.is_atomic,
-                    body.is_decontextualized,
-                    claim_hash,
-                    body.resolution_status,
-                    body.fulfillment_assertion_id,
-                    validation.quality_score,
-                    review_status,
-                    body.prospective_summary,
-                    body.events_json,
-                    body.artifact_uri,
-                    body.artifact_storage,
-                    entrenchment,
-                    predicate_form_to_store,
-                    raw_pf,
-                    norm_dec,
-                    cand_fp,
-                    norm_ver,
-                    json_encode(body.attributes),
-                ),
+        def _locked_write() -> tuple[bool, int, NearDuplicateWarning | None]:
+            return _write_assertion_locked(
+                conn,
+                body,
+                claim_hash=claim_hash,
+                quality_score=validation.quality_score,
+                review_status=review_status,
+                contradiction_warnings_out=contradiction_warnings_out,
+                entrenchment=entrenchment,
+                predicate_form_to_store=predicate_form_to_store,
+                normalize_result=normalize_result,
+                raw_pf=raw_pf,
+                norm_dec=norm_dec,
+                cand_fp=cand_fp,
+                norm_ver=norm_ver,
+                commit=commit,
             )
 
-            was_new = cur.rowcount > 0
-            new_id = cur.lastrowid
-
-            if was_new:
-                if body.force and body.supersedes_id:
-                    now_str = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    # CAS on superseded_by IS NULL — mirrors _supersede.py
-                    # (assertion 9956 / friction 9824). If the target is
-                    # already part of a supersession chain, rowcount=0; roll
-                    # back the just-inserted replacement so we don't leave a
-                    # dangling lineage pointer with was_new=True.
-                    sup_cur = conn.execute(
-                        "UPDATE assertions SET superseded_by = ?, valid_until = ?, "
-                        "updated_at = ? WHERE id = ? AND superseded_by IS NULL",
-                        (new_id, now_str, now_str, body.supersedes_id),
-                    )
-                    if sup_cur.rowcount == 0:
-                        conn.rollback()
-                        existing = query(
-                            conn,
-                            "SELECT superseded_by FROM assertions WHERE id = ?",
-                            (body.supersedes_id,),
-                        )
-                        if not existing:
-                            raise HTTPException(
-                                status_code=status.HTTP_404_NOT_FOUND,
-                                detail=(
-                                    f"supersedes_id assertion {body.supersedes_id} "
-                                    f"no longer exists (deleted concurrently)"
-                                ),
-                            )
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail=(
-                                f"Assertion {body.supersedes_id} is already "
-                                f"superseded by {existing[0].get('superseded_by')}; "
-                                f"call POST /assertions/supersede with force=true "
-                                f"to override an existing supersedence chain"
-                            ),
-                        )
-
-                if contradiction_warnings_out:
-                    c2_notes = "; ".join(
-                        f"Semantic contradiction: #{c.assertion_id} "
-                        f"(sim={c.similarity:.2f}, "
-                        f"source={c.retrieval_source or 'cosine'})"
-                        for c in contradiction_warnings_out
-                    )
-                    conn.execute(
-                        "UPDATE assertions SET review_notes = ? WHERE id = ?",
-                        (c2_notes, new_id),
-                    )
-
-                match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
-                if match:
-                    record_near_duplicate(conn, new_id, match.existing_id, match.score)
-                    near_dup_warning = NearDuplicateWarning(
-                        existing_id=match.existing_id, score=match.score
-                    )
-
-                contradiction = check_contradictions(conn, body.entity_id, body.claim)
-                if contradiction.flagged:
-                    conn.execute(
-                        "UPDATE assertions SET review_status = ?, "
-                        "review_notes = CASE WHEN review_notes IS NOT NULL "
-                        "THEN review_notes || '; ' || ? ELSE ? END "
-                        "WHERE id = ?",
-                        (
-                            "flagged",
-                            contradiction.review_notes,
-                            contradiction.review_notes,
-                            new_id,
-                        ),
-                    )
-                    logger.info(
-                        "Assertion %d flagged: contradiction with %s via edge #%s",
-                        new_id,
-                        contradiction.contradicting_entity,
-                        contradiction.edge_id,
-                    )
-
-                # Q5.2=(c): predicate normalize flagged requires_human_review —
-                # append note alongside any existing review state.
-                if normalize_result and normalize_result.get("requires_human_review"):
-                    _flag_predicate_normalize_review(conn, new_id, normalize_result)
-
-                # Fork D write side: a new backing assertion may change the
-                # entity's derived confidence-axis status. Recompute inside the
-                # same transaction so the label tracks auditor-validatability
-                # without a hand-set entity_update (which Fork D rejects).
-                recompute_entity_substantiation_status(conn, body.entity_id)
-                if review_status != "staged":
-                    materialize_graduated_lifecycle(conn, body.entity_id)
-
-            conn.commit()
+        if hold_lock:
+            with WRITE_LOCK:
+                was_new, new_id, near_dup_warning = _locked_write()
+        else:
+            was_new, new_id, near_dup_warning = _locked_write()
 
         if was_new:
             rows = query(
@@ -487,7 +580,8 @@ def create_assertion(
                 (body.entity_id, claim_hash),
             )
     finally:
-        conn.close()
+        if owns_conn:
+            conn.close()
 
     if not rows:
         logger.error(
@@ -520,26 +614,29 @@ def create_assertion(
             matched_assertion_id=item.id,
             reason="exact_claim_hash",
         )
-    else:
-        threading.Thread(
-            target=reindex_assertion_fts, args=(item.id,), daemon=True
-        ).start()
-        dispatch_assertion_enrichment_background(
-            item.id, body.claim, body.entity_id, body.confidence
+    elif commit:
+        start_new_assertion_side_effects(
+            item_id=item.id,
+            claim=body.claim,
+            entity_id=body.entity_id,
+            confidence=body.confidence,
+            derivation_type=body.derivation_type or "inference",
+            entrenchment_score=entrenchment,
+            observed_at=body.observed_at,
+            prospective_summary=body.prospective_summary,
+            events_json=body.events_json,
         )
-        dispatch_predicate_extract_background(item.id, body.claim, body.entity_id)
-        _embed_assertion_background(
-            item.id,
-            {
-                "claim": body.claim,
-                "entity_id": body.entity_id,
-                "confidence": body.confidence,
-                "derivation_type": body.derivation_type or "inference",
-                "entrenchment_score": entrenchment,
-                "observed_at": body.observed_at,
-                "prospective_summary": body.prospective_summary,
-                "events_json": body.events_json,
-            },
+    elif side_effect_out is not None:
+        side_effect_out.update(
+            item_id=item.id,
+            claim=body.claim,
+            entity_id=body.entity_id,
+            confidence=body.confidence,
+            derivation_type=body.derivation_type or "inference",
+            entrenchment_score=entrenchment,
+            observed_at=body.observed_at,
+            prospective_summary=body.prospective_summary,
+            events_json=body.events_json,
         )
 
     predicate_form_normalize_out = None
