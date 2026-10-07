@@ -7,6 +7,7 @@ the central ``state`` module.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -183,6 +184,32 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
     return ChunksByIndexResponse(chunks=results)
 
 
+# Client catalog fetch times out at 5s. Enrichment is counts and topics;
+# scope names come from config and must still be returned when SQLite is busy.
+_ENRICHMENT_BUDGET_S = 1.0
+
+
+async def _scope_list_enrichment_bounded() -> dict[str, dict[str, object]]:
+    """Enrichment off the event loop, dropped when it exceeds the budget."""
+    index = state._property_index
+    if index is None:
+        return {}
+    try:
+        enrichment = await asyncio.wait_for(
+            asyncio.to_thread(index.scope_list_enrichment),
+            timeout=_ENRICHMENT_BUDGET_S,
+        )
+    except TimeoutError:
+        logger.warning(
+            "GET /scopes enrichment exceeded %.1fs; serving scope names only",
+            _ENRICHMENT_BUDGET_S,
+        )
+        return {}
+    if isinstance(enrichment, dict):
+        return enrichment
+    return {}
+
+
 @router.get(
     "/scopes",
     response_model=ScopesResponse,
@@ -195,9 +222,7 @@ async def get_scopes() -> ScopesResponse:
         await state._event_bus.publish_nowait(
             rag_scopes_listed(count=len(loaded_config.scopes))
         )
-    enrichment: dict[str, dict[str, object]] = {}
-    if state._property_index is not None:
-        enrichment = state._property_index.scope_list_enrichment()
+    enrichment = await _scope_list_enrichment_bounded()
     return ScopesResponse(
         scopes={
             name: ScopeInfo(

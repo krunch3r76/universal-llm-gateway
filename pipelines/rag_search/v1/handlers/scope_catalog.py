@@ -122,11 +122,11 @@ async def _ensure_cache(base_url: str) -> bool:
         now2 = time.monotonic()
         if _cache_scopes is not None and (now2 - _cache_ts) < _cache_ttl_seconds:
             return True
-        if (
-            _stale_catalog_usable(now2)
-            and (now2 - _cache_last_attempt_ts) < _refresh_backoff_seconds
-        ):
-            return True
+        if (now2 - _cache_last_attempt_ts) < _refresh_backoff_seconds:
+            # One failed refresh covers the whole burst. A usable stale
+            # catalog is served; a cold miss returns immediately so queued
+            # callers do not each wait out another /scopes timeout.
+            return _stale_catalog_usable(now2)
         _cache_last_attempt_ts = now2
         if await _refresh_cache(base_url):
             return True
