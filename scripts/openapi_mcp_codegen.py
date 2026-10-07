@@ -331,8 +331,6 @@ def main(argv: list[str] | None = None) -> int:
         elif service == "rag":
             manifest = rag_codegen.dry_run_generate(schema)
         elif service == "jobs":
-            from openapi_mcp.binding import extract_typed_routes
-
             routes = extract_typed_routes(schema)
             print(f"served_ops={len(routes)} sha256=jobs")
             return 0
