@@ -8,11 +8,16 @@ one line so a parent process can read a child's restart reconcile.
 
 from __future__ import annotations
 
+import json
 import os
+import socket
+from datetime import UTC, datetime
 from typing import Any
 
 from universal_event_bus.events.event import Event
 from universal_event_bus.events.factory import event_factory
+
+_EVENTS_SOCK = "/tmp/universal-protocol/events.sock"
 
 _SINK: list[Event] = []
 
@@ -32,18 +37,43 @@ def reset_published_events() -> None:
 
 
 def publish(event: Event) -> None:
-    """Record one advisory event locally and, when configured, on a sink file.
+    """Record one advisory event locally, on the file sink, and on Event Service.
 
     The file sink is the cross-process channel for restart reconcile: the
     child writes ``jobs.run.lost`` and the parent reads the path. A missing
-    sink is not an error. This function does not read the journal.
+    sink is not an error. Event Service ingest is a second projection on
+    ``EVENTS_INGEST_SOCK`` (default ``/tmp/universal-protocol/events.sock``).
+    A missing socket is not an error. This function does not read the journal.
     """
     _SINK.append(event)
     path = os.environ.get("JOBS_EVENT_SINK", "")
-    if not path:
+    if path:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(event.signal + "\n")
+    _emit_to_event_service(event)
+
+
+def _emit_to_event_service(event: Event) -> None:
+    """Best-effort NDJSON line to Event Service. Never raises."""
+    now = datetime.now(UTC)
+    body = {
+        "signal": event.signal,
+        "source": "jobs",
+        "role": event.role,
+        "scope": event.scope,
+        "timestamp": now.isoformat(),
+        "ts_unix_ms": int(now.timestamp() * 1000),
+        "payload": event.payload,
+    }
+    line = (json.dumps(body, default=str) + "\n").encode()
+    sock_path = os.environ.get("EVENTS_INGEST_SOCK", _EVENTS_SOCK)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2.0)
+            sock.connect(sock_path)
+            sock.sendall(line)
+    except OSError:
         return
-    with open(path, "a", encoding="utf-8") as handle:
-        handle.write(event.signal + "\n")
 
 
 @event_factory

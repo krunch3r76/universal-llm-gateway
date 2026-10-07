@@ -71,6 +71,12 @@ def fixture_specs() -> tuple[JobSpec, ...]:
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_event_service_sock(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests must not write the live Event Service socket."""
+    monkeypatch.setenv("EVENTS_INGEST_SOCK", str(tmp_path / "absent-events.sock"))
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("JOBS_TOKEN", TOKEN)

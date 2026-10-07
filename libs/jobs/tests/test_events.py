@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 
@@ -89,3 +90,59 @@ def test_signal_names_and_catalog() -> None:
         check=False,
     )
     assert check.returncode == 0, check.stdout + check.stderr
+
+
+@pytest.mark.offline
+def test_publish_fills_sink_and_file_when_socket_missing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing Event Service socket must not drop the spy or the file sink."""
+    sink = tmp_path / "events.ndjson"
+    monkeypatch.setenv("JOBS_EVENT_SINK", str(sink))
+    monkeypatch.setenv("EVENTS_INGEST_SOCK", str(tmp_path / "absent.sock"))
+    events.reset_published_events()
+    events.publish(
+        events.jobs_run_admitted(
+            run_id="run-sink",
+            job="ticker",
+            surface="code",
+            output_contract="inline",
+        )
+    )
+    assert [e.signal for e in events.published_events()] == ["jobs.run.admitted"]
+    assert sink.read_text(encoding="utf-8") == "jobs.run.admitted\n"
+
+
+@pytest.mark.offline
+def test_publish_emits_event_service_line(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Event Service emit carries source=jobs and the Event fields."""
+    sent: list[bytes] = []
+
+    class _Sock:
+        def settimeout(self, _seconds: float) -> None:
+            return None
+
+        def connect(self, _path: str) -> None:
+            return None
+
+        def sendall(self, data: bytes) -> None:
+            sent.append(data)
+
+        def __enter__(self) -> _Sock:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    monkeypatch.setenv("JOBS_EVENT_SINK", "")
+    monkeypatch.setattr(events.socket, "socket", lambda *_a, **_k: _Sock())
+    events.reset_published_events()
+    events.publish(events.jobs_run_lost(run_id="run-es", recovery="restart_reconcile"))
+    assert len(sent) == 1
+    line = json.loads(sent[0].decode())
+    assert line["signal"] == "jobs.run.lost"
+    assert line["source"] == "jobs"
+    assert line["role"] == "observation"
+    assert line["scope"] == "node"
+    assert line["payload"] == {"run_id": "run-es", "recovery": "restart_reconcile"}
+    assert [e.signal for e in events.published_events()] == ["jobs.run.lost"]
