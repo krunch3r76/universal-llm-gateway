@@ -88,6 +88,55 @@ def observer(tmp_path: Path) -> GenerateObserver:
     return GenerateObserver(dispatch_id="bb28fae31960-dd251b78", spool_dir=tmp_path)
 
 
+def test_await_reply_false_skips_fire_row_control_still_records(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    """friction a:38542: fire-and-forget CDP generates must not enter the ledger."""
+    observer.on_request(
+        _request(
+            20,
+            "team_dispatch",
+            {
+                "op": "generate",
+                "model": "cdp/opus-5.5",
+                "generation_options": {"await_reply": False},
+            },
+        )
+    )
+    observer.on_result(_result(20, _cdp_admit_payload()))
+    assert read_generate_records("bb28fae31960-dd251b78", spool_dir=tmp_path) == []
+
+    observer.on_request(
+        _request(21, "team_dispatch", {"op": "generate", "model": "cdp/opus-5.5"})
+    )
+    observer.on_result(_result(21, _cdp_admit_payload()))
+    rows = read_generate_records("bb28fae31960-dd251b78", spool_dir=tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["execution_id"] == _EXEC
+
+
+def test_await_reply_false_on_overflow_dispatch_form(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    observer.on_request(
+        _request(
+            22,
+            "dispatch",
+            {
+                "tool": "team_dispatch",
+                "arguments": json.dumps(
+                    {
+                        "op": "generate",
+                        "generation_options": {"await_reply": False},
+                    }
+                ),
+            },
+        )
+    )
+    observer.on_result(_result(22, _cdp_admit_payload(), structured=True))
+    assert read_generate_records("bb28fae31960-dd251b78", spool_dir=tmp_path) == []
+
+
 def test_records_cdp_generate_admit_from_team_dispatch(
     observer: GenerateObserver, tmp_path: Path
 ) -> None:
