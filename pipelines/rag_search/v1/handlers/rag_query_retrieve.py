@@ -609,6 +609,14 @@ class RagMultiRetrieveHandler(BaseHandler):
             has_prefix_override=has_prefix_override,
             rewrite_enabled=rewrite_enabled,
         )
+        declared_scope_source = rewrite_data.get("scope_source")
+        if (
+            isinstance(declared_scope_source, str)
+            and declared_scope_source.strip()
+            and not has_scope_override
+            and not has_prefix_override
+        ):
+            scope_source = declared_scope_source.strip()
         if has_prefix_override:
             source_prefixes = explicit_prefixes_raw
             scope = "custom"
