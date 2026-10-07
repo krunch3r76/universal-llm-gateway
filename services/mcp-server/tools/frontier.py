@@ -57,6 +57,11 @@ from ._frontier_intake import (
     validate_wrap_inputs,
 )
 from ._restart_probe import annotate_unreachable_error
+from ._team_dispatch_relay_recovery import (
+    build_response_lost_error,
+    recover_team_dispatch_after_transport_error,
+    transport_error_code,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -171,9 +176,27 @@ async def _relay(
         except httpx.RequestError as exc:
             logger.error("%s relay transport failure: %s", record_prefix, exc)
             record(f"{record_prefix}.failed", error="transport")
+            if endpoint == "/api/v1/team/dispatch":
+                recovered = await recover_team_dispatch_after_transport_error(
+                    body=body,
+                    exc=exc,
+                )
+                if recovered is not None:
+                    record(
+                        f"{record_prefix}.recovered",
+                        execution_id=recovered.get("execution_id", ""),
+                    )
+                    return recovered
+                dispatch_thread_id = str(body.get("dispatch_thread_id") or "")
+                code = transport_error_code(exc, recovered=False)
+                if code == "stargate_response_lost" and dispatch_thread_id:
+                    return build_response_lost_error(
+                        exc=exc,
+                        dispatch_thread_id=dispatch_thread_id,
+                    )
             return annotate_unreachable_error(
                 code="stargate_unreachable",
-                message=str(exc),
+                message=str(exc) or type(exc).__name__,
                 service="stargate",
             )
 
