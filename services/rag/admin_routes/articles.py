@@ -234,7 +234,7 @@ def register_article_routes(
     @router.post(
         "/article",
         response_model=ArticleUpsertResponse,
-        openapi_extra=x_mcp("upsert_article", tool="rag"),
+        openapi_extra=x_mcp("upsert_article", tool="rag", pipeline=True),
     )
     async def upsert_article(request: ArticleUpsertRequest) -> ArticleUpsertResponse:
         """Insert or update an article metadata row (merge semantics for empty fields)."""

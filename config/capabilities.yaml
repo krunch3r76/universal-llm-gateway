@@ -4,3 +4,9 @@ categories:
     implementation: satellite
     upstream: events_query
     origin_prefix: /api/v1/observability
+  jobs:
+    description: Host-bound operator jobs (bounded registry; operator-only)
+    implementation: satellite
+    upstream: jobs
+    origin_prefix: /api/v1/jobs
+    auth_env: JOBS_TOKEN

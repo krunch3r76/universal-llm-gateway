@@ -118,3 +118,17 @@ def test_operation_id_comes_from_openapi_not_seed() -> None:
     assert (
         extract_typed_routes(enriched)["assert"].operation_id == "create_assertion_post"
     )
+
+
+@pytest.mark.offline
+def test_pipeline_flag_roundtrip() -> None:
+    """The allowlist bit is x-mcp.pipeline, keyed by op rather than operationId."""
+    schema = _sample_openapi()
+    schema["paths"]["/assertions"]["post"].update(
+        x_mcp("create_run", tool="jobs", pipeline=True)
+    )
+    route = extract_typed_routes(schema)["create_run"]
+    assert route.pipeline is True
+    assert route.operation_id == "create_assertion_post"
+    with pytest.raises(ValueError, match="pipeline must be a bool"):
+        x_mcp("create_run", pipeline="yes")  # type: ignore[arg-type]

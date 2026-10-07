@@ -51,6 +51,7 @@ from ..shutdown_gate import ManageShutdownGate
 from ..sidecar_ctl import SidecarController
 from . import (
     agent_bus_service,
+    jobs_service,
     cdp_ask_remote,
     cdp_ask_service,
     cloud_proxy_service,
@@ -788,6 +789,28 @@ class ServiceController:
         """Rebuild agent-bus — host process, so rebuild = restart."""
         await self.stop_agent_bus()
         return await self.start_agent_bus()
+
+    async def start_jobs(self) -> str:
+        """Start the jobs satellite as a host subprocess."""
+        return await jobs_service.start_jobs(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def stop_jobs(self) -> str:
+        """Stop the jobs satellite gracefully."""
+        return await jobs_service.stop_jobs(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def restart_jobs(self) -> str:
+        """Restart the jobs satellite (stop then start)."""
+        await self.stop_jobs()
+        return await self.start_jobs()
+
+    async def rebuild_jobs(self, *, no_cache: bool = False) -> str:  # noqa: ARG002
+        """Rebuild jobs — host process, so rebuild = restart."""
+        await self.stop_jobs()
+        return await self.start_jobs()
 
     async def start_git_integration_worker(self) -> str:
         """Start git-integration-worker as host TCP subprocess."""

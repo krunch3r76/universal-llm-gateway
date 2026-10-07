@@ -60,6 +60,9 @@ def _schema(service: str) -> dict:
     if service == "giw":
         from services.git_integration_worker.app import create_app
         return create_app().openapi()
+    if service == "jobs":
+        from jobs.server import create_app
+        return create_app().openapi()
     raise SystemExit(f"unknown service {service!r}")
 
 def _manifest(service: str, schema: dict) -> dict:
@@ -69,6 +72,22 @@ def _manifest(service: str, schema: dict) -> dict:
         from agent_bus_store.openapi_mcp.codegen import generate_adapter_manifest
     elif service == "rag":
         from services.rag.openapi_mcp.codegen import generate_adapter_manifest
+    elif service == "jobs":
+        from openapi_mcp.binding import extract_typed_routes
+        routes = extract_typed_routes(schema)
+        return {
+            "openapi_sha256": "jobs",
+            "served_ops": {
+                op: {
+                    "method": route.method,
+                    "path": route.path,
+                    "operation_id": route.operation_id,
+                }
+                for op, route in routes.items()
+            },
+            "non_binding_path_fingerprints": {},
+            "facade_tool": "jobs",
+        }
     else:
         from services.git_integration_worker.openapi_mcp.codegen import (
             generate_adapter_manifest,
@@ -205,6 +224,23 @@ def check_services_from_commit_tree(
         lives = live_loader(services, repo)
     results: list[tuple[str, ManifestCheckResult]] = []
     for service in services:
+        if service == "jobs":
+            live = lives.get(service)
+            required = {"catalog", "spec", "create_run", "status", "log", "cancel"}
+            if live is None:
+                missing = sorted(required)
+            else:
+                missing = sorted(required - set(live.served_ops))
+            results.append(
+                (
+                    service,
+                    ManifestCheckResult(
+                        tuple(f"unbound {op}" for op in missing),
+                        (),
+                    ),
+                )
+            )
+            continue
         relpath = MANIFEST_RELPATH.get(service)
         if relpath is None:
             results.append(

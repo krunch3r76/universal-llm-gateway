@@ -503,6 +503,23 @@ class ServiceState:
             ),
         )
 
+    JOBS_PID_FILE: Path = Path.home() / ".gateway" / "jobs.pid"
+    JOBS_SOCK: Path = Path(
+        os.environ.get("JOBS_SOCK", "/tmp/universal-protocol/jobs.sock")
+    )
+
+    def check_jobs(self) -> ServiceInfo:
+        """Check the jobs satellite via its PID file and UDS health probe."""
+        return self._check_uds_service(
+            name="Jobs",
+            pid_file=self.JOBS_PID_FILE,
+            socket_path=self.JOBS_SOCK,
+            health_endpoint="/health",
+            managed_pid_predicate=lambda pid: self._pid_cmdline_contains(
+                pid, "jobs.server:app", "--uds"
+            ),
+        )
+
     def check_agent_bus(self) -> ServiceInfo:
         """Check agent-bus status via PID file + UDS health probe."""
         return self._check_uds_service(

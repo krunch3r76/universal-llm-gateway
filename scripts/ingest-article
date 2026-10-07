@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -101,6 +102,53 @@ def compute_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _download_only(
+    *,
+    pdf_url: str,
+    dest: Path,
+    filename: str,
+    force: bool,
+    arxiv: str | None,
+    title: str,
+    authors: str,
+    venue: str,
+    date: str,
+) -> int:
+    """Download one PDF and print a single JSON object on the last stdout line."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and not force:
+        byte_count = dest.stat().st_size
+    else:
+        try:
+            byte_count = download_pdf(pdf_url, dest)
+        except httpx.HTTPStatusError as exc:
+            print(f"FAILED (HTTP {exc.response.status_code})", file=sys.stderr)
+            return 1
+        except httpx.RequestError as exc:
+            print(f"FAILED ({exc})", file=sys.stderr)
+            return 1
+    payload = {
+        "source_path": str(dest),
+        "sha256": compute_hash(dest),
+        "bytes": byte_count,
+        "filename": filename,
+    }
+    if arxiv:
+        payload["arxiv_id"] = arxiv
+    if pdf_url:
+        payload["url"] = pdf_url
+    if title:
+        payload["title"] = title
+    if authors:
+        payload["authors"] = [part.strip() for part in authors.split(",") if part.strip()]
+    if venue:
+        payload["venue"] = venue
+    if date[:4].isdigit():
+        payload["year"] = int(date[:4])
+    print(json.dumps(payload))
+    return 0
+
+
 def register_article(
     *,
     stargate_url: str,
@@ -153,8 +201,12 @@ def main() -> int:
 
     parser.add_argument(
         "--subdir",
-        required=True,
-        help="Subdirectory under docs/research/ (e.g. documentation, rag-systems)",
+        help="Subdirectory under docs/research/ (required unless --download-only)",
+    )
+    parser.add_argument(
+        "--download-only",
+        action="store_true",
+        help="Download the PDF and print one JSON line; do not register or index",
     )
     parser.add_argument(
         "--filename",
@@ -194,6 +246,8 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+    if not args.download_only and not args.subdir:
+        parser.error("--subdir is required unless --download-only")
 
     if args.arxiv:
         pdf_url = f"https://arxiv.org/pdf/{args.arxiv}"
@@ -203,20 +257,34 @@ def main() -> int:
         default_filename = args.url.rsplit("/", 1)[-1] or "paper.pdf"
 
     filename = args.filename or default_filename
-    dest = RESEARCH_ROOT / args.subdir / filename
+    subdir = args.subdir or "downloads"
+    dest = RESEARCH_ROOT / subdir / filename
     source_path = str(dest)
     scope = args.scope or SUBDIRECTORY_TO_SCOPE.get(args.subdir, "all")
 
     print(f"Source:     {pdf_url}")
     print(f"Dest:       {dest}")
     print(f"Scope:      {scope}")
-    print(f"Subdir:     {args.subdir}")
+    print(f"Subdir:     {subdir}")
     if args.title:
         print(f"Title:      {args.title[:80]}")
 
     if args.dry_run:
         print("\n[dry-run] Would download, register, and optionally index.")
         return 0
+
+    if args.download_only:
+        return _download_only(
+            pdf_url=pdf_url,
+            dest=dest,
+            filename=filename,
+            force=args.force,
+            arxiv=args.arxiv,
+            title=args.title,
+            authors=args.authors,
+            venue=args.venue,
+            date=args.date,
+        )
 
     # Step 1: Download
     if dest.exists() and not args.force:

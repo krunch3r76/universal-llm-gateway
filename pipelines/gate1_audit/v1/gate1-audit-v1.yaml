@@ -1,0 +1,65 @@
+schema_version: 6
+id: gate1-audit
+version: "1.0"
+type: gate1_audit
+category: gate1_audit
+description: >
+  Post a gate-1 audit turn, wake the thread, and arm bus-reply-watch with
+  thread delivery. The watch step does not await the run.
+options:
+  timeout_seconds: 120
+steps:
+  - name: audit
+    type: http_v1
+    service: agent-bus
+    operation_id: reply
+    body:
+      thread:
+        first_present:
+          - from: options.thread
+          - literal: "191"
+      from: jobs
+      to: web-anthropic
+      subject: Gate 1 audit
+      body:
+        from: options.body
+    await: none
+  - name: wake
+    type: http_v1
+    service: agent-bus
+    operation_id: reply
+    body:
+      thread:
+        first_present:
+          - from: options.thread
+          - literal: "191"
+      from: jobs
+      to: cursor
+      subject: Gate 1 wake
+      body: wake
+      after_turn:
+        from: steps.audit.json.turn_number
+    await: none
+  - name: watch
+    type: http_v1
+    service: jobs
+    operation_id: create_run
+    path:
+      job: bus-reply-watch
+    body:
+      args:
+        thread:
+          first_present:
+            - from: options.thread
+            - literal: "191"
+        after_turn:
+          from: steps.audit.json.turn_number
+        label: gate1
+        no_producer: true
+        page: true
+      output_contract: thread
+      target_thread:
+        first_present:
+          - from: options.thread
+          - literal: "191"
+    await: none

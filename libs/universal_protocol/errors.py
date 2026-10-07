@@ -17,13 +17,14 @@ Source semantics:
 - "gateway": Gateway-level error (capacity, model routing)
 - "edge": Edge node error (federation, slot reservation)
 - "master": Master node error (proxy, orchestration)
+- "jobs": Jobs satellite error (run admission, journal, delivery)
 """
 
 from typing import Any, Literal
 
 # Source layers for error origin tracking
 type ErrorSource = Literal[
-    "rpc", "stream", "engine", "worker", "gateway", "edge", "master"
+    "rpc", "stream", "engine", "worker", "gateway", "edge", "master", "jobs"
 ]
 
 

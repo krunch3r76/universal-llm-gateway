@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_JOBS_URL, DEFAULT_RAG_URL
+
 
 @dataclass(frozen=True, slots=True)
 class ServiceDescriptor:
@@ -19,6 +21,12 @@ class ServiceDescriptor:
 
     seed_bindings: Callable[[], dict[str, tuple[str, str]]] | None = None
     """Optional migration seed: op → (METHOD, path). Empty when routes are native."""
+    base_url: str = ""
+    """Origin the http_v1 handler calls. Empty for services that are not pipeline leaves."""
+    auth_env: str | None = None
+    """Env var holding the bearer token. None means the call sends no Authorization."""
+    openapi_path: str = "/openapi.json"
+    """Path of the in-process OpenAPI document. Allowlist reads do not GET it."""
 
 
 def _load_cortex_openapi() -> dict[str, Any]:
@@ -47,6 +55,12 @@ def _load_rag_openapi() -> dict[str, Any]:
     return app.openapi()
 
 
+def _load_jobs_openapi() -> dict[str, Any]:
+    from jobs.server import create_app
+
+    return create_app().openapi()
+
+
 def _load_giw_openapi() -> dict[str, Any]:
     from services.git_integration_worker.app import create_app
 
@@ -67,12 +81,27 @@ def default_registry() -> tuple[ServiceDescriptor, ...]:
             facade_tools=frozenset({"agent_bus"}),
             load_openapi=_load_agent_bus_openapi,
             seed_bindings=None,
+            base_url=DEFAULT_AGENT_BUS_URL,
+            auth_env="AGENT_BUS_TOKEN",
+            openapi_path="/openapi.json",
         ),
         ServiceDescriptor(
             name="rag",
             facade_tools=frozenset({"rag"}),
             load_openapi=_load_rag_openapi,
             seed_bindings=None,
+            base_url=DEFAULT_RAG_URL,
+            auth_env=None,
+            openapi_path="/openapi.json",
+        ),
+        ServiceDescriptor(
+            name="jobs",
+            facade_tools=frozenset({"jobs"}),
+            load_openapi=_load_jobs_openapi,
+            seed_bindings=None,
+            base_url=DEFAULT_JOBS_URL,
+            auth_env="JOBS_TOKEN",
+            openapi_path="/api/v1/jobs/openapi.json",
         ),
         ServiceDescriptor(
             name="giw",

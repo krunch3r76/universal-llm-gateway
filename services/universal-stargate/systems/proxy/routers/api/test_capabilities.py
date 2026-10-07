@@ -28,7 +28,12 @@ class _Upstream:
     def build_request(self, **kwargs: object) -> httpx.Request:
         method = str(kwargs["method"])
         url = str(kwargs["url"])
-        return httpx.Request(method, f"http://localhost{url}")
+        headers = kwargs.get("headers") or {}
+        return httpx.Request(
+            method,
+            f"http://localhost{url}",
+            headers=headers if isinstance(headers, dict) else {},
+        )
 
     async def send(self, request: httpx.Request) -> httpx.Response:
         return self._responder(request)
@@ -234,3 +239,109 @@ def test_alias_uses_origin_listing(tmp_path, monkeypatch: pytest.MonkeyPatch) ->
         "/api/v1/capabilities/sql", content=b"{}", follow_redirects=False
     )
     assert posted.status_code == 308
+
+
+_JOBS = """
+categories:
+  jobs:
+    description: jobs
+    implementation: satellite
+    upstream: jobs
+    origin_prefix: /api/v1/jobs
+    auth_env: JOBS_TOKEN
+"""
+
+
+def test_location_prefix_rewrite(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOBS_TOKEN", "secret-token")
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer secret-token"
+        return httpx.Response(
+            202,
+            json={"href": "/api/v1/jobs/article-fetch/runs/1"},
+            headers={
+                "location": "/api/v1/jobs/article-fetch/runs/1",
+                "link": '</api/v1/jobs/article-fetch/runs/1>; rel="monitor"',
+                "content-type": "application/json",
+            },
+        )
+
+    client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    created = client.post(
+        "/api/v1/capabilities/jobs/article-fetch",
+        headers={"Authorization": "Bearer inbound"},
+        json={"args": {}},
+    )
+    assert created.status_code == 202
+    assert (
+        created.headers["location"]
+        == "/api/v1/capabilities/jobs/article-fetch/runs/1"
+    )
+    assert "/api/v1/capabilities/jobs/article-fetch/runs/1" in created.headers["link"]
+    assert created.json()["href"] == "/api/v1/capabilities/jobs/article-fetch/runs/1"
+
+
+def test_foreign_location_is_502(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOBS_TOKEN", "secret-token")
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            202,
+            content=b"{}",
+            headers={
+                "location": "https://evil.example/run",
+                "content-type": "application/json",
+            },
+        )
+
+    client, bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    created = client.post("/api/v1/capabilities/jobs/article-fetch", json={"args": {}})
+    assert created.status_code == 502
+    assert created.json()["code"] == "UPSTREAM_LOCATION_INVALID"
+    failed = [
+        event
+        for event in bus.events
+        if getattr(event, "signal", "") == "capability.relay.failed"
+    ]
+    assert any(
+        (getattr(event, "payload", {}) or {}).get("error") == "upstream_location_invalid"
+        for event in failed
+    )
+
+
+def test_auth_env_unset_is_503(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JOBS_TOKEN", raising=False)
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(request.url)
+
+    client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    missing = client.get("/api/v1/capabilities/jobs")
+    assert missing.status_code == 503
+    assert "auth_env JOBS_TOKEN not configured" in missing.json()["message"]
+
+
+def test_delete_non_satellite_is_405(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def responder(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, json={"ok": True})
+
+    client, _bus = _app(tmp_path, _GOOD, monkeypatch, responder)
+    denied = client.delete("/api/v1/capabilities/not-a-category/member")
+    assert denied.status_code == 405
+    assert denied.json()["code"] == "method_not_allowed"
+
+
+def test_nested_member_non_satellite_is_404(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def responder(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, json={"ok": True})
+
+    client, _bus = _app(tmp_path, _GOOD, monkeypatch, responder)
+    missing = client.get("/api/v1/capabilities/not-a-category/member/extra")
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "capability_not_found"

@@ -368,6 +368,22 @@ class HttpActiveWorkProbe:
         return ActiveWork(busy=bool(data.get("busy", False)), detail=data)
 
 
+class JobsBusyProbe:
+    """Defer restart while a bus-reply-watch fold is still open.
+
+    Reads ``journal.db`` through ``jobs.busy``. A missing database is idle.
+    Other job names do not hold the drain.
+    """
+
+    async def snapshot(self) -> ActiveWork:
+        from jobs.busy import open_run_rows
+
+        rows = [
+            row for row in open_run_rows() if row.get("job") == "bus-reply-watch"
+        ]
+        return ActiveWork(busy=bool(rows), detail={"open": rows})
+
+
 def _default_probes() -> dict[str, BusyProbe]:
     """Service → busy probe. Unlisted services default to NullBusyProbe."""
     from .mcp_restart_probe import build_mcp_busy_probe
@@ -388,6 +404,7 @@ def _default_probes() -> dict[str, BusyProbe]:
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
         ),
         "mcp": build_mcp_busy_probe(),
+        "jobs": JobsBusyProbe(),
     }
     cfg = cdp_ask_url_config()
     if cfg is not None:
