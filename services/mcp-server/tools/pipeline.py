@@ -25,6 +25,20 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
+def _stargate_headers() -> dict[str, str]:
+    """Copy the bound request surface onto Stargate calls.
+
+    Absent metadata sends no surface header. The jobs satellite then refuses
+    the call; this helper does not invent a surface.
+    """
+    from request_profile import current_request_metadata
+
+    surface = (current_request_metadata() or {}).get("surface")
+    if isinstance(surface, str) and surface:
+        return {"X-ULG-Surface": surface}
+    return {}
+
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
 _TIMEOUT_BUFFER = 30.0
@@ -51,7 +65,7 @@ def _fetch_pipelines_metadata() -> dict[str, Any]:
     url = "/api/v1/capabilities"
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
-            resp = client.get(url)
+            resp = client.get(url, headers=_stargate_headers())
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError:
@@ -177,7 +191,7 @@ def _pipeline_run(
         toolprogress_phase("pipeline", "stargate_post_begin", pipeline=pipeline_id)
         url = "/v1/chat/completions"
         with make_sync_client(STARGATE_URL, timeout=effective_timeout) as client:
-            resp = client.post(url, json=body)
+            resp = client.post(url, json=body, headers=_stargate_headers())
             resp.raise_for_status()
             data = resp.json()
         toolprogress_phase("pipeline", "stargate_post_done", pipeline=pipeline_id)
@@ -283,7 +297,11 @@ def _pipeline_async(
 
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
-            listed = client.get("/api/v1/capabilities", params={"id": pipeline_id})
+            listed = client.get(
+                "/api/v1/capabilities",
+                params={"id": pipeline_id},
+                headers=_stargate_headers(),
+            )
             if listed.status_code >= 400:
                 try:
                     return listed.json()
@@ -295,7 +313,7 @@ def _pipeline_async(
                         }
                     }
             url = listed.json()["url"]
-            resp = client.post(url, json=body)
+            resp = client.post(url, json=body, headers=_stargate_headers())
         if resp.status_code >= 400:
             try:
                 payload = resp.json()
@@ -338,7 +356,7 @@ def _pipeline_stats() -> dict[str, Any]:
     url = "/api/v1/executions/stats"
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
-            resp = client.get(url)
+            resp = client.get(url, headers=_stargate_headers())
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError as exc:
@@ -353,7 +371,7 @@ def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
     url = f"/api/v1/executions/{execution_id}"
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
-            resp = client.delete(url)
+            resp = client.delete(url, headers=_stargate_headers())
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError as exc:
@@ -394,7 +412,9 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     url = f"/api/v1/executions/{execution_id}"
     try:
         with make_sync_client(STARGATE_URL, timeout=http_timeout) as client:
-            resp = client.get(url, params={"wait": wait_clamped})
+            resp = client.get(
+                url, params={"wait": wait_clamped}, headers=_stargate_headers()
+            )
         if resp.status_code >= 400:
             try:
                 return resp.json()
@@ -421,7 +441,9 @@ def _pipeline_list(category: str | None = None) -> dict[str, Any]:
     params = {"category": category} if category else None
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
-            resp = client.get("/api/v1/capabilities", params=params)
+            resp = client.get(
+                "/api/v1/capabilities", params=params, headers=_stargate_headers()
+            )
         if resp.status_code >= 400:
             try:
                 return resp.json()
@@ -443,7 +465,11 @@ def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
 
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
-            resp = client.get("/api/v1/capabilities", params={"id": pipeline_id})
+            resp = client.get(
+                "/api/v1/capabilities",
+                params={"id": pipeline_id},
+                headers=_stargate_headers(),
+            )
     except httpx.ConnectError as e:
         return _validate_error(pipeline_id, f"Stargate not reachable: {e}")
     except httpx.HTTPError as e:

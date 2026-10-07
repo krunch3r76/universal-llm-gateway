@@ -236,6 +236,7 @@ async def stop_local_services(
         stop_ops.append(("cortex_api", ctl.stop_cortex_api))
     if is_agent_bus_configured():
         stop_ops.append(("agent_bus", ctl.stop_agent_bus))
+    stop_ops.append(("jobs", ctl.stop_jobs))
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
     # GIW is drain-gated — never parallel with peers (see fleet_local_drain).
@@ -285,6 +286,10 @@ def _build_start_ops(
             else ctl.start_agent_bus
         )
         start_ops.append(("agent_bus", agent_bus_op))
+    jobs_op = (
+        ctl.rebuild_jobs if rebuild_supporting_services else ctl.start_jobs
+    )
+    start_ops.append(("jobs", jobs_op))
     if not FLEET_SKIP_GIT_WORKER:
         giw_op = (
             ctl.rebuild_git_integration_worker

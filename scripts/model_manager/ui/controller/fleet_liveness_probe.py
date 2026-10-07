@@ -27,6 +27,7 @@ SERVICE_SLUGS = (
     "email_bridge",
     "git_integration_worker",
     "cdp_ask",
+    "jobs",
 )
 CONTAINER_SERVICES = {"mcp": ("mcp-server", "/app")}
 CONTAINER_MARKERS = {

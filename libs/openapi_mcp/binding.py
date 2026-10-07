@@ -28,13 +28,19 @@ _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 
 @dataclass(frozen=True, slots=True)
 class TypedRoute:
-    """One MCP-reachable operation bound to a served OpenAPI path."""
+    """One MCP-reachable operation bound to a served OpenAPI path.
+
+    ``pipeline`` is the http_v1 allowlist bit copied from ``x-mcp.pipeline``.
+    Callers key the allowlist on ``op``, while ``operation_id`` stays the
+    OpenAPI operationId and is not the allowlist key.
+    """
 
     method: Method
     path: str
     operation_id: str
     tool: str = "cortex"
     readonly: bool | None = None
+    pipeline: bool = False
 
 
 def x_mcp(
@@ -42,17 +48,24 @@ def x_mcp(
     *,
     tool: str = "cortex",
     readonly: bool | None = None,
+    pipeline: bool | None = None,
 ) -> dict[str, Any]:
     """Return the ``openapi_extra`` payload binding a route to an MCP op.
 
     Use at the route decorator so the served OpenAPI document carries the
     binding: ``@router.post("/assertions", openapi_extra=x_mcp("assert"))``.
+    ``pipeline=True`` is the http_v1 allowlist stamp. The allowlist key is
+    this ``op``, not the generated operationId.
     """
     if not op:
         raise ValueError("x_mcp() requires a non-empty op")
+    if pipeline is not None and not isinstance(pipeline, bool):
+        raise ValueError("x_mcp() pipeline must be a bool")
     payload: dict[str, Any] = {"tool": tool, "op": op}
     if readonly is not None:
         payload["readonly"] = readonly
+    if pipeline is not None:
+        payload["pipeline"] = pipeline
     return {"x-mcp": payload}
 
 
@@ -86,12 +99,16 @@ def extract_typed_routes(openapi_schema: Mapping[str, Any]) -> dict[str, TypedRo
             readonly = xm.get("readonly")
             if readonly is not None and not isinstance(readonly, bool):
                 raise ValueError(f"x-mcp.readonly must be bool on op {op!r}")
+            pipeline = xm.get("pipeline", False)
+            if not isinstance(pipeline, bool):
+                raise ValueError(f"x-mcp.pipeline must be bool on op {op!r}")
             route = TypedRoute(
                 method=method.upper(),  # type: ignore[arg-type]
                 path=path,
                 operation_id=oid,
                 tool=tool,
                 readonly=readonly,
+                pipeline=pipeline,
             )
             if op in served:
                 prior = served[op]

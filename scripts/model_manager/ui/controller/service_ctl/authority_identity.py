@@ -49,6 +49,7 @@ _HOST_PID_FILES: dict[str, Path] = {
     "cloud_proxy": GATEWAY_DIR / "cloud-proxy.pid",
     "cortex_api": GATEWAY_DIR / "cortex-api.pid",
     "agent_bus": GATEWAY_DIR / "agent-bus.pid",
+    "jobs": GATEWAY_DIR / "jobs.pid",
     "git_integration_worker": GATEWAY_DIR / "git-integration-worker.pid",
     "event_service": GATEWAY_DIR / "event-service.pid",
     "cdp_ask": GATEWAY_DIR / "cdp-ask.pid",

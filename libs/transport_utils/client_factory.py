@@ -19,6 +19,9 @@ AGENT_BUS_SOCK = os.environ.get(
 )
 DEFAULT_AGENT_BUS_URL = f"unix://{AGENT_BUS_SOCK}"
 
+JOBS_SOCK = os.environ.get("JOBS_SOCK", "/tmp/universal-protocol/jobs.sock")
+DEFAULT_JOBS_URL = f"unix://{JOBS_SOCK}"
+
 # Resolution order for Stargate URL:
 #   1. STARGATE_UNIX_SOCKET — UDS mode (edge container deployment).
 #   2. STARGATE_URL          — explicit HTTP override (containerized callers

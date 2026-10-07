@@ -27,7 +27,15 @@ from .capability_events import (
     capability_relay_failed,
     capability_vocabulary_rejected,
 )
-from .capability_vocabulary import Category, load_vocabulary, reset_vocabulary_cache
+from .capability_vocabulary import (
+    Category,
+    bearer_for,
+    load_vocabulary,
+    map_origin,
+    reset_vocabulary_cache,
+    rewrite_json_value,
+    rewrite_link_header,
+)
 from .git import _filter_request_headers, _filter_response_headers
 from .pipelines_dispatch import DispatchRequest, _error_response, admit_dispatch
 
@@ -164,6 +172,45 @@ async def _origin_listing(category: Category) -> dict[str, Any] | None:
     return body if isinstance(body, dict) else None
 
 
+def _location_invalid(category: Category, location: str) -> JSONResponse:
+    return JSONResponse(
+        {
+            "code": "UPSTREAM_LOCATION_INVALID",
+            "message": "upstream Location is outside the origin prefix",
+            "source": "master",
+            "retryable": False,
+            "data": {"category": category.name, "location": location},
+        },
+        status_code=502,
+    )
+
+
+def _method_not_allowed() -> JSONResponse:
+    return JSONResponse(
+        {
+            "code": "method_not_allowed",
+            "message": "DELETE is only relayed for satellite categories",
+            "source": "master",
+            "retryable": False,
+            "data": {},
+        },
+        status_code=405,
+    )
+
+
+def _capability_not_found(category: str, member: str) -> JSONResponse:
+    return JSONResponse(
+        {
+            "code": "capability_not_found",
+            "message": "member path is not a satellite relay",
+            "source": "master",
+            "retryable": False,
+            "data": {"category": category, "member": member},
+        },
+        status_code=404,
+    )
+
+
 async def _relay(
     request: Request,
     category: Category,
@@ -171,6 +218,25 @@ async def _relay(
 ) -> Response:
     target = f"{category.origin_prefix}/{member}" if member else category.origin_prefix
     headers = _filter_request_headers(request.headers.raw)
+    if category.auth_env:
+        headers.pop("Authorization", None)
+        headers.pop("authorization", None)
+        token = bearer_for(category.auth_env)
+        if token is None:
+            await _publish(
+                request,
+                capability_relay_failed(
+                    category=category.name,
+                    member=member,
+                    upstream=category.upstream_symbol,
+                    error="auth_env_unconfigured",
+                ),
+            )
+            return _upstream_unavailable(
+                f"auth_env {category.auth_env} not configured"
+            )
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
     body = await request.body()
     started = time.perf_counter()
     client = make_async_client(category.upstream_url(), timeout=_RELAY_TIMEOUT)
@@ -209,12 +275,61 @@ async def _relay(
         ),
     )
     media = upstream.headers.get("content-type")
+    forwarded = _filter_response_headers(upstream.headers)
+    location = forwarded.get("location") or forwarded.get("Location")
+    if (
+        200 <= upstream.status_code < 300
+        and location
+        and map_origin(location, category.origin_prefix, category.name) is None
+    ):
+        await _publish(
+            request,
+            capability_relay_failed(
+                category=category.name,
+                member=member,
+                upstream=category.upstream_symbol,
+                error="upstream_location_invalid",
+            ),
+        )
+        return _location_invalid(category, location)
+    content, forwarded = _rewrite_relay(
+        content, forwarded, media, category
+    )
     return Response(
         content=content,
         status_code=upstream.status_code,
-        headers=_filter_response_headers(upstream.headers),
+        headers=forwarded,
         media_type=media or None,
     )
+
+
+def _rewrite_relay(
+    content: bytes,
+    headers: dict[str, str],
+    media: str | None,
+    category: Category,
+) -> tuple[bytes, dict[str, str]]:
+    """Rewrite Location, Link, and JSON href or OpenAPI paths onto the relay."""
+    origin = category.origin_prefix
+    name = category.name
+    rewritten = dict(headers)
+    for key, value in list(rewritten.items()):
+        if key.lower() == "location":
+            mapped = map_origin(value, origin, name)
+            if mapped:
+                rewritten[key] = mapped
+        elif key.lower() == "link":
+            rewritten[key] = rewrite_link_header(value, origin, name)
+    if media and "json" in media.lower() and content:
+        try:
+            payload = json.loads(content)
+        except Exception:
+            return content, rewritten
+        updated = rewrite_json_value(payload, origin, name)
+        if updated == payload:
+            return content, rewritten
+        return json.dumps(updated).encode("utf-8"), rewritten
+    return content, rewritten
 
 
 def _local_list(
@@ -367,7 +482,7 @@ async def list_capabilities(
     return JSONResponse({"categories": listed, "catalog_skips": skips})
 
 
-@router.api_route("/capabilities/{first}", methods=["GET", "POST"])
+@router.api_route("/capabilities/{first}", methods=["GET", "POST", "DELETE"])
 async def capability_first(
     first: str,
     request: Request,
@@ -391,7 +506,12 @@ async def capability_first(
                     member["href"] = (
                         f"/api/v1/capabilities/{category.name}/{member['name']}"
                     )
-            return JSONResponse(body, status_code=upstream.status_code)
+            rebuilt = JSONResponse(body, status_code=upstream.status_code)
+            for key in ("location", "link"):
+                value = upstream.headers.get(key)
+                if value:
+                    rebuilt.headers[key] = value
+            return rebuilt
         return upstream
     proxy = _proxy(request)
     if _local_ready(proxy):
@@ -429,7 +549,9 @@ async def capability_first(
     )
 
 
-@router.api_route("/capabilities/{category}/{member}", methods=["GET", "POST"])
+@router.api_route(
+    "/capabilities/{category}/{member:path}", methods=["GET", "POST", "DELETE"]
+)
 async def capability_member(
     category: str,
     member: str,
@@ -446,6 +568,10 @@ async def capability_member(
     match = next((cat for cat in categories if cat.name == category), None)
     if match is not None:
         return await _relay(request, match, member)
+    if request.method == "DELETE":
+        return _method_not_allowed()
+    if "/" in member:
+        return _capability_not_found(category, member)
     proxy = _proxy(request)
     if not _local_ready(proxy):
         return _unavailable()

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .coalesce import CoalesceHandler
+from .http import HttpHandler
 from .rag_source import RagSourceHandler
 from .shell import ShellHandler
 
@@ -26,3 +27,4 @@ def register_handlers(router: DomainRouter) -> None:
     router.register_generic_handler_class("shell_v1", ShellHandler)
     router.register_generic_handler_class("rag_source_v1", RagSourceHandler)
     router.register_generic_handler_class("coalesce_v1", CoalesceHandler)
+    router.register_generic_handler_class("http_v1", HttpHandler)

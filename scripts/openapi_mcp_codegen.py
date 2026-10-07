@@ -39,13 +39,14 @@ from services.git_integration_worker.openapi_mcp import (  # noqa: E402
 from services.rag.openapi_mcp import codegen as rag_codegen  # noqa: E402
 
 _GENERATED_OPENAPI = _REPO / "config" / "mcp" / "generated" / "cortex.openapi.json"
-_SERVICE_CHOICES = ("cortex", "agent-bus", "rag", "giw", "all")
+_SERVICE_CHOICES = ("cortex", "agent-bus", "rag", "giw", "jobs", "all")
 
 _SERVICE_PREFIXES: dict[str, tuple[str, ...]] = {
     "cortex": ("libs/cortex_store/",),
     "agent-bus": ("libs/agent_bus_store/",),
     "rag": ("services/rag/",),
     "giw": ("services/git_integration_worker/",),
+    "jobs": ("libs/jobs/",),
 }
 _OPENAPI_TOUCH_MARKERS = ("/routes/", "/openapi_mcp/", "/main.py", "/server.py")
 
@@ -67,6 +68,10 @@ def _load_service_schema(service: str) -> dict[str, Any]:
         from services.git_integration_worker.app import create_app
 
         return create_app().openapi()
+    if service == "jobs":
+        from jobs.server import create_app
+
+        return create_app().openapi()
     raise ValueError(f"unknown service {service!r}")
 
 
@@ -80,6 +85,12 @@ def _check_service_detailed(service: str) -> ManifestCheckResult:
         return rag_codegen.check_generated_module_detailed(schema)
     if service == "giw":
         return giw_codegen.check_generated_module_detailed(schema)
+    if service == "jobs":
+        from jobs.openapi_mcp._route_map import unbound_dispatch_ops
+
+        unbound = unbound_dispatch_ops(schema)
+        fatals = tuple(f"unbound {op}" for op in unbound)
+        return ManifestCheckResult(fatal_messages=fatals, warning_messages=())
     raise ValueError(f"unknown service {service!r}")
 
 
@@ -174,7 +185,9 @@ def _run_check(
             check_served_binding_drift,
         )
 
-        served = check_served_binding_drift(services)
+        served = check_served_binding_drift(
+            [name for name in services if name != "jobs"]
+        )
         for msg in served.fatal_messages:
             print(f"served-binding-drift: {msg}", file=sys.stderr)
         for msg in served.warning_messages:
@@ -259,6 +272,10 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             unbound = unbound_dispatch_ops()
+        elif service == "jobs":
+            from jobs.openapi_mcp._route_map import unbound_dispatch_ops
+
+            unbound = unbound_dispatch_ops()
         else:
             from cortex_store.openapi_mcp._route_map import unbound_dispatch_ops
 
@@ -313,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
             manifest = agent_bus_codegen.dry_run_generate(schema)
         elif service == "rag":
             manifest = rag_codegen.dry_run_generate(schema)
+        elif service == "jobs":
+            routes = extract_typed_routes(schema)
+            print(f"served_ops={len(routes)} sha256=jobs")
+            return 0
         else:
             manifest = giw_codegen.dry_run_generate(schema)
         print(
@@ -322,6 +343,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.write:
+        if service == "jobs":
+            print("jobs has no generated adapter module")
+            return 0
         if service == "all":
             cortex_path = _write_service("cortex")
             agent_bus_path = _write_service("agent-bus")
@@ -350,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         if service == "all":
             return _run_check(
-                ["cortex", "agent-bus", "rag", "giw"],
+                ["cortex", "agent-bus", "rag", "giw", "jobs"],
                 include_served_binding_drift=fleet_gates,
                 from_commit_tree=from_commit_tree,
             )

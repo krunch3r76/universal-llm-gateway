@@ -89,7 +89,7 @@ def _rows_to_turns(rows: list[dict[str, Any]]) -> list[Turn]:
     "/turns",
     status_code=status.HTTP_201_CREATED,
     response_model=TurnCreated,
-    openapi_extra=x_mcp("reply", tool="agent_bus"),
+    openapi_extra=x_mcp("reply", tool="agent_bus", pipeline=True),
 )
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""

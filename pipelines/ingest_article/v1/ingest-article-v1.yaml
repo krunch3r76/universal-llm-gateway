@@ -1,0 +1,58 @@
+schema_version: 6
+id: ingest-article
+version: "1.0"
+type: ingest_article
+category: ingest_article
+description: >
+  Fetch one paper through the jobs satellite, then register the result with rag.
+  Metadata prefers caller options and falls back to the fetch result.
+options:
+  timeout_seconds: 900
+steps:
+  - name: fetch
+    type: http_v1
+    service: jobs
+    operation_id: create_run
+    path:
+      job: article-fetch
+    body:
+      args:
+        arxiv:
+          from: options.arxiv
+        url:
+          from: options.url
+        force:
+          from: options.force
+      output_contract: inline
+    await: terminal
+    stall_polls: 3
+  - name: register
+    type: http_v1
+    service: rag
+    operation_id: upsert_article
+    body:
+      source_path:
+        first_present:
+          - from: options.source_path
+          - from: steps.fetch.json.result.source_path
+      filename:
+        first_present:
+          - from: options.filename
+          - from: steps.fetch.json.result.filename
+      title:
+        first_present:
+          - from: options.title
+          - from: steps.fetch.json.result.title
+      authors:
+        first_present:
+          - from: options.authors
+          - from: steps.fetch.json.result.authors
+      content_hash:
+        first_present:
+          - from: options.content_hash
+          - from: steps.fetch.json.result.sha256
+      subdirectory:
+        first_present:
+          - from: options.subdirectory
+          - literal: downloads
+    await: none

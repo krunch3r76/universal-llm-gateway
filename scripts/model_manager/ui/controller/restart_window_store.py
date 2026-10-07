@@ -36,6 +36,7 @@ FLEET_WINDOW_SERVICES: tuple[str, ...] = (
     "agent_bus",
     "git_integration_worker",
     "email_bridge",
+    "jobs",
 )
 
 _WINDOW_DDL = """

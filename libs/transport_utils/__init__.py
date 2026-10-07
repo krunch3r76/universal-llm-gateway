@@ -10,12 +10,14 @@ from transport_utils.client_factory import (
     DEFAULT_CLOUD_PROXY_URL,
     DEFAULT_CORTEX_URL,
     DEFAULT_EMAIL_BRIDGE_URL,
+    DEFAULT_JOBS_URL,
     DEFAULT_JOURNAL_BRIDGE_URL,
     DEFAULT_RAG_URL,
     DEFAULT_STARGATE_URL,
     EMAIL_BRIDGE_SOCK,
     EVENTS_QUERY_SOCK,
     EVENTS_SUBSCRIBE_PATH,
+    JOBS_SOCK,
     MANAGE_SOCKET,
     RAG_SOCKET_PATH,
     STARGATE_UNIX_SOCKET,
@@ -25,7 +27,7 @@ from transport_utils.client_factory import (
 )
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
-CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp', 'rag', 'stargate')
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'jobs', 'mcp', 'rag', 'stargate')
 
 def resolve_rag_base_url() -> str:
     """Resolve the RAG base URL without importing YAML helpers eagerly."""
@@ -41,12 +43,14 @@ __all__ = [
     "DEFAULT_CLOUD_PROXY_URL",
     "DEFAULT_CORTEX_URL",
     "DEFAULT_EMAIL_BRIDGE_URL",
+    "DEFAULT_JOBS_URL",
     "DEFAULT_JOURNAL_BRIDGE_URL",
     "DEFAULT_RAG_URL",
     "DEFAULT_STARGATE_URL",
     "EMAIL_BRIDGE_SOCK",
     "EVENTS_QUERY_SOCK",
     "EVENTS_SUBSCRIBE_PATH",
+    "JOBS_SOCK",
     "MANAGE_SOCKET",
     "RAG_SOCKET_PATH",
     "STARGATE_UNIX_SOCKET",

@@ -29,3 +29,7 @@ categories:
     description: vocab_classify
   writing_exemplar:
     description: writing_exemplar
+  ingest_article:
+    description: ingest_article
+  gate1_audit:
+    description: gate1_audit
