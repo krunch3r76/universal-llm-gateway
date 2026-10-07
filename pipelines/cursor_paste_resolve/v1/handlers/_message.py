@@ -272,7 +272,7 @@ def compose_message(
     return "".join(parts)
 
 
-CURSOR_SDK_MODEL = "cursor/grok-4.7"
+CURSOR_SDK_MODEL = "cursor/composer-2.5"
 
 
 def work_key_for(kind: str, assertion_id: int) -> str:

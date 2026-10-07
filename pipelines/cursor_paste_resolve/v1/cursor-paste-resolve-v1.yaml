@@ -4,7 +4,7 @@
 # Investigate is a prior cursor-sdk hop when options.investigate is set.
 # Launch is the last step: Glass/IDE shells scripts/cursor-bridge-launch.py
 # open-tab (the paste chord). cursor_sdk POSTs /api/v1/team/dispatch with
-# CURSOR_SDK_MODEL (cursor/grok-4.7) unchanged.
+# CURSOR_SDK_MODEL (cursor/composer-2.5) — non-investigate SDK write default.
 #
 # Invocation:
 #   pipeline(op="run", pipeline_id="cursor-paste-resolve",
