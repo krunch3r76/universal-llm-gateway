@@ -1489,31 +1489,7 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     monkeypatch.setenv(AWAIT_REPLY_FLAG_ENV, "1")
-    _seed_running("d-close", tmp_path=tmp_path)
-    _record_generate(tmp_path, "d-close")
-    # Point steer spool at the test spool so outstanding_generates sees the fire.
     monkeypatch.setenv("ULG_STEER_SPOOL_DIR", str(_spool(tmp_path)))
-
-    order: list[str] = []
-    real_park = __import__(
-        "services.git_integration_worker.cursor_sdk_await_reply", fromlist=["x"]
-    ).maybe_await_park_at_terminal
-
-    async def _track_park(**kw: Any) -> bool:
-        order.append("park")
-        return await real_park(**kw)
-
-    real_promote = route_mod._mark_terminal_and_promote
-
-    async def _track_promote(**kw: Any) -> None:
-        order.append("promote")
-        return await real_promote(**kw)
-
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_await_reply.maybe_await_park_at_terminal",
-        _track_park,
-    )
-    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", _track_promote)
 
     async def _prep(**_kw: Any) -> CloseoutDelivery:
         return CloseoutDelivery(
@@ -1548,6 +1524,31 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
     )
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_k: None)
+
+    _seed_running("d-close", tmp_path=tmp_path)
+    _record_generate(tmp_path, "d-close")
+
+    order: list[str] = []
+    real_park = __import__(
+        "services.git_integration_worker.cursor_sdk_await_reply", fromlist=["x"]
+    ).maybe_await_park_at_terminal
+
+    async def _track_park(**kw: Any) -> bool:
+        order.append("park")
+        return await real_park(**kw)
+
+    real_promote = route_mod._mark_terminal_and_promote
+
+    async def _track_promote(**kw: Any) -> None:
+        order.append("promote")
+        return await real_promote(**kw)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.maybe_await_park_at_terminal",
+        _track_park,
+    )
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", _track_promote)
+
     from services.git_integration_worker.cursor_sdk_await_reply import (
         AwaitResumeSummary,
     )
@@ -1649,6 +1650,57 @@ async def test_deliver_sdk_closeout_park_ordering_and_exception_path(
     )
     assert "promote" in order
     assert _row("d-close-x")["status"] == "completed"
+
+    # friction a:38542 — no ledger fire rows ⇒ hook runs but does not await-park.
+    _seed_running(
+        "d-close-optout",
+        tmp_path=tmp_path,
+        thread_id="14697",
+        work_key="friction:38542-optout",
+    )
+    optout_order: list[str] = []
+
+    async def _optout_park(**kw: Any) -> bool:
+        optout_order.append("park")
+        return await real_park(**kw)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_await_reply.maybe_await_park_at_terminal",
+        _optout_park,
+    )
+    optout_bus = _bus()
+    req_optout = CursorDispatchRequest(
+        thread_id="14697",
+        model="cursor/grok-4.7",
+        dispatch_id="d-close-optout",
+        execution_id="exec-d-close-optout",
+        caller_agent="cursor",
+        message="packet",
+        handoff_contract="freeform",
+        work_key="friction:38542-optout",
+    )
+    await route_mod._deliver_sdk_closeout(
+        req=req_optout,
+        source_repo=tmp_path / "repo",
+        outcome=SdkRunOutcome(
+            body="status: complete\n",
+            status="finished",
+            duration_ms=10,
+            tool_call_count=1,
+        ),
+        degraded_reason=None,
+        bus=optout_bus,
+        reply_to="dispatch",
+        work_item_ref="friction:38542-optout",
+        controller=_controller(),
+    )
+    assert optout_order == ["park"]
+    assert _row("d-close-optout")["park_kind"] is None
+    assert _row("d-close-optout")["status"] == "completed"
+    optout_subjects = [
+        str(c.kwargs.get("subject") or "") for c in optout_bus.reply.await_args_list
+    ]
+    assert not any("AWAITING CDP REPLY" in s for s in optout_subjects)
 
 
 @pytest.mark.asyncio

@@ -186,8 +186,18 @@ def _result_payload(result: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def cdp_generate_record(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """Project a team_dispatch result onto a ledger row when it is a live CDP admit."""
+def cdp_generate_record(
+    payload: dict[str, Any],
+    *,
+    generation_options: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Project a team_dispatch result onto a ledger row when it is a live CDP admit.
+
+    When ``generation_options`` carries ``await_reply`` false, no row is written (a:38542).
+    """
+    opts = generation_options or {}
+    if isinstance(opts, dict) and opts.get("await_reply") is False:
+        return None
     execution_id = payload.get("execution_id")
     if not isinstance(execution_id, str) or not execution_id:
         return None
@@ -344,7 +354,24 @@ class GenerateObserver:
                 return
             params = message.get("params")
             if _is_generate_call(params):
-                self._pending[msg_id] = {"kind": "generate"}
+                gen_opts: dict[str, Any] = {}
+                target = _tool_call_target(params)
+                if target is not None:
+                    _, arguments = target
+                    raw = arguments.get("generation_options")
+                    if isinstance(raw, dict):
+                        gen_opts = raw
+                    elif isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, dict):
+                                gen_opts = parsed
+                        except json.JSONDecodeError:
+                            pass
+                self._pending[msg_id] = {
+                    "kind": "generate",
+                    "generation_options": gen_opts,
+                }
                 return
             receive = _receive_call(params)
             if receive is not None:
@@ -366,7 +393,9 @@ class GenerateObserver:
             if payload is None:
                 return
             if pending.get("kind") == "generate":
-                record = cdp_generate_record(payload)
+                raw_opts = pending.get("generation_options")
+                gen_opts = raw_opts if isinstance(raw_opts, dict) else {}
+                record = cdp_generate_record(payload, generation_options=gen_opts)
                 if record is not None:
                     self._append(record)
                 return
