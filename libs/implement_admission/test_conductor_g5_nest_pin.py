@@ -7,12 +7,21 @@ from pathlib import Path
 import pytest
 
 from implement_admission.conductor_g5_nest_pin import pin_g5_nest_dispatch_id
+from implement_admission.conductor_score_io import (
+    JournalRecord,
+    append_journal_record_at,
+)
 from implement_admission.conductor_score_journal import (
+    G_ROWS,
     birth_scoreboard,
     read_tip,
     render_sparse_scoreboard,
 )
-from implement_admission.conductor_witness_table import _conductor_dispatch_id
+from implement_admission.conductor_score_locus import work_item_locus
+from implement_admission.conductor_witness_table import (
+    _conductor_dispatch_id,
+    _g3_journal_written_at,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -123,3 +132,59 @@ def test_pin_idempotent_when_line_present(tmp_path: Path) -> None:
         files_root=files_root,
     )
     assert first == second == _PARENT
+
+
+def test_g3_cutoff_skips_nest_pin_all_row_stamp(tmp_path: Path) -> None:
+    """A nest-pin journal that lists every G-row is not a new G3 cutoff."""
+    files_root = tmp_path / "cortex"
+    slug = "g3-cutoff-nest-pin"
+    body = "tip\n"
+    birth_scoreboard(slug, scoreboard_body=body, files_root=files_root, rows=("G1",))
+    locus = work_item_locus(slug, files_root=files_root)
+    g3_at = "2026-10-03T06:13:01.334149+00:00"
+    pin_at = "2026-10-07T04:06:15.480904+00:00"
+    append_journal_record_at(
+        locus,
+        JournalRecord(
+            prior_tip_sha="a" * 64,
+            tip_sha="b" * 64,
+            tip_body=body,
+            seat="fold",
+            dispatch_id=None,
+            reason="witness_fold",
+            rows=("G3",),
+            delta="G3 OPEN→DONE",
+            written_at=g3_at,
+        ),
+    )
+    append_journal_record_at(
+        locus,
+        JournalRecord(
+            prior_tip_sha="b" * 64,
+            tip_sha="c" * 64,
+            tip_body=body,
+            seat="giw",
+            dispatch_id=_PARENT,
+            reason="g5 nest pin conductor dispatch_id",
+            rows=G_ROWS,
+            delta="conductor dispatch_id",
+            written_at=pin_at,
+        ),
+    )
+    assert _g3_journal_written_at(slug, files_root=files_root) == g3_at
+    later = "2026-10-07T05:00:00.000000+00:00"
+    append_journal_record_at(
+        locus,
+        JournalRecord(
+            prior_tip_sha="c" * 64,
+            tip_sha="d" * 64,
+            tip_body=body,
+            seat="cursor-sdk",
+            dispatch_id=None,
+            reason="densify S4b",
+            rows=("G3",),
+            delta="S4b item 3",
+            written_at=later,
+        ),
+    )
+    assert _g3_journal_written_at(slug, files_root=files_root) == later

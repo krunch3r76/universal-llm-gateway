@@ -314,12 +314,22 @@ def _g6_review_failure_reason(
     return None
 
 
+# The G5 nest pin journals every G-row so the dispatch id lands on the tip.
+# That stamp is not a new G3. Using it as the resurface cutoff hides a
+# SCORE_RESURFACE posted in the gap before the pin.
+_G3_CUTOFF_IGNORE_REASONS = frozenset({"g5 nest pin conductor dispatch_id"})
+
+
 def _g3_journal_written_at(slug: str, *, files_root: Path) -> str | None:
+    """Latest G3 journal time, skipping the G5 nest-pin all-row stamp."""
     for record in reversed(load_journal(slug, files_root=files_root)):
         rows = record.get("rows") or []
-        if "G3" in rows:
-            written = record.get("written_at")
-            return str(written) if written else None
+        if "G3" not in rows:
+            continue
+        if record.get("reason") in _G3_CUTOFF_IGNORE_REASONS:
+            continue
+        written = record.get("written_at")
+        return str(written) if written else None
     return None
 
 
