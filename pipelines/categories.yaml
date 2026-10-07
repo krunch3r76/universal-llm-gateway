@@ -23,6 +23,8 @@ categories:
     description: rag_extraction
   rag_search:
     description: rag_search
+  live_verify:
+    description: live_verify
   todo_close:
     description: todo_close
   vocab_classify:

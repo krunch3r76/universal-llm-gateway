@@ -78,6 +78,7 @@ from .type_schemas import (
 from .type_taxonomy import CATEGORY_SPECIES, category_species
 from .workflow_state import (
     emit_todo_done_side_effects,
+    enforce_live_verify_on_done,
     validate_workflow_state,
     workflow_schema,
 )
@@ -519,6 +520,16 @@ def update_entity_impl(
         # to move them to done/resolved/closed.
         if str(prior.get("type")) == "condition":
             _reject_condition_closure_attempt(str(updates["workflow_state"]))
+        enforce_live_verify_on_done(
+            conn,
+            entity_id=entity_id,
+            entity_type=str(prior["type"]),
+            new_workflow_state=str(updates["workflow_state"]),
+            prior_workflow_state=(
+                str(prior_workflow_state) if prior_workflow_state is not None else None
+            ),
+            attributes=merged.get("attributes"),
+        )
 
     if "attributes" in updates:
         attrs = merged.get("attributes")
