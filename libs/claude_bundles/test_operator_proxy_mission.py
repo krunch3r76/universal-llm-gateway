@@ -533,6 +533,32 @@ def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
     assert "execution_id unknown" not in out
 
 
+def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
+    """False-positive marker match inside untrusted handoff data."""
+    handoff_snippet = (
+        "NEXT 1: template cites ## Hard refusals mid-sentence must not splice.\n"
+        "    ## Hard refusals (indented quote in CURRENT, not template)\n"
+        "tail line\n"
+    )
+    sidecar = f"## LEG 99 — CURRENT, READ FIRST\n{handoff_snippet}"
+    birth = "cd" * 16
+    caller = f"thread_id: 12286\nsuccessor_birth_id: {birth}\n"
+    out = ensure_operator_proxy_mission_prompt(
+        caller,
+        standing_handoff_text=sidecar,
+        execution_id="exec-a38589",
+    )
+    assert handoff_snippet.rstrip("\n") in out
+    refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
+    assert sum(1 for line in out.splitlines() if line.startswith(refusal_heading)) == 1
+    assert out.count("## Hop request (data)") == 1
+    assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
+    assert out.index("## Hop request (data)") < out.index(refusal_heading)
+    assert out.index("## Hard refusals (indented quote in CURRENT") < out.index(
+        refusal_heading
+    )
+
+
 def test_cdp_operator_proxy_skill_keep_alive_stale_text_absent() -> None:
     from pathlib import Path
 

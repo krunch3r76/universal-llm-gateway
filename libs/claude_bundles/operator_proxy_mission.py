@@ -149,6 +149,11 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 - Never claim done, landed, live or passed without quoting the payload that shows it.
 """
 
+_HOP_REFUSALS_MARKER = "## Hard refusals"
+_hop_refusals_index = _HOP_SUCCESSOR_TEMPLATE.index(_HOP_REFUSALS_MARKER)
+_HOP_SUCCESSOR_PREFIX = _HOP_SUCCESSOR_TEMPLATE[:_hop_refusals_index]
+_HOP_SUCCESSOR_SUFFIX = _HOP_SUCCESSOR_TEMPLATE[_hop_refusals_index:]
+
 _BRIEFING_BLOCK = _HOP_SUCCESSOR_TEMPLATE
 _FIELD_ORDER = (
     "lane",
@@ -158,6 +163,16 @@ _FIELD_ORDER = (
 )
 
 
+def _substitute_hop_template_part(part: str, fields: dict[str, str]) -> str:
+    """Replace named field tokens in one unfilled template segment."""
+    for key in _FIELD_ORDER:
+        part = part.replace("{" + key + "}", fields[key])
+    return part.replace(
+        "{handoff_current_section_verbatim}",
+        fields["handoff_current_section_verbatim"],
+    )
+
+
 def render_hop_successor_briefing(
     fields: dict[str, str],
     *,
@@ -165,25 +180,20 @@ def render_hop_successor_briefing(
 ) -> str:
     """Substitute template fields, then place the caller body before refusals.
 
-    The verbatim section is inserted before the caller body so braces in
+    The hop-request block is spliced at the split fixed on the raw template so
+    handoff or caller text that quotes ``## Hard refusals`` cannot move it.
+    Field tokens are substituted before the verbatim handoff so braces in
     either stay literal. Hard refusals stay last.
     """
-    text = _HOP_SUCCESSOR_TEMPLATE
-    for key in _FIELD_ORDER:
-        text = text.replace("{" + key + "}", fields[key])
-    text = text.replace(
-        "{handoff_current_section_verbatim}",
-        fields["handoff_current_section_verbatim"],
-    )
-    marker = "## Hard refusals"
-    index = text.index(marker)
+    prefix = _substitute_hop_template_part(_HOP_SUCCESSOR_PREFIX, fields)
+    suffix = _substitute_hop_template_part(_HOP_SUCCESSOR_SUFFIX, fields)
     caller = (caller_body or "").strip()
     block = (
         f"## Hop request (data)\n\n{caller}\n\n"
         if caller
         else "## Hop request (data)\n\n"
     )
-    return text[:index] + block + text[index:]
+    return prefix + block + suffix
 
 
 def is_operator_proxy_mission_purpose(purpose: str | None) -> bool:
