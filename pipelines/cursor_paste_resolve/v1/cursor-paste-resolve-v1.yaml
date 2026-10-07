@@ -19,7 +19,9 @@
 #              "investigate": "opus"|"fable"|absent, # SDK investigate hop
 #              "tab_model": "opus"|"fable"|absent,  # Glass Ctrl+/ query
 #              "dispatch_thread_id": "<minted>", # cursor_sdk write executor
+#              "operator_note": "<prose>",       # data-only <operator_note> before implementer; soft refuse >8000
 #            })
+# cursor_sdk admit always pairs reuse_thread=dispatch_thread_id (after mint or caller-supplied).
 
 schema_version: 6
 id: cursor-paste-resolve
@@ -45,6 +47,13 @@ options:
   tab_model:
     type: string
     description: opus | fable (folded tab-opus / tab-fable); empty = no Ctrl+/
+    default: ""
+  operator_note:
+    type: string
+    description: >
+      optional seat-judgment prose spliced as <operator_note> after investigate
+      and before implementer bytes (data, not instructions); soft refuse if
+      longer than 8000 codepoints
     default: ""
 
 steps:

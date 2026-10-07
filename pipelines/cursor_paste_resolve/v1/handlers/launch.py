@@ -230,6 +230,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
         assertion_id=assertion_id,
         message_path=str(message_file),
         dispatch_thread_id=thread_id or "<minted>",
+        reuse_thread=thread_id or "",
     )
     if thread_id == MAESTRO_MEMO_THREAD:
         payload = cursor_sdk_refuse_payload(
@@ -271,12 +272,14 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
                 )
                 return _step(payload, error=payload["error"])
             admit["dispatch_thread_id"] = thread_id
+            admit["reuse_thread"] = thread_id
 
     body = cursor_sdk_dispatch_body(
         kind=kind,
         assertion_id=assertion_id,
         prompt=prompt,
         dispatch_thread_id=thread_id,
+        reuse_thread=thread_id,
     )
     async with make_async_client(
         DEFAULT_STARGATE_URL, timeout=_REQUEST_TIMEOUT
