@@ -118,6 +118,10 @@ def configure_dispatch_status_hint(
     _enable_pane_borders(_run)
     _run(["tmux", "set-option", "-w", "@dispatch_board_section", "SDK"])
     _run(["tmux", "set-option", "-w", "status-right", DISPATCH_STATUS_RIGHT])
+    # Keep the curses board pane titled even when allow-rename / host
+    # defaults would otherwise show the hostname (e.g. ``io``).
+    _run(["tmux", "set-option", "-p", "allow-rename", "off"])
+    _run(["tmux", "select-pane", "-T", BOARD_PANE_TITLE])
 
 
 def publish_board_section_focus(
@@ -224,6 +228,8 @@ def ensure_prose_pane(
         )
 
     _enable_pane_borders(_run)
+    board = _run(["tmux", "display-message", "-p", "#{pane_id}"])
+    board_id = board.stdout.strip() if board.returncode == 0 else ""
     listed = _run(["tmux", "list-panes", "-F", "#{pane_title}"])
     if listed.returncode != 0:
         return "tmux_list_failed"
@@ -249,6 +255,9 @@ def ensure_prose_pane(
     pane_id = opened.stdout.strip().splitlines()[-1]
     _run(["tmux", "select-pane", "-t", pane_id, "-T", PANE_TITLE])
     _run(["tmux", "set-option", "-t", pane_id, "remain-on-exit", "on"])
+    if board_id:
+        _run(["tmux", "set-option", "-p", "-t", board_id, "allow-rename", "off"])
+        _run(["tmux", "select-pane", "-t", board_id, "-T", BOARD_PANE_TITLE])
     return "opened"
 
 
@@ -268,6 +277,8 @@ def ensure_prompt_pane(
         return run(args, check=False, capture_output=True, text=True)
 
     _enable_pane_borders(_run)
+    board = _run(["tmux", "display-message", "-p", "#{pane_id}"])
+    board_id = board.stdout.strip() if board.returncode == 0 else ""
     listed = _run(["tmux", "list-panes", "-F", "#{pane_id}\t#{pane_title}"])
     if listed.returncode != 0:
         return "tmux_list_failed"
@@ -277,11 +288,19 @@ def ensure_prompt_pane(
         if title.strip() == PROMPT_PANE_TITLE and pane_id.strip():
             existing = pane_id.strip()
             break
+
+    def _retitle_board() -> None:
+        if not board_id:
+            return
+        _run(["tmux", "set-option", "-p", "-t", board_id, "allow-rename", "off"])
+        _run(["tmux", "select-pane", "-t", board_id, "-T", BOARD_PANE_TITLE])
+
     if existing:
         refreshed = _run(["tmux", "respawn-pane", "-k", "-t", existing, str(launcher)])
         if refreshed.returncode != 0:
             return "tmux_respawn_failed"
         _run(["tmux", "select-pane", "-t", existing, "-T", PROMPT_PANE_TITLE])
+        _retitle_board()
         return "refreshed"
     opened = _run(
         [
@@ -302,4 +321,5 @@ def ensure_prompt_pane(
     pane_id = opened.stdout.strip().splitlines()[-1]
     _run(["tmux", "select-pane", "-t", pane_id, "-T", PROMPT_PANE_TITLE])
     _run(["tmux", "set-option", "-t", pane_id, "remain-on-exit", "on"])
+    _retitle_board()
     return "opened"

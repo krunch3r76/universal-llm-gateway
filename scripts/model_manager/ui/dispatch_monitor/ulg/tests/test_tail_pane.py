@@ -13,6 +13,7 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.tail_follow import (
     follow_step,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (
+    BOARD_PANE_TITLE,
     PANE_TITLE,
     PROMPT_PANE_TITLE,
     configure_dispatch_status_hint,
@@ -93,6 +94,8 @@ def test_ensure_prose_pane_splits_once(monkeypatch, tmp_path) -> None:
 
     def fake_run(args, **_kwargs):
         calls.append(list(args))
+        if args[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(args, 0, stdout="%1\n", stderr="")
         if args[:2] == ["tmux", "list-panes"]:
             listed = sum(1 for call in calls if call[:2] == ["tmux", "list-panes"])
             stdout = "" if listed == 1 else f"{PANE_TITLE}\n"
@@ -110,6 +113,7 @@ def test_ensure_prose_pane_splits_once(monkeypatch, tmp_path) -> None:
     assert splits[0][0:3] == ["tmux", "split-window", "-v"]
     assert splits[0][-1] == str(launcher)
     assert ["tmux", "select-pane", "-t", "%12", "-T", PANE_TITLE] in calls
+    assert ["tmux", "select-pane", "-t", "%1", "-T", BOARD_PANE_TITLE] in calls
     assert ["tmux", "set-option", "-w", "pane-border-status", "top"] in calls
     assert PANE_TITLE == "transcript"
 
@@ -119,6 +123,8 @@ def test_ensure_prompt_pane_retitles_on_respawn(monkeypatch, tmp_path) -> None:
 
     def fake_run(args, **_kwargs):
         calls.append(list(args))
+        if args[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(args, 0, stdout="%1\n", stderr="")
         if args[:2] == ["tmux", "list-panes"]:
             return subprocess.CompletedProcess(
                 args, 0, stdout=f"%7\t{PROMPT_PANE_TITLE}\n", stderr=""
@@ -139,6 +145,7 @@ def test_ensure_prompt_pane_retitles_on_respawn(monkeypatch, tmp_path) -> None:
         str(tmp_path / "tmux-dispatch-prompt"),
     ] in calls
     assert ["tmux", "select-pane", "-t", "%7", "-T", "prompt"] in calls
+    assert ["tmux", "select-pane", "-t", "%1", "-T", BOARD_PANE_TITLE] in calls
 
 
 def test_ensure_prose_pane_outside_tmux(monkeypatch, tmp_path) -> None:
@@ -176,3 +183,6 @@ def test_configure_dispatch_status_hint(monkeypatch) -> None:
     assert ["tmux", "set-option", "-w", "status-right"] in [
         call[:4] for call in calls if call[:3] == ["tmux", "set-option", "-w"]
     ]
+    assert ["tmux", "set-option", "-p", "allow-rename", "off"] in calls
+    assert ["tmux", "select-pane", "-T", BOARD_PANE_TITLE] in calls
+    assert BOARD_PANE_TITLE == "board"

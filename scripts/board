@@ -35,3 +35,6 @@ tmux set-option -w -t "$target" pane-border-status top
 tmux set-option -w -t "$target" pane-border-format ' #{pane_title} '
 tmux set-option -w -t "$target" @dispatch_board_section SDK
 tmux set-option -w -t "$target" status-right ' #{pane_title} · #{@dispatch_board_section} '
+# Sticky board title on pane 0 (survives focus without respawn; splits keep index 0).
+tmux set-option -p -t "$target.0" allow-rename off 2>/dev/null || true
+tmux select-pane -t "$target.0" -T board 2>/dev/null || true
