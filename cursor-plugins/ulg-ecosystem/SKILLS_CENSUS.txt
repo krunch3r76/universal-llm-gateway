@@ -62,6 +62,7 @@ debug-with-events
 fs
 handoff-pickup
 lead-seat-boot
+lean-dispatch
 life-operator-do-chain
 life-to-code-request-lane
 required-skills-pickup

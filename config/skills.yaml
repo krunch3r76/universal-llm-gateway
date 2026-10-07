@@ -135,6 +135,9 @@ skills:
   consult-routing:
     surface_class: cursor_only
     mcp_surface_required: life
+  lean-dispatch:
+    surface_class: cursor_only
+    mcp_surface_required: life
   corpus-cross-reference-discipline:
     surface_class: cursor_only
     mcp_surface_required: code
