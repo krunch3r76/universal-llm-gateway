@@ -196,9 +196,10 @@ def label_satisfies_request(
 ) -> bool:
     """True when ``label`` attests the requested family (+ effort when required).
 
-    Effort rungs ``max`` / ``high`` / ``extra`` are exclusive: a Max request
-    must not pass on a High label, and a High request must not pass on Max or
-    Extra High (friction 24969).
+    Effort rungs ``max`` / ``high`` / ``extra`` / ``medium`` / ``low`` are
+    exclusive where attested: a Max request must not pass on a High label, a
+    High request must not pass on Max or Extra High (friction 24969), and
+    ``low`` / ``medium`` require ``Low`` / ``Medium`` on the chip (a:38549).
     """
     family, parsed_effort = parse_model_request(requested)
     if effort is None:
@@ -220,13 +221,13 @@ def label_satisfies_request(
     if effort == "extra":
         return bool(re.search(r"Extra", text, re.I))
     if effort == "medium":
-        if not re.search(r"Medium", text, re.I):
+        if not re.search(r"\bMedium\b", text, re.I):
             return False
-        if re.search(r"High", text, re.I) or re.search(r"Max", text, re.I):
+        if re.search(r"\bHigh\b", text, re.I) or re.search(r"\bMax\b", text, re.I):
             return False
         return True
     if effort == "low":
-        return bool(re.search(r"Low", text, re.I))
+        return bool(re.search(r"\bLow\b", text, re.I))
     return True
 
 
