@@ -2,7 +2,8 @@
 """Follow one selected dispatch in a tmux pane.
 
 Reads the selection file the board writes and prints TailPort lines after
-the cursor this process holds.
+the cursor this process holds. Each poll, :func:`follow_step` retitles the
+tmux pane to ``transcript · <label>`` when the followed row changes.
 """
 
 from __future__ import annotations

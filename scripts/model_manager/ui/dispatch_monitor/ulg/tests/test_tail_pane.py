@@ -19,10 +19,13 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (
     configure_dispatch_status_hint,
     ensure_prompt_pane,
     ensure_prose_pane,
+    format_transcript_pane_title,
+    is_transcript_pane_title,
     move_selection,
     publish_board_section_focus,
     read_selection,
     tail_targets,
+    update_transcript_pane_title,
     write_selection,
 )
 
@@ -60,6 +63,62 @@ def test_move_and_write_selection(tmp_path) -> None:
         "label": "d1",
         "prompt_key": "d1",
     }
+
+
+def test_follow_step_retitles_on_selection_change() -> None:
+    class Port:
+        def tail(self, kind: str, key: str, cursor: int) -> dict:
+            return {"lines": [], "cursor": 0, "eof": False}
+
+    port = Port()
+    state = FollowState()
+    titles: list[str] = []
+
+    def on_change(label: str) -> None:
+        titles.append(format_transcript_pane_title(label))
+
+    follow_step(
+        state,
+        {"kind": "cursor-sdk", "key": "dispatch-abc", "label": "dispatch-abc"},
+        port,
+        on_follow_change=on_change,
+    )
+    follow_step(
+        state,
+        {"kind": "cdp", "key": "https://x", "label": "req-other"},
+        port,
+        on_follow_change=on_change,
+    )
+    assert titles == [
+        format_transcript_pane_title("dispatch-abc"),
+        format_transcript_pane_title("req-other"),
+    ]
+
+
+def test_update_transcript_pane_title_outside_tmux(monkeypatch) -> None:
+    monkeypatch.delenv("TMUX", raising=False)
+    update_transcript_pane_title("any-label")
+
+
+def test_update_transcript_pane_title_in_tmux(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("TMUX", "1")
+    update_transcript_pane_title("live-dispatch-id", run=fake_run)
+    assert calls == [
+        ["tmux", "select-pane", "-T", format_transcript_pane_title("live-dispatch-id")]
+    ]
+
+
+def test_is_transcript_pane_title() -> None:
+    assert is_transcript_pane_title("transcript")
+    assert is_transcript_pane_title("transcript · live-sdk-1")
+    assert not is_transcript_pane_title("board")
+    assert not is_transcript_pane_title("transcriptish")
 
 
 def test_follow_step_appends_once_then_respects_cursor() -> None:
@@ -116,6 +175,25 @@ def test_ensure_prose_pane_splits_once(monkeypatch, tmp_path) -> None:
     assert ["tmux", "select-pane", "-t", "%1", "-T", BOARD_PANE_TITLE] in calls
     assert ["tmux", "set-option", "-w", "pane-border-status", "top"] in calls
     assert PANE_TITLE == "transcript"
+
+
+def test_ensure_prose_pane_recognizes_qualified_transcript_title(
+    monkeypatch, tmp_path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        if args[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(args, 0, stdout="%1\n", stderr="")
+        if args[:2] == ["tmux", "list-panes"]:
+            stdout = f"{format_transcript_pane_title('row-a')}\n"
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("TMUX", "1")
+    assert ensure_prose_pane(tmp_path / "launcher", run=fake_run) == "already_open"
+    assert not any(call[:2] == ["tmux", "split-window"] for call in calls)
 
 
 def test_ensure_prompt_pane_retitles_on_respawn(monkeypatch, tmp_path) -> None:

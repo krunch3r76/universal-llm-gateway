@@ -16,6 +16,7 @@ from scripts.model_manager.ui.dispatch_monitor.core.board_lines import (
     live_cdp,
     live_sdk,
 )
+from scripts.model_manager.ui.dispatch_monitor.core.watch import clip_text
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
     CdpLegRow,
     SdkDispatchRow,
@@ -37,6 +38,40 @@ SECTION_STATUS_LABELS = {
 }
 
 DISPATCH_STATUS_RIGHT = " #{pane_title} · #{@dispatch_board_section} "
+
+TRANSCRIPT_LABEL_WIDTH = 12
+
+
+def format_transcript_pane_title(label: str) -> str:
+    """Window status / border title for the transcript pane."""
+    short = clip_text(label, TRANSCRIPT_LABEL_WIDTH)
+    if not short:
+        return PANE_TITLE
+    return f"{PANE_TITLE} · {short}"
+
+
+def is_transcript_pane_title(title: str) -> bool:
+    """True when ``title`` is the transcript pane (static or row-qualified)."""
+    stripped = title.strip()
+    if stripped == PANE_TITLE:
+        return True
+    return stripped.startswith(f"{PANE_TITLE} ·")
+
+
+def update_transcript_pane_title(
+    label: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> None:
+    """Retitle the current tmux pane to ``transcript · <short>``; no-op outside tmux."""
+    if not os.environ.get("TMUX"):
+        return
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        caller = run if run is not None else subprocess.run
+        return caller(args, check=False, capture_output=True, text=True)
+
+    _run(["tmux", "select-pane", "-T", format_transcript_pane_title(label)])
 
 
 @dataclass(frozen=True)
@@ -234,7 +269,7 @@ def ensure_prose_pane(
     if listed.returncode != 0:
         return "tmux_list_failed"
     titles = [line.strip() for line in listed.stdout.splitlines()]
-    if PANE_TITLE in titles:
+    if any(is_transcript_pane_title(title) for title in titles):
         return "already_open"
     opened = _run(
         [

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (
+    update_transcript_pane_title,
+)
 
 
 class _TailPort(Protocol):
@@ -27,6 +31,8 @@ def follow_step(
     state: FollowState,
     selection: Mapping[str, str] | None,
     port: _TailPort,
+    *,
+    on_follow_change: Callable[[str], None] | None = None,
 ) -> list[str]:
     """Lines to print for one poll. Updates ``state`` in place."""
     if not selection:
@@ -42,6 +48,8 @@ def follow_step(
         state.cursor = 0
         state.eof_announced = False
         label = selection.get("label") or key
+        retitle = on_follow_change or update_transcript_pane_title
+        retitle(label)
         out.append(f"--- {kind} {label} ---")
     body = port.tail(kind, key, state.cursor)
     new_cursor = body.get("cursor")
