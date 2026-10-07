@@ -1,10 +1,12 @@
-"""Poll the open Context grid until induction slugs are listed.
+"""Poll the open Context grid until induction slugs are listed post-use.
 
-A single scrape 1.5s after ``Use the {slug} skill`` reads an empty grid.
-The row is painted after that turn is processed (thread 12829: Context
-header already open, ``observed=[]``, assistant reply seconds later).
-A still-closed header is not waited out — ``scrape_loaded_skills`` raises
-``ChatContextSkillsError`` and this wait lets that refusal through.
+Cowork paints the Context → Skills group only after Claude executes a
+``Use the {slug} skill`` or ``/<slug>`` line (a:38612). Pre-use scrapes
+return ``pre_use_skills_rail`` (open Context, no Skills heading yet) and
+are retried until slugs appear or the deadline passes.
+
+A still-closed Context header is not waited out — ``scrape_loaded_skills``
+raises ``ChatContextSkillsError`` and this wait lets that refusal through.
 """
 
 from __future__ import annotations
@@ -42,11 +44,16 @@ async def wait_for_induction_panel(
     deadline = time.monotonic() + timeout_s
     started = time.monotonic()
     last_observed: list[str] = []
+    last_report: LoadedSkillsReport | None = None
+    saw_post_use_rail = False
     attempts = 0
     while True:
         attempts += 1
         report = await scrape_loaded_skills(page)
+        last_report = report
         last_observed = list(report.skills)
+        if report.skills_rail_post_use:
+            saw_post_use_rail = True
         if induction_panel_ready(required, last_observed):
             _emit_fetch_decisions(
                 required,
@@ -57,17 +64,27 @@ async def wait_for_induction_panel(
             return report
         if time.monotonic() >= deadline:
             elapsed = time.monotonic() - started
+            timeout_reason = (
+                "missing_required_slugs"
+                if saw_post_use_rail
+                else "pre_use_timeout"
+            )
             _emit_fetch_decisions(
                 required,
                 observed=last_observed,
                 decision="skipped",
-                reason="panel_timeout",
+                reason=timeout_reason,
+            )
+            heading = (
+                last_report.skills_heading_found if last_report is not None else False
             )
             raise SkillDeliveryError(
-                "induction Context → Skills panel not ready after combined submit: "
-                f"required={required} observed={last_observed} "
-                f"open_grid_reads={attempts} elapsed_s={elapsed:.1f} — fail closed "
-                "(decision:web-seat-skill-body-delivery)"
+                "induction Context → Skills receipt not ready after Use/<slug> "
+                f"activation: required={required} observed={last_observed} "
+                f"skills_heading_found={heading} post_use_rail={saw_post_use_rail} "
+                f"open_grid_reads={attempts} elapsed_s={elapsed:.1f} "
+                f"reason={timeout_reason} — fail closed "
+                "(decision:web-seat-skill-body-delivery; a:38612)"
             )
         await page.wait_for_timeout(interval_ms)
 

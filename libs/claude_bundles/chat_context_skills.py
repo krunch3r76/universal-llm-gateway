@@ -7,12 +7,16 @@ reads that DOM — deterministic, zero tokens. The Skills list is scraped only
 after its disclosure is confirmed open; a collapsed rail is expanded once,
 and a still-closed list raises instead of returning no slugs.
 
+Operator correction (a:38612): the **Skills** group under Context is populated
+**after** Claude uses a skill via ``Use the … skill`` or ``/<slug>`` — not at
+session open. ``context_found=true`` with ``skills_heading_found=false`` and
+``skills=()`` on a fresh Cowork turn is **pre-use**, not a missing heading.
+
 Loci (live 2026-08-07, Cowork CSE ``cse_01AhPKZ5C8gb1py1m3xHbEeL``):
 
-- Heading: ``span.font-medium.text-sm.text-primary`` with exact text ``Context``
-- Section siblings in the right rail: Progress / Outputs / Context
-- Under Context, a ``Skills`` group (container class often ``mb-2 last:mb-0``)
-  whose children are kebab-case skill slugs
+- Context toggle: ``[data-section-header][role="button"]`` labeled ``Context``
+- Skills rows live in that section's open grid (``header.nextElementSibling``)
+- Kebab-case slugs appear under a ``Skills`` label once the model has used them
 """
 
 from __future__ import annotations
@@ -74,12 +78,22 @@ class LoadedSkillsReport:
     def ok_nonempty(self) -> bool:
         return self.context_found and bool(self.skills)
 
+    @property
+    def skills_rail_post_use(self) -> bool:
+        """True once the open Context grid shows a Skills group or bound slugs."""
+        return bool(self.skills) or self.skills_heading_found
+
+    @property
+    def pre_use_skills_rail(self) -> bool:
+        """Open Context with no Skills group yet — normal before first Use/<slug>."""
+        return self.context_found and not self.skills_rail_post_use
+
 
 _SELECTORS_USED = (
-    'span.font-medium.text-sm.text-primary:text-is("Context")',
-    "right-rail section: Progress|Outputs|Context",
-    "under Context: exact heading Skills",
-    "skill rows: kebab-case slug text under Skills group (div.mb-2.last:mb-0)",
+    '[data-section-header][role="button"]: Context',
+    "Context panel: header.nextElementSibling innerText",
+    "under Context: exact heading Skills (post-use)",
+    "skill rows: kebab-case slug text under Skills group",
 )
 
 
@@ -158,13 +172,20 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
     raw = await page.evaluate(
         """() => {
           const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+          const headers = Array.from(
+            document.querySelectorAll('[data-section-header][role="button"]')
+          );
+          const ctxHeader = headers.find((el) =>
+            (el.innerText || '').trim().split('\\n')[0].trim() === 'Context'
+          );
           const spans = Array.from(document.querySelectorAll('span'));
-          const ctxSpan = spans.find((s) => {
-            const t = (s.textContent || '').trim();
-            if (t !== 'Context') return false;
-            return (s.className || '').toString().includes('font-medium');
-          }) || spans.find((s) => (s.textContent || '').trim() === 'Context');
-          if (!ctxSpan) {
+          const ctxSpan =
+            spans.find((s) => {
+              const t = (s.textContent || '').trim();
+              if (t !== 'Context') return false;
+              return (s.className || '').toString().includes('font-medium');
+            }) || spans.find((s) => (s.textContent || '').trim() === 'Context');
+          if (!ctxHeader && !ctxSpan) {
             return {
               context_found: false,
               skills_heading_found: false,
@@ -174,22 +195,13 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
             };
           }
 
-          // Smallest ancestor whose text has Context + Skills but stays in the
-          // right rail (avoid swallowing the whole transcript).
-          let best = null;
-          let el = ctxSpan;
-          for (let i = 0; i < 14 && el; i++) {
-            const t = (el.innerText || '').trim();
-            if (/^Context\\b/m.test(t) && /\\bSkills\\b/.test(t) && t.length < 2500) {
-              // Prefer nodes that do not contain the chat transcript cues.
-              const looksLikeRail = !/You said:/i.test(t) && !/TYPE:\\s*PROBE/i.test(t);
-              if (looksLikeRail || best === null) best = el;
-              if (looksLikeRail && t.length < 800) break;
-            }
-            el = el.parentElement;
+          let root = null;
+          if (ctxHeader && ctxHeader.nextElementSibling) {
+            root = ctxHeader.nextElementSibling;
+          } else if (ctxSpan) {
+            root = ctxSpan.parentElement;
           }
-          const root = best || ctxSpan.parentElement;
-          const text = (root.innerText || '').trim();
+          const text = root ? (root.innerText || '').trim() : '';
           const lines = text.split('\\n').map((l) => l.trim()).filter(Boolean);
 
           const skillsIdx = lines.findIndex((l) => /^Skills$/i.test(l));
@@ -202,9 +214,11 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
             }
           }
 
-          const skillsHeading = Array.from(
-            root.querySelectorAll('span,h1,h2,h3,h4,div,button')
-          ).find((n) => (n.textContent || '').trim() === 'Skills');
+          const skillsHeading = root
+            ? Array.from(root.querySelectorAll('span,h1,h2,h3,h4,div,button')).find(
+                (n) => (n.textContent || '').trim() === 'Skills'
+              )
+            : null;
 
           let fromDom = [];
           if (skillsHeading) {
@@ -221,7 +235,6 @@ async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
             }
           }
 
-          // Prefer DOM-local Skills group; fall back to line parse.
           const skills = fromDom.length ? fromDom : [...new Set(fromLines)];
 
           const body = document.body.innerText || '';

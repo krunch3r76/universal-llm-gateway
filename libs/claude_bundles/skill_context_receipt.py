@@ -40,6 +40,7 @@ async def record_post_submit_skills_receipt(
         "missing": [],
         "context_found": False,
         "skills_heading_found": False,
+        "pre_use_skills_rail": False,
         "skipped": False,
         "error": None,
     }
@@ -72,11 +73,12 @@ async def record_post_submit_skills_receipt(
     missing = list(report.missing(req))
     out.update(
         {
-            "ok": not missing and report.context_found,
+            "ok": not missing and report.context_found and report.skills_rail_post_use,
             "observed": observed,
             "missing": missing,
             "context_found": report.context_found,
             "skills_heading_found": report.skills_heading_found,
+            "pre_use_skills_rail": report.pre_use_skills_rail,
         }
     )
     emit_skill_context_loaded(

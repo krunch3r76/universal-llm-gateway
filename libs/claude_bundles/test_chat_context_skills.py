@@ -61,6 +61,22 @@ def test_parse_no_skills_heading() -> None:
     assert parse_skills_from_context_section("Context\nFiles\nfoo") == ()
 
 
+def test_pre_use_open_context_without_skills_group() -> None:
+    """a:38612 — Skills heading absent before first Use/<slug> is expected."""
+    report = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=(),
+        context_found=True,
+        skills_heading_found=False,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    assert report.pre_use_skills_rail is True
+    assert report.skills_rail_post_use is False
+    assert parse_skills_from_context_section("Context\n") == ()
+
+
 def test_open_aria_is_expanded_without_a_second_click() -> None:
     assert disclosure_is_expanded("true", list_visible=False) is True
     assert disclosure_is_expanded("TRUE", list_visible=False) is True

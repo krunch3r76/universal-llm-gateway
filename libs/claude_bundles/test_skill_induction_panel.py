@@ -88,11 +88,47 @@ async def test_open_grid_that_stays_empty_fails_closed(monkeypatch) -> None:
         {
             "ref": "reasoning-posture",
             "decision": "skipped",
-            "reason": "panel_timeout",
+            "reason": "missing_required_slugs",
             "required": ["reasoning-posture"],
             "observed": [],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_pre_use_rail_is_retried_until_post_use_population(monkeypatch) -> None:
+    """Pre-use empty Context (no Skills heading) keeps polling until slugs land."""
+    pre = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=(),
+        context_found=True,
+        skills_heading_found=False,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    post = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=("reasoning-posture",),
+        context_found=True,
+        skills_heading_found=True,
+        model_label=None,
+        selectors=(),
+        raw_section_text="Skills\nreasoning-posture",
+    )
+    snapshots = [pre, post]
+
+    async def scrape(_page):
+        return snapshots.pop(0)
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", lambda **_k: None)
+    page = _Page()
+    report = await panel.wait_for_induction_panel(
+        page, ["reasoning-posture"], timeout_s=30, interval_ms=1000
+    )
+    assert report.skills == ("reasoning-posture",)
+    assert page.waits == [1000]
 
 
 @pytest.mark.asyncio
