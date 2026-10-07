@@ -150,6 +150,9 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 """
 
 _HOP_REFUSALS_MARKER = "## Hard refusals"
+assert _HOP_SUCCESSOR_TEMPLATE.count(_HOP_REFUSALS_MARKER) == 1, (
+    "hop successor template must contain exactly one Hard refusals marker for splice"
+)
 _hop_refusals_index = _HOP_SUCCESSOR_TEMPLATE.index(_HOP_REFUSALS_MARKER)
 _HOP_SUCCESSOR_PREFIX = _HOP_SUCCESSOR_TEMPLATE[:_hop_refusals_index]
 _HOP_SUCCESSOR_SUFFIX = _HOP_SUCCESSOR_TEMPLATE[_hop_refusals_index:]

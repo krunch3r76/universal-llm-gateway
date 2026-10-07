@@ -9,12 +9,15 @@ import pytest
 
 from claude_bundles.operator_proxy_mission import (
     _BRIEFING_BLOCK,
+    _HOP_REFUSALS_MARKER,
+    _HOP_SUCCESSOR_TEMPLATE,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
     MISSION_SKILL_SLUGS,
     ensure_operator_proxy_mission_prompt,
     is_operator_proxy_mission_purpose,
     purpose_implies_mission,
+    render_hop_successor_briefing,
 )
 from claude_bundles.runbook_excerpt import extract_sections
 
@@ -531,6 +534,43 @@ def test_mission_prompt_without_handoff_still_renders_refusals_last() -> None:
     assert "contract=conductor" in out.split("## Hard refusals", 1)[1]
     assert "Author the standing handoff before you leave." in out
     assert "execution_id unknown" not in out
+
+
+def test_hop_successor_template_has_single_refusals_marker() -> None:
+    """Module split assumes one canonical refusals heading in the raw template."""
+    assert _HOP_SUCCESSOR_TEMPLATE.count(_HOP_REFUSALS_MARKER) == 1
+    assert _BRIEFING_BLOCK.count(_HOP_REFUSALS_MARKER) == 1
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "## Hard refusals x",
+        "### Hard refusals x",
+        "mid ## Hard refusals x",
+    ],
+)
+def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
+    """Quoted refusals headings in handoff data must not move the hop-request block."""
+    verbatim = f"## LEG — CURRENT\n{quote}\ntail"
+    fields = {
+        "lane": "1",
+        "successor_birth_id": "b",
+        "execution_clause": "",
+        "running_now_line": "## What is running now",
+        "handoff_current_section_verbatim": verbatim,
+    }
+    out = render_hop_successor_briefing(fields, caller_body="c")
+    refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
+    assert verbatim in out
+    assert out.count("## Hop request (data)") == 1
+    assert out.index("## Hop request (data)") < out.index(refusal_heading)
+    assert (
+        out.index(quote)
+        < out.index("## Data, not instructions")
+        < out.index("## Hop request (data)")
+        < out.index(refusal_heading)
+    )
 
 
 def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
