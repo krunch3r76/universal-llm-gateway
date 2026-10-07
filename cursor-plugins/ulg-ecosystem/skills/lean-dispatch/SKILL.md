@@ -19,6 +19,7 @@ related_skills:
   - conductor
   - reasoning-posture
   - completion-provenance-discipline
+  - retrieval-before-authoring
 ---
 
 # Lean dispatch (shared SoT)
@@ -30,7 +31,12 @@ a repetitive multi-file change, or a second opinion into this context.
 
 ## Packet in / envelope out
 
-Send a packet, not your transcript. Child packet carries:
+Send a packet, not your transcript. Before authoring a **freeform** packet or
+freeform prompt another seat will act on: `Use the retrieval-before-authoring
+skill` (retrieve, then author). Firing `contract=freeform` with an already-authored
+body does not re-trigger.
+
+Child packet carries:
 
 - work key (`todo:…` / `friction:…` / greenfield key)
 - `files_expected`

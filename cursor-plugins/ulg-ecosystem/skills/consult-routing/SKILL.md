@@ -258,6 +258,12 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 **Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.7` investigate + **`cdp/opus-5.5` bind** (`cdp/fable` only when Kaywan asks) · path-sim **Q** and the hop-5 check → ACTIVE · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5.5` · live checkout → `cursor/grok-4.7` `contract=freeform`.
 
+**Freeform packet author:** Before composing a freeform packet or freeform prompt
+another seat will act on (`team_dispatch` `contract=freeform`, live-checkout freeform,
+operator freeform commission): `Use the retrieval-before-authoring skill`. Same cite
+as lean-dispatch Packet in. Firing an already-authored freeform body does not
+re-trigger. Hard server admit stays nested-CDP / operator_packet only.
+
 **Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
 
 ## Dispatch kernel — relocated prose
