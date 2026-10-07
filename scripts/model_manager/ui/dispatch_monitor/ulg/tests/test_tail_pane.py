@@ -13,8 +13,13 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.tail_follow import (
     follow_step,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (
+    PANE_TITLE,
+    PROMPT_PANE_TITLE,
+    configure_dispatch_status_hint,
+    ensure_prompt_pane,
     ensure_prose_pane,
     move_selection,
+    publish_board_section_focus,
     read_selection,
     tail_targets,
     write_selection,
@@ -89,7 +94,8 @@ def test_ensure_prose_pane_splits_once(monkeypatch, tmp_path) -> None:
     def fake_run(args, **_kwargs):
         calls.append(list(args))
         if args[:2] == ["tmux", "list-panes"]:
-            stdout = "" if len(calls) == 1 else "dispatch-prose\n"
+            listed = sum(1 for call in calls if call[:2] == ["tmux", "list-panes"])
+            stdout = "" if listed == 1 else f"{PANE_TITLE}\n"
             return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
         if args[:2] == ["tmux", "split-window"]:
             return subprocess.CompletedProcess(args, 0, stdout="%12\n", stderr="")
@@ -99,10 +105,74 @@ def test_ensure_prose_pane_splits_once(monkeypatch, tmp_path) -> None:
     launcher = tmp_path / "tmux-dispatch-prose"
     assert ensure_prose_pane(launcher, run=fake_run) == "opened"
     assert ensure_prose_pane(launcher, run=fake_run) == "already_open"
-    assert calls[1][0:3] == ["tmux", "split-window", "-v"]
-    assert calls[1][-1] == str(launcher)
+    splits = [call for call in calls if call[:2] == ["tmux", "split-window"]]
+    assert len(splits) == 1
+    assert splits[0][0:3] == ["tmux", "split-window", "-v"]
+    assert splits[0][-1] == str(launcher)
+    assert ["tmux", "select-pane", "-t", "%12", "-T", PANE_TITLE] in calls
+    assert ["tmux", "set-option", "-w", "pane-border-status", "top"] in calls
+    assert PANE_TITLE == "transcript"
+
+
+def test_ensure_prompt_pane_retitles_on_respawn(monkeypatch, tmp_path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        if args[:2] == ["tmux", "list-panes"]:
+            return subprocess.CompletedProcess(
+                args, 0, stdout=f"%7\t{PROMPT_PANE_TITLE}\n", stderr=""
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("TMUX", "1")
+    assert (
+        ensure_prompt_pane(tmp_path / "tmux-dispatch-prompt", run=fake_run)
+        == "refreshed"
+    )
+    assert [
+        "tmux",
+        "respawn-pane",
+        "-k",
+        "-t",
+        "%7",
+        str(tmp_path / "tmux-dispatch-prompt"),
+    ] in calls
+    assert ["tmux", "select-pane", "-t", "%7", "-T", "prompt"] in calls
 
 
 def test_ensure_prose_pane_outside_tmux(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("TMUX", raising=False)
     assert ensure_prose_pane(tmp_path / "launcher") == "not_in_tmux"
+
+
+def test_publish_board_section_focus_sets_window_option(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("TMUX", "1")
+    publish_board_section_focus("cdp", zoom=True, run=fake_run)
+    assert [
+        "tmux",
+        "set-option",
+        "-w",
+        "@dispatch_board_section",
+        "CDP·zoom",
+    ] in calls
+
+
+def test_configure_dispatch_status_hint(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("TMUX", "1")
+    configure_dispatch_status_hint(run=fake_run)
+    assert ["tmux", "set-option", "-w", "status-right"] in [
+        call[:4] for call in calls if call[:3] == ["tmux", "set-option", "-w"]
+    ]

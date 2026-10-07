@@ -34,10 +34,60 @@ from .board_lines import (
     section_bar,
     tick_objective_line,
 )
-from .curses_sections import paint_attention, paint_lease
+from .curses_sections import _section_bar_attr, paint_attention, paint_lease
 from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
 from .sdk_posture import row_role
 from .watch import _cdp_line, _ms, _truncate, cdp_id_legend
+
+HEADER_ROWS = 3
+LOGICAL_HEIGHT = 100_000
+
+
+def section_row_caps(
+    *,
+    sdk_n: int,
+    cdp_n: int,
+    roots_n: int,
+    aside_n: int,
+    attention_n: int,
+) -> dict[str, int]:
+    """Every row is paintable. The viewport scrolls; caps are not a ceiling."""
+    return {
+        "attention": attention_n if attention_n else 1,
+        "cdp": cdp_n,
+        "sdk": sdk_n,
+        "roots": roots_n if roots_n else 1,
+        "aside": aside_n,
+    }
+
+
+def clamp_scroll(scroll: int, content_end: int, screen_h: int) -> int:
+    """Keep the viewport inside painted content.
+
+    ``content_end`` is one past the last logical line. Header rows stay fixed.
+    """
+    visible = max(1, screen_h - HEADER_ROWS)
+    content_lines = max(0, content_end - HEADER_ROWS)
+    max_scroll = max(0, content_lines - visible)
+    return min(max(0, scroll), max_scroll)
+
+
+def scroll_to_show_logical_line(
+    scroll: int,
+    logical_y: int,
+    *,
+    content_end: int,
+    screen_h: int,
+) -> int:
+    """Adjust scroll so a logical body line is visible on screen."""
+    if logical_y < HEADER_ROWS:
+        return scroll
+    screen_row = logical_y - scroll
+    if screen_row < HEADER_ROWS:
+        return clamp_scroll(logical_y - HEADER_ROWS, content_end, screen_h)
+    if screen_row >= screen_h:
+        return clamp_scroll(logical_y - screen_h + 1, content_end, screen_h)
+    return scroll
 
 
 class CursesBoard:
@@ -51,6 +101,10 @@ class CursesBoard:
         stdscr.timeout(250)
         self._hold: bool | None = None
         self._status = "starting…"
+        self._scroll = 0
+        self._content_end = HEADER_ROWS
+        self._screen_h = 24
+        self._selection_logical_y: int | None = None
         self._init_colors()
 
     def _init_colors(self) -> None:
@@ -69,6 +123,28 @@ class CursesBoard:
     def set_status(self, message: str) -> None:
         self._status = message
 
+    def scroll_by(self, delta: int) -> None:
+        """Move the body viewport. The three header rows stay put."""
+        self._scroll = clamp_scroll(
+            self._scroll + delta, self._content_end, self._screen_h
+        )
+
+    def adjust_scroll_for_selection(self) -> bool:
+        """Scroll the viewport until the selected row is on screen."""
+        y = self._selection_logical_y
+        if y is None:
+            return False
+        new_scroll = scroll_to_show_logical_line(
+            self._scroll,
+            y,
+            content_end=self._content_end,
+            screen_h=self._screen_h,
+        )
+        if new_scroll == self._scroll:
+            return False
+        self._scroll = new_scroll
+        return True
+
     def _pair_for_severity(self, severity: str) -> int:
         if severity == "crit":
             return 1
@@ -81,8 +157,14 @@ class CursesBoard:
         projection: SupervisorProjection | None,
         *,
         selected_key: str | None = None,
+        focused_section: str = "sdk",
+        section_zoom: bool = False,
     ) -> None:
-        height, width = self._scr.getmaxyx()
+        screen_h, width = self._scr.getmaxyx()
+        self._screen_h = screen_h
+        self._content_end = HEADER_ROWS
+        self._selection_logical_y = None
+        height = LOGICAL_HEIGHT
         self._scr.erase()
         if projection is None:
             self._safe_addstr(0, 0, f"DISPATCH BOARD  {la_clock()}  {self._status}", 3)
@@ -102,38 +184,60 @@ class CursesBoard:
         budgets = self._section_budgets(
             height, sdk_live, cdp_live, roots_active, roots_aside, projection
         )
-        y = self._paint_tick(
-            roots_active,
-            roots_aside,
-            projection,
-            by_sdk,
-            by_cdp,
-            y,
-            width,
-            height,
-            budgets["roots"],
-            budgets["aside"],
-        )
-        y = self._paint_lease(projection, y, width, height)
-        y = self._paint_sdk(
-            projection,
-            sdk_live,
-            y,
-            width,
-            height,
-            budgets["sdk"],
-            selected_key=selected_key,
-        )
-        y = self._paint_cdp(
-            projection,
-            cdp_live,
-            y,
-            width,
-            height,
-            budgets["cdp"],
-            selected_key=selected_key,
-        )
-        paint_attention(self, projection, y, width, height, budgets["attention"])
+
+        def _show(section_id: str) -> bool:
+            return not section_zoom or focused_section == section_id
+
+        if _show("tick"):
+            y = self._paint_tick(
+                roots_active,
+                roots_aside,
+                projection,
+                by_sdk,
+                by_cdp,
+                y,
+                width,
+                height,
+                budgets["roots"],
+                budgets["aside"],
+                focused_section=focused_section,
+            )
+        if _show("lease"):
+            y = self._paint_lease(
+                projection, y, width, height, focused_section=focused_section
+            )
+        if _show("sdk"):
+            y = self._paint_sdk(
+                projection,
+                sdk_live,
+                y,
+                width,
+                height,
+                budgets["sdk"],
+                selected_key=selected_key,
+                focused_section=focused_section,
+            )
+        if _show("cdp"):
+            y = self._paint_cdp(
+                projection,
+                cdp_live,
+                y,
+                width,
+                height,
+                budgets["cdp"],
+                selected_key=selected_key,
+                focused_section=focused_section,
+            )
+        if _show("attention"):
+            paint_attention(
+                self,
+                projection,
+                y,
+                width,
+                height,
+                budgets["attention"],
+                focused_section=focused_section,
+            )
         self._scr.refresh()
 
     def _paint_header(
@@ -181,20 +285,14 @@ class CursesBoard:
         roots_aside: list[CharterRootRow],
         projection: SupervisorProjection,
     ) -> dict[str, int]:
-        usable = max(8, height - 3)
-        att_n = len(projection.attention)
-        att = min(att_n, max(2, usable // 3)) if att_n else 1
-        sdk = min(len(sdk_live), max(3, usable // 5)) if sdk_live else 0
-        cdp = min(len(cdp_live), max(2, usable // 6)) if cdp_live else 0
-        roots = min(len(roots_active), max(2, usable // 5)) if roots_active else 1
-        aside = min(len(roots_aside), max(1, usable // 8)) if roots_aside else 0
-        return {
-            "attention": att,
-            "cdp": cdp,
-            "sdk": sdk,
-            "roots": roots,
-            "aside": aside,
-        }
+        del height
+        return section_row_caps(
+            sdk_n=len(sdk_live),
+            cdp_n=len(cdp_live),
+            roots_n=len(roots_active),
+            aside_n=len(roots_aside),
+            attention_n=len(projection.attention),
+        )
 
     def _paint_tick(
         self,
@@ -208,12 +306,20 @@ class CursesBoard:
         height: int,
         active_cap: int,
         aside_cap: int,
+        *,
+        focused_section: str | None = None,
     ) -> int:
         if y >= height - 1:
             return y
         closed = sum(1 for row in projection.roots if row.closed or row.unenrolled)
         bar = f" TICK / ACTIVE ({len(roots_active)} enqueued · +{closed} closed) "
-        self._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
+        self._safe_addstr(
+            y,
+            0,
+            f"─{bar}{'─' * max(0, width - len(bar) - 2)}",
+            4,
+            _section_bar_attr(focused_section, "tick"),
+        )
         y += 1
         primary = primary_tick_objective(roots_active)
         subtitle_root: str | None = None
@@ -300,9 +406,17 @@ class CursesBoard:
         return y
 
     def _paint_lease(
-        self, projection: SupervisorProjection, y: int, width: int, height: int
+        self,
+        projection: SupervisorProjection,
+        y: int,
+        width: int,
+        height: int,
+        *,
+        focused_section: str | None = None,
     ) -> int:
-        return paint_lease(self, projection, y, width, height)
+        return paint_lease(
+            self, projection, y, width, height, focused_section=focused_section
+        )
 
     def _paint_sdk(
         self,
@@ -313,6 +427,8 @@ class CursesBoard:
         height: int,
         row_cap: int,
         selected_key: str | None = None,
+        *,
+        focused_section: str | None = None,
     ) -> int:
         if y >= height - 1:
             return y
@@ -330,6 +446,7 @@ class CursesBoard:
                 unit=f"done/{self._seed_minutes}m",
             ),
             4,
+            _section_bar_attr(focused_section, "sdk"),
         )
         y += 1
         legend = sdk_posture_legend(posture)
@@ -358,6 +475,8 @@ class CursesBoard:
                 relations=projection.relations,
             )
             attr = curses.A_REVERSE if row.dispatch_id == selected_key else 0
+            if row.dispatch_id == selected_key:
+                self._selection_logical_y = y
             self._safe_addstr(y, 0, line[: width - 1], pair, attr)
             y += 1
             shown += 1
@@ -384,6 +503,8 @@ class CursesBoard:
         height: int,
         row_cap: int,
         selected_key: str | None = None,
+        *,
+        focused_section: str | None = None,
     ) -> int:
         if y >= height - 1:
             return y
@@ -395,6 +516,7 @@ class CursesBoard:
                 "CDP", len(live), window_done, width, unit=f"done/{self._seed_minutes}m"
             ),
             4,
+            _section_bar_attr(focused_section, "cdp"),
         )
         y += 1
         if not live and y < height - 1:
@@ -409,6 +531,8 @@ class CursesBoard:
                 break
             cdp_key = row.chat_url or row.registration_id
             attr = curses.A_REVERSE if cdp_key and cdp_key == selected_key else 0
+            if cdp_key and cdp_key == selected_key:
+                self._selection_logical_y = y
             self._safe_addstr(y, 0, _cdp_line(row, width=width - 1), 0, attr)
             y += 1
             shown += 1
@@ -428,6 +552,11 @@ class CursesBoard:
     def _safe_addstr(self, y: int, x: int, text: str, pair: int, attr: int = 0) -> None:
         if y < 0 or x < 0:
             return
+        if y >= HEADER_ROWS:
+            self._content_end = max(self._content_end, y + 1)
+            y -= self._scroll
+            if y < HEADER_ROWS:
+                return
         height, width = self._scr.getmaxyx()
         if y >= height or x >= width:
             return

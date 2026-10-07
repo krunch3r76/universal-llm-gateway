@@ -22,8 +22,21 @@ from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
 )
 
 DEFAULT_SELECTION_PATH = Path("/tmp/ulg-dispatch-board-selection.json")
-PANE_TITLE = "dispatch-prose"
-PROMPT_PANE_TITLE = "dispatch-prompt"
+PANE_TITLE = "transcript"
+PROMPT_PANE_TITLE = "prompt"
+BOARD_PANE_TITLE = "board"
+
+SECTION_ORDER = ("tick", "lease", "sdk", "cdp", "attention")
+
+SECTION_STATUS_LABELS = {
+    "tick": "TICK",
+    "lease": "LEASE",
+    "sdk": "SDK",
+    "cdp": "CDP",
+    "attention": "ATTENTION",
+}
+
+DISPATCH_STATUS_RIGHT = " #{pane_title} · #{@dispatch_board_section} "
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,62 @@ def tail_targets(
             )
         )
     return targets
+
+
+def advance_section(section: str, delta: int) -> str:
+    """Cycle painted-section focus within the single board pane."""
+    try:
+        idx = SECTION_ORDER.index(section)
+    except ValueError:
+        idx = 0
+    return SECTION_ORDER[(idx + delta) % len(SECTION_ORDER)]
+
+
+def targets_in_section(
+    targets: list[TailTarget], section: str
+) -> list[TailTarget]:
+    """Live rows selectable while ``section`` is focused (SDK/CDP only)."""
+    if section == "sdk":
+        return [row for row in targets if row.kind == "cursor-sdk"]
+    if section == "cdp":
+        return [row for row in targets if row.kind == "cdp"]
+    return []
+
+
+def configure_dispatch_status_hint(
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> None:
+    """Window-scoped tmux status + pane borders for dispatch-board focus."""
+    if not os.environ.get("TMUX"):
+        return
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        caller = run if run is not None else subprocess.run
+        return caller(args, check=False, capture_output=True, text=True)
+
+    _enable_pane_borders(_run)
+    _run(["tmux", "set-option", "-w", "@dispatch_board_section", "SDK"])
+    _run(["tmux", "set-option", "-w", "status-right", DISPATCH_STATUS_RIGHT])
+
+
+def publish_board_section_focus(
+    section: str,
+    *,
+    zoom: bool = False,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> None:
+    """Publish focused painted section for the window status line."""
+    if not os.environ.get("TMUX"):
+        return
+    label = SECTION_STATUS_LABELS.get(section, section.upper())
+    if zoom:
+        label = f"{label}·zoom"
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        caller = run if run is not None else subprocess.run
+        return caller(args, check=False, capture_output=True, text=True)
+
+    _run(["tmux", "set-option", "-w", "@dispatch_board_section", label])
 
 
 def move_selection(index: int, count: int, verb: str) -> tuple[int, bool]:
@@ -122,12 +191,24 @@ def read_selection(path: Path) -> dict[str, str] | None:
     return selected
 
 
+def _enable_pane_borders(
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """Show ``#{pane_title}`` on this window only.
+
+    ``pane-border-status`` is a window option. Setting it without ``-t``
+    applies to the window that owns the current pane.
+    """
+    run(["tmux", "set-option", "-w", "pane-border-status", "top"])
+    run(["tmux", "set-option", "-w", "pane-border-format", " #{pane_title} "])
+
+
 def ensure_prose_pane(
     launcher: Path,
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
-    """Split a tmux pane titled ``dispatch-prose`` when one is not already open.
+    """Split a tmux pane titled ``transcript`` when one is not already open.
 
     Outside tmux this returns ``not_in_tmux`` and does not spawn a process.
     """
@@ -142,6 +223,7 @@ def ensure_prose_pane(
             text=True,
         )
 
+    _enable_pane_borders(_run)
     listed = _run(["tmux", "list-panes", "-F", "#{pane_title}"])
     if listed.returncode != 0:
         return "tmux_list_failed"
@@ -175,7 +257,7 @@ def ensure_prompt_pane(
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
-    """Split ``dispatch-prompt``, or respawn it so the new selection prints.
+    """Split ``prompt``, or respawn it so the new selection prints.
 
     The printer exits after one body. A second ``p`` has to start it again.
     """
@@ -185,6 +267,7 @@ def ensure_prompt_pane(
     def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
         return run(args, check=False, capture_output=True, text=True)
 
+    _enable_pane_borders(_run)
     listed = _run(["tmux", "list-panes", "-F", "#{pane_id}\t#{pane_title}"])
     if listed.returncode != 0:
         return "tmux_list_failed"

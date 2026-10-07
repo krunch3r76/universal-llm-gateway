@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import curses
+
 from typing import Protocol
 
 from .board_lines import attention_line, lease_body_lines
@@ -14,12 +16,20 @@ class _BoardSurface(Protocol):
     def _pair_for_severity(self, severity: str) -> int: ...
 
 
+def _section_bar_attr(focused_section: str | None, section_id: str) -> int:
+    if focused_section == section_id:
+        return curses.A_BOLD | curses.A_REVERSE
+    return 0
+
+
 def paint_lease(
     board: _BoardSurface,
     projection: SupervisorProjection,
     y: int,
     width: int,
     height: int,
+    *,
+    focused_section: str | None = None,
 ) -> int:
     """Paint LEASE / QUEUE body; return next y."""
     if y >= height - 1:
@@ -27,7 +37,11 @@ def paint_lease(
     health = projection.health
     lease_bar = f" LEASE / QUEUE (q={health.queue_depth}) "
     board._safe_addstr(
-        y, 0, f"─{lease_bar}{'─' * max(0, width - len(lease_bar) - 2)}", 4
+        y,
+        0,
+        f"─{lease_bar}{'─' * max(0, width - len(lease_bar) - 2)}",
+        4,
+        _section_bar_attr(focused_section, "lease"),
     )
     y += 1
     for line, pair in lease_body_lines(health):
@@ -45,17 +59,25 @@ def paint_attention(
     width: int,
     height: int,
     row_cap: int,
-) -> None:
-    """Paint ATTENTION section in place."""
+    *,
+    focused_section: str | None = None,
+) -> int:
+    """Paint ATTENTION section in place; return next logical y."""
     if y >= height - 1:
-        return
+        return y
     items = projection.attention
     bar = f" ATTENTION ({len(items)}) "
-    board._safe_addstr(y, 0, f"─{bar}{'─' * max(0, width - len(bar) - 2)}", 4)
+    board._safe_addstr(
+        y,
+        0,
+        f"─{bar}{'─' * max(0, width - len(bar) - 2)}",
+        4,
+        _section_bar_attr(focused_section, "attention"),
+    )
     y += 1
     if not items and y < height - 1:
         board._safe_addstr(y, 0, "  (none)", 0)
-        return
+        return y + 1
     shown = 0
     for item in items:
         if y >= height - 1 or shown >= row_cap:
@@ -72,3 +94,5 @@ def paint_attention(
         shown += 1
     if shown < len(items) and y < height - 1:
         board._safe_addstr(y, 0, f"  … +{len(items) - shown} more", 0)
+        y += 1
+    return y

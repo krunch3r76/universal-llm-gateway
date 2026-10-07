@@ -28,5 +28,10 @@ if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qx "$
 else
   tmux new-window -t "$SESSION:" -n "$NAME" "$LAUNCH"
   tmux set-option -t "$SESSION:$NAME" remain-on-exit on
-  tmux select-window -t "$SESSION:$NAME"
+  target="$SESSION:$NAME"
+  tmux select-window -t "$target"
 fi
+tmux set-option -w -t "$target" pane-border-status top
+tmux set-option -w -t "$target" pane-border-format ' #{pane_title} '
+tmux set-option -w -t "$target" @dispatch_board_section SDK
+tmux set-option -w -t "$target" status-right ' #{pane_title} · #{@dispatch_board_section} '

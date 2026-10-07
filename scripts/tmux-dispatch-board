@@ -14,6 +14,9 @@ if [[ -n "${TMUX:-}" ]]; then
   tmux set-option -t "#{pane_id}" remain-on-exit on 2>/dev/null \
     || tmux set-option remain-on-exit on 2>/dev/null \
     || true
+  tmux select-pane -t "#{pane_id}" -T board 2>/dev/null || true
+  tmux set-option -w pane-border-status top 2>/dev/null || true
+  tmux set-option -w pane-border-format ' #{pane_title} ' 2>/dev/null || true
 fi
 ARGS=()
 [[ -n "${SEED_MINUTES:-}" ]] && ARGS+=(--seed-minutes "$SEED_MINUTES")

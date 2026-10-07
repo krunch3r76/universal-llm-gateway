@@ -39,10 +39,14 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import ( 
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (  # noqa: E402
     DEFAULT_SELECTION_PATH,
+    advance_section,
+    configure_dispatch_status_hint,
     ensure_prompt_pane,
     ensure_prose_pane,
     move_selection,
+    publish_board_section_focus,
     tail_targets,
+    targets_in_section,
     write_selection,
 )
 
@@ -109,10 +113,67 @@ def _selection_verb(key: int) -> str | None:
     return None
 
 
+def _global_index_for_section(
+    sec_index: int, section_targets: list[Any], all_targets: list[Any]
+) -> int:
+    if not section_targets:
+        return 0
+    sec_index = min(max(sec_index, 0), len(section_targets) - 1)
+    key = section_targets[sec_index].key
+    for pos, row in enumerate(all_targets):
+        if row.key == key:
+            return pos
+    return 0
+
+
+def _section_index_for_key(
+    section_targets: list[Any], key: str | None
+) -> int:
+    if not key or not section_targets:
+        return 0
+    for pos, row in enumerate(section_targets):
+        if row.key == key:
+            return pos
+    return 0
+
+
+def _paint_board(
+    board: CursesBoard,
+    frame: SupervisorProjection | None,
+    *,
+    hold: bool | None,
+    status: str,
+    tail_status: str,
+    selected_key: str | None,
+    focused_section: str,
+    section_zoom: bool,
+) -> None:
+    board.set_hold(hold)
+    board.set_status(f"{status}  {tail_status}")
+    board.paint(
+        frame,
+        selected_key=selected_key,
+        focused_section=focused_section,
+        section_zoom=section_zoom,
+    )
+    if board.adjust_scroll_for_selection():
+        board.paint(
+            frame,
+            selected_key=selected_key,
+            focused_section=focused_section,
+            section_zoom=section_zoom,
+        )
+
+
 def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None:
+    configure_dispatch_status_hint()
     board = CursesBoard(stdscr, seed_minutes=seed_minutes)
-    index = 0
-    tail_status = "j/k select · enter transcript · p prompt"
+    global_index = 0
+    focused_section = "sdk"
+    section_zoom = False
+    tail_status = (
+        "[/] section · z zoom · j/k row (SDK/CDP) · C-d/C-u scroll · enter · p"
+    )
     launcher = os.path.join(os.path.dirname(__file__), "tmux-dispatch-prose")
     prompt_launcher = os.path.join(os.path.dirname(__file__), "tmux-dispatch-prompt")
     while not state.stop.is_set():
@@ -121,11 +182,20 @@ def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None
             hold = state.hold
             status = state.status
         targets = tail_targets(frame.sdk, frame.cdp) if frame is not None else []
-        index, _ = move_selection(index, len(targets), "")
-        selected = targets[index].key if targets else None
-        board.set_hold(hold)
-        board.set_status(f"{status}  {tail_status}")
-        board.paint(frame, selected_key=selected)
+        global_index, _ = move_selection(global_index, len(targets), "")
+        selected = targets[global_index].key if targets else None
+        section_targets = targets_in_section(targets, focused_section)
+        publish_board_section_focus(focused_section, zoom=section_zoom)
+        _paint_board(
+            board,
+            frame,
+            hold=hold,
+            status=status,
+            tail_status=tail_status,
+            selected_key=selected,
+            focused_section=focused_section,
+            section_zoom=section_zoom,
+        )
         try:
             key = stdscr.getch()
         except curses.error:
@@ -133,8 +203,23 @@ def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None
         if key in (ord("q"), ord("Q")):
             state.stop.set()
             break
+        if key == ord("["):
+            focused_section = advance_section(focused_section, -1)
+            continue
+        if key == ord("]"):
+            focused_section = advance_section(focused_section, 1)
+            continue
+        if key in (ord("z"), ord("Z")):
+            section_zoom = not section_zoom
+            continue
+        if key in (curses.KEY_NPAGE, 4):  # Ctrl-d
+            board.scroll_by(max(1, board._screen_h // 2))
+            continue
+        if key in (curses.KEY_PPAGE, 21):  # Ctrl-u
+            board.scroll_by(-max(1, board._screen_h // 2))
+            continue
         if key in (ord("p"), ord("P")) and targets:
-            target = targets[index]
+            target = targets[global_index]
             write_selection(DEFAULT_SELECTION_PATH, target)
             pane = ensure_prompt_pane(prompt_launcher)
             if pane in {"opened", "refreshed"}:
@@ -145,12 +230,18 @@ def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None
                 tail_status = f"prompt pane failed ({pane})"
             continue
         verb = _selection_verb(key)
-        if verb is None or not targets:
+        if verb is None:
             continue
-        index, arm = move_selection(index, len(targets), verb)
+        if not section_targets:
+            continue
+        sec_index = _section_index_for_key(section_targets, selected)
+        sec_index, arm = move_selection(sec_index, len(section_targets), verb)
+        global_index = _global_index_for_section(
+            sec_index, section_targets, targets
+        )
         if not arm:
             continue
-        target = targets[index]
+        target = targets[global_index]
         write_selection(DEFAULT_SELECTION_PATH, target)
         pane = ensure_prose_pane(launcher)
         if pane == "opened":
