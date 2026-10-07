@@ -112,6 +112,11 @@ skills:
     # skill_shared (census) independent of MCP endpoint readiness for project-ask.
     surface_class: cursor_only
     mcp_surface_required: code
+  claude-ai-paste-resolve:
+    # Claude.ai / Cowork Customize slug. shared_sync + mcp none → Customize upload set.
+    # Thin wrapper around pipeline_id=cursor-paste-resolve; default launch_target=cursor_sdk.
+    surface_class: shared_sync
+    mcp_surface_required: none
   claude-ai-skill-uninstall:
     surface_class: cursor_only
     mcp_surface_required: none
