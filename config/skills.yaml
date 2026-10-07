@@ -117,6 +117,10 @@ skills:
     # Thin wrapper around pipeline_id=cursor-paste-resolve; default launch_target=cursor_sdk.
     surface_class: shared_sync
     mcp_surface_required: none
+  paste-resolve-cse-followup:
+    # Exportable Maestro/Grok finalize recipe (CSE followup + bus-watch posture); a:38621.
+    surface_class: shared_sync
+    mcp_surface_required: none
   claude-ai-skill-uninstall:
     surface_class: cursor_only
     mcp_surface_required: none
