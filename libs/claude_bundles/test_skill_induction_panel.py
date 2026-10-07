@@ -96,6 +96,46 @@ async def test_open_grid_that_stays_empty_fails_closed(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pre_use_rail_timeout_emits_pre_use_timeout_reason(monkeypatch) -> None:
+    """Never saw post-use Skills group → pre_use_timeout (review agent-bus:15599)."""
+    pre_use = LoadedSkillsReport(
+        url="https://claude.ai/cowork/cse_x",
+        skills=(),
+        context_found=True,
+        skills_heading_found=False,
+        model_label=None,
+        selectors=(),
+        raw_section_text="",
+    )
+    emitted: list[dict] = []
+
+    async def scrape(_page):
+        return pre_use
+
+    def _emit(**kwargs):
+        emitted.append(kwargs)
+        return None
+
+    monkeypatch.setattr(panel, "scrape_loaded_skills", scrape)
+    monkeypatch.setattr(panel, "emit_skill_fetch_decision", _emit)
+    page = _Page()
+    with pytest.raises(SkillDeliveryError, match=r"post_use_rail=False"):
+        await panel.wait_for_induction_panel(
+            page, ["reasoning-posture"], timeout_s=0, interval_ms=1000
+        )
+    assert page.waits == []
+    assert emitted == [
+        {
+            "ref": "reasoning-posture",
+            "decision": "skipped",
+            "reason": "pre_use_timeout",
+            "required": ["reasoning-posture"],
+            "observed": [],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pre_use_rail_is_retried_until_post_use_population(monkeypatch) -> None:
     """Pre-use empty Context (no Skills heading) keeps polling until slugs land."""
     pre = LoadedSkillsReport(
