@@ -9,7 +9,8 @@
 #   - 5184: existing pipeline interface IS the consumption surface
 #
 # Closure payload is delivered via pipeline_options. The single step
-# orchestrates: sidecar (markdown index + closure_summary_uri) → assert →
+# checks the live-verify close predicate first, then orchestrates:
+# sidecar (markdown index + closure_summary_uri) → assert →
 # relationships → depends_on edges → custom edges → workflow_state update.
 # Best-effort with structured per-call results; partial failures are
 # reported, not retried.

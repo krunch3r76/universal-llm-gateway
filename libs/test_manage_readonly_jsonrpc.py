@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from manage_readonly_jsonrpc import call_readonly, fleet_liveness
 
 pytestmark = pytest.mark.offline

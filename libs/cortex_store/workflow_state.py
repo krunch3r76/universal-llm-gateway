@@ -107,6 +107,144 @@ def closure_audit_exempt(conn: sqlite3.Connection, entity_type: str) -> bool:
     return bool(rows[0]["closure_audit_exempt"])
 
 
+VERDICT_MISSING = "live_verify.verdict_missing"
+LIVE_DEFECT = "live_verify.live_defect"
+LAND_SHA_NOT_LIVE = "live_verify.land_sha_not_live"
+RULING_MISSING = "live_verify.ruling_missing"
+
+_LIVE_VERIFY_KIND = "live_verify"
+_SATISFIED_RELATIONS = frozenset({"equal", "ancestor"})
+_LINE_VERDICTS = frozenset({"LIVE_OK", "LIVE_DEFECT", "LIVE_UNTESTABLE"})
+
+
+def live_verify_required(attributes: object) -> bool:
+    """True only when the todo opts into the close gate."""
+    return (
+        isinstance(attributes, dict) and attributes.get("live_verify_required") is True
+    )
+
+
+def _assertion_attributes(row: dict[str, object]) -> dict[str, object] | None:
+    raw = row.get("attributes")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
+def active_live_verify_rows(
+    assertions: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    """Active verdict rows: kind=live_verify and superseded_by IS NULL."""
+    rows: list[dict[str, object]] = []
+    for row in assertions or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("superseded_by") is not None:
+            continue
+        attrs = _assertion_attributes(row)
+        if attrs is None or attrs.get("kind") != _LIVE_VERIFY_KIND:
+            continue
+        rows.append({**row, "attributes": attrs})
+    return rows
+
+
+def live_verify_close_refusal(
+    attributes: object,
+    assertions: list[dict[str, object]] | None,
+) -> str | None:
+    """Named refusal for a flagged todo, or None when close may proceed.
+
+    Token order is the G4 bind. Unflagged todos return None. A flagged todo
+    with no single readable active verdict row fails closed.
+    """
+    if not live_verify_required(attributes):
+        return None
+    rows = active_live_verify_rows(assertions)
+    if len(rows) != 1:
+        return VERDICT_MISSING
+    attrs = rows[0]["attributes"]
+    assert isinstance(attrs, dict)
+    lines = attrs.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return VERDICT_MISSING
+    verdicts: list[object] = []
+    for line in lines:
+        if not isinstance(line, dict):
+            return VERDICT_MISSING
+        verdicts.append(line.get("verdict"))
+    if any(verdict not in _LINE_VERDICTS for verdict in verdicts):
+        return VERDICT_MISSING
+    if any(verdict == "LIVE_DEFECT" for verdict in verdicts):
+        return LIVE_DEFECT
+    relations = attrs.get("service_relations")
+    if not isinstance(relations, list) or not relations:
+        return LAND_SHA_NOT_LIVE
+    for rel in relations:
+        if not isinstance(rel, dict):
+            return LAND_SHA_NOT_LIVE
+        if (
+            rel.get("answer") != "yes"
+            or rel.get("relation") not in _SATISFIED_RELATIONS
+        ):
+            return LAND_SHA_NOT_LIVE
+    if any(verdict == "LIVE_UNTESTABLE" for verdict in verdicts):
+        ruling = attrs.get("operator_ruling")
+        if not isinstance(ruling, str) or not ruling.strip():
+            return RULING_MISSING
+    return None
+
+
+def enforce_live_verify_on_done(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    entity_type: str,
+    new_workflow_state: str,
+    prior_workflow_state: str | None,
+    attributes: object,
+) -> None:
+    """Refuse a todo→done write when the live-verify gate fails.
+
+    Shared by direct ``entity_update`` and any caller that commits
+    ``workflow_state=done``. cortex-api does not open the manage socket;
+    the sha check reads relations stored on the verdict row.
+    """
+    if entity_type != "todo":
+        return
+    if new_workflow_state != "done":
+        return
+    if prior_workflow_state == "done":
+        return
+    if not live_verify_required(attributes):
+        return
+    if not _table_exists(conn, "assertions"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=VERDICT_MISSING,
+        )
+    rows = query(
+        conn,
+        "SELECT id, entity_id, claim, attributes, superseded_by "
+        "FROM assertions WHERE entity_id = ?",
+        (entity_id,),
+    )
+    parsed: list[dict[str, object]] = []
+    for row in rows:
+        item = dict(row)
+        parsed.append(item)
+    token = live_verify_close_refusal(attributes, parsed)
+    if token is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=token,
+        )
+
+
 def emit_todo_closure_gap_if_needed(
     conn: sqlite3.Connection,
     *,
@@ -166,7 +304,9 @@ def emit_todo_done_side_effects(
     )
     # Local import: friction close pulls assertion write path; avoid cycle at
     # module load with entity_crud ↔ dispatch_ops.
-    from .dispatch_ops._friction_followon_close import close_spawned_friction_on_todo_done
+    from .dispatch_ops._friction_followon_close import (
+        close_spawned_friction_on_todo_done,
+    )
 
     close_spawned_friction_on_todo_done(
         conn,

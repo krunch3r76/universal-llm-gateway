@@ -166,6 +166,15 @@ async def do_sidecar(
     return await dispatch(client, "todo_close_sidecar", args)
 
 
+async def do_entity_get(client: Any, todo_id: str) -> dict[str, Any]:
+    """Read the todo, including attributes and assertions, before any close write."""
+    return await dispatch(
+        client,
+        "entity_get",
+        {"entity_id": todo_id, "intent": "full"},
+    )
+
+
 async def do_workflow_update(client: Any, todo_id: str) -> dict[str, Any]:
     return await dispatch(
         client,

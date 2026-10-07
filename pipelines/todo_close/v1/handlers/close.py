@@ -32,6 +32,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, override
 
+from cortex_store.workflow_state import live_verify_close_refusal
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from transport_utils import DEFAULT_CORTEX_URL, make_async_client
@@ -42,6 +43,7 @@ from ._ops import (
     default_evidence,
     do_assert,
     do_edge,
+    do_entity_get,
     do_relationship,
     do_sidecar,
     do_workflow_update,
@@ -98,24 +100,49 @@ class TodoCloseApplyHandler(BaseHandler):
         custom_edges = opts.get("edges") or []
         skip_workflow_update = bool(opts.get("skip_workflow_update", False))
 
-        result: dict[str, Any] = {
-            "ok": True,
-            "todo_id": todo_id,
-            "sidecar": None,
-            "closure_summary_uri": None,
-            "assertion": None,
-            "assertion_id": None,
-            "relationships": [],
-            "relationship_ids": [],
-            "edges": [],
-            "edge_ids": [],
-            "workflow_update": None,
-            "errors": [],
-        }
-
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_REQUEST_TIMEOUT
         ) as client:
+            # Gate before step 1. A refusal writes neither sidecar nor closure
+            # assertion. The token comes from the same predicate entity_update
+            # uses on workflow_state=done.
+            entity = await do_entity_get(client, todo_id)
+            if "error" in entity:
+                err = {
+                    "ok": False,
+                    "error": entity["error"],
+                    "todo_id": todo_id,
+                }
+                return StepOutput(
+                    raw=json.dumps(err, default=str),
+                    json=err,
+                    error=str(entity["error"])[:500],
+                )
+            refusal = live_verify_close_refusal(
+                entity.get("attributes"),
+                entity.get("assertions")
+                if isinstance(entity.get("assertions"), list)
+                else [],
+            )
+            if refusal is not None:
+                err = {"ok": False, "error": refusal, "todo_id": todo_id}
+                return StepOutput(raw=json.dumps(err), json=err, error=refusal)
+
+            result: dict[str, Any] = {
+                "ok": True,
+                "todo_id": todo_id,
+                "sidecar": None,
+                "closure_summary_uri": None,
+                "assertion": None,
+                "assertion_id": None,
+                "relationships": [],
+                "relationship_ids": [],
+                "edges": [],
+                "edge_ids": [],
+                "workflow_update": None,
+                "errors": [],
+            }
+
             # Sidecar first — it writes the durable markdown index, sets the
             # closure_summary_uri attribute, and yields the URI we cite in the
             # closure assertion's evidence_uris. Best-effort: a sidecar failure

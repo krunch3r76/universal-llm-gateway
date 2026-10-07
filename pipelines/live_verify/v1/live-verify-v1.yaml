@@ -1,0 +1,22 @@
+# live-verify — acceptance-line verdict against the running fleet
+#
+# Admit is a pipeline run whose model equals this pipeline id. The handler
+# probes fleet_liveness over the manage socket and writes one assertion.
+# It does not set workflow_state and it does not call team_dispatch.
+
+schema_version: 6
+id: live-verify
+version: "1.0"
+type: live_verify
+category: live_verify
+description: >
+  Record one live-verify verdict assertion on a todo. Per acceptance line:
+  probe call, observed result, and LIVE_OK, LIVE_DEFECT, or LIVE_UNTESTABLE.
+output: verdict
+
+options:
+  timeout_seconds: 60
+
+steps:
+  - name: verdict
+    type: live_verify_verdict_v1
