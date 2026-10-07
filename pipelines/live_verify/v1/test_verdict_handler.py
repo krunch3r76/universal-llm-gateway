@@ -9,6 +9,7 @@ import pytest
 from cortex_store.workflow_state import VERDICT_MISSING
 
 from pipelines.live_verify.v1.handlers._ops import (
+    normalize_lines,
     relations_from_snapshot,
     ruling_attributes,
     verdict_claim,
@@ -417,6 +418,109 @@ async def test_probe_is_scheduled_with_asyncio_to_thread(
         "code_ref": "abc123",
         "services": ["stargate"],
     }
+
+
+def test_normalize_lines_keeps_row_default_and_per_line_overrides() -> None:
+    default_probe = {
+        "jsonrpc": "2.0",
+        "method": "fleet_liveness",
+        "params": {"code_ref": "abc", "services": ["cortex_api"]},
+    }
+    default_observed = {
+        "service_relations": [{"service": "cortex_api", "answer": "yes"}],
+        "probe_error": None,
+    }
+    behavioural_probe = {"tool": "entity_get", "arguments": {"entity_id": "todo:x"}}
+    behavioural_observed = {"error": "live_verify.verdict_missing"}
+    lines = normalize_lines(
+        [
+            {"line": "(a) land sha live", "verdict": "LIVE_OK"},
+            {
+                "line": "(b) refusal token",
+                "verdict": "LIVE_OK",
+                "probe_call": behavioural_probe,
+                "observed": behavioural_observed,
+            },
+        ],
+        probe_call=default_probe,
+        observed=default_observed,
+    )
+    assert lines[0]["probe_call"] == default_probe
+    assert lines[0]["observed"] == default_observed
+    assert lines[1]["probe_call"] == behavioural_probe
+    assert lines[1]["observed"] == behavioural_observed
+
+
+def test_normalize_lines_caps_oversized_caller_observed() -> None:
+    huge = {"payload": "x" * 9000}
+    lines = normalize_lines(
+        [{"line": "(c) big", "verdict": "LIVE_OK", "observed": huge}],
+        probe_call={"method": "fleet_liveness"},
+        observed={"service_relations": []},
+    )
+    assert lines[0]["observed"].get("_size_truncated") is True
+    assert lines[0]["observed"]["_original_bytes"] > 8192
+
+
+@pytest.mark.asyncio
+async def test_verdict_row_service_relations_independent_of_line_observed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    class _Capture(_Client):
+        async def post(self, path: str, json: dict) -> _Response:  # noqa: A002
+            self.calls.append(json["tool"])
+            if json["tool"] == "assert":
+                captured.update(json["arguments"])
+            return _Response(self.routes[json["tool"]])
+
+    client = _Capture(
+        {
+            "entity_get": {"id": "todo:sample", "description": "", "assertions": []},
+            "assert": {"id": 11},
+        }
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.make_async_client",
+        lambda *_a, **_k: client,
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.fleet_liveness",
+        lambda **_k: {
+            "services": [
+                {
+                    "service": "cortex_api",
+                    "code_ref_validation": {
+                        "liveness": {"answer": "yes", "relation": "equal"}
+                    },
+                }
+            ]
+        },
+    )
+    out = await LiveVerifyVerdictHandler().execute(
+        None,
+        SimpleNamespace(
+            options={
+                "todo_id": "todo:sample",
+                "land_sha": "abc",
+                "services": ["cortex_api"],
+                "lines": [
+                    {
+                        "line": "(b) behavioural",
+                        "verdict": "LIVE_OK",
+                        "probe_call": {"tool": "pipeline", "arguments": {"op": "run"}},
+                        "observed": {"refusal": "live_verify.verdict_missing"},
+                    }
+                ],
+            }
+        ),
+    )
+    assert out.json["ok"] is True
+    attrs = captured["attributes"]
+    assert attrs["service_relations"][0]["answer"] == "yes"
+    assert attrs["lines"][0]["observed"] == {"refusal": "live_verify.verdict_missing"}
+    assert attrs["lines"][0]["probe_call"]["tool"] == "pipeline"
 
 
 def test_claim_cites_probe_and_observed() -> None:

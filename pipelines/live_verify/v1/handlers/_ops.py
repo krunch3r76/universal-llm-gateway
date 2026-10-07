@@ -5,6 +5,35 @@ from __future__ import annotations
 import json
 from typing import Any
 
+# Per-line probe_call / observed blobs (caller-supplied), UTF-8 JSON size cap.
+_LINE_DATA_MAX_BYTES = 8192
+
+
+def _cap_json_dict(value: dict[str, Any], *, max_bytes: int = _LINE_DATA_MAX_BYTES) -> dict[str, Any]:
+    """Store dict as data; if serialized size exceeds cap, mark truncation."""
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return {
+        "_size_truncated": True,
+        "_original_bytes": len(encoded),
+        "_max_bytes": max_bytes,
+    }
+
+
+def _line_probe_call(item: dict[str, Any], default: dict[str, Any]) -> dict[str, Any]:
+    supplied = item.get("probe_call")
+    if isinstance(supplied, dict):
+        return _cap_json_dict(supplied)
+    return default
+
+
+def _line_observed(item: dict[str, Any], default: dict[str, Any]) -> dict[str, Any]:
+    supplied = item.get("observed")
+    if isinstance(supplied, dict):
+        return _cap_json_dict(supplied)
+    return default
+
 
 def acceptance_lines_from_description(description: str) -> list[str]:
     """Lines shaped ``(a) ...`` in a todo description."""
@@ -94,6 +123,8 @@ def normalize_lines(
     """One recorded row per acceptance line. Default verdict is untestable."""
     rows: list[dict[str, Any]] = []
     for item in raw_lines:
+        line_probe = probe_call
+        line_observed = observed
         if isinstance(item, str):
             text = item
             verdict = "LIVE_UNTESTABLE"
@@ -105,13 +136,15 @@ def normalize_lines(
                 if supplied in {"LIVE_OK", "LIVE_DEFECT", "LIVE_UNTESTABLE"}
                 else "LIVE_UNTESTABLE"
             )
+            line_probe = _line_probe_call(item, probe_call)
+            line_observed = _line_observed(item, observed)
         else:
             continue
         rows.append(
             {
                 "line": text,
-                "probe_call": probe_call,
-                "observed": observed,
+                "probe_call": line_probe,
+                "observed": line_observed,
                 "verdict": verdict,
             }
         )
