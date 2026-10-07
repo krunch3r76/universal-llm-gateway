@@ -16,11 +16,11 @@ from scripts.model_manager.ui.dispatch_monitor.core.board_lines import (
     live_cdp,
     live_sdk,
 )
-from scripts.model_manager.ui.dispatch_monitor.core.watch import clip_text
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
     CdpLegRow,
     SdkDispatchRow,
 )
+from scripts.model_manager.ui.dispatch_monitor.core.watch import clip_text
 
 DEFAULT_SELECTION_PATH = Path("/tmp/ulg-dispatch-board-selection.json")
 PANE_TITLE = "transcript"
