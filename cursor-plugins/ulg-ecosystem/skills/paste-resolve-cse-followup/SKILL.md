@@ -20,7 +20,7 @@ related_skills:
 
 Genre: thin exportable recipe. Reader = Maestro / Grok (or any host) that **finalizes** after `pipeline_id=cursor-paste-resolve` admits `cursor_sdk` — not the Cursor implementer tab.
 
-Parent entry: Use `claude-ai-paste-resolve` for compose, launch, and watcher arm. This slug covers **optional warm CSE followup** and **closeout watch posture** only.
+Parent entry: Use `cowork-paste-resolve` for compose, launch, and watcher arm. This slug covers **optional warm CSE followup** and **closeout watch posture** only.
 
 Evidence: assertion a:38621 (2026-10-06/07 Grok seat); specimen threads in `agent-bus:12286`.
 
@@ -47,4 +47,4 @@ Evidence: assertion a:38621 (2026-10-06/07 Grok seat); specimen threads in `agen
 
 ## Skills
 
-cite `runbook:bus-consult-watcher` · Use `claude-ai-paste-resolve` for the paste-resolve ladder · Use `cdp-operator-proxy` when followup rides operator-proxy CSE lanes.
+cite `runbook:bus-consult-watcher` · Use `cowork-paste-resolve` for the paste-resolve ladder · Use `cdp-operator-proxy` when followup rides operator-proxy CSE lanes.

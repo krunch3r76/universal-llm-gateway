@@ -112,9 +112,11 @@ skills:
     # skill_shared (census) independent of MCP endpoint readiness for project-ask.
     surface_class: cursor_only
     mcp_surface_required: code
-  claude-ai-paste-resolve:
-    # Claude.ai / Cowork Customize slug. shared_sync + mcp none → Customize upload set.
-    # Thin wrapper around pipeline_id=cursor-paste-resolve; default launch_target=cursor_sdk.
+  cowork-paste-resolve:
+    # Claude.ai / Cowork Customize slug (frontmatter name; Anthropic rejects "claude" in name).
+    # Catalog alias claude-ai-paste-resolve preserves prior references. a:38633.
+    aliases:
+      - claude-ai-paste-resolve
     surface_class: shared_sync
     mcp_surface_required: none
   paste-resolve-cse-followup:

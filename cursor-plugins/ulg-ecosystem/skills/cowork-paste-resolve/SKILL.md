@@ -1,8 +1,9 @@
 ---
-name: claude-ai-paste-resolve
+name: cowork-paste-resolve
 description: "Thin Cowork wrapper: friction or assertion → runbook cursor-paste-resolve + pipeline cursor-paste-resolve; default launch_target cursor_sdk; this seat finalizes. ¬ Grok liaison."
 lifecycle: active
 trigger_match_terms:
+  - cowork-paste-resolve
   - claude-ai-paste-resolve
   - paste-resolve
   - cursor-paste-resolve
@@ -50,8 +51,10 @@ This is **not** the Grok liaison path-1 peer-spawn skill — Cowork **is** the d
 ## Invocation
 
 ```
-/claude-ai-paste-resolve <friction|assertion> <id> [maestro] [cursor_sdk|sdk-write|no-paste|admit] [opus|fable] [cursor_bridge] [glass|ide] [orion-node|jupiter]
+/cowork-paste-resolve <friction|assertion> <id> [maestro] [cursor_sdk|sdk-write|no-paste|admit] [opus|fable] [cursor_bridge] [glass|ide] [orion-node|jupiter]
 ```
+
+Catalog alias `claude-ai-paste-resolve` resolves the same skill; Customize slash is `/cowork-paste-resolve`.
 
 Default `launch_target=cursor_sdk`. Refuse missing kind/id; unknown token; inventing bridge before runbook supports Cowork→bridge.
 

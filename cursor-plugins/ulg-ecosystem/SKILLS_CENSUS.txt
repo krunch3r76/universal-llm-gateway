@@ -13,7 +13,7 @@ skill-authoring-gate
 directive-authoring-standard
 cursor-model-economics
 claude-ai-cdp-navigation
-claude-ai-paste-resolve
+cowork-paste-resolve
 paste-resolve-cse-followup
 conductor
 liaison
