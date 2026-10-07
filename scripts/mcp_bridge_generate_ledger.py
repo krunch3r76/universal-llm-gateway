@@ -191,7 +191,10 @@ def cdp_generate_record(
     *,
     generation_options: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Project a team_dispatch result onto a ledger row when it is a live CDP admit."""
+    """Project a team_dispatch result onto a ledger row when it is a live CDP admit.
+
+    When ``generation_options`` carries ``await_reply`` false, no row is written (a:38542).
+    """
     opts = generation_options or {}
     if isinstance(opts, dict) and opts.get("await_reply") is False:
         return None
@@ -358,6 +361,13 @@ class GenerateObserver:
                     raw = arguments.get("generation_options")
                     if isinstance(raw, dict):
                         gen_opts = raw
+                    elif isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, dict):
+                                gen_opts = parsed
+                        except json.JSONDecodeError:
+                            pass
                 self._pending[msg_id] = {
                     "kind": "generate",
                     "generation_options": gen_opts,

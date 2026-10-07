@@ -4678,6 +4678,9 @@ tools:
           type: string
       server_tools:
         type: boolean
+      generation_options:
+        type: object
+        description: '{"await_reply": false} on model=cdp/... generate stops the caller''s cursor-sdk dispatch from parking AWAITING CDP REPLY after its closeout; do not use it when the caller''s own work depends on the reply.'
     required:
     - op
     - role

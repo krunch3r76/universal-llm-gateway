@@ -115,6 +115,45 @@ def test_await_reply_false_skips_fire_row_control_still_records(
     assert rows[0]["execution_id"] == _EXEC
 
 
+def test_await_reply_false_generation_options_json_string(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    """MCP may serialize generation_options as a JSON string; opt-out must still apply."""
+    observer.on_request(
+        _request(
+            23,
+            "team_dispatch",
+            {
+                "op": "generate",
+                "model": "cdp/opus-5.5",
+                "generation_options": json.dumps({"await_reply": False}),
+            },
+        )
+    )
+    observer.on_result(_result(23, _cdp_admit_payload()))
+    assert read_generate_records("bb28fae31960-dd251b78", spool_dir=tmp_path) == []
+
+
+def test_malformed_generation_options_string_still_records_row(
+    observer: GenerateObserver, tmp_path: Path
+) -> None:
+    observer.on_request(
+        _request(
+            24,
+            "team_dispatch",
+            {
+                "op": "generate",
+                "model": "cdp/opus-5.5",
+                "generation_options": "{not valid json",
+            },
+        )
+    )
+    observer.on_result(_result(24, _cdp_admit_payload()))
+    rows = read_generate_records("bb28fae31960-dd251b78", spool_dir=tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["execution_id"] == _EXEC
+
+
 def test_await_reply_false_on_overflow_dispatch_form(
     observer: GenerateObserver, tmp_path: Path
 ) -> None:
