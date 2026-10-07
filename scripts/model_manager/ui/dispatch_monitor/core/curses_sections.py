@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import curses
-
 from typing import Protocol
 
 from .board_lines import attention_line, lease_body_lines

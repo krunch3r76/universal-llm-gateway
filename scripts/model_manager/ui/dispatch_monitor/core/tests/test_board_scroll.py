@@ -6,11 +6,9 @@ from scripts.model_manager.ui.dispatch_monitor.core.curses_board import (
     section_row_caps,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (
+    TailTarget,
     advance_section,
     targets_in_section,
-)
-from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (
-    TailTarget,
 )
 
 
