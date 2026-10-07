@@ -13,7 +13,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
-from ..unscoped_intent_scopes import expand_default_scopes_for_query
+from .unscoped_intent_scopes import expand_default_scopes_for_query
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
