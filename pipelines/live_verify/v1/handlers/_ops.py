@@ -26,8 +26,19 @@ def relations_from_snapshot(
     Close folds those into ``live_verify.land_sha_not_live``.
     """
     if "error" in snapshot or not isinstance(snapshot.get("services"), list):
+        reason = snapshot.get("error")
+        if isinstance(reason, str) and reason.strip():
+            absent = reason.strip()
+        else:
+            absent = "probe returned no code_ref relation"
         return [
-            {"service": service, "relation": None, "answer": "unknown"}
+            {
+                "service": service,
+                "relation": None,
+                "answer": "unknown",
+                "relation_absent_reason": absent,
+                "close_gate": "live_verify.land_sha_not_live",
+            }
             for service in services
         ]
     by_service = {
@@ -46,13 +57,29 @@ def relations_from_snapshot(
         answer = liveness.get("answer")
         if answer not in {"yes", "no", "unknown"}:
             answer = "unknown"
-        relations.append(
-            {
-                "service": service,
-                "relation": liveness.get("relation"),
-                "answer": answer,
-            }
-        )
+        relation = liveness.get("relation")
+        entry: dict[str, Any] = {
+            "service": service,
+            "relation": relation,
+            "answer": answer,
+        }
+        if relation is None:
+            observation = liveness.get("observation")
+            probe_error = (
+                observation.get("probe_error")
+                if isinstance(observation, dict)
+                else None
+            )
+            reason = liveness.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                absent = reason.strip()
+            elif isinstance(probe_error, str) and probe_error.strip():
+                absent = probe_error.strip()
+            else:
+                absent = "probe returned no code_ref relation"
+            entry["relation_absent_reason"] = absent
+            entry["close_gate"] = "live_verify.land_sha_not_live"
+        relations.append(entry)
     return relations
 
 
