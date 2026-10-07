@@ -63,7 +63,7 @@ def update_transcript_pane_title(
     *,
     run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> None:
-    """Retitle the current tmux pane to ``transcript · <short>``; no-op outside tmux."""
+    """Retitle the transcript tmux pane to ``transcript · <short>``; no-op outside tmux."""
     if not os.environ.get("TMUX"):
         return
 
@@ -71,7 +71,33 @@ def update_transcript_pane_title(
         caller = run if run is not None else subprocess.run
         return caller(args, check=False, capture_output=True, text=True)
 
-    _run(["tmux", "select-pane", "-T", format_transcript_pane_title(label)])
+    active = _run(["tmux", "display-message", "-p", "#{pane_id}"])
+    active_id = active.stdout.strip() if active.returncode == 0 else ""
+
+    listed = _run(["tmux", "list-panes", "-F", "#{pane_id}\t#{pane_title}"])
+    if listed.returncode != 0:
+        return
+    transcript_id = ""
+    for line in listed.stdout.splitlines():
+        pane_id, _, title = line.partition("\t")
+        if pane_id.strip() and is_transcript_pane_title(title.strip()):
+            transcript_id = pane_id.strip()
+            break
+    if not transcript_id:
+        return
+
+    _run(
+        [
+            "tmux",
+            "select-pane",
+            "-t",
+            transcript_id,
+            "-T",
+            format_transcript_pane_title(label),
+        ]
+    )
+    if active_id and active_id != transcript_id:
+        _run(["tmux", "select-pane", "-t", active_id])
 
 
 @dataclass(frozen=True)
@@ -128,9 +154,7 @@ def advance_section(section: str, delta: int) -> str:
     return SECTION_ORDER[(idx + delta) % len(SECTION_ORDER)]
 
 
-def targets_in_section(
-    targets: list[TailTarget], section: str
-) -> list[TailTarget]:
+def targets_in_section(targets: list[TailTarget], section: str) -> list[TailTarget]:
     """Live rows selectable while ``section`` is focused (SDK/CDP only)."""
     if section == "sdk":
         return [row for row in targets if row.kind == "cursor-sdk"]

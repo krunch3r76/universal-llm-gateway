@@ -105,13 +105,55 @@ def test_update_transcript_pane_title_in_tmux(monkeypatch) -> None:
 
     def fake_run(args, **_kwargs):
         calls.append(list(args))
+        if args[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(args, 0, stdout="%1\n", stderr="")
+        if args[:2] == ["tmux", "list-panes"]:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=(
+                    f"%1\t{BOARD_PANE_TITLE}\n"
+                    f"%12\t{format_transcript_pane_title('old-row')}\n"
+                ),
+                stderr="",
+            )
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setenv("TMUX", "1")
     update_transcript_pane_title("live-dispatch-id", run=fake_run)
-    assert calls == [
-        ["tmux", "select-pane", "-T", format_transcript_pane_title("live-dispatch-id")]
-    ]
+    expected_title = format_transcript_pane_title("live-dispatch-id")
+    assert [
+        "tmux",
+        "select-pane",
+        "-t",
+        "%12",
+        "-T",
+        expected_title,
+    ] in calls
+    assert ["tmux", "select-pane", "-t", "%1"] in calls
+    assert not any(
+        call == ["tmux", "select-pane", "-T", expected_title] for call in calls
+    )
+
+
+def test_update_transcript_pane_title_skips_when_no_transcript_pane(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        if args[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(args, 0, stdout="%1\n", stderr="")
+        if args[:2] == ["tmux", "list-panes"]:
+            return subprocess.CompletedProcess(
+                args, 0, stdout=f"%1\t{BOARD_PANE_TITLE}\n", stderr=""
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("TMUX", "1")
+    update_transcript_pane_title("any", run=fake_run)
+    assert not any(call[:3] == ["tmux", "select-pane", "-T"] for call in calls)
 
 
 def test_is_transcript_pane_title() -> None:
