@@ -43,7 +43,7 @@ This is **not** the Grok liaison path-1 peer-spawn skill — Cowork **is** the d
 - notify=maestro ⇔ closure memo thread **12286** only — never `dispatch_thread_id`
 - wait_timeout MCP -32001 ⇔ expected ∧ re-poll agent_bus
 - bus_watch ⇔ continuous `agent_bus` wait re-poll (cite `runbook:bus-consult-watcher`); cron wake routines = backup only — ¬ primary closeout watch (Maestro/Grok finalize; a:38621)
-- `launch_target=cursor_sdk` path1 ⇔ write-thread `agent_bus` wait suffices for closeout; failed Glass/local/orion/Jupiter launch arms after admit are noise — ¬ second recovery stack (a:38621)
+- `launch_target=cursor_sdk` post-admit ⇔ write-thread `agent_bus` wait suffices for closeout; failed Glass/local/orion/Jupiter launch arms after admit are noise — ¬ second recovery stack (a:38621)
 - CSE warm followup after paste-resolve ⇔ cite `paste-resolve-cse-followup` (prompt_text not box `prompt_path`; HTTP 417 → shorten once)
 - ¬ invent wires/runbook steps
 
