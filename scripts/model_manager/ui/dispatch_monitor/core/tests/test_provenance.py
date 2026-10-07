@@ -304,7 +304,7 @@ def test_sdk_live_line_paints_topic_when_present() -> None:
     assert "from=ide" in line
 
 
-def test_cdp_line_labels_url_and_thread_without_req_exec() -> None:
+def test_cdp_line_labels_url_thread_and_req() -> None:
     from scripts.model_manager.ui.dispatch_monitor.core.watch import (
         _cdp_line,
         cdp_id_legend,
@@ -328,20 +328,20 @@ def test_cdp_line_labels_url_and_thread_without_req_exec() -> None:
     assert f"url={chat_url}" in line
     assert "th=6329" in line
     assert "topic=bind the CDP id legend" in line
-    assert "req=" not in line
+    assert f"req={req_id}" in line
     assert "exec=" not in line
     assert "lane=" not in line
-    assert line.index("url=") < line.index("th=")
+    assert line.index("url=") < line.index("th=") < line.index("req=")
     narrow = _cdp_line(row, width=40)
     assert f"url={chat_url}" in narrow
     assert "ids: url=CSE chat (when bound)" in cdp_id_legend()
-    assert "req=" not in cdp_id_legend()
+    assert "req=generate request_id" in cdp_id_legend()
 
     no_url = CdpLegRow(request_id=req_id, thread_id="6329", state="admitted")
     bare = _cdp_line(no_url)
     assert "url=" not in bare
     assert "th=6329" in bare
-    assert "req=" not in bare
+    assert f"req={req_id}" in bare
     assert "exec=" not in bare
 
     model = Model()
@@ -372,5 +372,5 @@ def test_cdp_line_labels_url_and_thread_without_req_exec() -> None:
     assert cdp_id_legend() in text
     assert f"url={chat_url}" in text
     assert "th=6329" in text
-    assert "req=" not in text
+    assert f"req={req_id}" in text
     assert "exec=" not in text

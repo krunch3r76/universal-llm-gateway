@@ -673,7 +673,7 @@ _CSE_CHAT = "claude.ai/cowork/cse_paint123"
 
 
 def test_cdp_admitted_plus_cse_bound_one_row_url_paint() -> None:
-    """Admitted + cse.bound on same thread_id → one row with url= and no req=/exec=."""
+    """Admitted + cse.bound on same thread_id → one row with url= and req=."""
     from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line
 
     model = Model()
@@ -706,7 +706,7 @@ def test_cdp_admitted_plus_cse_bound_one_row_url_paint() -> None:
     assert row.chat_url == _CSE_CHAT
     line = _cdp_line(row)
     assert f"url={_CSE_CHAT}" in line
-    assert "req=" not in line
+    assert "req=req-paint" in line
     assert "exec=" not in line
     assert "lane=" not in line
 
@@ -745,7 +745,7 @@ def test_cdp_cse_bound_before_admitted_same_paint() -> None:
     assert row.chat_url == _CSE_CHAT
     line = _cdp_line(row)
     assert f"url={_CSE_CHAT}" in line
-    assert "req=" not in line
+    assert "req=req-order" in line
 
 
 def test_cdp_cse_bound_alone_leaves_cdp_empty() -> None:

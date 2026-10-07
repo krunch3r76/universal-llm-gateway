@@ -31,7 +31,12 @@ def main() -> int:
     key = selected.get("prompt_key") or ""
     label = selected.get("label") or key
     if not key:
-        print(f"{label}: no stored prompt key")
+        if selected.get("kind") == "cdp":
+            print(
+                f"{label}: no execution_id — CDP prompt is stored under execution_id"
+            )
+        else:
+            print(f"{label}: no stored prompt key")
         return 0
     result = fetch_prompt(key)
     error = result.get("error") or ""

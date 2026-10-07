@@ -6,7 +6,7 @@ from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.folds.cdp import DEFAULT_MAX_WALL_S
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
-from scripts.model_manager.ui.dispatch_monitor.core.watch import render
+from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line, render
 
 from .conftest import replay
 
@@ -58,6 +58,60 @@ def test_ac3_phantom_handlers_unreachable() -> None:
     )
 
 
+def test_cdp_elapsed_falls_back_to_hint_issued_ms() -> None:
+    """Hint-only live legs age from hint_issued_ms when admitted_at_ms is absent."""
+    model = Model()
+    hint_at = 1_000_000
+    model.apply(
+        Event(
+            signals.POLL_HINT_ISSUED,
+            hint_at,
+            {
+                "request_id": "hint-only-req",
+                "reply_from_agent": "web-anthropic",
+                "caller_agent": "cursor",
+                "thread_id": "12675",
+            },
+        )
+    )
+    now = hint_at + 125_000
+    row = _row(model.derive(now).cdp, "request_id", "hint-only-req")
+    assert row.admitted_at_ms is None
+    assert row.elapsed_ms == 125_000
+    assert row.state == "hint_issued"
+
+
+def test_cdp_elapsed_prefers_admit_clock_over_hint() -> None:
+    """When both clocks exist, elapsed uses admitted_at_ms."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.POLL_HINT_ISSUED,
+            1_000,
+            {
+                "request_id": "both-clocks",
+                "reply_from_agent": "web-anthropic",
+                "caller_agent": "cursor",
+                "thread_id": "1",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            100_000,
+            {
+                "request_id": "both-clocks",
+                "execution_id": "exec-both",
+                "model": "cdp/opus-5",
+                "thread_id": "1",
+            },
+        )
+    )
+    row = _row(model.derive(160_000).cdp, "request_id", "both-clocks")
+    assert row.elapsed_ms == 60_000
+
+
 def test_ac4_poll_hint_cdp_only() -> None:
     """AC4 — CDP poll hints fold; non-CDP hints are ignored."""
     model = Model()
@@ -89,6 +143,8 @@ def test_ac4_poll_hint_cdp_only() -> None:
     assert len(frame.cdp) == 1
     assert frame.cdp[0].request_id == "cdp-x"
     assert frame.cdp[0].caller_agent == "dispatch"
+    line = _cdp_line(frame.cdp[0])
+    assert "req=cdp-x" in line
 
 
 def test_ac5_attention_classes_on_real_signals() -> None:

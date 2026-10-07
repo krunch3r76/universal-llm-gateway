@@ -97,13 +97,16 @@ def _sdk_line(row: SdkDispatchRow) -> str:
 
 def cdp_id_legend() -> str:
     """One-line CDP identity legend. Does not name CSE or checkout lanes."""
-    return "  ids: url=CSE chat (when bound) · th=agent-bus thread"
+    return (
+        "  ids: url=CSE chat (when bound) · th=agent-bus thread · "
+        "req=generate request_id"
+    )
 
 
 def _cdp_line(row: CdpLegRow, *, width: int | None = None) -> str:
     """Render one CDP leg with labeled ids so ATTENTION ``request_id`` can join.
 
-    Identity tokens are unpadded. ``url=`` / ``th=`` omit when unknown.
+    Identity tokens are unpadded. ``url=`` / ``th=`` / ``req=`` omit when unknown.
     Width drops trailing status tokens; it does not invent CSE/checkout lanes.
     """
     proof = "proof" if row.proof_present else "-"
@@ -113,6 +116,8 @@ def _cdp_line(row: CdpLegRow, *, width: int | None = None) -> str:
         parts.append(f"url={row.chat_url}")
     if row.thread_id:
         parts.append(f"th={row.thread_id}")
+    if row.request_id:
+        parts.append(f"req={clip_text(row.request_id, 14)}")
     if row.dispatch_link_terminal is True:
         parts.append("link=terminal")
     base = "  " + (" ".join(parts) if parts else "-")

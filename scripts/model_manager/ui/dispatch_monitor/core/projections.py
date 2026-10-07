@@ -129,7 +129,12 @@ def cdp_rows(
     rows = []
     for state in fold.legs.values():
         live = state.terminal_ms is None
-        elapsed = age(now_ms, state.admitted_at_ms) if live else None
+        if live:
+            elapsed = age(now_ms, state.admitted_at_ms)
+            if elapsed is None and state.hint_issued_ms is not None:
+                elapsed = age(now_ms, state.hint_issued_ms)
+        else:
+            elapsed = None
         rows.append(
             CdpLegRow(
                 request_id=state.request_id,
