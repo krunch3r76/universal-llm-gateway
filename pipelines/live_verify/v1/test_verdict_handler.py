@@ -56,10 +56,16 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, module, client: _Client) -> N
 def test_unreachable_probe_stores_unknown_answer() -> None:
     relations = relations_from_snapshot(
         {"error": "manage socket not found"},
-        ["cortex-api"],
+        ["cortex_api"],
     )
     assert relations == [
-        {"service": "cortex-api", "relation": None, "answer": "unknown"}
+        {
+            "service": "cortex_api",
+            "relation": None,
+            "answer": "unknown",
+            "relation_absent_reason": "manage socket not found",
+            "close_gate": "live_verify.land_sha_not_live",
+        }
     ]
 
 
@@ -67,16 +73,42 @@ def test_answer_yes_equal_is_stored() -> None:
     snapshot = {
         "services": [
             {
-                "service": "cortex-api",
+                "service": "cortex_api",
                 "code_ref_validation": {
                     "liveness": {"answer": "yes", "relation": "ancestor"}
                 },
             }
         ]
     }
-    relations = relations_from_snapshot(snapshot, ["cortex-api"])
+    relations = relations_from_snapshot(snapshot, ["cortex_api"])
     assert relations[0]["answer"] == "yes"
     assert relations[0]["relation"] == "ancestor"
+    assert "relation_absent_reason" not in relations[0]
+
+
+def test_null_stargate_relation_records_probe_reason_without_inventing() -> None:
+    snapshot = {
+        "services": [
+            {
+                "service": "stargate",
+                "code_ref_validation": {
+                    "liveness": {
+                        "answer": "unknown",
+                        "relation": None,
+                        "reason": "probe unreachable or returned no payload",
+                        "observation": {"probe_error": "HTTP timeout"},
+                    }
+                },
+            }
+        ]
+    }
+    relations = relations_from_snapshot(snapshot, ["stargate"])
+    assert relations[0]["relation"] is None
+    assert relations[0]["answer"] == "unknown"
+    assert relations[0]["relation_absent_reason"] == (
+        "probe unreachable or returned no payload"
+    )
+    assert relations[0]["close_gate"] == "live_verify.land_sha_not_live"
 
 
 @pytest.mark.asyncio
@@ -122,7 +154,7 @@ async def test_verdict_supersedes_prior_and_drops_ruling(
             options={
                 "todo_id": "todo:sample",
                 "land_sha": "abc",
-                "services": ["cortex-api"],
+                "services": ["cortex_api"],
                 "lines": [{"line": "(a) row exists", "verdict": "LIVE_OK"}],
             }
         ),
@@ -160,7 +192,7 @@ async def test_ruling_is_supersede_of_full_attribute_set(
                         "attributes": {
                             "kind": "live_verify",
                             "land_sha": "abc",
-                            "services": ["cortex-api"],
+                            "services": ["cortex_api"],
                             "lines": [
                                 {
                                     "line": "(f) ruling",
@@ -171,7 +203,7 @@ async def test_ruling_is_supersede_of_full_attribute_set(
                             ],
                             "service_relations": [
                                 {
-                                    "service": "cortex-api",
+                                    "service": "cortex_api",
                                     "relation": "equal",
                                     "answer": "yes",
                                 }
@@ -193,13 +225,14 @@ async def test_ruling_is_supersede_of_full_attribute_set(
             options={
                 "todo_id": "todo:sample",
                 "land_sha": "abc",
-                "services": ["cortex-api"],
+                "services": ["cortex_api"],
                 "operator_ruling": "accepted",
             }
         ),
     )
     assert out.json["ok"] is True
     assert captured["old_assertion_id"] == 3
+    assert captured["derivation_type"] == "agent_observation"
     assert captured["attributes"]["operator_ruling"] == "accepted"
     assert captured["attributes"]["lines"][0]["verdict"] == "LIVE_UNTESTABLE"
     assert "assertion_update" not in client.calls
@@ -231,6 +264,159 @@ async def test_close_refusal_skips_sidecar(monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert out.json["error"] == VERDICT_MISSING
     assert client.calls == ["entity_get"]
+
+
+@pytest.mark.asyncio
+async def test_http_422_keeps_cortex_quality_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Reject(_Client):
+        async def post(self, path: str, json: dict) -> _Response:  # noqa: A002
+            self.calls.append(json["tool"])
+            if json["tool"] == "assert":
+                return _Response(
+                    {
+                        "detail": {
+                            "error": "assertion_quality_rejected",
+                            "diagnostics": [
+                                {
+                                    "field": "derivation_type",
+                                    "message": "derivation_type is required",
+                                }
+                            ],
+                        }
+                    },
+                    status_code=422,
+                )
+            return _Response(self.routes[json["tool"]])
+
+    client = _Reject(
+        {"entity_get": {"id": "todo:sample", "description": "", "assertions": []}}
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.make_async_client",
+        lambda *_a, **_k: client,
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.fleet_liveness",
+        lambda **_k: {"error": "down"},
+    )
+    out = await LiveVerifyVerdictHandler().execute(
+        None,
+        SimpleNamespace(
+            options={
+                "todo_id": "todo:sample",
+                "land_sha": "abc",
+                "services": ["cortex_api"],
+                "lines": [{"line": "(a) row exists", "verdict": "LIVE_OK"}],
+            }
+        ),
+    )
+    error = out.json["error"]
+    assert "http_422" in error
+    assert "assertion_quality_rejected" in error
+    assert "derivation_type is required" in error
+
+
+def test_assert_payload_passes_live_quality_contract() -> None:
+    from cortex_store.assertion_quality import validate_assertion
+    from cortex_store.models.assertions import AssertionCreate
+
+    payload = {
+        "entity_id": "todo:sample",
+        "claim": "live_verify line=(a) row",
+        "confidence": "confirmed",
+        "evidence": "live_verify verdict probe",
+        "attributes": {"kind": "live_verify"},
+        "seeded_by": "pipeline:live-verify",
+        "derivation_type": "agent_observation",
+    }
+    rejected = validate_assertion(AssertionCreate(**{**payload, "derivation_type": None}))
+    assert rejected.rejected
+    assert any(
+        "derivation_type is required" in item.message for item in rejected.hard_reject
+    )
+    accepted = validate_assertion(AssertionCreate(**payload))
+    assert not any(item.field == "derivation_type" for item in accepted.hard_reject)
+
+
+def test_both_reason_and_probe_error_survive_on_relation() -> None:
+    snapshot = {
+        "services": [
+            {
+                "service": "stargate",
+                "code_ref_validation": {
+                    "liveness": {
+                        "answer": "unknown",
+                        "relation": None,
+                        "reason": "probe unreachable or returned no payload",
+                        "observation": {"probe_error": "HTTP timeout"},
+                    }
+                },
+            }
+        ]
+    }
+    relations = relations_from_snapshot(snapshot, ["stargate"])
+    assert relations[0]["relation_absent_reason"] == (
+        "probe unreachable or returned no payload"
+    )
+    assert relations[0]["probe_error"] == "HTTP timeout"
+
+
+@pytest.mark.asyncio
+async def test_probe_is_scheduled_with_asyncio_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduled: dict = {}
+
+    async def _to_thread(fn, /, *args, **kwargs):
+        scheduled["fn"] = fn
+        scheduled["args"] = args
+        scheduled["kwargs"] = kwargs
+        return fn(*args, **kwargs)
+
+    client = _Client(
+        {
+            "entity_get": {
+                "id": "todo:sample",
+                "description": "",
+                "assertions": [],
+            },
+            "assert": {"id": 9},
+        }
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.asyncio.to_thread",
+        _to_thread,
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.make_async_client",
+        lambda *_a, **_k: client,
+    )
+    monkeypatch.setattr(
+        "pipelines.live_verify.v1.handlers.verdict.fleet_liveness",
+        lambda **_k: {"error": "down"},
+    )
+    out = await LiveVerifyVerdictHandler().execute(
+        None,
+        SimpleNamespace(
+            options={
+                "todo_id": "todo:sample",
+                "land_sha": "abc123",
+                "services": ["stargate"],
+                "lines": [{"line": "(a) row exists", "verdict": "LIVE_OK"}],
+            }
+        ),
+    )
+    assert out.json["ok"] is True
+    from pipelines.live_verify.v1.handlers import verdict as verdict_mod
+
+    assert scheduled["fn"] is verdict_mod.fleet_liveness
+    assert scheduled["args"] == ()
+    assert scheduled["kwargs"] == {
+        "code_ref": "abc123",
+        "services": ["stargate"],
+    }
 
 
 def test_claim_cites_probe_and_observed() -> None:

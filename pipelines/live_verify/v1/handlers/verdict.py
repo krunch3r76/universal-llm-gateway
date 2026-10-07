@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, override
@@ -23,6 +24,34 @@ from ._ops import (
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 30.0
+_DERIVATION_TYPE = "agent_observation"
+
+
+def _cortex_http_message(data: Any) -> str | None:
+    """Text from a FastAPI error body that has no top-level ``error`` key."""
+    if isinstance(data, str) and data.strip():
+        return data.strip()
+    if not isinstance(data, dict):
+        return None
+    detail = data.get("detail", data)
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    if not isinstance(detail, dict):
+        return None
+    parts: list[str] = []
+    error = detail.get("error")
+    if isinstance(error, str) and error.strip():
+        parts.append(error.strip())
+    diagnostics = detail.get("diagnostics")
+    if isinstance(diagnostics, list):
+        for item in diagnostics:
+            if isinstance(item, dict) and isinstance(item.get("message"), str):
+                parts.append(item["message"])
+            elif isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+    if not parts and isinstance(detail.get("message"), str):
+        parts.append(detail["message"])
+    return "; ".join(parts) if parts else None
 
 
 async def _dispatch(
@@ -38,10 +67,14 @@ async def _dispatch(
         data = resp.json()
     except Exception as exc:
         return {"error": f"invalid_json_response: {exc}"}
-    if getattr(resp, "status_code", 200) >= 400:
+    status_code = getattr(resp, "status_code", 200)
+    if status_code >= 400:
         if isinstance(data, dict) and "error" in data:
             return data
-        return {"error": f"http_{resp.status_code}"}
+        message = _cortex_http_message(data)
+        if message:
+            return {"error": f"http_{status_code}: {message}", "status_code": status_code}
+        return {"error": f"http_{status_code}", "status_code": status_code}
     return data if isinstance(data, dict) else {"error": "non_object_response"}
 
 
@@ -123,6 +156,7 @@ class LiveVerifyVerdictHandler(BaseHandler):
                         "evidence": "operator_ruling supersede on the live-verify verdict",
                         "attributes": attrs,
                         "seeded_by": "pipeline:live-verify",
+                        "derivation_type": _DERIVATION_TYPE,
                     },
                 )
             else:
@@ -130,8 +164,10 @@ class LiveVerifyVerdictHandler(BaseHandler):
                 if not isinstance(raw_lines, list):
                     description = entity.get("description") or ""
                     raw_lines = acceptance_lines_from_description(str(description))
-                snapshot = fleet_liveness(
-                    code_ref=str(land_sha), services=list(services)
+                snapshot = await asyncio.to_thread(
+                    fleet_liveness,
+                    code_ref=str(land_sha),
+                    services=list(services),
                 )
                 service_relations = relations_from_snapshot(snapshot, list(services))
                 observed = {
@@ -164,6 +200,7 @@ class LiveVerifyVerdictHandler(BaseHandler):
                             "evidence": "live_verify verdict probe",
                             "attributes": attrs,
                             "seeded_by": "pipeline:live-verify",
+                            "derivation_type": _DERIVATION_TYPE,
                         },
                     )
                 else:
@@ -178,6 +215,7 @@ class LiveVerifyVerdictHandler(BaseHandler):
                             "evidence": "live_verify verdict probe supersede",
                             "attributes": attrs,
                             "seeded_by": "pipeline:live-verify",
+                            "derivation_type": _DERIVATION_TYPE,
                         },
                     )
 
