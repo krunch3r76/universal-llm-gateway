@@ -5,12 +5,14 @@ description: House liaison on a continuity root. A played todo admits one conduc
 # Liaison — the seat that runs the house
 
 `liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work;
-the liaison **harvests → folds → decides → admits one conductor → checkpoints → hops**. It never reads a thread linearly
-and never implements what a live dispatch owns (`in-flight-work-guard`). Consolidated name for what the
-operator called *coordinator*; Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor =
-session to a designed stop), `decision:conductor-attended-vs-unattended-routing`.
+the liaison **harvests → folds → decides → admits one conductor → checkpoints → hops**. ¬ linear-read a thread;
+¬ implement what a live dispatch owns (`in-flight-work-guard`). Consolidated name for *coordinator*;
+Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor = session to a designed stop),
+`decision:conductor-attended-vs-unattended-routing`.
 
-**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`. Sketch, Compose, densify, and `contract=implement` are that conductor's steps. This seat does not fire them. This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
+**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`.
+Sketch, Compose, densify, and `contract=implement` are that conductor's steps — this seat does not fire them.
+This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
 
 | Bad | Good |
 |---|---|
@@ -20,414 +22,238 @@ session to a designed stop), `decision:conductor-attended-vs-unattended-routing`
 **Not the same as** `runbook:liaison-seat-on-a-lane` — that runbook is voice/web liaison on a **foreign lane**;
 this skill is the **IDE house seat** on a continuity root.
 
+## FOL pipeline
+
+```
+∀ wake: one_digest ∧ ¬double_check_bus
+played(todo:{slug}) ⇒ admit(conductor, source_ref=todo:{slug}, lane=B) ∧ end
+liaison_seats(IDE ∪ cursor-sdk) ≤ 1 per root
+∀ roots sharing master: isolate(paths ∧ locks) ≻ collide ∧ ¬discard(peer_work)
+conductor_live ⇒ ¬arm(turn_watcher)
+gate_blocks(row) ⇒ friction() ∧ card_row ∧ swap_NOW(gate) ∧ play(gate) ∧ ¬STAY(blocked)
+played(row) ∧ landed(master) ⇒ todo-close ≺ add_next_ungated ∧ play
+register=attended ∨ autonomous ⇒ land_on_green; HOLD_MERGE ⇔ operator_explicit_hold
+go_under ⇔ operator_overnight_or_departure; CONTEXT_BUDGET(attended, work_left) ⇒ ide-hop (¬go_under)
+ide_chain ⇒ ready=false; ticker ⇒ ready=true via --go-under only
+below_Opus ∧ judgment_fork ⇒ cdp/opus-5.5 first (¬cursor/claude-*; ¬anthropic/*)
+same_fix_failed_twice ⇒ REPEATED_FAILURE ∧ ¬third_variant
+```
+
 ## Registers
 
 | Register | Forks | Pages the human | Merges to master |
 |---|---|---|---|
-| **attended** | proceed on every fork with the best-known default (plan / packet target ≻ ladder default); the operator steers post-hoc — never park on a spend or model re-confirm the plan already named (operator 2026-09-11 20:00 PT: "the orchestrator runs without gating on me — I steer as needed") | on designed stops | **land on green** (AC met, merge the lane). `HOLD_MERGE` only if the operator **explicitly asked to hold** — ¬ operator ack as land gate (operator 2026-09-19, a:35726 SoT · a:35731) |
-| **autonomous** | bind every fork itself (steelman → bind → act); operator absent | only on `OPERATOR_GATE` / `SPEND_CAP` / `REPEATED_FAILURE` / `CONTEXT_BUDGET` | **land on green** (AC met, merge the lane). `HOLD_MERGE` only if the operator **explicitly asked to hold** — ¬ `auto_land` flag, ¬ missing chat ack (operator 2026-09-12 07:33 PT) |
+| **attended** | proceed on every fork with best-known default (plan/packet ≻ ladder); operator steers post-hoc — ¬park on spend/model re-confirm already named | designed stops | **land on green**. `HOLD_MERGE` only if operator **explicitly asked to hold** — ¬ operator ack as land gate (a:35726 · a:35731) |
+| **autonomous** | bind every fork (steelman → bind → act); operator absent | only `OPERATOR_GATE` / `SPEND_CAP` / `REPEATED_FAILURE` / `CONTEXT_BUDGET` | **land on green**. `HOLD_MERGE` only if operator **explicitly asked to hold** — ¬ `auto_land` flag, ¬ missing chat ack |
 
-Flip: `scripts/liaison-tick.py --root R --register autonomous|attended` (state-file field). The operator's
-return ("I'm back") flips to attended; the operator's departure ("running overnight") flips to autonomous.
+Flip: `scripts/liaison-tick.py --root R --register autonomous|attended`. Return ("I'm back") → attended; departure ("running overnight") → autonomous.
 
-**`go under`** (aliases `run headless` · `hand off to cursor-sdk` · `go under <root>`; operator 2026-09-12
-21:50 PT) = hand this house to the gear-3 ticker and leave the tab. **One verb, owned by the harness**
-(`libs/bus_watch/go_under.py`; 10534 2026-09-13 06:11Z parked at 99.6 % with the four-step prose unrun):
-1. segment CHECKPOINT (residue ≤ 800) — the seat authors it; `--mark-checkpoint` may ride on step 2;
-2. `liaison-tick.py --root R --go-under --holder ide:<transcript_id>` — flips `register=autonomous`, sets
-   `policy.ready=true` (the ticker becomes the driver; an IDE-hop chain keeps `ready=false`), releases the `ide:` seat,
-   SIGTERMs this root's attended `--loop`s, starts a ticker if none holds `liaison-ticker-<R>.lock`, and
-   arms **one** handoff wake (`state.handoff.seq`) so the next poll spawns the successor whether or not any
-   lane is unread. Refuses only `successor_model_unset` (`--set successor_model=<slug>` first);
-3. paste the printed `UNDER → …` line and end the turn. No hop, no dispatch after the verb.
-**When:** operator departure ("running overnight" · "hand off to ticker") — **not** attended
-`CONTEXT_BUDGET` mid-arc (that path is § Tick step 7 **ide-hop**). PARK is not a step while `NOW` or
-unread lanes remain.
-Overnight leftover is **hold | play | sit** (`spawn_wake.play_classify`), not “ticker always
-wakes a liaison.” Hold = a live conductor already owns the addressed `todo:{slug}` (doorbell
-only). Play = `now_row` names `todo:{slug}` and no live owner → admit that conductor
-(`source_ref=todo:{slug}`, `lane=B`); GIW `ROW_HOP` is the inner rotation. Sit = house
-attention and no addressed todo → today's headless liaison. Default `--go-under` is
-play-aware; `--go-under --sit` is the old 10534 chain on purpose. `successor_contract=conductor`
-on the house generate is not the play path.
+### go under / come up
 
-**Come up from under** (operator "I'm back" / "come up" / "stop the ticker" / "take the house" —
-**not** `resume R`, which is liaison↔operator check-in and leaves the ticker driving): (1) SIGTERM this root's
-`liaison-tick.py --loop --spawn-on-wake` ticker; (2) `liaison-tick.py --root R --register attended
---set ready=false`; (3) drop any `induction_binds` row that forbids IDE hop; (4) then `resume R` may
-`--take-over` — the `ide:` claim preempts any lingering `sdk:` holder. One driver: IDE-hop chain ⇒
-`ready=false`; ticker ⇒ `--go-under` only when the operator names overnight/departure. Check-in
-`resume R` while UNDER must not run this sequence.
+**`go under`** (aliases `run headless` · `hand off to cursor-sdk` · `go under <root>`) = hand house to gear-3 ticker and leave tab. **One verb, harness-owned** (`libs/bus_watch/go_under.py`):
+1. seat authors CHECKPOINT (residue ≤ 800); `--mark-checkpoint` may ride on step 2;
+2. `liaison-tick.py --root R --go-under --holder ide:<transcript_id>` — `register=autonomous`, `policy.ready=true`, release `ide:` seat, SIGTERM attended `--loop`s, start ticker if no `liaison-ticker-<R>.lock`, arm one handoff wake (`state.handoff.seq`). Refuses only `successor_model_unset`;
+3. paste printed `UNDER → …` line and end. ¬hop, ¬dispatch after the verb.
 
-**Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
-EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
-⇒ load(cited_section*) ∧ execute(seat-bound_steps)` this turn: read the root's `…/<root>-operator-guide.md`,
-answer from it in plain language, patch it the same turn. Today's liaison pattern: the attended IDE tab is the
-override; gear-3 headless successor is the fallback. The GIW doorbell schedule
-(`scripts/liaison-schedule-wake.py`) is retired and refuses. The ticker is the only house wake.
+**When:** operator overnight/departure — **not** attended `CONTEXT_BUDGET` mid-arc (§ Tick step 7 **ide-hop**). PARK ¬ a step while `NOW` or unread lanes remain.
+
+Overnight leftover = **hold | play | sit** (`spawn_wake.play_classify`): hold = live conductor owns addressed `todo:{slug}`; play = `now_row` names `todo:{slug}` and no live owner → admit conductor; sit = house attention, no addressed todo → headless liaison. Default `--go-under` is play-aware; `--go-under --sit` is the old 10534 chain. `successor_contract=conductor` on house generate ≠ play path.
+
+**Come up** (operator "I'm back" / "come up" / "stop the ticker" / "take the house" — **not** `resume R`, which is check-in and leaves ticker driving): (1) SIGTERM `--loop --spawn-on-wake` ticker; (2) `--register attended --set ready=false`; (3) drop `induction_binds` that forbid IDE hop; (4) then `resume R` may `--take-over`. One driver: IDE-hop ⇒ `ready=false`; ticker ⇒ `--go-under` only on overnight/departure. Check-in `resume R` while UNDER must not run this sequence.
+
+**Operator guide.** "How do I use …" / "what changed" / new ruling ⇒ **LOAD AND EXECUTE** `runbook:liaison-operator-guide` this turn. Attended IDE tab = override; gear-3 headless = fallback. GIW doorbell schedule retired/refuses. Ticker = only house wake.
 
 ## Tick protocol (one wake = one digest)
 
-Wake source: `AGENT_LOOP_TICK_liaison <json>` lines from
-`scripts/liaison-monitor-loop.sh` (armed by `/liaison` via
-`liaison-arm-loop.sh`, then the monitor with `notify_on_output`). The agent Shell
-must **not** be the `liaison-tick.py --loop` PID — that process is
-`setsid`+`nohup`'d so SIGTERM/harvest exit is not a `system_notification` that
-displaces LOCKED harvest SMS (a:38446 · specimen 15420 after #115). The monitor
-Shell is the liveness token (heartbeat file); when it dies the loop exits and
-releases the seat. The JSON is the whole read; do **not** fetch the bus to
-"double check". Read `digest.induction` **first** — the planted address for this wake
-(`WAKE <root>` · `Event:` stops/watchers/lanes · `NOW:` · `Loaded already (do not re-read)` · `Standing:` ·
-one step; ≤ 700 bytes, `libs/bus_watch/induction.py`, operator bind 10479 #82/#118/#120). It is also the
-first key of every `DIGEST <root>` bus turn, so a woken claude.ai liaison reads the same address. Bind NOW
-for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standing operator binds go in
-`--set induction_binds='["hopper paused (10479#210)"]'`, already-loaded skills in `induction_loaded`.
-Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+T) is the planned IDE
-transport; `cse_session(op=followup)` is the planned claude.ai transport — both are **planned / not yet wired**.
+Wake source: `AGENT_LOOP_TICK_liaison <json>` from `scripts/liaison-monitor-loop.sh` (armed by `/liaison` via `liaison-arm-loop.sh`, then monitor with `notify_on_output`). Agent Shell must **not** be the `liaison-tick.py --loop` PID — that process is `setsid`+`nohup`'d so SIGTERM/harvest exit is not a `system_notification` that displaces LOCKED harvest SMS (a:38446). Monitor Shell = liveness token; when it dies the loop exits and releases the seat. JSON is the whole read; ¬ fetch bus to "double check". Read `digest.induction` **first**. Bind NOW: `--set now_row="<row>"`; standing binds: `--set induction_binds=…`; already-loaded: `induction_loaded`.
 
-**Loop-abort wakes (a:38446):** if a `system_notification` still reports the
-monitor Shell stopped after harvest, restate the LOCKED operator-facing body, or
-say nothing new when that body was already relayed this tab — never a
-loop-status-only reply ("Heartbeat loop stopped…").
+**Loop-abort wakes (a:38446):** if `system_notification` still reports monitor Shell stopped after harvest → restate LOCKED operator-facing body, or silence if already relayed — ¬ loop-status-only reply.
 
-**After resume, before the first move:** The continuity card ## Skills lists slugs. After resume, read that
-section and Use each slug before the first move. Skip a slug named in the induction line `Loaded already
-(do not re-read)`.
+**After resume, before first move:** continuity card ## Skills → Use each slug; skip those named in induction `Loaded already (do not re-read)`.
 
-**Wakes (operator 2026-09-21):** Native `CreateGoal` is a Goals-panel label plus an unthrottled
-continuation injector (no interval field). It is **not** the house ticker. Skip `CreateGoal` on
-`/liaison`, resume, and hop pickup unless the operator asks for a panel pin. If a leftover goal is
-still active on this tab at hop `ok` or arc close ⇒ `UpdateGoal(status=complete)` so Cursor stops
-injecting (11912: goal kept waking a retired tab 5m45s). Do not mint a successor goal.
+**Wakes:** Native `CreateGoal` ≠ house ticker. Skip `CreateGoal` on `/liaison`, resume, hop pickup unless operator asks for a panel pin. Leftover goal still active at hop `ok` or arc close ⇒ `UpdateGoal(status=complete)`.
 
 House wakes, cheapest first:
-1. Finish signals (`closeout turn=` / `consult complete`) — one harvest, not each conductor turn. A conductor tail is `watch-supervise.sh tail --until-finish`: it returns on `closeout turn=` or `stall-pop:` and drops ordinary turns. `stall-pop:` on an already-relayed closeout is not a wake (§ Seat stays)
-2. `liaison-tick.py --loop` only while a finish watcher is already live or a row is playable. A tick that only repeats this tab's CHECKPOINT is not a wake
-3. Heartbeat **1200s (20 min)** — backup only while (2) holds: re-arm dead tails and check watcher health. No playable row and no live watcher ⇒ SIGTERM the loop. The house stays
+1. Finish signals (`closeout turn=` / `consult complete`) — one harvest. Conductor tail = `watch-supervise.sh tail --until-finish`. `stall-pop:` on already-relayed closeout ≠ wake (§ Seat stays)
+2. `liaison-tick.py --loop` only while finish watcher live or row playable. Tick that only repeats this tab's CHECKPOINT ≠ wake
+3. Heartbeat **1200s** — backup only while (2) holds. No playable row ∧ no live watcher ⇒ SIGTERM the loop. House stays
 
 ## Seat stays (operator 2026-09-22)
 
-Binds. Later prose that conflicts with them loses.
+Binds. Later prose that conflicts loses.
 
-1. **One conductor.** This seat holds `team_dispatch` and the checkout. A played `todo:{slug}` is `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)`, then end the turn. Repo write is that conductor's nested `contract=implement`. This seat does not send `contract=implement` or a Sketch generate for a house row. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
-2. **Do not close the house on a dead tail or an empty wake.** A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished: `watch-supervise.sh stop --label <label>`. That tail is not a watcher, not a hop, and not a reason to end the seat. No playable next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop` if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction to play. The house stays. The wake stops.
-3. **File the friction, add the house row, play a gate.** A row that cannot proceed: `friction()` on the owner the same turn, and a row on the continuity card `## Rows`. A **gate** is a friction the current row cannot pass until it is resolved. A gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn on the ladder in (1). Do not STAY on the blocked row. Do not page unless the gate is an armed `OPERATOR_GATE`.
-4. **When a row has been played, close its todo, then add the next one.** A played row is a land on master for that `todo:{slug}`. Same turn, before the next row, `pipeline(op=run, pipeline_id=todo-close)` so `workflow_state=done`. The ticker drops a policy `now_row` when that state is terminal (`done` included). An open card is still the work: the clock admits another conductor for it. That re-admit is how a night fails to replace the operator. A finished row does not empty the house. After the close, add every next deliverable that is not gated on another row, to `## Rows` and `--set now_row=`, then play it. Adding that row clears `now_row=quiet` and re-arms `--loop --heartbeat 1200` if the loop is down. Ungated rows may run at the same time. A row that waits on some other row having been played first stays off NOW until that condition is true. `now_row=quiet` and an empty NOW are legal only when the house program has no open deliverable. Do not close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
-5. **No turn-by-turn watch.** `conductor_live ⇒ ¬arm(turn_watcher)`. A conductor posts many turns before it finishes. Review the closeout, or a designed stop (`CONSULT_PENDING`, stale heartbeat, empty seat). Turn-by-turn watch only when the operator names that run. `closeout turn=` is one harvest, not a turn stream. Rebuilding start+tail for every in-flight lane on wake is not the default.
-6. **Owed park-harvest resume is this seat's move — via GIW single-admit, not a hand `team_dispatch`.** Harvest of `stop: PARKED_TRANSPORT` whose worker thread already has the `web-anthropic` reply after `closeout_turn`: check whether the predecessor already has a successor (`hop_successor`, or a ledger row whose `hop_from` is that dispatch). If none after one GIW reconcile sweep, fire the GIW park-harvest continue for that stop (same path as 15243#12: `fire_park_harvest_continue` under `claim_stop_service`, posts with `caller_agent=conductor-hop`). `¬` build `team_dispatch` with `hop_from` / `hop_reason` (MCP has no such fields; a hand admit races the watchdog). `¬` status-report-and-wait. `¬` treat operator "resume the conductor" as the gate. `HOLD_MERGE` holds the land, not the resume. A consult reply that names an operator question is not an armed `OPERATOR_GATE`. Distinct from GIW `park_live` cancel (`a:38111`) and hop-body refuse (`a:38115`).
+1. **One conductor.** This seat holds `team_dispatch` and the checkout. Played `todo:{slug}` → `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)` then end. Repo write = that conductor's nested `contract=implement`. ¬ this seat `contract=implement` or Sketch for a house row. `cursor_request` is life-only (life has no `team_dispatch`). On code, AutoJob admit door = `agent_bus(tool="request")`, not this seat's implement path.
+2. **¬ close house on dead tail or empty wake.** Closeout already relayed + tail still `stall-pop:` → finished: `watch-supervise.sh stop --label <label>`. That tail ≠ watcher, hop, or seat-end reason. No playable next ∧ no live watcher ⇒ ¬ arm `--loop`; SIGTERM if running. Tick that only repeats CHECKPOINT ≠ play instruction. House stays; wake stops.
+3. **Friction → house row → play gate.** Row cannot proceed: `friction()` on owner same turn + continuity card `## Rows`. **Gate** = friction current row cannot pass until resolved. Gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). Blocked row becomes next. Play gate same turn on ladder in (1). ¬ STAY on blocked. ¬ page unless armed `OPERATOR_GATE`.
+4. **Played row → todo-close → add next.** Played = land on master for that `todo:{slug}`. Same turn before next: `pipeline(op=run, pipeline_id=todo-close)` so `workflow_state=done`. Open card still = work: clock admits another conductor (re-admit ≠ replace operator overnight). After close, add every next ungated deliverable to `## Rows` + `--set now_row=`, then play. Clears `now_row=quiet`; re-arms `--loop --heartbeat 1200` if down. Ungated rows may run concurrent. Row waiting on prior play stays off NOW. `now_row=quiet` / empty NOW legal only when no open deliverable. ¬ close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
+5. **No turn-by-turn watch.** `conductor_live ⇒ ¬arm(turn_watcher)`. Review closeout or designed stop. Turn-by-turn only when operator names that run. ¬ rebuild start+tail for every in-flight lane on wake.
+6. **Owed park-harvest resume — GIW single-admit, ¬ hand `team_dispatch`.** Harvest `stop: PARKED_TRANSPORT` whose worker thread already has `web-anthropic` reply after `closeout_turn`: check predecessor successor (`hop_successor` / ledger `hop_from`). If none after one GIW reconcile sweep → fire GIW park-harvest continue (`fire_park_harvest_continue` under `claim_stop_service`, `caller_agent=conductor-hop`). ¬ build `team_dispatch` with `hop_from`/`hop_reason`. ¬ status-report-and-wait. ¬ treat operator "resume the conductor" as gate. `HOLD_MERGE` holds land, not resume. Consult reply naming operator question ≠ armed `OPERATOR_GATE`. Distinct from GIW `park_live` cancel (a:38111) and hop-body refuse (a:38115).
 
 | Bad | Good |
 |---|---|
-| Arm a tail and read each conductor turn | `tail --until-finish` — returns on closeout or stall-pop |
-| Rebuild start+tail for every in-flight lane at wake | Leave those turns on the bus until the finish |
-| PARKED_TRANSPORT + reply on thread, wait for "resume" or hand-admit via `team_dispatch` | One reconcile check, then GIW park-harvest continue if still unpaid |
-| Run `liaison-tick.py --loop` as the agent Shell (`block_until_ms: 0`) | `liaison-arm-loop.sh` + `liaison-monitor-loop.sh` (a:38446) |
+| Arm a tail and read each conductor turn | `tail --until-finish` |
+| Rebuild start+tail for every in-flight lane at wake | Leave turns on bus until finish |
+| PARKED_TRANSPORT + reply on thread, wait or hand-admit | One reconcile check, then GIW park-harvest continue if unpaid |
+| Run `liaison-tick.py --loop` as agent Shell | `liaison-arm-loop.sh` + `liaison-monitor-loop.sh` (a:38446) |
 | Loop-abort wake → "Heartbeat loop stopped…" only | Restate LOCKED body, or silence if already relayed |
 
 ## Tick steps
 
-0. **Wake check** — do not arm a turn-by-turn watcher on in-flight lanes (§ Seat stays 5). Arm `--loop --heartbeat 1200` only while a finish watcher is already live or a row is playable. Skip `CreateGoal`. `/liaison` command step 4 is the same bind.
-1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end turn.
-2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
-   read the CLOSEOUT/SCORE_RESURFACE, quote its evidence, `mark_read`. § Seat stays 6: if that closeout is unpaid `PARKED_TRANSPORT` and the consult wake is already on the thread, run the successor check / GIW single-admit before ending the harvest. Non-terminal unread ⇒ latest turn only.
-   `watchers_complete_unrelayed` ⇒ read the state file's `thread`, harvest, then
-   `liaison-tick.py --root R --mark-relayed <basename>` (`path.name` only — e.g. `11924-foo.state.json`, not
-   `tmp/watchers/11924-foo.state.json`; a prefixed path stays `watchers_complete_unrelayed`). `kind=friction`
-   items and `digest.frictions` ⇒ § Friction
-   score rows (one `assertion_get` deepen at most; the row already carries category · note · state).
-3. **Fold** — update the scoreboard (`fs md_replace` on the cortex scoreboard URI in the tip CHECKPOINT): row
-   status ← observed (quote sha / pytest line / execution_id). Landed ≠ live: a slice whose paths serve a
-   running process needs `manage(sync_restart)` — **LOAD** `restart-drain-discipline` (`needed(restart) ⇒
-   fire(restart)`; busy never skips).
-4. **Decide** — liaison computes Address. Unpaid `PARKED_TRANSPORT` with the consult wake already on the worker thread is Address (§ Seat stays 6), not STAY and not an operator resume gate. A played `todo:{slug}` admits or re-admits one conductor (§ Play). The conductor owns scoreboard NOW under `work_key=todo:{slug}` and nests Composer after its own Compose. This seat does not fire that implement. With no seat bind the induction's NOW **is** the newest undispositioned friction (§ Friction score rows). Gear 3 (`--spawn-on-wake`) pins the attention-tier NOW into `policy.now_row` and releases it when the lane is spent (`now_row_bind` provenance in tick.json). `--set now_row=…` always wins while satisfied; `--set now_row=quiet` holds the field. `reasoning-posture`: pin the question, bind, one bounded step.
-5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
-   **in-session watcher**: **LOAD AND EXECUTE** `runbook:bus-consult-watcher` (all legs 1–3 — arm, wake,
-   relay — before turn end; start-only / skipped tail / hold-turn = mis-arm). That watcher relays one
-   consult reply or closeout. It is not a feed of the conductor's intermediate turns (§ Seat stays 5).
-   cursor-sdk closeout: prefer `--dispatch-id` (both ids from admit OK — script prefers
-   `--dispatch-id`). CDP consult: `--execution-id` from admit. CDP producers: `cdp.generate.proof` carries
-   `archive_uri`; on `delivery_failed`
-   harvest the archive, not the bus.
-6. **Checkpoint** — `budget.checkpoint_due` ⇒ segment CHECKPOINT on R (`supersedes_turn=<tip>`, Residue ≤ 800
-   chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
-7. **Hop** — hop only when autonomous follow-up remains (operator 2026-09-12 07:26 PT;
-   supersedes hop-after-harvest). The hop opener is **paste-induction** (10479#82): a
-   user-turn that steers attention, not a second copy of the skill. `¬` call that
-   **hypnosis** until the attention-induction paradigm is defined (10158 / a:33210);
-   hop FOL restatement is not it. **Skill transfer:** the opener names every skill
-   the successor must load before it acts. The minimum is this skill — the line
-   `LOAD the liaison skill (do not skim)`. Add any other skill the row needs in
-   that same opener. A hop message that omits the liaison load is incomplete.
-   The successor loads those skills; this tab's context does not carry over.
-   Qualifies: live watcher tails — **¬** the ticker's
-   closeout watcher on **your own** lane (`--exclude-lane <lane>`; waiting on
-   yourself is not follow-up, and acting on it chains premium seats) · dispatchable NOW ·
-   `CONTEXT_BUDGET` with remaining work. **STAY** (write `STAY: <reason>`): empty NOW ·
-   quiet tick · hop script refuse · operator park · explicit hold-merge. Autonomous
-   LAND OWED without an explicit hold is **land**, not a stay-for-ack. Harvest-complete
-   with nothing next is a stay. **Not a close and not a wake:** a conductor whose
-   closeout is already relayed, while its tail still prints `stall-pop:`, is finished —
-   `watch-supervise.sh stop --label <label>`. That tail does not keep the seat. No playable
-   next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop`
-   if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction
-   to play. The house stays; the wake stops. `scripts/liaison-ide-hop.py` refuses `no_autonomous_followup`
-   unless `--force`. **Hop ordering (10479 hop-channel):** qualify → **`seal_hop_window`
-   (`channel=hop`)** → message → keystroke → landed. Pass **`--transcript-id <departing tab
-   uuid>`** (required; not inferred — `find_transcript_id` resolves the wrong tab). A hop
-   that cannot seal does not keystroke. In-flight watcher ⇒ harvest in this tab; hop it only
-   when this tab cannot continue. Hops do **not** stop because `lock.hops` equals 8; this-root
-   cap is `policy.max_hops_per_night` on `liaison-fable-<root>.lock`. Attended hop is the
-   last action **only when hopping** (`policy.gui_host` required; `ok` = landed).
-   Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
-   **Hop land phases (a:38474):** after keystroke the harness writes
-   `tmp/watchers/liaison-{root}.hop-land.json` (`state=fired`) and **quiesces**
-   (stop attended `--loop` / arm+harvest; keep tails + house pollers + `ide:` lock).
-   Land proof prefers resume-fence `armed` rows (`transcript_id` = new conversation id,
-   `created_at ≥ fired_at`, ≠ departing), then transcript fallback inside a long window
-   (default ≥600s — JSONL often births minutes later). `state=landed` ⇒ full retire.
-   Past deadline with no proof ⇒ `phase=expired` / **OPERATOR_GATE** with `message_path`
-   — **never** re-fire Ctrl+N (a:38364). Concurrent hops into one Agents window serialize
-   via the GUI-host window mutex.
-   **`ok` / `phase=landed` retires this tab (structural — do not rely on successor re-arm):**
-   1. Harness (`retire_departing_tab`, `liaison-ide-hop.py` after `ok`): SIGTERM this root's
-      attended `--loop`s; SIGTERM `watch-supervise.sh tail --label` for every tab tail that
-      belongs to the root (house pollers survive); `--release` the `ide:<transcript_id>` seat.
-      `--forever` debug tails stay. (Quiesce already stopped loops at `fired`.)
-   2. Seat (Cursor-native; harness cannot): **`UpdateGoal(status=complete)`** only if a
-      leftover native goal is still injecting wakes — ¬ mint a successor goal. Same turn,
-      after `liaison-ide-hop.py` prints `ok` (stderr carries `LIAISON_HOP_TAB_GOAL_RELEASE`).
-      Tool: `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
-      Successor **attaches** `tail --label` per ARM label and arms `--loop --heartbeat 1200`
-      only while a watcher is live or a row is playable. Skip `CreateGoal`.
-      Load `liaison-hop-retire_ulg` when unsure.
-   3. Answer `RETIRED → <landed_transcript_id>` in one line and never harvest
-      (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
-      recycled under the successor's read; 11912 2026-09-21: goal + loop survived land).
-8. **Stop classes** — `CONTEXT_BUDGET` on an attended tab with remaining work (live watcher ·
-   dispatchable NOW): CHECKPOINT → **`liaison-ide-hop.py`** (§ Dispatch ladder Successor row) — fresh
-   tab ~40k orient; **`--go-under` is wrong here** (ticker path is slower/heavier). `CONTEXT_BUDGET`
-   with empty NOW and nothing unread: CHECKPOINT → STAY or PARK. **`--go-under`** only on operator
-   overnight/departure (§ Registers). Headless `sdk:` holder at budget: CHECKPOINT → release, ticker
-   spawns. Other designed stops: § Stops.
+0. **Wake check** — ¬ arm turn-by-turn on in-flight (§ Seat stays 5). Arm `--loop --heartbeat 1200` only while finish watcher live or row playable. Skip `CreateGoal`.
+1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end.
+2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")`; quote CLOSEOUT/SCORE_RESURFACE; `mark_read`. Unpaid `PARKED_TRANSPORT` + consult wake on thread ⇒ successor check / GIW single-admit (§ Seat stays 6). Non-terminal unread ⇒ latest turn only. `watchers_complete_unrelayed` ⇒ harvest then `--mark-relayed <basename>` (`path.name` only). `kind=friction` / `digest.frictions` ⇒ § Friction score rows (≤ one `assertion_get` deepen).
+3. **Fold** — update scoreboard (`fs md_replace` on tip-CHECKPOINT cortex URI): row status ← observed (quote sha / pytest / execution_id). Landed ≠ live: served paths need `manage(sync_restart)` — LOAD `restart-drain-discipline`.
+4. **Decide** — compute Address. Unpaid `PARKED_TRANSPORT` with consult wake on thread = Address (§ Seat stays 6), not STAY / operator-resume gate. Played `todo:{slug}` admits/re-admits one conductor (§ Play). Conductor owns scoreboard NOW under `work_key=todo:{slug}` and nests Composer after Compose. ¬ this seat fire that implement. No seat bind ⇒ induction NOW **is** newest undispositioned friction. Gear 3 pins attention-tier NOW into `policy.now_row` and releases when spent. `--set now_row=…` wins while satisfied; `--set now_row=quiet` holds. `reasoning-posture`: pin question, bind forks.
+5. **Admit** — Address = playable `todo:{slug}` ⇒ one conductor admit (§ Play) then end. Address = gate ⇒ play gate. Address = STAY/PARK ⇒ do that. ¬ Sketch / implement / CDP-generate as the play from this seat.
+6. **Checkpoint** — when due or before hop/stop: tip CHECKPOINT (residue lean). `--mark-checkpoint` when harness needs it.
+7. **Hop / stop classes** —
+   - `CONTEXT_BUDGET` attended + remaining work ⇒ CHECKPOINT → `liaison-ide-hop.py` (§ Dispatch ladder Successor). `--go-under` wrong here.
+   - `CONTEXT_BUDGET` empty NOW ∧ nothing unread ⇒ CHECKPOINT → STAY or PARK.
+   - `--go-under` only operator overnight/departure (§ Registers).
+   - Headless `sdk:` at budget ⇒ CHECKPOINT → release; ticker spawns.
+   - Other designed stops: § Stops.
+   - Hop land: successor attaches `tail --label` per ARM label; arms `--loop --heartbeat 1200` only while watcher live or row playable. Skip `CreateGoal`. Load `liaison-hop-retire_ulg` when unsure. Answer `RETIRED → <landed_transcript_id>` in one line; ¬ harvest after land.
+8. **Stop classes** — see § Stops.
 
-## Seat model (operator 2026-09-11 20:37 PT: "Fable on IDE may not always be practical")
+## Seat model
 
-**MCP surfaces:** the attended liaison tab uses **`/mcp/code`**. Repo writes and mechanical work
-go through **`team_dispatch`** (`seat=cursor-sdk`, `lane=B`). Life Cowork (`/mcp/life`) still mounts
-`cursor_request` for implement/directive lanes when that surface has no `team_dispatch` generate door.
+Attended liaison tab uses **`/mcp/code`**. Repo writes / mechanical work via **`team_dispatch`** (`seat=cursor-sdk`, `lane=B`). Life Cowork (`/mcp/life`) still mounts `cursor_request` when that surface has no `team_dispatch` generate door.
 
-The liaison mechanics are **model-agnostic** — nothing in the tick loop, digest, resume fence, CHECKPOINT,
-hop, or lock reads the tab model. Pick the IDE tab model in the picker; the discipline that changes is the
-seat's own, not the house's:
+Mechanics are **model-agnostic** (tick, digest, resume fence, CHECKPOINT, hop, lock). Pick IDE tab model in picker:
 
 | Tab model class | Serves as liaison? | What must change |
 |---|---|---|
 | Opus-class (`claude-opus-5`, Fable when affordable) | yes — binds judgment forks inline | nothing |
-| Below Opus (Grok 4.7, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 are **explicit obligations**; every judgment bind goes to `cdp/opus-5.5` first (§ Reasoning recon) unless the criterion is already closed on a **named assertion + Explore locus** — then name the CDP skip as the rejected alternative and bind |
+| Below Opus (Grok 4.7, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 **explicit**; every judgment bind → `cdp/opus-5.5` first (§ Reasoning recon) unless criterion already closed on **named assertion + Explore locus** — then name CDP skip as rejected alternative and bind |
 
-Fable on **claude.ai** (`cdp/fable-5.1`) is still a product seat; in the IDE it is optional. Gear `1-fable-mvp` and the lock filename remain Fable-named. **Cursor Fable credit window is closed** (operator 2026-09-12 07:48 PT) — ¬ escalate to `cursor/claude-fable-5-1`.
+Fable on **claude.ai** (`cdp/fable-5.1`) remains a product seat; IDE optional. Gear `1-fable-mvp` and lock filename remain Fable-named. **Cursor Fable credit window closed** (2026-09-12) — ¬ escalate to `cursor/claude-fable-5-1`.
 
-Woken claude.ai liaisons read the house through the latest `DIGEST <root>` turn (`agent_bus_read(fetch, thread=<root>, last=3, compact=true)`, subject starts with `DIGEST`) published by the host tick loop when `policy.post_digest` is true (gear 3 default).
+Woken claude.ai liaisons read house via latest `DIGEST <root>` turn (`agent_bus_read(fetch, thread=<root>, last=3, compact=true)`) when `policy.post_digest` true (gear 3 default).
 
-## Single-liaison-seat cap (operator 2026-09-10; generalized from "single-Fable")
+## Single-liaison-seat cap
 
-`liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable-<root>.lock` via
-`scripts/liaison-tick.py`: `--claim --holder ide:<transcript_id>|sdk:<dispatch_id> [--hop]` ·
-`--release --holder …`. When arming `/liaison` or claiming the seat, resolve `ide:<transcript_id>` with
-`liaison-ide-hop.py --find-transcript` from the tab's **first user message**: `resume <root>` when that was
-first; `"/liaison <root>"` only when the slash line is first. Bare `"/liaison"` can hit a **foreign** tab.
-**Holder identity is the tab, not the root** — two attended tabs that both claim
-`ide:<root>` silently co-hold (same string ⇒ re-claim succeeds); with `ide:<transcript_id>` the second tab is
-`refused` (`reason=held`) and runs as a **worker tab**: its own legs and turns, no loop, no Rows fold, no
-CHECKPOINT on the root. Taking the seat from a live attended holder needs the operator's word: `resume <root>`
-typed in a fresh tab **is** that word (multi-workstation alternate) ⇒ claim with `--take-over` — the live loop
-sees `preempt_by`, exits, releases; retry within one poll (commit edb46bab). A `/liaison` without the word is
-`held` and stays a worker tab. Headless `sdk:` holders are preempted by any `ide:` claim. **Stopping a loop:** prefer SIGTERM on the pid in
-`tmp/watchers/liaison-loop-<R>.pid` (from `liaison-arm-loop.sh`). Else
-`pkill -f 'liaison-tick[.]py --root <R> --loop'` then `pgrep -fc` = 0. The
-attended monitor Shell is `liaison-monitor-loop.sh` — not the python; killing
-that Shell stale-heartbeats the loop so it exits and releases; killing the loop
-does not exit the monitor (a:38446). Do not arm `--loop` as the agent Shell
-itself. The `[.]` matters:
-`pkill -f` matches the *whole* command line of every process, including the bash
-wrapper running your own `pkill` — a literal pattern kills the seat's shell first
-and the rest of the command never runs (specimen hop 13, 04:44Z: silent empty
-output; the loop did die and released the lock via `holder_pid`).
-The lock records `holder_pid`; only the claiming process (or `--release`, the operator override) can release, so
-an orphan exiting no longer drops the live lease. Model seats refresh the
-declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
-`holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker-<root>.lock` (`ticker:<root>`) —
-it never takes the seat mutex and cannot write `preempt_by`. The legacy fleet file
-`liaison-ticker.lock` is unread leftover (same posture as `liaison-fable.lock`). Attended `--loop` (gear 1/2) still claims the seat
-lock; gear 3 uses `--loop --spawn-on-wake` instead. **Idle forfeit** (`spawn_pending.idle_ide_forfeit`): under
-`register=autonomous` an `ide:<transcript_id>` holder whose tab transcript has been silent longer than
-`policy.ide_idle_forfeit_s` (default 1200 s) is a stopped liaison — the ticker releases that lease and spawns
-(10479 2026-09-13: `ide:ccd52168…` claimed 06:13Z, `tick_seq=0`, ticker held 90 min). Attended register never forfeits. `lock.hops` is keyed by `night_id` on
-**this root's** `liaison-fable-<root>.lock` (`hop_cap.lock_hops_scope=root`); the legacy fleet file
-`liaison-fable.lock` is unread leftover. **This-root cap** is `policy.max_hops_per_night`. Per-root
-`lock.hops==8` is not a designed stop.
+`liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable-<root>.lock` via `scripts/liaison-tick.py`: `--claim --holder ide:<transcript_id>|sdk:<dispatch_id> [--hop]` · `--release --holder …`.
 
-## Peer-house conflicts (operator 2026-09-12 07:48 PT)
+Resolve `ide:<transcript_id>` with `liaison-ide-hop.py --find-transcript` from tab's **first user message**: `resume <root>` when that was first; `"/liaison <root>"` only when slash line is first. Bare `"/liaison"` can hit a **foreign** tab.
 
-`∀ roots sharing master: isolate(paths ∧ locks) ≻ collide`. One liaison per root; several roots may still
-touch the same files. `¬ discard(peer_work)` — a blocked merge is reconcile, not hop-away or copy-land.
-**Use the `git-posture` skill § Land** (merge the lane; keep both hunks).
+**Holder identity = tab, not root** — two attended tabs claiming `ide:<root>` silently co-hold; with `ide:<transcript_id>` second tab is `refused` (`reason=held`) → **worker tab** (own legs/turns; ¬loop, ¬Rows fold, ¬CHECKPOINT on root). Taking seat from live attended holder needs operator word: `resume <root>` in fresh tab **is** that word ⇒ `--take-over`. `/liaison` without the word stays worker. Headless `sdk:` preempted by any `ide:` claim.
+
+**Stop a loop:** prefer SIGTERM on pid in `tmp/watchers/liaison-loop-<R>.pid` (from `liaison-arm-loop.sh`). Else `pkill -f 'liaison-tick[.]py --root <R> --loop'` then `pgrep -fc` = 0. Attended monitor Shell = `liaison-monitor-loop.sh` — not the python. ¬ arm `--loop` as agent Shell. Lock records `holder_pid`; only claimant / `--release` / operator override releases. Model seats refresh lease (`expires_at`) each `--once` tick. Gear-3 **ticker** holds `liaison-ticker-<root>.lock` — never takes seat mutex, cannot write `preempt_by`. Attended `--loop` (gear 1/2) claims seat lock; gear 3 uses `--loop --spawn-on-wake`.
+
+**Idle forfeit** (`spawn_pending.idle_ide_forfeit`): under `register=autonomous`, `ide:` holder silent > `policy.ide_idle_forfeit_s` (default 1200s) ⇒ ticker releases and spawns. Attended never forfeits. `lock.hops` keyed by `night_id` on this root's lock; this-root cap = `policy.max_hops_per_night`. `lock.hops==8` ≠ designed stop.
+
+(Specimen detail: L3 sidecar § Seat-lock specimens.)
+
+## Peer-house conflicts
+
+`∀ roots sharing master: isolate(paths ∧ locks) ≻ collide`. One liaison per root; several roots may still touch same files. `¬ discard(peer_work)` — blocked merge = reconcile, not hop-away or copy-land. **Use `git-posture` § Land**.
 
 | Conflict | Action |
 |---|---|
 | Keepable overlap (both hunks valid) | attended IDE `git merge`; keep both; verify ACs; ¬ hop while unreconciled |
-| Judgment (which hunk is right) | `cdp/opus-5.5` → `cdp/opus-5`. ¬ `cursor/claude-*` |
-| Sensitive (`OPERATOR_GATE` class · discard-risk · identity) | only after that ladder fails: page human |
+| Judgment (which hunk) | `cdp/opus-5.5` → `cdp/opus-5`. ¬ `cursor/claude-*` |
+| Sensitive (`OPERATOR_GATE` · discard-risk · identity) | only after that ladder fails: page human |
 
-`¬ page(human)` for an ordinary merge conflict. `cdp/fable-5.1` only when the operator names it.
+`¬ page(human)` for ordinary merge conflict. `cdp/fable-5.1` only when operator names it.
 
 ## Headless successor (resume-fence pull)
 
-The hop target is a **message dispatch**, not a packet file. Sit leftover on a
-**friction/disposition score row** is not the house successor: the ticker spawns a
-**row-bind hop** (default `cursor/grok-4.7` Standard + high effort via
-`policy.row_bind_model` / `row_bind_model_knobs`; override with `cdp/opus-5.5` or
-`cdp/fable-5.1` when needed) to bind `ROW_CLASS: low|trio`. That seat does **not** edit the
-repo (bind then STOP; remaining hops are ticker-fired — § Friction score rows).
+Hop target = **message dispatch**, not packet file. Sit leftover on friction/disposition score row ≠ house successor: ticker spawns **row-bind hop** (default `cursor/grok-4.7` Standard + high via `policy.row_bind_model` / `row_bind_model_knobs`) to bind `ROW_CLASS: low|trio`. That seat ¬ edit repo (bind then STOP; remaining hops ticker-fired — § Friction).
 
 ```
-# friction NOW / sit leftover — ticker, not the house successor
-team_dispatch(
-  op=generate,
-  seat=cursor-sdk,
-  lane="B",
-  model=cursor/grok-4.7,     # policy.row_bind_model; model_knobs {"effort":"high","fast":"false"}
-  contract=freeform,
-  prompt=<row-bind wake>,    # BIND ROW_CLASS: low|trio before nested dispatch
-  dispatch_thread_id=<R>,
-  work_key=row-bind:<fid>:night-<night>,
-)
+# friction NOW / sit leftover — ticker, not house successor
+team_dispatch(op=generate, seat=cursor-sdk, lane="B",
+  model=cursor/grok-4.7,  # policy.row_bind_model; knobs effort=high, fast=false
+  contract=freeform, prompt=<row-bind wake>, dispatch_thread_id=<R>,
+  work_key=row-bind:<fid>:night-<night>)
+
+# other sit wakes (checkpoint / hop, no friction row)
+team_dispatch(op=generate, seat=cursor-sdk, contract=freeform, lane="B",
+  model=<policy.successor_model>, prompt=<build_successor_message>,
+  dispatch_thread_id=<R>, work_key=agent-bus:<R>,
+  timeout_seconds=<max_hop_minutes*60+1800>)
 ```
 
-Other sit wakes (checkpoint / hop, no friction row) stay `contract=freeform` `lane="B"`
-`model=<policy.successor_model>`:
+`build_successor_message` (`libs/bus_watch/spawn_on_wake.py`) emits ≤2048 bytes with verbatim: `resume <R>`, `dispatch(tool="continuity"`, `agent_bus_read(thread_get`, `gear:`, `row=`, `tip_cp_ordinal=`, `contract: none`.
 
-```
-team_dispatch(
-  op=generate,
-  seat=cursor-sdk,
-  contract=freeform,
-  lane="B",  # throwaway worktree. Lane A only on scope refusal or an explicit operator request for shared master. Bind-only and read-only are not that exception.
-  model=<policy.successor_model>,
-  prompt=<build_successor_message>,
-  dispatch_thread_id=<R>,
-  work_key=agent-bus:<R>,
-  timeout_seconds=<max_hop_minutes*60+1800>,
-)
-```
-
-`build_successor_message` (via `libs/bus_watch/spawn_on_wake.py`) emits ≤2048 bytes containing verbatim:
-`resume <R>`, `dispatch(tool="continuity"`, `agent_bus_read(thread_get`, `gear:`, `row=`,
-`tip_cp_ordinal=`, `contract: none`. Gear-3 ticker (`scripts/liaison-tick.py --loop --spawn-on-wake`) fires
-this body on: an unread **live** lane · a finished **work** lane's closeout, once per turn count
-(`state.served_closeouts`; a successor's own closeout never wakes the next — `caller=liaison-ticker` /
-`state.successor_threads`) · a `--go-under` handoff, once (`handoff.seq`) · `checkpoint_due`, once per CP epoch ·
-an undispositioned friction on a charter-owned service, once per assertion id (`state.friction_rows_seen`, ≤
-`policy.friction_dispatch_cap` per night; § Friction score rows) — sit leftover on forcing friction binds CDP `ROW_CLASS` first; remaining hops are **ticker-fired**, not CDP-implemented ·
-a fresh `CONTEXT_BUDGET` from the `sdk:` holder's own stream. Hold reasons are the per-clause booleans on the
-ticker's stdout line (`tmp/watchers/liaison-ticker-<R>.log` when started by `--go-under`). The successor claims
-the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
-dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
+Gear-3 ticker fires on: unread **live** lane · finished **work** lane closeout once per turn count · `--go-under` handoff once · `checkpoint_due` once per CP epoch · undispositioned friction on charter-owned service once per assertion id (≤ `policy.friction_dispatch_cap`) · fresh `CONTEXT_BUDGET` from `sdk:` stream. Successor claims lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns next. Composer implement (`contract=implement`, omit `model=`) runs **alongside** — not Fable seats.
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 
-`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(job=conductor)` (§ Play). Code AutoJob admit is `agent_bus(tool="request")`. Life implement uses `cursor_request` because life has no `team_dispatch`.
+`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(job=conductor)` (§ Play). Code AutoJob admit = `agent_bus(tool="request")`. Life implement = `cursor_request`.
 
 | Work | Executor | Bind / review |
 |---|---|---|
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
-| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; the successor **dispatches** instead) | none — commit path-explicit same turn |
-| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
-| Mechanical implement with dense spec (`files_expected` + ACs) | the conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
-| Repo write when this seat lacks `team_dispatch` or the checkout (life) | **`cursor_request(job=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
-| Design / judgment fork on a played row | the conductor's nest | one round inside the conductor; disagreement ⇒ CONSULT_PENDING |
-| Judgment fork (independent check) | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5.5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
-| Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
-| Long-context reasoning inside a work tab | `cursor/grok-4.7` (card context `256k`, knob `500k`) | **`cdp/fable`** only when Kaywan asks — never `cursor/claude-*` |
-| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <this tab uuid>` (seals `channel=hop` then keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (it does not hop the tab) | — |
+| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; successor **dispatches** instead) | none — commit path-explicit same turn |
+| Play a `todo:{slug}` | `team_dispatch(… contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
+| Mechanical implement with dense spec | conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
+| Repo write when this seat lacks `team_dispatch` or checkout (life) | **`cursor_request(job=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
+| Design / judgment fork on played row | conductor's nest | one round inside conductor; disagreement ⇒ CONSULT_PENDING |
+| Judgment fork (independent check) | this seat binds inline when Opus-class; below Opus, § Reasoning recon first | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
+| Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>` | one round; disagreement ⇒ CONSULT_PENDING |
+| Long-context reasoning inside work tab | `cursor/grok-4.7` (card 256k, knob 500k) | **`cdp/fable`** only when Kaywan asks — never `cursor/claude-*` |
+| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <uuid>`; autonomous: § Headless successor | — |
 
-**Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
-liaison sends the *wide read* to `cdp/opus-5.5` (`CDP: <trigger> — <why>`, tape cell / CP residue + the decision as
-context) and binds on the returned compact. The premium seat never spends its window on breadth; it
-spends it on the bind. This is the economy pattern, not an exception to the ladder.
+**Reasoning recon** (2026-09-10): before judgment bind, send *wide read* to `cdp/opus-5.5` (`CDP: <trigger> — <why>`, tape/CP residue + decision as context); bind on returned compact. Premium seat spends window on the bind, not breadth.
 
-Reasoning strength, low → high: `cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`, `cdp/fable-5`. Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1. Walk `high` → `extra` → `max` inside a rung before the next wire.
+Reasoning strength low→high: `cdp/opus-5.5`, `cdp/opus-5`, `cdp/fable-5.1`, `cdp/fable-5`. Walk `high` → `extra` → `max` inside a rung before next wire.
 
-Model walls (operator 2026-09-10; Fable-credit close 2026-09-12): default CDP seat is `cdp/opus-5.5`; `cdp/fable-5.1`
-only when the operator names it. Never `anthropic/*` API. `cursor/claude-fable-5-1` is not an escalation
-target (credit window closed) and never a `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
+Model walls: default CDP = `cdp/opus-5.5`; `cdp/fable-5.1` only when operator names it. Never `anthropic/*`. `cursor/claude-fable-5-1` ≠ escalation / `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
 
-## Economy gears (operator 2026-09-10: the Fable 1M Max spend window is finite)
+## Economy gears
 
-The successor model is **policy, never a constant**. `scripts/liaison-tick.py --root R --set gear=<name>` (or any
-`--set key=value`) writes the policy; every digest carries `policy`; successors copy `policy.successor_model`.
+Successor model = **policy, never a constant**. `--set gear=<name>` (or `--set key=value`) writes policy; digests carry `policy`; successors copy `policy.successor_model`.
 
 | Gear | Successor | Cadence | When |
 |---|---|---|---|
-| `1-fable-mvp` | `cursor/grok-4.7` (`effort=high`, `fast=false`; judgment hop, CDP for design forks) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3; Cursor Fable credit window closed (2026-09-12) |
-| `3-wake-on-attention` | **`cursor/grok-4.7`** (`effort=high`, `fast=false`) from the gear preset. The first play admit passes this same `successor_model` and knobs; it does not omit `model=`. Preset/default spawn allowlists that model only — premium presets still blocked (10534); Composer is not allowlisted until a mechanical hop exists. Override anytime with **`--set successor_model=<slug>`**. Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
+| `1-fable-mvp` | `cursor/grok-4.7` (`effort=high`, `fast=false`) | ≤ 5 ticks / 60 min / poll 600 s | **¬ overnight** — use gear 3; Cursor Fable credit closed |
+| `3-wake-on-attention` | **`cursor/grok-4.7`** (`effort=high`, `fast=false`) from preset; first play admit passes same `successor_model`+knobs (¬ omit `model=`). Override `--set successor_model=<slug>` | poll 120 s via `--loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`). IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 
-Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
-`--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`
-`absorb_operator_edits`, logged as `operator_edit_absorbed`); before 2026-09-12 the loop's in-memory state
-clobbered them within one poll — verify a steer by re-reading `--policy` after the next tick. `SPEND_CAP`
-(`policy.max_dispatches_per_night`) is **off by default** (operator 2026-09-13: "remove dispatch cap
-permanently") — the ceiling is opt-in, and non-positive or absent means no nightly limit. When an operator
-sets a positive cap it is a designed stop, not a gear change — page, don't downshift silently. Never let a successor pick a model itself; a refused model is an INFO + stop, never a fallback.
+Shift takes effect at **next** hop. Live `--loop` absorbs `--set` / `--mark-*` on next poll (`absorb_operator_edits`). `SPEND_CAP` (`policy.max_dispatches_per_night`) **off by default** — positive cap = designed stop (page, ¬ silent downshift). ¬ let successor pick a model; refused model = INFO + stop, never fallback.
 
 ## Objectives (autonomous queue)
 
 1. Scoreboard rows not DONE. 2. `cortex(todo_candidates)` filtered `implement_ready=true ∧ density_triage=mechanical`.
-3. Friction score rows (§ below — they arrive in the digest; no query). 4. Nothing ⇒ gardening: ruff on touched
-dirs, stale watcher hygiene, scoreboard grooming — then lengthen the heartbeat (`--heartbeat 3600`), never busy-loop.
+3. Friction score rows (§ below). 4. Nothing ⇒ gardening (ruff on touched dirs, stale watcher hygiene, scoreboard grooming) then lengthen heartbeat (`--heartbeat 3600`) — ¬ busy-loop.
 
-## Friction score rows (operator 2026-09-13, 10595: "proactively address frictions … a mutable score by a conductor")
+## Friction score rows
 
-`todo:liaison-friction-score-rows` · `libs/bus_watch/friction_rows.py`. Open `friction()` assertions on the
-house's **charter-owned** services are score rows: they enter the digest, need a disposition, and leave when
-closed on the assertion. Same driver as everything else — no second loop. Attended play of a `todo:{slug}`
-follows § Play. The ticker's LOW/TRIO fire below is the headless machine. It is not a license for this seat
-to Sketch or send `job=implement`.
+`todo:liaison-friction-score-rows` · `libs/bus_watch/friction_rows.py`. Open `friction()` on house **charter-owned** services = score rows. Same driver — no second loop. Attended play of `todo:{slug}` follows § Play. Ticker LOW/TRIO fire = headless machine — **not** a license for this seat to Sketch or `job=implement`.
 
 | Leg | Mechanic |
 |---|---|
-| Charter | `--set owned_services=…` feeds the digest. Empty ⇒ the digest stays empty. A friction this seat files is still a house row on `## Rows`; it does not wait for that set |
-| Harvest | `digest.frictions` (≤ 12, newest first: `id=a:<n>` · `owner` · `category` · `note` · `state` · `forcing`) + `digest.friction_summary` (`open` · `forcing` · `promoted` · `dispatch_cap` · `dispatched_tonight` · `error`). Read path: Cortex UDS `assertions` on the owner, non-superseded bracketed claims, 100-row window; `[feature]` asks and `[resolved:…]` closure rows are not rows |
-| NOW | no seat bind (`summary_row` / `policy.now_row` empty) ⇒ the newest `forcing` row **is** NOW. A seat bind outranks a non-gate friction; that row stays an `Event:`. **A gate swaps.** |
-| Disposition | **Ticker first spawn = row-bind hop** (default `cursor/grok-4.7` Standard + high effort), not Composer house generate. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining hops (LOW = implement lane B + later apply-all review; TRIO sketch default `cdp/opus-5.5` when no `todo:{slug}`). `--mark-friction` still records `direct-first` / `todo-minted` / `declined`. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, and does not skip review+apply+land. Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
-| Close-back | **on the assertion**: `cortex(tool="friction_close", assertion_id=<n>, resolution_kind=todo:<slug> \| wontfix \| commit:<sha>)` — `todo-minted` / `declined` the same turn; `direct-first` when the fix lands. Superseded ⇒ the row leaves on the next harvest. A `todo-minted`/`declined` row still open = `state=close_pending` — you forgot the close |
-| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only); the ticker latches the class and fires LOW (`job=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else `trio_sketch_model` consult) — never the Composer house successor on the bind leg. **Review harvest:** ticker applies ALL suggestions (SHOULD-FIX, nits, unused-code, adjacent) as one lane-B house generate (`job=freeform` + apply-all message — ¬ `job=implement`+`prompt`, wire-rejected) — ¬ page ¬ come-up ¬ park for the next resume; frozen `ready=false` and an attended `ide:` check-in do not hold that apply (`a:36093`) |
-| REPEATED_FAILURE | a **second** `direct-first` mark on the same row ⇒ `state=repeated_failure`: NOW reads "consult, then todo-minted \| declined; never a third variant" (`cdp/opus-5.5` first below Opus) |
+| Charter | `--set owned_services=…` feeds digest. Empty ⇒ digest empty. Friction this seat files is still a house row on `## Rows` |
+| Harvest | `digest.frictions` (≤ 12) + `digest.friction_summary`. Read path: Cortex UDS `assertions` on owner |
+| NOW | no seat bind ⇒ newest `forcing` row **is** NOW. Seat bind outranks non-gate friction. **A gate swaps.** |
+| Disposition | **Ticker first spawn = row-bind hop**, not Composer house generate. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining (LOW = implement lane B + later apply-all review; TRIO sketch default `cdp/opus-5.5` when no `todo:{slug}`). `--mark-friction` records disposition. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, does not skip review+apply+land |
+| Close-back | **on the assertion**: `cortex(tool="friction_close", …)`. Superseded ⇒ leaves next harvest. `todo-minted`/`declined` still open = `state=close_pending` |
+| Ticker | newest forcing ∧ unlatched → `attention` (`kind=friction`) — **one per tick**, none once `friction_dispatch_cap` (default 3) latched tonight; one spawn per assertion id. Sit leftover on forcing friction: row-bind posts class then **STOP**; ticker fires LOW/TRIO — never Composer house successor on bind leg. Review harvest: ticker applies ALL suggestions as one lane-B house generate (`job=freeform` + apply-all) — ¬ page ¬ come-up ¬ park |
+| REPEATED_FAILURE | second `direct-first` on same row ⇒ `state=repeated_failure`: consult then todo-minted \| declined; never third variant |
 
-## Gate swap (operator 2026-09-22)
+## Gate swap
 
-A row that cannot proceed is not a stop. Same turn: `friction()` on the owner, then a continuity-card row (`## Rows`). A **gate** is a friction the current row cannot pass until it is resolved. A gate **swaps** into NOW (`--set now_row=` the friction line, `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn: first leg on the dispatch ladder (`team_dispatch` `seat=cursor-sdk` from this seat). Do not STAY on the blocked row. Do not page.
-
-Not owned: pipelines, seat locks. Sit friction spawn is `spawn_wake.row_bind` (default Grok row-bind), not Composer house generate. Headless code successors dispatch `team_dispatch(seat=cursor-sdk)` for repo writes; life uses `cursor_request`. **`cdp/opus-5.5`** for judgment binds (doorbell duty line + § Reasoning recon). The IDE hop takes the friction
-NOW verbatim as `--row`; a headless successor gets it as `row=`.
+Covered by § Seat stays 3. Same-turn: `friction()` → card row → swap NOW → play gate on dispatch ladder. ¬ STAY on blocked. ¬ page. Sit friction spawn = `spawn_wake.row_bind`, not Composer house generate. Headless code successors use `team_dispatch(seat=cursor-sdk)`; life uses `cursor_request`. **`cdp/opus-5.5`** for judgment binds. IDE hop takes friction NOW as `--row`; headless gets `row=`.
 
 ## Stops (designed, not "continue?")
 
 | Stop | Trigger | Action |
 |---|---|---|
-| `HOUSE_CLOSE` | operator says close the house | LOAD `runbook:house-close` and execute it. Not session-close. |
-| `OPERATOR_GATE` | credentials · irreversible · money · outbound/calendar that commit other people · fleet-wide restart — **only when armed** via `liaison-tick.py --operator-gate <row>` (records `source=operator`, `as_of`). Seat prose or `now_row` containing `OPERATOR_GATE` is **not** a gate, and the successor-writable `--set` channel refuses the key | CHECKPOINT + page + park **that row** (other rows continue). Clear with `--operator-gate clear`. ¬ a Cowork permission dialog, ¬ a missing scheduled-task tool, ¬ A7 first-ticker-night — those take the named fallback (gear-3 ticker). Hop refuses only on operator-sourced gate state, not on gate text in `now_row` |
-| `HOLD_MERGE` | operator **explicitly** asked to hold the merge | leave lane branch, row `LAND OWED`, page; ¬ hop. Silence / missing `auto_land` is **not** a hold |
+| `HOUSE_CLOSE` | operator says close the house | LOAD `runbook:house-close` and execute. Not session-close. |
+| `OPERATOR_GATE` | credentials · irreversible · money · outbound/calendar committing others · fleet-wide restart — **only when armed** via `--operator-gate <row>` (`source=operator`) | CHECKPOINT + page + park **that row**. Clear with `--operator-gate clear`. Seat prose / `now_row` containing `OPERATOR_GATE` ≠ gate |
+| `HOLD_MERGE` | operator **explicitly** asked to hold merge | leave lane branch, row `LAND OWED`, page; ¬ hop. Silence / missing `auto_land` ≠ hold |
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
-| `REPEATED_FAILURE` | same fix failed twice | file the friction, add the house row, and if it is the gate swap it into NOW and play it. Page only when the gate is `OPERATOR_GATE` |
-| `SPEND_CAP` | **only when an operator set a positive `policy.max_dispatches_per_night`** — off by default (2026-09-13). Then: dispatch count ≥ cap (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
-| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost). Once the house is under (autonomous, no `ide:` holder) the retired tab's reading is dropped from the digest so a headless successor never parks on it | attended tab **with remaining work**: CHECKPOINT → **`liaison-ide-hop.py --root R --row "<NOW>"`** (induction plants the command); attended tab empty NOW: STAY/PARK; **`--go-under`** only operator overnight/departure (§ Registers); headless `sdk:`: CHECKPOINT → release, ticker spawns. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
+| `REPEATED_FAILURE` | same fix failed twice | friction + house row; if gate, swap NOW and play. Page only when gate is `OPERATOR_GATE` |
+| `SPEND_CAP` | **only when** positive `policy.max_dispatches_per_night` set — then dispatch count ≥ cap or dispatch > 2h | pause new dispatches, page |
+| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` (headless) or `source=ide.transcript` (attended; vs `policy.ide_window_tokens`, default 256k). `checkpoint_due` at 60% | attended + work left: CHECKPOINT → **`liaison-ide-hop.py`**; empty NOW: STAY/PARK; `--go-under` only overnight/departure; headless `sdk:`: CHECKPOINT → release, ticker spawns |
 
-Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json'
--d '{"subject":"liaison R — <stop>","body":"<one paragraph + tip CP turn>","tag":"liaison"}' http://localhost/pager/notify`.
+Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json' -d '{"subject":"liaison R — <stop>","body":"<one paragraph + tip CP turn>","tag":"liaison"}' http://localhost/pager/notify`.
 
 ## Provenance
 
-Every DONE/live/landed word in the scoreboard quotes a payload (`provenance-discipline`). The digest's
-`budget` is an estimate with its basis; the seat's own usage reading wins. Bus turns < 2 KB; long material →
-`sidecar_content`. Identity: `cursor`; never a personal name.
+Every DONE/live/landed word in scoreboard quotes a payload (`provenance-discipline`). Digest `budget` is estimate with basis; seat's own usage reading wins. Bus turns < 2 KB; long material → `sidecar_content`. Identity: `cursor`; never a personal name.
+
+## L3 sidecar
+
+Unique non-core (specimens, historical narrative) relocated to:
+`cortex://notes/system/references/liaison-l3-sidecar.md`.
