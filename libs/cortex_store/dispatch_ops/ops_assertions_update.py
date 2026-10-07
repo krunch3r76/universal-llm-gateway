@@ -189,6 +189,7 @@ def _op_supersede(
     agent: str | None = None,
     acknowledge_audit_gaps: list[str] | None = None,
     force: bool = False,
+    attributes: dict | None = None,
     **_: object,
 ) -> dict[str, Any]:
     missing = collect_missing_required(
@@ -228,6 +229,10 @@ def _op_supersede(
             body[key] = val
     if acknowledge_audit_gaps is not None:
         body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
+    # Omitted attributes stay off the body. The route inherits omitted fields
+    # from the prior row; stuffing None here would clear that carryover.
+    if attributes is not None:
+        body["attributes"] = attributes
     if force:
         body["force"] = True
     projection_tag = None

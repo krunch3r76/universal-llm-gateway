@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from cortex_store.dispatch_ops.ops_assertions_update import _op_supersede
 from cortex_store.entity_read import get_entity_impl
 from cortex_store.routes.assertions import _supersede_assertion_impl
 
@@ -261,3 +262,99 @@ def test_default_restatement_when_revision_type_omitted(
     ).fetchone()
     attrs = json.loads(row["attributes"])
     assert attrs["revision_type"] == "restatement"
+
+
+def test_op_supersede_persists_live_verify_attributes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatch **_ used to drop attributes; live-verify close then stored
+    only revision_type and the gate returned verdict_missing.
+    """
+    conn = _make_conn()
+    old_id = _insert(conn, claim="Prior live-verify verdict.")
+
+    class _NoCloseConn:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.cortex_conn",
+        lambda: _NoCloseConn(conn),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.enrich_old_assertion_events",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.reindex_assertion_fts",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.dispatch_assertion_enrichment_background",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.dispatch_predicate_extract_background",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede._embed_assertion_background",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.recompute_entity_substantiation_status",
+        lambda *a, **kw: None,
+    )
+
+    class _FakeImpact:
+        likely_supersedes: list[int] = []
+        touched_assertions: list[object] = []
+
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.analyze_assertion_impact",
+        lambda *a, **kw: _FakeImpact(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.vector_store",
+        type(
+            "VS",
+            (),
+            {
+                "is_initialized": staticmethod(lambda: False),
+                "delete_assertion_embedding": staticmethod(lambda _id: None),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_update.record",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_update._emit_predicate_form_normalize_events",
+        lambda *a, **k: None,
+    )
+    result = _op_supersede(
+        old_assertion_id=old_id,
+        entity_id=_ENTITY,
+        claim="live_verify ruling supersede",
+        confidence="believed",
+        evidence="operator_ruling supersede on the live-verify verdict",
+        attributes={
+            "kind": "live_verify",
+            "operator_ruling": "accepted",
+            "land_sha": "abc123",
+        },
+    )
+    assert "error" not in result, result
+    row = conn.execute(
+        "SELECT attributes FROM assertions WHERE id = ?", (result["new"]["id"],)
+    ).fetchone()
+    stored = json.loads(row["attributes"])
+    assert stored["kind"] == "live_verify"
+    assert stored["operator_ruling"] == "accepted"
