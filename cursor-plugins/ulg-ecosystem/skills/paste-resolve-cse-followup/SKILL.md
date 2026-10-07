@@ -11,7 +11,7 @@ trigger_match_terms:
   - HTTP 417 followup
   - post-admit bus wait
 related_skills:
-  - claude-ai-paste-resolve
+  - cowork-paste-resolve
   - cdp-operator-proxy
   - agent-bus-discipline
 ---
