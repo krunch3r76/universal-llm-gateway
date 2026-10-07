@@ -73,6 +73,8 @@ def relations_from_snapshot(
             reason = liveness.get("reason")
             if isinstance(reason, str) and reason.strip():
                 absent = reason.strip()
+                if isinstance(probe_error, str) and probe_error.strip():
+                    entry["probe_error"] = probe_error.strip()
             elif isinstance(probe_error, str) and probe_error.strip():
                 absent = probe_error.strip()
             else:

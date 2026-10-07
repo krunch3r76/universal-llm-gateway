@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, override
@@ -163,8 +164,10 @@ class LiveVerifyVerdictHandler(BaseHandler):
                 if not isinstance(raw_lines, list):
                     description = entity.get("description") or ""
                     raw_lines = acceptance_lines_from_description(str(description))
-                snapshot = fleet_liveness(
-                    code_ref=str(land_sha), services=list(services)
+                snapshot = await asyncio.to_thread(
+                    fleet_liveness,
+                    code_ref=str(land_sha),
+                    services=list(services),
                 )
                 service_relations = relations_from_snapshot(snapshot, list(services))
                 observed = {
