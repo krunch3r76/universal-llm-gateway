@@ -219,6 +219,14 @@ def label_satisfies_request(
         return True
     if effort == "extra":
         return bool(re.search(r"Extra", text, re.I))
+    if effort == "medium":
+        if not re.search(r"Medium", text, re.I):
+            return False
+        if re.search(r"High", text, re.I) or re.search(r"Max", text, re.I):
+            return False
+        return True
+    if effort == "low":
+        return bool(re.search(r"Low", text, re.I))
     return True
 
 

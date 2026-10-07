@@ -78,6 +78,7 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
         ("cdp/fable", "max", "cdp/fable-5.1-max"),
         ("cdp/fable-5", "max", "cdp/fable-5-max"),
         ("cdp/fable-5.1", "max", "cdp/fable-5.1-max"),
+        ("cdp/fable-5.1", "low", "cdp/fable-5.1-low"),
         ("cdp/sonnet-5", "max", "cdp/sonnet-5-max"),
         ("cdp/sonnet-5", "extra", "cdp/sonnet-5-extra"),
         ("cdp/sonnet-5.5", "extra", "cdp/sonnet-5.5-extra"),
@@ -127,6 +128,26 @@ def test_label_satisfies_bare_fable_with_bound_high(
     requested: str, label: str, expected: bool
 ) -> None:
     assert label_satisfies_request(requested, label, effort="high") is expected
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("label", "effort", "expected"),
+    [
+        ("Fable 5.1 High", "low", False),
+        ("Fable 5.1 Low", "low", True),
+        ("Model: Fable 5.1 High", "low", False),
+        ("Fable 5.1 Medium", "medium", True),
+        ("Fable 5.1 High", "medium", False),
+    ],
+)
+def test_label_satisfies_low_medium_exclusive(
+    label: str, effort: str, expected: bool
+) -> None:
+    """a:38549 — High chip must not attest a low team_dispatch request."""
+    assert (
+        label_satisfies_request("fable-5.1", label, effort=effort) is expected
+    )
 
 
 @pytest.mark.offline
