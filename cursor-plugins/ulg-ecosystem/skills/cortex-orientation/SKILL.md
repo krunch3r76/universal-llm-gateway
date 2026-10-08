@@ -12,6 +12,8 @@ Cortex = shared knowledge graph: entities (`type:slug`), assertions (claims + co
 
 Invariant: `claim_about_known_entity_or_decision ⇒ search Cortex first`. `¬evidence ⇒ ¬assert`. Assertions are grounded facts, not vibes.
 
+Cortex is not git-tracked: entity/assertion/note writes are live ops (cortex MCP, or a script against the live DB) — never lane-B cursor-sdk work (lane B refuses cortex:// paths), never commit/land. Only code lands.
+
 ## Calling convention
 
 All Cortex CRUD goes through `cortex` with JSON-string `arguments`:
@@ -73,6 +75,7 @@ Channel ladder:
 | Smoke-test pass | nothing |
 | Smoke-test fail showing real defect | `friction(...)`, then fix |
 | Plan / next intent | `entity_create` todo, not assertion |
+| Entity/assertion/note write (incl. skill entity ingest) | live cortex op — not lane B, no commit |
 
 Noise you seeded: retract (`assertion_update(valid_until=now)`), do not supersede. Supersede is for load-bearing belief evolution.
 

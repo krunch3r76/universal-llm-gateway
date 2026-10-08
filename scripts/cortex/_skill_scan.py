@@ -60,7 +60,9 @@ def _life_local_source_uri(slug: str) -> str:
     return f"{_WS}/{_CLAUDE_SKILLS_REL}{slug}/SKILL.md"
 
 
-def _scan_life_local_skills(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
+def _scan_life_local_skills(
+    repo_root: Path | None = None,
+) -> dict[str, dict[str, object]]:
     """Projection-ready rows for life-local ``.claude/skills/*/SKILL.md`` SOTs."""
     skills_dir = _claude_skills_dir(repo_root)
     if not skills_dir.is_dir():
@@ -92,13 +94,13 @@ def _scan_life_local_skills(repo_root: Path | None = None) -> dict[str, dict[str
 def cortex_sot_slugs(repo_root: Path | None = None) -> set[str]:
     """Every Cursor SOT slug (hub ``.cursor/skills`` ∪ plugin census) minus skipped names."""
     return {
-        slug
-        for slug in _sot_skill_paths(repo_root)
-        if slug not in _SKIP_CORTEX_SOT
+        slug for slug in _sot_skill_paths(repo_root) if slug not in _SKIP_CORTEX_SOT
     }
 
 
-def _scan_cortex_sot_metadata(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
+def _scan_cortex_sot_metadata(
+    repo_root: Path | None = None,
+) -> dict[str, dict[str, object]]:
     """Declared frontmatter from hub ``.cursor/skills`` and plugin census SOTs."""
     root = repo_root or _REPO_DEFAULT
     found: dict[str, dict[str, object]] = {}
@@ -134,7 +136,9 @@ def _scan_cortex_sot_declared(repo_root: Path | None = None) -> dict[str, list[s
     }
 
 
-def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
+def _scan_cortex_sot_skills(
+    repo_root: Path | None = None,
+) -> dict[str, dict[str, object]]:
     """Projection-ready rows for hub ``.cursor/skills`` and plugin census SOTs.
 
     Empty or missing frontmatter ``description:`` still yields a row — that state
@@ -176,10 +180,25 @@ def _create_lifecycle(fm: dict[str, object]) -> str:
 
 
 def _source_uri(slug: str, body: str, root: Path) -> str:
-    sot = _CORTEX_SOT_RE.search(body)
-    if sot:
-        return _workspace_source_uri(sot.group(1))
-    return _workspace_source_uri(slug)
+    """Catalog slugs use ``resolve_canonical_source_uri``; others stay workspace-relative.
+
+    ``root`` is unused for catalog hits (the resolver owns the repo root). Non-catalog
+    skills keep the historical ``.cursor/skills`` fallback, including a SOT slug
+    named in the body.
+    """
+    del root
+    try:
+        from implement_admission.skill_catalog_resolver import (
+            SkillCatalogResolveError,
+            resolve_canonical_source_uri,
+        )
+
+        return resolve_canonical_source_uri(slug)
+    except (SkillCatalogResolveError, FileNotFoundError, KeyError):
+        sot = _CORTEX_SOT_RE.search(body)
+        if sot:
+            return _workspace_source_uri(sot.group(1))
+        return _workspace_source_uri(slug)
 
 
 def _scan_skills(root: Path) -> dict[str, dict[str, object]]:

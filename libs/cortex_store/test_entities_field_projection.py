@@ -96,6 +96,26 @@ def test_fields_absent_returns_entity_summary_shape() -> None:
     assert "applicable_agents" not in item
 
 
+def test_list_and_fields_projection_return_source_uri() -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO entities (id, type, name, source_uri, lifecycle, created_at) "
+        "VALUES ('agent_skill:plug', 'agent_skill', 'plug', ?, 'active', "
+        "'2026-05-19T00:00:00Z')",
+        (
+            "workspaces://universal-llm-gateway/cursor-plugins/ulg-ecosystem/skills/plug/SKILL.md",
+        ),
+    )
+    conn.commit()
+    listed = list_entities_impl(conn, entity_type="agent_skill")
+    assert listed["items"][0]["source_uri"].endswith("/plug/SKILL.md")
+    EntitySummary(**listed["items"][0])
+    projected = list_entities_impl(
+        conn, entity_type="agent_skill", fields=["source_uri"]
+    )
+    assert projected["items"][0]["source_uri"].endswith("/plug/SKILL.md")
+
+
 def test_unsafe_field_names_are_dropped_not_interpolated() -> None:
     conn = _conn()
     _insert_skill(conn, "agent_skill:safe")
