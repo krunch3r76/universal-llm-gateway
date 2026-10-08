@@ -26,7 +26,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
     refused = None
     for name in steps:
         payload = step_output_json(outputs, name)
-        if not payload:
+        if not payload or payload.get("_skipped"):
             continue
         completed.append(name)
         if payload.get("refused"):

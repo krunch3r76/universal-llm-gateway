@@ -42,7 +42,10 @@ async def test_seal_args_and_already_closed(monkeypatch: pytest.MonkeyPatch) -> 
     assert args["agent"] == "grok-bot"
     assert out["already_closed"] is True
     assert out["session_id"] == "sess-1"
-    assert args["session_id"].startswith("grokbot-")
+    from agent_seat.session_id import SESSION_ID_RE
+
+    assert SESSION_ID_RE.fullmatch(args["session_id"])
+    assert out["sealed_on"] == out["sealed_on"]
     assert out["sealed_on"].endswith("Z")
     assert events[0]["surface"] == "grok"
     assert out["proposals"]

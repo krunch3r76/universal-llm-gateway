@@ -20,6 +20,8 @@ def _prefix_holds(old: list[Any], new: list[Any]) -> bool:
 async def run_envelope(
     options: dict[str, Any], source: dict[str, Any], fs: Any
 ) -> dict[str, Any]:
+    if source.get("_skipped") or source.get("refused") or not source.get("messages_sha256"):
+        return refuse("envelope.upstream_skipped", "source did not yield a pour")
     uri = str(
         options.get("snapshot_uri")
         or (

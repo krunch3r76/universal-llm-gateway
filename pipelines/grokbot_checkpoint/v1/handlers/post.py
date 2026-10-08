@@ -8,7 +8,7 @@ from agent_bus_store.checkpoint_projection import CANONICAL_RESUME_FOOTER
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import bus_get, bus_send, step_output_json
+from ._clients import bus_get, bus_send, refuse, step_output_json
 
 _MARKER = "house-cp:"
 
@@ -74,6 +74,14 @@ async def run_post(
     get: Any = None,
     send: Any = None,
 ) -> dict[str, Any]:
+    if (
+        seal.get("_skipped")
+        or seal.get("refused")
+        or not seal.get("session_id")
+        or envelope_step.get("_skipped")
+        or not envelope_step.get("snapshot_uri")
+    ):
+        return refuse("post.upstream_skipped", "seal or envelope missing")
     get = get or bus_get
     send = send or bus_send
     thread = str(options.get("root_thread") or "")

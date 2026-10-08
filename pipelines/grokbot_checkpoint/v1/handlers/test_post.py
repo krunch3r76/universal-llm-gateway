@@ -37,6 +37,7 @@ async def test_body_and_duplicate() -> None:
         },
         {"session_id": "sess"},
         {
+            "snapshot_uri": "notes/snap.json",
             "turn_count": 2,
             "coverage": "full",
             "messages_sha256": "abc123",
@@ -68,7 +69,13 @@ async def test_body_and_duplicate() -> None:
             "verifier": "verifier",
         },
         {"session_id": "sess"},
-        {"turn_count": 2, "messages_sha256": "abc123", "provenance": "raw", "producer": "p"},
+        {
+            "snapshot_uri": "notes/snap.json",
+            "turn_count": 2,
+            "messages_sha256": "abc123",
+            "provenance": "raw",
+            "producer": "p",
+        },
         get=get_dup,
         send=send,
     )

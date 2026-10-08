@@ -1,8 +1,14 @@
-"""Provenance is optional and absent from the wire when unset."""
+"""Provenance is optional and absent from the wire when unset.
+
+Golden bytes are libs/continuity_tape/tests/fixtures/envelope_wire_base_87f3104b.json,
+produced from git show 87f3104b:libs/continuity_tape/messages.py (see fixtures/README.md).
+Not regenerated from the working tree.
+"""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from continuity_tape.messages import (
@@ -36,22 +42,11 @@ def test_unset_provenance_omitted_from_wire() -> None:
     blob = json.dumps(wire, sort_keys=True).encode()
     assert b'"provenance"' not in blob
     assert b'"capture"' not in blob
-    wire_golden = (
-        '{"cells": [], "index": [], "messages": [{"content": "hi", "role": "user"}], '
-        '"meta": {"budget_bytes": null, "chat_url": null, "checkpoint_turns": null, '
-        '"coverage": null, "degraded": null, "door": null, "execution_id": null, '
-        '"extras": false, "message_count": 0, "messages_sha256": "", "observed_at": null, '
-        '"payload_bytes": null, "request": null, "sealed_at": null, '
-        '"segment_codec_counts": null, "session_id": null, "source_sha256": null, '
-        '"sources": null, "streaming": null, "surface": "cursor", "surfaces": null, '
-        '"tools": "none", "tools_available": false, "transcript_id": "t", '
-        '"truncated": false, "turn_count": 0}, "schema": "ulg.continuity.messages/1"}'
-    )
-    dump_golden = wire_golden.replace(
-        ', "schema":', ', "open_line": null, "schema":'
-    )
-    assert json.dumps(wire, sort_keys=True) == wire_golden
-    assert json.dumps(dumped, sort_keys=True) == dump_golden
+    golden_path = Path(__file__).parent / "fixtures" / "envelope_wire_base_87f3104b.json"
+    golden = json.loads(golden_path.read_text())
+    assert dumped == golden
+    assert "provenance" not in wire["meta"]
+    assert "capture" not in wire["meta"]
 
 
 def test_provenance_literal_roundtrip() -> None:

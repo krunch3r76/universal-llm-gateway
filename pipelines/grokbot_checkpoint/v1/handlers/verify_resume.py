@@ -62,9 +62,7 @@ async def run_verify_resume(
             if isinstance(capture, dict) and str(capture.get("ref") or "").startswith(
                 ("cortex://", "workspaces://")
             ):
-                rel = str(capture["ref"])
-                rel = rel.removeprefix("cortex://").removeprefix("workspaces://")
-                cap_raw = await fs.read(rel)
+                cap_raw = await fs.read_uri(str(capture["ref"]))
                 checks["capture_sha"] = (
                     cap_raw is not None
                     and file_sha256(cap_raw) == capture.get("sha256")

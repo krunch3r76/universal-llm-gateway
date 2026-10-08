@@ -10,7 +10,7 @@ from typing import Any, override
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import bus_get, step_output_json
+from ._clients import bus_get, refuse, step_output_json
 
 
 def wait_transport_backoff_s(round_index: int) -> float:
@@ -34,10 +34,13 @@ async def run_await_verify(
     sleep: Any = None,
     now: Any = None,
 ) -> dict[str, Any]:
+    if fact.get("_skipped") or fact.get("refused") or not fact.get("turn"):
+        return refuse("await_verify.upstream_skipped", "fact did not post")
     get = get or bus_get
     sleep = sleep or asyncio.sleep
     now = now or time.monotonic
-    budget = float(options.get("wait_verify_seconds") or 900)
+    raw_budget = options.get("wait_verify_seconds")
+    budget = 900.0 if raw_budget is None else float(raw_budget)
     budget = min(budget, 1200.0)
     deadline = now() + budget
     after = int(fact.get("turn") or 0)

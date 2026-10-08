@@ -105,9 +105,6 @@ async def test_capture_unreadable_zero_writes(fs) -> None:
         {
             "raw_ref": "notes/raw.json",
             "raw_sha256": file_sha256(valid),
-            "capture_ref": "notes/missing.bin",
-            "capture_sha256": "ab" * 32,
-            "capture_kind": "jsonl",
         },
         fs,
     )
@@ -116,44 +113,63 @@ async def test_capture_unreadable_zero_writes(fs) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_dispatch_client_refuses() -> None:
+async def test_missing_share_root_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
+    from . import _clients
     from .source import GrokbotCheckpointSourceHandler
 
+    def boom() -> None:
+        raise OSError("CORTEX_FILES_ROOT unset")
+
+    monkeypatch.setattr(_clients, "cortex_files_root", boom, raising=False)
+    monkeypatch.setattr(
+        "implement_admission.closeout_helpers.cortex_files_root", boom
+    )
     ctx = SimpleNamespace(
         options={"raw_ref": "notes/raw.json", "raw_sha256": "ab" * 32},
         outputs={},
         execution_id="e",
-        cortex_dispatch=None,
     )
     out = await GrokbotCheckpointSourceHandler().execute(None, ctx)
     assert out.json["refused"]["code"] == "fs.client_missing"
 
 
 @pytest.mark.asyncio
-async def test_production_fs_uses_cortex_dispatch() -> None:
+async def test_share_root_read(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
     from .source import GrokbotCheckpointSourceHandler
 
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     body = json.dumps(_raw_pour()).encode()
-    seen: list[dict] = []
-
-    async def dispatch(tool: str, args: dict) -> dict:
-        seen.append({"tool": tool, "args": args})
-        return {"content": body.decode(), "ok": True}
-
+    dest = tmp_path / "notes" / "raw.json"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(body)
     ctx = SimpleNamespace(
-        options={
-            "raw_ref": "cortex://notes/raw.json",
-            "raw_sha256": file_sha256(body),
-        },
+        options={"raw_ref": "cortex://notes/raw.json", "raw_sha256": file_sha256(body)},
         outputs={},
         execution_id="e",
-        cortex_dispatch=dispatch,
     )
     out = await GrokbotCheckpointSourceHandler().execute(None, ctx)
     assert out.json.get("refused") is None
-    assert seen[0]["tool"] == "fs"
-    assert seen[0]["args"]["sandbox"] == "cortex"
+
+
+@pytest.mark.asyncio
+async def test_capture_sha_mismatch_branch(fs) -> None:
+    pour = _raw_pour()
+    pour["meta"]["capture"] = {
+        "kind": "jsonl",
+        "ref": "cortex://notes/cap.bin",
+        "sha256": "ab" * 32,
+        "pseudo_byte_exact": False,
+    }
+    pour["meta"]["source_sha256"] = "ab" * 32
+    valid = json.dumps(pour).encode()
+    fs.files["notes/raw.json"] = valid
+    fs.files["notes/cap.bin"] = b"not-the-hash"
+    out = await run_source(
+        {"raw_ref": "notes/raw.json", "raw_sha256": file_sha256(valid)},
+        fs,
+    )
+    assert out["refused"]["code"] == "capture.sha_mismatch"

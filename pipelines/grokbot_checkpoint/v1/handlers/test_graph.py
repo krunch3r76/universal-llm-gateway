@@ -167,6 +167,7 @@ async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispat
         name = step["name"]
         cond = step.get("condition") or ""
         if cond and not evaluate_condition(cond, outputs, options):
+            outputs[name] = _out({"_skipped": True})
             continue
         payload = await step_payload(name)
         outputs[name] = _out(payload)
@@ -174,7 +175,7 @@ async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispat
             break
     flat = {name: item.json for name, item in outputs.items()}
     flat["seal_calls"] = calls["seal"]
-    if "source" in flat and flat["source"].get("refused") and "card" not in flat:
+    if flat.get("source", {}).get("refused"):
         return flat["source"] | {"seal_calls": calls["seal"], "posts": bus.posts}
     return flat
 
@@ -296,7 +297,7 @@ async def test_rerun_after_seal(fs, patch_seal) -> None:
     assert bus.posts == 2  # CHECKPOINT + FACT
     third = await _seal_graph(fs, options, bus, dispatch=already)
     assert third["admit"]["replayed"] is True
-    assert "post" not in third
+    assert third["post"].get("_skipped") is True
     assert bus.posts == 2
 
 
@@ -353,7 +354,7 @@ async def test_light_mode_no_pour(fs) -> None:
 
 def test_yaml_names_framework_concurrency_key() -> None:
     spec = yaml.safe_load(_YAML.read_text())
-    assert spec["concurrency"]["key"] == "grokbot-cp:{options.house}"
+    assert spec["concurrency"]["key"] == "grokbot-cp:{context.dispatch_thread_id}"
 
 
 @pytest.mark.asyncio

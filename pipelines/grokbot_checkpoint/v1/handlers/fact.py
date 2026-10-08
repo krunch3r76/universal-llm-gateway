@@ -7,7 +7,7 @@ from typing import Any, override
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import bus_get, bus_send, step_output_json
+from ._clients import bus_get, bus_send, refuse, step_output_json
 from .admit import fact_subject
 
 
@@ -50,6 +50,12 @@ async def run_fact(
     get: Any = None,
     send: Any = None,
 ) -> dict[str, Any]:
+    if card.get("_skipped") or card.get("refused") or not card.get("written_sha256"):
+        return refuse("fact.upstream_skipped", "card was not written")
+    if options.get("mode") == "seal" and (
+        envelope_step.get("_skipped") or not envelope_step.get("snapshot_uri")
+    ):
+        return refuse("fact.upstream_skipped", "envelope missing in seal mode")
     get = get or bus_get
     send = send or bus_send
     subject = fact_subject(options)

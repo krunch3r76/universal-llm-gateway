@@ -36,8 +36,8 @@ __all__ = [
     "bus_get",
     "bus_send",
     "cortex_dispatch",
-    "DispatchFs",
     "FsClientMissingError",
+    "RootFs",
     "file_sha256",
     "fs_of",
     "refuse",
@@ -75,33 +75,42 @@ class FsClientMissingError(Exception):
     code = "fs.client_missing"
 
 
-class DispatchFs:
-    """cortex_dispatch ``fs`` client. workspaces:// uses sandbox workspaces."""
+_ULG = "universal-llm-gateway"
 
-    def __init__(self, dispatch: Any) -> None:
-        self.dispatch = dispatch
+
+def _share_path(uri: str) -> Path:
+    """Same root split as cursor_paste_resolve read_share_uri."""
+    from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
+
+    text = (uri or "").strip()
+    if text.startswith("workspaces://"):
+        projects = workspaces_root().resolve()
+        if projects.name == _ULG:
+            projects = projects.parent
+        root = projects
+        path = (root / text.removeprefix("workspaces://")).resolve()
+    else:
+        rel = text.removeprefix("cortex://")
+        root = cortex_files_root().resolve()
+        path = (root / rel).resolve()
+    path.relative_to(root)
+    return path
+
+
+class RootFs:
+    """File sandbox via cortex_files_root / workspaces_root. Not a cortex tool."""
 
     async def read(self, rel: str) -> bytes | None:
         return await self.read_uri(rel if "://" in rel else f"cortex://{rel}")
 
     async def read_uri(self, uri: str) -> bytes | None:
-        if self.dispatch is None:
-            raise FsClientMissingError("cortex_dispatch missing")
-        if uri.startswith("workspaces://"):
-            sandbox, path = "workspaces", uri.removeprefix("workspaces://")
-        else:
-            sandbox, path = "cortex", uri if uri.startswith("cortex://") else f"cortex://{uri}"
-        result = await self.dispatch(
-            "fs", {"op": "read", "sandbox": sandbox, "path": path}
-        )
-        if not isinstance(result, dict) or result.get("error"):
+        try:
+            path = _share_path(uri)
+        except (ValueError, OSError) as exc:
+            raise FsClientMissingError(str(exc)) from exc
+        if not path.is_file():
             return None
-        content = result.get("content")
-        if isinstance(content, bytes):
-            return content
-        if isinstance(content, str):
-            return content.encode("utf-8")
-        return None
+        return path.read_bytes()
 
     async def write(
         self,
@@ -111,40 +120,24 @@ class DispatchFs:
         expected_sha256: str | None = None,
         if_absent: bool = False,
     ) -> dict[str, Any]:
-        if self.dispatch is None:
-            raise FsClientMissingError("cortex_dispatch missing")
-        path = rel if rel.startswith("cortex://") else f"cortex://{rel}"
-        result = await self.dispatch(
-            "fs",
-            {
-                "op": "write",
-                "sandbox": "cortex",
-                "path": path,
-                "content": data.decode("utf-8"),
-                "expected_sha256": expected_sha256 or "",
-                "if_absent": if_absent,
-            },
-        )
-        if not isinstance(result, dict) or result.get("error"):
-            return {
-                "ok": False,
-                "conflict": True,
-                "sha256": None,
-                "error": result,
-            }
-        return {
-            "ok": True,
-            "conflict": False,
-            "sha256": str(result.get("sha256") or file_sha256(data)),
-        }
+        try:
+            path = _share_path(rel if "://" in rel else f"cortex://{rel}")
+        except (ValueError, OSError) as exc:
+            raise FsClientMissingError(str(exc)) from exc
+        if if_absent and path.is_file():
+            return {"ok": False, "conflict": True, "sha256": file_sha256(path.read_bytes())}
+        if expected_sha256 and path.is_file():
+            live = file_sha256(path.read_bytes())
+            if live != expected_sha256:
+                return {"ok": False, "conflict": True, "sha256": live}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return {"ok": True, "conflict": False, "sha256": file_sha256(data)}
 
 
 def fs_of(context: Any) -> Any:
-    """Injected test fs, else the cortex_dispatch fs client. No /tmp fallback."""
+    """Injected test fs, else the share-root client. No /tmp fallback."""
     injected = getattr(context, "fs", None)
     if injected is not None:
         return injected
-    dispatch = getattr(context, "cortex_dispatch", cortex_dispatch)
-    if dispatch is None:
-        return DispatchFs(None)
-    return DispatchFs(dispatch)
+    return RootFs()

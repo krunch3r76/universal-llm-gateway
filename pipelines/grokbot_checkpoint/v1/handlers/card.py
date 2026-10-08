@@ -54,6 +54,13 @@ async def run_card(
     execution_id: str,
     seal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if options.get("mode") == "seal" and (
+        not seal
+        or seal.get("_skipped")
+        or seal.get("refused")
+        or not seal.get("session_id")
+    ):
+        return refuse("card.upstream_skipped", "seal did not yield a session_id")
     if seal and seal.get("refused"):
         return {"refused": seal["refused"]}
     uri = str(options.get("card_uri") or "")

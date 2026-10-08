@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, datetime
 from typing import Any, override
 
+from agent_seat.session_id import derive_session_id_from_timestamp
 from continuity_tape.events import stargate_continuity_checkpoint_sealed
+from cortex_store.session_close_validation import _validate_session_close_args
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -22,6 +23,10 @@ async def run_seal(
     execution_id: str,
     dispatch: Any = None,
 ) -> dict[str, Any]:
+    if envelope_step.get("_skipped") or envelope_step.get("refused") or not envelope_step.get(
+        "snapshot_uri"
+    ):
+        return refuse("seal.upstream_skipped", "envelope did not produce a snapshot")
     post = dispatch or cortex_dispatch
     snapshot = str(envelope_step.get("snapshot_uri") or "")
     lane = str(options.get("root_thread") or options.get("verify_lane") or "")
@@ -29,9 +34,27 @@ async def run_seal(
     house = str(options.get("house") or "")
     n = options.get("n")
     msg_sha = str(envelope_step.get("messages_sha256") or "")
-    session_id = "grokbot-" + hashlib.sha256(
-        f"{house}|{n}|{msg_sha}".encode()
-    ).hexdigest()[:20]
+    sealed_on = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    agent_id = str(options.get("agent_id") or "")
+    session_id = ""
+    if agent_id:
+        try:
+            from cortex_store.session_close_successor_hop import (
+                lookup_journaled_by_conversation_uuid,
+            )
+
+            found = lookup_journaled_by_conversation_uuid(agent_id)
+        except Exception:
+            found = None
+        if found is not None and getattr(found, "session_id", None):
+            session_id = str(found.session_id)
+    if not session_id:
+        session_id = derive_session_id_from_timestamp(
+            agent,
+            sealed_on,
+            deterministic=True,
+            conversation_uuid=agent_id or f"{house}|{n}|{msg_sha}",
+        )
     close_args = {
         "session_id": session_id,
         "agent": agent,
@@ -43,6 +66,18 @@ async def run_seal(
         "closed_by": "succession",
         "succession_seal_authority": True,
     }
+    rejected = _validate_session_close_args(
+        session_id=session_id,
+        agent=agent,
+        transcript_jsonl_path=None,
+        session_summary_md=_STUB,
+        summary=_STUB,
+        transcript_messages_path=snapshot,
+        transcript_depth="verbatim",
+        emit_rejected=False,
+    )
+    if isinstance(rejected, dict) and rejected.get("error"):
+        return refuse(str(rejected.get("reason") or "seal.invalid"), str(rejected.get("error")))
     close = await post("session_close", close_args)
     if not isinstance(close, dict):
         return refuse("seal.transport", "session_close returned non-object")
@@ -71,7 +106,7 @@ async def run_seal(
         _stamp_succession_fields(
             session_id=session_id,
             sealed_by=agent,
-            sealed_on=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            sealed_on=sealed_on,
             conversation_uuid=str(options.get("agent_id") or ""),
             dominant_lane=lane,
         )
@@ -96,7 +131,7 @@ async def run_seal(
         "producer": envelope_step.get("producer"),
         "proposals": proposals,
         "close_args": close_args,
-        "sealed_on": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "sealed_on": sealed_on,
     }
 
 

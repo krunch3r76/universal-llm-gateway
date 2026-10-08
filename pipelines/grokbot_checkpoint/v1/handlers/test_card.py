@@ -42,10 +42,13 @@ async def test_append_mismatch_and_replay(fs) -> None:
         env,
         fs,
         execution_id="e0",
+        seal={"session_id": "s", "refused": None},
     )
     assert stale["refused"]["code"] == "card.sha_mismatch"
     assert fs.writes == []
-    out = await run_card(options, {}, env, fs, execution_id="e1")
+    out = await run_card(
+        options, {}, env, fs, execution_id="e1", seal={"session_id": "s", "refused": None}
+    )
     assert out["refused"] is None
     body = (await fs.read("notes/card.md")).decode()
     assert body.count("| 1 |") == 1
@@ -57,6 +60,7 @@ async def test_append_mismatch_and_replay(fs) -> None:
         env,
         fs,
         execution_id="e2",
+        seal={"session_id": "s", "refused": None},
     )
     assert replay["replayed"] is True
     assert await fs.read("notes/card.md") == untouched
