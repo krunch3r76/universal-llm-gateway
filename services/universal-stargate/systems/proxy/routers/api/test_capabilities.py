@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from systems.proxy.dependencies import get_auth_dependency
+from systems.proxy.dependencies import get_auth_dependency, get_proxy
 from systems.proxy.routers.api import capabilities as capability_routes
 from systems.proxy.routers.api.capabilities import router
 from systems.proxy.routers.api.capability_vocabulary import reset_vocabulary_cache
@@ -59,7 +61,11 @@ def _app(tmp_path, body: str, monkeypatch, responder) -> tuple[TestClient, _Bus]
     app.include_router(router, prefix="/api/v1")
     app.dependency_overrides[get_auth_dependency] = lambda: {}
     bus = _Bus()
-    app.state.event_bus = bus
+    app.dependency_overrides[get_proxy] = lambda: SimpleNamespace(
+        pipeline_registry=None,
+        is_pipeline_system_ready=False,
+        event_bus=bus,
+    )
     return TestClient(app), bus
 
 
@@ -345,3 +351,47 @@ def test_nested_member_non_satellite_is_404(
     missing = client.get("/api/v1/capabilities/not-a-category/member/extra")
     assert missing.status_code == 404
     assert missing.json()["code"] == "capability_not_found"
+
+
+def test_relay_events_reach_proxy_bus_for_one_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOBS_TOKEN", "dummy-token")
+    run_path = "/api/v1/jobs/bus-reply-watch/runs/r1"
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if (
+            request.method == "POST"
+            and request.url.path == "/api/v1/jobs/bus-reply-watch"
+        ):
+            return httpx.Response(
+                202,
+                json={"run_id": "r1"},
+                headers={"location": run_path, "content-type": "application/json"},
+            )
+        if request.method == "GET" and request.url.path == run_path:
+            return httpx.Response(200, json={"run_id": "r1", "status": "completed"})
+        return httpx.Response(500, content=b"unexpected")
+
+    client, bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    created = client.post(
+        "/api/v1/capabilities/jobs/bus-reply-watch",
+        json={"args": {}},
+    )
+    assert created.status_code == 202, created.text
+    fetched = client.get(created.headers["location"])
+    assert fetched.status_code == 200, fetched.text
+    assert not hasattr(client.app.state, "event_bus")
+    completed = [
+        event
+        for event in bus.events
+        if getattr(event, "signal", "") == "capability.relay.completed"
+    ]
+    assert len(completed) == 2
+    payloads = [getattr(event, "payload", {}) or {} for event in completed]
+    assert payloads[0]["category"] == "jobs"
+    assert payloads[0]["member"] == "bus-reply-watch"
+    assert payloads[0]["method"] == "POST"
+    assert payloads[1]["category"] == "jobs"
+    assert payloads[1]["member"] == "bus-reply-watch/runs/r1"
+    assert payloads[1]["method"] == "GET"
