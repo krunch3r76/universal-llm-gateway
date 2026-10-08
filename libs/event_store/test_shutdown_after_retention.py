@@ -141,3 +141,58 @@ def test_stop_during_retention_batch_sleep_exits_under_5s(tmp_path: Path) -> Non
             proc.kill()
             proc.wait(timeout=2)
     assert elapsed < 5
+
+
+@pytest.mark.offline
+def test_stop_during_long_select_exits_under_5s(tmp_path: Path) -> None:
+    """A reader inside SQLite must be interrupted so SIGTERM returns inside grace."""
+    db = tmp_path / "events.db"
+    assert str(db).startswith("/tmp")
+    assert ".events" not in str(db)
+    _seed(db, 1)
+    proc = _serve(
+        db,
+        tmp_path / "ingest.sock",
+        tmp_path / "query.sock",
+        {
+            "EVENTS_RETENTION_STARTUP": "off",
+            "EVENTS_QUERY_DEADLINE_S": "60",
+        },
+    )
+    query: subprocess.Popen[str] | None = None
+    try:
+        _wait_log(proc, "Event service started", 10)
+        query = subprocess.Popen(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "30",
+                "--unix-socket",
+                str(tmp_path / "query.sock"),
+                "-H",
+                "content-type: application/json",
+                "-d",
+                '{"sql":"SELECT max(x) FROM (WITH RECURSIVE c(x) AS ('
+                "SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 500000000"
+                ') SELECT x FROM c)","limit":1}',
+                "http://localhost/api/v1/observability/sql",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        time.sleep(0.4)
+        if query.poll() is not None:
+            body = query.stdout.read() if query.stdout else ""
+            pytest.fail(f"slow select returned before SIGTERM: {body[:500]}")
+        elapsed = _sigterm_exit_s(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
+        if query is not None and query.poll() is None:
+            query.kill()
+            query.wait(timeout=2)
+    assert elapsed < 5

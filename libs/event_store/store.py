@@ -174,6 +174,8 @@ class EventStore:
         self._read_executor: ThreadPoolExecutor | None = None
         self._retention_executor: ThreadPoolExecutor | None = None
         self._retention_conn: sqlite3.Connection | None = None
+        self._reader_conns: list[sqlite3.Connection] = []
+        self._reader_conns_lock = threading.Lock()
         self._read_deadline_s = _READ_DEADLINE_S
         self._read_queue_deadline_s = _READ_QUEUE_DEADLINE_S
         self._read_pool_size = _READ_POOL_SIZE
@@ -207,23 +209,34 @@ class EventStore:
         logger.info("EventStore opened: %s", self._db_path)
 
     def stop_background_work(self) -> None:
-        """Unblock retention so shutdown does not wait out the manage grace.
+        """Unblock retention and readers so shutdown does not wait out grace.
 
-        The retention pool is a non-daemon ``ThreadPoolExecutor``. Interpreter
-        exit joins that thread. A keyset batch inside SQLite or ``time.sleep``
-        ignores ``asyncio.Task.cancel`` until the call returns, so SIGTERM
-        sits until manage escalates to SIGKILL. This sets the stop event
-        (wakes the inter-batch sleep) and interrupts the retention connection
-        (aborts the in-flight statement). Safe to call more than once.
+        The read and retention pools are non-daemon ``ThreadPoolExecutor``s.
+        Interpreter exit joins those threads. A statement inside SQLite, or
+        the retention inter-batch sleep, ignores ``asyncio.Task.cancel`` until
+        the call returns, so SIGTERM sits until manage escalates to SIGKILL.
+        This sets the retention stop event (wakes the sleep) and interrupts
+        the retention connection and every pooled reader connection (aborts
+        the in-flight statement). Per-call read deadlines still interrupt only
+        the connection that call is running. Safe to call more than once.
         """
         self._retention_stop.set()
-        conn = self._retention_conn
-        if conn is None:
-            return
-        try:
-            conn.interrupt()
-        except sqlite3.Error:
-            logger.exception("event-store retention interrupt failed")
+        with self._reader_conns_lock:
+            conns = list(self._reader_conns)
+        retention = self._retention_conn
+        if retention is not None and retention not in conns:
+            conns.append(retention)
+        for conn in conns:
+            try:
+                conn.interrupt()
+            except sqlite3.Error:
+                logger.exception("event-store shutdown interrupt failed")
+
+    def _track_reader(self, connection: sqlite3.Connection) -> None:
+        """Remember a pooled reader so shutdown can interrupt it."""
+        with self._reader_conns_lock:
+            if connection not in self._reader_conns:
+                self._reader_conns.append(connection)
 
     async def close(self) -> None:
         """Close SQLite connections and shut down the read and retention pools."""
@@ -296,6 +309,7 @@ class EventStore:
     def _reader_connection(self) -> sqlite3.Connection:
         """Return one read-only connection per worker thread."""
         if os.environ.get("EVENTS_SQLITE_NFS_PIN") == "1" and self._db is not None:
+            self._track_reader(self._db)
             return self._db
         connection = getattr(self._reader_local, "connection", None)
         if connection is not None:
@@ -309,6 +323,7 @@ class EventStore:
             self._configure_connection(connection)
             connection.execute("PRAGMA busy_timeout=5000")
         self._reader_local.connection = connection
+        self._track_reader(connection)
         return connection
 
     def push_realtime(self, event: dict[str, Any]) -> None:
