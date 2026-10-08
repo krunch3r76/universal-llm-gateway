@@ -367,6 +367,11 @@ skills:
     # cursor_request. Hop paste loads this slug beside liaison.
     surface_class: cursor_only
     mcp_surface_required: code
+  maestro-sidekick:
+    # Per-REQUEST grok-bot liaison under a Maestro Sidekick (15609#48).
+    # Trigger-disjoint from liaison (IDE house seat). cursor_only via census.
+    surface_class: cursor_only
+    mcp_surface_required: code
   markdown-navigation:
     surface_class: cursor_only
     mcp_surface_required: life
