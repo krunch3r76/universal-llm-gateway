@@ -80,7 +80,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
           get          (thread, turn_number, mark_read?)  — turn_number may be int or "latest"; mark_read=true marks the fetched turn read (same side effect as fetch)
-          wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
+          wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?, mark_read?)
           lane_current (thread) — derived current lane parentage (state=none when unbound)
           tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, transcript_id?, prior_cells?, include_extras?, tools?, channel?) — continuity dump; messages[] + cells[] + index[] (index = budget-degrade metadata only). scope=window requires transcript_id; tail = open cell (bus_turn_id null).
 

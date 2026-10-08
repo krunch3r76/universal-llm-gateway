@@ -11,7 +11,7 @@ from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
 from ._shared import _structured_relay_error, relay
-from .read_state import _resolve_turn_id
+from .read_state import _mark_read_dispatch, _resolve_turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -303,12 +303,18 @@ def _wait_dispatch(
     completion: str = "first_reply_from",
     from_agent: str | None = None,
     execution_id: str | None = None,
+    mark_read: bool = False,
 ) -> dict[str, Any]:
     """Thin relay to agent-bus GET /threads/{id}/wait."""
     if isinstance(thread, int):
         thread = str(thread)
     if not thread:
         return {"error": 'wait requires: thread (str, e.g. "1234")'}
+    if mark_read and not from_agent:
+        return {
+            "error": "wait with mark_read=true requires from_agent",
+            "reason": "wait_mark_read_requires_from_agent",
+        }
     if completion in {"first_reply_from", "proof_reply_from"} and not from_agent:
         return {"error": f"wait with completion={completion} requires from_agent"}
     from agent_bus_store.wait_status import STATUS_COMPLETION_MODES
@@ -364,6 +370,19 @@ def _wait_dispatch(
         terminal_status = (
             str(result.get("status", "")) if isinstance(result, dict) else ""
         )
+        if (
+            mark_read
+            and isinstance(result, dict)
+            and result.get("complete")
+            and result.get("qualifying_reply_turn") is not None
+        ):
+            mark_result = _mark_read_dispatch(
+                thread=thread,
+                through_turn=int(result["qualifying_reply_turn"]),
+                agent=from_agent,
+            )
+            if isinstance(mark_result, dict) and "error" in mark_result:
+                return mark_result
         return result
     finally:
         pkg.record(
