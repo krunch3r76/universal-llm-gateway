@@ -14,10 +14,18 @@ from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
 _PT = ZoneInfo("America/Los_Angeles")
 
 
+def _log_section(body: str) -> str:
+    if "## Checkpoint log" not in body:
+        return ""
+    rest = body.split("## Checkpoint log", 1)[1]
+    nxt = rest.find("\n## ")
+    return rest if nxt < 0 else rest[:nxt]
+
+
 def _last_row_n(body: str) -> int | None:
     rows = [
         line
-        for line in body.splitlines()
+        for line in _log_section(body).splitlines()
         if line.startswith("|") and not line.startswith("| n") and "---" not in line
     ]
     if not rows:
@@ -52,11 +60,16 @@ async def run_card(
     if not rel_path_ok(uri):
         return refuse("admit.path_escape", f"refused path {uri}")
     expected = str(options.get("expected_card_sha256") or "")
-    raw = fs.read(uri)
-    if raw is None:
-        return refuse("card.missing", f"{uri} absent")
+    supplied = options.get("card_body")
+    if isinstance(supplied, str) and supplied:
+        body = supplied
+        raw = body.encode("utf-8")
+    else:
+        raw = await fs.read(uri)
+        if raw is None:
+            return refuse("card.missing", f"{uri} absent")
+        body = raw.decode("utf-8")
     live = file_sha256(raw)
-    body = raw.decode("utf-8")
     n = int(options["n"])
     if live != expected:
         if _last_row_n(body) == n:
@@ -97,7 +110,7 @@ async def run_card(
     )
     updated = body.rstrip() + "\n" + row + "\n"
     data = updated.encode("utf-8")
-    written = fs.write(uri, data, expected_sha256=expected)
+    written = await fs.write(uri, data, expected_sha256=expected)
     if not written.get("ok"):
         return refuse("card.conflict", "409 card write")
     return {

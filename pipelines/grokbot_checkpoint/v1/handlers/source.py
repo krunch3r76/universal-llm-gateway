@@ -9,15 +9,19 @@ from continuity_tape.pour_contract import PourRefused, validate_pour
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import file_sha256, fs_of, refuse, rel_path_ok
+from ._clients import FsClientMissingError, file_sha256, fs_of, refuse, rel_path_ok
 
 
-def _load_slot(
+async def _load_slot(
     fs: Any, ref: str, expected: str, slot: str
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    if not rel_path_ok(ref):
+    if ref.startswith(("cortex://", "workspaces://")):
+        reader = getattr(fs, "read_uri", None)
+        raw = await reader(ref) if reader is not None else await fs.read(ref)
+    elif not rel_path_ok(ref):
         return None, refuse("admit.path_escape", f"refused path {ref}")
-    raw = fs.read(ref)
+    else:
+        raw = await fs.read(ref)
     if raw is None:
         return None, refuse("source.missing", f"envelope {ref} absent")
     digest = file_sha256(raw)
@@ -55,15 +59,18 @@ def _load_slot(
     }, None
 
 
-def _read_capture(fs: Any, ref: str) -> bytes | None:
+async def _read_capture(fs: Any, ref: str) -> bytes | None:
     text = ref.strip()
     for prefix in ("cortex://", "workspaces://"):
         if text.startswith(prefix):
-            return fs.read(text.removeprefix(prefix))
+            reader = getattr(fs, "read_uri", None)
+            if reader is not None:
+                return await reader(text)
+            return await fs.read(text.removeprefix(prefix))
     return None
 
 
-def _attach_capture(selected: dict[str, Any], fs: Any) -> dict[str, Any]:
+async def _attach_capture(selected: dict[str, Any], fs: Any) -> dict[str, Any]:
     capture = selected.get("capture_meta")
     if not capture:
         selected["capture"] = "none"
@@ -72,7 +79,7 @@ def _attach_capture(selected: dict[str, Any], fs: Any) -> dict[str, Any]:
     ref = str(capture.get("ref") or "")
     if not ref.startswith(("cortex://", "workspaces://")):
         return refuse("capture.unreadable", f"capture ref {ref}")
-    raw = _read_capture(fs, ref)
+    raw = await _read_capture(fs, ref)
     if raw is None:
         return refuse("capture.unreadable", f"capture ref {ref} unreadable")
     digest = file_sha256(raw)
@@ -97,8 +104,13 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
         return refuse("source.no_pour", "seal mode needs a transcribed or raw pour")
     loaded: dict[str, dict[str, Any]] = {}
     first_refusal: dict[str, Any] | None = None
-    for slot, ref, expected in slots:
-        body, err = _load_slot(fs, ref, expected, slot)
+    try:
+        loaded_slots = []
+        for slot, ref, expected in slots:
+            loaded_slots.append((slot, ref, expected, await _load_slot(fs, ref, expected, slot)))
+    except FsClientMissingError as exc:
+        return refuse(exc.code, str(exc))
+    for slot, ref, expected, (body, err) in loaded_slots:
         if err:
             first_refusal = first_refusal or err
             continue
@@ -126,7 +138,7 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
         selected = loaded["raw"]
     if selected is None:
         return first_refusal or refuse("source.no_pour", "no valid pour")
-    checked = _attach_capture(selected, fs)
+    checked = await _attach_capture(selected, fs)
     if checked.get("refused"):
         return checked
     checked["alternate"] = alternate

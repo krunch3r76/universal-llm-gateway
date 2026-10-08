@@ -32,7 +32,7 @@ async def run_verify_resume(
     checks: dict[str, bool] = {}
     card_uri = str(options.get("card_uri") or "")
     packet_sha = str(options.get("expected_card_sha256") or "")
-    card_raw = fs.read(card_uri)
+    card_raw = await fs.read(card_uri)
     live = file_sha256(card_raw) if card_raw is not None else ""
     body = card_raw.decode("utf-8") if card_raw else ""
     later = False
@@ -43,7 +43,7 @@ async def run_verify_resume(
                 later = True
     checks["card_sha"] = live == packet_sha or later
     snap_uri = str(options.get("snapshot_uri") or "")
-    snap_raw = fs.read(snap_uri) if snap_uri else None
+    snap_raw = await fs.read(snap_uri) if snap_uri else None
     snap_live = file_sha256(snap_raw) if snap_raw else ""
     packet_snap = str(options.get("snapshot_sha256") or "")
     checks["snapshot_sha"] = snap_live == packet_snap
@@ -64,7 +64,7 @@ async def run_verify_resume(
             ):
                 rel = str(capture["ref"])
                 rel = rel.removeprefix("cortex://").removeprefix("workspaces://")
-                cap_raw = fs.read(rel)
+                cap_raw = await fs.read(rel)
                 checks["capture_sha"] = (
                     cap_raw is not None
                     and file_sha256(cap_raw) == capture.get("sha256")
@@ -72,16 +72,23 @@ async def run_verify_resume(
             else:
                 checks["capture_sha"] = True
     lane = str(options.get("verify_lane") or "")
-    listing, _status = await get(f"/threads/{lane}/turns")
-    turns = listing.get("turns") if isinstance(listing, dict) else []
+    root = str(options.get("root_thread") or lane)
+    cp_listing, _status = await get(f"/threads/{root}/turns")
+    receipt_listing, _status = await get(f"/threads/{lane}/turns")
+    cp_turns = cp_listing.get("turns") if isinstance(cp_listing, dict) else []
+    receipt_turns = (
+        receipt_listing.get("turns") if isinstance(receipt_listing, dict) else []
+    )
     cp_body = ""
     receipt = False
     successor = str(options.get("successor") or options.get("bus_identity") or "")
     fact_turn = int(options.get("fact_turn") or 0)
-    if isinstance(turns, list):
-        for turn in turns:
+    if isinstance(cp_turns, list):
+        for turn in cp_turns:
             if turn.get("subject") == "CHECKPOINT":
                 cp_body = str(turn.get("body") or "")
+    if isinstance(receipt_turns, list):
+        for turn in receipt_turns:
             num = int(turn.get("turn_number") or 0)
             if (
                 turn.get("subject") == "RECEIPT"

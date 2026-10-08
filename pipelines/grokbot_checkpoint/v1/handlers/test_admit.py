@@ -30,19 +30,30 @@ def test_register_handlers_covers_steps() -> None:
 
 
 @pytest.mark.asyncio
-async def test_path_escape_and_replay() -> None:
+async def test_path_escape_and_replay(fs) -> None:
     bad = await run_admit(
         {"mode": "seal", "house": "h", "n": 1, "raw_ref": "../x"}, {}
     )
     assert bad["refused"]["code"] == "admit.path_escape"
+    card = (
+        "## Checkpoint log\n\n| n | when | trigger | expected | envelope | pipeline |\n"
+        "|---|---|---|---|---|---|\n| 2 | t | hop | sha | cell | pipeline e |\n"
+    )
+    fs.files["notes/card.md"] = card.encode()
+
+    async def get(path, params=None):
+        return {"turns": [{"subject": "FACT|house-cp|h|2", "superseded": False}]}, 200
+
     replay = await run_admit(
         {
             "mode": "seal",
             "house": "h",
             "n": 2,
-            "_card_rows": [{"n": 2}],
-            "_fact_exists": True,
+            "card_uri": "notes/card.md",
+            "verify_lane": "v",
         },
         {},
+        fs=fs,
+        get=get,
     )
     assert replay["replayed"] is True

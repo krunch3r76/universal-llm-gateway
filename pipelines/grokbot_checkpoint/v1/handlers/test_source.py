@@ -86,3 +86,74 @@ async def test_pour_codes_via_source(fs) -> None:
     )
     assert fallback["provenance"] == "raw"
     assert fallback["fallback"]["from"] == "transcribed"
+
+
+@pytest.mark.asyncio
+async def test_capture_unreadable_zero_writes(fs) -> None:
+    pour = _raw_pour()
+    pour["meta"]["capture"] = {
+        "kind": "jsonl",
+        "ref": "notes/missing.bin",
+        "sha256": "ab" * 32,
+        "pseudo_byte_exact": False,
+    }
+    pour["meta"]["source_sha256"] = "ab" * 32
+    valid = json.dumps(pour).encode()
+    fs.files["notes/raw.json"] = valid
+    writes = list(fs.writes)
+    out = await run_source(
+        {
+            "raw_ref": "notes/raw.json",
+            "raw_sha256": file_sha256(valid),
+            "capture_ref": "notes/missing.bin",
+            "capture_sha256": "ab" * 32,
+            "capture_kind": "jsonl",
+        },
+        fs,
+    )
+    assert out["refused"]["code"] == "capture.unreadable"
+    assert fs.writes == writes
+
+
+@pytest.mark.asyncio
+async def test_missing_dispatch_client_refuses() -> None:
+    from types import SimpleNamespace
+
+    from .source import GrokbotCheckpointSourceHandler
+
+    ctx = SimpleNamespace(
+        options={"raw_ref": "notes/raw.json", "raw_sha256": "ab" * 32},
+        outputs={},
+        execution_id="e",
+        cortex_dispatch=None,
+    )
+    out = await GrokbotCheckpointSourceHandler().execute(None, ctx)
+    assert out.json["refused"]["code"] == "fs.client_missing"
+
+
+@pytest.mark.asyncio
+async def test_production_fs_uses_cortex_dispatch() -> None:
+    from types import SimpleNamespace
+
+    from .source import GrokbotCheckpointSourceHandler
+
+    body = json.dumps(_raw_pour()).encode()
+    seen: list[dict] = []
+
+    async def dispatch(tool: str, args: dict) -> dict:
+        seen.append({"tool": tool, "args": args})
+        return {"content": body.decode(), "ok": True}
+
+    ctx = SimpleNamespace(
+        options={
+            "raw_ref": "cortex://notes/raw.json",
+            "raw_sha256": file_sha256(body),
+        },
+        outputs={},
+        execution_id="e",
+        cortex_dispatch=dispatch,
+    )
+    out = await GrokbotCheckpointSourceHandler().execute(None, ctx)
+    assert out.json.get("refused") is None
+    assert seen[0]["tool"] == "fs"
+    assert seen[0]["args"]["sandbox"] == "cortex"

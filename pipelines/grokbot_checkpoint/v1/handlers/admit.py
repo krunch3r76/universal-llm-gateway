@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, override
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import refuse, rel_path_ok, step_output_json
+from ._clients import bus_get, fs_of, refuse, rel_path_ok, step_output_json
+from .card import _last_row_n
 
 _MODES = frozenset({"light", "seal", "verify_resume"})
 _PATH_KEYS = (
@@ -17,15 +17,6 @@ _PATH_KEYS = (
     "raw_ref",
     "snapshot_uri",
 )
-HOUSE_LOCKS: dict[str, asyncio.Lock] = {}
-
-
-def house_lock(house: str) -> asyncio.Lock:
-    lock = HOUSE_LOCKS.get(house)
-    if lock is None:
-        lock = asyncio.Lock()
-        HOUSE_LOCKS[house] = lock
-    return lock
 
 
 def fact_subject(options: dict[str, Any]) -> str:
@@ -44,7 +35,13 @@ def _paths(options: dict[str, Any]) -> list[str]:
     return found
 
 
-async def run_admit(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]:
+async def run_admit(
+    options: dict[str, Any],
+    outputs: dict[str, Any],
+    *,
+    fs: Any = None,
+    get: Any = None,
+) -> dict[str, Any]:
     mode = str(options.get("mode") or "")
     if mode not in _MODES:
         return refuse("admit.mode", f"mode {mode!r} not in light|seal|verify_resume")
@@ -63,14 +60,23 @@ async def run_admit(options: dict[str, Any], outputs: dict[str, Any]) -> dict[st
     prior = step_output_json(outputs, "prior")
     if prior.get("replayed"):
         return prior
-    card_rows = options.get("_card_rows")
-    fact_exists = bool(options.get("_fact_exists"))
-    if (
-        isinstance(card_rows, list)
-        and card_rows
-        and _last_cp(card_rows) == n
-        and fact_exists
-    ):
+    fact_exists = False
+    last_n = None
+    if fs is not None and options.get("card_uri"):
+        raw = await fs.read(str(options["card_uri"]))
+        if raw:
+            last_n = _last_row_n(raw.decode("utf-8"))
+    getter = get or bus_get
+    lane = str(options.get("verify_lane") or "")
+    if lane:
+        listing, status = await getter(f"/threads/{lane}/turns")
+        turns = listing.get("turns") if isinstance(listing, dict) else []
+        subject = fact_subject(options)
+        if status < 400 and isinstance(turns, list):
+            fact_exists = any(
+                t.get("subject") == subject and not t.get("superseded") for t in turns
+            )
+    if last_n == n and fact_exists:
         return {
             "refused": None,
             "replayed": True,
@@ -88,19 +94,15 @@ async def run_admit(options: dict[str, Any], outputs: dict[str, Any]) -> dict[st
     }
 
 
-def _last_cp(rows: list[Any]) -> int | None:
-    last = rows[-1]
-    if isinstance(last, dict) and isinstance(last.get("n"), int):
-        return last["n"]
-    return None
-
-
 class GrokbotCheckpointAdmitHandler(BaseHandler):
     step_type = "grokbot_checkpoint_admit_v1"
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
-        async with house_lock(str(options.get("house") or "")):
-            payload = await run_admit(options, getattr(context, "outputs", {}) or {})
+        payload = await run_admit(
+            options,
+            getattr(context, "outputs", {}) or {},
+            fs=fs_of(context),
+        )
         return StepOutput(raw="", json=payload)

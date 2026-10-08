@@ -47,10 +47,10 @@ async def test_append_mismatch_and_replay(fs) -> None:
     assert fs.writes == []
     out = await run_card(options, {}, env, fs, execution_id="e1")
     assert out["refused"] is None
-    body = fs.read("notes/card.md").decode()
+    body = (await fs.read("notes/card.md")).decode()
     assert body.count("| 1 |") == 1
     assert "provenance:raw" in body
-    untouched = fs.read("notes/card.md")
+    untouched = await fs.read("notes/card.md")
     replay = await run_card(
         {**options, "expected_card_sha256": "f" * 64, "n": 1},
         {},
@@ -59,5 +59,5 @@ async def test_append_mismatch_and_replay(fs) -> None:
         execution_id="e2",
     )
     assert replay["replayed"] is True
-    assert fs.read("notes/card.md") == untouched
+    assert await fs.read("notes/card.md") == untouched
     assert "pipeline e2" not in body

@@ -42,17 +42,17 @@ async def test_write_skip_prefix_and_refuse(fs) -> None:
     base = [{"role": "user", "content": "hello", "turn_index": 1}]
     first = await run_envelope(options, _source(base), fs)
     assert first["action"] == "write"
-    old = fs.read("notes/snap.json")
+    old = await fs.read("notes/snap.json")
     skip = await run_envelope(options, _source(base), fs)
     assert skip["action"] == "skip"
-    assert fs.read("notes/snap.json") == old
+    assert await fs.read("notes/snap.json") == old
     extended = base + [{"role": "assistant", "content": "yo", "turn_index": 1}]
     over = await run_envelope(options, _source(extended), fs)
     assert over["action"] == "overwrite"
-    assert fs.read("notes/snap.json") != old
-    saved = fs.read("notes/snap.json")
+    assert await fs.read("notes/snap.json") != old
+    saved = await fs.read("notes/snap.json")
     other = [{"role": "user", "content": "different", "turn_index": 1}]
     refused = await run_envelope(options, _source(other), fs)
     assert refused["refused"]["code"] == "envelope.not_prefix"
-    assert fs.read("notes/snap.json") == saved
+    assert await fs.read("notes/snap.json") == saved
     json.loads(saved)

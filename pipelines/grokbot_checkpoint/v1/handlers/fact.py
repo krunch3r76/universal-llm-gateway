@@ -37,7 +37,8 @@ def _fact_body(
         pointer = "none"
     return (
         f"card {card_uri}@{card_sha} trigger {trigger} snapshot {snap} "
-        f"provenance {prov} capture {pointer}"
+        f"provenance {prov} capture {pointer} "
+        f"producer {envelope_step.get('producer') or 'none'}"
     )
 
 

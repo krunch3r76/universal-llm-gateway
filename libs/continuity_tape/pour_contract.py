@@ -143,7 +143,10 @@ def validate_pour(
             _refuse("pour.window", "window.lo/hi/total must be ints")
         if coverage == "full" and not (lo == 1 and hi == total):
             _refuse("pour.window", "full coverage requires lo==1 and hi==total")
-    parsed = ContinuityMessagesEnvelope.model_validate(envelope_dict)
+    try:
+        parsed = ContinuityMessagesEnvelope.model_validate(envelope_dict)
+    except ValidationError as exc:
+        _refuse("pour.schema", str(exc))
     if parsed.meta.provenance not in ("raw", "transcribed"):
         _refuse("pour.provenance_missing", "parsed provenance missing")
     return parsed

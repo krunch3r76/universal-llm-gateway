@@ -39,7 +39,12 @@ async def test_fact_once() -> None:
         "card_uri": "notes/card.md",
     }
     card = {"uri": "notes/card.md", "written_sha256": "ccc"}
-    env = {"snapshot_uri": "notes/snap.json", "sha256": "sss", "provenance": "raw"}
+    env = {
+        "snapshot_uri": "notes/snap.json",
+        "sha256": "sss",
+        "provenance": "raw",
+        "producer": "cursor-jsonl-extractor",
+    }
     first = await run_fact(options, card, env, get=get, send=send)
     second = await run_fact(options, card, env, get=get, send=send)
     assert first["skipped"] is False
@@ -47,3 +52,4 @@ async def test_fact_once() -> None:
     assert len(sent) == 1
     assert "provenance raw" in sent[0]["body"]
     assert "capture none" in sent[0]["body"]
+    assert "producer cursor-jsonl-extractor" in sent[0]["body"]

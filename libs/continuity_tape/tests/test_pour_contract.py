@@ -94,5 +94,13 @@ def test_capture_rules() -> None:
     assert validate_pour(payload).meta.capture is not None
 
 
+def test_model_validation_error_is_pour_schema() -> None:
+    payload = _ok()
+    payload["meta"]["surface"] = "not-a-surface"
+    with pytest.raises(PourRefused) as exc:
+        validate_pour(payload)
+    assert exc.value.code == "pour.schema"
+
+
 def test_import_without_stargate() -> None:
     assert callable(validate_pour)

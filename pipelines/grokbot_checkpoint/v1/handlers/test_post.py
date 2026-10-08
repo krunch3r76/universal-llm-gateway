@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import re
-
 import pytest
-from agent_bus_store.checkpoint_projection import CANONICAL_RESUME_FOOTER
+from agent_bus_store.checkpoint_projection import (
+    CANONICAL_RESUME_FOOTER,
+    extract_authored_resume_footer,
+)
 
 from .post import run_post
 
@@ -52,8 +53,8 @@ async def test_body_and_duplicate() -> None:
     assert "provenance:raw" in body
     assert "producer:cursor-jsonl-extractor" in body
     assert "capture:none" in body
-    assert CANONICAL_RESUME_FOOTER in body
-    assert re.search(r"messages_sha256:([0-9a-f]+)", body).group(1) == "abc123"
+    assert extract_authored_resume_footer(body) == CANONICAL_RESUME_FOOTER
+    assert "messages_sha256:abc123" in body
     async def get_dup(path: str, params=None):
         return {"turns": [{"body": body, "subject": "CHECKPOINT"}]}, 200
 

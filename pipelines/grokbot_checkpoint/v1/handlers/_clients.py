@@ -36,7 +36,8 @@ __all__ = [
     "bus_get",
     "bus_send",
     "cortex_dispatch",
-    "CortexFs",
+    "DispatchFs",
+    "FsClientMissingError",
     "file_sha256",
     "fs_of",
     "refuse",
@@ -68,42 +69,82 @@ def dumps(obj: Any) -> bytes:
     ).encode("utf-8")
 
 
-class CortexFs:
-    """Byte store keyed by cortex-relative path. Tests replace ``context.fs``."""
+class FsClientMissingError(Exception):
+    """Production fs has no cortex_dispatch client. Never falls back to /tmp."""
 
-    def __init__(self, root: Path | None = None) -> None:
-        self.root = root or Path("/tmp/grokbot-checkpoint-fs")
+    code = "fs.client_missing"
 
-    def _path(self, rel: str) -> Path:
-        if not rel_path_ok(rel):
-            raise ValueError(f"path escape: {rel}")
-        path = (self.root / rel).resolve()
-        if not str(path).startswith(str(self.root.resolve())):
-            raise ValueError(f"path escape: {rel}")
-        return path
 
-    def read(self, rel: str) -> bytes | None:
-        path = self._path(rel)
-        if not path.is_file():
+class DispatchFs:
+    """cortex_dispatch ``fs`` client. workspaces:// uses sandbox workspaces."""
+
+    def __init__(self, dispatch: Any) -> None:
+        self.dispatch = dispatch
+
+    async def read(self, rel: str) -> bytes | None:
+        return await self.read_uri(rel if "://" in rel else f"cortex://{rel}")
+
+    async def read_uri(self, uri: str) -> bytes | None:
+        if self.dispatch is None:
+            raise FsClientMissingError("cortex_dispatch missing")
+        if uri.startswith("workspaces://"):
+            sandbox, path = "workspaces", uri.removeprefix("workspaces://")
+        else:
+            sandbox, path = "cortex", uri if uri.startswith("cortex://") else f"cortex://{uri}"
+        result = await self.dispatch(
+            "fs", {"op": "read", "sandbox": sandbox, "path": path}
+        )
+        if not isinstance(result, dict) or result.get("error"):
             return None
-        return path.read_bytes()
+        content = result.get("content")
+        if isinstance(content, bytes):
+            return content
+        if isinstance(content, str):
+            return content.encode("utf-8")
+        return None
 
-    def write(
-        self, rel: str, data: bytes, *, expected_sha256: str | None = None
+    async def write(
+        self,
+        rel: str,
+        data: bytes,
+        *,
+        expected_sha256: str | None = None,
+        if_absent: bool = False,
     ) -> dict[str, Any]:
-        path = self._path(rel)
-        current = path.read_bytes() if path.is_file() else None
-        current_sha = file_sha256(current) if current is not None else None
-        if expected_sha256 is not None and current_sha != expected_sha256:
-            return {"ok": False, "conflict": True, "sha256": current_sha}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        return {"ok": True, "conflict": False, "sha256": file_sha256(data)}
+        if self.dispatch is None:
+            raise FsClientMissingError("cortex_dispatch missing")
+        path = rel if rel.startswith("cortex://") else f"cortex://{rel}"
+        result = await self.dispatch(
+            "fs",
+            {
+                "op": "write",
+                "sandbox": "cortex",
+                "path": path,
+                "content": data.decode("utf-8"),
+                "expected_sha256": expected_sha256 or "",
+                "if_absent": if_absent,
+            },
+        )
+        if not isinstance(result, dict) or result.get("error"):
+            return {
+                "ok": False,
+                "conflict": True,
+                "sha256": None,
+                "error": result,
+            }
+        return {
+            "ok": True,
+            "conflict": False,
+            "sha256": str(result.get("sha256") or file_sha256(data)),
+        }
 
 
 def fs_of(context: Any) -> Any:
-    fs = getattr(context, "fs", None)
-    if fs is None:
-        fs = CortexFs()
-        context.fs = fs
-    return fs
+    """Injected test fs, else the cortex_dispatch fs client. No /tmp fallback."""
+    injected = getattr(context, "fs", None)
+    if injected is not None:
+        return injected
+    dispatch = getattr(context, "cortex_dispatch", cortex_dispatch)
+    if dispatch is None:
+        return DispatchFs(None)
+    return DispatchFs(dispatch)

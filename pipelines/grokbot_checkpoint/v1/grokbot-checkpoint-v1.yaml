@@ -44,8 +44,10 @@ steps:
 
   - name: card
     type: grokbot_checkpoint_card_v1
-    condition: "options.get('mode') in ('light', 'seal') and admit.json.get('refused') is None and not admit.json.get('replayed')"
+    condition: "(options.get('mode') == 'light' and admit.json.get('refused') is None and not admit.json.get('replayed')) or (options.get('mode') == 'seal' and seal.json.get('refused') is None)"
     reads_from:
+      - step: seal
+        fields: [json]
       - step: envelope
         fields: [json]
 
@@ -60,15 +62,19 @@ steps:
 
   - name: fact
     type: grokbot_checkpoint_fact_v1
-    condition: "options.get('mode') in ('light', 'seal') and card.json.get('refused') is None"
+    condition: "(options.get('mode') == 'light' and card.json.get('refused') is None) or (options.get('mode') == 'seal' and seal.json.get('refused') is None and card.json.get('refused') is None)"
     reads_from:
+      - step: seal
+        fields: [json]
       - step: card
         fields: [json]
 
   - name: await_verify
     type: grokbot_checkpoint_await_verify_v1
-    condition: "options.get('mode') in ('light', 'seal') and fact.json.get('refused') is None"
+    condition: "(options.get('mode') == 'light' and fact.json.get('refused') is None) or (options.get('mode') == 'seal' and seal.json.get('refused') is None and fact.json.get('refused') is None)"
     reads_from:
+      - step: seal
+        fields: [json]
       - step: fact
         fields: [json]
 

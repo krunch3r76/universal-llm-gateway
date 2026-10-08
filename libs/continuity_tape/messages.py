@@ -96,7 +96,7 @@ class EnvelopeMeta(BaseModel):
     capture: CaptureRef | None = None
 
     @model_serializer(mode="wrap")
-    def _omit_unset_optional_meta(self, handler: Any) -> Any:
+    def _omit_unset_optional_meta(self, handler: Any) -> dict[str, Any]:
         """Drop unset provenance and capture so existing wire bytes stay identical."""
         data = handler(self)
         if isinstance(data, dict):

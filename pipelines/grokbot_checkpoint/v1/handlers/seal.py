@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime
 from typing import Any, override
 
 from continuity_tape.events import stargate_continuity_checkpoint_sealed
@@ -24,7 +26,14 @@ async def run_seal(
     snapshot = str(envelope_step.get("snapshot_uri") or "")
     lane = str(options.get("root_thread") or options.get("verify_lane") or "")
     agent = str(options.get("bus_identity") or "")
+    house = str(options.get("house") or "")
+    n = options.get("n")
+    msg_sha = str(envelope_step.get("messages_sha256") or "")
+    session_id = "grokbot-" + hashlib.sha256(
+        f"{house}|{n}|{msg_sha}".encode()
+    ).hexdigest()[:20]
     close_args = {
+        "session_id": session_id,
         "agent": agent,
         "session_summary_md": _STUB,
         "summary": _STUB,
@@ -42,7 +51,7 @@ async def run_seal(
             str(close.get("code") or "seal.refused"),
             str(close.get("error")),
         )
-    session_id = str(close.get("session_id") or "")
+    session_id = str(close.get("session_id") or session_id)
     already = bool(close.get("already_closed"))
     proposals: list[str] = []
     echoed = close.get("meta") if isinstance(close.get("meta"), dict) else {}
@@ -62,7 +71,7 @@ async def run_seal(
         _stamp_succession_fields(
             session_id=session_id,
             sealed_by=agent,
-            sealed_on="",
+            sealed_on=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             conversation_uuid=str(options.get("agent_id") or ""),
             dominant_lane=lane,
         )
@@ -87,6 +96,7 @@ async def run_seal(
         "producer": envelope_step.get("producer"),
         "proposals": proposals,
         "close_args": close_args,
+        "sealed_on": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
 

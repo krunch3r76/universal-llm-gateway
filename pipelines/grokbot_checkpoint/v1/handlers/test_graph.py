@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
 from continuity_tape.messages import CaptureRef, envelope_wire_dict
+from systems.pipeline.core.conditions import evaluate_condition
 
 from ._clients import file_sha256
-from .admit import house_lock, run_admit
+from .admit import run_admit
 from .await_verify import run_await_verify
 from .card import run_card
 from .envelope import run_envelope
@@ -106,36 +107,76 @@ def _options(fs, pour: bytes, *, house: str = "house", slot: str = "raw") -> dic
     }
 
 
+def _out(payload: dict) -> SimpleNamespace:
+    return SimpleNamespace(json=payload, raw="", text="", model_id=None, error=None)
+
+
 async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispatch=None):
-    admitted = await run_admit(options, {})
-    assert admitted["refused"] is None
-    source = await run_source(options, fs)
-    if source.get("refused") or stop_after == "source":
-        return source
-    env = await run_envelope(options, source, fs)
-    if env.get("refused") or stop_after == "envelope":
-        return env
-    sealed = await run_seal(
-        options,
-        env,
-        execution_id="exec",
-        dispatch=dispatch,
-    )
-    if stop_after == "seal":
-        return {"source": source, "envelope": env, "seal": sealed}
-    card = await run_card(
-        options, source, env, fs, execution_id="exec", seal=sealed
-    )
-    post = await run_post(options, sealed, env, get=bus.get, send=bus.send)
-    fact = await run_fact(options, card, env, get=bus.get, send=bus.send)
-    return {
-        "source": source,
-        "envelope": env,
-        "seal": sealed,
-        "card": card,
-        "post": post,
-        "fact": fact,
-    }
+    """Run steps in YAML order; skip when the YAML condition is false."""
+    spec = yaml.safe_load(_YAML.read_text())
+    outputs: dict = {}
+    calls = {"seal": 0}
+
+    async def step_payload(name: str) -> dict:
+        if name == "admit":
+            return await run_admit(options, {}, fs=fs, get=bus.get)
+        if name == "source":
+            return await run_source(options, fs)
+        if name == "envelope":
+            return await run_envelope(options, outputs["source"].json, fs)
+        if name == "seal":
+            calls["seal"] += 1
+            return await run_seal(
+                options,
+                outputs["envelope"].json,
+                execution_id="exec",
+                dispatch=dispatch,
+            )
+        if name == "card":
+            return await run_card(
+                options,
+                outputs.get("source", _out({})).json,
+                outputs.get("envelope", _out({})).json,
+                fs,
+                execution_id="exec",
+                seal=outputs.get("seal", _out({})).json,
+            )
+        if name == "post":
+            return await run_post(
+                options,
+                outputs["seal"].json,
+                outputs["envelope"].json,
+                get=bus.get,
+                send=bus.send,
+            )
+        if name == "fact":
+            return await run_fact(
+                options,
+                outputs["card"].json,
+                outputs.get("envelope", _out({})).json,
+                get=bus.get,
+                send=bus.send,
+            )
+        if name == "await_verify":
+            return {"refused": None, "state": "pending", "turn": None}
+        if name == "result":
+            return {"refused": None}
+        return {"refused": None}
+
+    for step in spec["steps"]:
+        name = step["name"]
+        cond = step.get("condition") or ""
+        if cond and not evaluate_condition(cond, outputs, options):
+            continue
+        payload = await step_payload(name)
+        outputs[name] = _out(payload)
+        if stop_after == name:
+            break
+    flat = {name: item.json for name, item in outputs.items()}
+    flat["seal_calls"] = calls["seal"]
+    if "source" in flat and flat["source"].get("refused") and "card" not in flat:
+        return flat["source"] | {"seal_calls": calls["seal"], "posts": bus.posts}
+    return flat
 
 
 @pytest.fixture
@@ -190,11 +231,46 @@ async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
     payload["meta"]["source_sha256"] = "ab" * 32
     tampered = json.dumps(payload).encode()
     options2 = _options(fs, tampered, house="badcap", slot="raw")
+    refused_bus = Bus()
     refused = await _seal_graph(
-        fs, options2, Bus(), dispatch=lambda tool, args: _ok_close()
+        fs, options2, refused_bus, dispatch=lambda tool, args: _ok_close()
     )
     assert refused["refused"]["code"] == "capture.sha_mismatch"
+    assert refused["seal_calls"] == 0
+    assert refused_bus.posts == 0
     assert fs.writes == writes
+
+
+@pytest.mark.asyncio
+async def test_dom_harvest_graph(fs, patch_seal) -> None:
+    raw = _jsonl()
+    env = extract_turns_from_jsonl_bytes(raw, transcript_id="cursor-window")
+    env.meta.provenance = "raw"
+    env.meta.coverage = "full"
+    env.meta.capture = CaptureRef(
+        kind="dom_harvest",
+        ref="workspaces://captures/dom.bin",
+        sha256=file_sha256(b"dom-bytes"),
+        pseudo_byte_exact=True,
+    )
+    env.meta.sources = [
+        {
+            "kind": "dom_harvest",
+            "producer": {"id": "dom-harvester", "kind": "harvester", "version": None},
+        }
+    ]
+    pour = json.dumps(envelope_wire_dict(env)).encode()
+    fs.files["captures/dom.bin"] = b"dom-bytes"
+    bus = Bus()
+    out = await _seal_graph(
+        fs,
+        _options(fs, pour, house="dom"),
+        bus,
+        dispatch=lambda tool, args: _ok_close(),
+    )
+    assert out["source"]["capture"]["kind"] == "dom_harvest"
+    assert "producer dom-harvester" in out["fact"]["body"]
+    assert bus.posts == 2
 
 
 async def _ok_close():
@@ -219,8 +295,8 @@ async def test_rerun_after_seal(fs, patch_seal) -> None:
     assert second["card"]["refused"] is None
     assert bus.posts == 2  # CHECKPOINT + FACT
     third = await _seal_graph(fs, options, bus, dispatch=already)
-    assert third["post"]["duplicate"] is True
-    assert third["fact"]["skipped"] is True
+    assert third["admit"]["replayed"] is True
+    assert "post" not in third
     assert bus.posts == 2
 
 
@@ -234,7 +310,7 @@ async def test_stale_card_then_fresh(fs, patch_seal) -> None:
     )
     assert out["card"]["refused"]["code"] == "card.sha_mismatch"
     assert options["card_uri"] not in fs.writes
-    live = file_sha256(fs.read(options["card_uri"]))
+    live = file_sha256(await fs.read(options["card_uri"]))
     options["expected_card_sha256"] = live
     again = await _seal_graph(
         fs,
@@ -265,30 +341,19 @@ async def test_light_mode_no_pour(fs) -> None:
         "bus_identity": "bot",
         "verifier": "verifier",
     }
-    admitted = await run_admit(options, {})
+    async def get(path, params=None):
+        return {"turns": []}, 200
+
+    admitted = await run_admit(options, {}, fs=fs, get=get)
     assert admitted["refused"] is None
     card_out = await run_card(options, {}, {}, fs, execution_id="e")
     assert "none" in card_out["row"]
     assert "notes/pour.json" not in fs.files
 
 
-@pytest.mark.asyncio
-async def test_concurrency_key_serializes() -> None:
+def test_yaml_names_framework_concurrency_key() -> None:
     spec = yaml.safe_load(_YAML.read_text())
-    assert spec["id"] == "grokbot-checkpoint-v1"
-    assert spec["type"] == "grokbot_checkpoint"
     assert spec["concurrency"]["key"] == "grokbot-cp:{options.house}"
-    order: list[str] = []
-
-    async def hold(name: str) -> None:
-        async with house_lock("same"):
-            order.append(f"in-{name}")
-            await asyncio.sleep(0.01)
-            order.append(f"out-{name}")
-
-    await asyncio.gather(hold("a"), hold("b"))
-    assert order[0].startswith("in-")
-    assert order[1].startswith("out-")
 
 
 @pytest.mark.asyncio

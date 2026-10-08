@@ -17,10 +17,11 @@ def wait_transport_backoff_s(round_index: int) -> float:
     return float(min(2**round_index, 10))
 
 
-def _classify(body: str, n: int) -> str | None:
-    if re.search(rf"IN-SYNC\|.*\|{n}\b", body):
+def _classify(body: str, n: int, house: str) -> str | None:
+    house_re = re.escape(house)
+    if re.search(rf"IN-SYNC\|{house_re}\|{n}\b", body):
         return "in_sync"
-    if re.search(rf"DRIFT\|.*\|{n}\b", body):
+    if re.search(rf"DRIFT\|{house_re}\|{n}\b", body):
         return "drift"
     return None
 
@@ -43,6 +44,7 @@ async def run_await_verify(
     lane = str(options.get("verify_lane") or "")
     verifier = str(options.get("verifier") or "")
     n = int(options["n"])
+    house = str(options.get("house") or "")
     round_index = 0
     while now() < deadline:
         try:
@@ -63,7 +65,7 @@ async def run_await_verify(
             for turn in turns:
                 if str(turn.get("from") or "") != verifier:
                     continue
-                state = _classify(str(turn.get("body") or ""), n)
+                state = _classify(str(turn.get("body") or ""), n, house)
                 if state:
                     return {
                         "refused": None,
