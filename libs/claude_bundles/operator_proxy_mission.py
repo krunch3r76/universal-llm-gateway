@@ -54,19 +54,44 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# ulg-code primaries observed 2026-09-29 on the operator connector.
-# Equality with endpoint_surface.derive_code_extra_primary_tools() is
-# intentionally broken: that derivation is /mcp/code minus /mcp/life and still
-# equals {team_dispatch, manage, observability, panel_dispatch, claudeburst}.
-# This seat's forbidden set stops at the two names on neither connector.
+# ulg-code primaries for the operator-proxy Cowork seat (2026-10-08).
+# Shared MCP tools live on /mcp/code once (17e788fd); life keeps life-only names.
+# This frozenset is the permission intent mirror — not derive_code_extra_primary_tools().
 ULG_CODE_PRIMARY_TOOLS: frozenset[str] = frozenset(
     {
         "agent_bus",
         "agent_bus_read",
-        "team_dispatch",
+        "cortex",
+        "cortex_brief",
+        "cse_session",
+        "fleet_liveness",
+        "fs",
         "manage",
         "observability",
+        "rag",
+        "retrieve",
+        "team_dispatch",
         "tool_search",
+    }
+)
+
+# Claude Customize connector detail: Tool permissions radiogroup aria-labels.
+# Kept beside ULG_CODE_PRIMARY_TOOLS; set_claude_tool_permissions imports this.
+ULG_CODE_PRIMARY_UI_TITLES: frozenset[str] = frozenset(
+    {
+        "Agent Bus",
+        "Agent Bus (read-only)",
+        "Cortex Brief",
+        "Cortex Knowledge Graph",
+        "CSE Session",
+        "File I/O (Sandboxed)",
+        "Fleet Liveness",
+        "Manage Services",
+        "Observability",
+        "RAG Knowledge Retrieval",
+        "Retrieve Oversized Response",
+        "Team Dispatch",
+        "Tool Search (Discovery)",
     }
 )
 
@@ -239,6 +264,7 @@ __all__ = [
     "LIFE_SURFACE_LEGAL_TOOLS",
     "MISSION_SKILL_SLUGS",
     "ULG_CODE_PRIMARY_TOOLS",
+    "ULG_CODE_PRIMARY_UI_TITLES",
     "OPERATOR_PROXY_MISSION_PURPOSES",
     "HOP_SUCCESSOR_TITLE",
     "_BRIEFING_BLOCK",

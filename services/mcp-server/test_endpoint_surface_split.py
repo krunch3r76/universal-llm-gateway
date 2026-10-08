@@ -132,9 +132,16 @@ def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
         {
             "agent_bus",
             "agent_bus_read",
-            "team_dispatch",
+            "cortex",
+            "cortex_brief",
+            "cse_session",
+            "fleet_liveness",
+            "fs",
             "manage",
             "observability",
+            "rag",
+            "retrieve",
+            "team_dispatch",
             "tool_search",
         }
     )

@@ -1,25 +1,31 @@
 """ulg-code tool allowlist for the claude.ai Customize connector detail.
 
 ``set_claude_tool_permissions`` calls this when the connector is ``/mcp/code``
-or named ``ulg-code``. Manage Services, Observability, and Team Dispatch stay
-on Always allow. Every other tool radio is Blocked. The Yours list and the
-detail page can carry a second radiogroup with the same accessible name, so
-the click targets the visible ``aria-label`` radio. A DOM ``element.click()``
-does not survive reload.
+or named ``ulg-code``. Operator-proxy shared primaries plus manage,
+observability, and team_dispatch stay on Always allow. Every other tool
+radio is Blocked. The Yours list and the detail page can carry a second
+radiogroup with the same accessible name, so the click targets the visible
+``aria-label`` radio. A DOM ``element.click()`` does not survive reload.
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from playwright.async_api import Page
+
+_REPO = Path(__file__).resolve().parent.parent.parent
+if str(_REPO / "libs") not in sys.path:
+    sys.path.insert(0, str(_REPO / "libs"))
+
+from claude_bundles.operator_proxy_mission import (  # noqa: E402
+    ULG_CODE_PRIMARY_UI_TITLES,
+)
 
 ALLOWED_POLICY = "Always allow"
 BLOCKED_POLICY = "Blocked"
-# Claude titles for manage, observability, and team_dispatch.
-CODE_OPS_ALLOW = frozenset({
-    "Manage Services",
-    "Observability",
-    "Team Dispatch",
-})
+CODE_OPS_ALLOW = ULG_CODE_PRIMARY_UI_TITLES
 
 _PERMISSION_SNAPSHOT_JS = """() => {
   const legend = [...document.querySelectorAll('legend')].find(
@@ -70,7 +76,7 @@ def resolve_policy(mcp_url: str, connector_name: str, explicit: str | None) -> s
 
 
 def _desired(name: str) -> str:
-    """Return Always allow for the three ops tools and Blocked for the rest."""
+    """Return Always allow for operator-proxy ulg-code primaries; Blocked else."""
     if name in CODE_OPS_ALLOW:
         return ALLOWED_POLICY
     return BLOCKED_POLICY
@@ -132,7 +138,7 @@ async def apply_code_ops(
     *,
     reopen,
 ) -> str:
-    """Block every ulg-code tool except the three ops verbs, then reload-verify.
+    """Block every ulg-code tool except the operator allowlist, then reload-verify.
 
     ``reopen`` is an async callable used when reload closes the settings
     modal. The return value is ``changed`` or ``already_set`` plus

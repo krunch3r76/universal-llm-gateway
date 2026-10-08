@@ -14,6 +14,8 @@ from claude_bundles.operator_proxy_mission import (
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
     MISSION_SKILL_SLUGS,
+    ULG_CODE_PRIMARY_TOOLS,
+    ULG_CODE_PRIMARY_UI_TITLES,
     ensure_operator_proxy_mission_prompt,
     is_operator_proxy_mission_purpose,
     purpose_implies_mission,
@@ -277,6 +279,21 @@ def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
 
 def test_mission_skill_slugs_include_lane_act_gates() -> None:
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
+
+
+def test_ulg_code_primary_ui_titles_match_tool_count() -> None:
+    """Playwright allowlist stays 1:1 with the MCP-name mirror constant."""
+    import sys
+
+    cortex_scripts = Path(__file__).resolve().parents[2] / "scripts" / "cortex"
+    if str(cortex_scripts) not in sys.path:
+        sys.path.insert(0, str(cortex_scripts))
+    from claude_code_tool_permissions import CODE_OPS_ALLOW
+
+    assert len(ULG_CODE_PRIMARY_TOOLS) == len(ULG_CODE_PRIMARY_UI_TITLES) == 13
+    assert CODE_OPS_ALLOW == ULG_CODE_PRIMARY_UI_TITLES
+    assert "panel_dispatch" not in ULG_CODE_PRIMARY_TOOLS
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS <= {"panel_dispatch", "claudeburst"}
 
 
 def test_legal_subset_forbidden_disjoint_a9() -> None:
