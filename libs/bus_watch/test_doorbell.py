@@ -389,7 +389,7 @@ def test_live_10479_web_anthropic_render_byte_length() -> None:
     """AC4 — 11655 regression pin corrected: life render is not the old 1019 B IDE paste."""
     text = _live_10479_render()
     encoded_len = len(text.encode("utf-8"))
-    assert encoded_len == 1154
+    assert encoded_len == 1164
     assert encoded_len != 1019
     assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
 
@@ -469,7 +469,7 @@ _SUCCESSOR_WAKE_GOLDEN = (
     "duty: run the tick; checkpoint; hop only if hop_qualifies. "
     "This hop orchestrates — do not land repo edits here (≤20 lines, no served "
     "path, liaison ladder only); repo work ⇒ dispatch implement/conductor or "
-    "cursor-auto; design/judgment/invariant forks ⇒ cdp/opus-5.5 consult before bind; "
+    "team_dispatch on ulg-code; design/judgment/invariant forks ⇒ cdp/opus-5.5 consult before bind; "
     "STAY only on empty NOW / quiet tick / OPERATOR_GATE.\n"
     "disclosure: orientation ritual; one echo before the first move.\n"
     "objective: tip turn #42 on agent-bus:10479; tip CHECKPOINT #40; "
@@ -517,7 +517,7 @@ def test_successor_wake_fitting_input_byte_identical() -> None:
     first = _default_successor_render()
     second = _default_successor_render()
     assert first == second
-    assert len(first.encode("utf-8")) == 1483
+    assert len(first.encode("utf-8")) == 1497
 
 
 @pytest.mark.offline

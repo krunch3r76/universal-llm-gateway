@@ -1,7 +1,10 @@
-"""agent_bus ``request`` — bus turn on an existing or new lane.
+"""agent_bus ``request`` — retired cursor-auto entry (a:38728).
 
-Writes a send-equivalent turn and returns ``{thread, turn, poll_hint}``.
-The Auto enqueue arm is not on this path.
+``_request_dispatch`` returns ``cursor_auto_retired_refusal`` before author
+resolution, validation, CSE bind, or any turn write. ``_request_impl``,
+``request_intake``, ``request_cse_bind``, and ``request_worker_client`` stay
+until slice 2 deletes them. ``_resolve_hop_seat_request_refusal`` stays; hop
+imports it.
 """
 
 from __future__ import annotations
@@ -24,6 +27,20 @@ from .request_intake import (
     stamp_contract_deprecation,
 )
 from .send import _send_dispatch
+
+_CURSOR_AUTO_RETIRED_ERROR = (
+    "cursor-auto is retired (a:38728). Code commission: team_dispatch on ulg-code. "
+    "Life CSE: life_dispatch. A bus turn: agent_bus send."
+)
+
+
+def cursor_auto_retired_refusal() -> dict[str, str]:
+    """Teaching refusal for the retired cursor-auto commission path."""
+    record("mcp.agentbus.request.rejected", reason="cursor_auto_retired")
+    return {
+        "error": _CURSOR_AUTO_RETIRED_ERROR,
+        "reason": "cursor_auto_retired",
+    }
 
 
 def _resolve_hop_seat_request_refusal(
@@ -321,8 +338,11 @@ def _request_dispatch(
     Omit the key, or use lane A, and the job stays serial. Same thread still
     supersedes. ``conductor`` is recognized by that predicate; bus intake
     still rejects it as ``request_contract_unknown`` — probes use ``implement``.
+
+    Slice 1 (a:38728): this entry refuses before any of the work below.
     """
-    if isinstance(thread, int):
+    return cursor_auto_retired_refusal()
+    if isinstance(thread, int):  # pragma: no cover
         thread = str(thread)
 
     from_agent, author_err = resolve_dispatch_from_agent(from_agent)

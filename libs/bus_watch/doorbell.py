@@ -362,7 +362,7 @@ def render_doorbell(
         )
         if show_commission:
             lines.append(
-                f"commission: operator_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
+                f"commission: team_dispatch on ulg-code (new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
             )
         return "\n".join(lines) + "\n"
 
@@ -459,9 +459,9 @@ def _successor_duty_line(
     if contract != "none":
         return (
             "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
-            "(operator_request on life / team_dispatch on ulg-code, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
+            "(team_dispatch on ulg-code, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
             "verify against git before any 'landed' word; then checkpoint. "
-            "Repo-write goals ⇒ cursor-auto; design/judgment forks ⇒ cdp/fable-5.1 — never STAY. "
+            "Repo-write goals ⇒ team_dispatch on ulg-code; design/judgment forks ⇒ cdp/fable-5.1 — never STAY. "
             "Orienting and writing STAY is not the leg."
         )
     consult = _judgment_consult(policy, successor_model)
@@ -469,7 +469,7 @@ def _successor_duty_line(
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
         "This hop orchestrates — do not land repo edits here (≤20 lines, no served "
         "path, liaison ladder only); repo work ⇒ dispatch implement/conductor or "
-        f"cursor-auto; design/judgment/invariant forks ⇒ {consult} consult before bind; "
+        f"team_dispatch on ulg-code; design/judgment/invariant forks ⇒ {consult} consult before bind; "
         "STAY only on empty NOW / quiet tick / OPERATOR_GATE."
     )
 

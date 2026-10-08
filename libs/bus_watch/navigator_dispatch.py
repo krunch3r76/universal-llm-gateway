@@ -1,4 +1,4 @@
-"""Navigator wake dispatch — ``cursor-sdk`` (code) or ``cursor-auto`` (life).
+"""Navigator wake dispatch — ``cursor-sdk`` (code). ``cursor-auto`` is retired (a:38728).
 
 CDP generate is not a navigator transport. A ``cdp/*`` ``navigator_model`` is
 ignored on the wire so Stargate cannot route the wake back onto project-ask.
@@ -114,14 +114,17 @@ def submit_navigator(
     """POST the wake. Life ``cursor-auto`` uses the injected ``submit`` in tests.
 
     Default production submit is Stargate ``team_dispatch`` for ``cursor-sdk``.
-    ``cursor-auto`` must be submitted by the caller (life ``operator_request``);
-    a missing injector is a refused wake, not a silent CDP fallback.
+    ``cursor-auto`` is retired (a:38728); set ``navigator_seat=cursor-sdk``
+    (``team_dispatch``). A missing injector is a refused wake, not a silent CDP fallback.
     """
     if str(body.get("seat") or "") == "cursor-auto":
         return {
             "error": {
                 "code": "cursor_auto_submit_required",
-                "message": "life navigator wake uses operator_request; inject submit",
+                "message": (
+                    "cursor-auto is retired (a:38728); "
+                    "set navigator_seat=cursor-sdk (team_dispatch)"
+                ),
             }
         }, 422
     return submit_team_dispatch(body)

@@ -713,7 +713,7 @@ def test_request_omit_desired_effort_enqueues_auto() -> None:
             "auto_handler_status": "auto-handler-live",
             "enqueue": {"ok": True},
         }
-        _request_dispatch(
+        result = _request_dispatch(
             new_slug="effort-omit",
             thread=None,
             to="cursor",
@@ -722,7 +722,8 @@ def test_request_omit_desired_effort_enqueues_auto() -> None:
             from_agent="web-anthropic",
             contract="investigate",
         )
-    assert enqueue_mock.call_args.kwargs["desired_effort"] == "auto"
+    assert result["reason"] == "cursor_auto_retired"
+    enqueue_mock.assert_not_called()
 
 
 def test_enqueue_includes_lane_when_set() -> None:
@@ -949,8 +950,7 @@ def test_request_half_pair_parent_only_rejects_before_send() -> None:
             parent_thread="10479",
             lane_role=None,
         )
-    assert result["reason"] == "lane_bind_incomplete"
-    assert result["provided"] == ["parent_thread"]
+    assert result["reason"] == "cursor_auto_retired"
     send_mock.assert_not_called()
 
 
@@ -966,8 +966,7 @@ def test_request_half_pair_role_only_rejects_before_send() -> None:
             parent_thread=None,
             lane_role="sub_mission",
         )
-    assert result["reason"] == "lane_bind_incomplete"
-    assert result["provided"] == ["lane_role"]
+    assert result["reason"] == "cursor_auto_retired"
     send_mock.assert_not_called()
 
 
