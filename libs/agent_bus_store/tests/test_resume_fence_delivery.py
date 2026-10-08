@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.db.connection import connect
+from agent_bus_store.house_pools import ContinuityCard
 from agent_bus_store.resume_fence import encode_resume_bundle
 from agent_bus_store.resume_fence_delivery import (
     _IN_FLIGHT,
@@ -33,6 +34,20 @@ _CARD = """
 | --- | --- | --- | --- | --- | --- | --- |
 | orchestrator | cursor | open | ulg-for-llms | tip CP | agent-bus:10303 | posts on 10223 |
 """
+
+
+def _found_card(text: str) -> ContinuityCard:
+    rel = "notes/system/threads/10223-card.md"
+    return ContinuityCard(
+        status="found",
+        tried=(rel,),
+        relpath=rel,
+        uri=f"cortex://{rel}",
+        text=text,
+        sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
+
+
 _ENVELOPE = {
     "scope": "last_session",
     "seal_status": "sealed",
@@ -84,7 +99,7 @@ class _PourPatches:
         self._stack.enter_context(
             patch(
                 "agent_bus_store.resume_fence.load_continuity_card",
-                return_value=_CARD,
+                return_value=_found_card(_CARD),
             )
         )
         self._stack.enter_context(
@@ -96,7 +111,7 @@ class _PourPatches:
         self._stack.enter_context(
             patch(
                 "agent_bus_store.resume_fence_delivery.load_continuity_card",
-                return_value=_CARD,
+                return_value=_found_card(_CARD),
             )
         )
         self._stack.enter_context(

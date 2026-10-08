@@ -19,21 +19,17 @@ if str(_REPO_ROOT / "libs") not in sys.path:
 
 from agent_bus_store.house_pools import (  # noqa: E402
     PoolsParseError,
-    continuity_card_uri,
     load_continuity_card,
     parse_closeout_thread_id,
     parse_pools,
 )
+from implement_admission.closeout_helpers import cortex_files_root  # noqa: E402
 
-_DEFAULT_SPEC_URI = (
-    "cortex://notes/system/specs/continuity-house-pool-manifest.md"
-)
+_DEFAULT_SPEC_URI = "cortex://notes/system/specs/continuity-house-pool-manifest.md"
 _OPPORTUNITIES_URI_TEMPLATE = (
     "cortex://notes/system/threads/{house_id}-opportunities.md"
 )
-_SLICE_HEADING_RE = re.compile(
-    r"(?im)^###\s+(?:O\d+\s*[—-]\s*)?{slice}\b"
-)
+_SLICE_HEADING_RE = re.compile(r"(?im)^###\s+(?:O\d+\s*[—-]\s*)?{slice}\b")
 
 
 def _opportunity_excerpt(opportunities_text: str, slice_id: str) -> str | None:
@@ -68,6 +64,7 @@ def _render_prompt(
     spec_uri: str,
     opportunities_uri: str,
     slice_body: str,
+    card_uri: str,
 ) -> str:
     coord = parse_closeout_thread_id(row.closeout) or "10303"
     house_ref = house_id.strip().removeprefix("agent-bus:")
@@ -78,7 +75,7 @@ def _render_prompt(
         f"**Read:**\n"
         f"- `{opportunities_uri}` (row `{slice_id}`)\n"
         f"- `{spec_uri}`\n"
-        f"- `{continuity_card_uri(house_id)}`\n\n"
+        f"- `{card_uri}`\n\n"
         f"**Closeout:** agent-bus:{coord} — subject "
         f"`CLOSEOUT — WORK {slice_id}`; body fields: {closeout_fields} "
         f"(must read `none on {house_ref}`)\n\n"
@@ -120,22 +117,20 @@ def main(argv: list[str] | None = None) -> int:
 
     house_id = args.house.strip().removeprefix("agent-bus:")
     card = load_continuity_card(house_id)
-    if card is None:
+    if card.status != "found" or not card.text or not card.uri:
         print(
             f"error: continuity card missing for house {house_id}",
             file=sys.stderr,
         )
         return 1
     try:
-        row = parse_pools(card)[args.pool.strip().lower()]
+        row = parse_pools(card.text)[args.pool.strip().lower()]
     except (PoolsParseError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    from agent_bus_store.house_pools import continuity_card_path
-
     opportunities_file = (
-        continuity_card_path(house_id).parent / f"{house_id}-opportunities.md"
+        cortex_files_root() / "notes/system/threads" / f"{house_id}-opportunities.md"
     )
     opportunities_uri = _OPPORTUNITIES_URI_TEMPLATE.format(house_id=house_id)
     slice_body = args.slice_body
@@ -158,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         house_id=house_id,
         slice_id=args.slice,
         row=row,
+        card_uri=card.uri,
         spec_uri=args.spec_uri,
         opportunities_uri=opportunities_uri,
         slice_body=slice_body,

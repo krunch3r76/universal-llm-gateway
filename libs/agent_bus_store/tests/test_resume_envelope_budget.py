@@ -79,3 +79,39 @@ def test_envelope_reports_no_degradation_on_normal_pour() -> None:
 
     assert envelope["tape_degraded"] is None
     assert envelope["tape_truncated"] is False
+
+
+def test_consolidate_summary_row_from_card_only_house(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A house whose only card is ``{id}-card.md`` still fills the L3 row."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("**Settled:** card-only house is live\n", encoding="utf-8")
+    tape = {
+        "messages": [],
+        "open_line": {"scope": "last_session"},
+        "truncated": False,
+    }
+    with (
+        patch.object(env_mod, "render_tape_with_harvest", return_value=tape),
+        patch.object(env_mod, "_tip_checkpoint_body", return_value=(12, "")),
+    ):
+        envelope = env_mod.build_resume_envelope("10479", tape_budget_bytes=24000)
+
+    assert envelope["consolidate_summary_row"] == "card-only house is live"
+    assert envelope["summary_row_source"] == "l3_continuity_card"
+    assert envelope["summary_row_as_of_turn"] == 12
+
+
+def test_l3_summary_row_reads_continuity_card_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-continuity-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("**Live:** continuity-card name\n", encoding="utf-8")
+    row, source = env_mod._read_l3_summary_row("10479")
+    assert row == "continuity-card name"
+    assert source == "l3_continuity_card"

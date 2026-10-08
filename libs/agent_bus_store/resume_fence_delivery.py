@@ -19,7 +19,6 @@ from deploy_identity.code_version import resolve_code_version
 from .db.connection import connect, write_connect
 from .house_pools import load_continuity_card
 from .resume_fence import (
-    _sha256_text,
     _tip_checkpoint,
     assemble_resume_fence,
     encode_resume_bundle,
@@ -128,7 +127,7 @@ def _bundle_is_fresh(row: StoredBundle, thread_id: str) -> bool:
     if tip is None or int(tip["id"]) != row.tip_turn_id:
         return False
     card = load_continuity_card(thread_id)
-    card_sha = _sha256_text(card) if card else None
+    card_sha = card.sha256 if card.status == "found" else None
     if card_sha != row.card_sha256:
         return False
     return resolve_code_version() == row.head_sha

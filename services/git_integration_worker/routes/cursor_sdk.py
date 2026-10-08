@@ -848,12 +848,12 @@ def _conductor_pool_refusal(
     )
     if not is_conductor:
         return None
-    from agent_bus_store.house_pools import conductor_pool_admit_refusal
+    from agent_bus_store.house_pools import conductor_pool_gate
 
-    reason = conductor_pool_admit_refusal(req.continuity_root_thread_id)
-    if reason is None:
+    gate = conductor_pool_gate(req.continuity_root_thread_id)
+    if gate.basis != "blocked" or not gate.pool_status:
         return None
-    return f"status:blocked · pool_blocked · {reason}"
+    return f"status:blocked · pool_blocked · {gate.pool_status}"
 
 
 def _lane_branch_standing(req: CursorDispatchRequest) -> dict[str, Any]:

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from unittest.mock import patch
 
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.db.connection import connect
+from agent_bus_store.house_pools import ContinuityCard
 from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
 from agent_bus_store.resume_fence_store import fold_fence
 
@@ -47,6 +49,18 @@ cortex://notes/system/threads/10223-opportunities.md
 """
 
 
+def _found_card(text: str) -> ContinuityCard:
+    rel = "notes/system/threads/10223-card.md"
+    return ContinuityCard(
+        status="found",
+        tried=(rel,),
+        relpath=rel,
+        uri=f"cortex://{rel}",
+        text=text,
+        sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
+
+
 @pytest.fixture()
 def root_thread(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
@@ -68,7 +82,7 @@ def test_arm_resume_fence_journals_armed_only(root_thread) -> None:
     with (
         patch(
             "agent_bus_store.resume_fence.load_continuity_card",
-            return_value=_CARD,
+            return_value=_found_card(_CARD),
         ),
     ):
         payload = arm_resume_fence("10223", transcript_id="tab-x", source="hook_prompt")
@@ -99,7 +113,7 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
         ),
         patch(
             "agent_bus_store.resume_fence.load_continuity_card",
-            return_value=_CARD,
+            return_value=_found_card(_CARD),
         ),
         patch(
             "agent_bus_store.resume_fence_pour.resolve_code_version",
@@ -182,6 +196,11 @@ def _poured_flag(root_thread: str, card: str | None) -> bool:
         "summary_row_source": "l3",
         "summary_row_as_of_turn": 507,
     }
+    stub = (
+        ContinuityCard(status="missing", tried=())
+        if card is None
+        else _found_card(card)
+    )
     with (
         patch(
             "agent_bus_store.resume_fence_pour.build_resume_envelope",
@@ -189,7 +208,7 @@ def _poured_flag(root_thread: str, card: str | None) -> bool:
         ),
         patch(
             "agent_bus_store.resume_fence.load_continuity_card",
-            return_value=card,
+            return_value=stub,
         ),
         patch(
             "agent_bus_store.resume_fence_pour.resolve_code_version",
@@ -225,3 +244,55 @@ def test_card_inlined_tracks_rules_or_skills(
     root_thread, card: str | None, expected: bool
 ) -> None:
     assert _poured_flag(root_thread, card) is expected
+
+
+def test_assemble_missing_card_omits_uri_and_read_via(
+    root_thread, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    envelope = {
+        "scope": "last_session",
+        "seal_status": "sealed",
+        "tape_verbal": [],
+        "checkpoint_highlight": "highlight",
+        "consolidate_summary_row": None,
+        "summary_row_source": None,
+        "summary_row_as_of_turn": 1,
+    }
+    with (
+        patch(
+            "agent_bus_store.resume_fence_pour.build_resume_envelope",
+            return_value=envelope,
+        ),
+        patch(
+            "agent_bus_store.resume_fence_pour.resolve_code_version",
+            return_value="abc123",
+        ),
+    ):
+        bundle = assemble_resume_fence("10223", transcript_id="tab-miss", source="test")
+
+    card = bundle["card"]
+    assert card == {
+        "status": "missing",
+        "tried": [
+            "notes/system/threads/10223-card.md",
+            "notes/system/threads/10223-continuity-card.md",
+            "notes/system/threads/10223-continuity.md",
+        ],
+    }
+    assert "read_via" not in card
+    readable = bundle["read_set"]["readable"]
+    assert readable["fs_paths"] == []
+    assert not any(
+        "10223-card.md" in uri or "10223-continuity" in uri
+        for uri in readable["cortex_uris"]
+    )
+    fs_allow = next(row for row in readable["mcp_allow"] if row["tool"] == "fs")
+    assert not any(
+        "10223-card.md" in path or "10223-continuity" in path
+        for path in fs_allow["paths"]
+    )
+    sources = bundle["provenance"]["sources"]
+    assert len(sources) == 1
+    assert sources[0]["uri"] == "agent-bus:10223#1"
+    assert sources[0]["sha256"] is None

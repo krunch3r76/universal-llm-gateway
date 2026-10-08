@@ -8,11 +8,17 @@ import this module — do not re-parse the table elsewhere.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Literal
 
 from implement_admission.closeout_helpers import cortex_files_root
+
+logger = logging.getLogger(__name__)
+
+CardStatus = Literal["found", "missing"]
+ConductorGateBasis = Literal["open", "blocked", "card_missing", "no_pools"]
 
 POOL_COLUMNS: tuple[str, ...] = (
     "pool",
@@ -62,57 +68,102 @@ class PoolRow:
     forbidden: str
 
 
-def continuity_card_relpath(house_id: str) -> str:
-    """Relative cortex path for the legacy archive ``{house_id}-continuity.md``.
+@dataclass(frozen=True, slots=True)
+class ContinuityCard:
+    """Resolved house card, or an explicit miss.
 
-    Writers that still emit the archive name keep this path. Resume lookup
-    uses :func:`resolve_continuity_card_relpath`, which prefers ``{id}-card.md``.
+    ``relpath``, ``uri``, ``text``, and ``sha256`` are set only when
+    ``status`` is ``found``. ``tried`` is the candidate relpaths examined,
+    in ladder order, on both outcomes.
     """
-    normalized = house_id.strip().removeprefix("agent-bus:")
-    return f"notes/system/threads/{normalized}-continuity.md"
+
+    status: CardStatus
+    tried: tuple[str, ...]
+    relpath: str | None = None
+    uri: str | None = None
+    text: str | None = None
+    sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status == "found":
+            if any(
+                value is None
+                for value in (self.relpath, self.uri, self.text, self.sha256)
+            ):
+                raise ValueError("found card requires relpath, uri, text, and sha256")
+            return
+        if self.status != "missing":
+            raise ValueError(f"unknown card status: {self.status}")
+        if any(
+            value is not None
+            for value in (self.relpath, self.uri, self.text, self.sha256)
+        ):
+            raise ValueError(
+                "missing card must not carry relpath, uri, text, or sha256"
+            )
 
 
-def continuity_card_candidate_relpaths(house_id: str) -> tuple[str, ...]:
-    """Live card first, then the legacy archive name."""
-    normalized = house_id.strip().removeprefix("agent-bus:")
-    live = f"notes/system/threads/{normalized}-card.md"
-    legacy = continuity_card_relpath(house_id)
-    return (live, legacy)
+@dataclass(frozen=True, slots=True)
+class ConductorPoolGate:
+    """Conductor-pool admission class for one house.
+
+    ``refusal`` is the pool status cell only when ``basis`` is ``blocked``.
+    ``card_missing`` and ``no_pools`` admit. A conductor row whose status is
+    not the blocked vocabulary, including ``serial``, admits with basis
+    ``open`` and the cell text in ``pool_status`` — the basis set has no
+    separate serial value, and refusal is blocked-only.
+    """
+
+    basis: ConductorGateBasis
+    pool_status: str | None = None
+
+    @property
+    def refusal(self) -> str | None:
+        if self.basis != "blocked":
+            return None
+        return self.pool_status
 
 
-def resolve_continuity_card_relpath(house_id: str) -> str:
-    """Return the on-disk card relative path, preferring ``{id}-card.md``.
+def _normalized_house_id(house_id: str) -> str:
+    return house_id.strip().removeprefix("agent-bus:")
 
-    When neither file exists, the preferred live name is returned so callers
-    cite the card the house actually maintains.
+
+def _continuity_card_candidate_relpaths(house_id: str) -> tuple[str, ...]:
+    """Ladder: live card, continuity-card, legacy archive. Same directory."""
+    normalized = _normalized_house_id(house_id)
+    return tuple(
+        f"notes/system/threads/{normalized}{suffix}"
+        for suffix in ("-card.md", "-continuity-card.md", "-continuity.md")
+    )
+
+
+def load_continuity_card(house_id: str) -> ContinuityCard:
+    """Resolve one house card. Sole builder of a continuity-card path.
+
+    Candidates, in order: ``{id}-card.md``, ``{id}-continuity-card.md``,
+    ``{id}-continuity.md``. A missing house returns status ``missing`` and
+    does not invent a URI.
     """
     root = cortex_files_root()
-    candidates = continuity_card_candidate_relpaths(house_id)
-    for rel in candidates:
-        if (root / rel).is_file():
-            return rel
-    return candidates[0]
-
-
-def continuity_card_uri(house_id: str) -> str:
-    """Cortex URI of the resolved house card (live name, else archive)."""
-    return f"cortex://{resolve_continuity_card_relpath(house_id)}"
-
-
-def continuity_card_path(house_id: str) -> Path:
-    """On-disk path of the resolved house card under ``CORTEX_FILES_ROOT``."""
-    return cortex_files_root() / resolve_continuity_card_relpath(house_id)
-
-
-def load_continuity_card(house_id: str) -> str | None:
-    """Read the house continuity card when present on disk.
-
-    Prefers ``{id}-card.md``. Falls back to ``{id}-continuity.md``.
-    """
-    path = continuity_card_path(house_id)
-    if not path.is_file():
-        return None
-    return path.read_text(encoding="utf-8")
+    tried: list[str] = []
+    for rel in _continuity_card_candidate_relpaths(house_id):
+        tried.append(rel)
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        return ContinuityCard(
+            status="found",
+            tried=tuple(tried),
+            relpath=rel,
+            uri=f"cortex://{rel}",
+            text=text,
+            sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        )
+    return ContinuityCard(status="missing", tried=tuple(tried))
 
 
 def extract_pools_block(card_text: str) -> str | None:
@@ -195,7 +246,9 @@ def _split_list_field(raw: str) -> tuple[str, ...]:
 
 
 def _parse_table(block: str) -> dict[str, PoolRow]:
-    lines = [line.strip() for line in block.splitlines() if line.strip().startswith("|")]
+    lines = [
+        line.strip() for line in block.splitlines() if line.strip().startswith("|")
+    ]
     if len(lines) < 2:
         raise PoolsParseError("## Pools table missing header or rows")
     header_cells = [cell.strip().lower() for cell in lines[0].strip("|").split("|")]
@@ -267,7 +320,7 @@ def resolve_house_thread_id(
             continue
         seen.add(candidate)
         card = load_continuity_card(candidate)
-        if card and extract_pools_block(card):
+        if card.status == "found" and card.text and extract_pools_block(card.text):
             return candidate
     return None
 
@@ -278,24 +331,47 @@ def parse_closeout_thread_id(closeout: str) -> str | None:
     return match.group(1) if match else None
 
 
-def conductor_pool_admit_refusal(house_id: str) -> str | None:
-    """Refusal reason when the conductor pool is not ``open``."""
+def conductor_pool_gate(house_id: str) -> ConductorPoolGate:
+    """Classify conductor admission. Refuse only when the pool is blocked.
+
+    A missing card is logged and admitted (basis ``card_missing``). A card
+    with no conductor row admits as ``no_pools``.
+    """
     card = load_continuity_card(house_id)
-    if not card:
-        return None
+    if card.status == "missing":
+        logger.info(
+            "card_missing house_id=%s tried=%s",
+            _normalized_house_id(house_id),
+            list(card.tried),
+        )
+        return ConductorPoolGate(basis="card_missing")
+    if card.text is None:
+        return ConductorPoolGate(basis="no_pools")
     try:
-        row = parse_pools(card)["conductor"]
+        row = parse_pools(card.text)["conductor"]
     except (PoolsParseError, KeyError):
-        return None
-    if pool_status_is_open(row.status):
-        return None
-    return row.status
+        return ConductorPoolGate(basis="no_pools")
+    if pool_status_is_blocked(row.status):
+        return ConductorPoolGate(basis="blocked", pool_status=row.status)
+    return ConductorPoolGate(basis="open", pool_status=row.status)
 
 
-def format_house_read_first_block(*, house_id: str, row: PoolRow) -> str:
-    """Build the CDP ``## House (read first)`` staging block for one pool row."""
-    card_uri = continuity_card_uri(house_id)
-    pointers = [card_uri]
+def format_house_read_first_block(
+    *,
+    house_id: str,
+    row: PoolRow,
+    card: ContinuityCard | None = None,
+) -> str:
+    """Build the CDP ``## House (read first)`` staging block for one pool row.
+
+    The card line is the resolved URI when the card was found. A missing
+    card omits that line. ``card`` skips a second resolve when the caller
+    already holds one.
+    """
+    resolved = card if card is not None else load_continuity_card(house_id)
+    pointers: list[str] = []
+    if resolved.status == "found" and resolved.uri:
+        pointers.append(resolved.uri)
     for item in row.must_read:
         cleaned = item.strip()
         if cleaned.startswith("this card"):
@@ -332,10 +408,7 @@ def merge_house_pool_skills(
 ) -> list[str]:
     """Prepend pool ``must_load`` slugs idempotently (bare slug match)."""
     caller = [str(item).strip() for item in (skills or []) if str(item).strip()]
-    have = {
-        item.lstrip("/").split("(", 1)[0].strip().lower()
-        for item in caller
-    }
+    have = {item.lstrip("/").split("(", 1)[0].strip().lower() for item in caller}
     missing: list[str] = []
     for slug in extra:
         bare = slug.split("(", 1)[0].strip().lstrip("/").lower()
@@ -353,9 +426,9 @@ def apply_fable_house_staging(
 ) -> tuple[str, list[str]]:
     """Prepend House block and merge fable ``must_load`` when the card resolves."""
     card = load_continuity_card(house_id)
-    if not card:
+    if card.status != "found" or not card.text:
         return body, list(skills or [])
-    rows = parse_pools(card)
+    rows = parse_pools(card.text)
     row = rows.get("fable")
     if row is None:
         return body, list(skills or [])
@@ -365,7 +438,7 @@ def apply_fable_house_staging(
             cell="status@fable",
         )
     merged_skills = merge_house_pool_skills(skills, extra=row.must_load)
-    block = format_house_read_first_block(house_id=house_id, row=row)
+    block = format_house_read_first_block(house_id=house_id, row=row, card=card)
     if body.lstrip().startswith("## House (read first)"):
         return body, merged_skills
     return f"{block}\n\n{body.lstrip()}", merged_skills
@@ -374,9 +447,9 @@ def apply_fable_house_staging(
 def inject_pools_checkpoint_projection(projected_body: str, house_id: str) -> str:
     """Add Pools block anchor to CHECKPOINT derived zone (AC-P-5 resolver)."""
     card = load_continuity_card(house_id)
-    if not card:
+    if card.status != "found" or not card.text:
         return projected_body
-    digest = pools_block_sha256(card)
+    digest = pools_block_sha256(card.text)
     if not digest:
         return projected_body
     anchor = f"- Pools block · sha256:{digest}"
@@ -390,10 +463,7 @@ def inject_pools_checkpoint_projection(projected_body: str, house_id: str) -> st
     if line_end < 0:
         return projected_body
     return (
-        projected_body[: line_end + 1]
-        + anchor
-        + "\n"
-        + projected_body[line_end + 1 :]
+        projected_body[: line_end + 1] + anchor + "\n" + projected_body[line_end + 1 :]
     )
 
 
@@ -401,13 +471,10 @@ __all__ = [
     "POOL_COLUMNS",
     "PoolRow",
     "PoolsParseError",
+    "ConductorPoolGate",
+    "ContinuityCard",
     "apply_fable_house_staging",
-    "conductor_pool_admit_refusal",
-    "continuity_card_candidate_relpaths",
-    "continuity_card_path",
-    "continuity_card_relpath",
-    "continuity_card_uri",
-    "resolve_continuity_card_relpath",
+    "conductor_pool_gate",
     "extract_pools_block",
     "extract_pools_residue_sha8",
     "inject_pools_checkpoint_projection",

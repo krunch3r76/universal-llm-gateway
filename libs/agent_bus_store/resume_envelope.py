@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-from pathlib import Path
 from typing import Any
 
 from cortex_store.transcript_projection_membership import (
@@ -14,6 +12,7 @@ from cortex_store.transcript_projection_membership import (
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .house_pools import load_continuity_card
 from .tape_degrade import (
     TAPE_BUDGET_BYTES_DEFAULT,
     TapeBudgetExceeded,
@@ -122,14 +121,11 @@ def _summary_row_from_tip_cp(body: str) -> str | None:
 
 
 def _read_l3_summary_row(thread_id: str) -> tuple[str | None, str | None]:
-    """Best-effort read of consolidate card summary (L3) from cortex files mount."""
-    root = Path(
-        os.environ.get("CORTEX_FILES_ROOT", str(Path.home() / "mcp-data/files"))
-    )
-    card = root / "notes/system/threads" / f"{thread_id}-continuity.md"
-    if not card.is_file():
+    """Best-effort Settled/Live/Next line from the resolved continuity card."""
+    card = load_continuity_card(thread_id)
+    if card.status != "found" or not card.text:
         return None, None
-    text = card.read_text(encoding="utf-8", errors="replace")
+    text = card.text
     for pattern in (
         r"(?m)^\*\*Settled:\*\*\s*(.+)$",
         r"(?m)^\*\*Live:\*\*\s*(.+)$",

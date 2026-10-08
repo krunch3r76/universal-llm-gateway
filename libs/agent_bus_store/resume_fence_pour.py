@@ -15,7 +15,6 @@ from typing import Any
 
 from deploy_identity.code_version import resolve_code_version
 
-from .house_pools import continuity_card_uri
 from .resume_envelope import build_resume_envelope
 from .resume_fence_mission import build_mission_block, cap_standing_rule_claims
 from .resume_fence_store import (
@@ -54,20 +53,18 @@ def assemble_resume_fence_in_txn(
         RESUME_FENCE_TAPE_BUDGET,
         _load_resume_context,
         _resume_first_hop,
-        _sha256_text,
         _thread_slug,
         resume_bundle_sha256,
     )
 
-    tip, card_text, read_set = _load_resume_context(thread_id, pool=pool, conn=conn)
-    if tip is None or read_set is None:
+    tip, card, read_set = _load_resume_context(thread_id, pool=pool, conn=conn)
+    if tip is None or card is None or read_set is None:
         return {
             "error": "no_tip_checkpoint",
             "reason": "resume_fence.no_tip_checkpoint",
         }
 
-    card_uri = continuity_card_uri(thread_id)
-    card_sha = _sha256_text(card_text) if card_text else None
+    card_text = card.text if card.status == "found" else None
 
     envelope = build_resume_envelope(
         thread_id,
@@ -182,11 +179,15 @@ def assemble_resume_fence_in_txn(
                 "scope": "last_session",
             },
         },
-        "card": {
-            "uri": card_uri,
-            "sha256": card_sha,
-            "read_via": {"tool": "fs", "op": "read", "path": card_uri},
-        },
+        "card": (
+            {
+                "uri": card.uri,
+                "sha256": card.sha256,
+                "read_via": {"tool": "fs", "op": "read", "path": card.uri},
+            }
+            if card.status == "found"
+            else {"status": "missing", "tried": list(card.tried)}
+        ),
         "projection": {
             "uri": projection_uri,
             "sha256": None,
@@ -200,8 +201,12 @@ def assemble_resume_fence_in_txn(
         "stance": "Use the ulg-for-llms skill.",
         "provenance": {
             "built_at": datetime.now(UTC).isoformat(),
-            "sources": [
-                {"uri": card_uri, "sha256": card_sha},
+            "sources": (
+                [{"uri": card.uri, "sha256": card.sha256}]
+                if card.status == "found"
+                else []
+            )
+            + [
                 {"uri": f"agent-bus:{thread_id}#{tip['turn_number']}", "sha256": None},
             ],
         },
