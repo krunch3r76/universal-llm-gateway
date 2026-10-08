@@ -17,7 +17,7 @@ from ...body_auto_spill import (
 from ...checkpoint_projection import CheckpointBodyTooLargeError, is_checkpoint_subject
 from ...db import get_thread
 from ...db.thread_mint import mint_thread
-from ...db.turns import insert_turn
+from ...db.turns import get_turn_by_number, insert_turn
 from ...events.lifecycle import emit_sidecar_orphaned
 from ...events.send_hold import emit_send_hold_measured
 from ...turns_models import TurnSendCreate
@@ -103,6 +103,18 @@ def run_new_thread_send(
         idempotency_key=idempotency_key,
     )
     thread_id = thread_row["id"]
+
+    if thread_row.get("idempotent_replay"):
+        existing = get_turn_by_number(thread_id, 1)
+        if existing is not None:
+            prepared = PreparedBody(body=str(existing.get("body") or ""))
+            return (
+                thread_row,
+                int(existing["id"]),
+                str(existing["created_at"]),
+                int(existing["turn_number"]),
+                prepared,
+            )
 
     if lane_bind_body is not None:
         _bind_lane_on_send(body=lane_bind_body, thread_id=thread_id)

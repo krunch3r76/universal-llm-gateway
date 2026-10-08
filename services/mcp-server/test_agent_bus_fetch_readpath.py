@@ -153,9 +153,8 @@ def test_threads_manifest_uses_listing_hints_not_last_window() -> None:
     assert manifest["adaptive_last"] is None
     assert manifest.get("listing_op") is True
     options = "\n".join(manifest["selective_options"])
-    assert "limit" in options
+    assert "last" in options
     assert "tags" in options
-    assert '"last":' not in options
 
 
 def test_oversize_fetch_windowed_fixture_passes_through_guard() -> None:

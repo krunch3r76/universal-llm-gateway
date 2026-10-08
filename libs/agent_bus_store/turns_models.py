@@ -693,6 +693,7 @@ class TurnSendCreated(BaseModel):
     sidecar_sha256: str | None = None
     auto_spilled: bool | None = None
     inline_chars: int | None = None
+    idempotent_replay: bool = False
 
 
 class ThreadClose(BaseModel):

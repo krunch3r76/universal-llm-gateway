@@ -124,15 +124,7 @@ def _reconcile_get_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, li
 
 
 def _reconcile_fetch_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    advisories: list[str] = []
-    if "after_turn" in args:
-        advisories.append(
-            _advisory(
-                "fetch: after_turn is wired to GET /turns (forward cursor); "
-                "omit last or use get(turn_number=…) for one turn."
-            )
-        )
-    return None, advisories
+    return None, []
 
 
 def _reconcile_threads_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:

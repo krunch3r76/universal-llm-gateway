@@ -23,6 +23,7 @@ from mcp.types import ToolAnnotations
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
+from ._agent_bus_author import AUTHOR_AUTOFILL_OPS, reconcile_author_arguments
 from ._agent_tools import JsonArgStr
 from .agent_bus import (
     _fetch_dispatch,
@@ -115,6 +116,16 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
             parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
                 return dispatch_arguments_error(arguments, example='{"thread": "111"}')
+            if tool in AUTHOR_AUTOFILL_OPS:
+                parsed, author_error = reconcile_author_arguments(parsed)
+                if author_error is not None:
+                    record(
+                        "mcp.agentbus.dispatch.rejected",
+                        tool=tool,
+                        surface="read",
+                        reason=str(author_error.get("reason", "")),
+                    )
+                    return author_error
             parsed, rewrite_error, rewrite_advisories = reconcile_dispatch_arguments(
                 tool, parsed
             )

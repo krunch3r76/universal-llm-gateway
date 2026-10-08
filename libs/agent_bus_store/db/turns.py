@@ -10,6 +10,7 @@ from ..recipients import (
     is_same_seat_memo_note,
     recipient_in_clause,
     sender_auto_mark_clause,
+    turn_mark_read_eligible,
 )
 from .connection import connect, now, write_connect
 from .threads import _next_auto_id
@@ -370,9 +371,16 @@ def get_turns(
     with conn_cm as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
-        if mark_read:
+        if mark_read and to is not None:
             ts = now()
-            unread_ids = [r["id"] for r in rows if r["read_at"] is None]
+            unread_ids = [
+                r["id"]
+                for r in rows
+                if r["read_at"] is None
+                and turn_mark_read_eligible(
+                    seat=to, to_agent=str(r.get("to_agent") or "")
+                )
+            ]
             if unread_ids:
                 placeholders = ",".join("?" for _ in unread_ids)
                 conn.execute(

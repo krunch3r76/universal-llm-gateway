@@ -21,6 +21,13 @@ def recipient_in_clause(seat: str, *, include_team: bool) -> tuple[str, list[str
     return clause, [*recipients, *extras]
 
 
+def turn_mark_read_eligible(*, seat: str, to_agent: str) -> bool:
+    """True when ``seat`` may mark ``to_agent`` read via get/fetch side effects."""
+    if to_agent == "all":
+        return False
+    return to_agent in expand_recipient_slugs(seat)
+
+
 def sender_auto_mark_clause(seat: str) -> tuple[str, list[str]]:
     """Alias-resolved ``to_agent`` match for send/through_turn auto-mark.
 

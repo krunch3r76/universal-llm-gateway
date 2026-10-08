@@ -6,8 +6,10 @@ import logging
 from typing import Any
 from urllib.parse import urlencode
 
+from agent_bus_store.recipients import turn_mark_read_eligible
 from mcp_events import record
 
+from .._agent_bus_author import resolve_dispatch_from_agent
 from ._shared import _FETCH_CONTEXT_CAP, _structured_relay_error, relay
 
 logger = logging.getLogger(__name__)
@@ -114,7 +116,11 @@ def _fetch_unread_toc_impl(
 
 
 def _get_impl(
-    *, thread: str, turn_number: int | str, mark_read: bool = False
+    *,
+    thread: str,
+    turn_number: int | str,
+    mark_read: bool = False,
+    reader_agent: str = "",
 ) -> dict[str, Any]:
     """Direct single-turn lookup via GET /turns/by-number."""
     qs = urlencode({"thread": thread, "turn_number": turn_number})
@@ -124,17 +130,34 @@ def _get_impl(
         if structured is not None:
             return structured
         return {"error": f"agent-bus error: {result['error']}"}
-    if mark_read and isinstance(result, dict) and result.get("read_at") is None:
-        turn_id = result.get("id")
-        if turn_id is not None:
-            relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
+    advisories: list[str] = []
+    if mark_read and isinstance(result, dict):
+        to_agent = str(result.get("to_agent") or "")
+        if reader_agent and turn_mark_read_eligible(
+            seat=reader_agent, to_agent=to_agent
+        ):
+            if result.get("read_at") is None:
+                turn_id = result.get("id")
+                if turn_id is not None:
+                    patched = relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
+                    if isinstance(patched, dict) and patched.get("read_at"):
+                        result = dict(result)
+                        result["read_at"] = patched["read_at"]
+        elif mark_read:
+            advisories.append(
+                "get: mark_read skipped — turn is not addressed to the caller "
+                f"(to={to_agent!r}, reader={reader_agent!r})"
+            )
     record(
         "mcp.agentbus.turn.detail.fetched",
         thread=thread,
         turn_number=str(turn_number),
         mark_read=mark_read,
     )
-    return {"turn": result}
+    out: dict[str, Any] = {"turn": result}
+    if advisories:
+        out["argument_rewrite_advisory"] = "; ".join(advisories)
+    return out
 
 
 def _fetch_unread_dispatch(
@@ -188,14 +211,16 @@ def _fetch_dispatch(
         thread = str(thread)
     effective_to = to if to else None
     effective_thread = thread if thread else None
-    if after_turn is not None:
-        effective_last = None
-    elif all:
-        effective_last = None
-    elif unread:
+    if all or unread:
         effective_last = None
     else:
         effective_last = max(1, min(last, _FETCH_CONTEXT_CAP))
+    if mark_read:
+        reader_agent, author_err = resolve_dispatch_from_agent()
+        if author_err is not None:
+            return author_err
+        if effective_to is None and reader_agent:
+            effective_to = reader_agent
     return _fetch_impl(
         to=effective_to,
         thread=effective_thread,
@@ -212,6 +237,7 @@ def _get_dispatch(
     thread: str | int = "",
     turn_number: int | str = 0,
     mark_read: bool = False,
+    from_agent: str = "",
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -231,6 +257,14 @@ def _get_dispatch(
         if tn < 1:
             return {"error": "get requires: turn_number (int >= 1 or 'latest')"}
         turn_number = tn
+    reader_agent = ""
+    if mark_read:
+        reader_agent, author_err = resolve_dispatch_from_agent(from_agent)
+        if author_err is not None:
+            return author_err
     return _get_impl(
-        thread=thread, turn_number=turn_number, mark_read=mark_read
+        thread=thread,
+        turn_number=turn_number,
+        mark_read=mark_read,
+        reader_agent=reader_agent,
     )
