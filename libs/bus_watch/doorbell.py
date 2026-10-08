@@ -362,7 +362,7 @@ def render_doorbell(
         )
         if show_commission:
             lines.append(
-                f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
+                f"commission: operator_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
             )
         return "\n".join(lines) + "\n"
 
@@ -459,7 +459,7 @@ def _successor_duty_line(
     if contract != "none":
         return (
             "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
-            "(cursor_request, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
+            "(operator_request on life / team_dispatch on ulg-code, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
             "verify against git before any 'landed' word; then checkpoint. "
             "Repo-write goals ⇒ cursor-auto; design/judgment forks ⇒ cdp/fable-5.1 — never STAY. "
             "Orienting and writing STAY is not the leg."

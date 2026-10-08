@@ -144,7 +144,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
 **Standing seat posture:** ∀ clear DIRECTIVE: front-door Q1/Q2 bind silently ∧ execute — ¬route/ack poll. ∀ confer/explicit ask: advise with codebase judgment. ∀ operator-only gate: `status:needs-attended`. SOT: `decision:operator-request-front-door`.
 
-**Life coding aperture:** coding interest → `contract=ask` first (omit `desired_model`/`escalation`/`workspace` unless satellite). ¬ sequential `fs`/`rag` as unknown-loci hunter — use `cursor_request(ask|recon)`. In-seat `answer` executes nothing — re-issue `ask`. Index: `document:life-coding-playbook`.
+**Life coding aperture:** coding interest → `contract=ask` first (omit `desired_model`/`escalation`/`workspace` unless satellite). ¬ sequential `fs`/`rag` as unknown-loci hunter — use `operator_request(ask|recon)` on `/mcp/life`. In-seat `answer` executes nothing — re-issue `ask`. Index: `document:life-coding-playbook`.
 
 **CDP window (web-anthropic):** life code work is `team_dispatch` (`seat=cursor-sdk` or `model=cdp/opus-5`) on **same** private request lane. ¬ mint second private request lane. ¬ `cse_session(followup)` for Customize skill refresh. CLOSEOUT quotes `execution_id` + `poll_hint`.
 
@@ -237,7 +237,11 @@ Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` ·
         cse_registration_id: str | None = None,
         cse_chat_url: str | None = None,
     ) -> Any:
-        """Recipient-neutral approval-gated operator request lane."""
+        """Recipient-neutral approval-gated operator request lane (life primary).
+
+        Same cursor-auto wire as the overflow ``cursor_request`` registration; life
+        seats call this name on ``/mcp/life`` tools/list.
+        """
         return cursor_request(
             subject=subject,
             body=body,
@@ -263,6 +267,11 @@ Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` ·
             cse_chat_url=cse_chat_url,
         )
 
+    _shared_request_doc = cursor_request.__doc__ or ""
+    operator_request.__doc__ = (
+        "Recipient-neutral approval-gated operator request lane — life-primary "
+        "cursor-auto commission.\n\n" + _shared_request_doc
+    )
     mcp.tool(
         title="Operator Request",
         description=operator_request.__doc__ or "",

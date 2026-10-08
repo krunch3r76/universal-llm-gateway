@@ -42,7 +42,7 @@ def register_life_dispatch_tools(mcp: FastMCP) -> None:
         """Life→cursor operator-proxy — mint a Life Cowork CSE that drives cursor.
 
         Not a life conversation and not claude.ai→claude.ai chat. Stay in this
-        session for correspondence; use ``cursor_request`` for a DIRECTIVE
+        session for correspondence; use ``operator_request`` for a DIRECTIVE
         without a new CSE.
 
         Supply ``prompt`` (inline text or ``cortex://`` sidecar ref) **or**

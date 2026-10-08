@@ -114,14 +114,14 @@ def submit_navigator(
     """POST the wake. Life ``cursor-auto`` uses the injected ``submit`` in tests.
 
     Default production submit is Stargate ``team_dispatch`` for ``cursor-sdk``.
-    ``cursor-auto`` must be submitted by the caller (life ``cursor_request``);
+    ``cursor-auto`` must be submitted by the caller (life ``operator_request``);
     a missing injector is a refused wake, not a silent CDP fallback.
     """
     if str(body.get("seat") or "") == "cursor-auto":
         return {
             "error": {
                 "code": "cursor_auto_submit_required",
-                "message": "life navigator wake uses cursor_request; inject submit",
+                "message": "life navigator wake uses operator_request; inject submit",
             }
         }, 422
     return submit_team_dispatch(body)

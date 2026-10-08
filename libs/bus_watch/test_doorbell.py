@@ -389,7 +389,7 @@ def test_live_10479_web_anthropic_render_byte_length() -> None:
     """AC4 — 11655 regression pin corrected: life render is not the old 1019 B IDE paste."""
     text = _live_10479_render()
     encoded_len = len(text.encode("utf-8"))
-    assert encoded_len == 1152
+    assert encoded_len == 1154
     assert encoded_len != 1019
     assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
 

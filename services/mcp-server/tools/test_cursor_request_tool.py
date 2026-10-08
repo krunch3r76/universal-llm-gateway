@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from contract_vocab import CANONICAL_CONTRACTS, RECORDS
@@ -288,11 +290,23 @@ def test_cursor_request_absent_on_life_surface_tool_list() -> None:
     from endpoint_surface import derive_surface_primary_tools
     from server import _build_server
 
-    mcp, _, _ = _build_server("life")
+    mcp, _, overflow_reg = _build_server("life")
     tools = asyncio.run(mcp.list_tools())
     tool_names = {t.name for t in tools}
     assert "cursor_request" not in tool_names
     assert "cursor_request" not in derive_surface_primary_tools("life")
+    assert "cursor_request" in overflow_reg
+    assert "dispatch" not in tool_names
+    assert "tool_search" not in tool_names
+
+    async def _call_pruned_name() -> None:
+        await mcp.call_tool(
+            "cursor_request",
+            {"subject": "s", "body": "b", "new_slug": "slug-test"},
+        )
+
+    with pytest.raises(Exception, match="Unknown tool"):
+        asyncio.run(_call_pruned_name())
 
 
 def test_cursor_request_absent_on_code_surface_tool_list() -> None:
