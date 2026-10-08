@@ -20,7 +20,7 @@ from typing import Any
 
 from universal_concurrency import QUEUE_EMPTY_ERRORS, drain_queue_batch
 
-from .store import EventStore
+from .store import EventStore, register_coerce_notice_hook
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,10 @@ class IngestServer:
         sock_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._running = True
+        register_coerce_notice_hook(
+            self._emit_coerce_notice,
+            interval_sec=self._drop_notice_interval_sec,
+        )
         self._writer_task = asyncio.create_task(self._db_writer_loop())
 
         self._server = await asyncio.start_unix_server(
@@ -99,8 +103,28 @@ class IngestServer:
         )
         logger.info("Ingest TCP listener on %s:%d", host, port)
 
+    def _emit_coerce_notice(self, notice: dict[str, Any]) -> None:
+        """Fan out ``events.coerced.ingest`` the same way as ingest drops.
+
+        The store rate-limits per field and source at
+        ``drop_notice_interval_sec``. This only publishes; it does not persist.
+        """
+        self._fan_out(
+            {
+                "signal": "events.coerced.ingest",
+                "role": "coordination",
+                "scope": "global",
+                "payload": {
+                    "count": notice.get("count", 0),
+                    "field": notice.get("field", ""),
+                    "source": notice.get("source", ""),
+                },
+            }
+        )
+
     async def stop(self) -> None:
         self._running = False
+        register_coerce_notice_hook(None)
         if self._tcp_server:
             self._tcp_server.close()
             await self._tcp_server.wait_closed()
