@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
@@ -132,14 +132,16 @@ async def create_resume_fence(
 @router.get("/threads/{thread_id}/resume-fence")
 async def get_thread_resume_bundle(
     thread_id: str,
-    transcript_id: str | None = Query(None),
-    since_epoch: float | None = Query(
-        None,
-        description=(
-            "When set, return armed fence rows for this root with created_at >= "
-            "since_epoch (read-only land probe; no arm side effect)."
+    transcript_id: Annotated[str | None, Query()] = None,
+    since_epoch: Annotated[
+        float | None,
+        Query(
+            description=(
+                "When set, return armed fence rows for this root with created_at >= "
+                "since_epoch (read-only land probe; no arm side effect)."
+            ),
         ),
-    ),
+    ] = None,
 ) -> dict[str, Any]:
     """Return stored resume bundle or pouring / missing state.
 

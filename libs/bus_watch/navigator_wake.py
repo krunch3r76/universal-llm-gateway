@@ -232,7 +232,7 @@ def render_navigator_doorbell(
     extras = tuple(policy.get("navigator_extra_addresses") or ())
     seat = resolve_navigator_seat(policy, register=register)
     if register == "life":
-        default_fire = "refused cursor_auto_retired"
+        default_fire = "refused navigator_life_unsupported"
     else:
         default_fire = "cursor-sdk generate via liaison-ticker"
     fired_by = policy.get("navigator_fired_by") or default_fire

@@ -174,6 +174,61 @@ def test_loop_runs_and_get_serves_while_continue_send_blocked(root_env) -> None:
     asyncio.run(_run())
 
 
+def test_direct_get_omitted_since_epoch_serves_stored_bundle(root_env) -> None:
+    """Omitted since_epoch is None, so GET returns the stored bundle.
+
+    A bare Query() default is a FieldInfo, which is not None and makes
+    float(since_epoch) raise (friction:38946).
+    """
+    root = root_env
+
+    async def _run() -> None:
+        with pour_patches():
+            await deliver_resume_bundle(
+                root, transcript_id="tab-a", source="test", pool=None
+            )
+        row = read_stored_bundle(root, "tab-a")
+        assert row is not None
+        resp = await get_thread_resume_bundle(root, transcript_id="tab-a")
+        assert resp["state"] != "armed_since"
+        assert resp["fence_id"] == row.fence_id
+        assert "bundle" in resp
+        assert (
+            hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
+            == row.sha256
+        )
+
+    asyncio.run(_run())
+
+
+def test_direct_get_omitted_transcript_id_serves_thread_only_bundle(
+    root_env,
+) -> None:
+    """Omitted transcript_id is None, so GET returns the thread-only bundle.
+
+    A bare Query() default is a FieldInfo. pour_key would call .strip() on it
+    (friction:38946 review, agent-bus:15917 archive).
+    """
+    root = root_env
+
+    async def _run() -> None:
+        with pour_patches():
+            await deliver_resume_bundle(
+                root, transcript_id=None, source="test", pool=None
+            )
+        row = read_stored_bundle(root, None)
+        assert row is not None
+        resp = await get_thread_resume_bundle(root)
+        assert resp["state"] != "armed_since"
+        assert resp["fence_id"] == row.fence_id
+        assert (
+            hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
+            == row.sha256
+        )
+
+    asyncio.run(_run())
+
+
 def test_overlapping_pours_same_key_one_fence_one_row(root_env) -> None:
     root = root_env
     call_count = {"n": 0}
@@ -192,9 +247,12 @@ def test_overlapping_pours_same_key_one_fence_one_row(root_env) -> None:
 
     async def _run() -> None:
         key = pour_key(root, "tab-b")
-        with pour_patches(), patch(
-            "agent_bus_store.resume_fence_delivery.assemble_resume_fence",
-            side_effect=counting_assemble,
+        with (
+            pour_patches(),
+            patch(
+                "agent_bus_store.resume_fence_delivery.assemble_resume_fence",
+                side_effect=counting_assemble,
+            ),
         ):
             t1 = asyncio.create_task(
                 deliver_resume_bundle(

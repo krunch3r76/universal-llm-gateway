@@ -419,17 +419,6 @@ class SdkFold:
         if path and row.closeout_uri is None:
             row.closeout_uri = str(path)
 
-    def _on_closeout_relayed(self, record: EventRecord) -> None:
-        """Record relayed closeout receipt — identity + URI, never terminalize (v3 §5)."""
-        row = self._state(record)
-        if row is None:
-            return
-        payload = record.payload
-        if row.closeout_uri is None:
-            uri = payload.get("receipt_path") or payload.get("uri")
-            if uri:
-                row.closeout_uri = str(uri)
-
     def _bind_lifecycle_terminal(
         self,
         record: EventRecord,

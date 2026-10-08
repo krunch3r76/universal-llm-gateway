@@ -170,3 +170,58 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     folded = fold_fence(bundle["fence"]["fence_id"])
     assert folded is not None
     assert folded.state == "released"
+
+
+def _poured_flag(root_thread: str, card: str | None) -> bool:
+    envelope = {
+        "scope": "last_session",
+        "seal_status": "sealed",
+        "tape_verbal": [],
+        "checkpoint_highlight": "highlight",
+        "consolidate_summary_row": "row",
+        "summary_row_source": "l3",
+        "summary_row_as_of_turn": 507,
+    }
+    with (
+        patch(
+            "agent_bus_store.resume_fence_pour.build_resume_envelope",
+            return_value=envelope,
+        ),
+        patch(
+            "agent_bus_store.resume_fence.load_continuity_card",
+            return_value=card,
+        ),
+        patch(
+            "agent_bus_store.resume_fence_pour.resolve_code_version",
+            return_value="abc123",
+        ),
+    ):
+        bundle = assemble_resume_fence(
+            root_thread, transcript_id="tab-x", source="test"
+        )
+    with connect() as conn:
+        poured_row = conn.execute(
+            """
+            SELECT payload_json FROM resume_fence_events
+            WHERE fence_id = ? AND event = 'poured'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (bundle["fence"]["fence_id"],),
+        ).fetchone()
+    assert poured_row is not None
+    return bool(json.loads(str(poured_row["payload_json"]))["card_inlined"])
+
+
+@pytest.mark.parametrize(
+    ("card", "expected"),
+    [
+        ("## Rules\n- stay on the named item\n", True),
+        ("## Skills\n- `outbound-voice-spec`\n", True),
+        ("## Stance\nhello\n", False),
+        (None, False),
+    ],
+)
+def test_card_inlined_tracks_rules_or_skills(
+    root_thread, card: str | None, expected: bool
+) -> None:
+    assert _poured_flag(root_thread, card) is expected

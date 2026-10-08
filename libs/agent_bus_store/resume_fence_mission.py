@@ -305,8 +305,13 @@ def _row_status(row: sqlite3.Row) -> tuple[str, dict[str, str]]:
 def _follow_supersede(
     start: int,
     loaded: dict[int, sqlite3.Row | None],
-) -> tuple[sqlite3.Row, int, bool]:
-    """Walk ``superseded_by`` at most ``_SUPERSEDE_HOPS`` steps. Cycle-safe."""
+) -> tuple[sqlite3.Row, int, bool, int | None]:
+    """Walk ``superseded_by`` at most ``_SUPERSEDE_HOPS`` steps. Cycle-safe.
+
+    A successor id that was fetched and has no row stops the walk. The
+    fourth value is that missing id. A cycle, a non-integer pointer, or
+    a hop-cap stop (id never fetched) returns None for that value.
+    """
     row = loaded[start]
     assert row is not None
     seen = {start}
@@ -323,14 +328,16 @@ def _follow_supersede(
             break
         if nxt in seen:
             break
-        nxt_row = loaded.get(nxt)
-        if nxt_row is None:
+        if nxt not in loaded:
             break
+        nxt_row = loaded[nxt]
+        if nxt_row is None:
+            return current, current_id, moved, nxt
         seen.add(nxt)
         current = nxt_row
         current_id = nxt
         moved = True
-    return current, current_id, moved
+    return current, current_id, moved, None
 
 
 def _fetch_assertion_rows(
@@ -380,7 +387,11 @@ def lookup_assertions(assertion_ids: list[int]) -> dict[int, dict[str, Any]]:
     judged with the same status logic as a direct cite (``current_status``
     is ``current``, ``rejected``, or ``elapsed``). Only a ``current`` tip
     is returned as the claim; a rejected or elapsed tip keeps the cited
-    row's claim.
+    row's claim. When the next id was fetched and the row is missing,
+    ``status`` stays ``superseded``, ``current_status`` is ``unresolved``,
+    ``dangling_successor`` names that id, and the claim stays the cited
+    row's claim. ``current_id`` is set only when the walk already moved
+    to a resolved row before that break.
     """
     ids = list(dict.fromkeys(int(i) for i in assertion_ids))
     if not ids:
@@ -388,7 +399,7 @@ def lookup_assertions(assertion_ids: list[int]) -> dict[int, dict[str, Any]]:
     try:
         from cortex_store.db import cortex_conn
 
-        conn = cortex_conn()
+        conn = cortex_conn(read_only=True)
         try:
             loaded = _fetch_assertion_rows(conn, ids)
         finally:
@@ -417,9 +428,24 @@ def lookup_assertions(assertion_ids: list[int]) -> dict[int, dict[str, Any]]:
                 "claim_truncated": False,
             }
             continue
-        current, current_id, moved = _follow_supersede(assertion_id, loaded)
-        tip_status, tip_note = _row_status(current)
+        current, current_id, moved, dangling_id = _follow_supersede(
+            assertion_id, loaded
+        )
         cited_claim = str(row["claim"] or "")
+        if dangling_id is not None:
+            entry = {
+                "id": ref,
+                "status": "superseded",
+                "current_status": "unresolved",
+                "dangling_successor": f"a:{dangling_id}",
+                "claim": cited_claim,
+                "claim_truncated": False,
+            }
+            if current_id != assertion_id:
+                entry["current_id"] = f"a:{current_id}"
+            out[assertion_id] = entry
+            continue
+        tip_status, tip_note = _row_status(current)
         tip_claim = str(current["claim"] or "")
         if moved or row["superseded_by"] is not None:
             entry: dict[str, Any] = {
@@ -464,7 +490,9 @@ def cap_standing_rule_claims(
         for item in row.get("assertions") or []:
             if not isinstance(item, dict):
                 continue
-            claim, truncated = _truncate_claim(str(item.get("claim") or ""), _CLAIM_CHARS)
+            claim, truncated = _truncate_claim(
+                str(item.get("claim") or ""), _CLAIM_CHARS
+            )
             item["claim"] = claim
             item["claim_truncated"] = bool(item.get("claim_truncated")) or truncated
             items.append(item)
@@ -521,6 +549,8 @@ def build_standing_rules(card_text: str | None) -> list[dict[str, Any]]:
             extra["current_id"] = item["current_id"]
         if item.get("current_status"):
             extra["current_status"] = item["current_status"]
+        if item.get("dangling_successor"):
+            extra["dangling_successor"] = item["dangling_successor"]
         if item.get("valid_until_note"):
             extra["valid_until_note"] = item["valid_until_note"]
         entry["assertions"].append(

@@ -86,7 +86,7 @@ def test_maybe_fire_after_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr(tick_sos, "notify_tick_sos", fake_notify)
-    monkeypatch.setattr(tick_sos, "_post_cursor_auto_note", fake_bus)
+    monkeypatch.setattr(tick_sos, "_post_sos_note", fake_bus)
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.charter_runner.telemetry.emit_root_skip_observed",
         fake_emit,
@@ -131,7 +131,7 @@ def test_sticky_live_holder_suppresses_count(
         return None
 
     monkeypatch.setattr(tick_sos, "notify_tick_sos", fake_notify)
-    monkeypatch.setattr(tick_sos, "_post_cursor_auto_note", fake_bus)
+    monkeypatch.setattr(tick_sos, "_post_sos_note", fake_bus)
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.charter_runner.telemetry.emit_root_skip_observed",
         fake_emit,
@@ -174,7 +174,7 @@ def test_orphan_holder_fires_immediately(
         return None
 
     monkeypatch.setattr(tick_sos, "notify_tick_sos", fake_notify)
-    monkeypatch.setattr(tick_sos, "_post_cursor_auto_note", fake_bus)
+    monkeypatch.setattr(tick_sos, "_post_sos_note", fake_bus)
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.charter_runner.telemetry.emit_root_skip_observed",
         fake_emit,
@@ -228,7 +228,7 @@ def test_empty_hopper_ages_to_escalate(
         return None
 
     monkeypatch.setattr(tick_sos, "notify_tick_sos", fake_notify)
-    monkeypatch.setattr(tick_sos, "_post_cursor_auto_note", fake_bus)
+    monkeypatch.setattr(tick_sos, "_post_sos_note", fake_bus)
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.charter_runner.telemetry.emit_root_skip_observed",
         fake_emit,
@@ -284,7 +284,7 @@ def test_episode_actuator_falls_back_to_old_decision_label(
         fake_notify,
     )
     monkeypatch.setattr(
-        "scripts.model_manager.ui.controller.charter_runner.tick_sos._post_cursor_auto_note",
+        "scripts.model_manager.ui.controller.charter_runner.tick_sos._post_sos_note",
         fake_bus,
     )
     monkeypatch.setattr(

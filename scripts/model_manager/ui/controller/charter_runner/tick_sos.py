@@ -1,8 +1,8 @@
-"""Automatic charter-tick SOS — pager + cursor-auto note + optional CDP heal.
+"""Automatic charter-tick SOS — pager + bus note + optional CDP heal.
 
 Doctrine: ``decision:tick-heal-cdp-operator-default``. When the tick
 silent-starves, do not wait for IDE babysitting — claim once, page an SOS
-(minimum), leave details on the bus for cursor-auto, and auto-admit a CDP
+(minimum), leave details on the bus via team_dispatch (seat=cursor-sdk), and auto-admit a CDP
 operator-proxy heal via ``team_dispatch(model=cdp/opus-5, purpose=operator-proxy, contract=freeform)``
 when ``CHARTER_TICK_SOS_CDP`` is enabled.
 """
@@ -183,7 +183,7 @@ async def fire_episode_actuator(
         logger.exception("tick SOS pager failed root=%s", root_id)
 
     try:
-        result["bus_noted"] = await _post_cursor_auto_note(
+        result["bus_noted"] = await _post_sos_note(
             root_id,
             reason=reason,
             consecutive=1,
@@ -349,7 +349,7 @@ async def maybe_fire_tick_sos(
         logger.exception("tick SOS pager failed root=%s", root_id)
 
     try:
-        result["bus_noted"] = await _post_cursor_auto_note(
+        result["bus_noted"] = await _post_sos_note(
             root_id,
             reason=reason,
             consecutive=consecutive,
@@ -380,7 +380,7 @@ async def maybe_fire_tick_sos(
     return result
 
 
-async def _post_cursor_auto_note(
+async def _post_sos_note(
     root_id: str,
     *,
     reason: str,
@@ -399,7 +399,7 @@ async def _post_cursor_auto_note(
             f"- consecutive: {consecutive}",
             f"- detail: {detail or '(none)'}",
             "",
-            "Kaywan can dig here / via cursor-auto. CDP operator-proxy may also",
+            "Kaywan can dig here / via team_dispatch (seat=cursor-sdk). CDP operator-proxy may also",
             "be running a heal mission (purpose=operator-proxy, contract=freeform via team_dispatch).",
             "Doctrine: decision:tick-heal-cdp-operator-default",
         ]
