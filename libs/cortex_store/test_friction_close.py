@@ -124,29 +124,38 @@ def test_build_close_claim_carries_symptom_and_fix() -> None:
     assert "Fix: path_flock on navigator lease RMW" in claim
 
 
-def test_validate_commit_resolution_lists_paths_missing_from_commit() -> None:
-    repo = str(Path(__file__).resolve().parents[2])
-    missing = _paths_not_touched_by_commit(
-        repo,
-        "c8fa90f4",
-        [
-            "libs/event_store/store.py",
-            "server.py",
-            "query.py",
-            "operations_impl.py",
-            "operations_trace.py",
-        ],
+def test_validate_commit_resolution_lists_paths_missing_from_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.get_workspace_root",
+        lambda: "/repo",
     )
-    assert missing is not None
-    assert "operations_impl.py" in missing
-    assert "operations_trace.py" in missing
-    assert "libs/event_store/store.py" not in missing
-
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.resolve_commit_sha",
+        lambda _sha: "a" * 40,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._commit_touched_set",
+        lambda _repo, _sha: {
+            "libs/event_store/store.py",
+            "libs/event_store/server.py",
+            "libs/event_store/query.py",
+        },
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._paths_stageable",
+        lambda _repo, _paths: True,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.commit_paths_fingerprint",
+        lambda _repo, _paths: "",
+    )
     err = _validate_commit_resolution(
-        "commit:c8fa90f4",
+        "commit:deadbeef",
         changed_paths=[
             "libs/event_store/store.py",
-            "operations_impl.py",
+            "libs/event_store/operations_impl.py",
         ],
         resolution_note=None,
     )
