@@ -32,6 +32,7 @@ _CURSOR_PREVIEW_LIMIT = 50
 _CURSOR_PREVIEW_BLOCKED = frozenset(
     {
         "raw_sql",
+        "sql",
         "request-trace",
         "pipeline-trace",
         "request-lifecycle",
