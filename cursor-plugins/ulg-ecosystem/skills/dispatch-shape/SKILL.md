@@ -15,6 +15,7 @@ not hand-enumerated). Wire-shape rules for `cortex`, `agent_bus`, `dispatch`, an
 (1) run in-seat cognitive legs; (2) `agent_bus` ask a code seat to fire transport;
 or (3) use `agent_bus(wait)` only — ¬ call CODE_EXTRA from life. Full gate +
 IF6 CLI / `cse_session(followup)` posture: skill `consult-routing` § Surface gate.
+cortex writes (entities, assertions, notes, skill ingest) are live ops, not lane B — see cortex-orientation.
 
 ## Wire invariant
 
