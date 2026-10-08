@@ -9,7 +9,6 @@ revision, and a ship gate. Nothing here sends or writes.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -86,15 +85,15 @@ def _model_of(step: Any) -> str | None:
     return str(model) if model else None
 
 
-def _rates() -> dict[str, tuple[float, float]]:
-    path = Path(__file__).resolve().parents[4] / "config" / "model_rates.yaml"
+def _rates() -> tuple[dict[str, tuple[float, float]], dict[str, str]]:
     from event_store.model_rate_table import load_manual_rows
 
-    rows, _aliases = load_manual_rows(path)
-    return {
+    rows, aliases = load_manual_rows()
+    table = {
         model_id: (row.input_rate_per_m, row.output_rate_per_m)
         for model_id, row in rows.items()
     }
+    return table, aliases
 
 
 def _cost(
@@ -102,14 +101,17 @@ def _cost(
     usage: dict[str, dict[str, int] | None],
     models: dict[str, str],
 ) -> tuple[float | None, str | None]:
-    table = _rates()
+    table, aliases = _rates()
     total = 0.0
     for step_name, role in _GENERATE_STEPS:
         spent = usage.get(step_name)
         if not spent:
             continue
         model = _model_of(_raw_step(outputs, step_name)) or models.get(role) or ""
-        rate = table.get(model)
+        resolved = aliases.get(model) or model
+        rate = table.get(resolved)
+        if rate is None:
+            rate = table.get(model)
         if rate is None:
             return None, f"rate_missing:{model}"
         prompt_rate, completion_rate = rate

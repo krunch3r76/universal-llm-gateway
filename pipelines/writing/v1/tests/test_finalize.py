@@ -87,6 +87,23 @@ def _run(outputs: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def test_finalize_cost_resolves_rate_alias() -> None:
+    outputs = {
+        "draft": _Out(
+            _draft(),
+            model_id="composer-2.5",
+            model_call_count=1,
+        )
+    }
+    total, note = finalize._cost(
+        outputs,
+        {"draft": {"prompt_tokens": 1_000_000, "completion_tokens": 0}},
+        {"writer": "unused"},
+    )
+    assert note is None
+    assert total == 0.5
+
+
 def test_finalize_partial_review_failure() -> None:
     payload = _run(
         {
