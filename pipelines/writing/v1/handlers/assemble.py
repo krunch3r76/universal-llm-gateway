@@ -252,6 +252,13 @@ def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
             "refused": "reviewer_seat_unavailable",
             "error": "reviewer_seat must be local",
         }
+    raw_max = _unwrap(options.get("max_pins", 40), 40)
+    if isinstance(raw_max, bool) or not isinstance(raw_max, int):
+        return {
+            "ok": False,
+            "refused": "options_invalid",
+            "error": "max_pins must be an integer",
+        }
     return None
 
 

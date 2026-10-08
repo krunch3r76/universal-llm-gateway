@@ -304,6 +304,18 @@ def test_assemble_writer_seat_unavailable() -> None:
     assert payload["refused"] == "writer_seat_unavailable"
 
 
+@pytest.mark.parametrize("max_pins", ["nope", 1.5, True])
+def test_assemble_max_pins_not_integer(max_pins: object) -> None:
+    payload = asyncio.run(
+        assemble.WritingAssembleHandler().execute(
+            None,
+            _Ctx(brief=_brief(), working_set=[], max_pins=max_pins),
+        )
+    ).json
+    assert payload["refused"] == "options_invalid"
+    assert payload["error"] == "max_pins must be an integer"
+
+
 def test_assemble_max_pins_exceeded() -> None:
     client = _FakeClient("abc")
     payload = asyncio.run(
