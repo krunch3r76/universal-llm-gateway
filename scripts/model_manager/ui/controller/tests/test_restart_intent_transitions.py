@@ -24,6 +24,7 @@ from scripts.model_manager.ui.controller.restart_intent_lookup import (
 from scripts.model_manager.ui.controller.restart_intent_states import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
+    STATUS_DRAINED_RESTARTING,
     STATUS_FAILED,
     STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
@@ -492,8 +493,8 @@ def test_waiting_note_does_not_overwrite_cancel(tmp_path: Any) -> None:
     assert row.status_reason == CANCELLED_BY_OPERATOR
 
 
-def test_store_error_during_wait_is_supervisor_exception(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+def test_waiting_note_failure_logs_and_completes(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     store = _store(tmp_path)
     intent = _arm(store)
@@ -506,14 +507,123 @@ def test_store_error_during_wait_is_supervisor_exception(
         _boom,
     )
     busy = ActiveWork(busy=True, detail={"busy": True, "total": 1})
-    supervisor = _supervisor(_ScriptedProbe([busy]), _noop_lifecycle)
+    idle = ActiveWork(busy=False, detail={"busy": False, "total": 0})
+    called = {"n": 0}
+
+    async def _lifecycle() -> str:
+        called["n"] += 1
+        return "restarted"
+
+    supervisor = _supervisor(_ScriptedProbe([busy, idle]), _lifecycle)
+    supervisor.store = store
+    with caplog.at_level("ERROR"):
+        _run(supervisor.supervise(intent))
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert row.status == STATUS_COMPLETED
+    assert called["n"] == 1
+    assert not any(item["status"] == STATUS_FAILED for item in row.transitions or [])
+    assert intent.intent_id in caplog.text
+
+
+def test_cancelled_under_supervisor_is_not_failed(tmp_path: Any) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
+        CANCELLED_BY_OPERATOR,
+    )
+
+    store = _store(tmp_path)
+    intent = _arm(store)
+    idle = ActiveWork(busy=False, detail={"busy": False, "total": 0})
+    called = {"n": 0}
+
+    class _CancelThenIdle:
+        async def snapshot(self) -> ActiveWork:
+            store.cancel(intent.intent_id, reason=CANCELLED_BY_OPERATOR)
+            return idle
+
+    async def _lifecycle() -> str:
+        called["n"] += 1
+        return "should not run"
+
+    supervisor = _supervisor(_CancelThenIdle(), _lifecycle)
+    supervisor.store = store
+    _run(supervisor.supervise(intent))
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert row.status == STATUS_CANCELLED
+    assert row.status_reason == CANCELLED_BY_OPERATOR
+    assert called["n"] == 0
+    assert not any(item["status"] == STATUS_FAILED for item in row.transitions or [])
+
+
+def test_probe_streak_notes_once_and_ceiling_carries_count(tmp_path: Any) -> None:
+    store = _store(tmp_path)
+    intent = _arm(store)
+    notes = {"n": 0}
+    real = store  # bound for the wrapper closure
+
+    import scripts.model_manager.ui.controller.restart_drain_supervise as supervise_mod
+
+    original = supervise_mod.note_waiting_reason
+
+    def _counting(*args: Any, **kwargs: Any) -> bool:
+        notes["n"] += 1
+        return original(*args, **kwargs)
+
+    supervise_mod.note_waiting_reason = _counting
+    try:
+        probe = _ScriptedProbe([httpx.ReadTimeout("down")] * 30)
+
+        async def _lifecycle() -> str:
+            return "forced"
+
+        supervisor = _supervisor(probe, _lifecycle, deadline_s=0.19)
+        supervisor.poll_interval_s = 0.01
+        supervisor.store = store
+        _run(supervisor.supervise(intent))
+    finally:
+        supervise_mod.note_waiting_reason = original
+    row = real.get(intent.intent_id)
+    assert row is not None
+    assert notes["n"] <= 1
+    force = next(
+        item
+        for item in row.transitions or []
+        if item["status"] == STATUS_FORCE_REQUESTED
+    )
+    assert (
+        force["reason"] == "idle_ceiling_reached:drain_probe_exception:ReadTimeout x20"
+    )
+    drained = next(
+        item
+        for item in row.transitions or []
+        if item["status"] == STATUS_DRAINED_RESTARTING
+    )
+    assert drained["reason"] == force["reason"]
+
+
+def test_cas_raise_during_transition_is_supervisor_exception(tmp_path: Any) -> None:
+    store = _store(tmp_path)
+    intent = _arm(store)
+    idle = ActiveWork(busy=False, detail={"busy": False, "total": 0})
+    original = store.advance_if_status
+    calls = {"n": 0}
+
+    def _cas(intent_id: str, **kwargs: Any) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("cas")
+        return original(intent_id, **kwargs)
+
+    store.advance_if_status = _cas  # type: ignore[method-assign]
+    supervisor = _supervisor(_ScriptedProbe([idle]), _noop_lifecycle)
     supervisor.store = store
     with pytest.raises(RuntimeError):
         _run(supervisor.supervise(intent))
     row = store.get(intent.intent_id)
     assert row is not None
     assert row.status == STATUS_FAILED
-    assert row.status_reason == "supervisor_exception:wait:RuntimeError"
+    assert row.status_reason == "supervisor_exception:drained_restarting:RuntimeError"
 
 
 def test_giw_deadline_semantics_unchanged() -> None:

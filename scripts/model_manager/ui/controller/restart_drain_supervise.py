@@ -76,14 +76,13 @@ async def supervise_until_lifecycle(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — fail closed, keep polling
-                key = describe_probe_exc(exc)
-                probe_count = probe_count + 1 if key == probe_key else 1
-                probe_key = key
-                last_cause = reason_code(
-                    DRAIN_PROBE_EXCEPTION, f"{type(exc).__name__} x{probe_count}"
-                )
-                _note_if_changed(store, intent_id, last_cause, last_note)
-                last_note = last_cause
+                note_key = reason_code(DRAIN_PROBE_EXCEPTION, type(exc).__name__)
+                probe_count = probe_count + 1 if note_key == probe_key else 1
+                probe_key = note_key
+                last_cause = f"{note_key} x{probe_count}"
+                if note_key != last_note:
+                    _note_if_changed(store, intent_id, note_key, last_note)
+                    last_note = note_key
             else:
                 probe_key = None
                 probe_count = 0
@@ -158,7 +157,12 @@ def _note_if_changed(
 ) -> None:
     if cause == previous:
         return
-    note_waiting_reason(store, intent_id, status_reason=_clip(cause))
+    try:
+        note_waiting_reason(store, intent_id, status_reason=_clip(cause))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("restart intent waiting note failed intent_id=%s", intent_id)
 
 
 def _cas(
