@@ -1,4 +1,4 @@
-# grokbot-checkpoint-v1 — checkpoint a Grok Bot house from one poured envelope.
+# grokbot-checkpoint-v1 — checkpoint a Grok Bot house from transcribed and/or raw pour slots.
 schema_version: 6
 id: grokbot-checkpoint-v1
 version: "1.0"
@@ -6,7 +6,8 @@ type: grokbot_checkpoint
 category: grokbot_checkpoint
 description: >
   Admit, snapshot, succession-seal, card row, CHECKPOINT, FACT, and verify
-  poll for one house checkpoint. verify_resume is read-only.
+  poll for one house checkpoint. Seal reads transcribed_ref plus
+  transcribed_sha256 and/or raw_ref plus raw_sha256. verify_resume is read-only.
 output: result
 
 concurrency:
