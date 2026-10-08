@@ -4,8 +4,9 @@ WAL mode with PRAGMA synchronous=NORMAL for high-throughput writes.
 Generated virtual columns promote correlation fields from JSON payload
 for indexed O(log N) lookups without schema churn.
 
-Uses stdlib sqlite3 directly. Reads run on dedicated connections in worker
-threads so a slow analytical query cannot block ingest or health probes.
+Uses stdlib sqlite3 directly. Reads run on a small private thread pool with
+a server-side deadline so a slow scan cannot pin every worker. Retention
+deletes are batched off the event loop.
 
 Invariant: SQLite is the sole authoritative store for all queries.
 """
@@ -20,11 +21,12 @@ import sqlite3
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from .errors import EventStoreBusyError, is_sqlite_busy
+from .errors import EventStoreBusyError, EventStoreReadDeadlineError, is_sqlite_busy
 from .retention import HEARTBEAT_SIGNALS
 from .schema import _SCHEMA_SQL, migrate_correlation_taxonomy_columns
 
@@ -41,6 +43,7 @@ def register_write_fail_hook(
     global _write_fail_hook
     _write_fail_hook = hook
 
+
 _REALTIME_BUFFER_SIZE = int(os.environ.get("REALTIME_BUFFER_SIZE", "10000"))
 _SQLITE_CACHE_KIB = int(os.environ.get("EVENTS_SQLITE_CACHE_KIB", "1048576"))
 _SQLITE_MMAP_BYTES = int(os.environ.get("EVENTS_SQLITE_MMAP_BYTES", str(8 * 1024**3)))
@@ -56,6 +59,13 @@ _INSERT_SNAPSHOT = (
 )
 
 _MAX_PAYLOAD_BYTES = 64 * 1024
+_READ_POOL_SIZE = int(os.environ.get("EVENTS_READ_POOL_SIZE", "4"))
+_READ_DEADLINE_S = float(os.environ.get("EVENTS_QUERY_DEADLINE_S", "5"))
+_RETENTION_BATCH_SIZE = int(os.environ.get("EVENTS_RETENTION_BATCH_SIZE", "5000"))
+_RETENTION_BATCH_SLEEP_S = float(
+    os.environ.get("EVENTS_RETENTION_BATCH_SLEEP_S", "0.05")
+)
+_RETENTION_TABLES = frozenset({"events", "request_snapshots", "evaluations"})
 
 
 def _ts_ms_from_iso(iso: str) -> int:
@@ -72,12 +82,24 @@ def _ts_ms_from_iso(iso: str) -> int:
 
 
 class EventStore:
-    """SQLite-backed event store with batched writes, retention, and realtime ring buffer."""
+    """SQLite-backed event store with batched writes, retention, and a realtime ring.
+
+    Call ``open`` before reads or writes and ``close`` to release connections
+    and the read and retention executors. Reads go through ``query`` on a
+    private pool; retention methods delete in bounded batches off the loop.
+    """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         self._db: sqlite3.Connection | None = None
         self._reader_local = threading.local()
+        self._read_executor: ThreadPoolExecutor | None = None
+        self._retention_executor: ThreadPoolExecutor | None = None
+        self._retention_conn: sqlite3.Connection | None = None
+        self._read_deadline_s = _READ_DEADLINE_S
+        self._read_pool_size = _READ_POOL_SIZE
+        self._retention_batch_size = _RETENTION_BATCH_SIZE
+        self._retention_batch_sleep_s = _RETENTION_BATCH_SLEEP_S
         self._realtime_buffer: deque[dict[str, Any]] = deque(
             maxlen=_REALTIME_BUFFER_SIZE
         )
@@ -105,14 +127,61 @@ class EventStore:
         logger.info("EventStore opened: %s", self._db_path)
 
     async def close(self) -> None:
-        """Close the SQLite connection if it is open."""
-        if self._db:
-            self._db.close()
+        """Close SQLite connections and shut down the read and retention pools."""
+        db = self._db
+        if self._read_executor is not None:
+            self._read_executor.shutdown(wait=False, cancel_futures=True)
+            self._read_executor = None
+        if self._retention_executor is not None:
+            self._retention_executor.shutdown(wait=False, cancel_futures=True)
+            self._retention_executor = None
+        if self._retention_conn is not None:
+            self._retention_conn.close()
+            self._retention_conn = None
+        if db is not None:
+            db.close()
             self._db = None
         reader = getattr(self._reader_local, "connection", None)
-        if reader is not None:
+        if reader is not None and reader is not db:
             reader.close()
             self._reader_local.connection = None
+
+    def _read_pool(self) -> ThreadPoolExecutor:
+        """Return the private read pool, creating it on first use."""
+        if self._read_executor is None:
+            self._read_executor = ThreadPoolExecutor(
+                max_workers=max(1, self._read_pool_size),
+                thread_name_prefix="event-store-read",
+            )
+        return self._read_executor
+
+    def _retention_pool(self) -> ThreadPoolExecutor:
+        """Return the single-thread retention pool, creating it on first use."""
+        if self._retention_executor is None:
+            self._retention_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="event-store-retention",
+            )
+        return self._retention_executor
+
+    def _retention_connection(self) -> sqlite3.Connection:
+        """Return the connection retention batches must use.
+
+        File databases get a dedicated connection so ingest can keep using
+        ``self._db`` on the event loop. ``:memory:`` has no shared cache
+        across connections, so retention reuses the open connection.
+        """
+        if self._db is None:
+            raise RuntimeError("EventStore is not open")
+        if self._db_path == ":memory:":
+            return self._db
+        if self._retention_conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+            self._retention_conn = conn
+        return self._retention_conn
 
     @staticmethod
     def _configure_connection(db: sqlite3.Connection) -> None:
@@ -283,12 +352,17 @@ class EventStore:
     ) -> list[dict[str, Any]]:
         """Execute a read query and return rows as dicts.
 
-        ``raise_on_error`` controls error visibility. Named operations keep the
-        default (lenient: log + empty rows) so a hard-coded query bug does not
-        crash an agent's investigation. User-facing raw SQL (the ``_raw_sql``
-        handler) opts in to ``raise_on_error=True`` so typos and missing-column
-        errors surface as structured 4xx responses instead of silent empty
-        results.
+        ``raise_on_error`` controls SQL error visibility. Named operations keep
+        the default (lenient: log + empty rows) so a hard-coded query bug does
+        not crash an agent's investigation. User-facing raw SQL (the
+        ``_raw_sql`` handler) opts in to ``raise_on_error=True`` so typos and
+        missing-column errors surface as structured 4xx responses instead of
+        silent empty results.
+
+        Reads run on a private pool. When the wait exceeds
+        ``_read_deadline_s``, the reader connection is interrupted and this
+        raises ``EventStoreReadDeadlineError`` even when ``raise_on_error``
+        is false, so a scan cannot occupy a worker until the client gives up.
         """
         if not self._db:
             logger.error("query called before EventStore.open(); sql=%s", sql[:120])
@@ -296,13 +370,42 @@ class EventStore:
                 raise sqlite3.OperationalError("EventStore not open")
             return []
 
+        started = threading.Event()
+        slot: list[sqlite3.Connection] = []
+
         def read() -> list[dict[str, Any]]:
-            cursor = self._reader_connection().execute(sql, params)
+            connection = self._reader_connection()
+            slot.append(connection)
+            started.set()
+            cursor = connection.execute(sql, params)
             return [dict(row) for row in cursor.fetchmany(limit)]
 
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(self._read_pool(), read)
         try:
-            rows = await asyncio.to_thread(read)
-            return rows
+            return await asyncio.wait_for(future, self._read_deadline_s)
+        except TimeoutError:
+            # wait_for marks the wrapper cancelled while the thread is still
+            # inside execute, so cancellation is not evidence the read stopped.
+            if future.done() and not future.cancelled() and future.exception() is None:
+                return future.result()
+            if started.is_set() and slot:
+                try:
+                    slot[0].interrupt()
+                except sqlite3.Error:
+                    logger.exception("event-store reader interrupt failed")
+
+            def _consume(done: asyncio.Future[list[dict[str, Any]]]) -> None:
+                if done.cancelled():
+                    return
+                abandoned = done.exception()
+                if abandoned is not None:
+                    logger.debug("abandoned event-store read: %s", abandoned)
+
+            future.add_done_callback(_consume)
+            raise EventStoreReadDeadlineError(
+                f"event-store read exceeded deadline of {self._read_deadline_s}s"
+            ) from None
         except sqlite3.Error as e:
             logger.error("Query failed: %s params=%s - %s", sql[:120], params, e)
             if is_sqlite_busy(e):
@@ -316,27 +419,117 @@ class EventStore:
                 raise
             return []
 
-    async def run_retention(self, max_age_ms: int) -> int:
+    async def _delete_bounded(
+        self,
+        table: str,
+        where_sql: str,
+        params: tuple[Any, ...],
+        *,
+        dry_run: bool,
+    ) -> int:
+        """Delete matching rows in ``DELETE … LIMIT N`` transactions off the loop.
+
+        ``dry_run`` counts rows and deletes nothing, logging the count it would
+        delete. Each real batch commits, logs ``deleted`` and ``cumulative``,
+        then sleeps so other connections can read. A mid-pass SQLite error
+        returns the count already committed. ``table`` must be one of
+        ``_RETENTION_TABLES``; ``where_sql`` is a caller-built predicate.
+        """
+        if table not in _RETENTION_TABLES:
+            raise ValueError(f"retention table not allowed: {table}")
+        batch_size = max(1, int(self._retention_batch_size))
+        sleep_s = max(0.0, float(self._retention_batch_sleep_s))
+        count_sql = f"SELECT COUNT(*) AS n FROM {table} WHERE {where_sql}"
+        delete_sql = f"DELETE FROM {table} WHERE {where_sql} LIMIT ?"
+
+        def work() -> int:
+            conn = self._retention_connection()
+            if dry_run:
+                row = conn.execute(count_sql, params).fetchone()
+                would_delete = int(row[0] if row is not None else 0)
+                logger.info(
+                    "Retention dry-run table=%s would_delete=%d",
+                    table,
+                    would_delete,
+                )
+                return would_delete
+            total = 0
+            while True:
+                try:
+                    cursor = conn.execute(delete_sql, (*params, batch_size))
+                    deleted = cursor.rowcount or 0
+                    conn.commit()
+                except sqlite3.Error:
+                    conn.rollback()
+                    logger.exception(
+                        "Retention batch failed table=%s cumulative=%d",
+                        table,
+                        total,
+                    )
+                    return total
+                total += deleted
+                logger.info(
+                    "Retention batch table=%s deleted=%d cumulative=%d",
+                    table,
+                    deleted,
+                    total,
+                )
+                if deleted < batch_size:
+                    break
+                time.sleep(sleep_s)
+            return total
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._retention_pool(), work)
+
+    async def _checkpoint_after_retention(self, *, dry_run: bool, vacuum: bool) -> None:
+        """Run optional incremental vacuum and a passive WAL checkpoint off-loop.
+
+        Dry-run skips both: it did not write. Vacuum matches the previous
+        age and session retention passes; heartbeat and debug prunes checkpoint
+        only. A checkpoint error is logged and does not raise.
+        """
+        if dry_run or self._db is None:
+            return
+
+        def work() -> None:
+            conn = self._retention_connection()
+            if vacuum:
+                conn.execute("PRAGMA incremental_vacuum")
+                conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            logger.info("Retention WAL checkpoint mode=PASSIVE vacuum=%s", vacuum)
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(self._retention_pool(), work)
+        except sqlite3.Error as e:
+            logger.error("Retention WAL checkpoint failed: %s", e)
+
+    async def run_retention(self, max_age_ms: int, *, dry_run: bool = False) -> int:
         """Delete rows older than max_age_ms from all retained tables.
 
-        Returns total count deleted across events, request_snapshots, and
-        evaluations.
+        Deletes run as bounded ``DELETE … LIMIT`` batches off the event loop,
+        with a sleep between batches and a passive WAL checkpoint after.
+        ``dry_run`` reports the row count it would delete and writes nothing.
+        Returns the total deleted, or the would-delete count when ``dry_run``
+        is true. A batch error returns the count already committed.
         """
         if not self._db:
             logger.error("run_retention called before EventStore.open()")
             return 0
         cutoff = int(time.time() * 1000) - max_age_ms
         try:
-            r1 = self._db.execute("DELETE FROM events WHERE ts_unix_ms < ?", (cutoff,))
-            r2 = self._db.execute(
-                "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff,)
-            )
-            r3 = self._db.execute(
-                "DELETE FROM evaluations WHERE ts_unix_ms < ?", (cutoff,)
-            )
-            self._db.execute("PRAGMA incremental_vacuum")
-            self._db.commit()
-            return (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0)
+            deleted = 0
+            for table in ("events", "request_snapshots", "evaluations"):
+                deleted += await self._delete_bounded(
+                    table,
+                    "ts_unix_ms < ?",
+                    (cutoff,),
+                    dry_run=dry_run,
+                )
+            await self._checkpoint_after_retention(dry_run=dry_run, vacuum=True)
+            return deleted
         except sqlite3.Error as e:
             logger.error("Retention failed cutoff=%s: %s", cutoff, e)
             return 0
@@ -344,12 +537,14 @@ class EventStore:
             logger.exception("Unexpected retention failure cutoff=%s: %s", cutoff, e)
             return 0
 
-    async def prune_debug_events(self) -> int:
+    async def prune_debug_events(self, *, dry_run: bool = False) -> int:
         """Delete debug events older than the current session boundary.
 
         Debug events (role='debug') are temporary diagnostic instrumentation.
         They survive within the current Stargate session only and are pruned at
-        each retention cycle.
+        each retention cycle. The session lookup uses keyword ``limit`` so a
+        stray positional argument cannot kill the retention loop. ``dry_run``
+        counts matching rows and deletes nothing.
         """
         if not self._db:
             logger.error("prune_debug_events called before EventStore.open()")
@@ -358,7 +553,6 @@ class EventStore:
         rows = await self.query(
             "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = ?",
             (_SESSION_BOUNDARY_SIGNAL,),
-            (),
             limit=1,
         )
         if not rows or rows[0].get("ts") is None:
@@ -366,12 +560,14 @@ class EventStore:
 
         cutoff_ts = int(rows[0]["ts"])
         try:
-            result = self._db.execute(
-                "DELETE FROM events WHERE role = 'debug' AND ts_unix_ms < ?",
+            deleted = await self._delete_bounded(
+                "events",
+                "role = 'debug' AND ts_unix_ms < ?",
                 (cutoff_ts,),
+                dry_run=dry_run,
             )
-            self._db.commit()
-            return result.rowcount or 0
+            await self._checkpoint_after_retention(dry_run=dry_run, vacuum=False)
+            return deleted
         except sqlite3.Error as e:
             logger.error("Debug event prune failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
@@ -381,12 +577,13 @@ class EventStore:
             )
             return 0
 
-    async def prune_heartbeat_signals(self) -> int:
+    async def prune_heartbeat_signals(self, *, dry_run: bool = False) -> int:
         """Delete heartbeat signals older than the current session boundary.
 
         Heartbeat signals are high-frequency telemetry that survive only
         within the current Stargate session and are pruned at each retention
-        cycle.
+        cycle. The session lookup uses keyword ``limit``. ``dry_run`` counts
+        matching rows and deletes nothing.
         """
         if not self._db:
             logger.error("prune_heartbeat_signals called before EventStore.open()")
@@ -397,7 +594,6 @@ class EventStore:
         rows = await self.query(
             "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = ?",
             (_SESSION_BOUNDARY_SIGNAL,),
-            (),
             limit=1,
         )
         if not rows or rows[0].get("ts") is None:
@@ -406,12 +602,14 @@ class EventStore:
         cutoff_ts = int(rows[0]["ts"])
         placeholders = ", ".join("?" for _ in HEARTBEAT_SIGNALS)
         try:
-            result = self._db.execute(
-                f"DELETE FROM events WHERE signal IN ({placeholders}) AND ts_unix_ms < ?",
+            deleted = await self._delete_bounded(
+                "events",
+                f"signal IN ({placeholders}) AND ts_unix_ms < ?",
                 (*sorted(HEARTBEAT_SIGNALS), cutoff_ts),
+                dry_run=dry_run,
             )
-            self._db.commit()
-            return result.rowcount or 0
+            await self._checkpoint_after_retention(dry_run=dry_run, vacuum=False)
+            return deleted
         except sqlite3.Error as e:
             logger.error("Heartbeat signal prune failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
@@ -421,12 +619,17 @@ class EventStore:
             )
             return 0
 
-    async def run_session_retention(self, max_sessions: int) -> int:
+    async def run_session_retention(
+        self, max_sessions: int, *, dry_run: bool = False
+    ) -> int:
         """Delete rows older than the Nth most recent event.service.started boundary.
 
         For max_sessions=2 this keeps rows from the two most recent Stargate
         sessions. Uses OFFSET max_sessions - 1 to identify the oldest boundary
-        that should remain, then deletes older rows across all retained tables.
+        that should remain, then deletes older rows across all retained tables
+        in bounded batches. Coordination events are skipped here; the age cap
+        in ``run_retention`` is what keeps that role past the session window.
+        ``dry_run`` counts rows and deletes nothing.
         """
         if max_sessions < 1:
             return 0
@@ -445,24 +648,26 @@ class EventStore:
 
         cutoff_ts = int(rows[0]["ts_unix_ms"])
         try:
-            # Role-aware: coordination events are the forensic audit trail,
-            # governed by the 7-day age cap (run_retention), NOT the session cap.
-            # Skipping them here is what makes role="coordination" actually retain
-            # past the 2-session boundary; without this filter the DELETE is
-            # role-blind and any role promotion upstream is a no-op.
-            r1 = self._db.execute(
-                "DELETE FROM events WHERE ts_unix_ms < ? AND role != 'coordination'",
+            deleted = await self._delete_bounded(
+                "events",
+                "ts_unix_ms < ? AND role != 'coordination'",
                 (cutoff_ts,),
+                dry_run=dry_run,
             )
-            r2 = self._db.execute(
-                "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff_ts,)
+            deleted += await self._delete_bounded(
+                "request_snapshots",
+                "ts_unix_ms < ?",
+                (cutoff_ts,),
+                dry_run=dry_run,
             )
-            r3 = self._db.execute(
-                "DELETE FROM evaluations WHERE ts_unix_ms < ?", (cutoff_ts,)
+            deleted += await self._delete_bounded(
+                "evaluations",
+                "ts_unix_ms < ?",
+                (cutoff_ts,),
+                dry_run=dry_run,
             )
-            self._db.execute("PRAGMA incremental_vacuum")
-            self._db.commit()
-            return (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0)
+            await self._checkpoint_after_retention(dry_run=dry_run, vacuum=True)
+            return deleted
         except sqlite3.Error as e:
             logger.error("Session retention failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0

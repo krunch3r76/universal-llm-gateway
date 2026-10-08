@@ -72,6 +72,45 @@ def _signal_match_sql(signal: str) -> tuple[str, str]:
     return "= ?", signal
 
 
+def _trailing_signal_prefix(pattern: str) -> str | None:
+    """Return the literal stem when ``pattern`` is only a trailing wildcard.
+
+    ``mcp.transport.%`` and ``team_dispatch.*`` are prefixes. A wildcard in
+    the middle, or a SQL ``_`` wildcard on the LIKE path, is not one range
+    and returns ``None`` so the caller keeps LIKE. Glob ``*`` treats ``_``
+    as a literal character, matching ``_signal_match_sql`` escape rules.
+    """
+    if pattern.endswith("*") and pattern.count("*") == 1 and "%" not in pattern:
+        stem = pattern[:-1]
+        return stem or None
+    if (
+        pattern.endswith("%")
+        and pattern.count("%") == 1
+        and "*" not in pattern
+        and "_" not in pattern
+    ):
+        stem = pattern[:-1]
+        return stem or None
+    return None
+
+
+def signal_prefix_range(prefix: str) -> tuple[str, str]:
+    """Inclusive lower and exclusive upper bounds for a signal prefix.
+
+    The upper bound increments the prefix's last code point so
+    ``signal >= lower AND signal < upper`` is a case-sensitive range SQLite
+    can satisfy with ``idx_signal_ts``. Unlike ``LIKE``, ASCII case folds
+    are not matches; callers use this only for prefixes that were previously
+    case-insensitive prefix scans.
+
+    Returns ``(lower, upper)``. Raises ``ValueError`` when ``prefix`` is empty.
+    """
+    if not prefix:
+        raise ValueError("signal prefix must be non-empty")
+    upper = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+    return prefix, upper
+
+
 # Unix-seconds timestamps for dates through year 5138 are strictly below this;
 # millisecond timestamps for 1973+ are at or above it. Used to detect the
 # seconds-scale ``since_ts`` callers pass against ``ts_unix_ms`` columns.

@@ -13,6 +13,7 @@ from .operation_parameters import (
     _coerce_since_ts,
     _get_session_start_ts,
     _resolve_window_minutes_and_cutoff,
+    signal_prefix_range,
 )
 from .store import EventStore
 
@@ -190,12 +191,16 @@ async def _federation_health(
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
-    sql = "SELECT * FROM events WHERE signal LIKE 'federation.%' AND role NOT IN ('debug', 'realtime')"
-    query_params: list[Any] = []
+    lower, upper = signal_prefix_range("federation.")
+    sql = (
+        "SELECT * FROM events WHERE signal >= ? AND signal < ? "
+        "AND role NOT IN ('debug', 'realtime')"
+    )
+    query_params: list[Any] = [lower, upper]
     if since_ts is not None:
         sql += " AND ts_unix_ms >= ?"
         query_params.append(since_ts)
-    sql += " ORDER BY seq DESC LIMIT ?"
+    sql += " ORDER BY ts_unix_ms DESC LIMIT ?"
     query_params.append(limit)
     rows = await store.query(
         sql,
@@ -406,7 +411,11 @@ async def _stack_last_started(
     )
     session_start_ts = await _get_session_start_ts(store)
     session_timestamp = next(
-        (r.get("timestamp") for r in rows if r.get("signal") == "event.service.started"),
+        (
+            r.get("timestamp")
+            for r in rows
+            if r.get("signal") == "event.service.started"
+        ),
         None,
     )
     return {

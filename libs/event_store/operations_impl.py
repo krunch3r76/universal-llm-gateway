@@ -15,6 +15,8 @@ from .operation_parameters import (
     _get_session_start_ts,
     _resolve_window_minutes_and_cutoff,
     _signal_match_sql,
+    _trailing_signal_prefix,
+    signal_prefix_range,
 )
 from .store import EventStore
 
@@ -137,7 +139,13 @@ async def _request_summary(params: dict[str, Any], store: EventStore) -> dict[st
 
 
 async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    """Fetch recent events by exact signal or glob (* or % wildcards)."""
+    """Fetch recent events by exact signal or glob (* or % wildcards).
+
+    A trailing-only prefix (``mcp.transport.%``, ``team_dispatch.*``) is a
+    case-sensitive ``signal >= ? AND signal < ?`` range so ``idx_signal_ts``
+    can serve it. Mid-string wildcards stay LIKE. Rows are ordered by
+    ``ts_unix_ms`` descending, not insert seq.
+    """
     signal = params.get("signal") or ""
     if not signal:
         return {"error": "signal is required"}
@@ -152,20 +160,28 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
         else:
             since_ts = await _get_session_start_ts(store)
 
-    signal_predicate, signal_value = _signal_match_sql(signal)
-
-    sql = (
-        "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
-        f"FROM events WHERE signal {signal_predicate}"
-    )
-    query_params: list[Any] = [signal_value]
+    prefix = _trailing_signal_prefix(signal)
+    if prefix is not None:
+        lower, upper = signal_prefix_range(prefix)
+        sql = (
+            "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
+            "FROM events WHERE signal >= ? AND signal < ?"
+        )
+        query_params: list[Any] = [lower, upper]
+    else:
+        signal_predicate, signal_value = _signal_match_sql(signal)
+        sql = (
+            "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
+            f"FROM events WHERE signal {signal_predicate}"
+        )
+        query_params = [signal_value]
     if execution_id:
         sql += " AND execution_id = ?"
         query_params.append(execution_id)
     if since_ts is not None:
         sql += " AND ts_unix_ms >= ?"
         query_params.append(since_ts)
-    sql += " ORDER BY seq DESC LIMIT ?"
+    sql += " ORDER BY ts_unix_ms DESC LIMIT ?"
     query_params.append(limit)
 
     rows = await store.query(sql, tuple(query_params))
