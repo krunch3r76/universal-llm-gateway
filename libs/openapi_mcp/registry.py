@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -61,6 +62,12 @@ def _load_jobs_openapi() -> dict[str, Any]:
     return create_app().openapi()
 
 
+def _load_web_fetcher_openapi() -> dict[str, Any]:
+    from web_fetcher.app import create_app
+
+    return create_app().openapi()
+
+
 def _load_giw_openapi() -> dict[str, Any]:
     from services.git_integration_worker.app import create_app
 
@@ -102,6 +109,15 @@ def default_registry() -> tuple[ServiceDescriptor, ...]:
             base_url=DEFAULT_JOBS_URL,
             auth_env="JOBS_TOKEN",
             openapi_path="/api/v1/jobs/openapi.json",
+        ),
+        ServiceDescriptor(
+            name="web_fetcher",
+            facade_tools=frozenset({"web_fetcher"}),
+            load_openapi=_load_web_fetcher_openapi,
+            seed_bindings=None,
+            base_url=os.environ.get("WEB_FETCHER_URL", "").strip(),
+            auth_env=None,
+            openapi_path="/openapi.json",
         ),
         ServiceDescriptor(
             name="giw",

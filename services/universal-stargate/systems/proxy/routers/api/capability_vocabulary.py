@@ -14,6 +14,7 @@ from transport_utils import EVENTS_QUERY_SOCK, JOBS_SOCK
 _UPSTREAMS = {
     "events_query": lambda: f"unix://{EVENTS_QUERY_SOCK}",
     "jobs": lambda: f"unix://{JOBS_SOCK}",
+    "web_fetcher": lambda: os.environ.get("WEB_FETCHER_URL", "").strip(),
 }
 _LINK_URI = re.compile(r"<([^>]+)>")
 

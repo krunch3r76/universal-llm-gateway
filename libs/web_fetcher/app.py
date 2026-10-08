@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import trafilatura
 from fastapi import FastAPI, HTTPException
+from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel
 
 from .active_tab import ActiveTabResult, list_tabs_op, read_active_tab
@@ -90,7 +91,7 @@ def create_app(*, headless: bool | None = None) -> FastAPI:
             "cdp_url_configured": bool(cdp_url),
         }
 
-    @app.post("/fetch")
+    @app.post("/fetch", openapi_extra=x_mcp("fetch", tool="web_fetcher", pipeline=True))
     async def fetch(req: FetchRequest) -> dict[str, Any]:
         now = time.monotonic()
         rate_log[:] = [t for t in rate_log if now - t < 60]
