@@ -34,12 +34,12 @@ def model_family(model_id: str) -> str | None:
         return "xai"
     if text.startswith("cursor/composer"):
         return "cursor"
-    if "hermes" in text or "llama" in text:
-        return "llama"
     if "qwen" in text:
         return "qwen"
     if "gemma" in text:
         return "gemma"
+    if "llama" in text:
+        return "llama"
     if text.startswith("openai/") or "gpt" in text:
         return "openai"
     return None

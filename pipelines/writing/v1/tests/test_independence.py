@@ -80,6 +80,8 @@ def test_independence_partial_when_allowed() -> None:
         ("grok-3", "xai"),
         ("cursor/composer-2.5", "cursor"),
         ("hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid", "llama"),
+        ("hermes-4-14b-qwen3", "qwen"),
+        ("hermes-4-14b", None),
         ("llama-3-8b", "llama"),
         ("qwen3-14b-q4-k-m-40960", "qwen"),
         ("gemma-2-9b", "gemma"),
