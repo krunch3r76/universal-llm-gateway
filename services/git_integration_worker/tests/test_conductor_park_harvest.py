@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from unittest.mock import AsyncMock
@@ -431,6 +432,38 @@ def test_park_harvest_continue_owed_true_when_reply_arrived() -> None:
         row,
         reply_fn=lambda *_a, **_k: True,
     )
+
+
+def test_park_harvest_continue_owed_unchanged_for_live_harvest_id() -> None:
+    """Continue reads ledger/stop/body/hop keys, not the park grade.
+
+    A live harvest uuid and a non-id ``harvest G1`` body both still continue.
+    """
+    source = inspect.getsource(park_harvest_continue_owed)
+    assert "conductor_park_harvest_owed" not in source
+    assert "status_incomplete_class" not in source
+    assert "work_outcome" not in source
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="park-live-grade")
+    row = _production_parked_row(ledger, req)
+    record = json.loads(row["record_json"])
+    live = dict(record)
+    live["closeout_body"] = (
+        "stop: PARKED_TRANSPORT\n"
+        "NEXT_ADMIT: harvest 642fe99c-45e4-487d-9abb-132c1023a679\n"
+    )
+    g1 = dict(record)
+    g1["closeout_body"] = _PARKED_HARVEST_CLOSEOUT
+    row_live = dict(row)
+    row_g1 = dict(row)
+    row_live["record_json"] = json.dumps(live)
+    row_g1["record_json"] = json.dumps(g1)
+
+    def _reply(*_a, **_k):
+        return True
+
+    assert park_harvest_continue_owed(row_live, reply_fn=_reply)
+    assert park_harvest_continue_owed(row_g1, reply_fn=_reply)
 
 
 def test_park_harvest_continue_rejects_done_in_body() -> None:

@@ -221,6 +221,8 @@ def conductor_q2_score_ratify_degraded_reason(
 
 CONDUCTOR_CONSULT_PENDING = "conductor_consult_pending"
 CONDUCTOR_CONSULT_HANDOFF_MISSING = "conductor_consult_handoff_missing"
+# Designed park with a live harvest id. Not a consult gap and not paged.
+CONDUCTOR_PARK_HARVEST_OWED = "conductor_park_harvest_owed"
 CONDUCTOR_CONSULT_REASONS = frozenset(
     {
         CONDUCTOR_CONSULT_PENDING,

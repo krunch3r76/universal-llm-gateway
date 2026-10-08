@@ -271,13 +271,58 @@ def conductor_row_hop_degraded_reason(
     return None
 
 
+def _parked_transport_harvest_is_live(body: str, tokens: frozenset[str]) -> bool:
+    """Text-only live harvest: park token, id-shaped NEXT_ADMIT, harvest still owed.
+
+    False (fail closed to ``conductor_exit_persist``) when a designed ``stop:``
+    line is DONE, another exit-persist token or ``CONFIRM_PENDING`` is present,
+    the admit is absent or ``none``, the payload has no execution-id-shaped
+    token, or an archive / web-anthropic reply clears ``harvest_still_owed``.
+    Row-status DONE prose is not a designed stop. No I/O.
+    """
+    if "PARKED_TRANSPORT" not in tokens:
+        return False
+    from bus_watch.park_harvest import harvest_still_owed
+    from claude_bundles.conductor_stop import (
+        EXIT_PERSIST_STOPS,
+        last_next_admit_payload,
+        next_admit_names_harvest,
+        parse_designed_stop_tokens,
+    )
+
+    if "DONE" in parse_designed_stop_tokens(body).tokens:
+        return False
+    if tokens & (EXIT_PERSIST_STOPS - {"PARKED_TRANSPORT"}):
+        return False
+    if "CONFIRM_PENDING" in tokens:
+        return False
+
+    if not next_admit_names_harvest(body):
+        return False
+    if not last_next_admit_payload(body):
+        return False
+    if not harvest_still_owed(body=body):
+        return False
+    # Reuse the hop harvest-id matcher. Import is function-local: conductor_hop
+    # imports this module at load, so a module-level import would cycle.
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _harvest_target_token,
+    )
+
+    return _harvest_target_token(body) is not None
+
+
 def conductor_row_pinned_degraded_reason(
     *,
     body: str,
     packet_text: str | None = None,
     packet_kind: str | None = None,
 ) -> str | None:
-    """ROW_PINNED / other exit-persist tokens grade consult, not gate_d/work."""
+    """ROW_PINNED / exit-persist tokens grade consult, except a live park harvest.
+
+    Order: ROW_PINNED, then PARKED_TRANSPORT with a live harvest id
+    (``conductor_park_harvest_owed``), then any other exit-persist token.
+    """
     if not _packet_is_conductor(packet_kind, packet_text):
         return None
     from claude_bundles.conductor_stop import (
@@ -288,6 +333,12 @@ def conductor_row_pinned_degraded_reason(
     tokens = parse_stop_tokens(body).tokens
     if "ROW_PINNED" in tokens:
         return CONDUCTOR_ROW_PINNED
+    if _parked_transport_harvest_is_live(body, tokens):
+        from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+            CONDUCTOR_PARK_HARVEST_OWED,
+        )
+
+        return CONDUCTOR_PARK_HARVEST_OWED
     if tokens & EXIT_PERSIST_STOPS:
         return CONDUCTOR_EXIT_PERSIST
     return None
@@ -305,9 +356,7 @@ def conductor_has_live_nested(*, dispatch_id: str | None) -> bool:
     )
 
     ledger = CursorDispatchLedger.instance()
-    queue: list[str] = list(
-        ledger.list_nested_children(parent_dispatch_id=dispatch_id)
-    )
+    queue: list[str] = list(ledger.list_nested_children(parent_dispatch_id=dispatch_id))
     seen: set[str] = {dispatch_id}
     hops = 0
     while queue:

@@ -875,7 +875,7 @@ def resolve_work_outcome(
     divergence_reason: str | None = None,
     deviations: Iterable[str] | None = None,
     deliverables_expected: bool = False,
-) -> WorkOutcome:
+) -> WorkOutcome | None:
     """Grade work truth independently from capture_status (Fork A refined).
 
     G₁ (todo:success-shaped-silence): no-write intent conjuncts evaluate *before*
@@ -894,8 +894,12 @@ def resolve_work_outcome(
         return WorkOutcome.NOT_SHIPPED
     from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
         CONDUCTOR_CONSULT_REASONS,
+        CONDUCTOR_PARK_HARVEST_OWED,
     )
 
+    # Designed park: harvest is still owed, so there is no work outcome yet.
+    if degraded_reason == CONDUCTOR_PARK_HARVEST_OWED:
+        return None
     if degraded_reason in CONDUCTOR_CONSULT_REASONS:
         return WorkOutcome.UNVERIFIED
 
