@@ -33,7 +33,9 @@ def test_capability_async_posts_member_path() -> None:
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
     with bind_request("default", surface="code"):
         with patch("tools.pipeline.make_sync_client", return_value=client):
-            out = _capability_async("jobs/bus-reply-watch", {"args": {"thread": "1"}})
+            out = _capability_async(
+                "jobs/bus-reply-watch", {"args": {"thread": "1"}}
+            )
     assert out["href"] == "/api/v1/capabilities/jobs/bus-reply-watch/runs/r1"
     client.get.assert_not_called()
     client.post.assert_called_once_with(
@@ -57,9 +59,7 @@ def test_capability_async_passes_error_body(status_code: int, body: dict) -> Non
     resp.headers = {}
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
     with patch("tools.pipeline.make_sync_client", return_value=client):
-        out = _capability_async(
-            "jobs/nope" if status_code == 404 else "nope/member", None
-        )
+        out = _capability_async("jobs/nope" if status_code == 404 else "nope/member", None)
     assert out["code"] == body["code"]
     assert out["status_code"] == status_code
     client.get.assert_not_called()
