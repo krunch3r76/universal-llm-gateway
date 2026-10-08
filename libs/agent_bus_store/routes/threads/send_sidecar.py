@@ -12,7 +12,8 @@ from ...checkpoint_projection import CheckpointBodyTooLargeError
 from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
 from ...db import close_thread, get_thread, normalize_thread_id
 from ...db.thread_mint import mint_thread
-from ...db.turns import SlugExists, get_turn_by_number
+from ...db.thread_idempotency import existing_first_turn_for_idempotent_send
+from ...db.turns import SlugExists
 from ...enrollment_guard import EnrollmentTagError
 from ...thread_classification import ThreadClassificationError
 from ...turns_models import (
@@ -117,7 +118,9 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         thread_id = thread_row["id"]
         send_path = "new_thread"
         if thread_row.get("idempotent_replay"):
-            existing = get_turn_by_number(thread_id, 1)
+            existing = existing_first_turn_for_idempotent_send(
+                thread_id, idempotent_replay=True
+            )
             if existing is not None:
                 created_at = existing["created_at"]
                 if isinstance(created_at, str):

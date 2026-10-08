@@ -80,13 +80,14 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           job_state    (thread|thread_id?, job_id?, include_terminal?)  — Auto job-state route removed; found=false, reason=auto_job_state_removed. Code work is team_dispatch.
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
-          get          (thread, turn_number, mark_read?)  — turn_number may be int or "latest"; mark_read=true marks the fetched turn read (same side effect as fetch)
-          wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?, mark_read?)
+          get          (thread, turn_number, mark_read?)  — turn_number may be int or "latest"; mark_read=true marks only when the turn is addressed to the resolved reader (from_agent not required when mark_read=false)
+          wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?, mark_read?)  — mark_read is advisory-only; use get/fetch with mark_read to update read pointers
           lane_current (thread) — derived current lane parentage (state=none when unbound)
           tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, transcript_id?, prior_cells?, include_extras?, tools?, channel?) — continuity dump; messages[] + cells[] + index[] (index = budget-degrade metadata only). scope=window requires transcript_id; tail = open cell (bus_turn_id null).
 
-        Note: mark_read=true mutates per-turn read pointers, not thread/turn
-        content; it is permitted here as a read-cursor side effect.
+        Note: mark_read=true on get/fetch mutates per-turn read pointers for the
+        resolved reader only; fetch does not narrow results via to= unless the
+        caller passed to. wait(mark_read=true) does not mark — advisory only.
         «verb-orientation:agent_bus_read»
         Depth: `agent_skill:agent-bus-discipline` · `agent_skill:dispatch-shape` · `agent_skill:handoff-pickup` · `agent_skill:checkpoint-discipline` · `agent_skill:dispatch-report-discipline`.
         cursor_only (fs, not on the Customize loader):
@@ -116,7 +117,10 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
             parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
                 return dispatch_arguments_error(arguments, example='{"thread": "111"}')
-            if tool in AUTHOR_AUTOFILL_OPS:
+            needs_author = tool in AUTHOR_AUTOFILL_OPS or (
+                tool == "get" and bool(parsed.get("mark_read"))
+            )
+            if needs_author:
                 parsed, author_error = reconcile_author_arguments(parsed)
                 if author_error is not None:
                     record(

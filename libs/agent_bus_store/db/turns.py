@@ -314,6 +314,7 @@ def get_turns(
     last: int | None = None,
     compact: bool = False,
     mark_read: bool = False,
+    mark_read_seat: str | None = None,
     include_superseded: bool = False,
     after_turn: int | None = None,
 ) -> list[dict[str, Any]]:
@@ -371,14 +372,15 @@ def get_turns(
     with conn_cm as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
-        if mark_read and to is not None:
+        read_seat = mark_read_seat if mark_read_seat is not None else to
+        if mark_read and read_seat is not None:
             ts = now()
             unread_ids = [
                 r["id"]
                 for r in rows
                 if r["read_at"] is None
                 and turn_mark_read_eligible(
-                    seat=to, to_agent=str(r.get("to_agent") or "")
+                    seat=read_seat, to_agent=str(r.get("to_agent") or "")
                 )
             ]
             if unread_ids:

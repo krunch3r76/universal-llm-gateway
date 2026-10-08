@@ -419,6 +419,8 @@ class Turn(BaseModel):
 
 class TurnList(BaseModel):
     turns: list[Turn]
+    truncated: bool = False
+    next_after_turn: int | None = None
 
 
 class UnreadThreadTocRow(BaseModel):

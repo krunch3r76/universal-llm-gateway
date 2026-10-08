@@ -2,24 +2,39 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
+from fastmcp import FastMCP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 
+from tools._agent_bus_read import register_agent_bus_read_tool  # noqa: E402
 from tools.agent_bus import (  # noqa: E402
     _fetch_dispatch,
     _get_dispatch,
     _get_impl,
 )
 from tools.agent_bus._arg_rewrite import reconcile_dispatch_arguments
+
+
+@pytest.fixture
+def agent_bus_read_fn(monkeypatch: pytest.MonkeyPatch):
+    import tools.agent_bus as agent_bus_module
+
+    monkeypatch.setattr(agent_bus_module, "record", lambda *a, **k: None)
+    mcp = FastMCP("test-agent-bus-read-fixes")
+    register_agent_bus_read_tool(mcp)
+    tools = asyncio.run(mcp.list_tools())
+    return next(t for t in tools if t.name == "agent_bus_read").fn
 
 
 def _store_client(tmp_path: Path) -> TestClient:
@@ -179,7 +194,8 @@ def test_fetch_mark_read_passes_to_caller() -> None:
         ):
             _fetch_dispatch(thread="1", mark_read=True, after_turn=0)
 
-    assert captured.get("to") == "cursor"
+    assert "to" not in captured
+    assert captured.get("mark_read_seat") == "cursor"
     assert captured.get("mark_read") == "true"
 
 
@@ -201,3 +217,105 @@ def test_get_dispatch_marks_with_from_autofill() -> None:
             _get_dispatch(thread="1", turn_number=1, mark_read=True)
             impl.assert_called_once()
             assert impl.call_args.kwargs["reader_agent"] == "cursor"
+
+
+def test_agent_bus_read_get_without_mark_read_no_author_required(
+    agent_bus_read_fn,
+) -> None:
+    from request_profile import bind_request
+
+    with bind_request("default", surface=None):
+        with patch("tools.agent_bus.fetch._get_impl", return_value={"turn": {"id": 1}}):
+            result = agent_bus_read_fn(
+                tool="get",
+                arguments='{"thread": "1", "turn_number": 1, "mark_read": false}',
+            )
+    assert "error" not in result
+    assert result.get("reason") != "from_agent_required"
+
+
+def test_fetch_mark_read_same_turn_list_as_without_mark_read() -> None:
+    sample_turns = [{"id": 1, "turn_number": 1}, {"id": 2, "turn_number": 2}]
+    seen: list[dict[str, str]] = []
+
+    def relay(service: str, method: str, path: str, **kwargs) -> dict:
+        del service, kwargs
+        qs = urlparse(path).query
+        seen.append({k: v[0] for k, v in parse_qs(qs).items()})
+        return {"turns": list(sample_turns)}
+
+    with patch("tools.agent_bus.fetch.relay", side_effect=relay):
+        with patch(
+            "tools.agent_bus.fetch.resolve_dispatch_from_agent",
+            return_value=("cursor", None),
+        ):
+            plain = _fetch_dispatch(thread="1", mark_read=False)
+            marked = _fetch_dispatch(thread="1", mark_read=True)
+    assert "to" not in seen[0]
+    assert "to" not in seen[1]
+    assert seen[1].get("mark_read_seat") == "cursor"
+    plain_turns = plain if isinstance(plain, list) else plain.get("turns", [])
+    marked_turns = marked if isinstance(marked, list) else marked.get("turns", [])
+    assert [t["id"] for t in plain_turns] == [t["id"] for t in marked_turns]
+
+
+def test_fetch_thread_mark_read_marks_for_reader(tmp_path) -> None:
+    with _store_client(tmp_path) as client:
+        send = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "mark-read-thread",
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "s",
+                "body": "b",
+            },
+        )
+        assert send.status_code == 201
+        thread_id = send.json()["thread"]["id"]
+        listed = client.get(
+            "/turns",
+            params={
+                "thread": thread_id,
+                "mark_read": "true",
+                "mark_read_seat": "cursor",
+            },
+        )
+        assert listed.status_code == 200
+        turns = listed.json()["turns"]
+        assert len(turns) == 1
+        assert turns[0]["read_at"] is not None
+
+
+def test_fetch_after_turn_truncation_flag_when_capped(tmp_path) -> None:
+    with _store_client(tmp_path) as client:
+        send = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "trunc-thread",
+                "from": "cursor",
+                "to": "web-anthropic",
+                "subject": "s",
+                "body": "b",
+            },
+        )
+        thread_id = send.json()["thread"]["id"]
+        for i in range(2, 13):
+            client.post(
+                "/threads/send",
+                json={
+                    "thread": thread_id,
+                    "from": "cursor",
+                    "to": "web-anthropic",
+                    "subject": f"s{i}",
+                    "body": f"b{i}",
+                },
+            )
+        page = client.get(
+            "/turns",
+            params={"thread": thread_id, "after_turn": 0, "last": 10},
+        )
+        data = page.json()
+        assert data["truncated"] is True
+        assert data["next_after_turn"] == 10
+        assert len(data["turns"]) == 10

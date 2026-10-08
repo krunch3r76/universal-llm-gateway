@@ -270,22 +270,44 @@ async def list_turns(
             "Omit for tip window (newest-first). Not the POST unread guard."
         ),
     ),
+    mark_read_seat: AgentName | None = Query(
+        None,
+        description=(
+            "Seat whose read pointers mark_read updates — does not filter results. "
+            "Used when mark_read=true without a to= inbox filter."
+        ),
+    ),
 ) -> TurnList:
     """List turns with optional filters and optional mark-read side effects."""
     if thread is not None:
         thread = normalize_thread_id(thread)
+    fetch_last = last
+    if after_turn is not None and last is not None:
+        fetch_last = last + 1
     rows = get_turns(
         thread=thread,
         to=to,
         unread=unread,
         status=turn_status,
-        last=last,
+        last=fetch_last,
         compact=compact,
         mark_read=mark_read_flag,
+        mark_read_seat=mark_read_seat,
         include_superseded=include_superseded,
         after_turn=after_turn,
     )
-    return TurnList(turns=_rows_to_turns(rows))
+    truncated = False
+    next_after_turn: int | None = None
+    if after_turn is not None and last is not None and len(rows) > last:
+        truncated = True
+        rows = rows[:last]
+        if rows:
+            next_after_turn = int(rows[-1]["turn_number"])
+    return TurnList(
+        turns=_rows_to_turns(rows),
+        truncated=truncated,
+        next_after_turn=next_after_turn,
+    )
 
 
 @router.get(

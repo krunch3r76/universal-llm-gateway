@@ -9,9 +9,13 @@ the first call created so ``create_thread`` returns it instead.
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any
 
+from .connection import write_connect
 from .threads import get_thread_with_links
+
+_IDEMPOTENT_TURN1_WAIT_S = 30.0
 
 
 def thread_id_for_idempotency_key(conn: sqlite3.Connection, key: str) -> str | None:
@@ -30,3 +34,36 @@ def replayed_thread_detail(thread_id: str) -> dict[str, Any]:
         )
     detail["idempotent_replay"] = True
     return detail
+
+
+def _turn1_row(conn: sqlite3.Connection, thread_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM turns WHERE thread = ? AND turn_number = 1 LIMIT 1",
+        (thread_id,),
+    ).fetchone()
+    return None if row is None else dict(row)
+
+
+def existing_first_turn_for_idempotent_send(
+    thread_id: str,
+    *,
+    idempotent_replay: bool,
+) -> dict[str, Any] | None:
+    """Return turn 1 under write serialization when a send must not insert again.
+
+    Idempotent replays wait (bounded) for an in-flight first turn on the same
+    thread so concurrent retries cannot both miss turn 1 outside the lock.
+    """
+    deadline = time.monotonic() + _IDEMPOTENT_TURN1_WAIT_S
+    while True:
+        with write_connect() as conn:
+            existing = _turn1_row(conn, thread_id)
+            if existing is not None:
+                return existing
+            if not idempotent_replay:
+                return None
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"idempotent replay timed out waiting for turn 1 on thread {thread_id!r}"
+            )
+        time.sleep(0.002)

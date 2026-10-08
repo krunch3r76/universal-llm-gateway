@@ -24,6 +24,7 @@ def _fetch_impl(
     mark_read: bool,
     compact: bool,
     after_turn: int | None = None,
+    mark_read_seat: str | None = None,
 ) -> dict[str, Any]:
     if to is None and thread is None:
         return {"error": "fetch requires at least one of: to, thread"}
@@ -43,6 +44,8 @@ def _fetch_impl(
         params["after_turn"] = after_turn
     if mark_read:
         params["mark_read"] = "true"
+    if mark_read_seat:
+        params["mark_read_seat"] = mark_read_seat
 
     qs = urlencode(params)
     result = relay("agent-bus", "GET", f"/turns?{qs}")
@@ -215,21 +218,34 @@ def _fetch_dispatch(
         effective_last = None
     else:
         effective_last = max(1, min(last, _FETCH_CONTEXT_CAP))
+    mark_read_seat: str | None = None
+    advisories: list[str] = []
     if mark_read:
         reader_agent, author_err = resolve_dispatch_from_agent()
         if author_err is not None:
             return author_err
-        if effective_to is None and reader_agent:
-            effective_to = reader_agent
-    return _fetch_impl(
+        mark_read_seat = reader_agent or None
+        if not mark_read_seat:
+            advisories.append(
+                "fetch: mark_read skipped — reader seat could not be resolved"
+            )
+    result = _fetch_impl(
         to=effective_to,
         thread=effective_thread,
         last=effective_last,
         unread=unread,
-        mark_read=mark_read,
+        mark_read=mark_read and bool(mark_read_seat),
         compact=compact,
         after_turn=after_turn,
+        mark_read_seat=mark_read_seat,
     )
+    if advisories and isinstance(result, dict) and "error" not in result:
+        prior = result.get("argument_rewrite_advisory")
+        merged = "; ".join(advisories)
+        result["argument_rewrite_advisory"] = (
+            f"{prior}; {merged}" if prior else merged
+        )
+    return result
 
 
 def _get_dispatch(

@@ -269,7 +269,10 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                         reason=str(alias_error.get("reason", "")),
                     )
                     return alias_error
-            if tool in AUTHOR_AUTOFILL_OPS:
+            needs_author = tool in AUTHOR_AUTOFILL_OPS or (
+                tool == "get" and bool(parsed.get("mark_read"))
+            )
+            if needs_author:
                 parsed, author_error = reconcile_author_arguments(parsed)
                 if author_error is not None:
                     record(
