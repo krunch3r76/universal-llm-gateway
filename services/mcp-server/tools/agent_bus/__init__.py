@@ -17,6 +17,7 @@ from .._agent_bus_author import AUTHOR_AUTOFILL_OPS, reconcile_author_arguments
 from .._agent_bus_post_guard import reconcile_post_arguments, reconcile_send_arguments
 from .._agent_tools import JsonArgStr
 from .._local_relay import relay as _relay
+from ._arg_rewrite import reconcile_dispatch_arguments
 from ._shared import (
     _FETCH_CONTEXT_CAP,
     _format_agent_bus_error,
@@ -277,6 +278,14 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                         reason=str(author_error.get("reason", "")),
                     )
                     return author_error
+            parsed, rewrite_error = reconcile_dispatch_arguments(tool, parsed)
+            if rewrite_error is not None:
+                record(
+                    "mcp.agentbus.dispatch.rejected",
+                    tool=tool,
+                    reason=str(rewrite_error.get("reason", "")),
+                )
+                return rewrite_error
             accepted = set(inspect.signature(handler).parameters)
             unknown = [k for k in parsed if k not in accepted]
             if unknown:

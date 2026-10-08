@@ -31,6 +31,7 @@ from .agent_bus import (
     _threads_dispatch,
     _wait_dispatch,
 )
+from .agent_bus._arg_rewrite import reconcile_dispatch_arguments
 from .agent_bus.lane_associations import _lane_current_dispatch
 from .agent_bus.threads import _job_state_dispatch, _tape_dispatch, _thread_get_dispatch
 
@@ -111,6 +112,15 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
             parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
                 return dispatch_arguments_error(arguments, example='{"thread": "111"}')
+            parsed, rewrite_error = reconcile_dispatch_arguments(tool, parsed)
+            if rewrite_error is not None:
+                record(
+                    "mcp.agentbus.dispatch.rejected",
+                    tool=tool,
+                    surface="read",
+                    reason=str(rewrite_error.get("reason", "")),
+                )
+                return rewrite_error
             accepted = set(inspect.signature(handler).parameters)
             unknown = [k for k in parsed if k not in accepted]
             if unknown:

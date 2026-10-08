@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from fastmcp import FastMCP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import agent_bus as agent_bus_module  # noqa: E402
 from tools._agent_bus_post_guard import reconcile_send_arguments  # noqa: E402
+from tools.agent_bus import register_agent_bus_tools  # noqa: E402
+from tools.agent_bus._arg_rewrite import reconcile_dispatch_arguments  # noqa: E402
+
+
+@pytest.fixture
+def agent_bus_fn(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(agent_bus_module, "record", lambda *a, **k: None)
+    mcp = FastMCP("test-agent-bus-arg-rewrite")
+    register_agent_bus_tools(mcp)
+    tools = asyncio.run(mcp.list_tools())
+    return next(t for t in tools if t.name == "agent_bus").fn
 
 
 def test_structured_relay_error_surfaces_unread_turns_exist() -> None:
@@ -273,7 +287,7 @@ def test_send_rejects_cursor_auto_spellings(bad_to: str) -> None:
     _, err = reconcile_send_arguments({"to": bad_to, "subject": "s", "body": "b"})
     assert err is not None
     assert err["reason"] == "send_to_cursor_auto_not_addressable"
-    assert "request" in err["error"]
+    assert "team_dispatch" in err["error"]
     assert "to='cursor'" in err["error"]
 
 
@@ -289,3 +303,156 @@ def test_send_rejects_cursor_auto_spellings(bad_to: str) -> None:
 def test_send_passes_live_addresses(ok_to: str) -> None:
     _, err = reconcile_send_arguments({"to": ok_to, "subject": "s", "body": "b"})
     assert err is None
+
+
+def test_wait_timeout_seconds_rewrites_to_wait_seconds(agent_bus_fn) -> None:
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    def _record(signal: str, **payload: Any) -> None:
+        recorded.append((signal, payload))
+
+    with patch.object(agent_bus_module.lifecycle, "MAX_WAIT_SECONDS", 320.0):
+        with patch.object(
+            agent_bus_module,
+            "_relay",
+            return_value={"status": "no_new_turn", "complete": False},
+        ):
+            with patch.object(agent_bus_module, "record", side_effect=_record):
+                result = asyncio.run(
+                    agent_bus_fn(
+                        tool="wait",
+                        arguments=json.dumps(
+                            {
+                                "thread": "15609",
+                                "timeout_seconds": 290,
+                                "from_agent": "grok-bot",
+                                "completion": "thread_closed",
+                            }
+                        ),
+                    )
+                )
+
+    assert "error" not in result
+    called = next(p for s, p in recorded if s == "mcp.agentbus.wait.called")
+    assert called["wait_seconds"] == 290.0
+
+
+def test_wait_rejects_timeout_seconds_with_wait_seconds(agent_bus_fn) -> None:
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    def _record(signal: str, **payload: Any) -> None:
+        recorded.append((signal, payload))
+
+    with patch.object(agent_bus_module, "record", side_effect=_record):
+        result = asyncio.run(
+            agent_bus_fn(
+                tool="wait",
+                arguments=json.dumps(
+                    {
+                        "thread": "15609",
+                        "wait_seconds": 10,
+                        "timeout_seconds": 290,
+                        "from_agent": "grok-bot",
+                    }
+                ),
+            )
+        )
+
+    assert "error" in result
+    assert result.get("reason") == "wait_timeout_conflict"
+    assert not any(s == "mcp.agentbus.wait.called" for s, _ in recorded)
+
+
+def test_mark_read_agent_through_turn_unchanged(agent_bus_fn) -> None:
+    captured: list[dict[str, Any]] = []
+
+    def _relay(
+        service: str, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        del service, method, path
+        captured.append(kwargs.get("body") or {})
+        return {"marked_read": 1}
+
+    with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+        result = asyncio.run(
+            agent_bus_fn(
+                tool="mark_read",
+                arguments=json.dumps(
+                    {
+                        "thread": "15741",
+                        "agent": "grok-bot",
+                        "through_turn": 12,
+                    }
+                ),
+            )
+        )
+
+    assert "error" not in result
+    assert captured[0]["agent"] == "grok-bot"
+    assert captured[0]["through_turn"] == 12
+    assert "turn_numbers" not in captured[0]
+
+
+def test_mark_read_reader_and_turn_number_rewrite() -> None:
+    parsed, err = reconcile_dispatch_arguments(
+        "mark_read",
+        {"thread": "15741", "reader": "grok-bot", "turn_number": 25},
+    )
+    assert err is None
+    assert parsed["agent"] == "grok-bot"
+    assert parsed["turn_numbers"] == [25]
+    assert "reader" not in parsed
+    assert "turn_number" not in parsed
+
+
+def test_mark_read_reader_turn_number_reaches_handler(agent_bus_fn) -> None:
+    captured: list[dict[str, Any]] = []
+
+    def _relay(
+        service: str, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        del service, method, path
+        captured.append(kwargs.get("body") or {})
+        return {"marked_read": 1}
+
+    with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+        result = asyncio.run(
+            agent_bus_fn(
+                tool="mark_read",
+                arguments=json.dumps(
+                    {
+                        "thread": "15741",
+                        "reader": "grok-bot",
+                        "turn_number": 25,
+                    }
+                ),
+            )
+        )
+
+    assert "error" not in result
+    assert captured[0]["turn_numbers"] == [25]
+
+
+def test_fetch_after_turn_still_rejected(agent_bus_fn) -> None:
+    result = asyncio.run(
+        agent_bus_fn(
+            tool="fetch",
+            arguments=json.dumps({"thread": "15609", "after_turn": 3}),
+        )
+    )
+    assert "error" in result
+    msg = result["error"]
+    assert "last" in msg
+    assert "get" in msg
+
+
+def test_unmapped_argument_still_rejected(agent_bus_fn) -> None:
+    result = asyncio.run(
+        agent_bus_fn(
+            tool="fetch",
+            arguments=json.dumps({"thread": "15609", "frobnicate": 1}),
+        )
+    )
+    assert "error" in result
+    assert "frobnicate" in result["error"]
+    assert "unsupported argument" in result["error"]
