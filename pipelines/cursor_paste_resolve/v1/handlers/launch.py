@@ -80,12 +80,14 @@ def cursor_sdk_refuse_payload(
     *,
     reason: str,
     admit: dict[str, Any],
+    finalize: str = "",
 ) -> dict[str, Any]:
     return {
         "ok": False,
         "http_status": 422,
         "error": reason,
         "admit": admit,
+        "finalize": finalize,
     }
 
 
@@ -225,6 +227,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
     kind = bound["kind"]
     assertion_id = bound["assertion_id"]
     thread_id = bound["dispatch_thread_id"]
+    finalize = bound.get("finalize") or ""
     admit = team_dispatch_admit_shape(
         kind=kind,
         assertion_id=assertion_id,
@@ -236,6 +239,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
         payload = cursor_sdk_refuse_payload(
             reason="dispatch_thread_id 12286 is maestro memo only — mint a work/review thread",
             admit=admit,
+            finalize=finalize,
         )
         return _step(payload, error=payload["error"])
 
@@ -246,6 +250,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
             payload = cursor_sdk_refuse_payload(
                 reason="AGENT_BUS_TOKEN unset — cannot mint a thread",
                 admit=admit,
+                finalize=finalize,
             )
             return _step(payload, error=payload["error"])
         async with make_async_client(
@@ -262,6 +267,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
                 payload = cursor_sdk_refuse_payload(
                     reason=f"create_thread failed: {mint['error']}",
                     admit=admit,
+                    finalize=finalize,
                 )
                 return _step(payload, error=payload["error"])
             thread_id = str(mint.get("id") or "")
@@ -269,6 +275,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
                 payload = cursor_sdk_refuse_payload(
                     reason="create_thread returned no id",
                     admit=admit,
+                    finalize=finalize,
                 )
                 return _step(payload, error=payload["error"])
             admit["dispatch_thread_id"] = thread_id
@@ -295,6 +302,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
             "http_status": dispatched.get("http_status") or 422,
             "error": str(err)[:500],
             "admit": admit,
+            "finalize": finalize,
             "dispatch": dispatched,
         }
         return _step(payload, error=payload["error"])
@@ -304,6 +312,7 @@ async def _launch_cursor_sdk(bound: dict[str, Any], message_file: Path) -> StepO
             "launch_target": "cursor_sdk",
             "dispatch_thread_id": thread_id,
             "admit": admit,
+            "finalize": finalize,
             "dispatch": dispatched,
         }
     )

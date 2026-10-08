@@ -12,9 +12,11 @@ import yaml
 from systems.pipeline.core.pipeline_config import PipelineSpec
 from work_key_grammar import is_valid_work_key_scheme
 
+from . import compose as compose_mod
 from . import investigate as investigate_mod
 from . import investigate_wait as investigate_wait_mod
 from . import launch
+from ._finalize import dispatcher_finalize_suffix
 from ._message import (
     CURSOR_SDK_MODEL,
     SPLICE_END,
@@ -28,6 +30,7 @@ from ._message import (
     team_dispatch_admit_shape,
     work_key_for,
 )
+from .compose import CursorPasteComposeHandler
 from .investigate import CursorPasteInvestigateHandler
 from .investigate_wait import (
     WAIT_CLIENT_TIMEOUT,
@@ -56,6 +59,7 @@ def test_pipeline_yaml_loads() -> None:
     assert "investigate" in opts
     assert "tab_model" in opts
     assert "operator_note" in opts
+    assert "finalize" in opts
 
 
 def test_parse_compose_options_rejects_bad_kind() -> None:
@@ -465,6 +469,251 @@ def test_compose_message_operator_note_order_and_constraints() -> None:
     bare = compose_message("friction", 1, "", impl)
     assert "<operator_note>" not in bare
     assert "operator_note" not in bare or "<operator_note>" not in bare
+
+
+def test_parse_compose_options_finalize_binds() -> None:
+    base = {"kind": "friction", "assertion_id": 1}
+    assert parse_compose_options(base)["finalize"] == ""
+    assert parse_compose_options({**base, "finalize": "  "})["finalize"] == ""
+    dispatchee = parse_compose_options({**base, "finalize": "dispatchee"})
+    assert dispatchee["finalize"] == "dispatchee"
+    for target in ("cursor_sdk", ""):
+        bound = parse_compose_options(
+            {**base, "finalize": "dispatcher", "launch_target": target}
+        )
+        assert bound["finalize"] == "dispatcher"
+
+
+def test_parse_compose_options_finalize_unknown_refuses() -> None:
+    err = parse_compose_options(
+        {"kind": "friction", "assertion_id": 1, "finalize": "cowork"}
+    )
+    assert isinstance(err, str)
+    assert "cowork" in err
+    assert "allowed: dispatchee, dispatcher" in err
+
+
+@pytest.mark.parametrize("target", ["glass", "ide"])
+def test_parse_compose_options_finalize_dispatcher_refuses_glass_ide(
+    target: str,
+) -> None:
+    err = parse_compose_options(
+        {
+            "kind": "friction",
+            "assertion_id": 1,
+            "host": "orion-node",
+            "launch_target": target,
+            "finalize": "dispatcher",
+        }
+    )
+    assert isinstance(err, str)
+    assert "cursor_sdk launches only" in err
+    assert f"launch_target={target}" in err
+    glass_default = parse_compose_options(
+        {"kind": "friction", "assertion_id": 1, "launch_target": target}
+    )
+    assert glass_default["finalize"] == ""
+
+
+def test_compose_message_dispatcher_suffix_last_and_untagged() -> None:
+    impl = "IMPLEMENTER-BODY\n"
+    kwargs = {
+        "investigate_model": "cursor/claude-opus-5-5",
+        "investigate_splice": "surfaces: x",
+        "tab_model": "opus",
+        "operator_note": "judgment bytes",
+    }
+    today = compose_message("friction", 38698, "maestro", impl, **kwargs)
+    out = compose_message(
+        "friction", 38698, "maestro", impl, finalize="dispatcher", **kwargs
+    )
+    suffix = dispatcher_finalize_suffix("friction", 38698)
+    assert out.endswith(suffix)
+    assert out == today + suffix
+    assert impl in out
+    head = "## Finalize ownership: dispatcher (overrides earlier steps)"
+    assert out.count(head) == 1
+    assert out.index(impl) < out.index(head)
+    assert out.index("same model_identity as this Glass tab).") < out.index(head)
+    assert out.index("The <operator_note> block earlier") < out.index(head)
+    assert out.index("thread 12286 reporting the closure") < out.index(head)
+    assert "friction:38698 by any other tool" in suffix
+    assert "<kind>" not in out and "<id>" not in out
+    assert "<" not in suffix and ">" not in suffix
+
+
+def test_dispatcher_suffix_four_clauses() -> None:
+    suffix = dispatcher_finalize_suffix("assertion", 7)
+    for phrase in (
+        "restart intent",
+        "friction_close",
+        "12286",
+        "land_sha",
+        "importer services",
+        "Then stop",
+        "assertion:7",
+    ):
+        assert phrase in suffix
+    for clause in ("\n1. ", "\n2. ", "\n3. ", "\n4. "):
+        assert clause in suffix
+
+
+@pytest.mark.parametrize("notify", ["", "maestro"])
+@pytest.mark.parametrize("investigate", ["", "opus"])
+@pytest.mark.parametrize("operator_note", ["", "x"])
+@pytest.mark.parametrize("tab_model", ["", "opus"])
+def test_compose_message_finalize_default_byte_identity(
+    notify: str, investigate: str, operator_note: str, tab_model: str
+) -> None:
+    impl = "IMPLEMENTER-BODY\n"
+    kwargs = {
+        "investigate_model": "cursor/claude-opus-5-5" if investigate else "",
+        "investigate_splice": "surfaces: x" if investigate else "",
+        "tab_model": tab_model,
+        "operator_note": operator_note,
+    }
+    today = compose_message("friction", 7, notify, impl, **kwargs)
+    blank = compose_message("friction", 7, notify, impl, finalize="", **kwargs)
+    dispatchee = compose_message(
+        "friction", 7, notify, impl, finalize="dispatchee", **kwargs
+    )
+    assert blank == today
+    assert dispatchee == today
+    assert "Finalize ownership" not in today
+
+
+class _NoNetworkClient:
+    async def __aenter__(self) -> _NoNetworkClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_compose_payload_echoes_finalize(tmp_path: Path, monkeypatch) -> None:
+    async def fake_dispatch(
+        _client: object, _op: str, args: dict[str, object]
+    ) -> dict[str, object]:
+        return {"id": args["assertion_id"], "claim": "x"}
+
+    monkeypatch.setattr(
+        compose_mod, "make_async_client", lambda *a, **k: _NoNetworkClient()
+    )
+    monkeypatch.setattr(compose_mod, "cortex_dispatch", fake_dispatch)
+    monkeypatch.setattr(
+        compose_mod, "read_implementer", lambda files_root=None: "IMPLEMENTER-BODY\n"
+    )
+    monkeypatch.setattr(compose_mod, "workspaces_root", lambda: tmp_path)
+    ctx = SimpleNamespace(
+        options={
+            "kind": "friction",
+            "assertion_id": 5,
+            "launch_target": "cursor_sdk",
+            "finalize": "dispatcher",
+        },
+        outputs={},
+    )
+    out = await CursorPasteComposeHandler().execute(
+        SimpleNamespace(handler_inputs={}), ctx
+    )
+    assert out.json["ok"] is True
+    assert out.json["finalize"] == "dispatcher"
+    body = Path(out.json["message_path"]).read_text(encoding="utf-8")
+    assert body.endswith(dispatcher_finalize_suffix("friction", 5))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"finalize": "cowork", "launch_target": "cursor_sdk"},
+        {"finalize": "dispatcher", "launch_target": "glass", "host": "orion-node"},
+        {"finalize": "dispatcher", "launch_target": "ide", "host": "jupiter"},
+    ],
+)
+async def test_compose_finalize_refuse_writes_nothing_and_launch_skips(
+    tmp_path: Path, monkeypatch, extra: dict[str, str]
+) -> None:
+    def no_client(*_a: object, **_k: object) -> _NoNetworkClient:
+        raise AssertionError("refused compose must not reach cortex")
+
+    monkeypatch.setattr(compose_mod, "make_async_client", no_client)
+    monkeypatch.setattr(compose_mod, "workspaces_root", lambda: tmp_path)
+    opts = {"kind": "friction", "assertion_id": 1, **extra}
+    composed = await CursorPasteComposeHandler().execute(
+        SimpleNamespace(handler_inputs={}), SimpleNamespace(options=opts, outputs={})
+    )
+    assert composed.json["ok"] is False
+    assert "finalize" in composed.error
+    assert not (tmp_path / "tmp").exists()
+
+    called = {"n": 0}
+
+    def runner(_argv: list[str], _env: dict[str, str]) -> dict[str, object]:
+        called["n"] += 1
+        return {"returncode": 0, "parsed": {"ok": True}}
+
+    handler = CursorPasteLaunchHandler()
+    handler.bridge_runner = runner  # type: ignore[method-assign]
+    out = await handler.execute(
+        SimpleNamespace(handler_inputs={}),
+        SimpleNamespace(options=opts, outputs={"compose": composed}),
+    )
+    assert out.json["ok"] is False
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cursor_sdk_launch_payload_echoes_finalize(
+    tmp_path: Path, monkeypatch
+) -> None:
+    msg = tmp_path / "msg.md"
+    msg.write_text("prompt", encoding="utf-8")
+    posts: list[dict[str, object]] = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict[str, object]:
+            return {"execution_id": "e1"}
+
+    class _Client(_NoNetworkClient):
+        async def post(
+            self,
+            path: str,
+            json: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+        ) -> _Resp:
+            posts.append({"path": path, "json": json})
+            return _Resp()
+
+    monkeypatch.setattr(launch, "make_async_client", lambda *a, **k: _Client())
+    opts = {
+        "kind": "friction",
+        "assertion_id": 1,
+        "launch_target": "cursor_sdk",
+        "dispatch_thread_id": "5555",
+        "finalize": "dispatcher",
+    }
+    compose_out = SimpleNamespace(json={"ok": True, "message_path": str(msg)})
+    out = await CursorPasteLaunchHandler().execute(
+        SimpleNamespace(handler_inputs={}),
+        SimpleNamespace(options=opts, outputs={"compose": compose_out}),
+    )
+    assert out.json["ok"] is True
+    assert out.json["finalize"] == "dispatcher"
+    assert "finalize" not in posts[0]["json"]
+    refused = await CursorPasteLaunchHandler().execute(
+        SimpleNamespace(handler_inputs={}),
+        SimpleNamespace(
+            options={**opts, "dispatch_thread_id": "12286"},
+            outputs={"compose": compose_out},
+        ),
+    )
+    assert refused.json["http_status"] == 422
+    assert refused.json["finalize"] == "dispatcher"
 
 
 @pytest.mark.asyncio

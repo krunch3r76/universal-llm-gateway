@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ._finalize import FINALIZE_DISPATCHER, dispatcher_finalize_suffix, parse_finalize
+
 ALLOWED_KINDS = frozenset({"friction", "assertion"})
 ALLOWED_WINDOWS = frozenset({"glass", "ide"})
 ALLOWED_HOSTS = frozenset({"orion-node", "jupiter"})
@@ -162,6 +164,9 @@ def parse_compose_options(opts: dict[str, Any]) -> dict[str, Any] | str:
             "operator_note exceeds 8000 codepoints "
             f"(got {len(operator_note)}); shorten or split — no silent truncate"
         )
+    finalize = parse_finalize(opts.get("finalize"), launch_target)
+    if isinstance(finalize, tuple):
+        return finalize[0]
     return {
         "kind": kind,
         "assertion_id": raw_id,
@@ -173,6 +178,7 @@ def parse_compose_options(opts: dict[str, Any]) -> dict[str, Any] | str:
         "tab_model": tab_model,
         "dispatch_thread_id": str(opts.get("dispatch_thread_id") or "").strip(),
         "operator_note": operator_note,
+        "finalize": finalize,
     }
 
 
@@ -279,6 +285,7 @@ def compose_message(
     investigate_splice: str = "",
     tab_model: str = "",
     operator_note: str = "",
+    finalize: str = "",
 ) -> str:
     closed = "complete-to-maestro" if notify == "maestro" else "complete"
     parts = [rename_block(kind, assertion_id, closed)]
@@ -296,6 +303,8 @@ def compose_message(
             operator_note=operator_note,
         )
     )
+    if finalize == FINALIZE_DISPATCHER:
+        parts.append(dispatcher_finalize_suffix(kind, assertion_id))
     return "".join(parts)
 
 

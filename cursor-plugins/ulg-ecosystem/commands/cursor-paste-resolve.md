@@ -25,6 +25,8 @@ After kind and id, zero or more tokens. Classify each by its set. `opus` / `fabl
 | investigate | `opus`, `claude-opus`, `cursor/claude-opus-5-5`, `fable`, `claude-fable`, `cursor/claude-fable-5-1`, `cursor/claude-fable-5` | no investigate hop |
 | tab | `tab-opus`, `tab-fable` | no Glass model query |
 
+`finalize` is options-only (no slash token in v1): default `dispatchee` (the executor restarts and closes, as today). `finalize=dispatcher` appends the dispatcher-finalize block last (executor lands, posts land_sha + importer services, stops) and refuses on `glass`/`ide`; Cowork passes it on every cursor_sdk fire (a:38698).
+
 Fold investigate aliases to `opus` or `fable` before calling the pipeline. Fold tab tokens to `tab_model=opus|fable`. Fold steal cues to `launch_target=cursor_sdk`. A missing window focuses Cursor Glass. A missing host is never filled with `jupiter` or `orion-node` by default. Thread `12286` is the maestro closure memo only — never `dispatch_thread_id`.
 
 Specimens: `glass orion-node opus cursor_sdk` (or “Glass … Opus on cursor_sdk”) → window=glass, investigate=opus, **paste Glass**. `cursor_sdk opus` (no window) → investigate=opus, **SDK write**. `glass orion-node opus no-paste` → investigate=opus, **SDK write**.

@@ -108,6 +108,7 @@ class CursorPasteComposeHandler(BaseHandler):
             investigate_splice=investigate_splice,
             tab_model=bound["tab_model"],
             operator_note=bound["operator_note"],
+            finalize=bound["finalize"],
         )
         dest.write_text(body, encoding="utf-8")
         payload = {
@@ -121,6 +122,7 @@ class CursorPasteComposeHandler(BaseHandler):
             "investigate": bound["investigate"],
             "tab_model": bound["tab_model"],
             "operator_note": bound["operator_note"],
+            "finalize": bound["finalize"],
             "message_path": str(dest),
             "implementer_uri": IMPLEMENTER_URI,
         }

@@ -20,8 +20,11 @@
 #              "tab_model": "opus"|"fable"|absent,  # Glass Ctrl+/ query
 #              "dispatch_thread_id": "<minted>", # cursor_sdk write executor
 #              "operator_note": "<prose>",       # data-only <operator_note> before implementer; soft refuse >8000
+#              "finalize": "dispatchee"|"dispatcher"|absent, # who restarts+closes; dispatcher = cursor_sdk or compose-only
 #            })
 # cursor_sdk admit always pairs reuse_thread=dispatch_thread_id (after mint or caller-supplied).
+# finalize=dispatcher appends the untagged dispatcher-finalize block last (a:38698);
+# absent/""/dispatchee are byte-identical; glass/ide + dispatcher refuses.
 
 schema_version: 6
 id: cursor-paste-resolve
@@ -54,6 +57,15 @@ options:
       optional seat-judgment prose spliced as <operator_note> after investigate
       and before implementer bytes (data, not instructions); soft refuse if
       longer than 8000 codepoints
+    default: ""
+  finalize:
+    type: string
+    description: >
+      dispatchee | dispatcher; empty = dispatchee (executor restarts and
+      closes). dispatcher appends a plain constraints block last (no restart,
+      no friction_close, no 12286 post; land, post land_sha + importer
+      services, stop). dispatcher refuses on launch_target glass|ide; unknown
+      values refuse
     default: ""
 
 steps:

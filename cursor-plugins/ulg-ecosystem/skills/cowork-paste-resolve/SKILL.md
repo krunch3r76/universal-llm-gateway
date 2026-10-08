@@ -41,6 +41,7 @@ This is **not** the Grok liaison path-1 peer-spawn skill — Cowork **is** the d
 - ¬ grok_bot_bridge
 - friction_resolve ⇒ judgment_here ∨ investigate_opt_in ∧ pipeline ∧ finalize_here
 - finalize ⇔ this_seat owns land + friction_close (same as spawned Cursor tab)
+- `launch_target=cursor_sdk` ⇒ `options.finalize=dispatcher` on every fire — executor lands, posts land_sha + importer services on the write thread, then stops; this seat owns restart + live probe + friction_close (a:38698). `finalize=dispatcher` refuses on glass/ide
 - notify=maestro ⇔ closure memo thread **12286** only — never `dispatch_thread_id`
 - wait_timeout MCP -32001 ⇔ expected ∧ re-poll agent_bus
 - bus_watch ⇔ continuous `agent_bus` wait re-poll (cite `runbook:bus-consult-watcher`); cron wake routines = backup only — ¬ primary closeout watch (Maestro/Grok finalize; a:38621)
@@ -70,9 +71,9 @@ Default `launch_target=cursor_sdk`. Refuse missing kind/id; unknown token; inven
 1. **Parse** kind, id, notify, launch_target, investigate, optional future bridge/window/host tokens per runbook attachment rules.
 2. **Judgment** (or investigate when `opus` / `fable` opt-in) — bind before pipeline fire.
 3. **cite(runbook:cursor-paste-resolve)** — execute; do not restate runbook bodies here.
-4. **Pipeline** — `pipeline(pipeline_id=cursor-paste-resolve, options={…})` compose + launch; use async when investigate or `launch_target=cursor_sdk` outlives this turn.
+4. **Pipeline** — `pipeline(pipeline_id=cursor-paste-resolve, options={…})` compose + launch; use async when investigate or `launch_target=cursor_sdk` outlives this turn. Every `cursor_sdk` fire passes `finalize: "dispatcher"` (the composed prompt then ends with the dispatcher-finalize block: no restart / restart intent, no friction_close, no 12286 post).
 5. **agent_bus watch** — every cursor-sdk hop gets watcher per runbook; on MCP `-32001` wait_timeout, re-poll (expected). Prefer continuous watcher poll over cron-only bus-watch for the same `dispatch_id` / write thread.
-6. **Finalize** — `friction_close` when acceptance criteria met; maestro memo only on thread 12286 when `maestro` token present. Optional CSE followup to nudge attended finalize: Use `paste-resolve-cse-followup`.
+6. **Finalize** — harvest the executor closeout (land_sha, changed paths, importer services, review thread, filed proposal ids); restart the importer services it names (or hand them to the operator seat that owns restarts) and probe live; then `friction_close` when acceptance criteria met; maestro memo only on thread 12286 when `maestro` token present. Optional CSE followup to nudge attended finalize: Use `paste-resolve-cse-followup`.
 
 **Admit model (non-investigate sdk write):** `cursor/composer-2.5` (prefer code over stale runbook prose).
 
