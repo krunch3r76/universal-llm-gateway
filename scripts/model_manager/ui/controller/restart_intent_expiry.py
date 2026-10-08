@@ -48,9 +48,7 @@ def join_expires_at(
         return expires
     if wait_for_boundary:
         return prior_expires_at
-    _agent, _armed, expires = arm_stamps(
-        "join", now=now, ttl_s=INTENT_EXPIRY_WINDOW_S
-    )
+    _agent, _armed, expires = arm_stamps("join", now=now, ttl_s=INTENT_EXPIRY_WINDOW_S)
     return expires
 
 
@@ -134,8 +132,7 @@ async def expire_via_cancel(
     if intent.drain_epoch is not None:
         if release_drain is None:
             logger.warning(
-                "restart intent expiry skipped; drain release unavailable "
-                "intent_id=%s",
+                "restart intent expiry skipped; drain release unavailable intent_id=%s",
                 intent_id,
             )
             return False
@@ -149,7 +146,7 @@ async def expire_via_cancel(
                 exc_info=True,
             )
             return False
-    store.cancel(intent_id)
+    store.cancel(intent_id, reason="ttl_expired")
     logger.warning(
         "restart intent expired via cancel intent_id=%s caller_agent=%s",
         intent_id,

@@ -87,7 +87,9 @@ class _Feed:
 
 def _patch_validate(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _arm(store: RestartIntentStore, intent: Any) -> bool:
-        store.advance(intent.intent_id, status=STATUS_VERIFYING_ACTIVATION)
+        store.advance(
+            intent.intent_id, status=STATUS_VERIFYING_ACTIVATION, reason="test"
+        )
         return True
 
     monkeypatch.setattr(
@@ -362,7 +364,9 @@ def test_recycle_giw_starts_stopped_giw_under_active_drain(
     ) -> str:
         assert reason == "recycle_stopped"
         message = await start()
-        bound_store.advance(bound_intent.intent_id, status=STATUS_VERIFYING_ACTIVATION)
+        bound_store.advance(
+            bound_intent.intent_id, status=STATUS_VERIFYING_ACTIVATION, reason="test"
+        )
         return message
 
     async def _no_snapshot(_url: str) -> None:

@@ -100,12 +100,17 @@ async def record_kill_boundary_and_arm_verify(
         store, intent, boundary_source=boundary_source
     )
     if not arms_activation_verify(intent.action):
-        store.advance(intent.intent_id, status=STATUS_COMPLETED)
+        store.advance(
+            intent.intent_id,
+            status=STATUS_COMPLETED,
+            reason="activation verify does not apply to this action",
+        )
         return
     cas_ok = store.advance_if_status(
         intent.intent_id,
         from_status=from_status,
         to_status=STATUS_VERIFYING_ACTIVATION,
+        reason="kill boundary recorded; arm activation verify",
     )
     if not cas_ok:
         return
@@ -145,6 +150,7 @@ async def arm_verify_after_generation_gone(
         intent.intent_id,
         from_status=STATUS_PENDING_DRAIN,
         to_status=STATUS_VERIFYING_ACTIVATION,
+        reason="generation gone; arm activation verify",
     )
     if not cas_ok:
         return False
@@ -292,6 +298,7 @@ async def run_activation_verify(
                             intent_id,
                             from_status=STATUS_VERIFYING_ACTIVATION,
                             to_status=STATUS_COMPLETED,
+                            reason="activation validated",
                         )
                         publish_activation_event(
                             ManageRestartActivationValidated(

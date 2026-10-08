@@ -298,6 +298,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
                    expiry unless intent_ttl_s > 0 (a:37197).
         intent_ttl_s: optional arm TTL seconds. 0/omit = default (600s, or none
                    when wait_for_boundary). Positive = caller-set expiry window.
+                   This is arm expiry, separate from the idle ceiling. A stargate
+                   idle-drain ceiling self-preempts (force_requested, then
+                   drained_restarting) when the probe is still busy. GIW keeps
+                   an alert-only ceiling. drain_begun is the GIW drain epoch
+                   (false for stargate, which has no epoch).
         caller_dispatch_id: cursor-sdk dispatch id for self-holder busy-skip drain
                    (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
                    busy holder matches, sync_restart mints restart_intent_id and defers
@@ -354,17 +359,46 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              Friction a:25814 is the live CSE
                                              count axis, not this ceiling.
                                              restart_intent is null when
-                                             no live non-terminal intent exists;
+                                             no live non-terminal intent exists
+                                             (non-null means a restart is pending);
                                              otherwise {restart_intent_id, status,
                                              drain_epoch, deadline_ceiling_at,
                                              deadline_semantics, deadline_at,
-                                             elapsed_s, service, action, reason}.
-                                             deadline_ceiling_at/deadline_semantics:
-                                             TTL alert ceiling — NOT scheduled fire.
+                                             elapsed_s, service, action, reason,
+                                             status_reason, status_changed_at,
+                                             transitions, live}. reason is the
+                                             arm reason. status_reason is the
+                                             latest transition or waiting note.
+                                             transitions is [{status, reason, at}].
+                                             restart_intent_last is the newest
+                                             terminal intent for that service
+                                             within 30 minutes, or null. Its
+                                             status is projected, not the store
+                                             word: completed and force_requested
+                                             → fired; failed and
+                                             activation_unverified → failed;
+                                             timeout → expired; cancelled →
+                                             cancelled (constant
+                                             TERMINAL_STATUS_PROJECTION).
+                                             Fields: intent_id, status, reason
+                                             (machine-readable code, optional
+                                             detail after ':'), armed_at,
+                                             terminal_at, drain_begun.
+                                             Live restart_intent never carries
+                                             a terminal row. deadline_semantics:
+                                             GIW is
+                                             an alert-only ceiling — NOT scheduled
+                                             fire. Stargate idle-drain is a
+                                             self-preempt instant (still busy →
+                                             force_requested → drained_restarting).
+                                             drain_begun is the GIW drain epoch.
           restart_intent_status (intent_id | service) — one-call read of a
-                                             restart intent (live intent when
-                                             service= given). Same projection as
-                                             busy_status.restart_intent; no mutation.
+                                             restart intent. service= prefers the
+                                             live intent and otherwise the newest
+                                             intent for that service (live false
+                                             when that row is terminal). Same
+                                             projection as busy_status.restart_intent;
+                                             no mutation.
                                              restart_window is null when no operator
                                              restart window covers the service;
                                              otherwise {window_id, scope, service_set,

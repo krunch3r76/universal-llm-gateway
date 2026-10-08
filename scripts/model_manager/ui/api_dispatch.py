@@ -849,6 +849,8 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
     now = datetime.now(UTC)
     store = ctl.restart_intent_store
     store.sweep_expired_windows(now=now)
+    from .controller.restart_intent_lookup import latest_terminal_for_service
+
     live_intents = {intent.service: intent for intent in store.pending_intents()}
     for service, entry in report.items():
         intent = live_intents.get(service)
@@ -856,6 +858,12 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
             project_restart_intent_consumer(intent, now=now)
             if intent is not None
             else None
+        )
+        from .controller.restart_intent_consumer import project_restart_intent_last
+
+        last = latest_terminal_for_service(store, service, now=now)
+        entry["restart_intent_last"] = (
+            project_restart_intent_last(last) if last is not None else None
         )
         entry["restart_window"] = store.restart_window_for_service(service, now=now)
         entry["active_work_summary"] = format_active_work_summary(
@@ -898,7 +906,9 @@ async def _restart_intent_status(
     if intent_id:
         intent = store.get(intent_id)
     elif service:
-        intent = store.active_for_service(service)
+        from .controller.restart_intent_lookup import newest_for_service
+
+        intent = store.active_for_service(service) or newest_for_service(store, service)
     else:
         raise ValueError("restart_intent_status requires 'intent_id' or 'service'")
     if intent is None:
@@ -1006,7 +1016,7 @@ async def orchestrate_cancel_restart_intent(
             }
 
     try:
-        cancelled = store.cancel(intent_id)
+        cancelled = store.cancel(intent_id, reason="cancelled_by_operator")
     except RestartIntentCancelError as exc:
         return {
             "status": "refused",

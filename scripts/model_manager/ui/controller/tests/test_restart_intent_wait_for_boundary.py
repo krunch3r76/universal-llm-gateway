@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -325,9 +326,7 @@ async def test_wait_for_boundary_caller_ttl_expires_after_arm(tmp_path) -> None:
         released.append((iid, epoch))
         return {"draining": False, "armed": False}
 
-    assert await expire_via_cancel(
-        store, intent.intent_id, release_drain=_release
-    )
+    assert await expire_via_cancel(store, intent.intent_id, release_drain=_release)
     assert released == [(intent.intent_id, 1)]
     stored = store.get(intent.intent_id)
     assert stored is not None
@@ -342,10 +341,7 @@ def test_resolve_drain_arm_helpers() -> None:
     assert resolve_drain_arm(None) == "idle"
     assert resolve_drain_arm({"active_ops": []}) == "idle"
     assert resolve_drain_arm({"active_ops": [{"op_id": "x"}]}) == "holder:x"
-    assert (
-        resolve_drain_arm({"active_ops": [{"op_id": "a"}, {"op_id": "b"}]})
-        == "idle"
-    )
+    assert resolve_drain_arm({"active_ops": [{"op_id": "a"}, {"op_id": "b"}]}) == "idle"
 
 
 @pytest.mark.asyncio
@@ -514,7 +510,7 @@ async def test_wait_for_boundary_cancel_observed_while_armed(tmp_path) -> None:
     async def drain_state() -> dict[str, Any]:
         calls["n"] += 1
         if calls["n"] == 3:
-            store.advance(intent.intent_id, status="cancelled")
+            store.advance(intent.intent_id, status="cancelled", reason="test")
         return {
             "draining": False,
             "armed": True,
@@ -574,9 +570,7 @@ async def test_partial_drain_release_failure_leaves_pending(tmp_path) -> None:
     async def boom(_iid: str, _epoch: int) -> dict[str, Any]:
         raise RuntimeError("release failed")
 
-    assert not await expire_via_cancel(
-        store, intent.intent_id, release_drain=boom
-    )
+    assert not await expire_via_cancel(store, intent.intent_id, release_drain=boom)
     stored = store.get(intent.intent_id)
     assert stored is not None
     assert stored.status == "pending_drain"

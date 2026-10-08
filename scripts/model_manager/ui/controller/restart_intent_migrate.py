@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS restart_intents (
     park_live            INTEGER NOT NULL DEFAULT 0,
     park_summary         TEXT,
     wait_for_boundary    INTEGER NOT NULL DEFAULT 0,
+    status_reason        TEXT,
+    status_changed_at    TEXT,
+    transitions          TEXT NOT NULL DEFAULT '[]',
     created_at           TEXT NOT NULL,
     updated_at           TEXT NOT NULL
 );
@@ -131,6 +134,7 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
     _ensure_park_columns(conn)
     _ensure_wait_for_boundary_column(conn)
     _ensure_arm_columns(conn)
+    _ensure_transition_columns(conn)
     _ensure_kill_cas_indexes(conn)
 
 
@@ -142,8 +146,7 @@ def _ensure_arm_columns(conn: sqlite3.Connection) -> None:
     schema apply — so intentional nulls survive store reopen (a:37197).
     """
     cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+        row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
     }
     if "caller_agent" not in cols:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN caller_agent TEXT")
@@ -167,8 +170,7 @@ def _ensure_arm_columns(conn: sqlite3.Connection) -> None:
 def _ensure_park_columns(conn: sqlite3.Connection) -> None:
     """Steer-restart v1: park_live intent flag + last sweep summary JSON."""
     cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+        row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
     }
     if "park_live" not in cols:
         conn.execute(
@@ -178,11 +180,25 @@ def _ensure_park_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE restart_intents ADD COLUMN park_summary TEXT")
 
 
+def _ensure_transition_columns(conn: sqlite3.Connection) -> None:
+    """Status-transition columns. Legacy rows keep an empty history."""
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+    }
+    if "status_reason" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN status_reason TEXT")
+    if "status_changed_at" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN status_changed_at TEXT")
+    if "transitions" not in cols:
+        conn.execute(
+            "ALTER TABLE restart_intents ADD COLUMN transitions TEXT NOT NULL DEFAULT '[]'"
+        )
+
+
 def _ensure_wait_for_boundary_column(conn: sqlite3.Connection) -> None:
     """a:37197 — defer begin_drain until GIW idle; optional unbounded arm."""
     cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+        row[1] for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
     }
     if "wait_for_boundary" not in cols:
         conn.execute(

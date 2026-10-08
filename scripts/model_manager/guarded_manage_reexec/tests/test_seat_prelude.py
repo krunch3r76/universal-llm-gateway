@@ -77,7 +77,7 @@ def test_wait_nonterminal_intent_until_cleared(tmp_path: Path) -> None:
         if method == "health":
             return {"status": "stopped"}
         if method == "sync_restart":
-            store.advance(intent.intent_id, status="completed")
+            store.advance(intent.intent_id, status="completed", reason="test")
             return {"status": "ok"}
         return {}
 

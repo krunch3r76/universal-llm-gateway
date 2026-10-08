@@ -34,6 +34,7 @@ from .restart_intent_states import (
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
 )
+from .restart_intent_transitions import append_status_transition, transition_fields
 from .restart_window_store import (
     RestartWindow,
     RestartWindowStore,
@@ -92,6 +93,9 @@ class Intent:
     caller_agent: str | None = None
     armed_at: str | None = None
     expires_at: str | None = None
+    status_reason: str | None = None
+    status_changed_at: str | None = None
+    transitions: list[dict[str, str]] | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -150,6 +154,9 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         expires_at=row["expires_at"] if "expires_at" in keys else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        status_reason=transition_fields(row)[0],
+        status_changed_at=transition_fields(row)[1],
+        transitions=transition_fields(row)[2],
     )
 
 
@@ -208,7 +215,11 @@ class RestartIntentStore:
         path, not insert. ``wait_for_boundary`` defaults to no hard expiry
         unless ``intent_ttl_s`` is set (a:37197).
         """
-        from .restart_intent_expiry import arm_stamps, join_expires_at, resolve_intent_ttl_s
+        from .restart_intent_expiry import (
+            arm_stamps,
+            join_expires_at,
+            resolve_intent_ttl_s,
+        )
 
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -272,6 +283,9 @@ class RestartIntentStore:
                     now,
                 ),
             )
+            append_status_transition(
+                conn, intent_id, status=STATUS_PENDING_DRAIN, reason="armed"
+            )
             row = conn.execute(
                 "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)
             ).fetchone()
@@ -296,10 +310,13 @@ class RestartIntentStore:
             worker_started_at=worker_started_at,
         )
 
-    def advance(self, intent_id: str, *, status: str) -> None:
+    def advance(self, intent_id: str, *, status: str, reason: str) -> None:
         if status not in _ALL_STATUSES:
             raise ValueError(f"unknown intent status: {status!r}")
-        self._update(intent_id, status=status)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            append_status_transition(conn, intent_id, status=status, reason=reason)
+            conn.commit()
 
     def advance_if_status(
         self,
@@ -309,20 +326,24 @@ class RestartIntentStore:
         to_status: str,
         reason: str | None = None,
     ) -> int:
-        """CAS status transition; returns rowcount (0 when already moved)."""
+        """CAS; transition reason does not overwrite the arm reason."""
         if to_status not in _ALL_STATUSES:
             raise ValueError(f"unknown intent status: {to_status!r}")
-        now = _now()
+        recorded = to_status if reason is None else reason
         with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE restart_intents
-                SET status=?, reason=COALESCE(?, reason), updated_at=?
-                WHERE intent_id=? AND status=?
-                """,
-                (to_status, reason, now, intent_id, from_status),
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status FROM restart_intents WHERE intent_id=?",
+                (intent_id,),
+            ).fetchone()
+            if row is None or row["status"] != from_status:
+                conn.commit()
+                return 0
+            changed = append_status_transition(
+                conn, intent_id, status=to_status, reason=recorded
             )
-            return int(cursor.rowcount)
+            conn.commit()
+            return 1 if changed else 0
 
     def claim_kill(
         self,
@@ -339,7 +360,6 @@ class RestartIntentStore:
         successful idempotent re-drive. A loser must route to
         ``_resolve_non_kill`` — never call ``kill()``.
         """
-        now = _now()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
@@ -353,23 +373,24 @@ class RestartIntentStore:
             if existing is not None:
                 return str(existing["intent_id"]) == intent_id
             try:
-                cursor = conn.execute(
+                matched = conn.execute(
                     """
-                    UPDATE restart_intents
-                    SET status=?, updated_at=?
+                    SELECT status FROM restart_intents
                     WHERE intent_id=? AND status IN (?, ?)
                     """,
-                    (
-                        STATUS_DRAINED_RESTARTING,
-                        now,
-                        intent_id,
-                        STATUS_PENDING_DRAIN,
-                        STATUS_TIMEOUT,
-                    ),
+                    (intent_id, STATUS_PENDING_DRAIN, STATUS_TIMEOUT),
+                ).fetchone()
+                if matched is None:
+                    return False
+                changed = append_status_transition(
+                    conn,
+                    intent_id,
+                    status=STATUS_DRAINED_RESTARTING,
+                    reason="kill_commit",
                 )
             except sqlite3.IntegrityError:
                 return False
-            return int(cursor.rowcount) == 1
+            return changed == 1
 
     def set_kill_boundary(self, intent_id: str, *, kill_boundary_at: str) -> None:
         self._update(intent_id, kill_boundary_at=kill_boundary_at)
@@ -409,7 +430,7 @@ class RestartIntentStore:
             raise KeyError(intent_id)
         return refreshed
 
-    def cancel(self, intent_id: str) -> Intent:
+    def cancel(self, intent_id: str, *, reason: str) -> Intent:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -427,10 +448,8 @@ class RestartIntentStore:
                     f"cancel refused: status={current.status!r}",
                     status=current.status,
                 )
-            now = _now()
-            conn.execute(
-                "UPDATE restart_intents SET status=?, updated_at=? WHERE intent_id=?",
-                (STATUS_CANCELLED, now, intent_id),
+            append_status_transition(
+                conn, intent_id, status=STATUS_CANCELLED, reason=reason
             )
             row = conn.execute(
                 "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)

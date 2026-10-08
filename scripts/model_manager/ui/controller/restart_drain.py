@@ -378,9 +378,7 @@ class JobsBusyProbe:
     async def snapshot(self) -> ActiveWork:
         from jobs.busy import open_run_rows
 
-        rows = [
-            row for row in open_run_rows() if row.get("job") == "bus-reply-watch"
-        ]
+        rows = [row for row in open_run_rows() if row.get("job") == "bus-reply-watch"]
         return ActiveWork(busy=bool(rows), detail={"open": rows})
 
 
@@ -630,9 +628,7 @@ class RestartDrainGate:
                 reclassify_dead_heartbeat_work,
             )
 
-            busy, detail = reclassify_dead_heartbeat_work(
-                work.detail, busy=work.busy
-            )
+            busy, detail = reclassify_dead_heartbeat_work(work.detail, busy=work.busy)
             if busy:
                 determination = "busy"
             elif detail.get("determination") == "dead_heartbeat":
@@ -811,32 +807,18 @@ class LocalServiceDrainSupervisor:
     poll_interval_s: float = _SELF_HOLDER_POLL_INTERVAL_S
 
     async def supervise(self, intent: Any) -> None:
-        from .restart_intent_states import (
-            STATUS_COMPLETED,
-            STATUS_DRAINED_RESTARTING,
-            STATUS_FAILED,
-        )
+        from .restart_drain_supervise import supervise_until_lifecycle
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.deadline_s
-        intent_id = intent.intent_id
-        try:
-            while True:
-                if loop.time() >= deadline:
-                    # Alert ceiling only — do not hide the intent from busy_status.
-                    deadline = loop.time() + self.deadline_s
-                work = await self.gate.probe(self.service)
-                if not work.busy:
-                    break
-                await asyncio.sleep(self.poll_interval_s)
-            self.store.advance(intent_id, status=STATUS_DRAINED_RESTARTING)
-            await self.lifecycle()
-            self.store.advance(intent_id, status=STATUS_COMPLETED)
-        except Exception:
-            current = self.store.get(intent_id)
-            if current is not None and current.status != STATUS_COMPLETED:
-                self.store.advance(intent_id, status=STATUS_FAILED)
-            raise
+        await supervise_until_lifecycle(
+            store=self.store,
+            intent=intent,
+            probe=lambda: self.gate.probe(self.service),
+            is_idle=lambda work: not work.busy,
+            lifecycle=self.lifecycle,
+            deadline_s=self.deadline_s,
+            poll_interval_s=self.poll_interval_s,
+            ceiling="extend",
+        )
 
 
 def stargate_idle_from_active_work(detail: dict[str, Any]) -> bool:
@@ -866,41 +848,18 @@ class StargateIdleDrainSupervisor:
     poll_interval_s: float = _SELF_HOLDER_POLL_INTERVAL_S
 
     async def supervise(self, intent: Any) -> None:
-        from .restart_intent_states import (
-            STATUS_COMPLETED,
-            STATUS_DRAINED_RESTARTING,
-            STATUS_FAILED,
-            STATUS_FORCE_REQUESTED,
-        )
+        from .restart_drain_supervise import supervise_until_lifecycle
 
-        loop = asyncio.get_running_loop()
-        ceiling = loop.time() + self.deadline_s
-        intent_id = intent.intent_id
-        escalated = False
-        try:
-            while True:
-                work = await self.gate.probe("stargate")
-                if stargate_idle_from_active_work(work.detail):
-                    break
-                if loop.time() >= ceiling:
-                    escalated = True
-                    self.store.advance(intent_id, status=STATUS_FORCE_REQUESTED)
-                    break
-                await asyncio.sleep(self.poll_interval_s)
-            self.store.advance(intent_id, status=STATUS_DRAINED_RESTARTING)
-            await self.lifecycle()
-            self.store.advance(intent_id, status=STATUS_COMPLETED)
-            if escalated:
-                logger.info(
-                    "stargate drain supervisor completed after idle-ceiling force "
-                    "(intent_id=%s)",
-                    intent_id,
-                )
-        except Exception:
-            current = self.store.get(intent_id)
-            if current is not None and current.status != STATUS_COMPLETED:
-                self.store.advance(intent_id, status=STATUS_FAILED)
-            raise
+        await supervise_until_lifecycle(
+            store=self.store,
+            intent=intent,
+            probe=lambda: self.gate.probe("stargate"),
+            is_idle=lambda work: stargate_idle_from_active_work(work.detail),
+            lifecycle=self.lifecycle,
+            deadline_s=self.deadline_s,
+            poll_interval_s=self.poll_interval_s,
+            ceiling="self_preempt",
+        )
 
 
 def cdp_legs_orphaned_from_active_work(detail: dict[str, Any]) -> list[dict[str, Any]]:

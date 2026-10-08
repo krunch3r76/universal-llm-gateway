@@ -222,7 +222,7 @@ def test_advance_terminal_frees_the_service(tmp_path: Any) -> None:
     a = store.create_intent(
         service=_SERVICE, action="stop", deadline_at="d", reason="r"
     )
-    store.advance(a.intent_id, status=STATUS_COMPLETED)
+    store.advance(a.intent_id, status=STATUS_COMPLETED, reason="test")
     assert store.active_for_service(_SERVICE) is None
     assert store.pending_intents() == []
     # A fresh create now succeeds with a new id.
@@ -556,11 +556,13 @@ def test_store_cancel_writes_cancelled_pre_and_post_epoch(tmp_path: Any) -> None
     pre = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="pre"
     )
-    cancelled_pre = store.cancel(pre.intent_id)
+    cancelled_pre = store.cancel(pre.intent_id, reason="test")
     assert cancelled_pre.status == STATUS_CANCELLED
     assert store.get(pre.intent_id) is not None
     assert store.get(pre.intent_id).status == STATUS_CANCELLED  # type: ignore[union-attr]
-    assert store.cancel(pre.intent_id).status == STATUS_CANCELLED  # idempotent
+    assert (
+        store.cancel(pre.intent_id, reason="test").status == STATUS_CANCELLED
+    )  # idempotent
 
     post = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="post"
@@ -568,7 +570,7 @@ def test_store_cancel_writes_cancelled_pre_and_post_epoch(tmp_path: Any) -> None
     store.set_drain_epoch(
         post.intent_id, drain_epoch=2, worker_id="w1", worker_started_at="t1"
     )
-    cancelled_post = store.cancel(post.intent_id)
+    cancelled_post = store.cancel(post.intent_id, reason="test")
     assert cancelled_post.status == STATUS_CANCELLED
     assert cancelled_post.drain_epoch == 2
 
@@ -589,9 +591,9 @@ def test_store_cancel_refused_after_drained_restarting(tmp_path: Any) -> None:
     intent = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
-    store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+    store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="test")
     with pytest.raises(RestartIntentCancelError) as excinfo:
-        store.cancel(intent.intent_id)
+        store.cancel(intent.intent_id, reason="test")
     assert excinfo.value.status == STATUS_DRAINED_RESTARTING
     assert store.get(intent.intent_id).status == STATUS_DRAINED_RESTARTING  # type: ignore[union-attr]
 
@@ -663,7 +665,7 @@ def test_orchestrate_refuse_after_final_check_commit(tmp_path: Any) -> None:
     intent = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
-    store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+    store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING, reason="test")
     result = _run(orchestrate_cancel_restart_intent(store, intent_id=intent.intent_id))
     assert result["status"] == "refused"
     assert result["intent_status"] == STATUS_DRAINED_RESTARTING
@@ -710,7 +712,7 @@ def test_supervisor_aborts_on_cancel_mid_await(
             await asyncio.sleep(0.01)
             got = store.get(intent.intent_id)
             if got is not None and got.drain_epoch is not None:
-                store.cancel(intent.intent_id)
+                store.cancel(intent.intent_id, reason="test")
                 break
         await task
 
@@ -803,7 +805,7 @@ def test_claim_kill_one_winner_per_generation(tmp_path: Any) -> None:
     store.set_drain_epoch(
         a.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
     )
-    store.advance(a.intent_id, status=STATUS_TIMEOUT)
+    store.advance(a.intent_id, status=STATUS_TIMEOUT, reason="test")
     b = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r2"
     )
@@ -1397,7 +1399,7 @@ def test_repair_timeout_gap_cancels_when_live_pending(tmp_path: Any) -> None:
     hidden = store.create_intent(
         service=_SERVICE, action="sync_restart", deadline_at="d", reason="old"
     )
-    store.advance(hidden.intent_id, status=STATUS_TIMEOUT)
+    store.advance(hidden.intent_id, status=STATUS_TIMEOUT, reason="test")
     live = store.create_intent(
         service=_SERVICE, action="recycle_giw", deadline_at="d", reason="new"
     )
@@ -1422,7 +1424,7 @@ def test_repair_timeout_gap_restores_keep_await_when_alone(tmp_path: Any) -> Non
     hidden = store.create_intent(
         service=_SERVICE, action="sync_restart", deadline_at="d", reason="old"
     )
-    store.advance(hidden.intent_id, status=STATUS_TIMEOUT)
+    store.advance(hidden.intent_id, status=STATUS_TIMEOUT, reason="test")
     assert store.active_for_service(_SERVICE) is None
 
     repaired = repair_timeout_intent_gap(store)
@@ -1449,7 +1451,7 @@ def test_reconcile_repairs_timeout_then_resumes_recycle(
     store.set_drain_epoch(
         intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
     )
-    store.advance(intent.intent_id, status=STATUS_TIMEOUT)
+    store.advance(intent.intent_id, status=STATUS_TIMEOUT, reason="test")
     resumed: list[str] = []
 
     def _build(**_kwargs: Any) -> object:

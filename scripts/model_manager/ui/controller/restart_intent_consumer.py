@@ -5,13 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from .restart_intent_reason_codes import TERMINAL_STATUS_PROJECTION
+from .restart_intent_states import _NEEDS_RECONCILE
 from .restart_intent_store import Intent, intent_status_view
 
 __all__ = [
     "DEADLINE_SEMANTICS",
+    "STARGATE_DEADLINE_SEMANTICS",
+    "deadline_semantics_for",
     "blocking_drain_result",
     "drain_deferred_result",
     "project_restart_intent_consumer",
+    "project_restart_intent_last",
 ]
 
 DEADLINE_SEMANTICS = (
@@ -19,6 +24,17 @@ DEADLINE_SEMANTICS = (
     "instant. NOT the scheduled restart fire time; restarts proceed as soon as "
     "drain completes."
 )
+
+STARGATE_DEADLINE_SEMANTICS = (
+    "Stargate idle-drain ceiling — self-preempt instant. Still busy at this "
+    "instant moves force_requested then drained_restarting. NOT alert-only."
+)
+
+
+def deadline_semantics_for(service: str) -> str:
+    if service == "stargate":
+        return STARGATE_DEADLINE_SEMANTICS
+    return DEADLINE_SEMANTICS
 
 
 def project_restart_intent_consumer(
@@ -36,7 +52,11 @@ def project_restart_intent_consumer(
         "action": intent.action,
         "reason": intent.reason,
         "deadline_ceiling_at": ceiling,
-        "deadline_semantics": DEADLINE_SEMANTICS,
+        "deadline_semantics": deadline_semantics_for(intent.service),
+        "status_reason": intent.status_reason,
+        "status_changed_at": intent.status_changed_at,
+        "transitions": list(intent.transitions or []),
+        "live": intent.status in _NEEDS_RECONCILE,
         # Legacy alias — same instant; semantics live in deadline_semantics.
         "deadline_at": ceiling,
         # Steer-restart: whether live cursor-sdk dispatches are parked at drain
@@ -47,6 +67,26 @@ def project_restart_intent_consumer(
         "caller_agent": intent.caller_agent,
         "armed_at": intent.armed_at,
         "expires_at": intent.expires_at,
+        "drain_begun": intent.drain_epoch is not None,
+    }
+
+
+def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
+    """Terminal row for ``busy_status.restart_intent_last``.
+
+    ``status`` is the projected word (fired/failed/expired/cancelled), not the
+    store status. ``reason`` is the latest status reason. ``None`` when this
+    row is not a projected terminal.
+    """
+    projected = TERMINAL_STATUS_PROJECTION.get(intent.status)
+    if projected is None:
+        return None
+    return {
+        "intent_id": intent.intent_id,
+        "status": projected,
+        "reason": intent.status_reason or "",
+        "armed_at": intent.armed_at,
+        "terminal_at": intent.status_changed_at,
         "drain_begun": intent.drain_epoch is not None,
     }
 

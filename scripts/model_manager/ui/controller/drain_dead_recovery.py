@@ -95,7 +95,11 @@ def intent_code_ref(intent: Intent) -> str | None:
 def _fail_pending(store: RestartIntentStore, intent: Intent) -> None:
     current = store.get(intent.intent_id)
     if current is not None and current.status == STATUS_PENDING_DRAIN:
-        store.advance(intent.intent_id, status=STATUS_FAILED)
+        store.advance(
+            intent.intent_id,
+            status=STATUS_FAILED,
+            reason="force-start left the intent pending",
+        )
 
 
 async def force_start_and_validate(
@@ -157,7 +161,11 @@ async def force_start_and_validate(
     if not armed:
         current = store.get(intent.intent_id)
         if current is not None and current.status == STATUS_PENDING_DRAIN:
-            store.advance(intent.intent_id, status=STATUS_COMPLETED)
+            store.advance(
+                intent.intent_id,
+                status=STATUS_COMPLETED,
+                reason="force-start completed without activation verify",
+            )
     return message
 
 

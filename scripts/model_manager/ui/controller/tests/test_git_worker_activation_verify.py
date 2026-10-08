@@ -116,7 +116,7 @@ def test_expired_kill_boundary_budget_terminalizes_without_reset(
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"
-    assert got.reason == "idle_timeout"
+    assert got.status_reason == "idle_timeout"
 
 
 def test_activation_verify_invokes_settle_with_validation_ids(
@@ -315,8 +315,8 @@ def test_resume_activation_verify_discharges_missing_validation_row(
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"
-    assert got.reason is not None
-    assert "missing_validation" in got.reason
+    assert got.status_reason is not None
+    assert "missing_validation" in got.status_reason
 
 
 def test_discharge_intents_without_validation_sweep(tmp_path, monkeypatch) -> None:
@@ -339,7 +339,7 @@ def test_discharge_intents_without_validation_sweep(tmp_path, monkeypatch) -> No
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"
-    assert got.reason == "missing_validation_row"
+    assert got.status_reason == "missing_validation_row"
 
 
 def test_record_kill_boundary_discharges_missing_validation_at_arm(
@@ -367,7 +367,7 @@ def test_record_kill_boundary_discharges_missing_validation_at_arm(
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"
-    assert got.reason == "missing_validation_at_arm"
+    assert got.status_reason == "missing_validation_at_arm"
 
 
 def test_arm_verify_after_generation_gone_discharges_missing_validation(
@@ -387,7 +387,7 @@ def test_arm_verify_after_generation_gone_discharges_missing_validation(
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"
-    assert got.reason == "missing_validation_at_arm"
+    assert got.status_reason == "missing_validation_at_arm"
 
 
 def test_run_activation_verify_discharges_when_validation_already_resolved(
@@ -415,7 +415,7 @@ def test_run_activation_verify_discharges_when_validation_already_resolved(
     got = store.get(intent.intent_id)
     assert got is not None
     assert got.status == "activation_unverified"
-    assert got.reason == "validation_resolved_superseded"
+    assert got.status_reason == "validation_resolved_superseded"
 
 
 def test_out_of_band_start_reconciles_pending_activation(tmp_path, monkeypatch) -> None:
@@ -469,9 +469,7 @@ def test_out_of_band_start_reconciles_pending_activation(tmp_path, monkeypatch) 
         deadline_at="d",
         reason="r2",
     )
-    other_id = mint_pending_validation_for_intent(
-        other, code_ref=_RESOLVABLE_CODE_REF
-    )
+    other_id = mint_pending_validation_for_intent(other, code_ref=_RESOLVABLE_CODE_REF)
     with patch(
         "deploy_identity.code_ref_relation.code_ref_relation_from_observed",
         return_value="unrelated",

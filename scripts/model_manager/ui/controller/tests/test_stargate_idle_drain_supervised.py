@@ -126,15 +126,15 @@ def test_stargate_supervisor_ceiling_escalates_then_lifecycle(tmp_path: Any) -> 
     )
 
     statuses: list[str] = []
-    original_advance = store.advance
+    original_cas = store.advance_if_status
 
-    def _recording_advance(intent_id: str, **kwargs: Any) -> Any:
-        status = kwargs.get("status")
+    def _recording_cas(intent_id: str, **kwargs: Any) -> Any:
+        status = kwargs.get("to_status")
         if isinstance(status, str):
             statuses.append(status)
-        return original_advance(intent_id, **kwargs)
+        return original_cas(intent_id, **kwargs)
 
-    store.advance = _recording_advance  # type: ignore[method-assign]
+    store.advance_if_status = _recording_cas  # type: ignore[method-assign]
 
     _run(supervisor.supervise(intent))
     got = store.get(intent.intent_id)

@@ -305,7 +305,11 @@ class GitWorkerDrainSupervisor:
             if intent.drain_epoch is None:
                 await self._on_idle(intent, t0)
                 return
-            self.store.advance(intent.intent_id, status=STATUS_FAILED)
+            self.store.advance(
+                intent.intent_id,
+                status=STATUS_FAILED,
+                reason=f"drain supervisor {type(exc).__name__}: {exc}",
+            )
             await events.emit_manage_restart_failed(
                 intent_id=intent.intent_id, reason=str(exc)
             )
@@ -427,9 +431,8 @@ class GitWorkerDrainSupervisor:
                 probe_fail_streak = 0
                 if self._generation_gone(snapshot, intent):
                     return False
-                if (
-                    snapshot.get("drain_epoch") == intent.drain_epoch
-                    and bool(snapshot.get("draining"))
+                if snapshot.get("drain_epoch") == intent.drain_epoch and bool(
+                    snapshot.get("draining")
                 ):
                     return True
             else:
@@ -714,12 +717,20 @@ class GitWorkerDrainSupervisor:
         }:
             return
         if current.status != STATUS_DRAINED_RESTARTING:
-            self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+            self.store.advance(
+                intent.intent_id,
+                status=STATUS_DRAINED_RESTARTING,
+                reason="final epoch-check ok; delivering SIGTERM",
+            )
         try:
             message = await self.kill()
         except Exception as exc:  # noqa: BLE001
             logger.exception("drain SIGTERM failed: intent_id=%s", intent.intent_id)
-            self.store.advance(intent.intent_id, status=STATUS_FAILED)
+            self.store.advance(
+                intent.intent_id,
+                status=STATUS_FAILED,
+                reason=f"kill failed: {exc}",
+            )
             await events.emit_manage_restart_failed(
                 intent_id=intent.intent_id, reason=f"kill failed: {exc}"
             )
@@ -730,7 +741,11 @@ class GitWorkerDrainSupervisor:
                 intent.intent_id,
                 message[:200],
             )
-            self.store.advance(intent.intent_id, status=STATUS_FAILED)
+            self.store.advance(
+                intent.intent_id,
+                status=STATUS_FAILED,
+                reason=f"lifecycle unconfirmed: {message[:200]}",
+            )
             await events.emit_manage_restart_failed(
                 intent_id=intent.intent_id,
                 reason=f"lifecycle unconfirmed: {message[:200]}",
@@ -794,7 +809,11 @@ class GitWorkerDrainSupervisor:
                 "SIGTERM without epoch: intent_id=%s",
                 intent.intent_id,
             )
-        self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+        self.store.advance(
+            intent.intent_id,
+            status=STATUS_DRAINED_RESTARTING,
+            reason="begin-drain unreachable; SIGTERM without epoch",
+        )
         await self._sigterm(intent, t0)
         if self.idle_escalate_s is not None:
             await events.emit_manage_recycle_completed(
@@ -898,7 +917,11 @@ class GitWorkerDrainSupervisor:
         if snapshot is None or self._generation_gone(snapshot, intent):
             if await arm_verify_after_generation_gone(self.store, intent):
                 return
-            self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
+            self.store.advance(
+                intent.intent_id,
+                status=STATUS_COMPLETED,
+                reason="target generation already gone",
+            )
             await events.emit_manage_restart_completed(
                 intent_id=intent.intent_id, duration_s=0.0
             )
@@ -908,7 +931,11 @@ class GitWorkerDrainSupervisor:
                 intent.intent_id,
             )
             return
-        self.store.advance(intent.intent_id, status=STATUS_FAILED)
+        self.store.advance(
+            intent.intent_id,
+            status=STATUS_FAILED,
+            reason="final epoch-check mismatch on the same worker generation",
+        )
         await events.emit_manage_restart_failed(
             intent_id=intent.intent_id,
             reason="final epoch-check mismatch (epoch/draining/active) on the same worker generation",
@@ -1033,7 +1060,11 @@ class GitWorkerDrainSupervisor:
         current = self.store.get(intent.intent_id)
         if current is None or current.status != STATUS_PENDING_DRAIN:
             return
-        self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
+        self.store.advance(
+            intent.intent_id,
+            status=STATUS_COMPLETED,
+            reason="target gone; action does not start it",
+        )
         logger.info(
             "drain target gone; completed without start: intent_id=%s action=%s",
             intent.intent_id,

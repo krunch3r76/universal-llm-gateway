@@ -53,6 +53,7 @@ def project_service_busy(
         "lane": extract_lane(work),
         "probe_error": work.get("error"),
         "restart_intent": intent,
+        "restart_intent_last": entry.get("restart_intent_last"),
         "restart_window": entry.get("restart_window"),
         "active_work_summary": entry.get("active_work_summary", ""),
     }

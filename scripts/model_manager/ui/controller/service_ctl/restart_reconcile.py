@@ -31,9 +31,7 @@ async def reconcile_pending_restart_intents(controller: ServiceController) -> No
     try:
         repairs = repair_timeout_intent_gap(store)
         if repairs:
-            logger.info(
-                "restart-intent reconcile: timeout gap repairs=%s", repairs
-            )
+            logger.info("restart-intent reconcile: timeout gap repairs=%s", repairs)
     except Exception:
         logger.exception("restart-intent reconcile: timeout gap repair failed")
     try:
@@ -84,7 +82,11 @@ async def reconcile_pending_restart_intents(controller: ServiceController) -> No
                 intent.intent_id,
             )
             try:
-                store.advance(intent.intent_id, status="failed")
+                store.advance(
+                    intent.intent_id,
+                    status="failed",
+                    reason="reconcile resume failed",
+                )
             except Exception:
                 logger.exception(
                     "restart-intent reconcile: cannot mark intent failed: %s",
