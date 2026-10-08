@@ -28,6 +28,21 @@ os.environ.setdefault("MCP_AUTH_TOKEN", "test-noop")
 os.environ.setdefault("MCP_OAUTH_DISABLED", "1")
 
 
+def _private_local_tool_names() -> frozenset[str]:
+    """Tool names registered by the gitignored ``services/mcp-server/tools/local/`` layer.
+
+    Runs the production discovery (``server._discover_private_tools``) on a
+    throwaway FastMCP, so the private set comes from the same gate the server
+    uses (.gitignore:107). Empty when ``tools.local`` is absent (lane worktrees, CI).
+    """
+    from fastmcp import FastMCP  # noqa: PLC0415
+    from server import _discover_private_tools  # noqa: PLC0415
+
+    probe = FastMCP("private-local-probe")
+    _discover_private_tools(probe, surface="code")
+    return frozenset(t.name for t in asyncio.run(probe.list_tools()))
+
+
 @pytest.fixture(scope="module")
 def server_state() -> dict:
     """Build the server once; manifest is set by register_tool_search_tool at boot."""
@@ -40,6 +55,7 @@ def server_state() -> dict:
     return {
         "primary": set(_PRIMARY_TOOLS),
         "manifest": manifest,
+        "private_local": _private_local_tool_names(),
         "tool_records": [
             t.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)
             if hasattr(t, "to_mcp_tool")
@@ -138,18 +154,31 @@ def test_cursor_request_search_has_no_hit(server_state: dict) -> None:
 
 
 def test_catalog_total_bytes_within_baseline(server_state: dict) -> None:
-    """Wire size of advertised tools/list must stay at or below the locked baseline."""
-    total = sum(
-        len(json.dumps(r, separators=(",", ":"), default=str).encode("utf-8"))
+    """Wire size of tracked tools/list must stay at or below the locked baseline."""
+    sizes = {
+        r["name"]: len(json.dumps(r, separators=(",", ":"), default=str).encode("utf-8"))
         for r in server_state["tool_records"]
-    )
+    }
+    private = server_state["private_local"]
+    tracked = {n: b for n, b in sizes.items() if n not in private}
+    excluded = {n: b for n, b in sizes.items() if n in private}
+    total = sum(tracked.values())
+    for name in sorted(tracked):
+        print(f"tracked {name} {tracked[name]}")
+    print(f"tracked TOTAL {total} ({len(tracked)} tools)")
+    if excluded:
+        for name in sorted(excluded):
+            print(f"excluded-private {name} {excluded[name]}")
+    else:
+        print("excluded-private none")
     if BASELINE_PATH.exists():
         baseline = int(BASELINE_PATH.read_text().strip())
     else:
         baseline = 30000
     assert total <= baseline, (
         f"catalog wire size regressed: {total} B > baseline {baseline} B "
-        f"(update {BASELINE_PATH.name} only on intentional growth)"
+        f"(update {BASELINE_PATH.name} only on intentional growth) "
+        f"tracked={tracked} excluded={sorted(excluded)}"
     )
 
 
