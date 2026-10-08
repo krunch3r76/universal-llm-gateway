@@ -17,7 +17,7 @@ from deploy_identity.code_version import resolve_code_version
 
 from .house_pools import continuity_card_uri
 from .resume_envelope import build_resume_envelope
-from .resume_fence_mission import build_mission_block
+from .resume_fence_mission import build_mission_block, cap_standing_rule_claims
 from .resume_fence_store import (
     _armed_source,
     adoption_ambiguous_count,
@@ -133,6 +133,9 @@ def assemble_resume_fence_in_txn(
         open_line=open_line,
         fence_id=fence_id,
         thread_slug=_thread_slug(thread_id),
+    )
+    mission["standing_rules"] = cap_standing_rule_claims(
+        mission.get("standing_rules") or []
     )
 
     bundle: dict[str, Any] = {

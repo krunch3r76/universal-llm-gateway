@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 
 from cortex_store.transcript_cp_anchors import window_anchors_from_text
@@ -23,6 +26,13 @@ _UNREAD_BODY_CHARS = 4000
 _ASSERTION_ID_RE = re.compile(r"\ba:(\d+)\b")
 _CLAIM_CHARS = 240
 _CLAIMS_BUDGET_CHARS = 4000
+_SUPERSEDE_HOPS = 5
+# cortex_store.routes.assertions._shared._VALID_REVIEW_STATUS. There is no
+# retracted/withdrawn review_status. Retraction is valid_until
+# (cortex_store.dispatch_ops._todo_gate_distillation_impl._retract_assertion).
+_REJECTED_REVIEW_STATUS = "rejected"
+
+logger = logging.getLogger(__name__)
 _STANDING_RULES_STEP = (
     "Load mission.standing_rules (verbatim rows and resolved claims) "
     "before any other action"
@@ -242,6 +252,7 @@ def build_mission_block(
 def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
     """Lightweight mission slice for hook marker cache (FIX-17)."""
     handoff = mission.get("handoff") if isinstance(mission.get("handoff"), dict) else {}
+    rules = mission.get("standing_rules")
     return {
         "highlight": mission.get("highlight"),
         "summary_row": mission.get("summary_row"),
@@ -250,6 +261,8 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
         "clone_mode": (mission.get("lifecycle") or {}).get("clone_mode"),
         "todo": handoff.get("todo"),
         "skills_to_use": mission.get("skills_to_use") or [],
+        "standing_rules_count": len(rules) if isinstance(rules, list) else 0,
+        "standing_rules_first": rules[0] if isinstance(rules, list) and rules else None,
     }
 
 
@@ -259,77 +272,251 @@ def _truncate_claim(claim: str, limit: int) -> tuple[str, bool]:
     return claim[:limit].rstrip(), True
 
 
-def lookup_assertion(assertion_id: int) -> dict[str, Any]:
-    """Resolve one assertion id against the cortex store.
+def _is_retracted(row: sqlite3.Row) -> bool:
+    """True when ``valid_until`` has elapsed — the retract write path."""
+    raw = row["valid_until"]
+    if raw is None or str(raw).strip() == "":
+        return False
+    return str(raw) <= datetime.now(UTC).isoformat()
 
-    Missing rows, a down store, and query errors are ``unresolved``.
-    ``superseded_by`` and a retracted review status are flagged; the claim
-    text is still returned when the row exists.
+
+def _row_status(row: sqlite3.Row) -> str:
+    if _is_retracted(row):
+        return "retracted"
+    review = str(row["review_status"] or "").strip().lower()
+    if review == _REJECTED_REVIEW_STATUS:
+        return "rejected"
+    return "current"
+
+
+def _follow_supersede(
+    start: int,
+    loaded: dict[int, sqlite3.Row | None],
+) -> tuple[sqlite3.Row, int, bool]:
+    """Walk ``superseded_by`` at most ``_SUPERSEDE_HOPS`` steps. Cycle-safe."""
+    row = loaded[start]
+    assert row is not None
+    seen = {start}
+    current = row
+    current_id = start
+    moved = False
+    for _ in range(_SUPERSEDE_HOPS):
+        pointer = current["superseded_by"]
+        if pointer is None:
+            break
+        try:
+            nxt = int(pointer)
+        except (TypeError, ValueError):
+            break
+        if nxt in seen:
+            break
+        nxt_row = loaded.get(nxt)
+        if nxt_row is None:
+            break
+        seen.add(nxt)
+        current = nxt_row
+        current_id = nxt
+        moved = True
+    return current, current_id, moved
+
+
+def _fetch_assertion_rows(
+    conn: sqlite3.Connection,
+    ids: list[int],
+) -> dict[int, sqlite3.Row | None]:
+    """One ``IN`` query, then at most five hop queries for ``superseded_by``."""
+    loaded: dict[int, sqlite3.Row | None] = {}
+    frontier = list(dict.fromkeys(ids))
+    for hop in range(_SUPERSEDE_HOPS + 1):
+        missing = [i for i in frontier if i not in loaded]
+        if missing:
+            marks = ",".join("?" * len(missing))
+            rows = conn.execute(
+                "SELECT id, claim, superseded_by, review_status, valid_until "
+                f"FROM assertions WHERE id IN ({marks})",
+                missing,
+            ).fetchall()
+            found = {int(row["id"]): row for row in rows}
+            for assertion_id in missing:
+                loaded[assertion_id] = found.get(assertion_id)
+        if hop >= _SUPERSEDE_HOPS:
+            break
+        nxt: list[int] = []
+        for assertion_id in frontier:
+            row = loaded.get(assertion_id)
+            if row is None or row["superseded_by"] is None:
+                continue
+            try:
+                pointer = int(row["superseded_by"])
+            except (TypeError, ValueError):
+                continue
+            if pointer not in loaded:
+                nxt.append(pointer)
+        if not nxt:
+            break
+        frontier = nxt
+    return loaded
+
+
+def lookup_assertions(assertion_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Resolve many assertion ids on one cortex connection.
+
+    A store or query failure is ``lookup_error`` (logged). A missing row is
+    ``unresolved``. A ``superseded_by`` chain (max 5 hops, cycle-safe) keeps
+    the cited id, sets ``status`` to ``superseded``, and returns the current
+    claim under ``current_id``.
     """
-    ref = f"a:{assertion_id}"
+    ids = list(dict.fromkeys(int(i) for i in assertion_ids))
+    if not ids:
+        return {}
     try:
         from cortex_store.db import cortex_conn
 
         conn = cortex_conn()
         try:
-            row = conn.execute(
-                "SELECT claim, superseded_by, review_status FROM assertions WHERE id = ?",
-                (assertion_id,),
-            ).fetchone()
+            loaded = _fetch_assertion_rows(conn, ids)
         finally:
             conn.close()
     except Exception:
-        return {"id": ref, "status": "unresolved", "claim": "", "claim_truncated": False}
-    if row is None:
-        return {"id": ref, "status": "unresolved", "claim": "", "claim_truncated": False}
-    claim = str(row["claim"] or "")
-    superseded = row["superseded_by"] is not None
-    review = str(row["review_status"] or "").strip().lower()
-    if review in {"retracted", "withdrawn"}:
-        status = "retracted"
-    elif superseded:
-        status = "superseded"
-    else:
-        status = "current"
-    return {"id": ref, "status": status, "claim": claim, "claim_truncated": False}
+        logger.exception("assertion lookup failed")
+        return {
+            assertion_id: {
+                "id": f"a:{assertion_id}",
+                "status": "lookup_error",
+                "claim": "",
+                "claim_truncated": False,
+            }
+            for assertion_id in ids
+        }
+
+    out: dict[int, dict[str, Any]] = {}
+    for assertion_id in ids:
+        ref = f"a:{assertion_id}"
+        row = loaded.get(assertion_id)
+        if row is None:
+            out[assertion_id] = {
+                "id": ref,
+                "status": "unresolved",
+                "claim": "",
+                "claim_truncated": False,
+            }
+            continue
+        current, current_id, moved = _follow_supersede(assertion_id, loaded)
+        claim = str(current["claim"] or "")
+        if moved or (
+            row["superseded_by"] is not None and current_id != assertion_id
+        ):
+            out[assertion_id] = {
+                "id": ref,
+                "status": "superseded",
+                "current_id": f"a:{current_id}",
+                "claim": claim,
+                "claim_truncated": False,
+            }
+            continue
+        if row["superseded_by"] is not None:
+            out[assertion_id] = {
+                "id": ref,
+                "status": "superseded",
+                "claim": claim,
+                "claim_truncated": False,
+            }
+            continue
+        out[assertion_id] = {
+            "id": ref,
+            "status": _row_status(row),
+            "claim": claim,
+            "claim_truncated": False,
+        }
+    return out
+
+
+def lookup_assertion(assertion_id: int) -> dict[str, Any]:
+    """Resolve one assertion id. See ``lookup_assertions``."""
+    return lookup_assertions([assertion_id])[assertion_id]
+
+
+def cap_standing_rule_claims(
+    rules: list[dict[str, Any]],
+    *,
+    budget: int = _CLAIMS_BUDGET_CHARS,
+) -> list[dict[str, Any]]:
+    """Shorten claim text until the total is within *budget*.
+
+    Rule rows and assertion entries are kept. Only ``claim`` strings shrink.
+    The resume pour calls this so the bundle size path sees ``standing_rules``.
+    """
+    items: list[dict[str, Any]] = []
+    for row in rules:
+        for item in row.get("assertions") or []:
+            if not isinstance(item, dict):
+                continue
+            claim, truncated = _truncate_claim(str(item.get("claim") or ""), _CLAIM_CHARS)
+            item["claim"] = claim
+            item["claim_truncated"] = bool(item.get("claim_truncated")) or truncated
+            items.append(item)
+
+    def _total() -> int:
+        return sum(len(str(item.get("claim") or "")) for item in items)
+
+    while items and _total() > budget:
+        longest = max(items, key=lambda item: len(str(item.get("claim") or "")))
+        claim = str(longest.get("claim") or "")
+        if not claim:
+            break
+        overflow = _total() - budget
+        cut_to = max(0, len(claim) - overflow)
+        if cut_to >= len(claim):
+            cut_to = len(claim) - 1
+        trimmed, truncated = _truncate_claim(claim, cut_to)
+        longest["claim"] = trimmed
+        longest["claim_truncated"] = bool(longest.get("claim_truncated")) or truncated
+    return rules
 
 
 def build_standing_rules(card_text: str | None) -> list[dict[str, Any]]:
     """Card ``## Rules`` rows with cited assertions resolved.
 
-    Row text is never dropped. Claims are truncated to stay inside the
-    resume bundle budget. Resolution does not depend on entity-view recency.
+    Row text is never dropped. Claims are truncated to the per-claim cap and
+    then to ``_CLAIMS_BUDGET_CHARS`` in total. One cortex connection serves
+    every id on the card. Resolution does not depend on entity-view recency.
     """
     rows = extract_card_rule_rows(card_text or "")
     pending: list[dict[str, Any]] = []
+    wanted: list[tuple[dict[str, Any], str, int]] = []
     for text in rows:
         assertions: list[dict[str, Any]] = []
         seen: set[str] = set()
+        entry = {"text": text, "assertions": assertions}
+        pending.append(entry)
         for match in _ASSERTION_ID_RE.finditer(text):
             ref = f"a:{match.group(1)}"
             if ref in seen:
                 continue
             seen.add(ref)
-            resolved = lookup_assertion(int(match.group(1)))
-            claim, truncated = _truncate_claim(str(resolved.get("claim") or ""), _CLAIM_CHARS)
-            assertions.append(
-                {
-                    "id": ref,
-                    "status": resolved.get("status") or "unresolved",
-                    "claim": claim,
-                    "claim_truncated": truncated or bool(resolved.get("claim_truncated")),
-                }
-            )
-        pending.append({"text": text, "assertions": assertions})
-
-    used = sum(len(item["claim"]) for row in pending for item in row["assertions"])
-    if used > _CLAIMS_BUDGET_CHARS:
-        for row in pending:
-            for item in row["assertions"]:
-                claim, truncated = _truncate_claim(item["claim"], 80)
-                item["claim"] = claim
-                item["claim_truncated"] = truncated or item["claim_truncated"]
-    return pending
+            wanted.append((entry, ref, int(match.group(1))))
+    resolved = lookup_assertions([aid for _entry, _ref, aid in wanted])
+    for entry, ref, aid in wanted:
+        item = resolved.get(aid) or {
+            "id": ref,
+            "status": "unresolved",
+            "claim": "",
+            "claim_truncated": False,
+        }
+        entry["assertions"].append(
+            {
+                "id": ref,
+                "status": item.get("status") or "unresolved",
+                "claim": str(item.get("claim") or ""),
+                "claim_truncated": bool(item.get("claim_truncated")),
+                **(
+                    {"current_id": item["current_id"]}
+                    if item.get("current_id")
+                    else {}
+                ),
+            }
+        )
+    return cap_standing_rule_claims(pending)
 
 
 def _extract_resume_open(card_text: str | None) -> str | None:
@@ -347,8 +534,10 @@ def _extract_resume_open(card_text: str | None) -> str | None:
 __all__ = [
     "build_mission_block",
     "build_standing_rules",
+    "cap_standing_rule_claims",
     "house_unread_turns",
     "lookup_assertion",
+    "lookup_assertions",
     "mission_marker_preview",
     "sketchboard_uri",
 ]

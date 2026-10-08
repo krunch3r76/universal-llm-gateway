@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.resume_fence_mission import (
+    _CLAIMS_BUDGET_CHARS,
     build_mission_block,
+    build_standing_rules,
+    lookup_assertions,
     mission_marker_preview,
     sketchboard_uri,
 )
@@ -251,42 +257,48 @@ def test_mission_skills_to_use_from_card_and_step_order(bus_db) -> None:
     assert "rename_chat → `10223 continuity`" in steps
     preview = mission_marker_preview(mission)
     assert preview["skills_to_use"] == mission["skills_to_use"]
+    assert preview["standing_rules_count"] == 0
+    assert preview["standing_rules_first"] is None
 
 
 def test_standing_rules_resolve_assertions(bus_db, monkeypatch: pytest.MonkeyPatch) -> None:
     long_claim = "no rice " * 80
 
-    def _fake(assertion_id: int) -> dict:
-        if assertion_id == 31294:
-            return {
-                "id": "a:31294",
-                "status": "current",
-                "claim": long_claim,
-                "claim_truncated": False,
-            }
-        if assertion_id == 1:
-            return {
-                "id": "a:1",
-                "status": "superseded",
-                "claim": "old claim",
-                "claim_truncated": False,
-            }
-        if assertion_id == 2:
-            return {
-                "id": "a:2",
-                "status": "retracted",
-                "claim": "withdrawn",
-                "claim_truncated": False,
-            }
-        return {
-            "id": f"a:{assertion_id}",
-            "status": "unresolved",
-            "claim": "",
-            "claim_truncated": False,
-        }
+    def _fake(assertion_ids: list[int]) -> dict:
+        out = {}
+        for assertion_id in assertion_ids:
+            if assertion_id == 31294:
+                out[assertion_id] = {
+                    "id": "a:31294",
+                    "status": "current",
+                    "claim": long_claim,
+                    "claim_truncated": False,
+                }
+            elif assertion_id == 1:
+                out[assertion_id] = {
+                    "id": "a:1",
+                    "status": "superseded",
+                    "claim": "old claim",
+                    "claim_truncated": False,
+                }
+            elif assertion_id == 2:
+                out[assertion_id] = {
+                    "id": "a:2",
+                    "status": "retracted",
+                    "claim": "withdrawn",
+                    "claim_truncated": False,
+                }
+            else:
+                out[assertion_id] = {
+                    "id": f"a:{assertion_id}",
+                    "status": "unresolved",
+                    "claim": "",
+                    "claim_truncated": False,
+                }
+        return out
 
     monkeypatch.setattr(
-        "agent_bus_store.resume_fence_mission.lookup_assertion",
+        "agent_bus_store.resume_fence_mission.lookup_assertions",
         _fake,
     )
     row = (
@@ -362,3 +374,98 @@ def test_mission_no_skills_section_empty_list_no_step(bus_db) -> None:
     )
     assert mission["skills_to_use"] == []
     assert not any("skills_to_use" in step for step in mission["handoff"]["steps"])
+
+
+def _assertion_db(rows: list[tuple]) -> sqlite3.Connection:
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute(
+        "CREATE TABLE assertions ("
+        "id INTEGER PRIMARY KEY, claim TEXT, superseded_by INTEGER, "
+        "review_status TEXT, valid_until TEXT)"
+    )
+    db.executemany(
+        "INSERT INTO assertions (id, claim, superseded_by, review_status, valid_until) "
+        "VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    return db
+
+
+class _ConnWrap:
+    def __init__(self, db: sqlite3.Connection, opens: list[object]) -> None:
+        self._db = db
+        self.statements: list[str] = []
+        opens.append(self)
+
+    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        self.statements.append(sql)
+        return self._db.execute(sql, params)
+
+    def close(self) -> None:
+        return None
+
+
+def test_supersede_chain_cycle_and_retraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    db = _assertion_db(
+        [
+            (1, "old", 2, "committed", None),
+            (2, "mid", 3, "committed", None),
+            (3, "live claim", None, "committed", None),
+            (10, "cycle-a", 11, "committed", None),
+            (11, "cycle-b", 10, "committed", None),
+            (20, "ended", None, "committed", past),
+            (21, "no", None, "rejected", None),
+        ]
+    )
+    opens: list[_ConnWrap] = []
+
+    def _conn() -> _ConnWrap:
+        return _ConnWrap(db, opens)
+
+    monkeypatch.setattr("cortex_store.db.cortex_conn", _conn)
+    found = lookup_assertions([1, 10, 20, 21, 99])
+    assert found[1]["status"] == "superseded"
+    assert found[1]["current_id"] == "a:3"
+    assert found[1]["id"] == "a:1"
+    assert found[1]["claim"] == "live claim"
+    assert found[10]["status"] == "superseded"
+    assert found[10]["current_id"] == "a:11"
+    assert found[10]["claim"] == "cycle-b"
+    assert found[20]["status"] == "retracted"
+    assert found[21]["status"] == "rejected"
+    assert found[99]["status"] == "unresolved"
+    assert len(opens) == 1
+
+
+def test_lookup_error_is_not_unresolved(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def _boom() -> sqlite3.Connection:
+        raise sqlite3.OperationalError("store down")
+
+    monkeypatch.setattr("cortex_store.db.cortex_conn", _boom)
+    with caplog.at_level("ERROR"):
+        found = lookup_assertions([7])
+    assert found[7]["status"] == "lookup_error"
+    assert "assertion lookup failed" in caplog.text
+
+
+def test_many_ids_keep_rows_under_claim_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    claim = "x" * 500
+    db = _assertion_db([(i, claim, None, "committed", None) for i in range(1, 101)])
+    opens: list[_ConnWrap] = []
+    monkeypatch.setattr(
+        "cortex_store.db.cortex_conn",
+        lambda: _ConnWrap(db, opens),
+    )
+    lines = [f"- rule {n}: " + " ".join(f"a:{n * 5 + k}" for k in range(1, 6)) for n in range(20)]
+    card = "## Rules\n" + "\n".join(lines) + "\n"
+    rules = build_standing_rules(card)
+    assert len(rules) == 20
+    assert [row["text"] for row in rules] == lines
+    total = sum(len(item["claim"]) for row in rules for item in row["assertions"])
+    assert total <= _CLAIMS_BUDGET_CHARS
+    assert len(opens) == 1
+    assert sum(1 for wrap in opens for sql in wrap.statements if " IN " in sql) >= 1
