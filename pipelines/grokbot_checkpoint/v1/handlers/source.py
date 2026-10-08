@@ -128,6 +128,8 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
                 "sha256": raw["sha256"],
                 "messages_sha256": raw["messages_sha256"],
             }
+        elif first_refusal and any(slot == "raw" for slot, _ref, _sha in slots):
+            selected["alternate_refused"] = (first_refusal.get("refused") or {})
     elif "raw" in loaded and any(slot == "transcribed" for slot, _ref, _sha in slots):
         selected = loaded["raw"]
         fallback = {

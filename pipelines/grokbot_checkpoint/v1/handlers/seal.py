@@ -14,6 +14,42 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from ._clients import cortex_dispatch, refuse, step_output_json
 
 _STUB = "succession seal (grokbot-checkpoint-v1)"
+_SEAT = "grok-bot"
+# Stable clock so a rerun before the journal row exists still mints the same id.
+_STABLE_STAMP = "2026-01-01T00:00:00Z"
+
+
+def _lookup_session_id_any_closed_by(conversation_uuid: str) -> str | None:
+    """Latest session_journals row for this uuid, any closed_by.
+
+    ``lookup_journaled_by_conversation_uuid`` skips succession rows, so a grok
+    seal would never see itself. This matches ``_lookup_session_id_for_transcript``
+    in seal_claude_ai.py. A human-closed row is reused too: session_close then
+    returns already_closed and this pipeline does not mint a second seal.
+    """
+    from cortex_store.db import cortex_conn
+
+    conn = cortex_conn()
+    try:
+        row = conn.execute(
+            "SELECT session_id FROM session_journals WHERE conversation_uuid = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (conversation_uuid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row and row["session_id"]:
+        return str(row["session_id"])
+    return None
+
+
+def _stable_session_id(house: str, n: Any, msg_sha: str, agent_id: str) -> str:
+    return derive_session_id_from_timestamp(
+        _SEAT,
+        _STABLE_STAMP,
+        deterministic=True,
+        conversation_uuid=f"{agent_id}|{house}|{n}|{msg_sha}",
+    )
 
 
 async def run_seal(
@@ -39,22 +75,11 @@ async def run_seal(
     session_id = ""
     if agent_id:
         try:
-            from cortex_store.session_close_successor_hop import (
-                lookup_journaled_by_conversation_uuid,
-            )
-
-            found = lookup_journaled_by_conversation_uuid(agent_id)
+            session_id = _lookup_session_id_any_closed_by(agent_id) or ""
         except Exception:
-            found = None
-        if found is not None and getattr(found, "session_id", None):
-            session_id = str(found.session_id)
+            session_id = ""
     if not session_id:
-        session_id = derive_session_id_from_timestamp(
-            agent,
-            sealed_on,
-            deterministic=True,
-            conversation_uuid=agent_id or f"{house}|{n}|{msg_sha}",
-        )
+        session_id = _stable_session_id(house, n, msg_sha, agent_id)
     close_args = {
         "session_id": session_id,
         "agent": agent,
@@ -83,21 +108,12 @@ async def run_seal(
         return refuse("seal.transport", "session_close returned non-object")
     if close.get("error") and not close.get("already_closed"):
         return refuse(
-            str(close.get("code") or "seal.refused"),
+            str(close.get("reason") or close.get("code") or "seal.refused"),
             str(close.get("error")),
         )
     session_id = str(close.get("session_id") or session_id)
     already = bool(close.get("already_closed"))
     proposals: list[str] = []
-    echoed = close.get("meta") if isinstance(close.get("meta"), dict) else {}
-    if envelope_step.get("provenance") and not echoed.get("provenance"):
-        proposals.append(
-            "session_close response omitted meta.provenance; cortex_store unchanged"
-        )
-    if isinstance(envelope_step.get("capture"), dict) and not echoed.get("capture"):
-        proposals.append(
-            "session_close response omitted meta.capture; cortex_store unchanged"
-        )
     if not already:
         from cortex_store.dispatch_ops.ops_transcript_seal import (
             _stamp_succession_fields,

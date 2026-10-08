@@ -99,6 +99,14 @@ class GrokbotCheckpointAdmitHandler(BaseHandler):
 
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
+        if not str(getattr(context, "dispatch_thread_id", "") or "").strip():
+            return StepOutput(
+                raw="",
+                json=refuse(
+                    "admit.dispatch_thread_missing",
+                    "concurrency key needs context.dispatch_thread_id",
+                ),
+            )
         options = dict(getattr(context, "options", {}) or {})
         payload = await run_admit(
             options,

@@ -57,20 +57,35 @@ def _raw_bytes() -> bytes:
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
+    import inspect
+
+    from continuity_tape.events import stargate_continuity_checkpoint_sealed
+    from cortex_store.dispatch_ops.ops_transcript_seal import _stamp_succession_fields
+
     calls: list[str] = []
+    close_args: list[dict] = []
+    seen_ids: set[str] = set()
     posts: list[dict] = []
     turns: list[dict] = []
+    stamp_sig = inspect.signature(_stamp_succession_fields)
+    event_sig = inspect.signature(stargate_continuity_checkpoint_sealed)
 
     async def dispatch(tool: str, args: dict) -> dict:
         assert tool in _OP_SPECS
         calls.append(tool)
-        if tool == "session_close":
-            return {
-                "session_id": args["session_id"],
-                "already_closed": False,
-                "meta": {},
-            }
-        return {}
+        if tool != "session_close":
+            return {}
+        close_args.append(dict(args))
+        sid = str(args["session_id"])
+        already = sid in seen_ids
+        seen_ids.add(sid)
+        return {"session_id": sid, "already_closed": already, "reason": None}
+
+    def stamp(**kwargs):
+        stamp_sig.bind(**kwargs)
+
+    def event(**kwargs):
+        event_sig.bind(**kwargs)
 
     async def get(path: str, params=None):
         return {"turns": list(turns)}, 200
@@ -91,16 +106,16 @@ def transport(monkeypatch: pytest.MonkeyPatch):
     from . import admit, await_verify, fact, post, seal
 
     monkeypatch.setattr(seal, "cortex_dispatch", dispatch)
-    monkeypatch.setattr(seal, "stargate_continuity_checkpoint_sealed", lambda **k: None)
+    monkeypatch.setattr(seal, "stargate_continuity_checkpoint_sealed", event)
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
-        lambda **k: None,
+        stamp,
     )
     for mod in (admit, post, fact, await_verify):
         monkeypatch.setattr(mod, "bus_get", get)
         if hasattr(mod, "bus_send"):
             monkeypatch.setattr(mod, "bus_send", send)
-    return {"calls": calls, "posts": posts, "turns": turns}
+    return {"calls": calls, "posts": posts, "turns": turns, "close_args": close_args}
 
 
 async def _run(registry: PipelineRegistry, options: dict, root: Path) -> dict:
@@ -142,6 +157,13 @@ def test_registry_keeps_pipeline_and_renders_key(tmp_path: Path) -> None:
 async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    import cortex_store.db as cortex_db
+    from cortex_store._test_db_bootstrap import materialize_head_schema_template
+
+    db_path = tmp_path / "cortex.db"
+    materialize_head_schema_template(db_path)
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
+    cortex_db.run_migrations(cortex_db.cortex_conn())
     registry = _load_registry(tmp_path / "reg")
     card = _CARD.encode()
     (tmp_path / "notes").mkdir()
@@ -161,7 +183,7 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
         "trigger": "hop",
         "card_uri": "notes/card.md",
         "expected_card_sha256": file_sha256(card),
-        "snapshot_uri": "notes/snap.json",
+        "snapshot_uri": "notes/system/transcripts/grok/h-agent123.transcribed.messages.json",
         "channel": "cp",
         "residue": "r",
         "wait_verify_seconds": 0,
@@ -184,6 +206,58 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     assert "session_close" in transport["calls"]
     assert transport["posts"]
     assert "verify_resume" not in happy["result"]["completed_steps"]
+    snap_rel = base["snapshot_uri"]
+    snap_bytes = (tmp_path / snap_rel).read_bytes()
+    assert b'"provenance": "transcribed"' in snap_bytes or b'"provenance":"transcribed"' in snap_bytes
+    from cortex_store.dispatch_ops import _shared
+    from cortex_store.models import SessionCloseRequest
+    from cortex_store.routes.session_close_validate import (
+        _resolve_transcript_messages_envelope,
+    )
+
+    monkeypatch.setattr(_shared, "_FILES_ROOT", tmp_path)
+    resolved = _resolve_transcript_messages_envelope(
+        SessionCloseRequest(
+            session_id=happy["seal"]["session_id"],
+            agent="grok-bot",
+            summary="succession seal (grokbot-checkpoint-v1)",
+            session_summary_md="succession seal (grokbot-checkpoint-v1)",
+            transcript_messages_path=snap_rel,
+            transcript_depth="verbatim",
+            closed_by="succession",
+            succession_seal_authority=True,
+        )
+    )
+    assert resolved.meta.provenance == "transcribed"
+    from agent_seat.session_id import SESSION_ID_RE
+
+    assert SESSION_ID_RE.fullmatch(happy["seal"]["session_id"])
+    assert transport["close_args"][0]["transcript_messages_path"].startswith(
+        "notes/system/transcripts/"
+    )
+
+    tr_card = _CARD.encode()
+    (tmp_path / "notes" / "tronly.md").write_bytes(tr_card)
+    tr_only = await _run(
+        registry,
+        {
+            **base,
+            "mode": "seal",
+            "house": "tronly",
+            "agent_id": "grok-tronly",
+            "card_uri": "notes/tronly.md",
+            "expected_card_sha256": file_sha256(tr_card),
+            "snapshot_uri": "notes/system/transcripts/grok/tronly.transcribed.messages.json",
+            "transcribed_ref": "notes/tr.json",
+            "transcribed_sha256": file_sha256(transcribed),
+        },
+        tmp_path,
+    )
+    assert tr_only["source"]["provenance"] == "transcribed"
+    assert tr_only["source"].get("alternate") is None
+    assert tr_only["source"].get("fallback") is None
+    assert tr_only["result"]["refused"] is None
+
     raw_card = _CARD.encode()
     (tmp_path / "notes" / "rawonly.md").write_bytes(raw_card)
     raw_only = await _run(
@@ -192,17 +266,23 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
             **base,
             "mode": "seal",
             "house": "rawonly",
+            "agent_id": "grok-rawonly",
             "card_uri": "notes/rawonly.md",
             "expected_card_sha256": file_sha256(raw_card),
+            "snapshot_uri": "notes/system/transcripts/grok/rawonly.raw.messages.json",
             "raw_ref": "notes/raw.json",
             "raw_sha256": file_sha256(raw),
         },
         tmp_path,
     )
+    raw_snap = (tmp_path / "notes/system/transcripts/grok/rawonly.raw.messages.json").read_bytes()
+    assert b'"provenance": "raw"' in raw_snap or b'"provenance":"raw"' in raw_snap
+    assert "provenance:raw" in (tmp_path / "notes" / "rawonly.md").read_text()
     assert raw_only["source"].get("provenance") == "raw"
     assert raw_only["source"].get("alternate") is None
+    assert raw_only["source"].get("fallback") is None
+    assert raw_only["result"]["refused"] is None
 
-    files_before = set(raw_only["_files"])
     calls_before = len(transport["calls"])
     posts_before = len(transport["posts"])
     bad = json.loads(raw)
@@ -214,6 +294,8 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     }
     bad["meta"]["source_sha256"] = "ab" * 32
     blob = json.dumps(bad).encode()
+    bad_card = _CARD.encode()
+    (tmp_path / "notes" / "bad.md").write_bytes(bad_card)
     (tmp_path / "notes" / "bad.json").write_bytes(blob)
     (tmp_path / "notes" / "cap.bin").write_bytes(b"nope")
     mismatch = await _run(
@@ -222,9 +304,12 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
             **base,
             "mode": "seal",
             "house": "bad",
+            "agent_id": "grok-bad",
             "raw_ref": "notes/bad.json",
             "raw_sha256": file_sha256(blob),
-            "card_uri": "notes/card.md",
+            "card_uri": "notes/bad.md",
+            "expected_card_sha256": file_sha256(bad_card),
+            "snapshot_uri": "notes/system/transcripts/grok/bad.raw.messages.json",
         },
         tmp_path,
     )
@@ -232,7 +317,8 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     assert mismatch["seal"].get("_skipped") is True
     assert len(transport["calls"]) == calls_before
     assert len(transport["posts"]) == posts_before
-    assert "notes/snap.json" not in set(mismatch["_files"]) - files_before or True
+    assert file_sha256((tmp_path / "notes" / "bad.md").read_bytes()) == file_sha256(bad_card)
+    assert not (tmp_path / "notes/system/transcripts/grok/bad.raw.messages.json").exists()
 
     refused = await _run(
         registry,
@@ -281,6 +367,83 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
         },
         tmp_path,
     )
+    rerun_card = _CARD.encode()
+    (tmp_path / "notes" / "rerun.md").write_bytes(rerun_card)
+    first = await _run(
+        registry,
+        {
+            **base,
+            "mode": "seal",
+            "house": "rerun",
+            "agent_id": "grok-rerun",
+            "n": 3,
+            "card_uri": "notes/rerun.md",
+            "expected_card_sha256": "ab" * 32,
+            "snapshot_uri": "notes/system/transcripts/grok/rerun.raw.messages.json",
+            "raw_ref": "notes/raw.json",
+            "raw_sha256": file_sha256(raw),
+        },
+        tmp_path,
+    )
+    assert first["seal"].get("session_id")
+    assert first["card"].get("refused")
+    seeded = "grok-bot-2026-01-01-000000-abc"
+    conn = cortex_db.cortex_conn()
+    conn.execute(
+        "INSERT INTO session_journals (session_id, conversation_uuid, closed_by, "
+        "file_path, agent, summary, timestamp) VALUES (?, ?, 'succession', ?, ?, ?, ?)",
+        (seeded, "grok-rerun", "notes/x", "grok-bot", "seeded row", "2026-01-01T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+    calls_at_rerun = len(transport["calls"])
+    second = await _run(
+        registry,
+        {
+            **base,
+            "mode": "seal",
+            "house": "rerun",
+            "agent_id": "grok-rerun",
+            "n": 3,
+            "card_uri": "notes/rerun.md",
+            "expected_card_sha256": file_sha256(rerun_card),
+            "snapshot_uri": "notes/system/transcripts/grok/rerun.raw.messages.json",
+            "raw_ref": "notes/raw.json",
+            "raw_sha256": file_sha256(raw),
+        },
+        tmp_path,
+    )
+    assert second["seal"]["session_id"] == seeded
+    assert second["seal"]["session_id"] != first["seal"]["session_id"]
+    from cortex_store.models import SessionCloseRequest
+    from cortex_store.routes.session_close_persist import try_idempotent_session_close
+    from cortex_store.routes.session_close_validate import ValidatedCloseContext
+
+    response, row_id = try_idempotent_session_close(
+        SessionCloseRequest(
+            session_id=seeded,
+            agent="grok-bot",
+            summary="succession seal (grokbot-checkpoint-v1)",
+            session_summary_md="succession seal (grokbot-checkpoint-v1)",
+            transcript_messages_path="notes/system/transcripts/grok/rerun.raw.messages.json",
+            transcript_depth="verbatim",
+            closed_by="succession",
+            succession_seal_authority=True,
+        ),
+        ValidatedCloseContext(
+            composed_md=None,
+            turn_count=0,
+            heading_warning=None,
+            transcript_entity_id=None,
+            transcript_path=None,
+            source_uri=None,
+            now="2026-01-01T00:00:00Z",
+            opened_at=None,
+        ),
+    )
+    assert response is None
+    assert row_id is not None
+    assert len(transport["calls"]) == calls_at_rerun + 1
+
     assert light["card"].get("written_sha256")
     assert light["seal"].get("_skipped") is True
-    assert len(transport["calls"]) == calls_before

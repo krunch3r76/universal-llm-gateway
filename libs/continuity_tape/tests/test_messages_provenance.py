@@ -1,8 +1,8 @@
 """Provenance is optional and absent from the wire when unset.
 
-Golden bytes are libs/continuity_tape/tests/fixtures/envelope_wire_base_87f3104b.json,
-produced from git show 87f3104b:libs/continuity_tape/messages.py (see fixtures/README.md).
-Not regenerated from the working tree.
+Golden bytes are fixtures/envelope_wire_base_87f3104b.json and
+envelope_dump_base_87f3104b.json, produced from git show 87f3104b messages.py
+envelope_wire_dict and model_dump (see fixtures/README.md). Not regenerated from HEAD.
 """
 
 from __future__ import annotations
@@ -42,11 +42,11 @@ def test_unset_provenance_omitted_from_wire() -> None:
     blob = json.dumps(wire, sort_keys=True).encode()
     assert b'"provenance"' not in blob
     assert b'"capture"' not in blob
-    golden_path = Path(__file__).parent / "fixtures" / "envelope_wire_base_87f3104b.json"
-    golden = json.loads(golden_path.read_text())
-    assert dumped == golden
-    assert "provenance" not in wire["meta"]
-    assert "capture" not in wire["meta"]
+    fix = Path(__file__).parent / "fixtures"
+    wire_golden = (fix / "envelope_wire_base_87f3104b.json").read_text()
+    dump_golden = (fix / "envelope_dump_base_87f3104b.json").read_text()
+    assert json.dumps(wire, sort_keys=True) + "\n" == wire_golden
+    assert json.dumps(dumped, sort_keys=True) + "\n" == dump_golden
 
 
 def test_provenance_literal_roundtrip() -> None:

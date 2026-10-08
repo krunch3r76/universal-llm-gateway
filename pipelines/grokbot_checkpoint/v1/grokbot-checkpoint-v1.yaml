@@ -10,6 +10,10 @@ description: >
   transcribed_sha256 and/or raw_ref plus raw_sha256. verify_resume is read-only.
 output: result
 
+# Serializes per dispatch thread, the same convention as continuity-checkpoint-v1.
+# A run with no context.dispatch_thread_id is refused at admit
+# (admit.dispatch_thread_missing) instead of raising from _render_key.
+# Callers must supply the dispatch thread id. This is not a per-house lock.
 concurrency:
   key: "grokbot-cp:{context.dispatch_thread_id}"
   scope: execution

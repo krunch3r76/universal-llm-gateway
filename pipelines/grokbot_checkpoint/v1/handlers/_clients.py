@@ -1,5 +1,10 @@
-"""Shared helpers for grokbot-checkpoint-v1. Cortex and bus clients are the
-continuity_checkpoint ones; this module does not reimplement HTTP."""
+"""Shared helpers for grokbot-checkpoint-v1.
+
+Bus and cortex_dispatch are loaded from
+pipelines/continuity_checkpoint/v1/handlers/_clients.py by file path. That
+couples this package to that layout; the functions are not a separate installable
+module. File bytes use cortex_files_root / workspaces_root, not a cortex tool.
+"""
 
 from __future__ import annotations
 
@@ -70,7 +75,13 @@ def dumps(obj: Any) -> bytes:
 
 
 class FsClientMissingError(Exception):
-    """Production fs has no cortex_dispatch client. Never falls back to /tmp."""
+    """Share path escaped its root. cortex_files_root() itself does not raise:
+    it uses CORTEX_FILES_ROOT, else /data/files, else ~/mcp-data/files
+    (implement_admission.closeout_helpers), matching cortex_store and the MCP mount.
+    RootFs writes are check-then-write on that directory. They are not atomic and
+    they do not emit cortex fs index events. The concurrency key serializes one
+    dispatch thread; two threads can still race a shared card.
+    """
 
     code = "fs.client_missing"
 

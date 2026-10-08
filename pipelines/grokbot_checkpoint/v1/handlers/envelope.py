@@ -11,6 +11,32 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
 
 
+def _producer_id(meta: dict[str, Any]) -> str:
+    sources = meta.get("sources")
+    if isinstance(sources, list) and sources and isinstance(sources[0], dict):
+        producer = sources[0].get("producer")
+        if isinstance(producer, dict):
+            return str(producer.get("id") or "")
+    return ""
+
+
+def _same_pour_identity(old_meta: dict[str, Any], source: dict[str, Any]) -> bool:
+    """Same messages hash is not the same snapshot when provenance differs."""
+    old_prov = str(old_meta.get("provenance") or "")
+    new_prov = str(source.get("provenance") or "")
+    if old_prov and new_prov and old_prov != new_prov:
+        return False
+    old_prod = _producer_id(old_meta)
+    new_prod = str(source.get("producer") or "")
+    if old_prod and new_prod and old_prod != new_prod:
+        return False
+    old_cap = old_meta.get("capture")
+    new_cap = source.get("capture")
+    old_ref = old_cap.get("ref") if isinstance(old_cap, dict) else None
+    new_ref = new_cap.get("ref") if isinstance(new_cap, dict) else None
+    return old_ref == new_ref
+
+
 def _prefix_holds(old: list[Any], new: list[Any]) -> bool:
     from cortex_store.verbatim_succession import prefix_holds
 
@@ -25,8 +51,9 @@ async def run_envelope(
     uri = str(
         options.get("snapshot_uri")
         or (
-            f"notes/system/threads/{options.get('house')}-"
-            f"{str(options.get('agent_id') or '')[:8]}.{source.get('provenance')}.messages.json"
+            "notes/system/transcripts/grok/"
+            f"{options.get('house')}-{str(options.get('agent_id') or '')[:8]}."
+            f"{source.get('provenance')}.messages.json"
         )
     )
     if not rel_path_ok(uri):
@@ -58,8 +85,14 @@ async def run_envelope(
         old = json.loads(existing.decode("utf-8"))
     except json.JSONDecodeError:
         return refuse("envelope.not_prefix", "existing snapshot is not json")
-    old_sha = str((old.get("meta") or {}).get("messages_sha256") or "")
-    if old_sha == messages_sha:
+    old_meta = old.get("meta") if isinstance(old.get("meta"), dict) else {}
+    old_sha = str(old_meta.get("messages_sha256") or "")
+    if old_sha == messages_sha and not _same_pour_identity(old_meta, source):
+        return refuse(
+            "envelope.provenance_mismatch",
+            "snapshot messages match but provenance, producer, or capture differ",
+        )
+    if old_sha == messages_sha and _same_pour_identity(old_meta, source):
         return {
             "refused": None,
             "snapshot_uri": uri,

@@ -22,7 +22,7 @@ async def test_seal_args_and_already_closed(monkeypatch: pytest.MonkeyPatch) -> 
         seal_mod, "stargate_continuity_checkpoint_sealed", lambda **kw: events.append(kw)
     )
     out = await seal_mod.run_seal(
-        {"bus_identity": "grok-bot", "root_thread": "9", "agent_id": "agent"},
+        {"bus_identity": "grok-bot-hm1", "root_thread": "9", "agent_id": "grok-lane-15903-unit"},
         {
             "snapshot_uri": "notes/snap.json",
             "surface": "grok",
@@ -39,7 +39,8 @@ async def test_seal_args_and_already_closed(monkeypatch: pytest.MonkeyPatch) -> 
     assert args["transcript_messages_path"] == "notes/snap.json"
     assert args["closed_by"] == "succession"
     assert args["succession_seal_authority"] is True
-    assert args["agent"] == "grok-bot"
+    assert args["agent"] == "grok-bot-hm1"
+    assert args["session_id"].startswith("grok-bot-")
     assert out["already_closed"] is True
     assert out["session_id"] == "sess-1"
     from agent_seat.session_id import SESSION_ID_RE
@@ -48,4 +49,4 @@ async def test_seal_args_and_already_closed(monkeypatch: pytest.MonkeyPatch) -> 
     assert out["sealed_on"] == out["sealed_on"]
     assert out["sealed_on"].endswith("Z")
     assert events[0]["surface"] == "grok"
-    assert out["proposals"]
+    assert out["proposals"] == []
