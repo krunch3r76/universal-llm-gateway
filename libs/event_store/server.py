@@ -1,4 +1,13 @@
-"""Event store server - UDS ingest + FastAPI/uvicorn query server."""
+"""Event store server - UDS ingest + FastAPI/uvicorn query server.
+
+Automatic retention reads ``EVENTS_RETENTION_STARTUP`` (``dry_run``, ``run``,
+or ``off``; default ``dry_run``). ``dry_run`` logs each table's would-delete
+count and does not delete. ``off`` skips the automatic pass. ``run`` deletes.
+The daily loop uses the same gate, so a restart does not start the multi-million
+row delete. One live pass is ``POST /api/v1/retention/run`` on the query
+socket; that route ignores the gate and runs age retention before the session
+pass, then a TRUNCATE checkpoint.
+"""
 
 from __future__ import annotations
 
@@ -66,6 +75,7 @@ def create_app(
     ingest: IngestServer,
     *,
     subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
+    retention_runner: Any = None,
 ) -> FastAPI:
     """Build the FastAPI query/subscribe application."""
 
@@ -83,7 +93,9 @@ def create_app(
                 pass
 
     app = FastAPI(title="Event Store", lifespan=_lifespan)
-    query_router = create_query_router(store, ingest, subscriber_queues)
+    query_router = create_query_router(
+        store, ingest, subscriber_queues, retention_runner=retention_runner
+    )
     subscribe_router = create_subscribe_router(
         store, subscriber_queues, subscriber_queue_maxsize=subscriber_queue_maxsize
     )
@@ -92,45 +104,109 @@ def create_app(
     return app
 
 
+def retention_startup_mode() -> str:
+    """Return ``dry_run``, ``run``, or ``off`` from ``EVENTS_RETENTION_STARTUP``.
+
+    An unset or unknown value is ``dry_run``, so a restart logs counts and
+    does not delete.
+    """
+    raw = os.environ.get("EVENTS_RETENTION_STARTUP", "dry_run").strip().lower()
+    if raw in ("dry_run", "run", "off"):
+        return raw
+    logger.error(
+        "EVENTS_RETENTION_STARTUP=%s is not dry_run|run|off; using dry_run",
+        raw,
+    )
+    return "dry_run"
+
+
+async def run_retention_pass(
+    store: EventStore,
+    *,
+    retention_days: int,
+    max_sessions: int,
+    dry_run: bool,
+) -> dict[str, int]:
+    """Delete or count one retention cycle, age cap before the session cap.
+
+    Each step is isolated: a deadline, busy error, or any other exception is
+    logged and the remaining steps still run. A writing pass truncates the
+    WAL once at the end. ``dry_run`` only counts.
+    """
+    max_age_ms = retention_days * _SECONDS_PER_DAY * 1000
+
+    async def _step(name: str, awaitable: Any) -> int:
+        try:
+            deleted = await awaitable
+        except Exception:
+            logger.exception("Retention step %s failed", name)
+            return 0
+        return int(deleted or 0)
+
+    debug_deleted = await _step("debug", store.prune_debug_events(dry_run=dry_run))
+    heartbeat_deleted = await _step(
+        "heartbeat", store.prune_heartbeat_signals(dry_run=dry_run)
+    )
+    age_deleted = await _step("age", store.run_retention(max_age_ms, dry_run=dry_run))
+    session_deleted = await _step(
+        "session", store.run_session_retention(max_sessions, dry_run=dry_run)
+    )
+    if not dry_run:
+        try:
+            await store.checkpoint_wal_truncate()
+        except Exception:
+            logger.exception("Retention WAL checkpoint failed")
+    logger.info(
+        "Retention pass dry_run=%s debug=%d heartbeat=%d age=%d session=%d "
+        "(max_sessions=%d, max_days=%d)",
+        dry_run,
+        debug_deleted,
+        heartbeat_deleted,
+        age_deleted,
+        session_deleted,
+        max_sessions,
+        retention_days,
+    )
+    return {
+        "debug": debug_deleted,
+        "heartbeat": heartbeat_deleted,
+        "age": age_deleted,
+        "session": session_deleted,
+    }
+
+
 async def _retention_loop(
     store: EventStore,
     *,
     retention_days: int = 7,
     max_sessions: int = 2,
 ) -> None:
-    """Session-cap retention first, then age retention as safety net."""
-    max_age_ms = retention_days * _SECONDS_PER_DAY * 1000
+    """Automatic retention. The startup gate decides whether it deletes.
 
-    async def _run(*, startup: bool) -> None:
-        debug_deleted = await store.prune_debug_events()
-        heartbeat_deleted = await store.prune_heartbeat_signals()
-        session_deleted = await store.run_session_retention(max_sessions)
-        age_deleted = await store.run_retention(max_age_ms)
-        if debug_deleted or heartbeat_deleted or session_deleted or age_deleted:
-            if startup:
-                logger.info(
-                    "Retention (startup): debug=%d heartbeat=%d session=%d age=%d (keeping %d sessions)",
-                    debug_deleted,
-                    heartbeat_deleted,
-                    session_deleted,
-                    age_deleted,
-                    max_sessions,
-                )
-                return
+    ``dry_run`` (the default) logs would-delete counts and writes nothing.
+    ``run`` deletes. ``off`` skips the pass. The same mode applies to the
+    daily iteration. ``POST /api/v1/retention/run`` is the one-shot live pass.
+    """
+    mode = retention_startup_mode()
+
+    async def _automatic(*, startup: bool) -> None:
+        if mode == "off":
             logger.info(
-                "Retention: debug=%d heartbeat=%d session=%d age=%d (max_sessions=%d, max_days=%d)",
-                debug_deleted,
-                heartbeat_deleted,
-                session_deleted,
-                age_deleted,
-                max_sessions,
-                retention_days,
+                "Retention automatic pass skipped startup=%s EVENTS_RETENTION_STARTUP=off",
+                startup,
             )
+            return
+        await run_retention_pass(
+            store,
+            retention_days=retention_days,
+            max_sessions=max_sessions,
+            dry_run=mode != "run",
+        )
 
-    await _run(startup=True)
+    await _automatic(startup=True)
     while True:
         await asyncio.sleep(_SECONDS_PER_DAY)
-        await _run(startup=False)
+        await _automatic(startup=False)
 
 
 async def run_service(
@@ -205,11 +281,20 @@ async def run_service(
         )
         await ingest.start()
 
+        async def _operator_retention() -> dict[str, int]:
+            return await run_retention_pass(
+                store,
+                retention_days=retention_days,
+                max_sessions=max_sessions,
+                dry_run=False,
+            )
+
         app = create_app(
             store,
             subscriber_queues,
             ingest,
             subscriber_queue_maxsize=subscriber_queue_maxsize,
+            retention_runner=_operator_retention,
         )
 
         query_sock_path = Path(query_sock)
@@ -217,7 +302,9 @@ async def run_service(
         if query_sock_path.exists():
             query_sock_path.unlink()
 
-        uds_config = uvicorn.Config(app, uds=query_sock, **_uvicorn_query_config_kwargs())
+        uds_config = uvicorn.Config(
+            app, uds=query_sock, **_uvicorn_query_config_kwargs()
+        )
         uds_server = uvicorn.Server(uds_config)
         uds_task = asyncio.create_task(uds_server.serve())
         serve_tasks.append(uds_task)

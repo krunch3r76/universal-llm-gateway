@@ -16,7 +16,7 @@ from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .errors import EventStoreBusyError
+from .errors import EventStoreBusyError, EventStoreReadDeadlineError
 from .ingest import IngestServer
 from .operation_admission import admit
 from .operation_catalog import get_operation, list_operations
@@ -33,6 +33,8 @@ _MAX_QUERY_ROWS = 1000
 
 def _stamp_query_finished(started: float) -> None:
     record_query_completed(time.perf_counter() - started)
+
+
 _ALLOWED_SQL_PREFIXES = ("SELECT", "EXPLAIN")
 
 
@@ -40,6 +42,8 @@ def create_query_router(
     store: EventStore,
     ingest: IngestServer,
     subscriber_queues: set[Any],
+    *,
+    retention_runner: Any = None,
 ) -> APIRouter:
     """Build a FastAPI router with store/ingest injected via closure."""
     router = APIRouter()
@@ -72,8 +76,10 @@ def create_query_router(
                 f"Unknown member: {member}",
                 data={"members": sorted(names)},
             )
-        method = "POST" if member == "sql" else (
-            get_operation(member).method if get_operation(member) else "GET"
+        method = (
+            "POST"
+            if member == "sql"
+            else (get_operation(member).method if get_operation(member) else "GET")
         )
         if request.method != method:
             return _envelope(
@@ -95,6 +101,19 @@ def create_query_router(
         finally:
             _stamp_query_finished(started)
         return _handler_response(member, result)
+
+    @router.post("/api/v1/retention/run")
+    async def retention_run() -> JSONResponse:
+        """One operator-fired live retention pass. Ignores the startup gate."""
+        if retention_runner is None:
+            return _envelope(
+                503,
+                "RETENTION_UNAVAILABLE",
+                "This process has no retention runner",
+                retryable=False,
+            )
+        counts = await retention_runner()
+        return JSONResponse({"dry_run": False, **counts})
 
     @router.get("/health")
     async def health_handler() -> JSONResponse:
@@ -192,7 +211,10 @@ async def _raw_sql(request: Request, store: EventStore) -> JSONResponse:
         return _envelope(400, "INVALID_PARAMS", "Invalid JSON", data={"member": "sql"})
     if not isinstance(data, dict):
         return _envelope(
-            400, "INVALID_PARAMS", "Request body must be an object", data={"member": "sql"}
+            400,
+            "INVALID_PARAMS",
+            "Request body must be an object",
+            data={"member": "sql"},
         )
     failure = admit("sql", data)
     if failure is not None:
@@ -223,6 +245,14 @@ async def _raw_sql(request: Request, store: EventStore) -> JSONResponse:
                 f"Event store waited on a database lock: {exc}",
                 retryable=True,
                 data={"error_class": ERROR_CLASS_LOCK_WAIT},
+            )
+        except EventStoreReadDeadlineError as exc:
+            return _envelope(
+                503,
+                "READ_DEADLINE",
+                f"Event store read exceeded the server deadline: {exc}",
+                retryable=True,
+                data={"error_class": "read_deadline"},
             )
         except sqlite3.Error as exc:
             return _envelope(
