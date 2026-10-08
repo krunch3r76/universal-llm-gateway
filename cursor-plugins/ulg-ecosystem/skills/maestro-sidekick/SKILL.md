@@ -35,7 +35,7 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
    | diff review | a fresh grok-bot per-REQUEST successor (not the author) sends `VERDICT\|<work_key>` to the Sidekick; cdp/opus-5.5 only when the REQUEST names it |
    | next REQUEST in a chain | propose it to the owning Sidekick |
    Falsifier: a DONE names no route, or a conductor leg ran outside §5a. Specimen: a:38770.
-4. **Escalate.** Bind forks yourself first. `QUESTION|<work_key>` to the owning Sidekick only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
+4. **Escalate.** Bind forks yourself first; no CDP unless named. `QUESTION|<work_key>` to the owning Sidekick only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
    Falsifier: a QUESTION on a fork you could bind, or a blast-radius fork bound silently. Specimen: 15609#48.
 5. **Land.** Green ⇒ land, quote sha; land is standing under a REQUEST unless it says no-land. Push to origin only when the REQUEST says publish, or after `VERDICT APPROVE` with no no-push constraint. Restart owed ⇒ name service + sha.
    Falsifier: a land claim without sha, or a push with neither. Specimen: a:38732.
