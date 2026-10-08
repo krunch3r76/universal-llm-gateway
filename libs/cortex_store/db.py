@@ -28,13 +28,7 @@ _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 WRITE_LOCK = threading.Lock()
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    # timeout: seconds to wait for a write lock under concurrent access.
-    # Python default is 5s — 30s gives concurrent write ops room to complete.
-    conn = sqlite3.connect(str(db_path), timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+def _register_regexp(conn: sqlite3.Connection) -> None:
     # SQLite has no built-in REGEXP — register one so callers can use
     # `col REGEXP pattern` in SQL. None inputs are treated as non-matching.
     conn.create_function(
@@ -44,11 +38,39 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             re.search(pattern, str(value)) if value is not None else False
         ),
     )
+
+
+def _connect(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    # timeout: seconds to wait for a write lock under concurrent access.
+    # Python default is 5s — 30s gives concurrent write ops room to complete.
+    if read_only:
+        # mode=ro does not create a missing file and does not run
+        # journal_mode=WAL. foreign_keys stays on: it is a connection
+        # flag, not a journal change, so a read does not take write intent.
+        uri = db_path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        _register_regexp(conn)
+        return conn
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    _register_regexp(conn)
     return conn
 
 
-def cortex_conn() -> sqlite3.Connection:
-    return _connect(_CORTEX_DB)
+def cortex_conn(*, read_only: bool = False) -> sqlite3.Connection:
+    """Open the cortex SQLite database.
+
+    ``read_only=True`` uses ``file:…?mode=ro`` and skips
+    ``PRAGMA journal_mode=WAL`` so a resume lookup does not take write
+    intent. ``PRAGMA foreign_keys=ON`` still runs: that flag does not
+    change the journal. The default path is unchanged for every other
+    caller. ``todos_conn`` does not take this flag.
+    """
+    return _connect(_CORTEX_DB, read_only=read_only)
 
 
 def todos_conn() -> sqlite3.Connection:
