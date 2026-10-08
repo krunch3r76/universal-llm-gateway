@@ -28,13 +28,20 @@ from .ingest import IngestServer
 from .query import create_query_router
 from .query_path_health import run_event_loop_lag_probe
 from .store import EventStore
-from .subscribe import _DEFAULT_SUBSCRIBER_QUEUE_SIZE, create_subscribe_router
+from .subscribe import (
+    _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
+    LiveSubscribers,
+    create_subscribe_router,
+)
 
 logger = logging.getLogger(__name__)
 
 _SECONDS_PER_DAY = 86400
 _DEFAULT_QUERY_SOCK_MODE = 0o660
 _GRACEFUL_TIMEOUT_ENV = "EVENT_STORE_GRACEFUL_TIMEOUT_S"
+# Query peers (subscribe websockets, idle TCP) must not hold SIGTERM.
+_QUERY_SHUTDOWN_WAIT_S = 1.0
+_SUBSCRIBER_SHUTDOWN_WAIT_S = 1.0
 
 
 def _graceful_shutdown_timeout_kwargs() -> dict[str, int]:
@@ -76,8 +83,13 @@ def create_app(
     *,
     subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
     retention_runner: Any = None,
+    live_subscribers: LiveSubscribers | None = None,
 ) -> FastAPI:
-    """Build the FastAPI query/subscribe application."""
+    """Build the FastAPI query and subscribe application.
+
+    ``live_subscribers`` is the registry ``run_service`` closes on SIGTERM
+    so subscribe sockets are dropped without waiting for the peer.
+    """
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -97,7 +109,10 @@ def create_app(
         store, ingest, subscriber_queues, retention_runner=retention_runner
     )
     subscribe_router = create_subscribe_router(
-        store, subscriber_queues, subscriber_queue_maxsize=subscriber_queue_maxsize
+        store,
+        subscriber_queues,
+        subscriber_queue_maxsize=subscriber_queue_maxsize,
+        live_subscribers=live_subscribers,
     )
     app.include_router(query_router)
     app.include_router(subscribe_router)
@@ -118,6 +133,43 @@ def retention_startup_mode() -> str:
         raw,
     )
     return "dry_run"
+
+
+def _drop_query_peers(server: uvicorn.Server | None) -> None:
+    """Close accepted query connections so uvicorn does not wait on them.
+
+    ``should_exit`` alone leaves websockets and half-open TCP clients in
+    ``server_state.connections`` until each peer goes away. ``shutdown`` on
+    the protocol closes the transport from this side.
+    """
+    if server is None:
+        return
+    server.should_exit = True
+    for conn in list(server.server_state.connections):
+        try:
+            conn.shutdown()
+        except Exception:
+            logger.exception("event-store query peer shutdown failed")
+
+
+async def _finish_query_servers(
+    tasks: list[asyncio.Task[None]],
+    *,
+    timeout: float,
+) -> None:
+    """Await uvicorn serve tasks, cancelling any that outlive ``timeout``."""
+    pending = [task for task in tasks if not task.done()]
+    if not pending:
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*pending, return_exceptions=True),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def run_retention_pass(
@@ -250,6 +302,7 @@ async def run_service(
     effective_db = db_path if persist else ":memory:"
     store = EventStore(effective_db)
     subscriber_queues: set[asyncio.Queue[dict[str, Any]]] = set()
+    live_subscribers = LiveSubscribers()
     ingest: IngestServer | None = None
     uds_server: uvicorn.Server | None = None
     tcp_server: uvicorn.Server | None = None
@@ -295,6 +348,7 @@ async def run_service(
             ingest,
             subscriber_queue_maxsize=subscriber_queue_maxsize,
             retention_runner=_operator_retention,
+            live_subscribers=live_subscribers,
         )
 
         query_sock_path = Path(query_sock)
@@ -401,18 +455,12 @@ async def run_service(
                 await asyncio.wait_for(retention_task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
                 pass
+        await live_subscribers.close_all(timeout=_SUBSCRIBER_SHUTDOWN_WAIT_S)
         if ingest is not None:
             await ingest.stop()
-        if uds_server is not None:
-            uds_server.should_exit = True
-        if tcp_server is not None:
-            tcp_server.should_exit = True
-        for t in serve_tasks:
-            t.cancel()
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
+        _drop_query_peers(uds_server)
+        _drop_query_peers(tcp_server)
+        await _finish_query_servers(serve_tasks, timeout=_QUERY_SHUTDOWN_WAIT_S)
         if started and persist:
             ts_ms, ts_iso = _event_timestamp()
             await store.insert_events(

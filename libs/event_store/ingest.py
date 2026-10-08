@@ -27,10 +27,17 @@ logger = logging.getLogger(__name__)
 _LINE_LIMIT = 1024 * 1024  # 1MB per line
 _BATCH_SIZE = 100
 _FLUSH_INTERVAL = 0.25
+# Idle publishers block readline until the peer disconnects. manage's SIGTERM
+# grace is ~8s; do not spend it inside Server.wait_closed.
+_SHUTDOWN_WAIT_S = 1.0
 
 
 class IngestServer:
-    """UDS listener that ingests NDJSON events into the store."""
+    """UDS and TCP listener that ingests NDJSON into the store.
+
+    Shutdown aborts idle publisher transports so ``wait_closed`` does not
+    wait for peers that never disconnect.
+    """
 
     def __init__(
         self,
@@ -66,6 +73,7 @@ class IngestServer:
         self._drop_notice_last_signal: str = ""
         self._subscriber_overflow_last_log_ts: float = 0.0
         self._subscriber_overflow_pending: int = 0
+        self._publishers: set[asyncio.StreamWriter] = set()
 
     async def start(self) -> None:
         """Bind UDS socket and start the DB writer task."""
@@ -123,14 +131,29 @@ class IngestServer:
         )
 
     async def stop(self) -> None:
+        """Stop listeners and drop publisher sockets instead of waiting on them.
+
+        ``Server.close`` only stops accept. A publisher blocked in ``readline``
+        keeps ``wait_closed`` pending until that peer disconnects, which is
+        past manage's SIGTERM grace. Abort each accepted transport, then bound
+        ``wait_closed``. Queued events still drain through the writer task.
+        """
         self._running = False
         register_coerce_notice_hook(None)
-        if self._tcp_server:
-            self._tcp_server.close()
-            await self._tcp_server.wait_closed()
-        if self._server:
-            self._server.close()
-            await self._server.wait_closed()
+        for server in (self._tcp_server, self._server):
+            if server is not None:
+                server.close()
+        self._abort_publishers()
+        for server in (self._tcp_server, self._server):
+            if server is None:
+                continue
+            try:
+                await asyncio.wait_for(server.wait_closed(), timeout=_SHUTDOWN_WAIT_S)
+            except TimeoutError:
+                logger.warning(
+                    "ingest listener still open after %.1fs; continuing shutdown",
+                    _SHUTDOWN_WAIT_S,
+                )
         if self._writer_task:
             try:
                 await asyncio.wait_for(self._writer_task, timeout=2.0)
@@ -152,6 +175,7 @@ class IngestServer:
         """Handle a single publisher connection (NDJSON stream)."""
         peer = writer.get_extra_info("peername", "unknown")
         logger.debug("Publisher connected: %s", peer)
+        self._publishers.add(writer)
         try:
             while self._running:
                 try:
@@ -187,7 +211,16 @@ class IngestServer:
         except Exception as e:
             logger.exception("Publisher connection error from %s: %s", peer, e)
         finally:
-            writer.close()
+            self._publishers.discard(writer)
+            if not writer.is_closing():
+                writer.close()
+
+    def _abort_publishers(self) -> None:
+        """Abort accepted ingest transports so ``wait_closed`` can finish."""
+        for writer in list(self._publishers):
+            transport = writer.transport
+            if transport is not None:
+                transport.abort()
 
     async def _db_writer_loop(self) -> None:
         """Drain the queue, batch-insert into SQLite, fan out to subscribers."""

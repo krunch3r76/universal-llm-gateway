@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -29,6 +30,45 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SUBSCRIBER_QUEUE_SIZE = 1000
 # Page size only — never a replay cap. Catch-up walks until the window is empty.
 _REPLAY_PAGE_SIZE = 10000
+
+
+class LiveSubscribers:
+    """Open subscribe sockets dropped on shutdown without waiting for peers.
+
+    Each handler registers the ``disconnected`` event it already waits on.
+    ``close_all`` sets those events so receive and push loops return, then
+    waits until ``finally`` unregisters. A peer that never reads is not
+    consulted; query-server abort covers a handler that misses the wait.
+    """
+
+    def __init__(self) -> None:
+        self._events: set[asyncio.Event] = set()
+
+    def register(self, disconnected: asyncio.Event) -> None:
+        """Remember one live handler so shutdown can unblock its receive wait."""
+        self._events.add(disconnected)
+
+    def discard(self, disconnected: asyncio.Event) -> None:
+        """Forget a handler after its ``finally`` has dropped the queue."""
+        self._events.discard(disconnected)
+
+    async def close_all(self, *, timeout: float) -> None:
+        """Set every disconnect event and wait until handlers unregister.
+
+        ``timeout`` bounds the wait. Handlers still registered when it elapses
+        are left for the query-server peer abort that follows.
+        """
+        for event in list(self._events):
+            event.set()
+        deadline = time.monotonic() + timeout
+        while self._events and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        if self._events:
+            logger.warning(
+                "shutdown left %d subscriber handler(s) after %.1fs",
+                len(self._events),
+                timeout,
+            )
 
 
 def _matches_filter(event: dict[str, Any], filt: dict[str, str]) -> bool:
@@ -167,6 +207,7 @@ def create_subscribe_router(
     subscriber_queues: set[asyncio.Queue[dict[str, Any]]],
     *,
     subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
+    live_subscribers: LiveSubscribers | None = None,
 ) -> APIRouter:
     """Build a FastAPI router for WebSocket subscriptions.
 
@@ -177,7 +218,10 @@ def create_subscribe_router(
             for bursty broadcast workloads; tune downward to shed slow consumers
             faster. A dead peer is removed from the set; a full queue alone is
             not.
+        live_subscribers: When set, shutdown calls ``close_all`` on this same
+            object to drop sockets without waiting for the peer to disconnect.
     """
+    tracker = live_subscribers if live_subscribers is not None else LiveSubscribers()
     router = APIRouter()
 
     @router.websocket("/v1/subscribe")
@@ -197,6 +241,7 @@ def create_subscribe_router(
         disconnected = asyncio.Event()
         event_filter: dict[str, str] = {}
         subscriber_queues.add(queue)
+        tracker.register(disconnected)
         push_task: asyncio.Task[None] | None = None
         # Sole receive consumer for the life of the socket. Replay sends are
         # not in receive_text, so without this a peer close during replay
@@ -308,6 +353,7 @@ def create_subscribe_router(
             with contextlib.suppress(asyncio.CancelledError):
                 await reader_task
             subscriber_queues.discard(queue)
+            tracker.discard(disconnected)
             logger.info(
                 "Subscriber disconnected (%d remaining)", len(subscriber_queues)
             )
