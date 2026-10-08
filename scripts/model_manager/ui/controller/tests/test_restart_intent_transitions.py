@@ -361,6 +361,65 @@ async def test_busy_status_hides_failed_intent_and_keeps_last(tmp_path: Any) -> 
     assert last["terminal_at"]
 
 
+@pytest.mark.asyncio
+async def test_fired_reason_keeps_ceiling_cause(tmp_path: Any) -> None:
+    from unittest.mock import MagicMock
+
+    from scripts.model_manager.ui.api_dispatch import _busy_status
+    from scripts.model_manager.ui.controller.restart_drain import RestartDrainGate
+
+    store = _store(tmp_path)
+    intent = _arm(store)
+    busy = ActiveWork(
+        busy=True,
+        detail={"busy": True, "total": 2, "requests_in_flight": 2},
+    )
+
+    async def _lifecycle() -> str:
+        return "forced restart"
+
+    supervisor = _supervisor(_ScriptedProbe([busy] * 30), _lifecycle, deadline_s=0.05)
+    supervisor.store = store
+    await supervisor.supervise(intent)
+    gate = RestartDrainGate(
+        probes={
+            "stargate": _ScriptedProbe([ActiveWork(busy=False, detail={"busy": False})])
+        }
+    )
+    ctl = MagicMock()
+    ctl.restart_intent_store = store
+    ctl.restart_gate = gate
+    last = (await _busy_status(ctl, service="stargate"))["restart_intent_last"]
+    assert last["status"] == "fired"
+    assert last["reason"].startswith("lifecycle_completed:idle_ceiling_reached")
+
+
+@pytest.mark.asyncio
+async def test_fired_reason_keeps_idle_observed(tmp_path: Any) -> None:
+    from unittest.mock import MagicMock
+
+    from scripts.model_manager.ui.api_dispatch import _busy_status
+    from scripts.model_manager.ui.controller.restart_drain import RestartDrainGate
+
+    store = _store(tmp_path)
+    intent = _arm(store)
+    idle = ActiveWork(busy=False, detail={"busy": False, "total": 0})
+
+    async def _lifecycle() -> str:
+        return "stargate restarted"
+
+    supervisor = _supervisor(_ScriptedProbe([idle]), _lifecycle)
+    supervisor.store = store
+    await supervisor.supervise(intent)
+    gate = RestartDrainGate(probes={"stargate": _ScriptedProbe([idle])})
+    ctl = MagicMock()
+    ctl.restart_intent_store = store
+    ctl.restart_gate = gate
+    last = (await _busy_status(ctl, service="stargate"))["restart_intent_last"]
+    assert last["status"] == "fired"
+    assert last["reason"].startswith("lifecycle_completed:idle_observed")
+
+
 def test_terminal_status_projection_words() -> None:
     from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
         TERMINAL_STATUS_PROJECTION,
@@ -591,9 +650,11 @@ def test_probe_streak_notes_once_and_ceiling_carries_count(tmp_path: Any) -> Non
         for item in row.transitions or []
         if item["status"] == STATUS_FORCE_REQUESTED
     )
-    assert (
-        force["reason"] == "idle_ceiling_reached:drain_probe_exception:ReadTimeout x20"
-    )
+    import re
+
+    match = re.search(r"x(\d+)$", force["reason"])
+    assert match is not None
+    assert int(match.group(1)) == 30 - len(probe._steps)
     drained = next(
         item
         for item in row.transitions or []

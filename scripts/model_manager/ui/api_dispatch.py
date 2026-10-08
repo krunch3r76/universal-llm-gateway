@@ -849,6 +849,7 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
     now = datetime.now(UTC)
     store = ctl.restart_intent_store
     store.sweep_expired_windows(now=now)
+    from .controller.restart_intent_consumer import project_restart_intent_last
     from .controller.restart_intent_lookup import latest_terminal_for_service
 
     live_intents = {intent.service: intent for intent in store.pending_intents()}
@@ -859,8 +860,6 @@ async def _busy_status(ctl: ServiceController, *, service: str = "") -> dict[str
             if intent is not None
             else None
         )
-        from .controller.restart_intent_consumer import project_restart_intent_last
-
         last = latest_terminal_for_service(store, service, now=now)
         entry["restart_intent_last"] = (
             project_restart_intent_last(last) if last is not None else None

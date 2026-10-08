@@ -38,12 +38,6 @@ logger = get_logger(__name__)
 _REASON_LIMIT = 240
 
 
-def describe_probe_exc(exc: BaseException) -> str:
-    message = str(exc).strip()
-    text = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
-    return text[:180]
-
-
 def _clip(text: str) -> str:
     return text if len(text) <= _REASON_LIMIT else text[: _REASON_LIMIT - 3] + "..."
 
@@ -110,7 +104,7 @@ async def supervise_until_lifecycle(
             await asyncio.sleep(poll_interval_s)
         phase = "drained_restarting"
         if escalated:
-            drained_reason = reason_code(IDLE_CEILING_REACHED, last_cause)
+            drained_reason = _clip(reason_code(IDLE_CEILING_REACHED, last_cause))
         elif last_cause.startswith(DRAIN_PROBE_EXCEPTION):
             drained_reason = _clip(reason_code(IDLE_OBSERVED, last_cause))
         else:
@@ -127,12 +121,15 @@ async def supervise_until_lifecycle(
         phase = "lifecycle"
         message = await lifecycle()
         phase = "completed"
+        completed = drained_reason
+        if message and str(message).strip():
+            completed = f"{drained_reason}; {message}"
         _cas(
             store,
             intent_id,
             from_status=STATUS_DRAINED_RESTARTING,
             to_status=STATUS_COMPLETED,
-            reason=_clip(reason_code(LIFECYCLE_COMPLETED, message or "")),
+            reason=_clip(reason_code(LIFECYCLE_COMPLETED, completed)),
         )
         if escalated:
             logger.info(

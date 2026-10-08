@@ -384,8 +384,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              (constant
                                              TERMINAL_STATUS_PROJECTION).
                                              Fields: intent_id, status, reason
-                                             (machine-readable code, optional
-                                             detail after ':'), armed_at,
+                                             (code, optional ':' detail). A
+                                             fired row is
+                                             lifecycle_completed:<drained reason>
+                                             and, when the lifecycle returned
+                                             text, '; <message>' after that.
+                                             armed_at,
                                              terminal_at, drain_begun.
                                              Live restart_intent never carries
                                              a terminal row. deadline_semantics:
