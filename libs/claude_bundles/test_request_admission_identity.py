@@ -593,7 +593,7 @@ def test_request_dispatch_refuses_before_hop_gate():
         patch(
             "tools.agent_bus.request._resolve_hop_seat_request_refusal",
         ) as gate_mock,
-        patch("tools.agent_bus.request._send_dispatch") as send_mock,
+        patch("tools.agent_bus.send._send_dispatch") as send_mock,
     ):
         result = _request_dispatch(
             thread="7188",
