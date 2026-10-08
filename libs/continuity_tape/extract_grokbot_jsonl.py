@@ -57,8 +57,12 @@ HEADER_RE = re.compile(
 )
 TRAILER_RE = re.compile(r"^\s*Older messages remain: call ReadTranscript again\b")
 START_RE = re.compile(r"^\s*This is the start of the transcript\.\s*$")
-# No ReadTranscript truncation marker exists in this repo. Count explicit
-# elision markers that require a digit count (case-insensitive).
+# ReadTranscript middle-truncates a part to about TRUNCATION_PART_LEN chars by
+# splicing a bare ``...`` (three ASCII dots, no count or brackets). A part counts
+# as truncated when it contains ``...`` and its decoded length falls in
+# TRUNCATION_LEN_WINDOW. This can miss a truncated part outside the window and
+# can flag an untruncated ~4000-char part that contains ``...``. The bracket
+# regex is kept for older/other renderers.
 TRUNCATION_PART_LEN = 4000
 TRUNCATION_LEN_WINDOW = (3990, 4010)
 TRUNCATION_ELLIPSIS = "..."
@@ -133,26 +137,15 @@ def _split_pages(text: str) -> tuple[list[_Page] | None, bool]:
     return pages, start_sentinel
 
 
-def _position_base(min_lo: int, max_hi: int, total: int) -> int:
-    """0 when a window touches position 0 or the 0-based end; else 1."""
-    if min_lo == 0 or max_hi == total - 1:
-        return 0
-    return 1
-
-
 def _coverage(
     *,
     min_lo: int,
     max_hi: int,
     total: int,
-    position_base: int,
     start_sentinel: bool,
 ) -> str:
-    end_reached = (position_base == 0 and max_hi == total - 1) or (
-        position_base == 1 and max_hi == total
-    )
-    start_reached = min_lo == 0 or (min_lo == 1 and max_hi == total) or start_sentinel
-    if end_reached and start_reached:
+    """Full only for a gap-free 0-based span that includes the start sentinel."""
+    if min_lo == 0 and max_hi == total - 1 and start_sentinel:
         return "full"
     return "tail"
 
@@ -182,6 +175,10 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
     ordered = sorted(pages, key=lambda p: (p.lo, p.hi))
     unrendered = 0
     for page in ordered:
+        if page.lo > page.hi or page.hi >= total:
+            raise TranscriptPageError(
+                f"page {page.lo}-{page.hi} of {total}: window is not 0-based"
+            )
         expected = page.hi - page.lo + 1
         got = len(page.lines)
         if got > expected:
@@ -222,12 +219,10 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
         lines = [line for page in ordered for line in page.lines]
     min_lo = min(p.lo for p in ordered)
     max_hi = max(p.hi for p in ordered)
-    position_base = _position_base(min_lo, max_hi, total)
     coverage = _coverage(
         min_lo=min_lo,
         max_hi=max_hi,
         total=total,
-        position_base=position_base,
         start_sentinel=start_sentinel,
     )
     info = {
@@ -239,7 +234,6 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
         "header_agent_id": pages[0].header_agent_id,
         "unrendered_positions": unrendered,
         "start_sentinel": start_sentinel,
-        "position_base": position_base,
     }
     return lines, info
 
@@ -327,6 +321,7 @@ def adapt_records(
         "tool_pairs_by_id": 0,
         "tool_pairs_by_order": 0,
         "tool_use_unpaired": 0,
+        "memory_context_dropped": 0,
     }
     # Pair tool_use <-> tool_result: by id first, then FIFO order for id-less blocks.
     uses: list[dict[str, Any]] = []
@@ -382,9 +377,14 @@ def adapt_records(
         if role == "tool":
             stats["tool_result_records_dropped"] += 1
             continue
-        if role == "user" and INJECTED_USER_RE.match(_user_text(blocks)):
-            stats["injected_user_dropped"] += 1
-            continue
+        if role == "user":
+            user_text = _user_text(blocks)
+            if user_text.lstrip().startswith("<memory_context>"):
+                stats["memory_context_dropped"] += 1
+                continue
+            if INJECTED_USER_RE.match(user_text):
+                stats["injected_user_dropped"] += 1
+                continue
         kept.append({"role": role, "message": {"content": blocks}})
     return kept, stats
 
@@ -420,7 +420,6 @@ def _source_dict(
         source["window"] = {"lo": lo, "hi": hi, "total": cov["total"]}
         source["header_target"] = cov["header_target"]
         source["start_sentinel"] = cov["start_sentinel"]
-        source["position_base"] = cov["position_base"]
         if cov.get("header_agent_id"):
             source["header_agent_id"] = cov["header_agent_id"]
     return source

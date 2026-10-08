@@ -71,12 +71,14 @@ def _pages(records: list[dict], size: int) -> str:
     lines = _lines(records)
     n = len(lines)
     out: list[str] = []
-    hi = n
-    while hi >= 1:
-        lo = max(1, hi - size + 1)
+    hi = n - 1
+    while hi >= 0:
+        lo = max(0, hi - size + 1)
         out.append(f"Transcript of this conversation, positions {lo}\u2013{hi} of {n}:")
-        out.extend(lines[lo - 1 : hi])
-        if lo > 1:
+        out.extend(lines[lo : hi + 1])
+        if lo == 0:
+            out.append("This is the start of the transcript.")
+        else:
             out.append(
                 f"Older messages remain: call ReadTranscript again with before={lo}"
             )
@@ -88,7 +90,7 @@ def test_pages_newest_first_reassemble_oldest_first() -> None:
     lines, info = reassemble_pages(_pages(RECORDS, 4))
     assert lines == _lines(RECORDS)
     assert info["coverage"] == "full"
-    assert info["positions"] == [1, len(RECORDS)]
+    assert info["positions"] == [0, len(RECORDS) - 1]
 
 
 def test_envelope_drops_injections_thinking_and_tool_results() -> None:
@@ -162,9 +164,9 @@ def test_short_page_raises() -> None:
     with pytest.raises(TranscriptPageError):
         reassemble_pages(_pages(RECORDS, 4).replace(needle, needle + needle, 1))
     short_overlap = (
-        "Transcript of this conversation, positions 1\u20134 of 8:\n"
+        "Transcript of this conversation, positions 0\u20133 of 8:\n"
         + "\n".join(_lines(RECORDS[:3]))
-        + "\nTranscript of this conversation, positions 4\u20138 of 8:\n"
+        + "\nTranscript of this conversation, positions 3\u20137 of 8:\n"
         + "\n".join(_lines(RECORDS[:5]))
         + "\n"
     )
@@ -184,17 +186,17 @@ def _header_pages(records: list[dict], header: str, *, size: int = 4) -> str:
     lines = _lines(records)
     n = len(lines)
     chunks: list[tuple[int, int, list[str]]] = []
-    hi = n
-    while hi >= 1:
-        lo = max(1, hi - size + 1)
-        chunks.append((lo, hi, lines[lo - 1 : hi]))
+    hi = n - 1
+    while hi >= 0:
+        lo = max(0, hi - size + 1)
+        chunks.append((lo, hi, lines[lo : hi + 1]))
         hi = lo - 1
     chunks.reverse()  # oldest first, then we emit newest first
     out: list[str] = []
     for lo, hi, body in reversed(chunks):
         out.append(header.format(lo=lo, hi=hi, n=n))
         out.extend(body)
-        if lo == 1:
+        if lo == 0:
             out.append("This is the start of the transcript.")
         else:
             out.append(
@@ -220,8 +222,8 @@ def test_by_agent_header_matches_own_conversation_and_bare_jsonl() -> None:
     assert a.meta.messages_sha256 == b.meta.messages_sha256 == c.meta.messages_sha256
     assert a.meta.sources[0]["header_agent_id"] == NAME_FIX
     assert a.meta.sources[0]["window"] == {
-        "lo": 1,
-        "hi": len(RECORDS),
+        "lo": 0,
+        "hi": len(RECORDS) - 1,
         "total": len(RECORDS),
     }
 
@@ -358,7 +360,7 @@ def test_pages_sha_capture_and_provenance() -> None:
         "kind": "extractor",
         "version": "2",
     }
-    assert env.meta.sources[0]["window"]["lo"] == 1
+    assert env.meta.sources[0]["window"]["lo"] == 0
     checked = ContinuityMessagesEnvelope.model_validate(wire)
     again = envelope_wire_dict(checked)
     assert again["meta"]["provenance"] == "raw"
@@ -497,10 +499,11 @@ def test_real_l0_page_shape() -> None:
     src = a.meta.sources[0]
     assert a.meta.coverage == "full"
     assert src["unrendered_positions"] == 1
-    assert src["position_base"] == 0
+    assert "position_base" not in src
     assert src["start_sentinel"] is True
+    assert src["memory_context_dropped"] == 1
     assert src["truncated_parts"] == 3
-    assert src["truncated_parts_kept"] == 1
+    assert src["truncated_parts_kept"] == 0
     assert a.meta.truncated is True
     assert src["window"] == {"lo": 0, "hi": 5, "total": 6}
     assert a.meta.messages_sha256 == b.meta.messages_sha256
@@ -517,3 +520,43 @@ def test_real_l0_page_shape() -> None:
         observed_at="t",
     )
     assert no_dots.meta.sources[0]["truncated_parts"] == 0
+
+
+def test_memory_context_dropped_and_wrapped_hidden_prompt_kept() -> None:
+    wrapped = (
+        "<timestamp>2026-10-08T00:00:00Z</timestamp>\n"
+        "<user_query>\n"
+        "[GROK_BOT_HIDDEN_PROMPT][agent] land the house</user_query>"
+    )
+    records = [
+        _u("  <memory_context>\nsecret"),
+        _u("<memory_context>also secret"),
+        _a({"type": "text", "text": "ack"}),
+        _u("Go."),
+        _a({"type": "text", "text": "done"}),
+        _u(wrapped),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    assert env.meta.sources[0]["memory_context_dropped"] == 2
+    assert env.messages[0]["content"] == "(no user message)"
+    assert env.messages[1]["content"] == "ack"
+    assert env.messages[2]["content"] == "Go."
+    assert env.messages[3]["content"] == "done"
+    assert env.messages[4]["content"] == wrapped
+
+
+def test_zero_based_span_without_sentinel_is_tail() -> None:
+    body = "\n".join(_lines(RECORDS[:2]))
+    text = "Transcript of this conversation, positions 0\u20131 of 2:\n" + body + "\n"
+    env = extract_grokbot_transcript(text, agent_id="x", observed_at="t")
+    assert env.meta.coverage == "tail"
+    with pytest.raises(TranscriptPageError):
+        reassemble_pages(
+            "Transcript of this conversation, positions 0\u20132 of 2:\n" + body + "\n"
+        )
+    with pytest.raises(TranscriptPageError):
+        reassemble_pages(
+            "Transcript of this conversation, positions 3\u20131 of 4:\n" + body + "\n"
+        )
