@@ -21,6 +21,7 @@ from typing import Any, TypedDict
 from universal_logging import get_logger
 
 from .restart_intent_migrate import _DDL, apply_restart_intent_schema
+from .restart_intent_reason_codes import reason_code as _reason_code
 from .restart_intent_states import (
     _ALL_STATUSES,
     _BLOCKS_NEW_RESTART,
@@ -34,7 +35,11 @@ from .restart_intent_states import (
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
 )
-from .restart_intent_transitions import append_status_transition, transition_fields
+from .restart_intent_transitions import (
+    append_kill_commit,
+    append_status_transition,
+    transition_fields,
+)
 from .restart_window_store import (
     RestartWindow,
     RestartWindowStore,
@@ -283,8 +288,9 @@ class RestartIntentStore:
                     now,
                 ),
             )
+            armed_reason = _reason_code("armed")
             append_status_transition(
-                conn, intent_id, status=STATUS_PENDING_DRAIN, reason="armed"
+                conn, intent_id, status=STATUS_PENDING_DRAIN, reason=armed_reason
             )
             row = conn.execute(
                 "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)
@@ -329,7 +335,7 @@ class RestartIntentStore:
         """CAS; transition reason does not overwrite the arm reason."""
         if to_status not in _ALL_STATUSES:
             raise ValueError(f"unknown intent status: {to_status!r}")
-        recorded = to_status if reason is None else reason
+        recorded = _reason_code("unspecified_transition") if not reason else reason
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -382,12 +388,7 @@ class RestartIntentStore:
                 ).fetchone()
                 if matched is None:
                     return False
-                changed = append_status_transition(
-                    conn,
-                    intent_id,
-                    status=STATUS_DRAINED_RESTARTING,
-                    reason="kill_commit",
-                )
+                changed = append_kill_commit(conn, intent_id)
             except sqlite3.IntegrityError:
                 return False
             return changed == 1

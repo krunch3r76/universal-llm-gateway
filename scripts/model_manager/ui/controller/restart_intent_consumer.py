@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from .restart_intent_reason_codes import TERMINAL_STATUS_PROJECTION
+from .restart_intent_reason_codes import TERMINAL_STATUS_PROJECTION, TTL_EXPIRED
 from .restart_intent_states import _NEEDS_RECONCILE
 from .restart_intent_store import Intent, intent_status_view
 
@@ -81,6 +81,11 @@ def project_restart_intent_last(intent: Intent) -> dict[str, Any] | None:
     projected = TERMINAL_STATUS_PROJECTION.get(intent.status)
     if projected is None:
         return None
+    # Expiry cancels the row (expire_via_cancel) and records ttl_expired.
+    # Project that as expired so a TTL end is not shown as an operator cancel.
+    reason = intent.status_reason or ""
+    if projected == "cancelled" and reason.split(":", 1)[0] == TTL_EXPIRED:
+        projected = "expired"
     return {
         "intent_id": intent.intent_id,
         "status": projected,

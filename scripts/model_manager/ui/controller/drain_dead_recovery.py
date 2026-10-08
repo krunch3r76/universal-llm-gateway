@@ -18,6 +18,11 @@ from charter_runner_store.propagation_validation import latest_validation_for_in
 from universal_logging import get_logger
 
 from .git_worker_activation_verify import arm_verify_after_generation_gone
+from .restart_intent_reason_codes import (
+    FORCE_START_COMPLETED,
+    FORCE_START_PENDING,
+    reason_code,
+)
 from .restart_intent_states import STATUS_COMPLETED, STATUS_FAILED, STATUS_PENDING_DRAIN
 from .restart_intent_store import Intent, RestartIntentStore
 
@@ -98,7 +103,7 @@ def _fail_pending(store: RestartIntentStore, intent: Intent) -> None:
         store.advance(
             intent.intent_id,
             status=STATUS_FAILED,
-            reason="force-start left the intent pending",
+            reason=reason_code(FORCE_START_PENDING, "left the intent pending"),
         )
 
 
@@ -164,7 +169,7 @@ async def force_start_and_validate(
             store.advance(
                 intent.intent_id,
                 status=STATUS_COMPLETED,
-                reason="force-start completed without activation verify",
+                reason=reason_code(FORCE_START_COMPLETED, "without activation verify"),
             )
     return message
 

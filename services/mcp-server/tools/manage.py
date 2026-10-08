@@ -378,7 +378,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              → fired; failed and
                                              activation_unverified → failed;
                                              timeout → expired; cancelled →
-                                             cancelled (constant
+                                             cancelled, except a cancelled row
+                                             whose reason code is ttl_expired,
+                                             which projects as expired
+                                             (constant
                                              TERMINAL_STATUS_PROJECTION).
                                              Fields: intent_id, status, reason
                                              (machine-readable code, optional

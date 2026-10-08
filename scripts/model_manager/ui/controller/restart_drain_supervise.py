@@ -21,6 +21,7 @@ from .restart_intent_reason_codes import (
     IDLE_OBSERVED,
     LIFECYCLE_COMPLETED,
     LIFECYCLE_EXCEPTION,
+    SUPERVISOR_EXCEPTION,
     reason_code,
 )
 from .restart_intent_states import (
@@ -157,10 +158,7 @@ def _note_if_changed(
 ) -> None:
     if cause == previous:
         return
-    try:
-        note_waiting_reason(store, intent_id, status_reason=_clip(cause))
-    except Exception:
-        logger.exception("restart intent waiting note failed intent_id=%s", intent_id)
+    note_waiting_reason(store, intent_id, status_reason=_clip(cause))
 
 
 def _cas(
@@ -185,10 +183,11 @@ def _cas(
 def _record_failed(
     store: Any, intent_id: str, *, phase: str, exc: BaseException
 ) -> None:
-    detail = f"{phase} {type(exc).__name__}: {exc}"
+    exc_name = type(exc).__name__
     if phase == "lifecycle":
-        detail = type(exc).__name__
-    reason = _clip(reason_code(LIFECYCLE_EXCEPTION, detail))
+        reason = _clip(reason_code(LIFECYCLE_EXCEPTION, exc_name))
+    else:
+        reason = _clip(reason_code(SUPERVISOR_EXCEPTION, f"{phase}:{exc_name}"))
     try:
         current = store.get(intent_id)
         if current is None or current.status in {STATUS_COMPLETED, STATUS_CANCELLED}:

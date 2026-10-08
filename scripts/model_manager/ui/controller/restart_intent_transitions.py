@@ -7,6 +7,9 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from .restart_intent_reason_codes import KILL_COMMIT, reason_code
+from .restart_intent_states import STATUS_DRAINED_RESTARTING, STATUS_PENDING_DRAIN
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -80,11 +83,26 @@ def append_status_transition(
     return int(cursor.rowcount)
 
 
+def append_kill_commit(conn: sqlite3.Connection, intent_id: str) -> int:
+    """Kill-commit transition. Caller holds ``BEGIN IMMEDIATE``."""
+    return append_status_transition(
+        conn,
+        intent_id,
+        status=STATUS_DRAINED_RESTARTING,
+        reason=reason_code(KILL_COMMIT),
+    )
+
+
 def write_status_reason(
     conn: sqlite3.Connection, intent_id: str, *, status_reason: str
-) -> None:
-    """Waiting note. Does not append a transition or change status."""
-    conn.execute(
-        "UPDATE restart_intents SET status_reason=? WHERE intent_id=?",
-        (status_reason, intent_id),
+) -> bool:
+    """Waiting note on a live row. Does not append a transition or change status.
+
+    Returns whether the UPDATE matched. A terminal row (cancelled, failed,
+    completed) is left unchanged so a late note cannot replace its reason.
+    """
+    cursor = conn.execute(
+        "UPDATE restart_intents SET status_reason=? WHERE intent_id=? AND status=?",
+        (status_reason, intent_id, STATUS_PENDING_DRAIN),
     )
+    return int(cursor.rowcount) == 1

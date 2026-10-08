@@ -377,6 +377,145 @@ def test_terminal_status_projection_words() -> None:
     assert TERMINAL_STATUS_PROJECTION[STATUS_CANCELLED] == "cancelled"
 
 
+def test_supervisor_reasons_use_known_codes() -> None:
+    from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
+        ACTIVATION_NOT_APPLICABLE,
+        ACTIVATION_VALIDATED,
+        ACTIVATION_VERIFY_ARMED,
+        ALL_REASON_CODES,
+        BEGIN_DRAIN_UNREACHABLE,
+        EPOCH_CHECK_MISMATCH,
+        EPOCH_CHECK_OK,
+        FORCE_START_COMPLETED,
+        FORCE_START_PENDING,
+        GENERATION_GONE,
+        KILL_COMMIT,
+        KILL_FAILED,
+        LIFECYCLE_UNCONFIRMED,
+        RECONCILE_RESUME_FAILED,
+        SUPERVISOR_EXCEPTION,
+        TARGET_GONE,
+        UNSPECIFIED_TRANSITION,
+        reason_code,
+    )
+
+    samples = [
+        reason_code(SUPERVISOR_EXCEPTION, "RuntimeError: boom"),
+        reason_code(EPOCH_CHECK_OK, "delivering SIGTERM"),
+        reason_code(KILL_FAILED, "boom"),
+        reason_code(LIFECYCLE_UNCONFIRMED, "not certified"),
+        reason_code(BEGIN_DRAIN_UNREACHABLE, "SIGTERM without epoch"),
+        reason_code(GENERATION_GONE, "already gone"),
+        reason_code(EPOCH_CHECK_MISMATCH, "same worker generation"),
+        reason_code(TARGET_GONE, "action does not start it"),
+        reason_code(FORCE_START_PENDING, "left the intent pending"),
+        reason_code(FORCE_START_COMPLETED, "without activation verify"),
+        reason_code(ACTIVATION_NOT_APPLICABLE, "does not apply to this action"),
+        reason_code(ACTIVATION_VERIFY_ARMED, "kill boundary recorded"),
+        reason_code(ACTIVATION_VALIDATED),
+        reason_code(RECONCILE_RESUME_FAILED),
+        reason_code(KILL_COMMIT),
+        reason_code(UNSPECIFIED_TRANSITION),
+    ]
+    for sample in samples:
+        assert sample.split(":", 1)[0] in ALL_REASON_CODES
+
+
+def test_unspecified_cas_is_a_named_code(tmp_path: Any) -> None:
+    store = _store(tmp_path)
+    intent = _arm(store)
+    assert (
+        store.advance_if_status(
+            intent.intent_id,
+            from_status=STATUS_PENDING_DRAIN,
+            to_status=STATUS_FAILED,
+        )
+        == 1
+    )
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert (row.transitions or [])[-1]["reason"] == "unspecified_transition"
+    assert row.reason == "manage sync_restart (stargate idle drain)"
+
+
+def test_ttl_expiry_projects_as_expired(tmp_path: Any) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_last,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_expiry import (
+        expire_via_cancel,
+    )
+
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service="stargate",
+        action="sync_restart",
+        deadline_at="2026-10-08T06:00:00+00:00",
+        reason="arm",
+        intent_ttl_s=1,
+    )
+
+    async def _expire() -> bool:
+        return await expire_via_cancel(
+            store, intent.intent_id, now=datetime.now(UTC) + timedelta(hours=1)
+        )
+
+    assert _run(_expire()) is True
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert row.status == STATUS_CANCELLED
+    projected = project_restart_intent_last(row)
+    assert projected is not None
+    assert projected["status"] == "expired"
+    assert projected["reason"] == "ttl_expired"
+
+
+def test_waiting_note_does_not_overwrite_cancel(tmp_path: Any) -> None:
+    from scripts.model_manager.ui.controller.restart_intent_lookup import (
+        note_waiting_reason,
+    )
+    from scripts.model_manager.ui.controller.restart_intent_reason_codes import (
+        CANCELLED_BY_OPERATOR,
+    )
+
+    store = _store(tmp_path)
+    intent = _arm(store)
+    store.cancel(intent.intent_id, reason=CANCELLED_BY_OPERATOR)
+    wrote = note_waiting_reason(
+        store, intent.intent_id, status_reason="drain_probe_exception:ReadTimeout"
+    )
+    assert wrote is False
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert row.status_reason == CANCELLED_BY_OPERATOR
+
+
+def test_store_error_during_wait_is_supervisor_exception(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    intent = _arm(store)
+
+    def _boom(*_a: Any, **_k: Any) -> bool:
+        raise RuntimeError("locked")
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain_supervise.note_waiting_reason",
+        _boom,
+    )
+    busy = ActiveWork(busy=True, detail={"busy": True, "total": 1})
+    supervisor = _supervisor(_ScriptedProbe([busy]), _noop_lifecycle)
+    supervisor.store = store
+    with pytest.raises(RuntimeError):
+        _run(supervisor.supervise(intent))
+    row = store.get(intent.intent_id)
+    assert row is not None
+    assert row.status == STATUS_FAILED
+    assert row.status_reason == "supervisor_exception:wait:RuntimeError"
+
+
 def test_giw_deadline_semantics_unchanged() -> None:
     from scripts.model_manager.ui.controller.restart_intent_consumer import (
         DEADLINE_SEMANTICS,

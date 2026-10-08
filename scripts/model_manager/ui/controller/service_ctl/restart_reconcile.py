@@ -13,6 +13,7 @@ from ..drain_timeout_keep_await import repair_timeout_intent_gap
 from ..git_worker_activation_verify import resume_activation_verify
 from ..giw_recycle import recycle_deadline_s, recycle_idle_s
 from ..restart_drain import resume_drain_supervision
+from ..restart_intent_reason_codes import RECONCILE_RESUME_FAILED, reason_code
 from ..restart_intent_states import (
     STATUS_DRAINED_RESTARTING,
     STATUS_PENDING_DRAIN,
@@ -85,7 +86,7 @@ async def reconcile_pending_restart_intents(controller: ServiceController) -> No
                 store.advance(
                     intent.intent_id,
                     status="failed",
-                    reason="reconcile resume failed",
+                    reason=reason_code(RECONCILE_RESUME_FAILED),
                 )
             except Exception:
                 logger.exception(

@@ -55,6 +55,6 @@ def latest_terminal_for_service(
     return intent
 
 
-def note_waiting_reason(store: Any, intent_id: str, *, status_reason: str) -> None:
+def note_waiting_reason(store: Any, intent_id: str, *, status_reason: str) -> bool:
     with store._connect() as conn:
-        write_status_reason(conn, intent_id, status_reason=status_reason)
+        return write_status_reason(conn, intent_id, status_reason=status_reason)
