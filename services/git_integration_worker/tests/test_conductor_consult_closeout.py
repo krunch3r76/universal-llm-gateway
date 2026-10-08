@@ -417,6 +417,32 @@ def test_other_designed_stops_unchanged_beside_live_park(tmp_path) -> None:
         assert reason == CONDUCTOR_EXIT_PERSIST, token
         assert outcome == WorkOutcome.UNVERIFIED, token
         assert incomplete == "consult", token
+    for token in ("HOLD_MERGE", "OPERATOR_GATE", "CONFIRM_PENDING"):
+        beside = _park_body(
+            f"stop: {token}",
+            "stop: PARKED_TRANSPORT",
+            f"NEXT_ADMIT: harvest {_LIVE_HARVEST_UUID}",
+        )
+        reason, _status, outcome, incomplete = _grade(beside, tmp_path)
+        assert reason == CONDUCTOR_EXIT_PERSIST, token
+        assert outcome == WorkOutcome.UNVERIFIED, token
+        assert incomplete == "consult", token
+
+
+def test_row_status_done_prose_still_grades_live_park(tmp_path) -> None:
+    """G-row and prose DONE are not a designed stop: DONE line."""
+    body = _park_body(
+        "| G1 | Architecture | DONE |",
+        "| G2 | Frame | DONE |",
+        "G1–G4 DONE.",
+        "stop: PARKED_TRANSPORT",
+        f"NEXT_ADMIT: harvest {_LIVE_HARVEST_UUID}",
+    )
+    reason, status, outcome, incomplete = _grade(body, tmp_path)
+    assert reason == CONDUCTOR_PARK_HARVEST_OWED
+    assert status == CloseoutStatus.PARTIAL
+    assert outcome is None
+    assert incomplete == "park"
 
 
 def test_lane_closeout_settles_partial_when_park_work_outcome_is_null() -> None:

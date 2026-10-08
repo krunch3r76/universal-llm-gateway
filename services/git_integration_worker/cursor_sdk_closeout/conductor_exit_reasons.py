@@ -274,17 +274,28 @@ def conductor_row_hop_degraded_reason(
 def _parked_transport_harvest_is_live(body: str, tokens: frozenset[str]) -> bool:
     """Text-only live harvest: park token, id-shaped NEXT_ADMIT, harvest still owed.
 
-    False (fail closed to ``conductor_exit_persist``) when DONE is present, the
-    admit is absent or ``none``, the payload has no execution-id-shaped token,
-    or an archive / web-anthropic reply clears ``harvest_still_owed``. No I/O.
+    False (fail closed to ``conductor_exit_persist``) when a designed ``stop:``
+    line is DONE, another exit-persist token or ``CONFIRM_PENDING`` is present,
+    the admit is absent or ``none``, the payload has no execution-id-shaped
+    token, or an archive / web-anthropic reply clears ``harvest_still_owed``.
+    Row-status DONE prose is not a designed stop. No I/O.
     """
-    if "DONE" in tokens or "PARKED_TRANSPORT" not in tokens:
+    if "PARKED_TRANSPORT" not in tokens:
         return False
     from bus_watch.park_harvest import harvest_still_owed
     from claude_bundles.conductor_stop import (
+        EXIT_PERSIST_STOPS,
         last_next_admit_payload,
         next_admit_names_harvest,
+        parse_designed_stop_tokens,
     )
+
+    if "DONE" in parse_designed_stop_tokens(body).tokens:
+        return False
+    if tokens & (EXIT_PERSIST_STOPS - {"PARKED_TRANSPORT"}):
+        return False
+    if "CONFIRM_PENDING" in tokens:
+        return False
 
     if not next_admit_names_harvest(body):
         return False
