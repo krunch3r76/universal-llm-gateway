@@ -46,7 +46,9 @@ from .result import (
 )
 from .seat_prelude import (
     PANE_RULING,
+    caller_dispatch_id,
     intent_store_for_manage,
+    observe_giw_occupants,
     resolve_manage_inflight_for_seat,
     run_giw_paired_start,
     run_giw_paired_stop,
@@ -194,7 +196,7 @@ def _dry_run_attach_drain(report: Any, hold: dict[str, Any]) -> None:
     report.pause_drain_clear = bool(hold.get("pause_drain_clear"))
 
 
-def _attach_pane_finding(report: Any, finding: RefuseFinding | None) -> None:
+def _attach_finding(report: Any, finding: RefuseFinding | None) -> None:
     if finding is None:
         return
     report.findings.append(finding)
@@ -296,10 +298,16 @@ def run_guarded_reexec(
     if dry_run:
         _dry_run_attach_drain(report, _hold())
 
+    # Same occupant guard on dry-run and execute; the caller counts as one.
+    occupant_finding = observe_giw_occupants(
+        report.busy_status or {}, caller_dispatch=caller_dispatch_id()
+    )
+    _attach_finding(report, occupant_finding)
+
     tmux_effective = tmux_target
     pane_meta: dict[str, Any] = {"pane_ruling": PANE_RULING}
     if manage_pid_i is None:
-        _attach_pane_finding(
+        _attach_finding(
             report,
             RefuseFinding(
                 reason="manage_pid_unobservable",
@@ -332,7 +340,7 @@ def run_guarded_reexec(
                     run_cmd=run_cmd,
                     tree_contains_fn=tree_contains_fn,
                 )
-        _attach_pane_finding(report, pane_finding)
+        _attach_finding(report, pane_finding)
 
     prelude: dict[str, Any] = {
         "seat_operator_home": str(seat_home),
@@ -340,7 +348,8 @@ def run_guarded_reexec(
     }
     giw_paired_required = False
 
-    if not dry_run and manage_pid_i is not None:
+    # Occupied => refuse now; the waits below can nudge sync_restart.
+    if not dry_run and manage_pid_i is not None and occupant_finding is None:
         intent_wait = wait_nonterminal_intents_clear(
             store=store,
             manage_call=manage_call,
