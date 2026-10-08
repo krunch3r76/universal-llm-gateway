@@ -42,6 +42,7 @@ def _send_impl(
     parent_thread: str | None = None,
     lane_role: str | None = None,
     fence_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Relay to POST /threads/send."""
     payload: dict[str, Any] = {
@@ -87,6 +88,8 @@ def _send_impl(
         payload["lane_role"] = lane_role
     if fence_id is not None:
         payload["fence_id"] = fence_id
+    if idempotency_key is not None:
+        payload["idempotency_key"] = idempotency_key
 
     result = relay("agent-bus", "POST", "/threads/send", body=payload)
     if "error" in result:
@@ -151,6 +154,7 @@ def _send_dispatch(
     parent_thread: str | None = None,
     lane_role: str | None = None,
     fence_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -288,4 +292,5 @@ def _send_dispatch(
         parent_thread=parent_thread,
         lane_role=lane_role,
         fence_id=fence_id,
+        idempotency_key=idempotency_key,
     )
