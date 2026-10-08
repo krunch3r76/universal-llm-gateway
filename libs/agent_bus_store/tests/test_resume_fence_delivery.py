@@ -346,3 +346,49 @@ def test_overlapping_pours_same_key_one_fence_one_row(root_env) -> None:
         assert armed_after == armed_before
 
     asyncio.run(_run())
+
+
+def test_missing_card_pour_stores_null_sha_and_second_pour_adopts(
+    root_env, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A house with no card must store and be adoptable. sha256 is absent."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    root = root_env
+
+    async def _run() -> None:
+        with (
+            patch(
+                "agent_bus_store.resume_fence_pour.build_resume_envelope",
+                return_value=_ENVELOPE,
+            ),
+            patch(
+                "agent_bus_store.resume_fence_pour.resolve_code_version",
+                return_value="abc123",
+            ),
+            patch(
+                "agent_bus_store.resume_fence_delivery.resolve_code_version",
+                return_value="abc123",
+            ),
+        ):
+            first = await deliver_resume_bundle(
+                root, transcript_id="tab-miss", source="test", pool=None
+            )
+            second = await deliver_resume_bundle(
+                root, transcript_id="tab-miss", source="test", pool=None
+            )
+        assert first.get("error") is None
+        assert first["card"]["status"] == "missing"
+        assert "sha256" not in first["card"]
+        assert first["fence"]["fence_id"] == second["fence"]["fence_id"]
+        row = read_stored_bundle(root, "tab-miss")
+        assert row is not None
+        assert row.card_sha256 is None
+        with connect() as conn:
+            stored = conn.execute(
+                "SELECT card_sha256 FROM resume_fence_bundles WHERE fence_id = ?",
+                (first["fence"]["fence_id"],),
+            ).fetchone()
+        assert stored is not None
+        assert stored[0] is None
+
+    asyncio.run(_run())

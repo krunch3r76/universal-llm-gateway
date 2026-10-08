@@ -87,7 +87,7 @@ def store_bundle(bundle: dict[str, Any]) -> StoredBundle:
     digest = hashlib.sha256(body).hexdigest()
     fence_id = bundle["fence"]["fence_id"]
     tip_turn_id = int(bundle["tip_checkpoint"]["turn_id"])
-    card_sha256 = bundle["card"]["sha256"]
+    card_sha256 = bundle["card"].get("sha256")
     head_sha = bundle["fence"]["head_sha"]
     built_at = bundle["provenance"]["built_at"]
     body_text = body.decode("utf-8")
