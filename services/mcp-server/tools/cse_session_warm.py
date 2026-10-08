@@ -51,6 +51,7 @@ _ATTENDED_RETRYABLE: dict[str, bool] = {
     "attended_liveness_failed": True,
     "lane_cse_ambiguous": True,
     "lane_cse_none": True,
+    "lane_cse_stored_holder": False,
     "lane_cse_probe_error": True,
 }
 
@@ -62,6 +63,9 @@ _ATTENDED_MESSAGES: dict[str, str] = {
         "No single current CSE page for this lane; see data.reason and data.candidates"
     ),
     "lane_cse_none": "No live CSE page claims this lane",
+    "lane_cse_stored_holder": (
+        "Stored seat holder has no open claimed page; not a paste target"
+    ),
     "lane_cse_probe_error": "Lane-current CDP probe failed; absence is unknown",
 }
 

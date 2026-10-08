@@ -475,6 +475,16 @@ def _lane_seat_followup_gate(
                 fail_followup("lane_cse_none", detail=str(reason or "")),
                 None,
             )
+        if state == "stored" or lane_body.get("basis") == "stored_seat_holder":
+            _emit_lane_current(lane, lane_body, applied=False)
+            return (
+                req,
+                fail_followup(
+                    "lane_cse_stored_holder",
+                    detail="stored seat holder is not a paste target",
+                ),
+                None,
+            )
         if state == "ambiguous":
             _emit_lane_current(lane, lane_body, applied=False)
             contested = _in_flight_off_holder(lane_body)

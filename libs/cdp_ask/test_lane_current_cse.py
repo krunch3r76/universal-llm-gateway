@@ -1038,8 +1038,10 @@ def test_a38216_closed_page_stays_unclaimed() -> None:
         purpose_for_registration=lambda _rid: "operator-proxy",
         now=lambda: 1_700_000_000.0,
     )
-    assert body["state"] == "none"
-    assert body["reason"] == "no_claimed_live_page"
+    assert body["state"] == "stored"
+    assert body["basis"] == "stored_seat_holder"
+    assert body["state"] != "current"
+    assert body["reason"] == "seat_holder_stored"
     assert body["seat_holder"]["evidence_class"] == "stored_association"
 
 

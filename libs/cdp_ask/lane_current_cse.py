@@ -177,6 +177,10 @@ def select_lane_current(
         # An idle claim is stored association, the same evidence that named
         # the hygiene_drain page in a:37834.
         return "ambiguous", None, "no_live_signal", None
+    if holder_key and not holder_live:
+        # Stored seat with no open claimed page. Not a paste target and not
+        # the empty-lane miss.
+        return "stored", "stored_seat_holder", "seat_holder_stored", None
     return "none", None, "no_claimed_live_page", None
 
 

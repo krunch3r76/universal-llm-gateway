@@ -142,6 +142,22 @@ def test_relay_attended_new_codes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert none["code"] == "lane_cse_none"
     assert none["retryable"] is True
 
+    client_stored = _fake_client(
+        {
+            "code": "lane_cse_stored_holder",
+            "state": "stored",
+            "basis": "stored_seat_holder",
+            "seat_holder": {"evidence_class": "stored_association"},
+        },
+        status=409,
+    )
+    monkeypatch.setattr(warm.httpx, "Client", MagicMock(return_value=client_stored))
+    stored = warm.relay_attended(parent_thread="12286")
+    assert stored["code"] == "lane_cse_stored_holder"
+    assert stored["code"] != "lane_cse_none"
+    assert stored["retryable"] is False
+    assert stored["data"]["state"] != "current"
+
     client_err = _fake_client(
         {"code": "lane_cse_probe_error", "state": "none", "reason": "probe_error"},
         status=503,

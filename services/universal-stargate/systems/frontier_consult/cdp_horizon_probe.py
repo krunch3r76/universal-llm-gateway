@@ -64,6 +64,57 @@ def is_substrate_terminal_subject(subject: str) -> bool:
     return any(marker in subject for marker in SUBSTRATE_FAILED_SUBJECT_MARKERS)
 
 
+def _turn_cse_registration_id(turn: dict[str, Any]) -> str:
+    direct = str(turn.get("cse_registration_id") or "").strip()
+    if direct:
+        return direct
+    thread = turn.get("thread")
+    if isinstance(thread, dict):
+        return str(thread.get("cse_registration_id") or "").strip()
+    return ""
+
+
+def _turn_after_admit(turn: dict[str, Any], admitted_at: str) -> bool:
+    admitted = admitted_at.strip()
+    if not admitted:
+        return False
+    for key in ("created_at", "timestamp", "at"):
+        raw = turn.get(key)
+        if isinstance(raw, str) and raw.strip() and raw.strip() > admitted:
+            return True
+    return False
+
+
+def leg_scoped_horizon_hit(
+    turns: Sequence[dict[str, Any]],
+    *,
+    admitted_at: str,
+    registration_id: str | None = None,
+    successor_birth_id: str | None = None,
+) -> bool:
+    """True only for leg-scoped seated evidence after admit.
+
+    A registration match requires the turn's ``cse_registration_id`` (or the
+    thread field of the same name) to equal ``registration_id``. A
+    ``successor_birth_id`` match is the other retain. Unscoped seated speech
+    is not a hit.
+    """
+    birth = (successor_birth_id or "").strip() or None
+    if birth and seated_authorship_hit(turns, successor_birth_id=birth):
+        return True
+    reg = (registration_id or "").strip()
+    if not reg:
+        return False
+    for turn in turns:
+        if _turn_cse_registration_id(turn) != reg:
+            continue
+        if not _turn_after_admit(turn, admitted_at):
+            continue
+        if seated_authorship_hit([turn]):
+            return True
+    return False
+
+
 def seated_authorship_hit(
     turns: Sequence[dict[str, Any]],
     *,

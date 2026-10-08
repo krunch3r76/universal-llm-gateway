@@ -41,6 +41,8 @@ from .cdp_generate_inflight_ledger import (
 from .cdp_horizon_probe import (
     HorizonObservation,
     classify_horizon_probe,
+    fetch_recent_thread_turns,
+    leg_scoped_horizon_hit,
     seated_authorship_on_thread,
 )
 
@@ -129,9 +131,40 @@ async def _emit_reconcile_abandon(
     mark_abandoned(leg.execution_id)
 
 
-async def _retain_unverifiable_horizon(leg: InflightLeg, *, detail: str) -> None:
+def _leg_registration_id(leg: InflightLeg, snapshot: dict[str, Any] | None) -> str | None:
+    owner = (leg.owner or "").strip()
+    if owner:
+        return owner
+    if not snapshot:
+        return None
+    raw = snapshot.get("cse_registration_id") or snapshot.get("registration_id")
+    text = str(raw or "").strip()
+    return text or None
+
+
+def _successor_birth_id(snapshot: dict[str, Any] | None) -> str | None:
+    if not snapshot:
+        return None
+    text = str(snapshot.get("successor_birth_id") or "").strip()
+    return text or None
+
+
+async def _failed_horizon_scoped(leg: InflightLeg, snapshot: dict[str, Any] | None) -> bool:
+    """Leg-scoped retain evidence for a failed-at-horizon poll."""
+    turns = await fetch_recent_thread_turns(leg.thread_id)
+    return leg_scoped_horizon_hit(
+        turns,
+        admitted_at=leg.admitted_at,
+        registration_id=_leg_registration_id(leg, snapshot),
+        successor_birth_id=_successor_birth_id(snapshot),
+    )
+
+
+async def _retain_unverifiable_horizon(
+    leg: InflightLeg, *, detail: str, scoped: bool = False
+) -> None:
     """Retain the open inflight row; unverifiable is not death (G1 AC1)."""
-    seated = await seated_authorship_on_thread(leg.thread_id)
+    seated = scoped or await seated_authorship_on_thread(leg.thread_id)
     stall_stage = (
         STALL_HORIZON_SEATED_AUTHORSHIP
         if seated
@@ -182,6 +215,20 @@ async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
             horizon=horizon,
             stall_stage=STALL_RECONCILE_ABANDONED_CONFIRMED,
             error=f"satellite confirmed dead at horizon (status={status!r})",
+        )
+        return
+
+    status = str((snapshot or {}).get("status") or "")
+    if status == "failed":
+        detail = str((snapshot or {}).get("error") or "failed at horizon")
+        if await _failed_horizon_scoped(leg, snapshot):
+            await _retain_unverifiable_horizon(leg, detail=detail, scoped=True)
+            return
+        await _emit_reconcile_abandon(
+            leg,
+            horizon=horizon,
+            stall_stage=STALL_RECONCILE_ABANDONED_UNVERIFIABLE,
+            error=detail or "failed at horizon without leg-scoped evidence",
         )
         return
 

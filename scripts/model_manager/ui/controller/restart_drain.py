@@ -903,6 +903,26 @@ class StargateIdleDrainSupervisor:
             raise
 
 
+def cdp_legs_orphaned_from_active_work(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """Operator-proxy and mission legs a restart will orphan.
+
+    Empty when the probe did not name any. Callers put this list on both
+    the deferred envelope and the armed receipt so the drain is not silent.
+    """
+    raw = detail.get("cdp_legs_orphaned")
+    if not isinstance(raw, list):
+        return []
+    named: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        execution_id = str(item.get("execution_id") or "").strip()
+        purpose = str(item.get("purpose") or "").strip()
+        if execution_id and purpose:
+            named.append({"execution_id": execution_id, "purpose": purpose})
+    return named
+
+
 async def run_gated_stargate_idle_drain_supervised(
     gate: RestartDrainGate,
     action: str,
@@ -915,6 +935,12 @@ async def run_gated_stargate_idle_drain_supervised(
     caller_agent: str | None = None,
 ) -> dict[str, Any]:
     """Arm a durable restart intent when Stargate active-work reports busy."""
+    orphaned: list[dict[str, Any]] = []
+    try:
+        probed = await gate.probe("stargate")
+        orphaned = cdp_legs_orphaned_from_active_work(probed.detail)
+    except (httpx.HTTPError, ValueError, OSError):
+        orphaned = []
     outcome = await gate.evaluate("stargate", force=True, supervised_drain=True)
     if outcome is not None:
         existing = store.active_for_service("stargate")
@@ -922,12 +948,16 @@ async def run_gated_stargate_idle_drain_supervised(
             validation_id = mint_activation_validation(
                 store, existing, code_ref=code_ref, row_id=row_id
             )
-            return drain_deferred_result(
+            deferred = drain_deferred_result(
                 existing,
                 reason="drain already in progress for this service",
                 activation_validation_id=validation_id,
             )
-        return outcome.to_result()
+            deferred["cdp_legs_orphaned"] = orphaned
+            return deferred
+        proceeded = outcome.to_result()
+        proceeded["cdp_legs_orphaned"] = orphaned
+        return proceeded
 
     deadline_at = (
         datetime.now(UTC) + timedelta(seconds=supervisor.deadline_s)
@@ -949,6 +979,7 @@ async def run_gated_stargate_idle_drain_supervised(
     await open_service_window(store, "stargate", reason=f"stargate idle drain {action}")
     _spawn_supervised(gate, "stargate", supervisor, intent)
     result = drain_deferred_result(intent, activation_validation_id=validation_id)
+    result["cdp_legs_orphaned"] = orphaned
     result["idle_ceiling_s"] = supervisor.deadline_s
     result["guidance"] = (
         "Stargate restart intent armed — fires when active-work reports idle, "
@@ -1180,5 +1211,6 @@ __all__ = [
     "run_gated_self_holder_drain_supervised",
     "run_gated_stargate_idle_drain_supervised",
     "sole_busy_holder_matches",
+    "cdp_legs_orphaned_from_active_work",
     "stargate_idle_from_active_work",
 ]
