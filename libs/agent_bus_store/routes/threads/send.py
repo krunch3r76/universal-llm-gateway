@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 
 from fastapi import HTTPException, status
+from fastapi.responses import JSONResponse
 from openapi_mcp.binding import x_mcp
 
 from ...body_auto_spill import build_turn_created, prepare_body_for_insert
@@ -64,7 +65,15 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             detail=_send_xor_violation(provided=[]),
         )
     if body.sidecar_content is not None:
-        return await asyncio.to_thread(_send_with_sidecar, body)
+        created = await asyncio.to_thread(_send_with_sidecar, body)
+        if created.idempotent_replay:
+            content = created.model_dump(mode="json")
+            content["idempotent_replay"] = True
+            thread_dump = content.get("thread")
+            if isinstance(thread_dump, dict):
+                thread_dump["idempotent_replay"] = True
+            return JSONResponse(status_code=status.HTTP_200_OK, content=content)
+        return created
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
 
     if has_new_slug:
@@ -123,7 +132,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
-        return TurnSendCreated(
+        replay = bool(thread_row.get("idempotent_replay"))
+        payload = TurnSendCreated(
             send_path="new_thread",
             thread=_thread_detail(thread_row),
             turn=build_turn_created(
@@ -140,7 +150,16 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             sidecar_sha256=prepared.sidecar_sha256,
             auto_spilled=prepared.auto_spilled or None,
             inline_chars=prepared.inline_chars,
+            idempotent_replay=replay,
         )
+        if replay:
+            content = payload.model_dump(mode="json")
+            content["idempotent_replay"] = True
+            thread_dump = content.get("thread")
+            if isinstance(thread_dump, dict):
+                thread_dump["idempotent_replay"] = True
+            return JSONResponse(status_code=status.HTTP_200_OK, content=content)
+        return payload
 
     if body.lifecycle_state is not None:
         raise HTTPException(

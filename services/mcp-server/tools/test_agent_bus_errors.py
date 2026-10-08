@@ -18,6 +18,7 @@ from tools import agent_bus as agent_bus_module  # noqa: E402
 from tools._agent_bus_post_guard import reconcile_send_arguments  # noqa: E402
 from tools.agent_bus import register_agent_bus_tools  # noqa: E402
 from tools.agent_bus._arg_rewrite import reconcile_dispatch_arguments  # noqa: E402
+from request_profile import bind_request  # noqa: E402
 from tools._agent_bus_read import register_agent_bus_read_tool  # noqa: E402
 
 
@@ -462,8 +463,7 @@ def test_fetch_after_turn_wires_to_turns(agent_bus_fn) -> None:
     assert "error" not in result
     assert captured
     assert "after_turn=3" in captured[0]
-    assert "argument_rewrite_advisory" in result
-    assert "after_turn" in result["argument_rewrite_advisory"]
+    assert "last=" in captured[0]
 
 
 def test_get_turn_alias_rewrite(agent_bus_read_fn) -> None:
@@ -471,15 +471,22 @@ def test_get_turn_alias_rewrite(agent_bus_read_fn) -> None:
 
     def _relay(_service: str, _method: str, path: str, **_kwargs: Any) -> dict[str, Any]:
         captured.append(path)
-        return {"id": 1, "thread": "15609", "turn_number": 7, "read_at": "2026-01-01T00:00:00Z"}
+        return {
+            "id": 1,
+            "thread": "15609",
+            "turn_number": 7,
+            "to_agent": "cursor",
+            "read_at": "2026-01-01T00:00:00Z",
+        }
 
-    with patch.object(agent_bus_module, "_relay", side_effect=_relay):
-        result = agent_bus_read_fn(
-            tool="get",
-            arguments=json.dumps(
-                {"thread": "15609", "turn": 7, "mark_read": True}
-            ),
-        )
+    with bind_request("default", surface="code"):
+        with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+            result = agent_bus_read_fn(
+                tool="get",
+                arguments=json.dumps(
+                    {"thread": "15609", "turn": 7, "mark_read": True}
+                ),
+            )
 
     assert "error" not in result
     assert "turn_number=7" in captured[0]
@@ -493,16 +500,27 @@ def test_get_mark_read_true_patches_read(agent_bus_read_fn) -> None:
     def _relay(_service: str, method: str, path: str, **_kwargs: Any) -> dict[str, Any]:
         paths.append(f"{method} {path}")
         if method == "GET":
-            return {"id": 99, "thread": "15741", "turn_number": 2, "read_at": None}
+            return {
+                "id": 99,
+                "thread": "15741",
+                "turn_number": 2,
+                "to_agent": "cursor",
+                "read_at": None,
+            }
         return {"status": "ok", "read_at": "2026-01-02T00:00:00Z"}
 
-    with patch.object(agent_bus_module, "_relay", side_effect=_relay):
-        result = agent_bus_read_fn(
-            tool="get",
-            arguments=json.dumps(
-                {"thread": "15741", "turn_number": 2, "mark_read": True}
-            ),
-        )
+    with bind_request("default", surface="code"):
+        with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+            result = agent_bus_read_fn(
+                tool="get",
+                arguments=json.dumps(
+                    {
+                        "thread": "15741",
+                        "turn_number": 2,
+                        "mark_read": True,
+                    }
+                ),
+            )
 
     assert "error" not in result
     assert any("PATCH /turns/99/read" in p for p in paths)

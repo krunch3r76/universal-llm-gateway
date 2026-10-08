@@ -10,7 +10,9 @@ from ...body_auto_spill import PreparedBody, build_turn_created
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...checkpoint_projection import CheckpointBodyTooLargeError
 from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
-from ...db import close_thread, create_thread, get_thread, normalize_thread_id
+from ...db import close_thread, get_thread, normalize_thread_id
+from ...db.thread_mint import mint_thread
+from ...db.turns import SlugExists, get_turn_by_number
 from ...enrollment_guard import EnrollmentTagError
 from ...thread_classification import ThreadClassificationError
 from ...turns_models import (
@@ -44,7 +46,6 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         write_thread_sidecar_for_send,
     )
 
-    from ...db.connection import write_connect
     from ...db.turns import UnreadTurnsExist, insert_turn, mark_sender_unread_in_thread
     from ...events.lifecycle import (
         emit_sidecar_orphaned,
@@ -92,38 +93,52 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         _raise_if_turn_body_over_limit(
             body.body, allow_long_body=body.allow_long_body
         )
-        with write_connect() as conn:
-            existing = conn.execute(
-                "SELECT id FROM threads WHERE slug = ? LIMIT 1",
-                (body.new_slug,),
-            ).fetchone()
-            if existing is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=slug_exists_detail(
-                        slug=body.new_slug,
-                        existing_thread_id=existing["id"],
-                    ),
-                )
         try:
-            thread_row = create_thread(
-                thread_id=None,
+            thread_row, _mint_ms = mint_thread(
                 slug=body.new_slug,
                 summary=body.summary,
                 tags=body.tags or [],
                 lifecycle_state=body.lifecycle_state,
                 enroll_charter_runner=body.enroll_charter_runner,
+                strict_slug=True,
+                idempotency_key=body.idempotency_key,
             )
+        except SlugExists as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=slug_exists_detail(
+                    slug=exc.slug,
+                    existing_thread_id=exc.existing_thread_id,
+                ),
+            ) from exc
         except (EnrollmentTagError, ThreadClassificationError) as exc:
             _raise_enrollment_denied(exc)
             raise
-        if thread_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create thread for sidecar send",
-            )
         thread_id = thread_row["id"]
         send_path = "new_thread"
+        if thread_row.get("idempotent_replay"):
+            existing = get_turn_by_number(thread_id, 1)
+            if existing is not None:
+                created_at = existing["created_at"]
+                if isinstance(created_at, str):
+                    created_dt = datetime.fromisoformat(created_at)
+                else:
+                    created_dt = created_at
+                return TurnSendCreated(
+                    send_path="new_thread",
+                    thread=_thread_detail(thread_row),
+                    turn=build_turn_created(
+                        PreparedBody(body=str(existing.get("body") or "")),
+                        turn_id=int(existing["id"]),
+                        thread=thread_id,
+                        turn_number=int(existing["turn_number"]),
+                        created_at=created_dt,
+                        from_agent=str(existing.get("from_agent") or body.from_agent),
+                        to_agent=str(existing.get("to_agent") or body.to),
+                        subject=str(existing.get("subject") or body.subject),
+                    ),
+                    idempotent_replay=True,
+                )
         _bind_lane_on_send(body=body, thread_id=thread_id)
     else:
         thread_id = normalize_thread_id(body.thread)
