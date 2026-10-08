@@ -131,7 +131,9 @@ async def _emit_reconcile_abandon(
     mark_abandoned(leg.execution_id)
 
 
-def _leg_registration_id(leg: InflightLeg, snapshot: dict[str, Any] | None) -> str | None:
+def _leg_registration_id(
+    leg: InflightLeg, snapshot: dict[str, Any] | None
+) -> str | None:
     owner = (leg.owner or "").strip()
     if owner:
         return owner
@@ -149,7 +151,9 @@ def _successor_birth_id(snapshot: dict[str, Any] | None) -> str | None:
     return text or None
 
 
-async def _failed_horizon_scoped(leg: InflightLeg, snapshot: dict[str, Any] | None) -> bool:
+async def _failed_horizon_scoped(
+    leg: InflightLeg, snapshot: dict[str, Any] | None
+) -> bool:
     """Leg-scoped retain evidence for a failed-at-horizon poll."""
     turns = await fetch_recent_thread_turns(leg.thread_id)
     return leg_scoped_horizon_hit(

@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 from src.core.gateway.in_flight_requests import in_flight_tracker
 
 from ...dependencies import get_auth_dependency, get_proxy
