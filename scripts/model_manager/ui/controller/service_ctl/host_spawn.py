@@ -163,6 +163,20 @@ def build_scope_wrapped_argv(
     return wrapped
 
 
+def _rotate_previous_service_log(log_file: Path) -> None:
+    """Rename ``name.log`` to ``name.1.log``, replacing any older generation.
+
+    Missing logs are left alone. The caller then opens the path in append
+    mode, so a failed rename cannot truncate the stopped process's lines.
+    """
+    if not log_file.is_file():
+        return
+    previous = log_file.with_name(f"{log_file.stem}.1{log_file.suffix}")
+    if previous.exists():
+        previous.unlink()
+    log_file.replace(previous)
+
+
 def spawn_detached_host_process(
     args: Sequence[str],
     *,
@@ -174,8 +188,10 @@ def spawn_detached_host_process(
 ) -> subprocess.Popen[bytes]:
     """Spawn a long-lived host service that outlives the manage TUI process.
 
-    Opens ``log_file`` for the child's stdout/stderr, then closes the parent
-    handle after ``Popen`` returns (the child keeps its inherited FD).
+    Rotates an existing ``log_file`` to ``<stem>.1<suffix>`` (one generation)
+    and opens the new file in append mode, so a restart does not erase the
+    stopped process's last lines. The parent closes its handle after
+    ``Popen`` returns; the child keeps the inherited FD.
 
     When ``scope_name`` is set and user systemd scope wrapping is available,
     the argv is prefixed with ``systemd-run --user --scope --collect`` so the
@@ -212,7 +228,8 @@ def spawn_detached_host_process(
                 _systemd_unavailable_reason(),
             )
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    log_fh = log_file.open("wb")
+    _rotate_previous_service_log(log_file)
+    log_fh = log_file.open("ab")
     try:
         return subprocess.Popen(
             spawn_args,
