@@ -358,3 +358,39 @@ def test_finalize_seats_used_writer_is_cdp_model() -> None:
         }
     )
     assert payload["seats_used"]["writer"] == "cdp/opus-5.5"
+
+
+def test_finalize_refused_review_with_violations_preserves_draft_v1() -> None:
+    draft = _draft()
+    fallback = {"reason": "timeout", "fallback_to": None, "seat": "cdp"}
+    result = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(
+            None,
+            _Ctx(
+                {
+                    "assemble": _Out(_assemble(reviewer_seat="cdp")),
+                    "draft": _Out(draft, model_id=_HERMES),
+                    "provenance_check": _Out(
+                        {"violations": [{"type": "omission"}], "pass": False}
+                    ),
+                    "independence": _Out({"refused": None, "independence": "full"}),
+                    "review": _Out(
+                        {
+                            "refused": "reviewer_seat_failed",
+                            "error": "reviewer_seat_failed",
+                            "seat_fallback": fallback,
+                        }
+                    ),
+                    "revise": _Out({"_skipped": True}),
+                    "provenance_check_final": _Out({"_skipped": True}),
+                }
+            ),
+        )
+    )
+    assert result.error is None
+    payload = result.json
+    assert payload["draft_v1"]["draft"] == draft["draft"]
+    assert payload["unsent"] is True
+    assert payload["review"]["status"] == "failed"
+    assert payload["ship_gate"]["pass"] is False
+    assert payload["seat_fallback"]["review"] == fallback

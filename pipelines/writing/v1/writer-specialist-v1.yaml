@@ -208,7 +208,7 @@ steps:
     type: generate
     model_ref: reviser
     prompt_ref: writing.v1.reviser
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -273,7 +273,7 @@ steps:
 
   - name: provenance_check_final
     type: writing_provenance_check_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
       draft: revise.json

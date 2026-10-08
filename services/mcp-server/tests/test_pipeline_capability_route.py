@@ -196,3 +196,51 @@ async def test_tool_routes_writing_member_to_local_body() -> None:
     assert client_http.post.call_args.args[0] == (
         "/api/v1/capabilities/writing/writer-specialist-v1"
     )
+
+
+def test_capability_async_local_carries_args_into_pipeline_options() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    working_set = [{"pin_id": "P1"}]
+    brief = {"signer": "Ada"}
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {
+                "args": {"working_set": working_set, "brief": brief},
+                "model": "writer-specialist-v1",
+            },
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body == {
+        "model": "writer-specialist-v1",
+        "messages": [],
+        "pipeline_options": {"working_set": working_set, "brief": brief},
+        "output_contract": "inline",
+    }
+    assert "args" not in body
+
+
+def test_capability_async_local_args_merge_precedence() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {
+                "model": "writer-specialist-v1",
+                "args": {"brief": {"from": "args"}, "extra": 1},
+                "pipeline_options": {"brief": {"from": "explicit"}},
+            },
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body["pipeline_options"] == {
+        "brief": {"from": "explicit"},
+        "extra": 1,
+    }

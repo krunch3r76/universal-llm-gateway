@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -345,3 +346,284 @@ def test_seat_wait_reviewer_sensitive_no_local_fallback() -> None:
     ).json
     assert envelope["review"]["status"] == "failed"
     assert envelope["ship_gate"]["pass"] is False
+
+
+def test_seat_wait_reviewer_sensitive_violations_chain() -> None:
+    clock = _Clock()
+    waited = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(
+            client=clock, now=clock, sleep=clock.sleep
+        ).execute(
+            _Step("review_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {"sensitivity": "sensitive", "reviewer_seat": "cdp"}
+                    ),
+                    "review_dispatch": _Out(
+                        _dispatch(
+                            seat="cdp",
+                            idempotency_key="writer-specialist-v1:run:reviewer",
+                        )
+                    ),
+                },
+                seat_timeout_s=10,
+            ),
+        )
+    ).json
+    assert waited["fallback_to"] is None
+    selected = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_wait": _Out(waited)}),
+        )
+    ).json
+    assert selected["refused"] == "reviewer_seat_failed"
+    envelope = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(
+            None,
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {
+                            "ok": True,
+                            "refused": None,
+                            "output": "envelope",
+                            "pin_ledger": [],
+                            "writer_seat": "local",
+                            "reviewer_seat": "cdp",
+                        }
+                    ),
+                    "draft": _Out(
+                        {"draft": "D", "claims": [], "need": [], "dispositions": []},
+                        model_id="hermes",
+                    ),
+                    "provenance_check": _Out({"violations": [{"type": "omission"}]}),
+                    "independence": _Out({"refused": None, "independence": "full"}),
+                    "review": _Out(selected),
+                }
+            ),
+        )
+    )
+    assert envelope.error is None
+    assert envelope.json["draft_v1"]["draft"] == "D"
+    assert envelope.json["review"]["status"] == "failed"
+    assert envelope.json["ship_gate"]["pass"] is False
+
+
+class _Bus:
+    def __init__(self, plan: list[Any]) -> None:
+        self.plan = list(plan)
+        self.calls: list[str] = []
+
+    async def get(self, path: str, params: dict | None = None) -> Any:
+        del params
+        self.calls.append(path)
+        item = self.plan.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class _Tick:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _writer_body() -> dict[str, Any]:
+    return {
+        "body": json.dumps({"draft": "W", "claims": [], "need": [], "dispositions": []})
+    }
+
+
+def test_wait_bus_transient_by_number_error_then_success() -> None:
+    import httpx
+
+    clock = _Tick()
+    bus = _Bus(
+        [
+            _Resp({"status": "complete", "qualifying_reply_turn": 3}),
+            httpx.ReadTimeout("by-number"),
+            _Resp({"status": "complete", "qualifying_reply_turn": 3}),
+            _Resp(_writer_body()),
+        ]
+    )
+    payload = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(bus=bus, now=clock, sleep=clock.sleep).execute(
+            _Step("draft_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {"sensitivity": "non_sensitive", "writer_seat": "cursor_pool1"}
+                    ),
+                    "draft_dispatch": _Out(
+                        _dispatch(
+                            seat="cursor_pool1",
+                            poll_hint={
+                                "tool": "agent_bus.wait",
+                                "arguments": {"thread": "15790", "after_turn": 0},
+                            },
+                        )
+                    ),
+                },
+                seat_timeout_s=30,
+            ),
+        )
+    ).json
+    assert payload["ok"] is True
+    assert payload["result"]["draft"] == "W"
+    assert bus.calls.count("/turns/by-number") == 2
+
+
+def test_wait_bus_persistent_by_number_error_times_out() -> None:
+    import httpx
+
+    clock = _Tick()
+    bus = _Bus([httpx.ReadTimeout("by-number")] * 20)
+    bus.plan.insert(0, _Resp({"status": "complete", "qualifying_reply_turn": 3}))
+
+    async def sleep(_seconds: float) -> None:
+        clock.now = 1000
+
+    payload = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(bus=bus, now=clock, sleep=sleep).execute(
+            _Step("draft_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {"sensitivity": "non_sensitive", "writer_seat": "cursor_pool1"}
+                    ),
+                    "draft_dispatch": _Out(
+                        _dispatch(
+                            seat="cursor_pool1",
+                            poll_hint={
+                                "arguments": {"thread": "15790", "after_turn": 0}
+                            },
+                        )
+                    ),
+                },
+                seat_timeout_s=30,
+            ),
+        )
+    ).json
+    assert payload["seat_fallback"]["reason"] == "timeout"
+    assert payload["fallback_to"] == "local"
+    assert clock.now >= 30
+
+
+def test_wait_bus_wait_transport_error_retries() -> None:
+    import httpx
+
+    clock = _Tick()
+    bus = _Bus(
+        [
+            httpx.ReadTimeout("wait"),
+            _Resp({"status": "complete", "qualifying_reply_turn": 2}),
+            _Resp(_writer_body()),
+        ]
+    )
+    payload = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(bus=bus, now=clock, sleep=clock.sleep).execute(
+            _Step("draft_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        {"sensitivity": "non_sensitive", "writer_seat": "cursor_pool1"}
+                    ),
+                    "draft_dispatch": _Out(
+                        _dispatch(
+                            seat="cursor_pool1",
+                            poll_hint={"arguments": {"thread": "9", "after_turn": 0}},
+                        )
+                    ),
+                },
+                seat_timeout_s=30,
+            ),
+        )
+    ).json
+    assert payload["ok"] is True
+
+
+def test_seat_wait_poll_404_is_terminal() -> None:
+    clock = _Clock()
+
+    async def get(path: str, params: dict | None = None) -> _Resp:
+        clock.gets.append((path, params))
+        resp = _Resp({"status": "running"})
+        resp.status_code = 404
+        return resp
+
+    clock.get = get  # type: ignore[method-assign]
+    payload = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(
+            client=clock, now=clock, sleep=clock.sleep
+        ).execute(
+            _Step("draft_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out({"sensitivity": "non_sensitive"}),
+                    "draft_dispatch": _Out(_dispatch()),
+                },
+                seat_timeout_s=30,
+            ),
+        )
+    ).json
+    assert len(clock.gets) == 1
+    assert payload["seat_fallback"]["reason"] == "poll_http_404"
+    assert payload["fallback_to"] == "local"
+
+
+def test_seat_wait_poll_503_retries_then_times_out() -> None:
+    clock = _Tick()
+    gets: list[str] = []
+
+    class _Client:
+        async def get(self, path: str, params: dict | None = None) -> _Resp:
+            del params
+            gets.append(path)
+            resp = _Resp({"status": "running"})
+            resp.status_code = 503
+            return resp
+
+    payload = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(
+            client=_Client(), now=clock, sleep=clock.sleep
+        ).execute(
+            _Step("draft_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out({"sensitivity": "non_sensitive"}),
+                    "draft_dispatch": _Out(_dispatch()),
+                },
+                seat_timeout_s=3,
+            ),
+        )
+    ).json
+    assert len(gets) > 1
+    assert payload["seat_fallback"]["reason"] == "timeout"
+
+
+def test_seat_wait_missing_execution_id_no_get() -> None:
+    clock = _Clock()
+    payload = asyncio.run(
+        seat_wait.WritingSeatWaitHandler(
+            client=clock, now=clock, sleep=clock.sleep
+        ).execute(
+            _Step("draft_wait"),
+            _Ctx(
+                {
+                    "assemble": _Out({"sensitivity": "non_sensitive"}),
+                    "draft_dispatch": _Out(_dispatch(execution_id="")),
+                },
+                seat_timeout_s=30,
+            ),
+        )
+    ).json
+    assert clock.gets == []
+    assert payload["seat_fallback"]["reason"] == "admit_unknown"

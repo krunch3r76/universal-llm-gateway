@@ -257,6 +257,16 @@ class WritingSeatWaitHandler(BaseHandler):
         started: float,
         deadline: float,
     ) -> StepOutput:
+        if not execution_id:
+            return _fail(
+                reason="admit_unknown",
+                seat=seat,
+                role=role,
+                execution_id=execution_id,
+                key=key,
+                waited=self._now() - started,
+                fallback=fallback,
+            )
         round_index = 0
         own_client = self._client is None
         client = self._client
@@ -275,6 +285,27 @@ class WritingSeatWaitHandler(BaseHandler):
                         params={"wait": slice_s},
                     )
                 except Exception:
+                    await self._sleep_round(round_index, deadline)
+                    round_index += 1
+                    continue
+                status_code = getattr(resp, "status_code", None)
+                if (
+                    isinstance(status_code, int)
+                    and 400 <= status_code < 500
+                    and status_code not in (408, 429)
+                ):
+                    return _fail(
+                        reason=f"poll_http_{status_code}",
+                        seat=seat,
+                        role=role,
+                        execution_id=execution_id,
+                        key=key,
+                        waited=self._now() - started,
+                        fallback=fallback,
+                    )
+                if isinstance(status_code, int) and (
+                    status_code >= 500 or status_code in (408, 429)
+                ):
                     await self._sleep_round(round_index, deadline)
                     round_index += 1
                     continue
@@ -346,6 +377,16 @@ class WritingSeatWaitHandler(BaseHandler):
         started: float,
         deadline: float,
     ) -> StepOutput:
+        if not execution_id:
+            return _fail(
+                reason="admit_unknown",
+                seat=seat,
+                role=role,
+                execution_id=execution_id,
+                key=key,
+                waited=self._now() - started,
+                fallback=fallback,
+            )
         hint = dispatch.get("poll_hint")
         args = hint.get("arguments") if isinstance(hint, dict) else {}
         if not isinstance(args, dict):
@@ -373,6 +414,27 @@ class WritingSeatWaitHandler(BaseHandler):
                         },
                     )
                 except Exception:
+                    await self._sleep_round(round_index, deadline)
+                    round_index += 1
+                    continue
+                status_code = getattr(resp, "status_code", None)
+                if (
+                    isinstance(status_code, int)
+                    and 400 <= status_code < 500
+                    and status_code not in (408, 429)
+                ):
+                    return _fail(
+                        reason=f"poll_http_{status_code}",
+                        seat=seat,
+                        role=role,
+                        execution_id=execution_id,
+                        key=key,
+                        waited=self._now() - started,
+                        fallback=fallback,
+                    )
+                if isinstance(status_code, int) and (
+                    status_code >= 500 or status_code in (408, 429)
+                ):
                     await self._sleep_round(round_index, deadline)
                     round_index += 1
                     continue
@@ -405,11 +467,39 @@ class WritingSeatWaitHandler(BaseHandler):
                     turn = snap.get("qualifying_reply_turn")
                     body = ""
                     if isinstance(turn, int):
-                        got = await bus.get(
-                            "/turns/by-number",
-                            params={"thread": thread, "turn_number": str(turn)},
-                        )
-                        payload = got.json() if getattr(got, "content", True) else {}
+                        try:
+                            got = await bus.get(
+                                "/turns/by-number",
+                                params={"thread": thread, "turn_number": str(turn)},
+                            )
+                            got_status = getattr(got, "status_code", None)
+                            if (
+                                isinstance(got_status, int)
+                                and 400 <= got_status < 500
+                                and got_status not in (408, 429)
+                            ):
+                                return _fail(
+                                    reason=f"poll_http_{got_status}",
+                                    seat=seat,
+                                    role=role,
+                                    execution_id=execution_id,
+                                    key=key,
+                                    waited=self._now() - started,
+                                    fallback=fallback,
+                                )
+                            if isinstance(got_status, int) and (
+                                got_status >= 500 or got_status in (408, 429)
+                            ):
+                                await self._sleep_round(round_index, deadline)
+                                round_index += 1
+                                continue
+                            payload = (
+                                got.json() if getattr(got, "content", True) else {}
+                            )
+                        except Exception:
+                            await self._sleep_round(round_index, deadline)
+                            round_index += 1
+                            continue
                         if isinstance(payload, dict):
                             body = str(payload.get("body") or payload.get("text") or "")
                     parsed = _first_json(body)

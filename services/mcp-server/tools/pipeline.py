@@ -380,14 +380,16 @@ def _capability_async(
     )
     if local:
         member = member_path.split("/")[-1]
+        args = opts.get("args") if isinstance(opts.get("args"), dict) else {}
         if isinstance(opts.get("pipeline_options"), dict):
-            pipeline_options = opts["pipeline_options"]
+            pipeline_options = {**args, **opts["pipeline_options"]}
         else:
-            pipeline_options = {
+            flat = {
                 key: value
                 for key, value in opts.items()
                 if key not in {"args", "output_contract", "model", "pipeline_options"}
             }
+            pipeline_options = {**args, **flat}
         body: dict[str, Any] = {
             "model": opts.get("model") or member,
             "messages": messages or [],

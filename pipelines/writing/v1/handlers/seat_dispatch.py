@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,10 +28,56 @@ _CALLER = "pipeline:writer-specialist-v1"
 _JSON_ONLY = "Return only the JSON object, with no prose before or after it."
 _POSTED: set[str] = set()
 _DEFAULT_MODELS = {"cdp": "cdp/opus-5.5", "cursor_pool1": "cursor/grok-4.7"}
+_ERROR_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+_DISPATCH_IDS = (
+    "execution_id",
+    "thread_id",
+    "dispatch_id",
+    "request_id",
+    "resolved_model",
+)
+_POLL_ARG_KEYS = ("thread", "after_turn", "execution_id", "from_agent", "completion")
 
 
 def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload, error=None)
+
+
+def _error_code(data: dict[str, Any], status: int) -> str:
+    candidates: list[Any] = []
+    detail = data.get("detail")
+    if isinstance(detail, dict):
+        candidates.append(detail.get("code"))
+    error = data.get("error")
+    if isinstance(error, dict):
+        candidates.append(error.get("code"))
+    candidates.append(data.get("code"))
+    for item in candidates:
+        if isinstance(item, str) and _ERROR_CODE.fullmatch(item):
+            return item
+    return f"http_{status}"
+
+
+def _safe_poll_hint(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    hint: dict[str, Any] = {}
+    if "tool" in raw:
+        hint["tool"] = raw.get("tool")
+    args = raw.get("arguments")
+    if isinstance(args, dict):
+        kept = {key: args[key] for key in _POLL_ARG_KEYS if key in args}
+        if kept:
+            hint["arguments"] = kept
+    return hint or None
+
+
+def _safe_dispatch(dispatched: dict[str, Any]) -> dict[str, Any]:
+    safe = {key: dispatched[key] for key in _DISPATCH_IDS if key in dispatched}
+    hint = _safe_poll_hint(dispatched.get("poll_hint"))
+    if hint is not None:
+        safe["poll_hint"] = hint
+    return safe
 
 
 def _role(step: Any) -> str:
@@ -87,7 +134,11 @@ async def _post_json(client: Any, path: str, body: dict[str, Any]) -> dict[str, 
     try:
         resp = await client.post(path, json=body)
     except Exception as exc:
-        return {"error": f"transport_error: {exc}", "transport": True}
+        return {
+            "error": f"transport_error: {exc}",
+            "exc_type": type(exc).__name__,
+            "transport": True,
+        }
     try:
         data = resp.json()
     except Exception:
@@ -200,11 +251,12 @@ class WritingSeatDispatchHandler(BaseHandler):
             "prompt_sha256": digest,
         }
         if dispatched.get("transport"):
+            exc_name = str(dispatched.get("exc_type") or "Exception")
             return _step(
                 {
                     "ok": False,
                     "admit": "unknown",
-                    "error": str(dispatched.get("error") or "")[:500],
+                    "error": "transport_error:" + exc_name,
                     "idempotency_key": key,
                     "prompt_sha256": digest,
                 }
@@ -216,18 +268,30 @@ class WritingSeatDispatchHandler(BaseHandler):
                     "ok": False,
                     "admit": "failed",
                     "http_status": status,
-                    "error": str(dispatched.get("error") or "")[:500],
+                    "error_code": _error_code(dispatched, status),
                     "idempotency_key": key,
                     "prompt_sha256": digest,
                 }
             )
+        execution_id = dispatched.get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id:
+            return _step(
+                {
+                    "ok": False,
+                    "admit": "unknown",
+                    "reason": "missing_execution_id",
+                    "idempotency_key": key,
+                    "prompt_sha256": digest,
+                }
+            )
+        poll_hint = _safe_poll_hint(dispatched.get("poll_hint"))
         return _step(
             {
                 "ok": True,
                 "admit": "admitted",
                 **base,
-                "execution_id": dispatched.get("execution_id"),
-                "poll_hint": dispatched.get("poll_hint"),
-                "dispatch": dispatched,
+                "execution_id": execution_id,
+                "poll_hint": poll_hint,
+                "dispatch": _safe_dispatch(dispatched),
             }
         )

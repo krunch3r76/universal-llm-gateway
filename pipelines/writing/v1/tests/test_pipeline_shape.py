@@ -70,7 +70,7 @@ _LOCAL_R = (
 )
 _REVISE = (
     _REVIEW
-    + " and (review.json.get('verdict') == 'revise' or "
+    + " and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or "
     + "len(provenance_check.json.get('violations', [])) > 0)"
 )
 _LOCAL_MODELS = (
@@ -285,3 +285,43 @@ def test_go_review_revise_conditions_on_step_outputs() -> None:
         "revise",
     ):
         assert runs(by_name[name].condition, refused_draft) is False
+
+
+def test_refused_review_skips_revise_with_violations() -> None:
+    from systems.pipeline.core.conditions import ConditionEvaluator
+    from systems.pipeline.core.handlers.step_output import StepOutput
+
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
+    )
+    by_name = {item.name: item for item in PipelineSpec(**raw).steps}
+    evaluator = ConditionEvaluator()
+
+    def step(data: dict) -> StepOutput:
+        return StepOutput(raw="", json=data)
+
+    refused = {
+        "assemble": step({"refused": None}),
+        "draft": step({"refused": None}),
+        "independence": step({"refused": None}),
+        "review": step(
+            {
+                "refused": "reviewer_seat_failed",
+                "seat_fallback": {"reason": "timeout"},
+                "error": "reviewer_seat_failed",
+            }
+        ),
+        "provenance_check": step({"violations": [{"type": "omission"}]}),
+    }
+    assert evaluator.evaluate(by_name["revise"].condition, refused, {}) is False
+    assert (
+        evaluator.evaluate(by_name["provenance_check_final"].condition, refused, {})
+        is False
+    )
+    assert by_name["finalize"].condition is None
+
+    positive = {
+        **refused,
+        "review": step({"verdict": "revise", "findings": [], "refused": None}),
+    }
+    assert evaluator.evaluate(by_name["revise"].condition, positive, {}) is True
