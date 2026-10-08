@@ -40,11 +40,13 @@ _CURSOR_SOT_SLUGS = (
 @pytest.mark.offline
 @pytest.mark.parametrize("slug", _CURSOR_SOT_SLUGS)
 def test_source_uri_resolves_to_cursor_sot(slug: str) -> None:
-    path = _REPO / ".cursor" / "skills" / slug / "SKILL.md"
-    if not path.is_file():
-        pytest.skip(f"no hub stub for {slug}")
-    body = path.read_text(encoding="utf-8")
-    assert _source_uri(slug, body, _REPO) == resolve_canonical_source_uri(slug)
+    """Catalog URI, including plugin-only SoT with no hub ``.cursor/skills`` stub."""
+    expected = resolve_canonical_source_uri(slug)
+    assert _source_uri(slug, "", _REPO) == expected
+    rel = expected.removeprefix(f"{_WS}/")
+    assert rel != expected
+    resolved = _REPO / rel
+    assert resolved.is_file(), resolved
 
 
 @pytest.mark.offline
