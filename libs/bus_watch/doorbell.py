@@ -356,13 +356,19 @@ def render_doorbell(
             ]
         )
         if show_commission:
-            send = (
-                f"agent_bus(send, new_slug=r15-wake-<slug>, parent_thread={root}, "
-                f"lane_role=sub_mission, to=cursor, ...)"
-            )
             if seat_dispatch_surface(seat) == "life":
+                # life_dispatch latches the latest turn; allowed_prompt_recipients
+                # ("life") is {life, dispatch}. to=cursor is a 422.
+                send = (
+                    f"agent_bus(send, new_slug=r15-wake-<slug>, parent_thread={root}, "
+                    f"lane_role=sub_mission, to=dispatch, ...)"
+                )
                 follow = "life_dispatch(thread=<new thread>)"
             else:
+                send = (
+                    f"agent_bus(send, new_slug=r15-wake-<slug>, parent_thread={root}, "
+                    f"lane_role=sub_mission, to=cursor, ...)"
+                )
                 follow = (
                     "team_dispatch(op=generate, seat=cursor-sdk, contract=freeform, "
                     "lane=B, dispatch_thread_id=<new thread>, "
@@ -462,8 +468,22 @@ def _successor_duty_line(
     *,
     policy: dict | None = None,
     successor_model: str | None = None,
+    seat: str = "cursor-sdk",
 ) -> str:
     if contract != "none":
+        if seat_dispatch_surface(seat) == "life":
+            # /mcp/life lists life_dispatch; team_dispatch is ulg-code only.
+            # to=dispatch matches allowed_prompt_recipients("life").
+            return (
+                "duty: dispatch -> read back -> verify -> CP. Commission: "
+                "agent_bus(send, new_slug=r15-wake-<slug>, parent_thread=<root>, "
+                "lane_role=sub_mission, to=dispatch, ...) then "
+                "life_dispatch(thread=<new thread>); "
+                "¬thread=<root>. Read its closeout; "
+                "verify against git before any 'landed' word; then checkpoint. "
+                "Repo-write goals ⇒ life_dispatch; design/judgment forks ⇒ cdp/fable-5.1 — never STAY. "
+                "Orienting and writing STAY is not the leg."
+            )
         return (
             "duty: dispatch -> read back -> verify -> CP. Commission: "
             "agent_bus(send, new_slug=r15-wake-<slug>, parent_thread=<root>, "
@@ -512,7 +532,9 @@ def _compose_successor_wake(
         f"resume {root_id}",
         "",
         f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: {contract}.",
-        _successor_duty_line(contract, policy=policy, successor_model=successor_model),
+        _successor_duty_line(
+            contract, policy=policy, successor_model=successor_model, seat=seat
+        ),
         "disclosure: orientation ritual; one echo before the first move.",
         f"objective: tip turn #{tip_turn_val} on agent-bus:{root_id}; "
         f"tip CHECKPOINT #{tip_cp_val}; row={row}; gear: {gear}; "

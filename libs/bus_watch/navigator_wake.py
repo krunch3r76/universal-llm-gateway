@@ -231,9 +231,10 @@ def render_navigator_doorbell(
     tape = loop_tape_thread(root_id, policy)
     extras = tuple(policy.get("navigator_extra_addresses") or ())
     seat = resolve_navigator_seat(policy, register=register)
-    default_fire = (
-        "cursor-sdk generate via liaison-ticker"
-    )
+    if register == "life":
+        default_fire = "refused cursor_auto_retired"
+    else:
+        default_fire = "cursor-sdk generate via liaison-ticker"
     fired_by = policy.get("navigator_fired_by") or default_fire
     fp = str(digest.get("fingerprint") or "")
     return render_doorbell(

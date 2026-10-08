@@ -389,9 +389,49 @@ def test_live_10479_web_anthropic_render_byte_length() -> None:
     """AC4 — 11655 regression pin corrected: life render is not the old 1019 B IDE paste."""
     text = _live_10479_render()
     encoded_len = len(text.encode("utf-8"))
-    assert encoded_len == 1106
+    assert encoded_len == 1108
     assert encoded_len != 1019
     assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
+
+
+@pytest.mark.offline
+def test_life_commission_send_is_prompt_for_life_role() -> None:
+    """Life commission send must latch as a life-role prompt (no 422).
+
+    Break: to=cursor is outside allowed_prompt_recipients("life") = {life, dispatch},
+    so life_dispatch raises dispatch_thread_latest_not_prompt.
+    """
+    from systems.frontier_consult.dispatch_thread_context import (
+        reject_non_prompt_latest_turn,
+    )
+
+    text = _live_10479_render()
+    commission = next(line for line in text.splitlines() if line.startswith("commission:"))
+    assert "to=dispatch" in commission
+    assert "to=cursor" not in commission
+    assert "life_dispatch(thread=<new thread>)" in commission
+    turn = {
+        "from": "web-anthropic",
+        "to": "dispatch",
+        "body": commission,
+    }
+    reject_non_prompt_latest_turn(
+        request_id="life-commission",
+        dispatch_thread_id="10479",
+        role="life",
+        turn=turn,
+    )
+
+
+@pytest.mark.offline
+def test_life_successor_contract_names_life_dispatch() -> None:
+    """Break: contract != none always named team_dispatch, absent on /mcp/life."""
+    text = render_successor_wake(
+        "10479", **_SUCCESSOR_KW, seat="web-anthropic", contract="conductor"
+    )
+    assert "life_dispatch(thread=<new thread>)" in text
+    assert "to=dispatch" in text
+    assert "team_dispatch" not in text
 
 
 @pytest.mark.offline

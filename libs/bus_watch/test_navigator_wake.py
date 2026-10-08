@@ -246,10 +246,19 @@ def test_fire_navigator_life_register_refuses_cursor_auto(
 ) -> None:
     from bus_watch.navigator_dispatch import submit_navigator
 
+    def _must_not_dispatch(_body: object) -> tuple[dict, int]:
+        raise AssertionError("submit_team_dispatch must not run for a life-register wake")
+
     monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    monkeypatch.setattr(
+        "bus_watch.navigator_dispatch.submit_team_dispatch", _must_not_dispatch
+    )
     result = fire_navigator_wake(
         "10479", _digest(), _state(), register="life", dry_run=True
     )
+    doorbell = result["evaluation"]["doorbell"]
+    assert "refused cursor_auto_retired" in doorbell
+    assert "cursor-sdk generate via liaison-ticker" not in doorbell
     refused, status = submit_navigator(result["body"])
     assert status == 422
     assert refused["error"]["code"] == "cursor_auto_retired"
