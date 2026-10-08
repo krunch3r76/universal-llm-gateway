@@ -361,7 +361,7 @@ run and posts the PARKED turn itself with the wake record
 harvest is owed and the liaison fires nothing. On resume: treat the last tool
 call as unverified, continue from your CHECKPOINT/journal, never restart the row.
 
-**Seat-initiated park (`team_dispatch op=steer`):** IDE / Auto may park one live
+**Seat-initiated park (`team_dispatch op=steer`):** IDE lead or cursor-sdk may park one live
 dispatch without arming manage restart — `team_dispatch(op="steer",
 steer="park_for_restart", dispatch_id=…, reason=…)` → Stargate → GIW park route.
 Same PARKED turn shape and `poll_hint` continuity as substrate park above; wake

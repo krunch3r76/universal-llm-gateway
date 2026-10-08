@@ -46,6 +46,7 @@ _VALIDATE_TIMEOUT = 15.0
 _DISPATCH_TIMEOUT = 15.0
 _RESULT_MAX_WAIT = 60.0
 _RESULT_POLL_BUFFER = 15.0
+_CAPABILITY_PREFIX = "/api/v1/capabilities/"
 
 _QUERY_SOCKET = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
@@ -351,6 +352,61 @@ def _pipeline_async(
         return {"error": {"code": "http_error", "message": str(exc)}}
 
 
+def _capability_async(member_path: str, options: dict[str, Any] | None) -> dict[str, Any]:
+    """POST a ``<category>/<member>`` run through the Stargate capability relay.
+
+    Stargate swaps in the satellite token (capabilities.yaml ``auth_env``); this
+    call carries only the bound surface. Error bodies pass through with
+    ``status_code`` so an unknown category or member is not a local error.
+    """
+    opts = options or {}
+    body = {
+        "args": opts.get("args") or {},
+        "output_contract": opts.get("output_contract", "inline"),
+    }
+    record("mcp.pipeline.async.called", pipeline=member_path)
+    try:
+        with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
+            resp = client.post(
+                f"{_CAPABILITY_PREFIX}{member_path}",
+                json=body,
+                headers=_stargate_headers(),
+            )
+    except httpx.ConnectError as exc:
+        record("mcp.pipeline.async.failed", pipeline=member_path, error="connect_error")
+        return annotate_unreachable_error(
+            code="stargate_unreachable",
+            message=f"Stargate not reachable: {exc}",
+            service="stargate",
+        )
+    except httpx.HTTPError as exc:
+        record("mcp.pipeline.async.failed", pipeline=member_path, error=str(exc))
+        return {"error": {"code": "http_error", "message": str(exc)}}
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+    if not isinstance(payload, dict):
+        payload = {"result": payload}
+    if resp.status_code >= 400:
+        record(
+            "mcp.pipeline.async.failed",
+            pipeline=member_path,
+            status_code=resp.status_code,
+        )
+        payload.setdefault("status_code", resp.status_code)
+        return payload
+    location = resp.headers.get("location")
+    if location:
+        payload.setdefault("href", location)
+    record(
+        "mcp.pipeline.async.dispatched",
+        pipeline=member_path,
+        execution_id=str(payload.get("run_id", "")),
+    )
+    return payload
+
+
 def _pipeline_stats() -> dict[str, Any]:
     """Fetch tracker occupancy snapshot from Stargate."""
     url = "/api/v1/executions/stats"
@@ -410,10 +466,14 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     http_timeout = wait_clamped + _RESULT_POLL_BUFFER
 
     url = f"/api/v1/executions/{execution_id}"
+    wait_param: float = wait_clamped
+    if execution_id.startswith(_CAPABILITY_PREFIX):
+        url = execution_id
+        wait_param = int(wait_clamped)
     try:
         with make_sync_client(STARGATE_URL, timeout=http_timeout) as client:
             resp = client.get(
-                url, params={"wait": wait_clamped}, headers=_stargate_headers()
+                url, params={"wait": wait_param}, headers=_stargate_headers()
             )
         if resp.status_code >= 400:
             try:
@@ -552,12 +612,19 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           ROLE-based consults prefer ``team_dispatch`` (role contracts,
           default_model resolution, briefing assembly; the handler returns
           a redirect hint when a role is passed to ``chat-dispatch`` raw).
+          A ``pipeline_id`` of the form ``<category>/<member>`` for a satellite
+          category (e.g. ``jobs/bus-reply-watch``) POSTs ``{args, output_contract}``
+          taken from ``options`` to ``/api/v1/capabilities/{category}/{member}``.
+          ``messages`` is not required. The result is the relay body plus
+          ``href`` (the run href). Error bodies carry ``status_code``.
 
         - ``"result"`` — fetch or short-block on async-dispatched pipeline
           result. Returns tracker shape: ``{execution_id, pipeline, status,
           started_at, completed_at, result, error}``. Required:
           ``execution_id``. Optional: ``wait_seconds`` (server-side short-poll
           window; 0 = immediate; clamped to 60s at Stargate).
+          ``execution_id`` may also be a ``/api/v1/capabilities/...`` run href
+          returned by a ``<category>/<member>`` async call.
 
         - ``"validate"`` — validate pipeline YAML + model availability
           without consuming inference compute. Returns ``{valid, pipeline,
@@ -586,6 +653,8 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 }
             return _pipeline_run(pipeline_id, messages, options, timeout)
         if op == "async":
+            if pipeline_id and "/" in pipeline_id:
+                return _capability_async(pipeline_id, options)
             if not pipeline_id or messages is None:
                 return {
                     "error": {

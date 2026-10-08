@@ -601,9 +601,10 @@ def test_noncanonical_308_emits_no_event(
 ) -> None:
     root = tmp_path / "pipelines"
     _write_root(root)
-    client = _client(_ready_proxy(_registry(root)), monkeypatch)
     bus = _RecordingBus()
-    client.app.state.event_bus = bus
+    proxy = _ready_proxy(_registry(root))
+    proxy.event_bus = bus
+    client = _client(proxy, monkeypatch)
     fetched = client.get("/api/v1/capabilities/wrong/demo-pipe", follow_redirects=False)
     posted = client.post(
         "/api/v1/capabilities/wrong/demo-pipe",

@@ -133,7 +133,7 @@ def _upstream_unavailable(message: str) -> JSONResponse:
 
 
 async def _publish(request: Request, event: Any) -> None:
-    bus = getattr(request.app.state, "event_bus", None)
+    bus = getattr(_proxy(request), "event_bus", None)
     if bus is None:
         return
     await bus.publish_nowait(event)

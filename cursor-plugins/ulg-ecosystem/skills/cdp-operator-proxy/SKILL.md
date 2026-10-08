@@ -56,13 +56,13 @@ Invoked command for this seat: `runbook:maestro-loop` (trigger / refuse / steps 
 
 - Conductor admit: admit or re-admit a conductor only with `contract=conductor`. A conductor admitted any other way never receives a hop successor, so this seat becomes the reactor. Admit and re-admit with `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:<slug>, lane=B, reuse_thread=<worker>, dispatch_thread_id=<worker>, work_key=todo:<slug>, model=cursor/grok-4.7, model_knobs={"fast":"true"})` and no `prompt`. The materialized packet sets `summoning_thread_id` to the worker thread and authorizes land on green, so rulings travel by `team_dispatch(op=steer, steer=inject, dispatch_id=<conductor dispatch>, directive=<ruling>)`, not by a DISPOSITION on this lane. Hand re-admit only at the two open gaps: CONSULT_PENDING, and a nest-close that leaves the conductor parked. Falsifier: 13589#3.
 - Child lane: commission with ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`, `work_key=…`, `dispatch_thread_id=…`). DISPOSITION, SEAT_REGISTRATION, and PARKED go on the parent by `send`. `seat.identity_unresolvable` or a same-child `census_n=0` is a regression of 585f5e68 — file friction, then mint a fresh child so the lane keeps moving. Falsifier: a:36655 closed by a:36669 (`commit:585f5e68`); turn 376 admitted after that repair.
-- Address: `send(to=cursor-auto)` is refused — cursor-auto is a role, not a bus address. `to=cursor` is not how this seat commissions. Falsifier: entry 1 wire refuse.
+- Address: commission repo work with ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`, `work_key=…`) — not bare `to=cursor` bus sends and not the retired Auto request path. Falsifier: entry 1 wire refuse.
 - Hop: update the standing handoff, then `agent_bus(hop, thread=<lane>, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…)`. Successor bind `desired_model=cdp/opus-5.5-extra`. `hop` takes `desired_model` (admit coalesces it); `escalation=` is `unsupported argument`. If the hop returns `seat.identity_unresolvable`, that is the same 585f5e68 regression — file friction, then commission `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, mission_kind=hop, parent_thread=<lane>, dispatch_thread_id=<lane>, prompt=<handoff '## First acts'>)` (wire `mission_kind=hop` so a mid-stream self-handoff clears the caller's own live generate — a:37182; omit it and Stargate returns `cdp_external_gate_live`) and keep operating until `TYPE: SEAT_STAND_DOWN`. Falsifier: arrival that worked without that fallback, turns 380→384 `seating_hook.path=seated_without_occupy_target`.
 - Judgment lanes pin `desired_model=grok-4.7` on the wire — the `RULING` marker does not route (12286 turn 563 specimen).
 - Successor first acts: `Use the <slug> skill` for each birth slug, including `lane-act-gates`, and `Use the retrieval-before-authoring skill` when the deliverable is a prompt → read `cortex://notes/runbooks/maestro-loop.md` in full (`fs` read, no limit) → handoff head only (`fs` `offset=0` `limit=50`; never unbounded — the file overflows the tool ceiling) → journal → `fetch(last=3)` → `mark_read(through_turn, agent=web-anthropic)` (no `from_agent` on `mark_read`) → `send` `TYPE: SEAT_REGISTRATION` quoting the birth record, that read's `read_sha256`, and in your own words the runbook rule that governs the first commission. A hop-header line `fetch-decision: runbook:maestro-loop skipped` means nothing loaded the runbook. Falsifier: entry 6 arrival, ~4 min to first commission. Seat 40811596 skipped that read and re-admitted two conductors with `contract=freeform` on 2026-09-30; admit or re-admit a conductor only with `contract=conductor`.
 - Identity: your identity is your birth record (CDP generate admit: model, `execution_id`, dispatch id, session URL). `thread_get(...).cse_*` and `cse_session_holders` are `relayed`, not identity — holders can still point at the predecessor after a hop. Falsifier: entry 5 wrote cse_01AoM9… into 12993; entry 6 holder-first returned predecessor 517cdefb, not successor 7830a322.
 - Held lane: when Stargate or cdp-ask returns `409 operator_seat_held` on a non-hop `team_dispatch(model=cdp/…)`, the lane already has a live operator seat — use `cse_session(op=followup, parent_thread=<lane>)` (or explicit holder identity) instead of firing another generate.
-- Poll: ulg-code `agent_bus` / `agent_bus_read` `tool=wait` with the 202 `poll_hint` `arguments_json` unchanged. Worker thread, not the parent. `completion` and `from_agent` stay what the hint says. `wait_seconds` stays what the hint says, including 0. Do not rewrite it into `job_state`. Do not promote 0 to 60. A `predicate_unmet` envelope means the completion is not satisfied yet; re-call the same hint. Do not re-dispatch on it. `job_state` is the poll_hint of deprecated `agent_bus.request`. Point: `agent-bus-discipline` § cursor-sdk closeout polling. `thread_get` on the operator lane is huge — do not use it. Sleep ≤290 s between polls. Quiet longer than ~10 min trips the quiet-with-WIP watchdog even after `TYPE: PARKED`. A poll blip: wait ~60 s and re-issue the same hint; do not re-dispatch. Falsifier: entry 1; entry 5 blip at 17:44Z.
+- Poll: ulg-code `agent_bus` / `agent_bus_read` `tool=wait` with the 202 `poll_hint` `arguments_json` unchanged. Worker thread, not the parent. `completion` and `from_agent` stay what the hint says. `wait_seconds` stays what the hint says, including 0. Do not promote 0 to 60. A `predicate_unmet` envelope means the completion is not satisfied yet; re-call the same hint. Do not re-dispatch on it. Point: `agent-bus-discipline` § cursor-sdk closeout polling. `thread_get` on the operator lane is huge — do not use it. Sleep ≤290 s between polls. Quiet longer than ~10 min trips the quiet-with-WIP watchdog even after `TYPE: PARKED`. A poll blip: wait ~60 s and re-issue the same hint; do not re-dispatch. Falsifier: entry 1; entry 5 blip at 17:44Z.
 - DISPOSITION: body ≤2000 characters or the lane returns `over_briefing_target`. Quotes go in `sidecar_content`. Body = verdict line + plane line + pointers. Falsifier: turn 389 at 2748 chars (third seat).
 - Work sweep before PARK: after SEAT_REGISTRATION and after every DISPOSITION, run `agent_bus_read(fetch_unread, to=web-anthropic, compact=true)` and read the standing handoff's open/unowned list; commission every auto-runnable item as a child lane (search cortex for an existing todo first) and only then PARK. PARK with an open, uncommissioned auto-runnable item is the defect Kaywan named on 2026-09-27 20:30Z. Falsifier: rev 32 PARK (12286 turn 417) with five open items, four commissionable.
 - Restart: this seat does not fire `contract:propagate`. The operator seat does fleet actions, including `manage` `sync_restart`, directly from its own session. `manage` actions: `status`, `health`, `wait_healthy`, `busy_status`, `sync_restart`, `cancel_restart_intent`. Never `force` on `git_integration_worker`. A permission refusal in the current session covers that outcome and is quoted verbatim to Kaywan. A refusal recorded in another session is history. An `agent_bus` or `mcp` `manage` `sync_restart` drops the connector ~30–60 s: re-issue the call that errored; do not treat the blip as failure. Falsifier: a:36654 holder deferral; entry 2 mcp blip.
@@ -87,7 +87,7 @@ operator work stopped.
 
 **Reconnect:** a dead dispatch id is not reopenable; `cse_session(op=followup)` into the same
 `chat_url` may reattach the CSE if a seat or dormant row holds it. Authoritative
-continuity = private request thread + `mark_read` before the next `request`.
+continuity = private request thread + `mark_read` before the next bus `send`/`reply` with `after_turn`.
 
 ### Three git planes on CLOSEOUT (a:28271 — shared vocabulary)
 
@@ -154,9 +154,9 @@ operator-only gates — not the active DIRECTIVE author. A declaration that hand
 (`you are not operator`, `I'm driving`) binds for that stream; otherwise seat authority stands.
 
 **Interagent register:** `call(MCP → agent_seat) ⇒ posture = interagent`. Bodies for
-`agent_bus.request` / `cursor_request` are dense agent-to-agent DIRECTIVE grammar — ¬ human
-chat register (Been→Are→Going / "What I need from you"). Human-facing awareness (inv 22) is a
-separate plane.
+ulg-code `team_dispatch` commissions and bus `TYPE: DIRECTIVE` turns are dense agent-to-agent
+DIRECTIVE grammar — ¬ human chat register (Been→Are→Going / "What I need from you").
+Human-facing awareness (inv 22) is a separate plane.
 
 ## Invariants
 
@@ -165,27 +165,27 @@ separate plane.
 3. `write_boundary(operator)` — no repo writes; write path is ulg-code `team_dispatch` to lane-B `cursor-sdk`. Reads ratified.
 4. `assumed_state` = a claim inviting contradiction; it outranks `deltas_to_spec` when the two pictures diverge.
 5. `pin(desired_model)` — SOT: skill `directive-authoring-standard` D1.
-6. `human_push = degraded_wake` — the product path is `request` + `wait(completion=status:done)`.
+6. `human_push = degraded_wake` — the product path is ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`) + wait on that response's `poll_hint`.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
 8. `tool_absent(life) ⇏ operator_gate` — a missing toys tool that ulg-code exposes is called on ulg-code. Verb for a commission is `team_dispatch`, not `request` / `send(to=cursor)`. ¬ park it on the operator in prose.
 9. **Fable** — standing outside check for architecture-suitability; encourage route, ¬ required every DIRECTIVE.
 10. **Architecture bind** — `cdp/opus-5.5` for the bind; live-checkout file:line depth is `cursor/grok-4.7` `contract=freeform` on cursor-sdk. The four-condition trigger is when to **pick** that checkout seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the grok card (`effort` through `xhigh`; omitted values stay on the card). ¬ `anthropic/*` API. ¬ `cursor/claude-*`.
-11. **Private operator thread** — dedicated `agent_bus.request` lane (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
+11. **Private operator thread** — dedicated private request lane (bus `send` / DISPOSITION; commissions via ulg-code `team_dispatch`) (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
 12. **Vision-resident operator.** Field SOT: skill `directive-authoring-standard` D1. Auto refuses `implement`/`investigate` without `vision:`. MAP escalation-only.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
 14. **Reasoning posture when framing.** Before DIRECTIVE/path-sim: pin Question, OOS, detent; steelman/calibrate/courage. Stamp `operator_framed=true` + `pinned_question` + `frame_uri`. This seat stamps; does not run path-sim (`cursor_only`).
 15. **Codework → layer.** Code change ⇒ `abstraction-layering` G1–G6; no todo ⇒ `work-item-seed-path` first. Non-codework ⇒ commission cursor for `path-sim` (`cursor_only`).
-16. Deprecated `agent_bus.request` supersede — do not issue it; a re-issue destroys a still-queued predecessor before it starts (§ Interrupt / supersede, live hazard).
+16. **Same `work_key` admit** — a second ulg-code `team_dispatch` while a non-terminal dispatch holds that `work_key` is refused with 409 `CURSOR_SOURCE_REF_IN_FLIGHT` (`retryable=false`; extra `holder_dispatch_id`, `holder_thread_id`, `steer`). The predecessor keeps running (§ Interrupt / supersede). Under backlog, wait on the predecessor's `poll_hint`. To stop a mistaken admit: `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)`. Holder: queued, admitted, running, `parked_waiting`, or an open restart park. Exempt (among others): adhoc identity, or no effective `work_key`; `nest_under` the holder; `resume_of` when the parent has `park_kind`, or is `resume_eligible` with `bridge_read_timeout`, or is terminal with the same `work_key`; `effective_hop` terminal with the same `work_key`. `force=true` (needs `force_reason`) skips it; audited fan-out only. Same content fingerprint while a peer is queued, admitted, or running is 409 `CURSOR_WORK_FINGERPRINT_IN_FLIGHT` (`force` skips that too).
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
 18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
 19. **Escalation chain + nesting.** Executor is `cursor-sdk` on lane B. **CDP consult refused or failed** (including `X display exhausted`): do not wait and do not retry the CDP pool. The conductor chooses at once by the question and records `cdp_fail_route` on the scoreboard row. `nested-grok`: ulg-code `team_dispatch` nested `seat=cursor-sdk` `model=cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`. `operator`: post the question and its context on the worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Hop 5 is `cdp/opus-5.5`. Every later hop is nested `cursor-sdk`.
 20. **Mission seat map.** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Opus=operator · Fable=advisor · `cursor/grok-4.7`=omit-model executor, investigate, and conductor · `cursor/composer-2.5`=mechanical `contract=implement` · `cursor-sdk` lane B=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify by commissioning a cursor-sdk seat. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
-22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only to **instantiate** a live IDE cursor session (or a true operator-only IDE gate: Reload Window / credentials). Human opens Cursor; **IDE seat executes**. `send` the commission first (inv 40). ¬ `only your hand` · ¬ ask the human to run `manage`. (e) life `notify`; absent ⇒ cursor `send`/`request` per inv 8/40. (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
+22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only to **instantiate** a live IDE cursor session (or a true operator-only IDE gate: Reload Window / credentials). Human opens Cursor; **IDE seat executes**. `send` the commission first (inv 40). ¬ `only your hand` · ¬ ask the human to run `manage`. (e) life `notify`; absent ⇒ cursor `send` per inv 8/40. (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
 23. **In-chat delivery.** Retained CSE = live correspondent via `cse_session(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
 24. **Authority** — repo writes, plugin install, and per-slug Customize upload are ulg-code `team_dispatch` to lane-B `cursor-sdk`. Fleet actions including `manage` `sync_restart` are this seat's, directly. Never `force` on `git_integration_worker`. Reload Window stays the human's hand.
 25. **Bus recency ≠ liveness** — fleet gate attestation authoritative when `fleet_gate_applied: true`; on dispatch lanes `wait.producer.state` (O14 D2, pinned `execution_id`) beats thread recency / unrelated closeout subjects. `in_flight` is the only occupied reading (`liveness_reason` `admit_grace` or `witness_live`). `unknown` is cannot-tell (`no_liveness_signal`) or a dead stream with no terminal write (`stream_dead_no_terminal`) — do not treat either as live and do not treat either as a finished producer.
-26. **Pre-wake observation** — life `fs` fleet-idle JSON; ¬ `agent_bus.request`.
+26. **Pre-wake observation** — life `fs` fleet-idle JSON; ¬ ulg-code `team_dispatch` before the idle read completes.
 27. **Staleness vs failure** — read `staleness_rule`; snapshot for occupancy, busy_status for restart safety.
 28. **Mentor, ¬ investigator.** Commission **`seat=cursor-sdk` `contract=investigate`** (`cursor/grok-4.7` high; omitted knobs follow the card) for substrate unknowns; adjudicate returned trace, ¬ originate hypothesis. Loop (judgment_required): (a) unanchored ask, (b) challenge chain, (c) withhold held answer, (d) max 2 rounds. `mechanical ⇒ ¬mentor_loop`.
 29. **Roadmap mutable — INSERT STEPS (a)–(e).** cortex roadmap editable via life `fs`; workspaces roadmap via `team_dispatch` (`seat=cursor-sdk`, `lane=B`). ¬ charter G-rows.
@@ -196,8 +196,8 @@ separate plane.
 34. **Outside break-in — advisory.** Reviewer may post `TYPE: BREAK_IN` without asking — advisory only. Requires live CSE. May return `NO_BREAK_IN`. Complements inv 33 confer.
 35. **Observed vs derived.** Status/rank/liveness claims need substrate quote. Positional implication is derived, not observed.
 36. **Peer disclosure (BINDING).** `∀ ≥2 advisors on same fork: each packet names peers` at commission. Standing claim until fork closes.
-37. **Conductor commission** — SOT: skill `directive-authoring-standard` D4. Recipe of record: `agent_skill:conductor` § **First-utterance spawn**. Wire is ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`), not `cursor_request`. This skill does not duplicate the conductor recipe.
-38. **Mission negotiation** — SOT: skill `directive-authoring-standard` D5. Field grammar stays in `cortex://notes/system/specs/directive-loop-mission-negotiation.md`. The operator wire is ulg-code `team_dispatch`, not `cursor_request`.
+37. **Conductor commission** — SOT: skill `directive-authoring-standard` D4. Recipe of record: `agent_skill:conductor` § **First-utterance spawn**. Wire is ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`). This skill does not duplicate the conductor recipe.
+38. **Mission negotiation** — SOT: skill `directive-authoring-standard` D5. Field grammar stays in `cortex://notes/system/specs/directive-loop-mission-negotiation.md`. The operator wire is ulg-code `team_dispatch`.
 39. **Autonomy default** — `recovery_path=human` ∨ ¬supervisor(process) ∨ manage ∉ `VALID_SERVICES` ⇒ substrate deficiency ⇒ implement autonomous recovery. ¬ `operator_only_gate` · ¬ `TYPE: OPERATOR_GATE` · ¬ wake(human). Naming who can recover today is observation; treating that answer as the arc terminal is the defect. Sibling of inv 8 (missing tool ≠ gate).
 40. **Attended IDE cursor ≠ human hand.** `decision:attended-ide-cursor-is-not-a-human-hand`.
     Specimen: agent-bus:9501 turn 184.
@@ -212,7 +212,7 @@ When blocked on a fact this seat cannot settle from tools alone:
 | 2 | Consult **cursor** via ulg-code `team_dispatch` (`seat=cursor-sdk`, `contract=freeform` or `contract=investigate` as the leg requires, `lane=B`) |
 | 2b | **CDP consult refused or failed** (including `X display exhausted`) — do not wait and do not retry the CDP pool. The conductor chooses at once and records `cdp_fail_route` on the scoreboard. `nested-grok`: ulg-code `team_dispatch` `seat=cursor-sdk` `model=cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`. `operator`: question and context on the worker thread `to=web-anthropic`, plus a one-line pointer on `parent_thread` `to=web-anthropic`. The operator answers on the worker thread; `CONSULT_PENDING` watches that reply. `cursor/claude-fable-5{,-1}` **blocked** (cost). |
 
-| 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
+| 2c | **GIW serial queue wedge** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE. Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. A second `team_dispatch` on the same `work_key` is refused 409 `CURSOR_SOURCE_REF_IN_FLIGHT`; the predecessor keeps running — wait on its `poll_hint`. |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
 **Invariant:** `cdp_consult_refused ∨ cdp_consult_failed ⇒ escalate_at_once(nested-grok ∨ operator)` · `¬ wait` · `¬ retry(CDP pool)` · `human_principal ⇔ operator_only_gate`.
@@ -229,13 +229,13 @@ that clause cancels this ladder. Pure sealed R-admit / charter consumers keep it
 
 IDE slash commands are thin wrappers; machinery lives in plugin skills. cursor-sdk
 **never** invokes `/commands` — it loads skills by slug from the DIRECTIVE
-body or episode BRIEFING (`cursor_request` tool descriptor mirrors this table).
+body or episode BRIEFING. The contract column is `team_dispatch` `contract`.
 
-| Lane | IDE command | Headless skill (SOT) | Wire `contract` (`cursor_request`) |
+| Lane | IDE command | Headless skill (SOT) | `team_dispatch` `contract` |
 |---|---|---|---|
-| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `seed` (S4a then spawn) |
-| Idea→implement codework | `/layer` (gate-shape) | `abstraction-layering` | re-admit conductor; `implement` \| `investigate` \| `verify` on existing todo; punch identity first if no todo |
-| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | — |
+| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `freeform` (prompt `Use the work-item-seed-path skill`, `lane=B`, `work_key`). S4a mints the todo, then spawns the conductor (`contract=conductor` needs `source_ref=todo:<slug>` and no inline prompt, so it cannot be the mint call). `freeform` + `source_ref` is 422 `handle_forbidden`, so the mint uses prompt + `work_key`, not `source_ref`. |
+| Idea→implement codework | `/layer` (gate-shape) | `abstraction-layering` | re-admit `conductor`; `implement` \| `investigate` on existing todo; punch identity first if no todo |
+| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | `freeform` (prompt `Use the path-sim skill`) |
 
 Commission grok sub-PM: body `Use the work-item-seed-path skill`; S6 **spawns
 conductor** (G-rows *are* layering). Existing `todo:{slug}` codework: body
@@ -287,16 +287,16 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Interrupt / supersede (BINDING)
 
-**The live hazard.** Re-issuing against a still-queued predecessor *destroys it before it does any work* — the opposite of the old belief that a queued job was safe and both would run. Under backlog (slow admits looking like a lost enqueue), **wait** rather than re-issue: a missing admit turn is not a lost enqueue, and re-issuing kills a job about to start.
+**The live hazard.** A second ulg-code `team_dispatch` (`op=generate`) on a `work_key` a non-terminal dispatch already holds is refused with 409 `CURSOR_SOURCE_REF_IN_FLIGHT` before admission (`retryable=false`; extra `holder_dispatch_id`, `holder_thread_id`, `steer`). The predecessor row is untouched and keeps running. Under backlog (slow admits looking like a lost enqueue), **wait** on the predecessor's `poll_hint`: a missing admit turn is not a lost enqueue. To stop a mistaken admit, `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)`. Holder: queued, admitted, running, `parked_waiting`, or an open restart park. Exempt (among others): adhoc identity, or no effective `work_key`; `nest_under` the holder; `resume_of` when the parent has `park_kind`, or is `resume_eligible` with `bridge_read_timeout`, or is terminal with the same `work_key`; `effective_hop` terminal with the same `work_key`. `force=true` (needs `force_reason`) skips it; audited fan-out only. Same content fingerprint while a peer is queued, admitted, or running is 409 `CURSOR_WORK_FINGERPRINT_IN_FLIGHT` (`force` skips that too).
 
-**Trigger.** The next commission is ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Do not issue `agent_bus.request`.
+**Trigger.** The next commission is ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`).
 
 ## Thread ownership (BINDING)
 
 | Surface | Owner | Carries |
 |---|---|---|
 | Endeavor / standing root | IDE cursor lead | CHECKPOINT, scoreboard index, human continuity |
-| Operator-proxy request thread | Cowork web-anthropic (this skill) | `request` → admit/BRIEFING → CLOSEOUT → DISPOSITION → next `request` |
+| Operator-proxy request thread | Cowork web-anthropic (this skill) | `team_dispatch` → admit/BRIEFING → CLOSEOUT → DISPOSITION → next `team_dispatch` |
 
 `arc:` names the root so cursor can reconstitute — **naming ≠ posting**. Posting
 `TYPE: DIRECTIVE` onto an endeavor root shared with an attended IDE session is the anti-pattern.
@@ -305,8 +305,7 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ulg-code `team_dispatch` is the ordinary commission, not a hop-409 fallback. Hop on an
 existing lane stays `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. Fresh work
-is `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`), not `cursor_request`
-/ `agent_bus.request`.
+is `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`).
 Life→cursor operator-proxy — mint a Life Cowork CSE that drives cursor, not a life
 conversation and not claude.ai→claude.ai chat — is **`life_dispatch`** on `/mcp/life` —
 server-pinned
@@ -352,10 +351,10 @@ Interim `scripts.local/claude-ai/life-project-dispatch.sh` is
 | 6 | Set `contract` + `density`; cursor binds the executor |
 | 6b | **Attended executor bind:** per skill `directive-authoring-standard` D1 (`require_attended` wire or body) |
 | 7 | Fetch the `status:admitted` turn; read the inline `TYPE: BRIEFING` before holding `wait` |
-| 7b | **Before every next `request` after an inbound burst:** `mark_read(through_turn=N)` — unread addressed turns ⇒ HTTP 409 `unread_turns_exist` |
+| 7b | **Before a bus `send`/`reply` with `after_turn=N`:** if turns addressed to you above N are unread, `mark_read(through_turn=...)` first, otherwise HTTP 409 `unread_turns_exist`. A `team_dispatch` generate is not gated by it. |
 | 8 | `wait` until CLOSEOUT follows the `poll_hint` (`tool=wait`, `arguments_json` unchanged, `wait_seconds` as the hint says including 0). Park-on-WAKE with `TYPE: PARKED`; delivery (b) primary; bus WAKE fallback |
 | 8b | On `status:blocked` + `pending_synthesized_closeout`: read in full → ack → re-deliver |
-| 8c | Long corpus ⇒ `sidecar_content` (+ optional `sidecar_slug`); keep ten §2 fields in `body` (skill `directive-authoring-standard` D1). **`allow_long_body` is rejected on `request`** |
+| 8c | Long corpus ⇒ `sidecar_content` (+ optional `sidecar_slug`); keep ten §2 fields in `body` (skill `directive-authoring-standard` D1) |
 | 9 | `TYPE: DISPOSITION` — `verdict:` on line 2; ¬ `wait(first_reply_from)` after it |
 
 ## Operator turn duties
@@ -374,9 +373,9 @@ something the DIRECTIVE did not scope in?*
 
 At ARRIVAL and after idle on the same CSE: if `workspaces_read_at_head` ≠ last
 watermark, run `fs(op="recent_commits", sandbox="workspaces",
-path="universal-llm-gateway", since=<watermark>)` **in-seat**. ¬ `cursor_request`
-for `git log`. Land-claim harvest still uses file read + path-scoped SHA
-(commission Auto only for `git show` when fs content is not enough). This is
+path="universal-llm-gateway", since=<watermark>)` **in-seat**. ¬ ulg-code
+`team_dispatch` for a read-only `git log`. Land-claim harvest still uses file read + path-scoped SHA
+(commission `team_dispatch` (`seat=cursor-sdk`, `lane=B`) for `git show` when fs content is not enough). This is
 primarily catch-up evidence; during migration HEAD, commit times, and watermark
 order remain a deprecated lower-confidence fallback for diagnosis, never proof
 of runtime activation. Ask `fleet_liveness(code_ref=<sha>)` for the authoritative
@@ -505,15 +504,13 @@ SOT: skill `directive-authoring-standard` D1. Architecture-bind remains § Archi
 
 ## Wire contracts + tier-M tool ask (BINDING)
 
-Authoring enum + propagate template: skill `directive-authoring-standard` D2. Live enum: `cursor_request` **Contract vocabulary**.
+Authoring enum + propagate template: skill `directive-authoring-standard` D2 **Contract vocabulary** (do not re-copy).
 
 **`contract: propagate` — nesting ban (closeout_relay):** do **not** fire `contract:propagate` from inside a GIW write-lease-holding nested dispatch whose parent closeout must relay dispositions. Thread 6692 (`failed/dead_on_giw_restart`) is the observed failure for **claimed / in-flight** jobs: nesting propagate inside such a dispatch **loses the parent closeout when the restart lands** — AutoJobQueue is process-local and a GIW drain/restart kills claimed/in-flight jobs (dead, not expired). **Queued-not-yet-claimed** jobs survive restart with `enqueued_at` preserved (agent-bus:9530 turn 50). The nested seat cannot observe the restart it blocks. This seat does not fire `contract:propagate`. Its restart verb is `manage` `sync_restart`, never `force` on `git_integration_worker`.
 
-**Admit field-parity (idea-commissioning keys):** `idea:` / `kind:` / `peer_disclosure:` are commissioning-register prose, not AutoJob envelope binds. Admit classifies them as **deferred** packet fields (same class as `arc` / `intent`). `from_lane:` is **not** a field — unknown at admit; use wire `lane=` on `cursor_request` / `agent_bus.request`. Do not write line-start `from_lane:` expecting checkout isolation.
+**Admit field-parity (idea-commissioning keys):** `idea:` / `kind:` / `peer_disclosure:` are commissioning-register prose, not AutoJob envelope binds. Admit classifies them as **deferred** packet fields (same class as `arc` / `intent`). `from_lane:` is **not** a field — unknown at admit; use wire `lane=` on ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Do not write line-start `from_lane:` expecting checkout isolation.
 
-**Blocked replies** carry `missed_tokens` + `fix_hint`. Re-issue supersedes per § Interrupt. Wire-neutral authoring (pending): wire answer may ship body implement.
-
-**Degrade ladder:** two fields, two subjects — `auto_handler_status` is the handler's heartbeat, `job_admission` is *your job's* admit verdict; never infer the second from the first. `job_admission.outcome` `refused` → read `fix_hint`/`missed_tokens`, re-issue, do ¬ poll · `deferred`|`admitted`|`waived` → poll · `not_applicable` → nothing ran, read `reason` · `auto-handler-live` → handler up (¬ a job verdict) · `no-auto-handler` → re-request · `status:blocked` → fix_hint · `status:needs-attended` → surface · `disposition:declined` → routing_hint · propagated/executed/queued → read `executions[]`.
+**Blocked replies** carry `missed_tokens` + `fix_hint`. A re-issue on the same `work_key` while the predecessor is non-terminal is refused 409 `CURSOR_SOURCE_REF_IN_FLIGHT` and the predecessor keeps running; wait on its `poll_hint`, or stop it with `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)` (§ Interrupt). Wire-neutral authoring (pending): wire answer may ship body implement.
 
 **Propagate `executions[]` restart dispositions** — read these structured fields. The `reason` string is not a determination (`could not determine in-flight work` embeds the self-preempt marker).
 
@@ -523,7 +520,7 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | `status=harvest_wanted` and `self_preempt_suppressed` with `would_preempt` set | Busy determination; self-preempt vetoed. Charter tick consumes the open row. |
 | `status=blocked` and `determination=undetermined` (`manage.state=probe_error`, `would_preempt` absent, no `restart_intent_id`) | The in-flight probe did not answer. Nothing is armed. Operator re-fire. Do not wait on the charter. |
 
-**Liveness reads (codeblind):** (1) fetch admit/terminal turn — not thread_count. (2) For a ulg-code `team_dispatch`, poll that response's `poll_hint` (`tool=wait`, `arguments_json` unchanged). `job_state` is the deprecated `agent_bus.request` hint. (3) `wait.status` is predicate — read the completion field (`predicate_unmet` means not satisfied yet; re-call the same hint). (4) `from_agent` stays what the hint says (`cursor-sdk` for this seat). (5) **Producer snapshot (O14 D2):** `agent_bus_read(wait, wait_seconds=0, execution_id=<id>, …)` → `producer.state`; prefer `poll_hint.arguments_json` (CDP admits include `execution_id`); `unknown` ⇒ execution_id not pinned; `unlinked` ⇒ admit never linked; unpinned ⇒ read `producers[]` on the same response. (6) **Watcher state file (O14 D1):** armed `watch-bus-consult-and-page.py --execution-id <id>` writes `producer`, `execution_id`, `verdict`, `stall_reason` to `tmp/watchers/<label>.state.json`; `predicate_unmet` while `verdict=in_flight` ⇒ keep polling — unrelated WORK closeouts are not terminal. `¬streaming` is not completion: Cowork pauses the streaming flag between tools. A badge-only archive (`Loaded tools, ran a command`) plus `stall_reason=producer_terminal_no_reply` is that pause, not `proof_reply_from`. (7) **CHECKPOINT derived zone (O14 D3):** read `### In-flight producers` under `## Derived` on role:root CHECKPOINT fetch — `_none linked_` is explicit negative. (8) **Closeout relay subject (O14 D4):** subject `status:` token must equal body `status:` — `status:blocked` in body with `status:done` subject is a harvest defect, not completion.
+**Liveness reads (codeblind):** (1) fetch admit/terminal turn — not thread_count. (2) For a ulg-code `team_dispatch`, poll that response's `poll_hint` (`tool=wait`, `arguments_json` unchanged). (3) `wait.status` is predicate — read the completion field (`predicate_unmet` means not satisfied yet; re-call the same hint). (4) `from_agent` stays what the hint says (`cursor-sdk` for this seat). (5) **Producer snapshot (O14 D2):** `agent_bus_read(wait, wait_seconds=0, execution_id=<id>, …)` → `producer.state`; prefer `poll_hint.arguments_json` (CDP admits include `execution_id`); `unknown` ⇒ execution_id not pinned; `unlinked` ⇒ admit never linked; unpinned ⇒ read `producers[]` on the same response. (6) **Watcher state file (O14 D1):** armed `watch-bus-consult-and-page.py --execution-id <id>` writes `producer`, `execution_id`, `verdict`, `stall_reason` to `tmp/watchers/<label>.state.json`; `predicate_unmet` while `verdict=in_flight` ⇒ keep polling — unrelated WORK closeouts are not terminal. `¬streaming` is not completion: Cowork pauses the streaming flag between tools. A badge-only archive (`Loaded tools, ran a command`) plus `stall_reason=producer_terminal_no_reply` is that pause, not `proof_reply_from`. (7) **CHECKPOINT derived zone (O14 D3):** read `### In-flight producers` under `## Derived` on role:root CHECKPOINT fetch — `_none linked_` is explicit negative. (8) **Closeout relay subject (O14 D4):** subject `status:` token must equal body `status:` — `status:blocked` in body with `status:done` subject is a harvest defect, not completion.
 
 ## Anti-patterns
 
@@ -534,7 +531,7 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | Treat `streaming=false` or `producer_terminal_no_reply` on a tool-badge archive as the CDP reply | The dispatch is on `dispatch_thread_id`. Done is `proof_reply_from` there. A badge-only `cdp FAILED` is a streaming pause between tools |
 | Facts only in Cowork chat | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |
 | Ref-only closeouts | Verdicts inline; evidence by ref |
-| `wait(first_reply_from)` after DISPOSITION | Re-`request` a sparse amend DIRECTIVE |
+| `wait(first_reply_from)` after DISPOSITION | Commission ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`) for a sparse amend DIRECTIVE |
 | Treat `workspaces://` as forbidden because the operator is codeblind | Read sight is ratified — `workspaces://` **is** readable via life `fs` |
 | `contract: execute` + `tool_op: manage.sync_restart`, or `contract:propagate`, as this seat's restart | Restart with ulg-code `manage` `sync_restart` from this session. Never `force` on `git_integration_worker`. Porcelain first |
 | Guessing another seat's live `poll_hint` / open DIRECTIVE | Read the thread + gate; one open DIRECTIVE per thread |
