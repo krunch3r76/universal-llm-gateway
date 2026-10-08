@@ -223,7 +223,8 @@ def test_admit_shape_names_generate() -> None:
         dispatch_thread_id="999",
         reuse_thread="999",
     )
-    assert shape["model"] == "cursor/composer-2.5"
+    assert shape["model"] == "cursor/grok-4.7"
+    assert shape["model_knobs"] == {"effort": "medium"}
     assert shape["work_key"] == "adhoc:cursor-paste-assertion-7"
     assert is_valid_work_key_scheme(shape["work_key"])
     assert shape["dispatch_thread_id"] == "999"
@@ -238,7 +239,8 @@ def test_admit_shape_names_generate() -> None:
         dispatch_thread_id="999",
         reuse_thread="999",
     )
-    assert body["model"] == "cursor/composer-2.5"
+    assert body["model"] == "cursor/grok-4.7"
+    assert body["model_knobs"] == {"effort": "medium"}
     assert body["job"] == "freeform"
     assert body["work_key"] == "friction:7"
     assert body["reuse_thread"] == "999"
@@ -779,7 +781,8 @@ def test_cursor_sdk_model_pin_unchanged_when_investigate_set() -> None:
         dispatch_thread_id="999",
     )
     assert body["model"] == CURSOR_SDK_MODEL
-    assert body["model"] == "cursor/composer-2.5"
+    assert body["model"] == "cursor/grok-4.7"
+    assert body["model_knobs"] == {"effort": "medium"}
     bound = parse_compose_options(
         {
             "kind": "friction",

@@ -308,7 +308,8 @@ def compose_message(
     return "".join(parts)
 
 
-CURSOR_SDK_MODEL = "cursor/composer-2.5"
+CURSOR_SDK_MODEL = "cursor/grok-4.7"
+CURSOR_SDK_MODEL_KNOBS: dict[str, str] = {"effort": "medium"}
 
 
 def work_key_for(kind: str, assertion_id: int) -> str:
@@ -330,6 +331,7 @@ def team_dispatch_admit_shape(
         "op": "generate",
         "seat": "cursor-sdk",
         "model": CURSOR_SDK_MODEL,
+        "model_knobs": dict(CURSOR_SDK_MODEL_KNOBS),
         "lane": "B",
         "contract": "freeform",
         "prompt": message_path,
@@ -355,6 +357,7 @@ def cursor_sdk_dispatch_body(
         "op": "generate",
         "seat": "cursor-sdk",
         "model": CURSOR_SDK_MODEL,
+        "model_knobs": dict(CURSOR_SDK_MODEL_KNOBS),
         "lane": "B",
         "job": "freeform",
         "prompt": prompt,
