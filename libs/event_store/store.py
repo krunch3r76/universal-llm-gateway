@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 
 _SESSION_BOUNDARY_SIGNAL = "event.service.started"
 _write_fail_hook: Callable[[int, list[str], str], None] | None = None
+_coerce_notice_hook: Callable[[dict[str, Any]], None] | None = None
+_coerce_notice_interval_sec: float = 1.0
+_coerce_notice_last_emit_ts: float = 0.0
+_coerce_notice_pending: dict[tuple[str, str], int] = {}
+_INGEST_FIELD_DEFAULTS: dict[str, str] = {
+    "signal": "unknown",
+    "role": "observation",
+    "scope": "global",
+    "source": "unknown",
+}
 
 
 def register_write_fail_hook(
@@ -43,6 +53,62 @@ def register_write_fail_hook(
     """Register a callback invoked when insert_events drops rows on sqlite error."""
     global _write_fail_hook
     _write_fail_hook = hook
+
+
+def register_coerce_notice_hook(
+    hook: Callable[[dict[str, Any]], None] | None,
+    *,
+    interval_sec: float = 1.0,
+) -> None:
+    """Register rate-limited fanout for coerced ingest fields (per field and source)."""
+    global _coerce_notice_hook, _coerce_notice_interval_sec
+    _coerce_notice_hook = hook
+    _coerce_notice_interval_sec = interval_sec
+
+
+def _note_field_coercion(field: str, source: str) -> None:
+    key = (field, source)
+    _coerce_notice_pending[key] = _coerce_notice_pending.get(key, 0) + 1
+    _maybe_emit_coerce_notice()
+
+
+def _maybe_emit_coerce_notice() -> None:
+    global _coerce_notice_last_emit_ts, _coerce_notice_pending
+    now = time.monotonic()
+    if now - _coerce_notice_last_emit_ts < _coerce_notice_interval_sec:
+        return
+    if not _coerce_notice_pending:
+        return
+    pending = dict(_coerce_notice_pending)
+    _coerce_notice_pending.clear()
+    _coerce_notice_last_emit_ts = now
+    if _coerce_notice_hook is None:
+        return
+    for (field, source), count in pending.items():
+        try:
+            _coerce_notice_hook(
+                {
+                    "signal": "events.coerced.ingest",
+                    "field": field,
+                    "source": source,
+                    "count": count,
+                }
+            )
+        except Exception:
+            logger.exception("coerce_notice_hook raised")
+
+
+def _ingest_string_field(ev: dict[str, Any], field: str) -> Any:
+    """Return a string column value, defaulting explicit nulls and counting coercion."""
+    raw = ev.get(field)
+    default = _INGEST_FIELD_DEFAULTS[field]
+    if raw is None:
+        producer = str(ev.get("source") or "unknown")
+        _note_field_coercion(field, producer)
+        return default
+    if isinstance(raw, str):
+        return raw or default
+    return raw
 
 
 _REALTIME_BUFFER_SIZE = int(os.environ.get("REALTIME_BUFFER_SIZE", "10000"))
@@ -262,12 +328,12 @@ class EventStore:
                 event_id = None
         row = (
             event_id,
-            ev.get("signal") or "unknown",
-            ev.get("role") or "observation",
-            ev.get("scope") or "global",
+            _ingest_string_field(ev, "signal"),
+            _ingest_string_field(ev, "role"),
+            _ingest_string_field(ev, "scope"),
             ts_ms,
             ts_iso,
-            ev.get("source") or "unknown",
+            _ingest_string_field(ev, "source"),
             payload_str,
         )
         return row, ev
