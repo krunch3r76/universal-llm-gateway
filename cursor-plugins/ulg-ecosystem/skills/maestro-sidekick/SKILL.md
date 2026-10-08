@@ -8,7 +8,7 @@ Seat: per-REQUEST successor `msk<N>-<work_key>`; MCP only, no checkout shell. Li
 
 ## Trigger
 
-A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an operator-seat commission to carry a house root (specimen 14106) as liaison.
+A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an operator-seat commission to carry a house root (specimen 14106) as liaison. House-root: the commissioning operator seat (web-anthropic) is the report-to for PICKUP / QUESTION / DONE / FAILED; there is no owning Sidekick.
 
 ## Refuse
 
@@ -23,7 +23,7 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
 
 1. **Boot.** Full harness before any task step, never abridged: `runbook:coding-boot` end to end (parity Paste packet, lean-dispatch, hypothesize-simulate with `frame:`/`rival:`/`killed:` on judgment steps, retrieval-before-authoring).
    Falsifier: a task step precedes the harness, or a prompt goes out with no retrieval report. Specimen: 15609#38; a:37295.
-2. **Claim.** `PICKUP|<work_key>` + boot receipt (what loaded, lean-dispatch read_sha256) to the owning Sidekick by agent message within 10 min. Read the REQUEST and every AMEND live; the latest AMEND governs.
+2. **Claim.** `PICKUP|<work_key>` + boot receipt (what loaded, lean-dispatch read_sha256) to the owning Sidekick by agent message within 10 min. Report-to = owning Sidekick on a Sidekick packet; = the commissioning operator seat on a house-root commission. Read the REQUEST and every AMEND live; the latest AMEND governs.
    Falsifier: work before PICKUP, or no receipt. Specimen: 15609#40 amends #17.
 3. **Route each leg** — lowest sufficient (`lean-dispatch`); name it in the DONE.
    | Leg | Route |
@@ -35,12 +35,12 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
    | diff review | a fresh grok-bot per-REQUEST successor (not the author) sends `VERDICT\|<work_key>` to the Sidekick; cdp/opus-5.5 only when the REQUEST names it |
    | next REQUEST in a chain | propose it to the owning Sidekick |
    Falsifier: a DONE names no route, or a conductor leg ran outside §5a. Specimen: a:38770.
-4. **Escalate.** Bind forks yourself first; no CDP unless named. `QUESTION|<work_key>` to the owning Sidekick only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
+4. **Escalate.** Bind forks yourself first; no CDP unless named. `QUESTION|<work_key>` to the owning Sidekick (house-root: the commissioning operator seat, Step 2) only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
    Falsifier: a QUESTION on a fork you could bind, or a blast-radius fork bound silently. Specimen: 15609#48.
 5. **Land.** Green ⇒ land, quote sha; land is standing under a REQUEST unless it says no-land. Push is optional (15722#33): after `VERDICT APPROVE` (a:38830), or when the REQUEST says publish, push hub master to origin unless the REQUEST says no-push — fast-forward only, never force — and quote the origin sha in the DONE. Not pushing is not a breach. Restart owed ⇒ name service + sha.
    Falsifier: a land claim without sha; a push with neither gate; a forced or non-fast-forward push; a push with no origin sha. Specimen: a:38732.
-6. **Close.** `DONE|<work_key>` or `FAILED|<work_key>` to the owning Sidekick by agent message: URIs + sha, route per leg, wall time REQUEST→DONE, nested closeouts with usage (or `none`).
-   Falsifier: a DONE without wall time or nested usage. Specimen: a:38765.
+6. **Close.** `DONE|<work_key>` or `FAILED|<work_key>` to the owning Sidekick (house-root: the commissioning operator seat, Step 2) by agent message: URIs + sha, route per leg, wall time REQUEST→DONE, nested closeouts with usage (or `none`), `proposals: <list>|none`, and `live-probe: <result>|n/a` (n/a when no service path was touched — landed is not live).
+   Falsifier: a DONE without wall time, nested usage, proposals, or live-probe. Specimen: a:38765; a:38838 finding 3.
 
 Grammar: `<VERB>|<work_key>`, VERB ∈ {REQUEST, AMEND, ACK, PARK, CANCEL, WITHDRAW, PICKUP, READY, QUESTION, RULING, VERDICT, DONE, FAILED}.
 
