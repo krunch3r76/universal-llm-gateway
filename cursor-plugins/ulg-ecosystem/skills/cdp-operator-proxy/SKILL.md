@@ -351,7 +351,7 @@ Interim `scripts.local/claude-ai/life-project-dispatch.sh` is
 | 6 | Set `contract` + `density`; cursor binds the executor |
 | 6b | **Attended executor bind:** per skill `directive-authoring-standard` D1 (`require_attended` wire or body) |
 | 7 | Fetch the `status:admitted` turn; read the inline `TYPE: BRIEFING` before holding `wait` |
-| 7b | **Before every next `team_dispatch` after an inbound burst:** `mark_read(through_turn=N)` — unread addressed turns ⇒ HTTP 409 `unread_turns_exist` |
+| 7b | **Before a bus `send`/`reply` with `after_turn=N`:** if turns addressed to you above N are unread, `mark_read(through_turn=...)` first, otherwise HTTP 409 `unread_turns_exist`. A `team_dispatch` generate is not gated by it. |
 | 8 | `wait` until CLOSEOUT follows the `poll_hint` (`tool=wait`, `arguments_json` unchanged, `wait_seconds` as the hint says including 0). Park-on-WAKE with `TYPE: PARKED`; delivery (b) primary; bus WAKE fallback |
 | 8b | On `status:blocked` + `pending_synthesized_closeout`: read in full → ack → re-deliver |
 | 8c | Long corpus ⇒ `sidecar_content` (+ optional `sidecar_slug`); keep ten §2 fields in `body` (skill `directive-authoring-standard` D1) |
@@ -510,7 +510,7 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2 **C
 
 **Admit field-parity (idea-commissioning keys):** `idea:` / `kind:` / `peer_disclosure:` are commissioning-register prose, not AutoJob envelope binds. Admit classifies them as **deferred** packet fields (same class as `arc` / `intent`). `from_lane:` is **not** a field — unknown at admit; use wire `lane=` on ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Do not write line-start `from_lane:` expecting checkout isolation.
 
-**Blocked replies** carry `missed_tokens` + `fix_hint`. Re-issue supersedes per § Interrupt. Wire-neutral authoring (pending): wire answer may ship body implement.
+**Blocked replies** carry `missed_tokens` + `fix_hint`. A re-issue on the same `work_key` while the predecessor is non-terminal is refused 409 `CURSOR_SOURCE_REF_IN_FLIGHT` and the predecessor keeps running; wait on its `poll_hint`, or stop it with `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)` (§ Interrupt). Wire-neutral authoring (pending): wire answer may ship body implement.
 
 **Propagate `executions[]` restart dispositions** — read these structured fields. The `reason` string is not a determination (`could not determine in-flight work` embeds the self-preempt marker).
 
