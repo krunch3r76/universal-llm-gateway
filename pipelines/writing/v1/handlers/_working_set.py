@@ -173,6 +173,8 @@ class WorkingSetClient:
             raise WorkingSetUnavailable(ref, "not_found")
         if status >= 400:
             raise WorkingSetUnavailable(ref, f"http_{status}")
+        if isinstance(body, dict) and body.get("error"):
+            raise WorkingSetUnavailable(ref, "error_body")
         if body is None:
             raise WorkingSetUnavailable(ref, "malformed_response")
         return body

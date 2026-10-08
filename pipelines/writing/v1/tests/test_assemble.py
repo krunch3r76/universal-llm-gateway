@@ -201,6 +201,19 @@ def test_assemble_service_down(case: str, refs: list[str]) -> None:
         assert http.gets
 
 
+def test_assemble_error_body_is_unavailable() -> None:
+    http = _Http(status=200, body={"error": "does not exist"})
+    ctx = _Ctx(
+        working_set=["entity:down"],
+        brief=_brief(not_attested=[]),
+        output="envelope",
+    )
+    with patch.object(working_set, "make_async_client", return_value=http):
+        payload = asyncio.run(assemble.WritingAssembleHandler().execute(None, ctx)).json
+    assert payload["refused"] == "working_set_unavailable"
+    assert payload["error"] == "error_body"
+
+
 def test_assemble_bus_read_only() -> None:
     captured: dict[str, Any] = {}
 
