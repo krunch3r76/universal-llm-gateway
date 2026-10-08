@@ -31,7 +31,9 @@ def _reset() -> None:
 
 
 def _age(execution_id: str) -> str:
-    old = (datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)).isoformat()
+    old = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
+    ).isoformat()
     conn = _connect()
     try:
         conn.execute(
@@ -101,7 +103,9 @@ def test_registration_before_admit_does_not_hit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_horizon_unscoped_abandons(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_failed_horizon_unscoped_abandons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(reconcile, "publish_cdp_kwargs", lambda *a, **k: None)
     monkeypatch.setattr(
         reconcile,
