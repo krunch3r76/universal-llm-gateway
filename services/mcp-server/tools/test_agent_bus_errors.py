@@ -695,22 +695,28 @@ def test_wait_mark_read_true_accepted_on_both_surfaces(
         if signal == "mcp.agentbus.dispatch.rejected":
             rejected.append(payload)
 
+    wait_cases = (
+        {
+            "thread": "15609",
+            "from_agent": "grok-bot",
+            "mark_read": True,
+            "completion": "thread_closed",
+        },
+        {
+            "thread": "15609",
+            "mark_read": True,
+            "completion": "thread_closed",
+        },
+    )
     with patch.object(agent_bus_module, "_relay", return_value={"complete": False}):
         with patch.object(agent_bus_module, "record", side_effect=_record):
-            invoke = bus_fn(
-                tool="wait",
-                arguments=json.dumps(
-                    {
-                        "thread": "15609",
-                        "from_agent": "grok-bot",
-                        "mark_read": True,
-                        "completion": "thread_closed",
-                    }
-                ),
-            )
-            result = asyncio.run(invoke) if asyncio.iscoroutine(invoke) else invoke
+            for case in wait_cases:
+                invoke = bus_fn(tool="wait", arguments=json.dumps(case))
+                result = asyncio.run(invoke) if asyncio.iscoroutine(invoke) else invoke
+                assert "error" not in result
+                advisory = result.get("argument_rewrite_advisory", "")
+                assert "mark_read ignored" in advisory
 
-    assert "error" not in result
     assert not rejected
 
 
@@ -736,17 +742,15 @@ def test_wait_mark_read_true_emits_canonical_pattern_advisory(agent_bus_fn) -> N
 
     assert "error" not in result
     advisory = result.get("argument_rewrite_advisory", "")
-    assert "wait(...)" in advisory
+    assert "mark_read ignored" in advisory
     assert "mark_read(thread, through_turn=" in advisory
 
 
-def test_wait_mark_read_calls_through_turn_bulk_mark_for_qualifying_turn() -> None:
-    calls: list[tuple[str, str, str, dict[str, Any]]] = []
+def test_wait_mark_read_complete_does_not_patch_read_state() -> None:
+    calls: list[tuple[str, str]] = []
 
-    def _relay(
-        service: str, method: str, path: str, **kwargs: Any
-    ) -> dict[str, Any]:
-        calls.append((service, method, path, kwargs.get("body") or {}))
+    def _relay(service: str, method: str, path: str, **_kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path))
         if method == "GET" and "/wait" in path:
             return {
                 "complete": True,
@@ -765,36 +769,10 @@ def test_wait_mark_read_calls_through_turn_bulk_mark_for_qualifying_turn() -> No
             )
 
     assert "error" not in result
-    patch_calls = [
-        c for c in calls if c[1] == "PATCH" and c[2].endswith("/turns/read-state")
-    ]
-    assert len(patch_calls) == 1
-    body = patch_calls[0][3]
-    assert body == {"through_turn": 7, "agent": "grok-bot"}
-
-
-def test_wait_mark_read_store_contract_uses_bulk_through_turn_not_turn_list() -> None:
-    """Recipient filter lives in agent-bus store; MCP sends through_turn + agent only."""
-
-    def _relay(
-        service: str, method: str, path: str, **kwargs: Any
-    ) -> dict[str, Any]:
-        if method == "GET":
-            return {"complete": True, "qualifying_reply_turn": 3}
-        body = kwargs.get("body") or {}
-        assert "turn_numbers" not in body
-        return {"marked_read": 0}
-
-    with patch.object(agent_bus_module, "_relay", side_effect=_relay):
-        with patch.object(agent_bus_module, "record", lambda *_a, **_k: None):
-            result = agent_bus_module._wait_dispatch(
-                thread="15609",
-                from_agent="grok-bot",
-                mark_read=True,
-                completion="first_reply_from",
-            )
-
-    assert result.get("complete") is True
+    assert not any(m == "PATCH" for m, _ in calls)
+    advisory = result.get("argument_rewrite_advisory", "")
+    assert "mark_read ignored" in advisory
+    assert "through_turn=7" in advisory
 
 
 def test_wait_incomplete_with_mark_read_skips_mark_relay() -> None:
@@ -815,6 +793,9 @@ def test_wait_incomplete_with_mark_read_skips_mark_relay() -> None:
 
     assert result.get("complete") is False
     assert not any(m == "PATCH" for m, _ in calls)
+    advisory = result.get("argument_rewrite_advisory", "")
+    assert "mark_read ignored" in advisory
+    assert "through_turn=<qualifying_reply_turn>" in advisory
 
 
 def test_unmapped_argument_still_rejected(agent_bus_fn) -> None:

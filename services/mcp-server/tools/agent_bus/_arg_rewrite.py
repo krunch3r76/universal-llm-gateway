@@ -35,14 +35,6 @@ def _reconcile_wait_args(args: dict[str, Any]) -> tuple[dict[str, Any] | None, l
             "reason": "wait_timeout_conflict",
         }, advisories
 
-    if args.get("mark_read") is True:
-        advisories.append(
-            _advisory(
-                "wait: canonical pattern is wait(...), then "
-                "mark_read(thread, through_turn=<n>, agent=<you>)"
-            )
-        )
-
     if has_wait or not (has_timeout or has_timeout_s):
         return None, advisories
 
@@ -264,7 +256,11 @@ def merge_argument_rewrite_advisory(
     advisory = "; ".join(advisories)
     if isinstance(result, dict):
         merged = dict(result)
-        merged["argument_rewrite_advisory"] = advisory
+        existing = merged.get("argument_rewrite_advisory")
+        if existing:
+            merged["argument_rewrite_advisory"] = f"{existing}; {advisory}"
+        else:
+            merged["argument_rewrite_advisory"] = advisory
         return merged
     if isinstance(result, list):
         return {"turns": result, "argument_rewrite_advisory": advisory}

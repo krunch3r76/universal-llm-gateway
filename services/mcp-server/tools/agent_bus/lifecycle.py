@@ -11,7 +11,7 @@ from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
 from ._shared import _structured_relay_error, relay
-from .read_state import _mark_read_dispatch, _resolve_turn_id
+from .read_state import _resolve_turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +295,28 @@ def _delete_turn_dispatch(
     return _delete_turn_impl(thread=thread, turn_number=turn_number, force=force)
 
 
+def _wait_mark_read_advisory(qualifying_reply_turn: Any) -> str:
+    if qualifying_reply_turn is not None:
+        through = str(int(qualifying_reply_turn))
+    else:
+        through = "<qualifying_reply_turn>"
+    return (
+        "wait: mark_read ignored — call mark_read(thread, "
+        f"through_turn={through}, agent=<your mailbox>) after the wait"
+    )
+
+
+def _enrich_wait_mark_read_advisory(result: dict[str, Any]) -> dict[str, Any]:
+    advisory = _wait_mark_read_advisory(result.get("qualifying_reply_turn"))
+    merged = dict(result)
+    existing = merged.get("argument_rewrite_advisory")
+    if existing:
+        merged["argument_rewrite_advisory"] = f"{existing}; {advisory}"
+    else:
+        merged["argument_rewrite_advisory"] = advisory
+    return merged
+
+
 def _wait_dispatch(
     *,
     thread: str | int = "",
@@ -310,11 +332,6 @@ def _wait_dispatch(
         thread = str(thread)
     if not thread:
         return {"error": 'wait requires: thread (str, e.g. "1234")'}
-    if mark_read and not from_agent:
-        return {
-            "error": "wait with mark_read=true requires from_agent",
-            "reason": "wait_mark_read_requires_from_agent",
-        }
     if completion in {"first_reply_from", "proof_reply_from"} and not from_agent:
         return {"error": f"wait with completion={completion} requires from_agent"}
     from agent_bus_store.wait_status import STATUS_COMPLETION_MODES
@@ -370,19 +387,8 @@ def _wait_dispatch(
         terminal_status = (
             str(result.get("status", "")) if isinstance(result, dict) else ""
         )
-        if (
-            mark_read
-            and isinstance(result, dict)
-            and result.get("complete")
-            and result.get("qualifying_reply_turn") is not None
-        ):
-            mark_result = _mark_read_dispatch(
-                thread=thread,
-                through_turn=int(result["qualifying_reply_turn"]),
-                agent=from_agent,
-            )
-            if isinstance(mark_result, dict) and "error" in mark_result:
-                return mark_result
+        if mark_read and isinstance(result, dict) and "error" not in result:
+            return _enrich_wait_mark_read_advisory(result)
         return result
     finally:
         pkg.record(

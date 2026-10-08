@@ -219,7 +219,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         **mark_read:** `turn_numbers[]` **XOR** `through_turn` (+ `agent` if through_turn).
 
-        **wait:** block ≤60s. `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}. `mark_read?` — when true and wait completes with `qualifying_reply_turn`, bulk mark through that turn for `from_agent` (requires `from_agent`).
+        **wait:** block ≤60s. `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}. `mark_read?` — ignored on wait; call `mark_read` separately with `through_turn` and your mailbox `agent` after the wait returns.
 
         **update_thread:** `tags` omit=keep, `[]`=clear, `[…]`=replace. **close** marks all read by default. **delete_turn** / **delete_thread** take optional `force`.
 
