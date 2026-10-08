@@ -167,6 +167,15 @@ class WritingFinalizeHandler(BaseHandler):
             )
         models = load_writing_models()
         draft = _json_of(outputs, "draft")
+        if isinstance(draft, dict) and draft.get("refused") == "writer_seat_failed":
+            return _step(
+                {
+                    "unsent": True,
+                    "refused": "writer_seat_failed",
+                    "seat_fallback": {"draft": draft.get("seat_fallback")},
+                    "error": draft.get("error"),
+                }
+            )
         initial_payload = _json_of(outputs, "provenance_check")
         initial = list((initial_payload or {}).get("violations") or [])
         independence = _json_of(outputs, "independence")
@@ -265,6 +274,14 @@ class WritingFinalizeHandler(BaseHandler):
             "usage": usage,
             "est_cost_usd": est_cost,
             "unsent": True,
+            "seat_fallback": {
+                "draft": draft.get("seat_fallback")
+                if isinstance(draft, dict)
+                else None,
+                "review": review.get("seat_fallback")
+                if isinstance(review, dict)
+                else None,
+            },
         }
         if cost_note:
             payload["cost_note"] = cost_note

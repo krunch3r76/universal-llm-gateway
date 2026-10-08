@@ -1,4 +1,5 @@
 # writer-specialist-v1 — local draft, independent review, targeted revision.
+# bare id writer-specialist-v1 is an alias of writing/writer-specialist-v1 (both resolve to this member).
 # UNSENT by construction: no send, post, file write, or mail draft.
 
 schema_version: 6
@@ -15,12 +16,26 @@ options:
   timeout_seconds: 1800
   writer_seat:
     type: string
-    description: S1 accepts only local
+    description: local, cdp, or cursor_pool1
     default: local
   reviewer_seat:
     type: string
-    description: S1 accepts only local
-    default: local
+    description: auto, local, or cdp
+    default: auto
+  dispatch_thread_id:
+    type: string
+    description: agent-bus thread for a non-local seat
+    default: "15790"
+  seat_models:
+    type: object
+    description: model id per remote seat
+    default:
+      cdp: cdp/opus-5.5
+      cursor_pool1: cursor/grok-4.7
+  seat_timeout_s:
+    type: integer
+    description: per wait step
+    default: 600
   output:
     type: string
     description: envelope or packet
@@ -46,11 +61,19 @@ steps:
   - name: assemble
     type: writing_assemble_v1
 
-  - name: draft
+  - name: draft_dispatch
+    type: writing_seat_dispatch_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and assemble.json.get('writer_seat') != 'local'"
+
+  - name: draft_wait
+    type: writing_seat_wait_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and assemble.json.get('writer_seat') != 'local'"
+
+  - name: draft_local
     type: generate
     model_ref: writer
     prompt_ref: writing.v1.writer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and (assemble.json.get('writer_seat') == 'local' or draft_wait.json.get('fallback_to') == 'local')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -105,22 +128,34 @@ steps:
             - need
             - dispositions
 
+  - name: draft
+    type: writing_seat_select_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+
   - name: provenance_check
     type: writing_provenance_check_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
       draft: draft.json
 
   - name: independence
     type: writing_independence_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None"
 
-  - name: review
+  - name: review_dispatch
+    type: writing_seat_dispatch_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
+
+  - name: review_wait
+    type: writing_seat_wait_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
+
+  - name: review_local
     type: generate
     model_ref: reviewer
     prompt_ref: writing.v1.reviewer
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and independence.json.get('refused') is None"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (assemble.json.get('reviewer_seat') == 'local' or review_wait.json.get('fallback_to') == 'local')"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -165,11 +200,15 @@ steps:
             - findings
             - verdict
 
+  - name: review
+    type: writing_seat_select_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None"
+
   - name: revise
     type: generate
     model_ref: reviser
     prompt_ref: writing.v1.reviser
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
     handler_inputs:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
@@ -234,7 +273,7 @@ steps:
 
   - name: provenance_check_final
     type: writing_provenance_check_v1
-    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
       draft: revise.json
@@ -244,11 +283,23 @@ steps:
     reads_from:
       - step: assemble
         fields: [json]
+      - step: draft_dispatch
+        fields: [json]
+      - step: draft_wait
+        fields: [json]
+      - step: draft_local
+        fields: [json]
       - step: draft
         fields: [json]
       - step: provenance_check
         fields: [json]
       - step: independence
+        fields: [json]
+      - step: review_dispatch
+        fields: [json]
+      - step: review_wait
+        fields: [json]
+      - step: review_local
         fields: [json]
       - step: review
         fields: [json]

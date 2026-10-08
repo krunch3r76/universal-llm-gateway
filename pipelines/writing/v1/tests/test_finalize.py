@@ -317,3 +317,44 @@ def test_finalize_independence_refused() -> None:
     assert payload["refused"] == "independence_violation"
     assert payload["draft_v1"]["draft"] == "Backed."
     assert payload["provenance"] == {"initial": []}
+
+
+def test_finalize_seat_fallback_null_and_present() -> None:
+    quiet = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "draft": _Out(_draft(), model_id=_HERMES),
+            "provenance_check": _Out({"violations": [], "pass": True}),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "review": _Out({"findings": [], "verdict": "ship"}, model_id=_QWEN),
+        }
+    )
+    assert quiet["seat_fallback"] == {"draft": None, "review": None}
+    record = {"seat": "cdp", "role": "writer", "reason": "timeout"}
+    flagged = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "draft": _Out({**_draft(), "seat_fallback": record}, model_id=_HERMES),
+            "provenance_check": _Out({"violations": [], "pass": True}),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "review": _Out(
+                {"findings": [], "verdict": "ship", "seat_fallback": None},
+                model_id=_QWEN,
+            ),
+        }
+    )
+    assert flagged["seat_fallback"]["draft"] == record
+    assert flagged["seat_fallback"]["review"] is None
+
+
+def test_finalize_seats_used_writer_is_cdp_model() -> None:
+    payload = _run(
+        {
+            "assemble": _Out(_assemble(writer_seat="cdp", reviewer_seat="local")),
+            "draft": _Out(_draft(), model_id="cdp/opus-5.5"),
+            "provenance_check": _Out({"violations": [], "pass": True}),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "review": _Out({"findings": [], "verdict": "ship"}, model_id=_QWEN),
+        }
+    )
+    assert payload["seats_used"]["writer"] == "cdp/opus-5.5"
