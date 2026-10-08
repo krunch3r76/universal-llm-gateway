@@ -172,8 +172,17 @@ def _upsert(
         live_type = str(live.get("type") or "")
         print(f"  SKIP  {entity_id:40s}  (skipped: already-migrated ({live_type}))")
         return True
-    if dry_run:
-        print(f"  {'WOULD PATCH' if status == 200 else 'WOULD CREATE'}  {entity_id}")
+    if status == 200:
+        matched, reason = _matches(live, projection)
+        if matched:
+            print(f"  UNCHANGED  {entity_id}")
+            return True
+        if dry_run:
+            detail = f"  ({reason})" if reason else ""
+            print(f"  WOULD PATCH  {entity_id}{detail}")
+            return True
+    elif dry_run:
+        print(f"  WOULD CREATE  {entity_id}")
         return True
     if status == 404:
         code, body = _request(client, "POST", "/entities", body=projection)

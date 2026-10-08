@@ -35,3 +35,45 @@ def test_upsert_skips_already_migrated_rule(capsys) -> None:
     assert ok is True
     out = capsys.readouterr().out
     assert "skipped: already-migrated (rule)" in out
+
+
+def _projection() -> dict:
+    return {
+        "id": "agent_skill:cowork-paste-resolve",
+        "description": "same",
+        "source_uri": "workspaces://universal-llm-gateway/.cursor/skills/cowork-paste-resolve/SKILL.md",
+        "attributes": {"trigger_match_terms": ["paste"]},
+    }
+
+
+def test_upsert_dry_run_unchanged_when_matches(capsys) -> None:
+    """HTTP 200 with identical fields is a no-op, including dry-run."""
+    live = {
+        "type": "agent_skill",
+        "lifecycle": "active",
+        "description": "same",
+        "source_uri": "workspaces://universal-llm-gateway/.cursor/skills/cowork-paste-resolve/SKILL.md",
+        "attributes": {"trigger_match_terms": ["paste"]},
+    }
+    ok = _upsert(_FakeClient(), _projection(), dry_run=True, live=live)
+    assert ok is True
+    out = capsys.readouterr().out
+    assert "UNCHANGED  agent_skill:cowork-paste-resolve" in out
+    assert "WOULD PATCH" not in out
+
+
+def test_upsert_dry_run_would_patch_when_fields_differ(capsys) -> None:
+    """Dry-run names WOULD PATCH only when a compared field differs."""
+    live = {
+        "type": "agent_skill",
+        "lifecycle": "active",
+        "description": "other",
+        "source_uri": "workspaces://universal-llm-gateway/.cursor/skills/cowork-paste-resolve/SKILL.md",
+        "attributes": {"trigger_match_terms": ["paste"]},
+    }
+    ok = _upsert(_FakeClient(), _projection(), dry_run=True, live=live)
+    assert ok is True
+    out = capsys.readouterr().out
+    assert "WOULD PATCH  agent_skill:cowork-paste-resolve" in out
+    assert "description" in out
+    assert "UNCHANGED" not in out
