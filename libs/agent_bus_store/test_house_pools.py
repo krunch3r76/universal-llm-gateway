@@ -11,7 +11,9 @@ from agent_bus_store.house_pools import (
     PoolsParseError,
     apply_fable_house_staging,
     conductor_pool_admit_refusal,
+    continuity_card_uri,
     extract_pools_block,
+    load_continuity_card,
     extract_pools_residue_sha8,
     format_house_read_first_block,
     inject_pools_checkpoint_projection,
@@ -134,11 +136,45 @@ def test_pools_residue_token_aligns_with_checkpoint_anchor(
     assert extract_pools_residue_sha8(residue) == digest[:8]
 
 
-def test_format_house_read_first_block() -> None:
+def test_resolver_prefers_card_md_over_archive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    directory = tmp_path / "notes/system/threads"
+    directory.mkdir(parents=True)
+    (directory / "10223-continuity.md").write_text("archive", encoding="utf-8")
+    (directory / "10223-card.md").write_text("live card", encoding="utf-8")
+    assert continuity_card_uri("10223").endswith("10223-card.md")
+    assert load_continuity_card("10223") == "live card"
+
+
+def test_resolver_falls_back_to_archive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    directory = tmp_path / "notes/system/threads"
+    directory.mkdir(parents=True)
+    (directory / "10223-continuity.md").write_text("archive", encoding="utf-8")
+    assert continuity_card_uri("10223").endswith("10223-continuity.md")
+    assert load_continuity_card("10223") == "archive"
+
+
+def test_resolver_missing_card_returns_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    assert load_continuity_card("10223") is None
+    assert continuity_card_uri("10223").endswith("10223-card.md")
+
+
+def test_format_house_read_first_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     row = parse_pools(_card_with_block())["fable"]
     block = format_house_read_first_block(house_id="10223", row=row)
     assert block.startswith("## House (read first)")
-    assert "cortex://notes/system/threads/10223-continuity.md" in block
+    assert "cortex://notes/system/threads/10223-card.md" in block
     assert "proof_reply_from web-anthropic" in block
 
 

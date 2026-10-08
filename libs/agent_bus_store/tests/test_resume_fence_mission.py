@@ -253,6 +253,101 @@ def test_mission_skills_to_use_from_card_and_step_order(bus_db) -> None:
     assert preview["skills_to_use"] == mission["skills_to_use"]
 
 
+def test_standing_rules_resolve_assertions(bus_db, monkeypatch: pytest.MonkeyPatch) -> None:
+    long_claim = "no rice " * 80
+
+    def _fake(assertion_id: int) -> dict:
+        if assertion_id == 31294:
+            return {
+                "id": "a:31294",
+                "status": "current",
+                "claim": long_claim,
+                "claim_truncated": False,
+            }
+        if assertion_id == 1:
+            return {
+                "id": "a:1",
+                "status": "superseded",
+                "claim": "old claim",
+                "claim_truncated": False,
+            }
+        if assertion_id == 2:
+            return {
+                "id": "a:2",
+                "status": "retracted",
+                "claim": "withdrawn",
+                "claim_truncated": False,
+            }
+        return {
+            "id": f"a:{assertion_id}",
+            "status": "unresolved",
+            "claim": "",
+            "claim_truncated": False,
+        }
+
+    monkeypatch.setattr(
+        "agent_bus_store.resume_fence_mission.lookup_assertion",
+        _fake,
+    )
+    row = (
+        "- Diet, loaded before any meal: `person:kaywan-mansubi` "
+        "a:31294 · a:1 · a:2. No rice."
+    )
+    card = f"## Rules\n{row}\n\n## Skills\n- `ulg-for-llms`\n"
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=card,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-rules",
+    )
+    assert mission["standing_rules"][0]["text"] == row
+    by_id = {item["id"]: item for item in mission["standing_rules"][0]["assertions"]}
+    assert by_id["a:31294"]["status"] == "current"
+    assert by_id["a:31294"]["claim_truncated"] is True
+    assert len(by_id["a:31294"]["claim"]) <= 240
+    assert by_id["a:1"]["status"] == "superseded"
+    assert by_id["a:2"]["status"] == "retracted"
+    steps = mission["handoff"]["steps"]
+    assert steps[0].startswith("Load mission.standing_rules")
+    assert steps[1] == "continuity(op=resume) was first hop"
+
+
+def test_missing_rules_section_degrades(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text="## Stance\nUse the `ulg-for-llms` skill.\n",
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-norules",
+    )
+    assert mission["standing_rules"] == []
+    assert not any("standing_rules" in step for step in mission["handoff"]["steps"])
+
+
+def test_missing_card_degrades(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-nocard",
+    )
+    assert mission["standing_rules"] == []
+
+
 def test_mission_no_skills_section_empty_list_no_step(bus_db) -> None:
     mission = build_mission_block(
         thread_id="10223",

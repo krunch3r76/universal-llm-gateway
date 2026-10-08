@@ -16,6 +16,8 @@ from implement_admission.closeout_helpers import cortex_files_root
 _SCRATCHBOARDS_HEADING = "## Scratchboards"
 _SKILLS_HEADING = "## Skills"
 _SKILLS_HEADING_RE = re.compile(r"^## Skills[ \t]*$", re.M)
+_RULES_HEADING_RE = re.compile(r"^## Rules[ \t]*$", re.M)
+_NONE_YET_RE = re.compile(r"^_None yet\._$")
 _CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>`]+")
 _BACKTICK_SLUG_RE = re.compile(r"`/?([A-Za-z0-9][A-Za-z0-9._-]*)`")
 _BARE_SLUG_RE = re.compile(r"^/?([A-Za-z0-9][A-Za-z0-9._-]*)")
@@ -133,6 +135,30 @@ def extract_card_skills(card_text: str) -> list[str]:
     return ordered
 
 
+def extract_card_rule_rows(card_text: str) -> list[str]:
+    """Return verbatim ``## Rules`` rows in card order.
+
+    Bullet and table body rows are kept as written. ``_None yet._``, blank
+    lines, and markdown table rules are skipped. A missing section yields
+    ``[]`` — never raise.
+    """
+    match = _RULES_HEADING_RE.search(card_text or "")
+    if not match:
+        return []
+    chunk = card_text[match.end() :].split("## ", 1)[0]
+    rows: list[str] = []
+    for raw_line in chunk.splitlines():
+        line = raw_line.strip()
+        if not line or _TABLE_RULE_RE.fullmatch(line) or _NONE_YET_RE.fullmatch(line):
+            continue
+        if line.startswith("|"):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if cells and cells[0].lower() in {"rule", "rules"}:
+                continue
+        rows.append(line)
+    return rows
+
+
 def missing_required_headings(card_text: str) -> list[str]:
     """Headings required on every continuity card (``card-schema.md``)."""
     missing: list[str] = []
@@ -172,6 +198,7 @@ def scratchboard_path_from_uri(uri: str) -> Path | None:
 
 
 __all__ = [
+    "extract_card_rule_rows",
     "extract_card_skills",
     "extract_scratchboard_uris",
     "missing_required_headings",

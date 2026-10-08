@@ -63,23 +63,52 @@ class PoolRow:
 
 
 def continuity_card_relpath(house_id: str) -> str:
-    """Relative cortex path for ``{house_id}-continuity.md``."""
+    """Relative cortex path for the legacy archive ``{house_id}-continuity.md``.
+
+    Writers that still emit the archive name keep this path. Resume lookup
+    uses :func:`resolve_continuity_card_relpath`, which prefers ``{id}-card.md``.
+    """
     normalized = house_id.strip().removeprefix("agent-bus:")
     return f"notes/system/threads/{normalized}-continuity.md"
 
 
+def continuity_card_candidate_relpaths(house_id: str) -> tuple[str, ...]:
+    """Live card first, then the legacy archive name."""
+    normalized = house_id.strip().removeprefix("agent-bus:")
+    live = f"notes/system/threads/{normalized}-card.md"
+    legacy = continuity_card_relpath(house_id)
+    return (live, legacy)
+
+
+def resolve_continuity_card_relpath(house_id: str) -> str:
+    """Return the on-disk card relative path, preferring ``{id}-card.md``.
+
+    When neither file exists, the preferred live name is returned so callers
+    cite the card the house actually maintains.
+    """
+    root = cortex_files_root()
+    candidates = continuity_card_candidate_relpaths(house_id)
+    for rel in candidates:
+        if (root / rel).is_file():
+            return rel
+    return candidates[0]
+
+
 def continuity_card_uri(house_id: str) -> str:
-    """Canonical cortex URI for a house continuity card."""
-    return f"cortex://{continuity_card_relpath(house_id)}"
+    """Cortex URI of the resolved house card (live name, else archive)."""
+    return f"cortex://{resolve_continuity_card_relpath(house_id)}"
 
 
 def continuity_card_path(house_id: str) -> Path:
-    """On-disk path for a house continuity card under ``CORTEX_FILES_ROOT``."""
-    return cortex_files_root() / continuity_card_relpath(house_id)
+    """On-disk path of the resolved house card under ``CORTEX_FILES_ROOT``."""
+    return cortex_files_root() / resolve_continuity_card_relpath(house_id)
 
 
 def load_continuity_card(house_id: str) -> str | None:
-    """Read the house continuity card when present on disk."""
+    """Read the house continuity card when present on disk.
+
+    Prefers ``{id}-card.md``. Falls back to ``{id}-continuity.md``.
+    """
     path = continuity_card_path(house_id)
     if not path.is_file():
         return None
@@ -374,8 +403,11 @@ __all__ = [
     "PoolsParseError",
     "apply_fable_house_staging",
     "conductor_pool_admit_refusal",
+    "continuity_card_candidate_relpaths",
     "continuity_card_path",
+    "continuity_card_relpath",
     "continuity_card_uri",
+    "resolve_continuity_card_relpath",
     "extract_pools_block",
     "extract_pools_residue_sha8",
     "inject_pools_checkpoint_projection",

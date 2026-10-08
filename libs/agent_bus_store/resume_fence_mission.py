@@ -9,7 +9,7 @@ from cortex_store.transcript_cp_anchors import window_anchors_from_text
 from cortex_store.transcript_projection_membership import extract_cp_object
 
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, extract_authored_residue
-from .continuity_card_scratchboards import extract_card_skills
+from .continuity_card_scratchboards import extract_card_rule_rows, extract_card_skills
 from .db.connection import connect
 from .recipients import MEMO_NOTE_SUBJECT_RE
 
@@ -20,6 +20,13 @@ _CLOSEOUT_MEMO_RE = re.compile(r"(?i)^closeout memo")
 _UNREAD_LIST_CAP = 24
 _UNREAD_BODY_CAP = 8
 _UNREAD_BODY_CHARS = 4000
+_ASSERTION_ID_RE = re.compile(r"\ba:(\d+)\b")
+_CLAIM_CHARS = 240
+_CLAIMS_BUDGET_CHARS = 4000
+_STANDING_RULES_STEP = (
+    "Load mission.standing_rules (verbatim rows and resolved claims) "
+    "before any other action"
+)
 
 
 def _sketchboard_in_tip(tip_body: str) -> str | None:
@@ -157,8 +164,12 @@ def build_mission_block(
     skills_to_use = [
         {"slug": slug, "use_line": f"Use the `{slug}` skill"} for slug in skills
     ]
+    standing_rules = build_standing_rules(card_text)
 
-    steps: list[str] = ["continuity(op=resume) was first hop"]
+    steps: list[str] = []
+    if standing_rules:
+        steps.append(_STANDING_RULES_STEP)
+    steps.append("continuity(op=resume) was first hop")
     if skills_to_use:
         steps.append(
             "Use each mission.skills_to_use slug now — before orientation "
@@ -196,6 +207,7 @@ def build_mission_block(
         "resume_open": _extract_resume_open(card_text),
         "pools_row": pools_row,
         "skills_to_use": skills_to_use,
+        "standing_rules": standing_rules,
         "fence_id": fence_id,
         "residue": residue or None,
         "sketchboard_uri": sketchboard,
@@ -241,6 +253,85 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _truncate_claim(claim: str, limit: int) -> tuple[str, bool]:
+    if len(claim) <= limit:
+        return claim, False
+    return claim[:limit].rstrip(), True
+
+
+def lookup_assertion(assertion_id: int) -> dict[str, Any]:
+    """Resolve one assertion id against the cortex store.
+
+    Missing rows, a down store, and query errors are ``unresolved``.
+    ``superseded_by`` and a retracted review status are flagged; the claim
+    text is still returned when the row exists.
+    """
+    ref = f"a:{assertion_id}"
+    try:
+        from cortex_store.db import cortex_conn
+
+        conn = cortex_conn()
+        try:
+            row = conn.execute(
+                "SELECT claim, superseded_by, review_status FROM assertions WHERE id = ?",
+                (assertion_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return {"id": ref, "status": "unresolved", "claim": "", "claim_truncated": False}
+    if row is None:
+        return {"id": ref, "status": "unresolved", "claim": "", "claim_truncated": False}
+    claim = str(row["claim"] or "")
+    superseded = row["superseded_by"] is not None
+    review = str(row["review_status"] or "").strip().lower()
+    if review in {"retracted", "withdrawn"}:
+        status = "retracted"
+    elif superseded:
+        status = "superseded"
+    else:
+        status = "current"
+    return {"id": ref, "status": status, "claim": claim, "claim_truncated": False}
+
+
+def build_standing_rules(card_text: str | None) -> list[dict[str, Any]]:
+    """Card ``## Rules`` rows with cited assertions resolved.
+
+    Row text is never dropped. Claims are truncated to stay inside the
+    resume bundle budget. Resolution does not depend on entity-view recency.
+    """
+    rows = extract_card_rule_rows(card_text or "")
+    pending: list[dict[str, Any]] = []
+    for text in rows:
+        assertions: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for match in _ASSERTION_ID_RE.finditer(text):
+            ref = f"a:{match.group(1)}"
+            if ref in seen:
+                continue
+            seen.add(ref)
+            resolved = lookup_assertion(int(match.group(1)))
+            claim, truncated = _truncate_claim(str(resolved.get("claim") or ""), _CLAIM_CHARS)
+            assertions.append(
+                {
+                    "id": ref,
+                    "status": resolved.get("status") or "unresolved",
+                    "claim": claim,
+                    "claim_truncated": truncated or bool(resolved.get("claim_truncated")),
+                }
+            )
+        pending.append({"text": text, "assertions": assertions})
+
+    used = sum(len(item["claim"]) for row in pending for item in row["assertions"])
+    if used > _CLAIMS_BUDGET_CHARS:
+        for row in pending:
+            for item in row["assertions"]:
+                claim, truncated = _truncate_claim(item["claim"], 80)
+                item["claim"] = claim
+                item["claim_truncated"] = truncated or item["claim_truncated"]
+    return pending
+
+
 def _extract_resume_open(card_text: str | None) -> str | None:
     if not card_text or "## Resume open" not in card_text:
         return None
@@ -255,7 +346,9 @@ def _extract_resume_open(card_text: str | None) -> str | None:
 
 __all__ = [
     "build_mission_block",
+    "build_standing_rules",
     "house_unread_turns",
+    "lookup_assertion",
     "mission_marker_preview",
     "sketchboard_uri",
 ]
