@@ -40,7 +40,7 @@ _write_fail_hook: Callable[[int, list[str], str], None] | None = None
 def register_write_fail_hook(
     hook: Callable[[int, list[str], str], None] | None,
 ) -> None:
-    """Register a callback invoked when insert_events drops a batch on sqlite error."""
+    """Register a callback invoked when insert_events drops rows on sqlite error."""
     global _write_fail_hook
     _write_fail_hook = hook
 
@@ -234,11 +234,93 @@ class EventStore:
             return []
         return list(self._realtime_buffer)[-limit:]
 
-    async def insert_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Insert a batch of events. Returns the events with seq assigned.
+    def _prepare_insert_row(
+        self, ev: dict[str, Any]
+    ) -> tuple[tuple[Any, ...], dict[str, Any]] | None:
+        """Build one INSERT row or skip oversized / invalid-id events."""
+        payload = ev.get("payload")
+        payload_str = json.dumps(payload) if payload is not None else None
+        if payload_str and len(payload_str.encode()) > _MAX_PAYLOAD_BYTES:
+            logger.warning(
+                "Dropping oversized event: signal=%s size=%d",
+                ev.get("signal"),
+                len(payload_str.encode()),
+            )
+            return None
+        ts_iso = ev.get("timestamp") or ""
+        ts_ms = ev.get("ts_unix_ms") or (
+            _ts_ms_from_iso(ts_iso) if ts_iso else int(time.time() * 1000)
+        )
+        event_id = ev.get("id")
+        if event_id is not None:
+            try:
+                event_id = int(event_id)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Dropping non-integer event id for signal=%s", ev.get("signal")
+                )
+                event_id = None
+        row = (
+            event_id,
+            ev.get("signal") or "unknown",
+            ev.get("role") or "observation",
+            ev.get("scope") or "global",
+            ts_ms,
+            ts_iso,
+            ev.get("source") or "unknown",
+            payload_str,
+        )
+        return row, ev
 
-        Skips events whose JSON payload exceeds 64KB. On DB error (e.g. disk
-        full), logs and drops the batch to keep the service alive.
+    def _insert_prepared_rows(
+        self, prepared: list[tuple[tuple[Any, ...], dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        """Insert rows one at a time after a batch failure; drop only failing rows."""
+        assert self._db is not None
+        accepted: list[dict[str, Any]] = []
+        dropped = 0
+        dropped_signals: list[str] = []
+        last_err = ""
+        for row, ev in prepared:
+            try:
+                self._db.execute(_INSERT_EVENT, row)
+                self._db.commit()
+                accepted.append(ev)
+            except sqlite3.Error as e:
+                self._db.rollback()
+                dropped += 1
+                dropped_signals.append(str(ev.get("signal", "unknown")))
+                last_err = str(e)
+                logger.warning(
+                    "Dropping event on row insert: signal=%s err=%s",
+                    ev.get("signal"),
+                    e,
+                )
+            except Exception as e:
+                self._db.rollback()
+                dropped += 1
+                dropped_signals.append(str(ev.get("signal", "unknown")))
+                last_err = str(e)
+                logger.exception("Unexpected row insert failure: %s", e)
+        if dropped:
+            logger.error(
+                "DB write dropped %d event(s) after batch retry (signals: %s): %s",
+                dropped,
+                dropped_signals[:5],
+                last_err,
+            )
+            if _write_fail_hook is not None:
+                try:
+                    _write_fail_hook(dropped, dropped_signals[:5], last_err)
+                except Exception:
+                    logger.exception("write_fail_hook raised")
+        return accepted
+
+    async def insert_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Insert a batch of events. Returns successfully persisted events.
+
+        Skips events whose JSON payload exceeds 64KB. On batch DB error, rolls
+        back and retries row-by-row so good rows commit and only bad rows drop.
         """
         if not events:
             return []
@@ -248,73 +330,33 @@ class EventStore:
             )
             return []
 
-        rows: list[tuple[Any, ...]] = []
-        accepted: list[dict[str, Any]] = []
+        prepared: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
         for ev in events:
-            payload = ev.get("payload")
-            payload_str = json.dumps(payload) if payload is not None else None
-            if payload_str and len(payload_str.encode()) > _MAX_PAYLOAD_BYTES:
-                logger.warning(
-                    "Dropping oversized event: signal=%s size=%d",
-                    ev.get("signal"),
-                    len(payload_str.encode()),
-                )
-                continue
-            ts_iso = ev.get("timestamp", "")
-            ts_ms = ev.get("ts_unix_ms") or (
-                _ts_ms_from_iso(ts_iso) if ts_iso else int(time.time() * 1000)
-            )
-            event_id = ev.get("id")
-            if event_id is not None:
-                try:
-                    event_id = int(event_id)
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Dropping non-integer event id for signal=%s", ev.get("signal")
-                    )
-                    event_id = None
-            rows.append(
-                (
-                    event_id,
-                    ev.get("signal") or "unknown",
-                    ev.get("role") or "observation",
-                    ev.get("scope") or "global",
-                    ts_ms,
-                    ts_iso,
-                    ev.get("source") or "unknown",
-                    payload_str,
-                )
-            )
-            accepted.append(ev)
+            item = self._prepare_insert_row(ev)
+            if item is not None:
+                prepared.append(item)
 
-        if not rows:
+        if not prepared:
             return []
 
+        rows = [item[0] for item in prepared]
         try:
             self._db.executemany(_INSERT_EVENT, rows)
             self._db.commit()
         except sqlite3.Error as e:
-            logger.error(
-                "DB write failed, dropping %d events (signals: %s): %s",
+            self._db.rollback()
+            logger.warning(
+                "Batch insert failed (%d rows), retrying one row at a time: %s",
                 len(rows),
-                [ev.get("signal") for ev in accepted[:5]],
                 e,
             )
-            if _write_fail_hook is not None:
-                try:
-                    _write_fail_hook(
-                        len(rows),
-                        [str(ev.get("signal", "unknown")) for ev in accepted[:5]],
-                        str(e),
-                    )
-                except Exception:
-                    logger.exception("write_fail_hook raised")
-            return []
+            return self._insert_prepared_rows(prepared)
         except Exception as e:
-            logger.exception("Unexpected event insert failure: %s", e)
-            return []
+            self._db.rollback()
+            logger.exception("Unexpected batch insert failure: %s", e)
+            return self._insert_prepared_rows(prepared)
 
-        return accepted
+        return [item[1] for item in prepared]
 
     async def insert_snapshot(self, snap: dict[str, Any]) -> None:
         """Insert a request snapshot record."""
