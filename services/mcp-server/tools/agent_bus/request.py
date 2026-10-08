@@ -261,6 +261,8 @@ def _request_impl(
     if side_effect_failures:
         result["side_effect_failures"] = side_effect_failures
     return result
+
+
 def _request_dispatch(
     *,
     new_slug: str | None = None,
