@@ -85,6 +85,7 @@ class EntitySummary(BaseModel):
     adoption: str | None = None
     workflow_state: str | None = None
     content_hash: str | None = None
+    source_uri: str | None = None
     created_at: str
 
 
@@ -246,4 +247,5 @@ class EntityCard(BaseModel):
     section_manifest: list[CardSection] = Field(default_factory=list)
     predicate_summary: str = ""
     freshness: dict[str, str] | None = None
+    source_uri: str | None = None
     debug: CardDebug | None = None

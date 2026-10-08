@@ -308,6 +308,33 @@ def _audit_terms(client: object, scanned: dict[str, dict[str, object]]) -> int:
     return 0 if not empty else 1
 
 
+_FILE_GONE_PREFIXES = (
+    f"{_WS}/.cursor/skills/",
+    f"{_WS}/.claude/skills/",
+    f"{_WS}/cursor-plugins/",
+)
+
+
+def _file_gone_ids(
+    live_by_id: dict[str, dict[str, object]],
+    scanned_slugs: set[str],
+    root: Path,
+) -> list[str]:
+    """Entities whose source file is gone under cursor, claude, or plugin prefixes."""
+    present = {f"agent_skill:{slug}" for slug in scanned_slugs}
+    gone: list[str] = []
+    for eid, row in live_by_id.items():
+        if eid in present or row.get("lifecycle") in _SUPPRESSED:
+            continue
+        uri = str(row.get("source_uri") or "")
+        if not uri.startswith(_FILE_GONE_PREFIXES):
+            continue
+        rel = uri.removeprefix(f"{_WS}/")
+        if not (root / rel).is_file():
+            gone.append(eid)
+    return gone
+
+
 def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) -> int:
     status, stubs = _fetch_guidance_entity_stubs(client)
     if status != 200:
@@ -316,14 +343,7 @@ def _audit(client: object, scanned: dict[str, dict[str, object]], root: Path) ->
     live_by_id = {row["id"]: row for row in stubs}
     cortex_declared = _scan_cortex_sot_declared(root)
     drifted = _drifts(client, scanned, live_by_id, cortex_declared=cortex_declared)
-    file_gone = [
-        eid
-        for eid, row in live_by_id.items()
-        if eid not in {f"agent_skill:{s}" for s in scanned}
-        and row.get("lifecycle") not in _SUPPRESSED
-        and str(row.get("source_uri") or "").startswith(f"{_WS}/.cursor/skills/")
-        and not (root / str(row["source_uri"]).removeprefix(f"{_WS}/")).is_file()
-    ]
+    file_gone = _file_gone_ids(live_by_id, set(scanned), root)
     print("Audit: agent_skill filesystem projections")
     print(f"  Scanned workspace skills : {len(scanned)}")
     print(f"  Drifted projections      : {len(drifted)}")

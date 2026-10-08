@@ -165,6 +165,7 @@ _PROJECTABLE_COLUMNS = frozenset(
         "workflow_state",
         "content_hash",
         "created_at",
+        "source_uri",
     }
 )
 _SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -177,6 +178,7 @@ _LIST_BASE_COLUMNS = (
     "workflow_state",
     "content_hash",
     "created_at",
+    "source_uri",
 )
 _TRAIT_READ_COLUMNS = ("lifecycle", "confidence_band", "adoption")
 
@@ -575,7 +577,9 @@ def update_entity_impl(
     # transition to a non-live value must evict alias rows even without an
     # explicit aliases key; sync_entity_aliases owns the live/non-live decision.
     if "name" in updates or "aliases" in updates or "lifecycle" in updates:
-        aliases_value = updates["aliases"] if "aliases" in updates else prior.get("aliases")
+        aliases_value = (
+            updates["aliases"] if "aliases" in updates else prior.get("aliases")
+        )
         sync_name = updates["name"] if "name" in updates else prior.get("name")
         sync_entity_aliases(
             conn,

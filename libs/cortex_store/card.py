@@ -441,6 +441,7 @@ def get_entity_card(
             "created_at": str(e["created_at"]),
             "updated_at": str(e["updated_at"]),
         },
+        source_uri=(str(e["source_uri"]) if e.get("source_uri") is not None else None),
         debug=debug_payload,
     )
     payload = card.model_dump(mode="json")
@@ -457,7 +458,9 @@ def get_entity_card(
             # Handler-set _next wins over static entity_get workflow hint.
             existing = payload.get("_next")
             payload["_next"] = (
-                f"{existing}; {hint}" if isinstance(existing, str) and existing else hint
+                f"{existing}; {hint}"
+                if isinstance(existing, str) and existing
+                else hint
             )
     attach_terminal_facts(conn, payload, entity_id=entity_id)
     from .runbook_inline_body import maybe_attach_runbook_body
