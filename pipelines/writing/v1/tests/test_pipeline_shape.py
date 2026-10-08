@@ -149,3 +149,38 @@ def test_pipeline_shape() -> None:
         ("writing", "writing_independence_v1"),
         ("writing", "writing_finalize_v1"),
     }
+
+
+def test_go_review_revise_conditions_on_step_outputs() -> None:
+    from systems.pipeline.core.conditions import ConditionEvaluator
+    from systems.pipeline.core.handlers.step_output import StepOutput
+
+    evaluator = ConditionEvaluator()
+
+    def step(data: dict) -> StepOutput:
+        return StepOutput(raw="", json=data)
+
+    refused = {"assemble": step({"refused": "working_set_unavailable"})}
+    assert evaluator.evaluate(_GO, refused, {}) is False
+    assert evaluator.evaluate(_REVIEW, refused, {}) is False
+
+    packet = {"assemble": step({"refused": None})}
+    assert evaluator.evaluate(_GO, packet, {"output": "packet"}) is False
+
+    clean = {
+        "assemble": step({"refused": None}),
+        "independence": step({"refused": None}),
+        "review": step({"verdict": "ship", "findings": []}),
+        "provenance_check": step({"violations": []}),
+    }
+    assert evaluator.evaluate(_REVIEW, clean, {}) is True
+    assert evaluator.evaluate(_REVISE, clean, {}) is False
+
+    revise = {**clean, "review": step({"verdict": "revise", "findings": []})}
+    assert evaluator.evaluate(_REVISE, revise, {}) is True
+
+    violated = {
+        **clean,
+        "provenance_check": step({"violations": [{"type": "omission"}]}),
+    }
+    assert evaluator.evaluate(_REVISE, violated, {}) is True
