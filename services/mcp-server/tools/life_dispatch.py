@@ -42,8 +42,8 @@ def register_life_dispatch_tools(mcp: FastMCP) -> None:
         """Life→cursor operator-proxy — mint a Life Cowork CSE that drives cursor.
 
         Not a life conversation and not claude.ai→claude.ai chat. Stay in this
-        session for correspondence; use ``operator_request`` for a DIRECTIVE
-        without a new CSE.
+        session for correspondence. Code work is ``team_dispatch`` on ulg-code;
+        a bus turn is ``agent_bus`` ``send``.
 
         Supply ``prompt`` (inline text or ``cortex://`` sidecar ref) **or**
         ``thread`` (agent_bus id). For ``thread``, the latest turn must be

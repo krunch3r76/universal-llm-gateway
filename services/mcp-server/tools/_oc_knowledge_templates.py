@@ -65,8 +65,8 @@ AGENT_BUS_COMPACT = """\
 A retired executor role name is not a bus address. Address cursor work to `cursor`.
 **Arm code work (repo write, build, deploy) → `team_dispatch`, ¬ `send`:**
 `team_dispatch(model=cdp/opus-5, …)` or `team_dispatch(seat=cursor-sdk, contract=implement|freeform, lane=B, …)`.
-The bus turn from `request` does not enqueue a worker.
-**CSE continuity hop (existing private lane) → `hop`, ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`:**
+**request** is RETIRED (a:38728) — it refuses. A bus turn is `send`.
+**CSE continuity hop (existing private lane) → `hop`, ¬ hand-authored `TYPE: CONTINUITY_HANDOFF`:**
 `agent_bus(tool="hop", arguments='{{"thread": "ID", "reason": "mcp-restart-healthy", "from": "web-anthropic"}}')`
 — `thread` + `reason` required; `new_slug` not accepted. Verb authors the hop body and enqueues `continuity_hop=true`. Reports *armed*, never `status:done`. `hop` is **not** a `contract` value.
 **Substrate graph write (resolved entity) → `substrate_graph_write`, ¬ bus-prose for the operator to carry:**

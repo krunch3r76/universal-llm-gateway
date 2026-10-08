@@ -20,15 +20,14 @@ def test_prose_discipline_v11_scope_in_operational_context() -> None:
         assert "all conversational prose" not in rendered.lower()
 
 
-def test_agent_bus_compact_renders_and_teaches_request() -> None:
+def test_agent_bus_compact_teaches_request_retired() -> None:
     rendered = AGENT_BUS_COMPACT.format(agent="claude-web")
-    assert 'tool="request"' in rendered
+    assert "RETIRED (a:38728)" in rendered
     assert 'tool="hop"' in rendered
     assert 'tool="substrate_graph_write"' in rendered
     assert 'tool="substrate_friction_file"' in rendered
     assert 'tool="substrate_entity_mint"' in rendered
     assert '"to": "cursor"' in rendered
     assert '"to": "TARGET"' not in rendered
-    assert "cursor-auto" in rendered
-    assert "never a valid `to`" in rendered
+    assert "not a bus address" in rendered
     assert "is **not** a `contract` value" in rendered

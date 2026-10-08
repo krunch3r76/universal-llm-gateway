@@ -241,19 +241,18 @@ def test_paused_opus_navigator_refuses_instead_of_grok(
 
 
 @pytest.mark.offline
-def test_fire_navigator_life_register_builds_cursor_auto_request(
+def test_fire_navigator_life_register_refuses_cursor_auto(
     tmp_path: Path, monkeypatch
 ) -> None:
+    from bus_watch.navigator_dispatch import submit_navigator
+
     monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
     result = fire_navigator_wake(
         "10479", _digest(), _state(), register="life", dry_run=True
     )
-    assert result["body"]["seat"] == "cursor-auto"
-    assert result["body"]["op"] == "request"
-    assert result["body"]["to"] == "cursor"
-    assert result["body"]["thread"] == "10479"
-    assert result["body"]["contract"] == "recon"
-    assert "cdp" not in str(result["body"].get("desired_model") or "")
+    refused, status = submit_navigator(result["body"])
+    assert status == 422
+    assert refused["error"]["code"] == "cursor_auto_retired"
 
 
 @pytest.mark.offline

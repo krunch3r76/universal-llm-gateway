@@ -581,7 +581,7 @@ def test_counterfactual_refuse_when_bound_predecessor_after_confirm():
     assert counters["counterfactual_would_refuse"] == 1
 
 
-def test_request_dispatch_uses_gate_before_impl():
+def test_request_dispatch_refuses_before_hop_gate():
     import sys
     from pathlib import Path
 
@@ -592,16 +592,8 @@ def test_request_dispatch_uses_gate_before_impl():
     with (
         patch(
             "tools.agent_bus.request._resolve_hop_seat_request_refusal",
-            return_value={
-                "code": "seat.lease_lost",
-                "source": "rpc",
-                "retryable": False,
-                "data": {},
-            },
-        ),
-        patch(
-            "tools.agent_bus.request._request_impl",
-        ) as impl_mock,
+        ) as gate_mock,
+        patch("tools.agent_bus.request._send_dispatch") as send_mock,
     ):
         result = _request_dispatch(
             thread="7188",
@@ -609,8 +601,9 @@ def test_request_dispatch_uses_gate_before_impl():
             body="b",
             from_agent="web-anthropic",
         )
-    impl_mock.assert_not_called()
-    assert result.get("code") == "seat.lease_lost"
+    gate_mock.assert_not_called()
+    send_mock.assert_not_called()
+    assert result.get("reason") == "cursor_auto_retired"
 
 
 def test_identity_gated_emits_on_both_outcomes_and_unwatched():

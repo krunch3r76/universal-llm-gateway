@@ -117,6 +117,13 @@ def test_search_ranking_top_one(
     )
 
 
+def test_cursor_request_search_has_no_hit(server_state: dict) -> None:
+    from tool_search import search_manifest
+
+    results = search_manifest(server_state["manifest"], "cursor_request", limit=5)
+    assert all(r.name != "cursor_request" for r in results)
+
+
 def test_catalog_total_bytes_within_baseline(server_state: dict) -> None:
     """Wire size of advertised tools/list must stay at or below the locked baseline."""
     total = sum(

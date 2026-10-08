@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 from tools.agent_bus.request import (
     _merge_lane_tags,
-    _request_dispatch,
     _request_impl,
     probe_auto_liveness,
 )
@@ -689,42 +688,6 @@ def test_enqueue_omits_lane_when_unset() -> None:
     assert "lane" not in payload
 
 
-def test_request_omit_desired_effort_enqueues_auto() -> None:
-    send_payload = {
-        "send_path": "new_thread",
-        "thread": {"id": "9923", "slug": "effort-omit"},
-        "turn": {"id": 1, "thread": "9923", "turn_number": 1},
-    }
-    with (
-        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
-        patch(
-            "tools.agent_bus.request.probe_auto_liveness",
-            return_value={
-                "live": True,
-                "reason": "ok",
-                "attempts": 1,
-                "elapsed_s": 0.1,
-            },
-        ),
-        patch("tools.agent_bus.request.enqueue_auto_job") as enqueue_mock,
-    ):
-        enqueue_mock.return_value = {
-            "ok": True,
-            "auto_handler_status": "auto-handler-live",
-            "enqueue": {"ok": True},
-        }
-        _request_dispatch(
-            new_slug="effort-omit",
-            thread=None,
-            to="cursor",
-            subject="DIRECTIVE",
-            body="TYPE: DIRECTIVE",
-            from_agent="web-anthropic",
-            contract="investigate",
-        )
-    assert enqueue_mock.call_args.kwargs["desired_effort"] == "auto"
-
-
 def test_enqueue_includes_lane_when_set() -> None:
     from tools.agent_bus.request_worker_client import enqueue_auto_job
 
@@ -934,41 +897,6 @@ def test_request_registration_only_does_not_bind_cse():
             cse_registration_id="reg-only",
         )
     bind.assert_not_called()
-
-
-def test_request_half_pair_parent_only_rejects_before_send() -> None:
-    """Half-pair lane bind must 422 at MCP intake with no thread row created."""
-    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
-        result = _request_dispatch(
-            new_slug="half-pair-parent",
-            thread=None,
-            to="cursor",
-            subject="DIRECTIVE",
-            body="TYPE: DIRECTIVE",
-            from_agent="web-anthropic",
-            parent_thread="10479",
-            lane_role=None,
-        )
-    assert result["reason"] == "lane_bind_incomplete"
-    assert result["provided"] == ["parent_thread"]
-    send_mock.assert_not_called()
-
-
-def test_request_half_pair_role_only_rejects_before_send() -> None:
-    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
-        result = _request_dispatch(
-            new_slug="half-pair-role",
-            thread=None,
-            to="cursor",
-            subject="DIRECTIVE",
-            body="TYPE: DIRECTIVE",
-            from_agent="web-anthropic",
-            parent_thread=None,
-            lane_role="sub_mission",
-        )
-    assert result["reason"] == "lane_bind_incomplete"
-    assert result["provided"] == ["lane_role"]
-    send_mock.assert_not_called()
 
 
 def test_request_cursor_author_does_not_bind_cse():

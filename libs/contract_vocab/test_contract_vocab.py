@@ -19,9 +19,6 @@ from contract_vocab import (
 _REPO = Path(__file__).resolve().parents[2]
 
 _PROSE_SITES = (
-    "services/mcp-server/tools/cursor_request.py",
-    "services/mcp-server/tools/agent_bus/__init__.py",
-    "services/mcp-server/tools/agent_bus/request.py",
     "services/mcp-server/tools/_oc_knowledge_templates.py",
 )
 

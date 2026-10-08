@@ -1,217 +1,27 @@
-"""Narrow request lane — dedicated MCP tool for approval gating.
+"""Life-primary ``operator_request`` tombstone (a:38728).
 
-The web-claude MCP harness gates tool approval at *registered-tool* granularity,
-not at the ``arguments.tool`` sub-op level. Because the unified ``agent_bus``
-tool bundles destructive ops (``delete_thread``, ``close``, ``triage``) with
-``request``, an operator cannot write an allow-by-name rule that covers only
-the request op. This module registers
-``cursor_request``, exposing ONLY the ``request`` op and delegating to
-``_request_dispatch`` — no logic is duplicated.
-Code work is ``team_dispatch`` (``seat=cursor-sdk`` or ``model=cdp/…``).
-
-Registered on the life MCP surface only (paired ``operator_request``); code AutoJob
-admit uses ``agent_bus(tool="request")``.
+``cursor_request`` is no longer registered. Every ``operator_request`` call
+returns ``cursor_auto_retired_refusal`` and does not call ``_request_dispatch``.
 """
 
 from __future__ import annotations
 
-import inspect
 from typing import TYPE_CHECKING, Any
 
-from mcp_events import record
-from mcp_toolprogress import toolprogress_begin, toolprogress_end
-
-from ._agent_bus_author import reconcile_author_arguments
-from .agent_bus import _request_dispatch
-
-# Cached once at import — runtime inspect.signature breaks under test mocks.
-_REQUEST_DISPATCH_PARAMS: frozenset[str] = frozenset(
-    inspect.signature(_request_dispatch).parameters
-)
+from .agent_bus.request import cursor_auto_retired_refusal
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-# Caller-facing wire fields only — ``to`` is fixed to ``cursor``; no tool/op discriminator.
-CALLER_FIELDS: frozenset[str] = frozenset(
-    {
-        "thread",
-        "new_slug",
-        "subject",
-        "body",
-        "contract",
-        "desired_model",
-        "desired_effort",
-        "escalation",
-        "from_agent",
-        "from",
-        "summary",
-        "tags",
-        "sidecar_content",
-        "sidecar_slug",
-        "require_attended",
-        "after_turn",
-        "lane",
-        "workspace",
-        "parent_thread",
-        "lane_role",
-        "request_id",
-        "cse_registration_id",
-        "cse_chat_url",
-        "work_key",
-    }
+_RETIRED_DOC = (
+    "RETIRED (a:38728). Refuses every call. "
+    "Code commission: team_dispatch on ulg-code. "
+    "Life CSE: life_dispatch. A bus turn: agent_bus send."
 )
 
 
-def _unknown_caller_error(unknown: list[str]) -> dict[str, Any]:
-    return {
-        "error": (
-            f"cursor_request: unsupported argument(s): "
-            f"{', '.join(sorted(unknown))}. "
-            f"Accepted: {sorted(CALLER_FIELDS)}"
-        ),
-    }
-
-
-def _dispatch_cursor_request(parsed: dict[str, Any]) -> Any:
-    """Validate caller dict, reconcile author, delegate to ``_request_dispatch``."""
-    unknown = [k for k in parsed if k not in CALLER_FIELDS]
-    if unknown:
-        record(
-            "mcp.agentbus.dispatch.rejected",
-            tool="request",
-            surface="cursor_request",
-            unknown=",".join(sorted(unknown)),
-        )
-        return _unknown_caller_error(unknown)
-
-    parsed, author_error = reconcile_author_arguments(parsed)
-    if author_error is not None:
-        record(
-            "mcp.agentbus.dispatch.rejected",
-            tool="request",
-            surface="cursor_request",
-            reason=str(author_error.get("reason", "")),
-        )
-        return author_error
-
-    accepted_dispatch = _REQUEST_DISPATCH_PARAMS
-    dispatch_kwargs = {k: v for k, v in parsed.items() if k in accepted_dispatch}
-    dispatch_kwargs["to"] = "cursor"
-    record("mcp.agentbus.dispatch", tool="request", surface="cursor_request")
-    return _request_dispatch(**dispatch_kwargs)
-
-
-def register_cursor_request_tool(mcp: FastMCP) -> None:
-    """Register the narrow ``cursor_request`` tool on the MCP server."""
-
-    def cursor_request(
-        subject: str,
-        body: str,
-        new_slug: str | None = None,
-        thread: str | None = None,
-        from_agent: str = "",
-        summary: str | None = None,
-        tags: list[str] | None = None,
-        sidecar_content: str | None = None,
-        sidecar_slug: str | None = None,
-        desired_model: str = "auto",
-        desired_effort: str = "auto",
-        escalation: str | None = None,
-        contract: str = "answer",
-        require_attended: bool = False,
-        after_turn: int = 0,
-        lane: str | None = None,
-        workspace: str | None = None,
-        parent_thread: str | None = None,
-        lane_role: str | None = None,
-        request_id: str | None = None,
-        cse_registration_id: str | None = None,
-        cse_chat_url: str | None = None,
-        work_key: str | None = None,
-    ) -> Any:
-        """Cursor-auto lane. `to=cursor` is fixed. XOR `new_slug`|`thread`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. Poll `poll_hint`. Prefer `from_agent=`.
-
-**contract**∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`}. Unknown → **422** before the turn write. `consult` aliases `confer`. Omit/`auto` `desired_effort`: answer/ask/confer/verify/execute/propagate `high`; investigate/seed `xhigh`; implement/recon `medium`.
-
-**lane:** in-repo implement passes `B`. Omit plus empty `files_expected` selects Lane A. Distinct from `lane_role`. `workspace` omit = hub. `parent_thread`+`lane_role` are both-or-neither.
-
-**work_key:** optional D4 identity (`todo:…`, `agent-bus:…`, `friction:…`). With `lane=B` and a lane-conductor contract (`investigate`, `recon`, `verify`) GIW selects concurrent Auto admission; omit ⇒ serial on that path.
-
-**Admit:** `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → **`status:needs-attended`**. Implement is `mechanical` unless the body has a line-start `RULING` / `RULING AC`. Judgment marker (implement admit): `agent_skill:directive-authoring-standard`. Confer negotiation fields stay in the body: `negotiation_phase`∈{`proposal`,`counter`,`agree`,`ratify`}.
-
-**Mission negotiation:** `contract=confer`. Body carries closed 12-field set: negotiation_phase, negotiation_id, revision, in_reply_to_turn, proposal_hash, parent_thread, objective, scope, out_of_scope, acceptance, vision, idle_deadline. (`parent_thread:` as a body line — distinct from the tool argument `parent_thread`.) `proposal_hash` = sha256: over sorted compact JSON of the six payload fields (parent_thread, objective, scope, out_of_scope, acceptance, vision). Every `key: value` line with a lowercase key is parsed; unlisted keys refuse the turn. Execution fields (desired_model, desired_effort, escalation, model_knobs, nest_under, dispatch_id) are forbidden on negotiation turns. Phase guards and negotiation.* dispositions: `cortex://notes/system/specs/directive-loop-mission-negotiation.md`.
-
-**Standing seat posture:** ∀ clear DIRECTIVE: front-door Q1/Q2 bind silently ∧ execute — ¬route/ack poll. ∀ confer/explicit ask: advise with codebase judgment. ∀ operator-only gate: `status:needs-attended`. SOT: `decision:operator-request-front-door`.
-
-**Life coding aperture:** coding interest → `contract=ask` first (omit `desired_model`/`escalation`/`workspace` unless satellite). ¬ sequential `fs`/`rag` as unknown-loci hunter — use `operator_request(ask|recon)` on `/mcp/life`. In-seat `answer` executes nothing — re-issue `ask`. Index: `document:life-coding-playbook`.
-
-**CDP window (web-anthropic):** life code work is `team_dispatch` (`seat=cursor-sdk` or `model=cdp/opus-5`) on **same** private request lane. ¬ mint second private request lane. ¬ `cse_session(followup)` for Customize skill refresh. CLOSEOUT quotes `execution_id` + `poll_hint`.
-
-**Conductor commission:** `investigate` + `lane=B` — packet/nest table: `agent_skill:conductor`.
-
-**Deploy/live:** landed≠live = process ¬restarted, never ¬committed; live@<sha> needs commit-before-restart + code_ref_satisfied + dirty disclosure. SOT: decision:checkout-disk-is-executable.
-
-**CLOSEOUT shape (by job):** answer→disposition:answered + inline relay; confer→codebase-grounded recommendation; ask→how-it-works in ≤12 lines + file:line anchors; investigate→findings / nested dispatch summary; implement→file changes + AC evidence (codework: ``abstraction-layering`` lane); verify→verification verdict + evidence (codework: ``abstraction-layering`` G6); execute→one tier-M op raw payload (body: tool_op + effects_expected); propagate→propagation ledger + drain-gated restart status; seed→todo slug + consult URI (if any) + ``abstraction-layering`` entry gate; recon→recon_core findings (+ optional recon_extra).
-
-**Second read (advisory):** `implement`|`investigate`|`verify` may append `## SECOND READ` by `cursor/claude-opus-5`. Observation only, not a gate. Knobs: `CURSOR_AUTO_REFLEX_ENABLED`, `_BUDGET`, `_SAMPLE_EVERY`, `_MODEL`, `_EFFORT`, `_TIMEOUT_S`.
-
-Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` · `agent_skill:conductor` · `agent_skill:directive-authoring-standard`.
-        """
-        t_prog, prog_timer = toolprogress_begin("cursor_request")
-        err: str | None = None
-        try:
-            parsed: dict[str, Any] = {
-                "subject": subject,
-                "body": body,
-                "desired_model": desired_model,
-                "desired_effort": desired_effort,
-                "escalation": escalation,
-                "contract": contract,
-                "require_attended": require_attended,
-                "after_turn": after_turn,
-            }
-            if lane is not None:
-                parsed["lane"] = lane
-            if workspace is not None:
-                parsed["workspace"] = workspace
-            if parent_thread is not None:
-                parsed["parent_thread"] = parent_thread
-            if lane_role is not None:
-                parsed["lane_role"] = lane_role
-            if request_id is not None:
-                parsed["request_id"] = request_id
-            if cse_registration_id is not None:
-                parsed["cse_registration_id"] = cse_registration_id
-            if cse_chat_url is not None:
-                parsed["cse_chat_url"] = cse_chat_url
-            if work_key is not None:
-                parsed["work_key"] = work_key
-            if new_slug is not None:
-                parsed["new_slug"] = new_slug
-            if thread is not None:
-                parsed["thread"] = thread
-            if from_agent:
-                parsed["from_agent"] = from_agent
-            if summary is not None:
-                parsed["summary"] = summary
-            if tags is not None:
-                parsed["tags"] = tags
-            if sidecar_content is not None:
-                parsed["sidecar_content"] = sidecar_content
-            if sidecar_slug is not None:
-                parsed["sidecar_slug"] = sidecar_slug
-            return _dispatch_cursor_request(parsed)
-        except Exception as exc:
-            err = str(exc)
-            raise
-        finally:
-            toolprogress_end(t_prog, prog_timer, "cursor_request", error=err)
-
-    mcp.tool(
-        title="Cursor Auto Request",
-        description=cursor_request.__doc__ or "",
-    )(cursor_request)
+def register_operator_request_tool(mcp: FastMCP) -> None:
+    """Register the retired ``operator_request`` tombstone on the life surface."""
 
     def operator_request(
         subject: str,
@@ -237,42 +47,11 @@ Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` ·
         cse_registration_id: str | None = None,
         cse_chat_url: str | None = None,
     ) -> Any:
-        """Recipient-neutral approval-gated operator request lane (life primary).
+        """RETIRED (a:38728). Refuses every call."""
+        return cursor_auto_retired_refusal()
 
-        Same cursor-auto wire as the overflow ``cursor_request`` registration; life
-        seats call this name on ``/mcp/life`` tools/list.
-        """
-        return cursor_request(
-            subject=subject,
-            body=body,
-            new_slug=new_slug,
-            thread=thread,
-            from_agent=from_agent,
-            summary=summary,
-            tags=tags,
-            sidecar_content=sidecar_content,
-            sidecar_slug=sidecar_slug,
-            desired_model=desired_model,
-            desired_effort=desired_effort,
-            escalation=escalation,
-            contract=contract,
-            require_attended=require_attended,
-            after_turn=after_turn,
-            lane=lane,
-            workspace=workspace,
-            parent_thread=parent_thread,
-            lane_role=lane_role,
-            request_id=request_id,
-            cse_registration_id=cse_registration_id,
-            cse_chat_url=cse_chat_url,
-        )
-
-    _shared_request_doc = cursor_request.__doc__ or ""
-    operator_request.__doc__ = (
-        "Recipient-neutral approval-gated operator request lane — life-primary "
-        "cursor-auto commission.\n\n" + _shared_request_doc
-    )
+    operator_request.__doc__ = _RETIRED_DOC
     mcp.tool(
         title="Operator Request",
-        description=operator_request.__doc__ or "",
+        description=_RETIRED_DOC,
     )(operator_request)
