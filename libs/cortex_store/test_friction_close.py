@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 import pytest
 
 from cortex_store.dispatch_ops._friction_close_impl import (
     _build_close_claim,
-    _paths_not_touched_by_commit,
     _validate_commit_resolution,
     close_friction_assertion,
     format_resolution_kind_catalog,
