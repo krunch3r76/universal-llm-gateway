@@ -5,6 +5,7 @@ External to the manage PID — uses manage.sock and host paths only.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
 )
 
 from .checks import (
+    RefuseFinding,
     default_intent_db,
     observe_manage_inflight,
     observe_nonterminal_intents,
@@ -28,6 +30,7 @@ from .pane import ppid_of
 
 ManageCall = Callable[..., dict[str, Any]]
 _GIW = "git_integration_worker"
+_CALLER_DISPATCH_ENV = "CURSOR_SDK_DISPATCH_ID"
 _DEFAULT_INTENT_WAIT_S = 600.0
 _DEFAULT_INFLIGHT_WAIT_S = 120.0
 _POLL_S = 2.0
@@ -101,6 +104,39 @@ def giw_has_claimed_occupants(busy: dict[str, Any]) -> bool:
             if isinstance(holder, dict) and holder.get("dispatch_id"):
                 return True
     return False
+
+
+def caller_dispatch_id() -> str | None:
+    """cursor-sdk dispatch id of this process, when it runs inside one."""
+    value = os.environ.get(_CALLER_DISPATCH_ENV, "").strip()
+    return value or None
+
+
+def observe_giw_occupants(
+    busy: dict[str, Any],
+    *,
+    caller_dispatch: str | None,
+) -> RefuseFinding | None:
+    """Refuse when GIW has claimed occupants, counting the calling dispatch.
+
+    Independent of ``manage_inflight_others`` and of whether GIW is a manage
+    child: a seat running inside a cursor-sdk dispatch is itself a GIW
+    occupant even when busy_status has not caught up with it. Read-only, so
+    dry-run and execute run the same check.
+    """
+    offenders: list[dict[str, Any]] = []
+    if caller_dispatch:
+        offenders.append(
+            {"occupant": "caller_dispatch", "dispatch_id": caller_dispatch}
+        )
+    if giw_has_claimed_occupants(busy):
+        entry = busy["services"][_GIW]
+        offenders.append(
+            {"occupant": "busy_status", "active_work": entry.get("active_work")}
+        )
+    if not offenders:
+        return None
+    return RefuseFinding(reason="giw_claimed_occupants", offenders=offenders)
 
 
 def _service_stopped(manage_call: ManageCall, service: str) -> bool:
@@ -255,10 +291,12 @@ __all__ = [
     "PANE_RULING",
     "IntentWaitResult",
     "InflightWaitResult",
+    "caller_dispatch_id",
     "giw_has_claimed_occupants",
     "giw_is_manage_child",
     "intent_store_for_manage",
     "is_nonterminal_status",
+    "observe_giw_occupants",
     "resolve_manage_inflight_for_seat",
     "run_giw_paired_start",
     "run_giw_paired_stop",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,6 +16,7 @@ from scripts.model_manager.guarded_manage_reexec.runner import run_guarded_reexe
 from scripts.model_manager.guarded_manage_reexec.seat_prelude import (
     _nudge_dead_intent_converge,
     giw_has_claimed_occupants,
+    observe_giw_occupants,
     resolve_manage_inflight_for_seat,
     wait_nonterminal_intents_clear,
 )
@@ -279,3 +281,116 @@ def test_dispatch_home_uses_operator_home_not_refusal(
     )
     assert result.reason != "dispatch_home_host_refusal"
     assert result.checks["seat_prelude"]["seat_operator_home"] == str(operator)
+
+
+_LIVE_OCCUPANT = {"write_lease": {"holder_dispatch_id": "d-live"}}
+
+
+def _occupant_busy(*, active_work: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "process": {"manage_inflight": 1, "activities": []},
+        "charter_hold": {"held": False, "pause_drain_clear": False},
+        "services": {"git_integration_worker": {"active_work": active_work}},
+    }
+
+
+def _recording_manage_call(busy: dict[str, Any], calls: list[str]):  # noqa: ANN202
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        calls.append(method)
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return busy
+        if method == "charter_hold_status":
+            return {
+                "held": False,
+                "pause_drain_clear": False,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        raise AssertionError(method)
+
+    return manage_call
+
+
+def _pane_hosts_manage(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    if cmd[:2] == ["tmux", "display-message"]:
+        return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+    raise AssertionError(cmd)
+
+
+def _run(tmp_path: Path, busy: dict[str, Any], calls: list[str], *, dry_run: bool):
+    return run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=dry_run,
+        manage_call=_recording_manage_call(busy, calls),
+        intent_db=_store(tmp_path)._db_path,  # noqa: SLF001
+        run_cmd=_pane_hosts_manage,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+    )
+
+
+def test_execute_refuses_live_occupant_with_zero_inflight_others(
+    tmp_path: Path,
+) -> None:
+    """AC1/AC3: manage_inflight_others=0 and one live GIW occupant => refused."""
+    calls: list[str] = []
+    result = _run(
+        tmp_path, _occupant_busy(active_work=_LIVE_OCCUPANT), calls, dry_run=False
+    )
+    assert result.checks["manage_inflight_others"] == 0
+    assert result.status == "refused"
+    assert result.reason == "giw_claimed_occupants"
+    assert result.executed is False
+    assert result.checks["findings"][0]["offenders"] == [
+        {"occupant": "busy_status", "active_work": _LIVE_OCCUPANT}
+    ]
+    assert "charter_pause" not in calls
+    assert "sync_restart" not in calls
+
+
+def test_execute_counts_calling_dispatch_as_occupant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: the seat's own CURSOR_SDK_DISPATCH_ID is an occupant."""
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_ID", "d-self")
+    calls: list[str] = []
+    result = _run(
+        tmp_path, _occupant_busy(active_work={"active_count": 0}), calls, dry_run=False
+    )
+    assert result.status == "refused"
+    assert result.reason == "giw_claimed_occupants"
+    assert result.checks["findings"][0]["offenders"] == [
+        {"occupant": "caller_dispatch", "dispatch_id": "d-self"}
+    ]
+    assert "charter_pause" not in calls
+
+
+def test_zero_occupants_passes_guard(tmp_path: Path) -> None:
+    """AC3: no occupants and no caller dispatch => guard passes; execute proceeds."""
+    busy = _occupant_busy(active_work={"active_count": 0})
+    assert observe_giw_occupants(busy, caller_dispatch=None) is None
+    calls: list[str] = []
+    result = _run(tmp_path, busy, calls, dry_run=False)
+    assert "charter_pause" in calls
+    assert result.reason == "drain_not_clear_after_pause"
+
+
+def test_dry_run_surfaces_occupant_refusal(tmp_path: Path) -> None:
+    """AC2/AC3: dry-run reports that execute would refuse on occupants."""
+    calls: list[str] = []
+    result = _run(
+        tmp_path, _occupant_busy(active_work=_LIVE_OCCUPANT), calls, dry_run=True
+    )
+    assert result.status == "dry-run"
+    assert result.reason == "giw_claimed_occupants"
+    assert result.checks["refused"] is True
+    assert result.executed is False
+    assert "charter_pause" not in calls
