@@ -146,6 +146,22 @@ def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
         }
     )
     assert LIFE_SURFACE_FORBIDDEN_TOOLS != derived
+    assert ULG_CODE_PRIMARY_TOOLS <= derive_surface_primary_tools("code")
+    assert ULG_CODE_PRIMARY_TOOLS.isdisjoint(LIFE_SURFACE_FORBIDDEN_TOOLS)
+
+
+def test_ulg_code_primary_ui_titles_match_mcp_titles(code_server: dict) -> None:
+    """Offline guard: Customize aria-labels track @mcp.tool(title=…) on /mcp/code."""
+    from claude_bundles.operator_proxy_mission import (
+        ULG_CODE_PRIMARY_TOOLS,
+        ULG_CODE_PRIMARY_UI_TITLES,
+    )
+
+    tools = asyncio.run(code_server["mcp"].list_tools())
+    by_name = {tool.name: tool.title for tool in tools}
+    mapped = frozenset(by_name[name] for name in ULG_CODE_PRIMARY_TOOLS)
+    assert mapped == ULG_CODE_PRIMARY_UI_TITLES
+    assert ULG_CODE_PRIMARY_TOOLS <= code_server["tool_names"]
 
 
 def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
