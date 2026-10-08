@@ -816,18 +816,26 @@ async def test_watchdog_parks_on_budget_exhaustion(
 
 
 @pytest.mark.asyncio
-async def test_watchdog_does_not_budget_park_cancel_discard() -> None:
+async def test_watchdog_does_not_budget_park_cancel_discard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """a:37149 — discard at mission_cap must not page/lock via watchdog budget.
 
     Reviewer falsifier: discard row past grace → sweep/fire must not call
     ``park_conductor_hop_mission`` and must leave ``mission_park_state`` clear.
+
+    a:38783 — the seed count is the effective cap. A hardcoded ``range(24)``
+    against the default of 48 never reaches the budget, so deleting the
+    ``PARK_KIND_DISCARD`` early-return still leaves this test green.
     """
     from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
         mission_park_state,
     )
 
+    mission_cap = 24
+    monkeypatch.setenv("CONDUCTOR_HOP_MISSION_CAP", str(mission_cap))
     ledger = CursorDispatchLedger.instance()
-    for idx in range(24):
+    for idx in range(mission_cap):
         dispatch_id = f"pred-disc-{idx}"
         _terminal_row(
             ledger,
