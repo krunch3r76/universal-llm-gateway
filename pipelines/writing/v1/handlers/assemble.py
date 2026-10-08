@@ -8,6 +8,7 @@ stay skipped. The handler never calls a model and never writes a file.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,19 +21,9 @@ from ._working_set import WorkingSetClient, WorkingSetUnavailable
 
 _EXCERPT_MAX = 1200
 _EXCERPT_SUFFIX = " [truncated]"
-_FENCE_PREFIXES = (
-    "</violations",
-    "</findings",
-    "</documents",
-    "</draft",
-    "</brief",
-    "</pin",
-    "<violations",
-    "<findings",
-    "<documents",
-    "<draft",
-    "<brief",
-    "<pin",
+_FENCE_TAG = re.compile(
+    r"</?(?:violations|findings|documents|draft|brief|pin)\b",
+    re.IGNORECASE,
 )
 _OUTPUTS = frozenset({"envelope", "packet"})
 
@@ -50,9 +41,11 @@ def _unwrap(value: Any, default: Any) -> Any:
 
 
 def _fence(text: str) -> str:
-    for prefix in _FENCE_PREFIXES:
-        text = text.replace(prefix, "&lt;" + prefix[1:])
-    return text
+    return _FENCE_TAG.sub(lambda match: "&lt;" + match.group(0)[1:], text)
+
+
+def _xml_attr(value: Any) -> str:
+    return str(value).replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _truncate(text: str) -> str:
@@ -376,7 +369,8 @@ def _not_attested_pins(items: list[str], *, start: int) -> list[dict[str, Any]]:
 
 def _pin_line(pin: dict[str, Any]) -> str:
     attested = "true" if pin["attested"] else "false"
+    source = _xml_attr(pin["source_uri"])
     return (
-        f'<pin id="{pin["pin_id"]}" source="{pin["source_uri"]}" '
+        f'<pin id="{pin["pin_id"]}" source="{source}" '
         f'attested="{attested}">{pin["excerpt"]}</pin>'
     )

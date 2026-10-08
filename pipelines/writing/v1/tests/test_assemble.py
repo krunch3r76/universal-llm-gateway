@@ -320,6 +320,23 @@ def test_assemble_max_pins_exceeded() -> None:
     assert payload["error"] == "max_pins_exceeded"
 
 
+def test_assemble_fence_neutralizes_case_and_quotes() -> None:
+    text = assemble._fence('see </DOCUMENTS> and <Pin id="x">')
+    assert "</DOCUMENTS>" not in text
+    assert "<Pin" not in text
+    assert "&lt;/DOCUMENTS>" in text
+    assert "&lt;Pin" in text
+    line = assemble._pin_line(
+        {
+            "pin_id": "P1",
+            "source_uri": 'entity:say"hi<x>',
+            "attested": True,
+            "excerpt": "ok",
+        }
+    )
+    assert 'source="entity:say&quot;hi&lt;x&gt;"' in line
+
+
 def test_assemble_output_packet() -> None:
     client = _FakeClient(hashlib.sha256(b"note body").hexdigest())
     payload = asyncio.run(
