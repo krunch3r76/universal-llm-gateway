@@ -92,10 +92,14 @@ def _query_event_service(
             return list_members(url=url, timeout=_QUERY_TIMEOUT)
         if operation in ("raw_sql", "sql"):
             params_dict = params or {}
+            try:
+                sql_limit = int(params_dict.get("limit", 100))
+            except (TypeError, ValueError):
+                return {"error": "limit must be an integer"}
             return query_sql(
                 str(params_dict.get("sql") or ""),
                 params=params_dict.get("params") or None,
-                limit=int(params_dict.get("limit", 100)),
+                limit=sql_limit,
                 url=url,
                 timeout=_QUERY_TIMEOUT,
             )
