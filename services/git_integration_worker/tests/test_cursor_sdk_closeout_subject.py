@@ -18,13 +18,13 @@ def test_build_sdk_closeout_subject_investigate_handoff_leg() -> None:
         execution_id="exec-472",
         message="TYPE: DIRECTIVE\ncontract: investigate\nhandoff=none\n",
         handoff_contract="none",
-        admitted_via="cursor-auto",
-        caller_agent="cursor-auto",
+        admitted_via="stargate",
+        caller_agent="stargate",
     )
     subject = build_sdk_closeout_subject(req, contract="none")
     assert subject == (
         "cursor-sdk CLOSEOUT auto-472 contract=investigate handoff=none "
-        "admitted_via=cursor-auto caller=cursor-auto"
+        "admitted_via=stargate caller=stargate"
     )
 
 
@@ -36,13 +36,13 @@ def test_build_sdk_closeout_subject_implement_leg() -> None:
         execution_id="exec-440",
         message="implement packet",
         handoff_contract="implement",
-        admitted_via="cursor-auto",
-        caller_agent="cursor-auto",
+        admitted_via="stargate",
+        caller_agent="stargate",
     )
     subject = build_sdk_closeout_subject(req, contract="implement")
     assert subject == (
         "cursor-sdk CLOSEOUT auto-440 contract=implement "
-        "admitted_via=cursor-auto caller=cursor-auto"
+        "admitted_via=stargate caller=stargate"
     )
     assert "read_only" not in subject
     assert subject != _BEFORE_SUBJECT.format(dispatch_id="auto-440")
@@ -66,7 +66,7 @@ def test_build_sdk_closeout_subject_read_only_leg() -> None:
         execution_id="exec-440",
         message="implement packet",
         handoff_contract="implement",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
     )
     read_only_subject = build_sdk_closeout_subject(req, contract="consult")
     implement_subject = build_sdk_closeout_subject(implement_req, contract="implement")
@@ -86,7 +86,7 @@ def test_build_sdk_closeout_subject_nested_only_when_present() -> None:
         execution_id="exec-child",
         message="nested",
         handoff_contract="implement",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
         nest_under="auto-parent",
     )
     subject = build_sdk_closeout_subject(req, contract="implement")
@@ -99,6 +99,6 @@ def test_build_sdk_closeout_subject_nested_only_when_present() -> None:
         execution_id="exec-child",
         message="nested",
         handoff_contract="implement",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
     )
     assert "nest=" not in build_sdk_closeout_subject(without_nest, contract="implement")

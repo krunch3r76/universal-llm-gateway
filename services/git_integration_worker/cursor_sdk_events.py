@@ -76,221 +76,6 @@ def emit_frontier_event(event: Event) -> None:
 
 
 @event_factory
-def FrontierSdkAutoAuthGateBlocked(  # noqa: N802
-    thread_id: str,
-    failure_count: int,
-    budget: int,
-    post_ack: bool,
-) -> Event:
-    return Event(
-        signal="frontier.sdk.auto.auth_gate_blocked",
-        payload={
-            "thread_id": thread_id,
-            "failure_count": failure_count,
-            "budget": budget,
-            "post_ack": post_ack,
-        },
-        scope="node",
-    )
-
-
-def emit_frontier_sdk_auto_auth_gate_blocked(
-    *,
-    thread_id: str,
-    failure_count: int,
-    budget: int,
-    post_ack: bool,
-) -> None:
-    """Emit when cursor-auto refuse-admits on auth-gate budget exhaustion."""
-    _emit(
-        FrontierSdkAutoAuthGateBlocked(
-            thread_id=thread_id,
-            failure_count=failure_count,
-            budget=budget,
-            post_ack=post_ack,
-        )
-    )
-    logger.info(
-        "cursor-auto auth_gate_blocked: thread_id=%s failure_count=%s "
-        "budget=%s post_ack=%s",
-        thread_id,
-        failure_count,
-        budget,
-        post_ack,
-    )
-
-
-@event_factory
-def FrontierSdkAutoEmptyDirectiveScopeBlocked(  # noqa: N802
-    thread_id: str,
-    contract: str,
-    density: str | None,
-    missed_tokens: tuple[str, ...],
-) -> Event:
-    return Event(
-        signal="frontier.sdk.auto.empty_directive_scope_blocked",
-        payload={
-            "thread_id": thread_id,
-            "contract": contract,
-            "density": density,
-            "missed_tokens": list(missed_tokens),
-        },
-        scope="node",
-    )
-
-
-def emit_frontier_sdk_auto_empty_directive_scope_blocked(
-    *,
-    thread_id: str,
-    contract: str,
-    density: str | None,
-    missed_tokens: tuple[str, ...],
-) -> None:
-    """Emit when cursor-auto blocks a nest for missing actionable scope."""
-    _emit(
-        FrontierSdkAutoEmptyDirectiveScopeBlocked(
-            thread_id=thread_id,
-            contract=contract,
-            density=density,
-            missed_tokens=missed_tokens,
-        )
-    )
-    logger.info(
-        "cursor-auto empty_directive_scope_blocked: thread_id=%s contract=%s "
-        "density=%s missed=%s",
-        thread_id,
-        contract,
-        density,
-        missed_tokens,
-    )
-
-
-@event_factory
-def FrontierSdkAutoJobAdmissionProjected(  # noqa: N802
-    thread_id: str,
-    job_id: str,
-    outcome: str,
-    reason: str | None,
-    deferred_gates: tuple[str, ...],
-) -> Event:
-    return Event(
-        signal="frontier.sdk.auto.job_admission_projected",
-        payload={
-            "thread_id": thread_id,
-            "job_id": job_id,
-            "outcome": outcome,
-            "reason": reason,
-            "deferred_gates": list(deferred_gates),
-        },
-        scope="node",
-    )
-
-
-def emit_frontier_sdk_auto_job_admission_projected(
-    *,
-    thread_id: str,
-    job_id: str,
-    outcome: str,
-    reason: str | None = None,
-    deferred_gates: tuple[str, ...] = (),
-) -> None:
-    """Emit the admit-ladder verdict ``/enqueue`` put on the wire.
-
-    Advisory broadcast only — the caller learns the outcome from the response
-    field, never from this event (``[universal:state-provenance]``).
-    """
-    _emit(
-        FrontierSdkAutoJobAdmissionProjected(
-            thread_id=thread_id,
-            job_id=job_id,
-            outcome=outcome,
-            reason=reason,
-            deferred_gates=deferred_gates,
-        )
-    )
-    logger.info(
-        "cursor-auto job_admission_projected: thread_id=%s job_id=%s outcome=%s "
-        "reason=%s deferred=%s",
-        thread_id,
-        job_id,
-        outcome,
-        reason,
-        deferred_gates,
-    )
-
-
-@event_factory
-def FrontierSdkAutoEmptyDirectiveScopeWaived(  # noqa: N802
-    thread_id: str,
-    contract: str,
-) -> Event:
-    return Event(
-        signal="frontier.sdk.auto.empty_directive_scope_waived",
-        payload={
-            "thread_id": thread_id,
-            "contract": contract,
-        },
-        scope="node",
-    )
-
-
-def emit_frontier_sdk_auto_empty_directive_scope_waived(
-    *,
-    thread_id: str,
-    contract: str,
-) -> None:
-    """Emit observation when body ``contract:`` waives empty-scope refuse.
-
-    Carries *thread_id* and stamped *contract* so waive storms stay measurable.
-    """
-    _emit(
-        FrontierSdkAutoEmptyDirectiveScopeWaived(
-            thread_id=thread_id,
-            contract=contract,
-        )
-    )
-    logger.info(
-        "cursor-auto empty_directive_scope_waived: thread_id=%s contract=%s",
-        thread_id,
-        contract,
-    )
-
-
-@event_factory
-def FrontierSdkAutoThreadStatusRefused(  # noqa: N802
-    thread_id: str,
-    status: str,
-) -> Event:
-    return Event(
-        signal="frontier.sdk.auto.thread_status_refused",
-        payload={
-            "thread_id": thread_id,
-            "status": status,
-        },
-        scope="node",
-    )
-
-
-def emit_frontier_sdk_auto_thread_status_refused(
-    *,
-    thread_id: str,
-    status: str,
-) -> None:
-    """Emit when cursor-auto refuses nest onto a closed/blocked bus thread."""
-    _emit(
-        FrontierSdkAutoThreadStatusRefused(
-            thread_id=thread_id,
-            status=status,
-        )
-    )
-    logger.info(
-        "cursor-auto thread_status_refused: thread_id=%s status=%s",
-        thread_id,
-        status,
-    )
-
-
-@event_factory
 def FrontierSdkWorkerCompleted(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -595,9 +380,9 @@ def emit_sdk_worker_completed(
 
     Carries optional association fields (``asked_by``, ``purpose``, ``story_id``,
     ``admitted_via``) when the dispatch was stamped at admit time so board fold
-    and story projector can reconcile nested cursor-auto rows without re-parsing
-    the packet. Registered ``admitted_via`` vocabulary: ``cursor-auto``,
-    ``stargate``, or unset.
+    and story projector can reconcile nested rows without re-parsing the
+    packet. Registered ``admitted_via`` vocabulary: ``stargate``,
+    ``giw_park_resume``, ``giw_await_reply_resume``, or unset.
     """
     _emit(
         FrontierSdkWorkerCompleted(
@@ -702,13 +487,11 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     packet_kind: str | None = None,
     model_knobs_requested: dict[str, str] | None = None,
 ) -> Event:
-    """GIW worker lane start signal after ``mark_running``.
+    """Worker lane start payload (``frontier.sdk.worker.dispatched``).
 
-    Emitted on the immediate admit path and on FIFO promote, but only when
-    ``admitted_via == \"cursor-auto\"`` (nested cursor-auto MCP). Registered
-    vocabulary: ``cursor-auto``, ``stargate``, or unset. Stargate-admitted /
-    unset admits rely on Stargate's own ``FrontierSdkWorkerDispatched``; GIW must
-    not emit while ledger status is ``queued``.
+    Stargate emits this signal on admit. GIW does not. Optional association
+    fields stamp when present. Registered ``admitted_via`` vocabulary:
+    ``stargate``, ``giw_park_resume``, ``giw_await_reply_resume``, or unset.
     """
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -738,48 +521,6 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
         signal="frontier.sdk.worker.dispatched",
         payload=payload,
         scope="node",
-    )
-
-
-def emit_sdk_worker_dispatched(
-    *,
-    dispatch_id: str,
-    thread_id: str,
-    execution_id: str,
-    request_id: str | None = None,
-    admitted_via: str | None = None,
-    asked_by: str | None = None,
-    purpose: str | None = None,
-    story_id: str | None = None,
-    topic: str | None = None,
-    nest_under: str | None = None,
-    packet_kind: str | None = None,
-    model_knobs_requested: dict[str, str] | None = None,
-    seat: str = "cursor-sdk",
-) -> None:
-    """Publish GIW worker-lane start after ``mark_running``.
-
-    Emitted on the immediate admit path and on FIFO promote, but only when
-    ``admitted_via == \"cursor-auto\"`` (nested cursor-auto MCP). Registered
-    vocabulary: ``cursor-auto``, ``stargate``, or unset. Stargate-admitted /
-    unset admits rely on Stargate's own ``FrontierSdkWorkerDispatched``; GIW must
-    not emit while ledger status is ``queued``.
-    """
-    _emit(
-        FrontierSdkWorkerDispatched(
-            dispatch_id=dispatch_id,
-            thread_id=thread_id,
-            execution_id=execution_id,
-            request_id=request_id,
-            seat=seat,
-            admitted_via=admitted_via,
-            asked_by=asked_by,
-            purpose=purpose,
-            story_id=story_id,
-            topic=topic,
-            nest_under=nest_under,
-            model_knobs_requested=model_knobs_requested,
-        )
     )
 
 
@@ -3373,34 +3114,6 @@ def emit_sdk_closeout_sidecar_receipt_failed(
 
 
 @event_factory
-def FrontierSdkCloseoutRelayed(  # noqa: N802
-    dispatch_id: str,
-    thread_id: str,
-    execution_id: str,
-    closeout_status: str,
-    receipt_path: str,
-    asked_by: str,
-    purpose: str,
-    story_id: str,
-) -> Event:
-    return Event(
-        signal="frontier.sdk.closeout.relayed",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-            "closeout_status": closeout_status,
-            "receipt_path": receipt_path,
-            "asked_by": asked_by,
-            "purpose": purpose,
-            "story_id": story_id,
-        },
-        scope="node",
-        role="observation",
-    )
-
-
-@event_factory
 def FrontierSdkCloseoutLintUnestablished(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -3440,43 +3153,6 @@ def emit_sdk_closeout_lint_unestablished(
             projection=projection,
             recovery=recovery,
         )
-    )
-
-
-def emit_sdk_closeout_relayed(
-    *,
-    dispatch_id: str,
-    thread_id: str,
-    execution_id: str,
-    closeout_status: str,
-    receipt_path: str,
-    asked_by: str,
-    purpose: str,
-    story_id: str,
-) -> None:
-    """Emit when cursor-auto relays operator CLOSEOUT after nested SDK terminal."""
-    _emit(
-        FrontierSdkCloseoutRelayed(
-            dispatch_id=dispatch_id,
-            thread_id=thread_id,
-            execution_id=execution_id,
-            closeout_status=closeout_status,
-            receipt_path=receipt_path,
-            asked_by=asked_by,
-            purpose=purpose,
-            story_id=story_id,
-        )
-    )
-    logger.info(
-        "cursor sdk closeout relayed: dispatch_id=%s thread_id=%s "
-        "closeout_status=%s story_id=%s asked_by=%s purpose=%s receipt_path=%s",
-        dispatch_id,
-        thread_id,
-        closeout_status,
-        story_id,
-        asked_by,
-        purpose,
-        receipt_path,
     )
 
 

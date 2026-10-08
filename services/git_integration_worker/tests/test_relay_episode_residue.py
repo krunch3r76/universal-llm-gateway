@@ -1,4 +1,4 @@
-"""Unit tests for cursor-auto conclusion-side propagation RESIDUE."""
+"""Unit tests for relay conclusion-side propagation RESIDUE."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _closeout_payload(**fields: object) -> str:
 
 def test_residue_sync_restart_for_giw_py_path():
     payload = _closeout_payload(
-        files_modified=["services/git_integration_worker/cursor_auto/handler.py"],
+        files_modified=["services/git_integration_worker/admission.py"],
     )
     block = residue_for_closeout(payload)
     assert block is not None
@@ -103,7 +103,7 @@ def test_residue_sync_restart_before_install_plugin():
     payload = _closeout_payload(
         files_modified=[
             "cursor-plugins/ulg-ecosystem/rules/mcp-tool-awareness_ulg.mdc",
-            "services/git_integration_worker/cursor_auto/handler.py",
+            "services/git_integration_worker/admission.py",
         ],
     )
     block = residue_for_closeout(payload)
@@ -220,7 +220,7 @@ status: complete
 
 def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
     wrapperless = _closeout_payload(
-        files_modified=["services/git_integration_worker/cursor_auto/handler.py"],
+        files_modified=["services/git_integration_worker/admission.py"],
     )
     block = resolve_relay_residue(wrapper_body=None, relay_body=wrapperless)
     assert block is not None

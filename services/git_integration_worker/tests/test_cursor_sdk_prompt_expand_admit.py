@@ -1,4 +1,4 @@
-"""Regression: enrolled-root cursor-auto admits reach GIW prompt-expand prelude."""
+"""Regression: enrolled-root admits reach the GIW prompt-expand prelude."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def test_expand_contract_preserves_operator_implement() -> None:
         operator_contract="implement",
         continuity_root_thread_id="10479",
         parent_dispatch_thread_id="10479",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
     )
     assert (
         expand_contract_for_admit(req, handoff_contract="pure-mechanical")
@@ -111,7 +111,7 @@ def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC3 — cursor-auto-shaped admit with parent 10479 + sketch reaches prelude."""
+    """AC3 — enrolled-root admit with parent 10479 + sketch reaches prelude."""
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     expand_calls: list[tuple[str, dict[str, str]]] = []
@@ -151,66 +151,8 @@ def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
         "operator_contract": "sketch",
         "continuity_root_thread_id": "10479",
         "parent_dispatch_thread_id": "10479",
-        "admitted_via": "cursor-auto",
+        "admitted_via": "stargate",
     }
     resp = client.post("/api/v1/cursor/dispatch", json=body)
     assert resp.status_code == 200, resp.text
     assert resp.json().get("prompt_expand") == "pending"
-
-
-@pytest.mark.parametrize("job", ["none", "pure-mechanical", "consult"])
-def test_cursor_auto_admit_refuses_unknown_job(client: TestClient, job: str) -> None:
-    body = {
-        "thread_id": "11767",
-        "model": "cursor/composer-2.5",
-        "dispatch_id": f"auto-unknown-{job}",
-        "execution_id": f"exec-unknown-{job}",
-        "message": "x",
-        "handoff_contract": job,
-        "admitted_via": "cursor-auto",
-    }
-    resp = client.post("/api/v1/cursor/dispatch", json=body)
-    payload = resp.json()
-    assert resp.status_code == 422
-    assert payload["error"]["event"] == "dispatch.job.refused"
-    assert payload["error"]["reason"] == "job_unknown"
-    assert payload["error"]["registry_ref"] == "job_vocab:unresolved"
-    assert payload["error"]["code"] == "job_unknown"
-    assert payload["error"]["reason"] != "job_retired"
-
-
-def test_cursor_auto_admit_refuses_missing_job(client: TestClient) -> None:
-    """No handoff_contract. Breaks when cursor-auto admits an omitted job."""
-    body = {
-        "thread_id": "11767",
-        "model": "cursor/composer-2.5",
-        "dispatch_id": "auto-missing-job",
-        "execution_id": "exec-missing-job",
-        "message": "x",
-        "admitted_via": "cursor-auto",
-    }
-    resp = client.post("/api/v1/cursor/dispatch", json=body)
-    payload = resp.json()
-    assert resp.status_code == 422
-    assert payload["error"]["code"] == "job_missing"
-    assert payload["error"]["event"] == "dispatch.job.refused"
-    assert payload["error"]["reason"] == "job_missing"
-
-
-def test_cursor_auto_admit_refuses_generate_only_job(client: TestClient) -> None:
-    """check-review is a registry id outside CURSOR_AUTO_ADMITTED_JOBS."""
-    body = {
-        "thread_id": "11767",
-        "model": "cursor/composer-2.5",
-        "dispatch_id": "auto-check-review",
-        "execution_id": "exec-check-review",
-        "message": "x",
-        "handoff_contract": "check-review",
-        "admitted_via": "cursor-auto",
-    }
-    resp = client.post("/api/v1/cursor/dispatch", json=body)
-    payload = resp.json()
-    assert resp.status_code == 422
-    assert payload["error"]["code"] == "job_unknown"
-    assert payload["error"]["event"] == "dispatch.job.refused"
-    assert payload["error"]["registry_ref"] == "job_vocab:check-review"

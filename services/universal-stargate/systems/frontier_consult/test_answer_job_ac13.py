@@ -1,8 +1,7 @@
 """G3 AC13 generate half: job=answer is unknown on Stargate generate intake.
 
 Breaks when generate intake admits answer, or returns a reason other than
-job_unknown, or omits dispatch.job.refused. The cursor-auto admit half is
-services/git_integration_worker/tests/test_cursor_auto_answer_job_ac13.py.
+job_unknown, or omits dispatch.job.refused.
 """
 
 from __future__ import annotations

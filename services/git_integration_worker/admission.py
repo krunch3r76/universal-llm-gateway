@@ -19,7 +19,6 @@ closeout. State is therefore never mutated from a worker thread.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -39,21 +38,6 @@ logger = get_logger(__name__)
 
 _TICKET_PENDING = "pending"
 _TICKET_RUNNING = "running"
-
-# Relay tickets on this route can be reserved before a ledger row exists. An
-# aged pending ticket with no row must not wedge ``active_count``.
-_RELAY_ROUTE = "cursor-auto/nested"
-_RELAY_LEAK_GRACE_S_DEFAULT = 900.0
-
-
-def _relay_leak_grace_s() -> float:
-    raw = os.environ.get("CURSOR_RELAY_TICKET_LEAK_GRACE_S", "").strip()
-    if not raw:
-        return _RELAY_LEAK_GRACE_S_DEFAULT
-    try:
-        return max(60.0, float(raw))
-    except ValueError:
-        return _RELAY_LEAK_GRACE_S_DEFAULT
 
 
 class Draining503(Exception):  # noqa: N818 — admission sentinel, caller maps to 503
@@ -181,37 +165,6 @@ class WorkAdmissionController:
         return self._drain_epoch
 
     # --------------------------------------------------------------- counting
-    def _leaked_relay_op_ids(self) -> list[str]:
-        """Pending relay tickets past grace with no ledger row.
-
-        Absence of a ledger row — not age alone — is the leak signature. A
-        queued or running dispatch under the same id is never reaped. The grace
-        period covers the window between reservation and the ledger insert.
-        """
-        now = datetime.now(UTC)
-        grace_s = _relay_leak_grace_s()
-        leaked: list[str] = []
-        for ticket in self._tickets.values():
-            if ticket.route != _RELAY_ROUTE or ticket.state != _TICKET_PENDING:
-                continue
-            if (now - ticket.admitted_at).total_seconds() < grace_s:
-                continue
-            if self.ledger.dispatch_status_by_id(dispatch_id=ticket.op_id) is None:
-                leaked.append(ticket.op_id)
-        return leaked
-
-    def _reap_leaked_relay_tickets(self) -> None:
-        for op_id in self._leaked_relay_op_ids():
-            ticket = self._tickets.pop(op_id, None)
-            if ticket is None:
-                continue
-            logger.warning(
-                "reaped leaked relay admission ticket: op_id=%s route=%s admitted_at=%s",
-                op_id,
-                ticket.route,
-                ticket.admitted_at.isoformat(),
-            )
-
     def active_ops(self) -> list[dict[str, Any]]:
         """Authoritative projection: counted tickets ∪ ledger live-running
         dispatches (orphan-excluded) ∪ claimed Auto jobs, de-duplicated by
@@ -221,13 +174,7 @@ class WorkAdmissionController:
         Cursor-sdk rows carry ``resolved_model`` / ``subject_preview`` from the
         ledger so busy probes name the holder, not only an opaque dispatch id.
         Claimed Auto jobs are a separate occupant (propagate has no SDK ticket).
-
-        Leaked relay tickets are reaped here rather than in a background sweep so
-        that every count authority — busy probes, ``drain_state``, and the idle
-        re-check — reconciles on read; the ledger side already applies the same
-        live-task filter in ``live_dispatch_projections``.
         """
-        self._reap_leaked_relay_tickets()
         ops: list[dict[str, Any]] = []
         seen: set[str] = set()
         projections = {
@@ -590,6 +537,7 @@ def _timedelta_s(seconds: float):
 
     return timedelta(seconds=seconds)
 
+
 def _parse_drain_arm(arm: str | None) -> tuple[str | None, str | None]:
     """Return ``(kind, holder_id)`` for begin_drain arm; kind None = immediate."""
     if arm is None:
@@ -606,4 +554,3 @@ def _parse_drain_arm(arm: str | None) -> tuple[str | None, str | None]:
             raise ValueError("arm=holder: requires a dispatch_id")
         return "holder", holder
     raise ValueError(f"unsupported begin_drain arm={arm!r}")
-

@@ -1,7 +1,7 @@
 """FIFO capacity gates for cursor-sdk dispatches.
 
 Standard lane (charter/autonomous): default limit 1 via ``CURSOR_SDK_DISPATCH_CONCURRENCY``.
-Operator lane (IDE lead + cursor-auto operator-proxy): default limit 3 via
+Operator lane (IDE lead): default limit 3 via
 ``CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY``.
 
 The slot is a dispatch/thread-lifetime lease. A timed-out outer coroutine must
@@ -118,9 +118,12 @@ def is_operator_sdk_dispatch(
     caller_agent: str | None = None,
     dispatch_id: str | None = None,
 ) -> bool:
-    """True for Kaywan IDE dispatches and cursor-auto operator-proxy nested SDK."""
-    if dispatch_id and dispatch_id.startswith("auto-"):
-        return True
+    """True when ``caller_agent`` resolves to the cursor platform (IDE lead).
+
+    ``dispatch_id`` stays on the signature so acquire and release call sites
+    stay symmetric. The id is not a lane signal.
+    """
+    del dispatch_id
     agent = (caller_agent or "").strip()
     if not agent:
         return False
@@ -230,11 +233,11 @@ def _gate_for_dispatch(
 ) -> FifoCapacityGate:
     """Resolve the owning lane gate, consulting the ledger when the caller is implicit.
 
-    Release/transfer callers know only ``dispatch_id``. Resolving the lane from the
-    id alone recognizes just the ``auto-`` prefix, so an operator-lane dispatch
-    admitted via ``caller_agent`` would release against the standard gate and leak
-    its operator slot permanently (limit 3 ⇒ the lane wedges after three IDE
-    dispatches). The ledger's ``caller_agent`` is the same value acquire resolved on.
+    Release/transfer callers know only ``dispatch_id``. The id does not name the
+    lane, so an operator-lane dispatch admitted via ``caller_agent`` would
+    release against the standard gate and leak its operator slot permanently
+    (limit 3 ⇒ the lane wedges after three IDE dispatches). The ledger's
+    ``caller_agent`` is the same value acquire resolved on.
     """
     resolved_agent = caller_agent or _caller_agent_for_dispatch(dispatch_id)
     lane = sdk_dispatch_lane(caller_agent=resolved_agent, dispatch_id=dispatch_id)

@@ -404,7 +404,9 @@ def test_ac_s2_6_read_only_lane_b_422(
     assert resp.status_code == 200
     body = resp.json()
     assert body["admitted"] is True
-    assert CursorDispatchLedger.instance().read_read_only(dispatch_id="disp-ro-b") is True
+    assert (
+        CursorDispatchLedger.instance().read_read_only(dispatch_id="disp-ro-b") is True
+    )
 
 
 @patch(
@@ -1025,26 +1027,6 @@ def test_row10_d4_non_implement_contract_keeps_regime_eligibility(
     set_lane_b_regime(active=False)
 
 
-def test_auto_regime_empty_scope_pure_mechanical(git_repo: Path) -> None:
-    req = CursorDispatchRequest(
-        thread_id="t-auto",
-        model="cursor/composer-2.5",
-        dispatch_id="auto-belt",
-        execution_id="exec-auto-belt",
-        message="x",
-        admitted_via="cursor-auto",
-    )
-    lane, _, reason = select_lane(
-        req=req,
-        regime_active=True,
-        source_repo=git_repo,
-        files_expected=[],
-        contract="pure-mechanical",
-    )
-    assert lane == "B"
-    assert reason == "auto_regime"
-
-
 def test_auto_residual_empty_scope_stays_a(git_repo: Path) -> None:
     req = CursorDispatchRequest(
         thread_id="t-auto",
@@ -1052,7 +1034,7 @@ def test_auto_residual_empty_scope_stays_a(git_repo: Path) -> None:
         dispatch_id="auto-a",
         execution_id="exec-auto-a",
         message="x",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
     )
     lane, _, reason = select_lane(
         req=req,
@@ -1065,9 +1047,7 @@ def test_auto_residual_empty_scope_stays_a(git_repo: Path) -> None:
     assert reason == "opt_out"
 
 
-def test_scope_refused_retries_named_a(
-    git_repo: Path, client: TestClient
-) -> None:
+def test_scope_refused_retries_named_a(git_repo: Path, client: TestClient) -> None:
     """select_lane still returns A for explicit A. HTTP admit refuses that wire lane."""
     from services.git_integration_worker.cursor_sdk_lane_select import LaneScopeRefused
 

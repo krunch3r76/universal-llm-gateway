@@ -88,7 +88,6 @@ class CursorDispatchRequest(BaseModel):
     )
     admitted_via: (
         Literal[
-            "cursor-auto",
             "stargate",
             "giw_park_resume",
             "giw_await_reply_resume",
@@ -102,7 +101,7 @@ class CursorDispatchRequest(BaseModel):
     operator_contract: str | None = Field(
         default=None,
         description=(
-            "Original cursor-auto request.contract before handoff_contract mapping. "
+            "Original request.contract before handoff_contract mapping. "
             "Used by prompt-expand admit so implement→pure-mechanical wire map does "
             "not suppress enrolled-root expand."
         ),
