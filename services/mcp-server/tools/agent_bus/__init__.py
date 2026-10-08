@@ -77,10 +77,7 @@ from .read_state import (
     _update_dispatch,
     _update_impl,
 )
-from .request import (
-    _request_dispatch,
-    _request_impl,
-)
+from .request import _request_dispatch
 from .send import (
     _send_dispatch,
     _send_impl,
@@ -176,7 +173,6 @@ __all__ = [
     "_reply_dispatch",
     "_reply_impl",
     "_request_dispatch",
-    "_request_impl",
     "_resolve_turn_id",
     "_send_dispatch",
     "_send_impl",
@@ -202,35 +198,35 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     async def agent_bus(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Inter-agent bus. `tool` = op name. `arguments` = JSON object string. Prefer `from=`. Bodies target 2000 characters (code points, Python len); use `sidecar_content` (cap 256KB) or auto-spill. Hard ceiling / spill failure → **413**. `allow_long_body=true` opts out of spill. Omitted author: life→`web-anthropic`, code→`cursor`.
 
-**send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
+        **send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
 
-**request:** RETIRED (a:38728) — refuses. Code commission: team_dispatch on ulg-code. Life CSE: life_dispatch. A bus turn: send.
+        **request:** RETIRED (a:38728) — refuses. Code commission: team_dispatch on ulg-code. Life CSE: life_dispatch. A bus turn: send.
 
-**hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-high`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Returns `successor`, not `status:done`.
+        **hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-high`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Returns `successor`, not `status:done`.
 
-**substrate_graph_write:** `entity_id` + `claim` or **422 `graph_write_entity_required`|`graph_write_claim_required`**.
+        **substrate_graph_write:** `entity_id` + `claim` or **422 `graph_write_entity_required`|`graph_write_claim_required`**.
 
-**substrate_friction_file:** (`owner`|`service`) + (`note`|`claim`) or **422 `friction_file_owner_required`|`friction_file_note_required`**.
+        **substrate_friction_file:** (`owner`|`service`) + (`note`|`claim`) or **422 `friction_file_owner_required`|`friction_file_note_required`**.
 
-**substrate_entity_mint:** (`id`|`entity_id`) + (`type`|`entity_type`) + (`name`|`title`).
+        **substrate_entity_mint:** (`id`|`entity_id`) + (`type`|`entity_type`) + (`name`|`title`).
 
-**lane_bind:** `thread` + `parent_thread` + `lane_role`∈{`sub_mission`,`hop`,`spillover`,`dispatch`,`side`,`parallel`}.
+        **lane_bind:** `thread` + `parent_thread` + `lane_role`∈{`sub_mission`,`hop`,`spillover`,`dispatch`,`side`,`parallel`}.
 
-**lane_current** · **thread_get** · **threads** — filter by `status`∈{`active`,`blocked`,`waiting`,`closed`,`all`} (default active), `tags` AND, `lifecycle_state`, `last` default **50** · **create_thread** (`slug`; optional `idempotency_key` 8–128 chars — same key on retry returns the existing thread with `idempotent_replay:true`, never a sibling; keyless creates are not deduplicated; a relay timeout with a key re-posts once and marks `recovered_after_timeout`) · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
+        **lane_current** · **thread_get** · **threads** — filter by `status`∈{`active`,`blocked`,`waiting`,`closed`,`all`} (default active), `tags` AND, `lifecycle_state`, `last` default **50** · **create_thread** (`slug`; optional `idempotency_key` 8–128 chars — same key on retry returns the existing thread with `idempotent_replay:true`, never a sibling; keyless creates are not deduplicated; a relay timeout with a key re-posts once and marks `recovered_after_timeout`) · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
 
-**update:** only while unread; else **409 `turn_already_acknowledged`**.
+        **update:** only while unread; else **409 `turn_already_acknowledged`**.
 
-**mark_read:** `turn_numbers[]` **XOR** `through_turn` (+ `agent` if through_turn).
+        **mark_read:** `turn_numbers[]` **XOR** `through_turn` (+ `agent` if through_turn).
 
-**wait:** block ≤60s. `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}.
+        **wait:** block ≤60s. `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}.
 
-**update_thread:** `tags` omit=keep, `[]`=clear, `[…]`=replace. **close** marks all read by default. **delete_turn** / **delete_thread** take optional `force`.
+        **update_thread:** `tags` omit=keep, `[]`=clear, `[…]`=replace. **close** marks all read by default. **delete_turn** / **delete_thread** take optional `force`.
 
-**triage:** `older_than` + `action`∈{`mark_read`,`close`}; preview `dry_run=true` + `confirm_token`; execute `dry_run=false`; floors mark_read ≥**24h**, close ≥**7d**; cap **50** threads/call; bad token → **409 `confirm_token_invalid|expired|filter_mismatch`**. agent_bus only.
+        **triage:** `older_than` + `action`∈{`mark_read`,`close`}; preview `dry_run=true` + `confirm_token`; execute `dry_run=false`; floors mark_read ≥**24h**, close ≥**7d**; cap **50** threads/call; bad token → **409 `confirm_token_invalid|expired|filter_mismatch`**. agent_bus only.
 
-**Legacy:** `post`/`reply` are not on the wire enum. Use `send`. Other `role:*` than `role:root` → **422 `unknown_role_tag`**.
+        **Legacy:** `post`/`reply` are not on the wire enum. Use `send`. Other `role:*` than `role:root` → **422 `unknown_role_tag`**.
 
-Depth: `agent_skill:agent-bus-discipline`.
+        Depth: `agent_skill:agent-bus-discipline`.
         """
         from .._agent_tools import (
             dispatch_arguments_error,

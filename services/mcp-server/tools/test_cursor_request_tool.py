@@ -40,7 +40,7 @@ def test_operator_request_is_retired_tombstone() -> None:
     assert "team_dispatch on ulg-code" in description
     assert "life_dispatch" in description
     assert "agent_bus send" in description
-    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
+    with patch("tools.agent_bus.send._send_dispatch") as send_mock:
         result = recorder.functions["operator_request"](subject="s", body="b")
     assert result["reason"] == "cursor_auto_retired"
     assert "a:38728" in result["error"]

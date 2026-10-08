@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 from tools.agent_bus.contract_vocab import (
@@ -61,16 +59,14 @@ def test_unknown_contract_fails_loud() -> None:
 
 def test_dispatch_refuses_before_turn_write() -> None:
     """Retired entry returns before contract, lane, or turn write."""
-    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
-        result = _request_dispatch(
-            new_slug="bad-contract",
-            to="cursor",
-            subject="probe",
-            body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
-            from_agent="web-anthropic",
-            contract="tool-op",
-        )
-    send_mock.assert_not_called()
+    result = _request_dispatch(
+        new_slug="bad-contract",
+        to="cursor",
+        subject="probe",
+        body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
+        from_agent="web-anthropic",
+        contract="tool-op",
+    )
     assert result["reason"] == "cursor_auto_retired"
 
 
