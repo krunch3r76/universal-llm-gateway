@@ -168,26 +168,6 @@ from _derive import (  # noqa: E402, I001
 _claude_manifest = _derive_claude_manifest()
 
 
-def claudeburst_private_tool_available() -> bool:
-    """True when private discovery can load ``tools.local.claudeburst``.
-
-    Same gate as ``_discover_private_tools``: missing ``tools.local`` (the
-    ImportError path below) or a failed ``tools.local.claudeburst`` import
-    means the code surface does not register ``claudeburst``.
-    """
-    import importlib
-
-    try:
-        import tools.local  # noqa: F401, PLC0415
-    except ImportError:
-        return False
-    try:
-        importlib.import_module("tools.local.claudeburst")
-    except Exception:
-        return False
-    return True
-
-
 _PRIMARY_TOOLS: set[str] = set(derive_surface_primary_tools("code"))
 
 

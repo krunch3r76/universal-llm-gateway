@@ -109,6 +109,28 @@ def _domains_to_primary_tool_names(
     return frozenset(tools)
 
 
+def claudeburst_private_tool_available() -> bool:
+    """True when private discovery can load ``tools.local.claudeburst``.
+
+    Same gate as ``server._discover_private_tools``: missing ``tools.local``
+    or ``tools.local._life_private_allowlist`` (the ImportError path there),
+    or a failed ``tools.local.claudeburst`` import, means the code surface
+    does not register ``claudeburst``.
+    """
+    import importlib
+
+    try:
+        import tools.local  # noqa: F401, PLC0415
+        importlib.import_module("tools.local._life_private_allowlist")
+    except ImportError:
+        return False
+    try:
+        importlib.import_module("tools.local.claudeburst")
+    except Exception:
+        return False
+    return True
+
+
 def derive_surface_primary_tools(
     surface: Surface,
     canonical_yaml_path: Path | None = None,
@@ -121,10 +143,6 @@ def derive_surface_primary_tools(
     )
     names = _domains_to_primary_tool_names(domains, canonical_yaml_path=path)
     if surface == "code" and "claudeburst" in names:
-        # Lazy: server imports this module at load. Predicate matches
-        # _discover_private_tools' tools.local.claudeburst gate.
-        from server import claudeburst_private_tool_available  # noqa: PLC0415
-
         if not claudeburst_private_tool_available():
             names = names - {"claudeburst"}
     return names

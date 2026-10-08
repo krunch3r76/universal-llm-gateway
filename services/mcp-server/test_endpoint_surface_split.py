@@ -56,6 +56,9 @@ CODE_EXTRA = frozenset(
         "panel_dispatch",
     }
 )
+CODE_PRIMARY = SHARED_ON_CODE | CODE_EXTRA
+
+
 @pytest.fixture(scope="module")
 def life_server() -> dict:
     from endpoint_surface import derive_surface_primary_tools
@@ -107,10 +110,10 @@ def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
         ULG_CODE_PRIMARY_TOOLS,
     )
     from endpoint_surface import (
+        claudeburst_private_tool_available,
         derive_code_extra_primary_tools,
         derive_surface_primary_tools,
     )
-    from server import claudeburst_private_tool_available
 
     derived = derive_code_extra_primary_tools()
     assert derived == derive_surface_primary_tools("code")
@@ -170,9 +173,12 @@ def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
 
 
 def test_code_tools_list_exact_primary_set(code_server: dict) -> None:
-    from endpoint_surface import derive_surface_primary_tools
+    from endpoint_surface import claudeburst_private_tool_available
 
-    expected = set(derive_surface_primary_tools("code"))
+    expected = set(SHARED_ON_CODE | CODE_EXTRA)
+    assert expected == set(CODE_PRIMARY)
+    if claudeburst_private_tool_available():
+        expected.add("claudeburst")
     assert code_server["tool_names"] == expected
     assert code_server["primary"] == expected
 
