@@ -284,21 +284,15 @@ def test_surface_registration_registers_cursor_request_on_life_only() -> None:
     assert "register_cursor_request_tool(mcp)" in life_block.split("register_fleet_liveness_tools", 1)[0]
 
 
-def test_cursor_request_present_on_life_surface_tool_list() -> None:
+def test_cursor_request_absent_on_life_surface_tool_list() -> None:
     from endpoint_surface import derive_surface_primary_tools
     from server import _build_server
 
     mcp, _, _ = _build_server("life")
     tools = asyncio.run(mcp.list_tools())
     tool_names = {t.name for t in tools}
-    assert "cursor_request" in tool_names
-    assert "cursor_request" in derive_surface_primary_tools("life")
-    cursor_request = next(tool for tool in tools if tool.name == "cursor_request")
-    description = cursor_request.description or ""
-    assert description, "schema compaction dropped cursor_request description"
-    for record in RECORDS:
-        assert record.name in description, record.name
-        assert record.closeout_shape in description, record.closeout_shape
+    assert "cursor_request" not in tool_names
+    assert "cursor_request" not in derive_surface_primary_tools("life")
 
 
 def test_cursor_request_absent_on_code_surface_tool_list() -> None:

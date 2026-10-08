@@ -5948,7 +5948,6 @@ domain_endpoints:
 # so the shared primaries (cortex, fs, agent_bus, …) stay on code once.
 surface_primary_domains:
   life:
-  - cursor_request
   - operator_request
   - imprint
   - recall

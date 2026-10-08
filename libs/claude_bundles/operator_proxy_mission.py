@@ -43,7 +43,6 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
 # are attached, so life keeps the life-only names.
 LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
     {
-        "cursor_request",
         "operator_request",
         "imprint",
         "recall",

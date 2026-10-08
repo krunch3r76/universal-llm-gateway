@@ -21,7 +21,6 @@ os.environ.setdefault("MCP_OAUTH_DISABLED", "1")
 # session that attaches both connectors does not receive two descriptor copies.
 LIFE_PRIMARY = frozenset(
     {
-        "cursor_request",
         "operator_request",
         "imprint",
         "recall",
