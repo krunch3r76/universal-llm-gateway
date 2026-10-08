@@ -99,18 +99,48 @@ class WritingIndependenceHandler(BaseHandler):
         """
         del step
         options = getattr(context, "options", {}) or {}
+        outputs = getattr(context, "outputs", {}) or {}
         raw_overrides = options.get("model_ref_overrides")
         overrides = raw_overrides if isinstance(raw_overrides, dict) else {}
         models = load_writing_models()
+        draft_step = outputs.get("draft")
+        draft_model = None
+        if isinstance(draft_step, dict):
+            draft_model = draft_step.get("model_id")
+        elif draft_step is not None:
+            draft_model = getattr(draft_step, "model_id", None)
         writer = (
             self._writer_model
+            or (str(draft_model) if draft_model else None)
             or overrides.get("draft")
             or overrides.get("writer")
             or models.get("writer")
             or ""
         )
+        assemble_step = outputs.get("assemble")
+        assemble_json = None
+        if isinstance(assemble_step, dict):
+            assemble_json = assemble_step.get("json")
+        elif assemble_step is not None:
+            assemble_json = getattr(assemble_step, "json", None)
+        reviewer_seat = ""
+        if isinstance(assemble_json, dict):
+            reviewer_seat = str(assemble_json.get("reviewer_seat") or "")
+        seat_models = options.get("seat_models")
+        if (
+            isinstance(seat_models, dict)
+            and "default" in seat_models
+            and "type" in seat_models
+        ):
+            seat_models = seat_models.get("default")
+        cdp_model = None
+        if reviewer_seat == "cdp" and isinstance(seat_models, dict):
+            cdp_model = seat_models.get("cdp")
+        if reviewer_seat == "cdp" and not cdp_model:
+            cdp_model = "cdp/opus-5.5"
         reviewer = (
             self._reviewer_model
+            or (str(cdp_model) if reviewer_seat == "cdp" and cdp_model else None)
             or overrides.get("review")
             or overrides.get("reviewer")
             or models.get("reviewer")

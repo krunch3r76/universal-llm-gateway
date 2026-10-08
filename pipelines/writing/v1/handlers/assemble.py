@@ -181,6 +181,9 @@ class WritingAssembleHandler(BaseHandler):
             return _step(brief_or_error)
         brief = brief_or_error
         assert isinstance(brief, dict)
+        seats = _resolve_seats(options, brief)
+        if seats.get("refused"):
+            return _step(seats)
         parsed, bad = _parse_working_set(options.get("working_set"))
         if bad is not None:
             return _step(bad)
@@ -212,8 +215,6 @@ class WritingAssembleHandler(BaseHandler):
             _writer_template(),
             {"documents": documents, "brief": brief_block},
         )
-        writer_seat = str(_unwrap(options.get("writer_seat", "local"), "local"))
-        reviewer_seat = str(_unwrap(options.get("reviewer_seat", "local"), "local"))
         output = str(_unwrap(options.get("output", "envelope"), "envelope"))
         return _step(
             {
@@ -223,8 +224,10 @@ class WritingAssembleHandler(BaseHandler):
                 "documents_block": documents,
                 "brief_block": brief_block,
                 "packet": packet,
-                "writer_seat": writer_seat,
-                "reviewer_seat": reviewer_seat,
+                "writer_seat": seats["writer_seat"],
+                "reviewer_seat": seats["reviewer_seat"],
+                "sensitivity": seats["sensitivity"],
+                "dispatch_thread_id": seats["dispatch_thread_id"],
                 "output": output,
             }
         )
@@ -238,20 +241,6 @@ def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
             "refused": "options_invalid",
             "error": "output must be envelope or packet",
         }
-    writer_seat = str(_unwrap(options.get("writer_seat", "local"), "local"))
-    if writer_seat != "local":
-        return {
-            "ok": False,
-            "refused": "writer_seat_unavailable",
-            "error": "writer_seat must be local",
-        }
-    reviewer_seat = str(_unwrap(options.get("reviewer_seat", "local"), "local"))
-    if reviewer_seat != "local":
-        return {
-            "ok": False,
-            "refused": "reviewer_seat_unavailable",
-            "error": "reviewer_seat must be local",
-        }
     raw_max = _unwrap(options.get("max_pins", 40), 40)
     if isinstance(raw_max, bool) or not isinstance(raw_max, int):
         return {
@@ -260,6 +249,89 @@ def _validate_options(options: dict[str, Any]) -> dict[str, Any] | None:
             "error": "max_pins must be an integer",
         }
     return None
+
+
+_WRITER_SEATS = frozenset({"local", "cdp", "cursor_pool1"})
+_REVIEWER_SEATS = frozenset({"auto", "local", "cdp"})
+_DEFAULT_THREAD = "15790"
+_REFUSED_THREAD = "12286"
+
+
+def _resolve_seats(options: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
+    raw_sensitivity = brief.get("sensitivity")
+    if raw_sensitivity is None or str(raw_sensitivity).strip() == "":
+        sensitivity = "sensitive"
+    else:
+        sensitivity = str(raw_sensitivity).strip()
+        if sensitivity not in {"sensitive", "non_sensitive"}:
+            return {
+                "ok": False,
+                "refused": "brief_invalid",
+                "error": "sensitivity must be sensitive or non_sensitive",
+            }
+    writer_seat = str(_unwrap(options.get("writer_seat", "local"), "local"))
+    if writer_seat not in _WRITER_SEATS:
+        return {
+            "ok": False,
+            "refused": "writer_seat_unavailable",
+            "error": "writer_seat must be local, cdp, or cursor_pool1",
+        }
+    reviewer_given = str(_unwrap(options.get("reviewer_seat", "auto"), "auto"))
+    if reviewer_given not in _REVIEWER_SEATS:
+        return {
+            "ok": False,
+            "refused": "reviewer_seat_unavailable",
+            "error": "reviewer_seat must be auto, local, or cdp",
+        }
+    reviewer_seat = reviewer_given
+    if reviewer_seat == "auto":
+        reviewer_seat = "cdp" if sensitivity == "sensitive" else "local"
+    if reviewer_seat == "local" and sensitivity == "sensitive":
+        return {
+            "ok": False,
+            "refused": "reviewer_seat_unavailable",
+            "error": "local reviewer is for non-sensitive briefs only (D2)",
+        }
+    allow = options.get("allow_partial_independence", False)
+    if isinstance(allow, dict) and "default" in allow:
+        allow = allow.get("default", False)
+    if writer_seat == "cdp" and reviewer_seat == "cdp" and allow is not True:
+        return {
+            "ok": False,
+            "refused": "reviewer_seat_unavailable",
+            "error": (
+                "no independent reviewer seat for writer_seat=cdp on a "
+                "sensitive brief; use writer_seat=local or mark the brief non_sensitive"
+            ),
+        }
+    thread = str(
+        _unwrap(options.get("dispatch_thread_id", _DEFAULT_THREAD), _DEFAULT_THREAD)
+    ).strip()
+    if writer_seat != "local" or reviewer_seat != "local":
+        if not thread:
+            return {
+                "ok": False,
+                "refused": "options_invalid",
+                "error": "dispatch_thread_id_required",
+            }
+        if thread == _REFUSED_THREAD:
+            return {
+                "ok": False,
+                "refused": "options_invalid",
+                "error": "dispatch_thread_id_refused",
+            }
+        if not thread.isdigit():
+            return {
+                "ok": False,
+                "refused": "options_invalid",
+                "error": "dispatch_thread_id_invalid",
+            }
+    return {
+        "writer_seat": writer_seat,
+        "reviewer_seat": reviewer_seat,
+        "sensitivity": sensitivity,
+        "dispatch_thread_id": thread or _DEFAULT_THREAD,
+    }
 
 
 def _validate_brief(raw: Any) -> dict[str, Any]:

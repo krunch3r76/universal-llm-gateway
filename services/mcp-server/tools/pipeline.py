@@ -39,6 +39,7 @@ def _stargate_headers() -> dict[str, str]:
         return {"X-ULG-Surface": surface}
     return {}
 
+
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
 _TIMEOUT_BUFFER = 30.0
@@ -352,18 +353,54 @@ def _pipeline_async(
         return {"error": {"code": "http_error", "message": str(exc)}}
 
 
-def _capability_async(member_path: str, options: dict[str, Any] | None) -> dict[str, Any]:
+def _capability_async(
+    member_path: str,
+    options: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """POST a ``<category>/<member>`` run through the Stargate capability relay.
 
     Stargate swaps in the satellite token (capabilities.yaml ``auth_env``); this
     call carries only the bound surface. Error bodies pass through with
     ``status_code`` so an unknown category or member is not a local error.
+    Local pipeline members take ``options.model`` (or flat options/messages).
+    The bare id (e.g. ``writer-specialist-v1``) is an alias.
     """
     opts = options or {}
-    body = {
-        "args": opts.get("args") or {},
-        "output_contract": opts.get("output_contract", "inline"),
-    }
+    flat = any(
+        key not in {"args", "output_contract", "model", "pipeline_options"}
+        for key in opts
+    )
+    model = opts.get("model")
+    local = (
+        (isinstance(model, str) and bool(model.strip()))
+        or isinstance(opts.get("pipeline_options"), dict)
+        or (isinstance(messages, list) and len(messages) > 0)
+        or flat
+    )
+    if local:
+        member = member_path.split("/")[-1]
+        args = opts.get("args") if isinstance(opts.get("args"), dict) else {}
+        if isinstance(opts.get("pipeline_options"), dict):
+            pipeline_options = {**args, **opts["pipeline_options"]}
+        else:
+            flat = {
+                key: value
+                for key, value in opts.items()
+                if key not in {"args", "output_contract", "model", "pipeline_options"}
+            }
+            pipeline_options = {**args, **flat}
+        body: dict[str, Any] = {
+            "model": opts.get("model") or member,
+            "messages": messages or [],
+            "pipeline_options": pipeline_options,
+            "output_contract": opts.get("output_contract", "inline"),
+        }
+    else:
+        body = {
+            "args": opts.get("args") or {},
+            "output_contract": opts.get("output_contract", "inline"),
+        }
     record("mcp.pipeline.async.called", pipeline=member_path)
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
@@ -385,7 +422,9 @@ def _capability_async(member_path: str, options: dict[str, Any] | None) -> dict[
     try:
         payload = resp.json()
     except ValueError:
-        payload = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+        payload = {
+            "error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}
+        }
     if not isinstance(payload, dict):
         payload = {"result": payload}
     if resp.status_code >= 400:
@@ -552,7 +591,9 @@ def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
 
     info = resp.json()
     if not isinstance(info, dict):
-        return _validate_error(pipeline_id, "Pipeline API returned invalid metadata payload.")
+        return _validate_error(
+            pipeline_id, "Pipeline API returned invalid metadata payload."
+        )
     _cache_pipeline_timeouts({pipeline_id: info})
     duration = monotonic_now() - t0
     record(
@@ -654,7 +695,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
             return _pipeline_run(pipeline_id, messages, options, timeout)
         if op == "async":
             if pipeline_id and "/" in pipeline_id:
-                return _capability_async(pipeline_id, options)
+                return _capability_async(pipeline_id, options, messages)
             if not pipeline_id or messages is None:
                 return {
                     "error": {
