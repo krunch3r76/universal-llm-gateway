@@ -159,6 +159,7 @@ def test_stage_then_resolve_prompt_does_not_double_hop_briefing(
     """Production path: staging ensure + resolve_prompt ensure stays single briefing."""
     from cdp_ask.models import SubmitProjectAskRequest
     from cdp_ask.runner import resolve_prompt
+
     from claude_bundles.cdp_model_endpoint_staging import (
         ephemeral_dir,
         stage_cdp_prompt_with_skills,
@@ -233,9 +234,9 @@ def test_stage_resolve_single_briefing_with_house_pool_inline(
 ) -> None:
     """House block + inline must_load on continuity card — one hop briefing."""
     from agent_bus_store.test_house_pools import _MANIFEST_BLOCK
-
     from cdp_ask.models import SubmitProjectAskRequest
     from cdp_ask.runner import resolve_prompt
+
     from claude_bundles.cdp_model_endpoint_staging import stage_cdp_prompt_with_skills
 
     root = tmp_path / "cortex_files"

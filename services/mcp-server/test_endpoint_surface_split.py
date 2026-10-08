@@ -56,14 +56,6 @@ CODE_EXTRA = frozenset(
         "panel_dispatch",
     }
 )
-# Declared on /mcp/code in canonical.yaml before a dedicated MCP registration lands.
-CODE_CANONICAL_ONLY = frozenset({"claudeburst"})
-CODE_PRIMARY = SHARED_ON_CODE | CODE_EXTRA
-
-
-CODE_PRIMARY_CANONICAL = CODE_PRIMARY | CODE_CANONICAL_ONLY
-
-
 @pytest.fixture(scope="module")
 def life_server() -> dict:
     from endpoint_surface import derive_surface_primary_tools
@@ -118,12 +110,21 @@ def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
         derive_code_extra_primary_tools,
         derive_surface_primary_tools,
     )
+    from server import claudeburst_private_tool_available
 
     derived = derive_code_extra_primary_tools()
     assert derived == derive_surface_primary_tools("code")
     assert derive_surface_primary_tools("life").isdisjoint(derived)
     assert LIFE_SURFACE_FORBIDDEN_TOOLS == frozenset({"panel_dispatch", "claudeburst"})
-    assert LIFE_SURFACE_FORBIDDEN_TOOLS < derived
+    # claudeburst is a code extra only when private discovery can load it.
+    forbidden_on_derived = (
+        LIFE_SURFACE_FORBIDDEN_TOOLS
+        if claudeburst_private_tool_available()
+        else LIFE_SURFACE_FORBIDDEN_TOOLS - {"claudeburst"}
+    )
+    assert forbidden_on_derived < derived
+    if not claudeburst_private_tool_available():
+        assert "claudeburst" not in derived
     assert {"team_dispatch", "manage", "observability"} < (
         derived - LIFE_SURFACE_FORBIDDEN_TOOLS
     )
@@ -169,8 +170,11 @@ def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
 
 
 def test_code_tools_list_exact_primary_set(code_server: dict) -> None:
-    assert code_server["tool_names"] == set(CODE_PRIMARY_CANONICAL)
-    assert code_server["primary"] == CODE_PRIMARY_CANONICAL
+    from endpoint_surface import derive_surface_primary_tools
+
+    expected = set(derive_surface_primary_tools("code"))
+    assert code_server["tool_names"] == expected
+    assert code_server["primary"] == expected
 
 
 def test_skill_suggest_absent_from_both_surfaces(

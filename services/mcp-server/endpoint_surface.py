@@ -119,7 +119,15 @@ def derive_surface_primary_tools(
     domains: list[str] = list(
         (data.get("surface_primary_domains") or {}).get(surface) or []
     )
-    return _domains_to_primary_tool_names(domains, canonical_yaml_path=path)
+    names = _domains_to_primary_tool_names(domains, canonical_yaml_path=path)
+    if surface == "code" and "claudeburst" in names:
+        # Lazy: server imports this module at load. Predicate matches
+        # _discover_private_tools' tools.local.claudeburst gate.
+        from server import claudeburst_private_tool_available  # noqa: PLC0415
+
+        if not claudeburst_private_tool_available():
+            names = names - {"claudeburst"}
+    return names
 
 
 def derive_contract_primary_tools(
