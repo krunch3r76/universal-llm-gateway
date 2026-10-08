@@ -45,7 +45,7 @@ async def test_read_only_checks(fs) -> None:
             "card_uri": "notes/card.md",
             "expected_card_sha256": file_sha256(card),
             "snapshot_uri": "notes/snap.json",
-            "envelope_sha256": file_sha256(snap),
+            "snapshot_sha256": file_sha256(snap),
             "verify_lane": "v",
             "successor": "successor",
             "fact_turn": 3,

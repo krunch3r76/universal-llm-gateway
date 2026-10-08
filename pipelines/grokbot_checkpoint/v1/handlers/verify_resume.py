@@ -45,9 +45,7 @@ async def run_verify_resume(
     snap_uri = str(options.get("snapshot_uri") or "")
     snap_raw = fs.read(snap_uri) if snap_uri else None
     snap_live = file_sha256(snap_raw) if snap_raw else ""
-    packet_snap = str(
-        options.get("snapshot_sha256") or options.get("envelope_sha256") or ""
-    )
+    packet_snap = str(options.get("snapshot_sha256") or "")
     checks["snapshot_sha"] = snap_live == packet_snap
     messages_sha = ""
     provenance = ""
