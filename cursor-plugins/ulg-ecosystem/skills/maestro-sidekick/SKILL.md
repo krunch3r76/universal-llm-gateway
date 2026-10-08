@@ -4,7 +4,7 @@ description: "Per-REQUEST grok-bot liaison under a Maestro Sidekick: carry one R
 ---
 # Maestro Sidekick — grok-bot liaison
 
-Seat: per-REQUEST successor `msk<N>-<work_key>`; MCP only, no checkout shell. Listener, lanes, spawn: `runbook:maestro-sidekick`. IDE house seat on a continuity root ⇒ `liaison`, not this. A conductor is one route, not the seat.
+Seat: per-REQUEST successor `msk<N>-<work_key>`; MCP only, no checkout shell. Listener, lanes, spawn: `runbook:maestro-sidekick`. IDE house seat on a continuity root ⇒ `liaison`, not this.
 
 ## Trigger
 
@@ -21,10 +21,10 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
 
 ## Steps
 
-1. **Boot.** `runbook:coding-boot` before the first act.
-   Falsifier: a work act precedes `cortex_brief(seat="grok-cursor")`. Specimen: 15609#38.
-2. **Claim.** `PICKUP|<work_key>` to the owning Sidekick by agent message within 10 min. Read the REQUEST and every AMEND live; the latest AMEND governs.
-   Falsifier: work before PICKUP. Specimen: 15609#40 amends #17.
+1. **Boot.** Full harness before any task step, never abridged: `runbook:coding-boot` end to end (parity Paste packet, lean-dispatch, hypothesize-simulate with `frame:`/`rival:`/`killed:` on judgment steps, retrieval-before-authoring).
+   Falsifier: a task step precedes the harness, or a prompt goes out with no retrieval report. Specimen: 15609#38; a:37295.
+2. **Claim.** `PICKUP|<work_key>` + boot receipt (what loaded, lean-dispatch read_sha256) to the owning Sidekick by agent message within 10 min. Read the REQUEST and every AMEND live; the latest AMEND governs.
+   Falsifier: work before PICKUP, or no receipt. Specimen: 15609#40 amends #17.
 3. **Route each leg** — lowest sufficient (`lean-dispatch`); name it in the DONE.
    | Leg | Route |
    |---|---|
@@ -34,15 +34,12 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
    | a `todo:` arc | conductor per `runbook:maestro-loop` §5a; poll `poll_hint`; hand re-admit only at CONSULT_PENDING, nest-close-while-parked, `next_admit_blocked`; rulings by `steer inject`; or run the arc yourself as a REQUEST chain when its slices are few and mechanical |
    | diff review | a fresh grok-bot successor seat (not the authoring seat) posts `VERDICT\|<work_key>`; cdp/opus-5.5 only when the REQUEST names it |
    | next REQUEST in a chain | propose it to the owning Sidekick |
-   House root: CHECKPOINT at leg boundaries (`checkpoint-discipline`); ¬ `liaison-tick`.
    Falsifier: a DONE names no route, or a conductor leg ran outside §5a. Specimen: a:38770.
-4. **Author.** `retrieval-before-authoring` before any prompt another seat acts on.
-   Falsifier: a dispatched prompt with no retrieval report. Specimen: a:37295.
-5. **Escalate.** Bind forks yourself first. `QUESTION|<work_key>` to the owning Sidekick only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; no default CDP consult; keep running other legs.
+4. **Escalate.** Bind forks yourself first. `QUESTION|<work_key>` to the owning Sidekick only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; no default CDP consult; keep running other legs.
    Falsifier: a QUESTION on a fork you could bind, or a blast-radius fork bound silently. Specimen: 15609#48.
-6. **Land.** Green ⇒ land, quote sha; land is standing. Push to origin only when the REQUEST says publish, or after `VERDICT APPROVE` with no no-push constraint. Restart owed ⇒ name service + sha.
+5. **Land.** Green ⇒ land, quote sha; land is standing. Push to origin only when the REQUEST says publish, or after `VERDICT APPROVE` with no no-push constraint. Restart owed ⇒ name service + sha.
    Falsifier: a land claim without sha, or a push with neither. Specimen: a:38732.
-7. **Close.** `DONE|<work_key>` or `FAILED|<work_key>` to the owning Sidekick by agent message: URIs + sha, route per leg, wall time REQUEST→DONE, nested closeouts with usage (or `none`). The Sidekick relays it.
+6. **Close.** `DONE|<work_key>` or `FAILED|<work_key>` to the owning Sidekick by agent message: URIs + sha, route per leg, wall time REQUEST→DONE, nested closeouts with usage (or `none`). The Sidekick relays it.
    Falsifier: a DONE without wall time or nested usage. Specimen: a:38765.
 
 Grammar: `<VERB>|<work_key>`, VERB ∈ {REQUEST, AMEND, ACK, PARK, CANCEL, WITHDRAW, PICKUP, READY, QUESTION, RULING, VERDICT, DONE, FAILED}.
