@@ -21,17 +21,35 @@ def mint_thread(
     lifecycle_state: str | None = None,
     enroll_charter_runner: bool = False,
     strict_slug: bool = False,
+    idempotency_key: str | None = None,
 ) -> tuple[dict[str, Any], float]:
     """Mint a thread row in one transaction; projection runs only after commit.
 
     Returns ``(thread_detail, mint_hold_ms)`` where ``mint_hold_ms`` is wall
     time in milliseconds for the ``write_connect()`` block including commit.
     """
+    from .thread_idempotency import (
+        replayed_thread_detail,
+        thread_id_for_idempotency_key,
+    )
+
     gated_tags = gate_thread_tags(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
     )
     t0 = time.monotonic()
     with write_connect() as conn:
+        replay_id: str | None = None
+        if idempotency_key is not None:
+            replay_id = thread_id_for_idempotency_key(conn, idempotency_key)
+        if replay_id is not None:
+            mint_hold_ms = (time.monotonic() - t0) * 1000.0
+            detail = replayed_thread_detail(replay_id)
+            if detail is None:
+                raise RuntimeError(
+                    f"idempotency_key replay thread {replay_id!r} not readable"
+                )
+            return detail, mint_hold_ms
+
         if strict_slug:
             existing = conn.execute(
                 "SELECT id FROM threads WHERE slug = ? LIMIT 1",
@@ -43,9 +61,10 @@ def mint_thread(
         thread_id = _next_auto_id(conn)
         ts = now()
         conn.execute(
-            "INSERT INTO threads (id, slug, summary, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (thread_id, slug, summary, ts, ts),
+            "INSERT INTO threads "
+            "(id, slug, summary, created_at, updated_at, idempotency_key) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (thread_id, slug, summary, ts, ts, idempotency_key),
         )
         if gated_tags:
             set_thread_tags(conn, thread_id, gated_tags)

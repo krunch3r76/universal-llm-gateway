@@ -31,7 +31,10 @@ from .agent_bus import (
     _threads_dispatch,
     _wait_dispatch,
 )
-from .agent_bus._arg_rewrite import reconcile_dispatch_arguments
+from .agent_bus._arg_rewrite import (
+    merge_argument_rewrite_advisory,
+    reconcile_dispatch_arguments,
+)
 from .agent_bus.lane_associations import _lane_current_dispatch
 from .agent_bus.threads import _job_state_dispatch, _tape_dispatch, _thread_get_dispatch
 
@@ -76,7 +79,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           job_state    (thread|thread_id?, job_id?, include_terminal?)  — Auto job-state route removed; found=false, reason=auto_job_state_removed. Code work is team_dispatch.
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
-          get          (thread, turn_number)  — turn_number may be int or "latest"
+          get          (thread, turn_number, mark_read?)  — turn_number may be int or "latest"; mark_read=true marks the fetched turn read (same side effect as fetch)
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
           lane_current (thread) — derived current lane parentage (state=none when unbound)
           tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, transcript_id?, prior_cells?, include_extras?, tools?, channel?) — continuity dump; messages[] + cells[] + index[] (index = budget-degrade metadata only). scope=window requires transcript_id; tail = open cell (bus_turn_id null).
@@ -112,7 +115,9 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
             parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
                 return dispatch_arguments_error(arguments, example='{"thread": "111"}')
-            parsed, rewrite_error = reconcile_dispatch_arguments(tool, parsed)
+            parsed, rewrite_error, rewrite_advisories = reconcile_dispatch_arguments(
+                tool, parsed
+            )
             if rewrite_error is not None:
                 record(
                     "mcp.agentbus.dispatch.rejected",
@@ -138,7 +143,10 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
                     )
                 }
             record("mcp.agentbus.dispatch", tool=tool, surface="read")
-            return handler(**parsed)
+            result = handler(**parsed)
+            if rewrite_advisories:
+                result = merge_argument_rewrite_advisory(result, rewrite_advisories)
+            return result
         except Exception as exc:
             err = str(exc)
             raise

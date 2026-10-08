@@ -17,7 +17,7 @@ from .._agent_bus_author import AUTHOR_AUTOFILL_OPS, reconcile_author_arguments
 from .._agent_bus_post_guard import reconcile_post_arguments, reconcile_send_arguments
 from .._agent_tools import JsonArgStr
 from .._local_relay import relay as _relay
-from ._arg_rewrite import reconcile_dispatch_arguments
+from ._arg_rewrite import merge_argument_rewrite_advisory, reconcile_dispatch_arguments
 from ._shared import (
     _FETCH_CONTEXT_CAP,
     _format_agent_bus_error,
@@ -278,7 +278,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                         reason=str(author_error.get("reason", "")),
                     )
                     return author_error
-            parsed, rewrite_error = reconcile_dispatch_arguments(tool, parsed)
+            parsed, rewrite_error, rewrite_advisories = reconcile_dispatch_arguments(
+                tool, parsed
+            )
             if rewrite_error is not None:
                 record(
                     "mcp.agentbus.dispatch.rejected",
@@ -302,6 +304,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                 result = await handler(**parsed)
             else:
                 result = await asyncio.to_thread(handler, **parsed)
+            if rewrite_advisories:
+                result = merge_argument_rewrite_advisory(result, rewrite_advisories)
             if (
                 isinstance(result, dict)
                 and "error" not in result

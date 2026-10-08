@@ -106,6 +106,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 attachments=att_dicts,
                 allow_long_body=body.allow_long_body,
                 lane_bind_body=body,
+                idempotency_key=body.idempotency_key,
             )
         except (EnrollmentTagError, ThreadClassificationError) as exc:
             _raise_enrollment_denied(exc)

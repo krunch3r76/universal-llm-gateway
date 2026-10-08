@@ -21,6 +21,7 @@ def _fetch_impl(
     unread: bool,
     mark_read: bool,
     compact: bool,
+    after_turn: int | None = None,
 ) -> dict[str, Any]:
     if to is None and thread is None:
         return {"error": "fetch requires at least one of: to, thread"}
@@ -36,6 +37,8 @@ def _fetch_impl(
         params["compact"] = "true"
     if last is not None:
         params["last"] = last
+    if after_turn is not None:
+        params["after_turn"] = after_turn
     if mark_read:
         params["mark_read"] = "true"
 
@@ -110,7 +113,9 @@ def _fetch_unread_toc_impl(
     return result
 
 
-def _get_impl(*, thread: str, turn_number: int | str) -> dict[str, Any]:
+def _get_impl(
+    *, thread: str, turn_number: int | str, mark_read: bool = False
+) -> dict[str, Any]:
     """Direct single-turn lookup via GET /turns/by-number."""
     qs = urlencode({"thread": thread, "turn_number": turn_number})
     result = relay("agent-bus", "GET", f"/turns/by-number?{qs}")
@@ -119,10 +124,15 @@ def _get_impl(*, thread: str, turn_number: int | str) -> dict[str, Any]:
         if structured is not None:
             return structured
         return {"error": f"agent-bus error: {result['error']}"}
+    if mark_read and isinstance(result, dict) and result.get("read_at") is None:
+        turn_id = result.get("id")
+        if turn_id is not None:
+            relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
     record(
         "mcp.agentbus.turn.detail.fetched",
         thread=thread,
         turn_number=str(turn_number),
+        mark_read=mark_read,
     )
     return {"turn": result}
 
@@ -171,13 +181,16 @@ def _fetch_dispatch(
     mark_read: bool = False,
     compact: bool = False,
     all: bool = False,
+    after_turn: int | None = None,
 ) -> dict[str, Any]:
     """Dispatch wrapper for fetch — normalizes empty strings and resolves last/all/unread."""
     if isinstance(thread, int):
         thread = str(thread)
     effective_to = to if to else None
     effective_thread = thread if thread else None
-    if all:
+    if after_turn is not None:
+        effective_last = None
+    elif all:
         effective_last = None
     elif unread:
         effective_last = None
@@ -190,11 +203,15 @@ def _fetch_dispatch(
         unread=unread,
         mark_read=mark_read,
         compact=compact,
+        after_turn=after_turn,
     )
 
 
 def _get_dispatch(
-    *, thread: str | int = "", turn_number: int | str = 0
+    *,
+    thread: str | int = "",
+    turn_number: int | str = 0,
+    mark_read: bool = False,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -214,4 +231,6 @@ def _get_dispatch(
         if tn < 1:
             return {"error": "get requires: turn_number (int >= 1 or 'latest')"}
         turn_number = tn
-    return _get_impl(thread=thread, turn_number=turn_number)
+    return _get_impl(
+        thread=thread, turn_number=turn_number, mark_read=mark_read
+    )

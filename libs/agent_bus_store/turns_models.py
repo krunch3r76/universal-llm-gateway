@@ -679,6 +679,7 @@ class TurnSendCreate(BaseModel):
     parent_thread: str | None = None
     lane_role: str | None = None
     fence_id: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class TurnSendCreated(BaseModel):

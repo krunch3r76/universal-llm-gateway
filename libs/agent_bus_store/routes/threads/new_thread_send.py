@@ -90,6 +90,7 @@ def run_new_thread_send(
     attachments: list[dict[str, Any]] | None,
     allow_long_body: bool,
     lane_bind_body: TurnSendCreate | None = None,
+    idempotency_key: str | None = None,
 ) -> tuple[dict[str, Any], int, str, int, PreparedBody]:
     """Mint, optional lane bind, prepare outside any transaction, then insert turn."""
     thread_row, mint_hold_ms = mint_thread(
@@ -99,6 +100,7 @@ def run_new_thread_send(
         lifecycle_state=lifecycle_state,
         enroll_charter_runner=enroll_charter_runner,
         strict_slug=strict_slug,
+        idempotency_key=idempotency_key,
     )
     thread_id = thread_row["id"]
 
