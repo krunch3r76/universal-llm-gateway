@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from agent_bus_store.continuity_card_scratchboards import (
+    _RULE_ROW_CHARS,
+    extract_card_rule_rows,
     extract_card_skills,
     extract_scratchboard_uris,
     missing_required_headings,
@@ -155,6 +157,34 @@ x
 
 def test_extract_card_skills_missing_section() -> None:
     assert extract_card_skills("## Stance\nUse ulg-for-llms\n") == []
+
+
+def test_rule_rows_keep_subheading_and_wrapped_bullets() -> None:
+    card = """## Rules
+- diet loaded before any meal
+  and again before a snack
+### Exceptions
+- travel days
+
+## Skills
+- `ulg-for-llms`
+"""
+    rows = extract_card_rule_rows(card)
+    assert rows == [
+        "- diet loaded before any meal and again before a snack",
+        "### Exceptions",
+        "- travel days",
+    ]
+
+
+def test_rule_rows_cap_at_1000_without_dropping() -> None:
+    long_row = "- " + ("n" * 2000)
+    card = f"## Rules\n{long_row}\n- kept\n"
+    rows = extract_card_rule_rows(card)
+    assert len(rows) == 2
+    assert rows[1] == "- kept"
+    assert len(rows[0]) == _RULE_ROW_CHARS
+    assert rows[0].endswith(" …[truncated]")
 
 
 def test_extract_card_skills_empty_section() -> None:

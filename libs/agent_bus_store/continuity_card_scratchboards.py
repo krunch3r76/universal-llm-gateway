@@ -17,6 +17,10 @@ _SCRATCHBOARDS_HEADING = "## Scratchboards"
 _SKILLS_HEADING = "## Skills"
 _SKILLS_HEADING_RE = re.compile(r"^## Skills[ \t]*$", re.M)
 _RULES_HEADING_RE = re.compile(r"^## Rules[ \t]*$", re.M)
+_NEXT_H2_RE = re.compile(r"(?m)^## ")
+# Generous cap so a wrapped rule stays one row. Marker is inside the cap.
+_RULE_ROW_CHARS = 1000
+_RULE_ROW_MARK = " …[truncated]"
 _NONE_YET_RE = re.compile(r"^_None yet\._$")
 _CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>`]+")
 _BACKTICK_SLUG_RE = re.compile(r"`/?([A-Za-z0-9][A-Za-z0-9._-]*)`")
@@ -135,28 +139,59 @@ def extract_card_skills(card_text: str) -> list[str]:
     return ordered
 
 
+def _cap_rule_row(text: str) -> str:
+    """Keep every row; shorten only past ``_RULE_ROW_CHARS``."""
+    if len(text) <= _RULE_ROW_CHARS:
+        return text
+    keep = _RULE_ROW_CHARS - len(_RULE_ROW_MARK)
+    return text[:keep].rstrip() + _RULE_ROW_MARK
+
+
 def extract_card_rule_rows(card_text: str) -> list[str]:
     """Return verbatim ``## Rules`` rows in card order.
 
-    Bullet and table body rows are kept as written. ``_None yet._``, blank
-    lines, and markdown table rules are skipped. A missing section yields
-    ``[]`` — never raise.
+    The section ends at the next level-2 ``## `` heading. A ``### ``
+    subheading stays inside the section. Indented or other non-bullet
+    lines that follow a bullet are appended to that bullet. Each row is
+    capped at ``_RULE_ROW_CHARS`` (1000) with `` …[truncated]``; rows are
+    never dropped. ``_None yet._``, blank lines, and markdown table rules
+    are skipped. A missing section yields ``[]`` — never raise.
     """
     match = _RULES_HEADING_RE.search(card_text or "")
     if not match:
         return []
-    chunk = card_text[match.end() :].split("## ", 1)[0]
+    rest = card_text[match.end() :]
+    nxt = _NEXT_H2_RE.search(rest)
+    chunk = rest[: nxt.start()] if nxt else rest
     rows: list[str] = []
+    on_bullet = False
     for raw_line in chunk.splitlines():
+        if not raw_line.strip():
+            continue
         line = raw_line.strip()
-        if not line or _TABLE_RULE_RE.fullmatch(line) or _NONE_YET_RE.fullmatch(line):
+        if _TABLE_RULE_RE.fullmatch(line) or _NONE_YET_RE.fullmatch(line):
             continue
         if line.startswith("|"):
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if cells and cells[0].lower() in {"rule", "rules"}:
                 continue
+            rows.append(line)
+            on_bullet = False
+            continue
+        if line.startswith("#"):
+            rows.append(line)
+            on_bullet = False
+            continue
+        if line[:1] in "-*":
+            rows.append(line)
+            on_bullet = True
+            continue
+        if on_bullet and rows:
+            rows[-1] = f"{rows[-1]} {line}"
+            continue
         rows.append(line)
-    return rows
+        on_bullet = False
+    return [_cap_rule_row(row) for row in rows]
 
 
 def missing_required_headings(card_text: str) -> list[str]:

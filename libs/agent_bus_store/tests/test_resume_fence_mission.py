@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
@@ -284,7 +284,7 @@ def test_standing_rules_resolve_assertions(bus_db, monkeypatch: pytest.MonkeyPat
             elif assertion_id == 2:
                 out[assertion_id] = {
                     "id": "a:2",
-                    "status": "retracted",
+                    "status": "elapsed",
                     "claim": "withdrawn",
                     "claim_truncated": False,
                 }
@@ -323,7 +323,7 @@ def test_standing_rules_resolve_assertions(bus_db, monkeypatch: pytest.MonkeyPat
     assert by_id["a:31294"]["claim_truncated"] is True
     assert len(by_id["a:31294"]["claim"]) <= 240
     assert by_id["a:1"]["status"] == "superseded"
-    assert by_id["a:2"]["status"] == "retracted"
+    assert by_id["a:2"]["status"] == "elapsed"
     steps = mission["handoff"]["steps"]
     assert steps[0].startswith("Load mission.standing_rules")
     assert steps[1] == "continuity(op=resume) was first hop"
@@ -406,8 +406,9 @@ class _ConnWrap:
         return None
 
 
-def test_supersede_chain_cycle_and_retraction(monkeypatch: pytest.MonkeyPatch) -> None:
-    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+def test_supersede_chain_cycle_and_elapsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    past_z = "2026-10-08T12:00:01Z"
+    past_offset = "2026-10-08T12:00:01+00:00"
     db = _assertion_db(
         [
             (1, "old", 2, "committed", None),
@@ -415,8 +416,14 @@ def test_supersede_chain_cycle_and_retraction(monkeypatch: pytest.MonkeyPatch) -
             (3, "live claim", None, "committed", None),
             (10, "cycle-a", 11, "committed", None),
             (11, "cycle-b", 10, "committed", None),
-            (20, "ended", None, "committed", past),
+            (20, "ended-z", None, "committed", past_z),
+            (22, "ended-offset", None, "committed", past_offset),
             (21, "no", None, "rejected", None),
+            (30, "cited-reject", 31, "committed", None),
+            (31, "rejected tip", None, "rejected", None),
+            (40, "cited-elapsed", 41, "committed", None),
+            (41, "elapsed tip", None, "committed", past_z),
+            (50, "bad stamp", None, "committed", "not-a-time"),
         ]
     )
     opens: list[_ConnWrap] = []
@@ -425,16 +432,35 @@ def test_supersede_chain_cycle_and_retraction(monkeypatch: pytest.MonkeyPatch) -
         return _ConnWrap(db, opens)
 
     monkeypatch.setattr("cortex_store.db.cortex_conn", _conn)
-    found = lookup_assertions([1, 10, 20, 21, 99])
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 10, 8, 12, 0, 1, 500000, tzinfo=UTC)
+
+    monkeypatch.setattr("agent_bus_store.resume_fence_mission.datetime", _Frozen)
+    found = lookup_assertions([1, 10, 20, 22, 21, 30, 40, 50, 99])
     assert found[1]["status"] == "superseded"
+    assert found[1]["current_status"] == "current"
     assert found[1]["current_id"] == "a:3"
     assert found[1]["id"] == "a:1"
     assert found[1]["claim"] == "live claim"
     assert found[10]["status"] == "superseded"
+    assert found[10]["current_status"] == "current"
     assert found[10]["current_id"] == "a:11"
     assert found[10]["claim"] == "cycle-b"
-    assert found[20]["status"] == "retracted"
+    assert found[20]["status"] == "elapsed"
+    assert found[22]["status"] == "elapsed"
     assert found[21]["status"] == "rejected"
+    assert found[30]["status"] == "superseded"
+    assert found[30]["current_status"] == "rejected"
+    assert found[30]["current_id"] == "a:31"
+    assert found[30]["claim"] == "cited-reject"
+    assert found[40]["status"] == "superseded"
+    assert found[40]["current_status"] == "elapsed"
+    assert found[40]["claim"] == "cited-elapsed"
+    assert found[50]["status"] == "current"
+    assert found[50]["valid_until_note"] == "unparseable"
     assert found[99]["status"] == "unresolved"
     assert len(opens) == 1
 

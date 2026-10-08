@@ -28,7 +28,7 @@ _CLAIM_CHARS = 240
 _CLAIMS_BUDGET_CHARS = 4000
 _SUPERSEDE_HOPS = 5
 # cortex_store.routes.assertions._shared._VALID_REVIEW_STATUS. There is no
-# retracted/withdrawn review_status. Retraction is valid_until
+# withdrawn review_status. Expiry is valid_until
 # (cortex_store.dispatch_ops._todo_gate_distillation_impl._retract_assertion).
 _REJECTED_REVIEW_STATUS = "rejected"
 
@@ -272,21 +272,34 @@ def _truncate_claim(claim: str, limit: int) -> tuple[str, bool]:
     return claim[:limit].rstrip(), True
 
 
-def _is_retracted(row: sqlite3.Row) -> bool:
-    """True when ``valid_until`` has elapsed — the retract write path."""
+def _valid_until_state(row: sqlite3.Row) -> tuple[bool, bool]:
+    """Return ``(elapsed, unparseable)`` for ``valid_until``.
+
+    Parse matches ``cortex_store.action_hints``: ``Z`` becomes ``+00:00``,
+    naive values are UTC, and an unparseable stamp is not elapsed.
+    """
     raw = row["valid_until"]
     if raw is None or str(raw).strip() == "":
-        return False
-    return str(raw) <= datetime.now(UTC).isoformat()
+        return False, False
+    try:
+        exp = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False, True
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=UTC)
+    return exp < datetime.now(UTC), False
 
 
-def _row_status(row: sqlite3.Row) -> str:
-    if _is_retracted(row):
-        return "retracted"
+def _row_status(row: sqlite3.Row) -> tuple[str, dict[str, str]]:
+    """Status of one assertion row, plus a note when ``valid_until`` will not parse."""
+    elapsed, unparseable = _valid_until_state(row)
+    note: dict[str, str] = {"valid_until_note": "unparseable"} if unparseable else {}
+    if elapsed:
+        return "elapsed", note
     review = str(row["review_status"] or "").strip().lower()
     if review == _REJECTED_REVIEW_STATUS:
-        return "rejected"
-    return "current"
+        return "rejected", note
+    return "current", note
 
 
 def _follow_supersede(
@@ -363,8 +376,11 @@ def lookup_assertions(assertion_ids: list[int]) -> dict[int, dict[str, Any]]:
 
     A store or query failure is ``lookup_error`` (logged). A missing row is
     ``unresolved``. A ``superseded_by`` chain (max 5 hops, cycle-safe) keeps
-    the cited id, sets ``status`` to ``superseded``, and returns the current
-    claim under ``current_id``.
+    the cited id and sets ``status`` to ``superseded``. The landed row is
+    judged with the same status logic as a direct cite (``current_status``
+    is ``current``, ``rejected``, or ``elapsed``). Only a ``current`` tip
+    is returned as the claim; a rejected or elapsed tip keeps the cited
+    row's claim.
     """
     ids = list(dict.fromkeys(int(i) for i in assertion_ids))
     if not ids:
@@ -402,31 +418,28 @@ def lookup_assertions(assertion_ids: list[int]) -> dict[int, dict[str, Any]]:
             }
             continue
         current, current_id, moved = _follow_supersede(assertion_id, loaded)
-        claim = str(current["claim"] or "")
-        if moved or (
-            row["superseded_by"] is not None and current_id != assertion_id
-        ):
-            out[assertion_id] = {
+        tip_status, tip_note = _row_status(current)
+        cited_claim = str(row["claim"] or "")
+        tip_claim = str(current["claim"] or "")
+        if moved or row["superseded_by"] is not None:
+            entry: dict[str, Any] = {
                 "id": ref,
                 "status": "superseded",
-                "current_id": f"a:{current_id}",
-                "claim": claim,
+                "current_status": tip_status,
+                "claim": tip_claim if tip_status == "current" else cited_claim,
                 "claim_truncated": False,
+                **tip_note,
             }
-            continue
-        if row["superseded_by"] is not None:
-            out[assertion_id] = {
-                "id": ref,
-                "status": "superseded",
-                "claim": claim,
-                "claim_truncated": False,
-            }
+            if current_id != assertion_id:
+                entry["current_id"] = f"a:{current_id}"
+            out[assertion_id] = entry
             continue
         out[assertion_id] = {
             "id": ref,
-            "status": _row_status(row),
-            "claim": claim,
+            "status": tip_status,
+            "claim": tip_claim,
             "claim_truncated": False,
+            **tip_note,
         }
     return out
 
@@ -503,17 +516,20 @@ def build_standing_rules(card_text: str | None) -> list[dict[str, Any]]:
             "claim": "",
             "claim_truncated": False,
         }
+        extra: dict[str, Any] = {}
+        if item.get("current_id"):
+            extra["current_id"] = item["current_id"]
+        if item.get("current_status"):
+            extra["current_status"] = item["current_status"]
+        if item.get("valid_until_note"):
+            extra["valid_until_note"] = item["valid_until_note"]
         entry["assertions"].append(
             {
                 "id": ref,
                 "status": item.get("status") or "unresolved",
                 "claim": str(item.get("claim") or ""),
                 "claim_truncated": bool(item.get("claim_truncated")),
-                **(
-                    {"current_id": item["current_id"]}
-                    if item.get("current_id")
-                    else {}
-                ),
+                **extra,
             }
         )
     return cap_standing_rule_claims(pending)
