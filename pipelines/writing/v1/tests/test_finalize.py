@@ -205,6 +205,30 @@ def test_finalize_skipped_revise_on_revise_verdict() -> None:
     assert findings[0] in payload["ship_gate"]["unresolved"]
 
 
+def test_finalize_live_reviewer_same_family_fails_gate() -> None:
+    payload = _run(
+        {
+            "assemble": _Out(_assemble()),
+            "draft": _Out(_draft(), model_id=_HERMES, model_call_count=1),
+            "provenance_check": _Out({"violations": [], "pass": True}),
+            "independence": _Out({"refused": None, "independence": "full"}),
+            "review": _Out(
+                {"findings": [], "verdict": "ship"},
+                model_id=_HERMES,
+                model_call_count=1,
+            ),
+        }
+    )
+    assert payload["ship_gate"]["pass"] is False
+    assert payload["seats_used"]["reviewer"] == _HERMES
+    assert payload["review"]["independence"] is None
+    assert {
+        "type": "independence_mismatch",
+        "claim_id": None,
+        "detail": f"{_HERMES}->{_HERMES}",
+    } in payload["ship_gate"]["unresolved"]
+
+
 def test_finalize_ship_without_revision() -> None:
     payload = _run(
         {

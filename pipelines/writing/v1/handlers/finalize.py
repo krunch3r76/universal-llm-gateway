@@ -15,7 +15,7 @@ from typing import Any
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from .independence import load_writing_models
+from .independence import _allow_partial, load_writing_models, model_family
 
 _GENERATE_STEPS = (
     ("draft", "writer"),
@@ -197,6 +197,30 @@ class WritingFinalizeHandler(BaseHandler):
         unresolved = list(active)
         if not revision_ran and review_ok and review.get("verdict") == "revise":
             unresolved.extend(list(review.get("findings") or []))
+        options = getattr(context, "options", {}) or {}
+        writer_live = (
+            _model_of(_raw_step(outputs, "draft")) or models.get("writer") or ""
+        )
+        reviewer_live = (
+            _model_of(_raw_step(outputs, "review")) or models.get("reviewer") or ""
+        )
+        writer_family = model_family(str(writer_live))
+        reviewer_family = model_family(str(reviewer_live))
+        if writer_family and reviewer_family and writer_family != reviewer_family:
+            live_independence: str | None = "full"
+        elif _allow_partial(options):
+            live_independence = "partial"
+        else:
+            live_independence = None
+        if live_independence is None and not _allow_partial(options):
+            passed = False
+            unresolved.append(
+                {
+                    "type": "independence_mismatch",
+                    "claim_id": None,
+                    "detail": f"{writer_live}->{reviewer_live}",
+                }
+            )
         revision = None
         if revision_ran and revise is not None:
             revision = {
@@ -219,16 +243,22 @@ class WritingFinalizeHandler(BaseHandler):
                 "status": "ok" if review_ok else "failed",
                 "writer_seat": assemble.get("writer_seat"),
                 "reviewer_seat": assemble.get("reviewer_seat"),
-                "independence": independence.get("independence"),
+                "independence": live_independence,
                 "findings": review.get("findings") if review_ok else None,
                 "verdict": review.get("verdict") if review_ok else None,
             },
             "revision": revision,
             "ship_gate": {"pass": passed, "unresolved": unresolved},
             "seats_used": {
-                "writer": models.get("writer"),
-                "reviewer": models.get("reviewer"),
-                "reviser": models.get("reviser") if revision_ran else None,
+                "writer": _model_of(_raw_step(outputs, "draft"))
+                or models.get("writer"),
+                "reviewer": _model_of(_raw_step(outputs, "review"))
+                or models.get("reviewer"),
+                "reviser": (
+                    (_model_of(_raw_step(outputs, "revise")) or models.get("reviser"))
+                    if revision_ran
+                    else None
+                ),
             },
             "usage": usage,
             "est_cost_usd": est_cost,

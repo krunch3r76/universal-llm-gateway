@@ -48,6 +48,17 @@ def test_independence_same_family_refused() -> None:
     assert payload["reviewer_family"] == "llama"
 
 
+def test_independence_override_reviewer_same_family_refused() -> None:
+    hermes = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
+    handler = independence.WritingIndependenceHandler()
+    payload = asyncio.run(
+        handler.execute(None, _Ctx(model_ref_overrides={"reviewer": hermes}))
+    ).json
+    assert payload["refused"] == "independence_violation"
+    assert payload["reviewer_model"] == hermes
+    assert payload["reviewer_family"] == "llama"
+
+
 def test_independence_partial_when_allowed() -> None:
     handler = independence.WritingIndependenceHandler(
         writer_model="qwen3-14b-q4-k-m-40960",

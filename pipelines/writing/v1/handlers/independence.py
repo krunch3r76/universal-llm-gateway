@@ -98,12 +98,26 @@ class WritingIndependenceHandler(BaseHandler):
         differ or when partial independence is allowed.
         """
         del step
+        options = getattr(context, "options", {}) or {}
+        raw_overrides = options.get("model_ref_overrides")
+        overrides = raw_overrides if isinstance(raw_overrides, dict) else {}
         models = load_writing_models()
-        writer = self._writer_model or models.get("writer") or ""
-        reviewer = self._reviewer_model or models.get("reviewer") or ""
+        writer = (
+            self._writer_model
+            or overrides.get("draft")
+            or overrides.get("writer")
+            or models.get("writer")
+            or ""
+        )
+        reviewer = (
+            self._reviewer_model
+            or overrides.get("review")
+            or overrides.get("reviewer")
+            or models.get("reviewer")
+            or ""
+        )
         writer_family = model_family(writer)
         reviewer_family = model_family(reviewer)
-        options = getattr(context, "options", {}) or {}
         if writer_family and reviewer_family and writer_family != reviewer_family:
             independence: str | None = "full"
             refused = None
