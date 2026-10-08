@@ -229,13 +229,20 @@ def test_assemble_bus_read_only() -> None:
         async def post(self, path: str, json: dict | None = None) -> _Resp:
             raise AssertionError("bus read must not post")
 
+    client = working_set.WorkingSetClient()
     with patch.object(working_set, "make_async_client", return_value=_Bus()):
-        body = asyncio.run(working_set.WorkingSetClient().bus_read("42", turn=3))
+        body = asyncio.run(client.bus_read("42", turn=3))
     assert body["turns"][0]["body"] == "hi"
+    assert captured["path"] == "/turns/by-number"
+    assert captured["params"]["thread"] == "42"
+    assert captured["params"]["turn_number"] == 3
+    assert "mark_read" not in captured["params"]
+    with patch.object(working_set, "make_async_client", return_value=_Bus()):
+        asyncio.run(client.bus_read("42"))
     assert captured["path"] == "/turns"
     assert captured["params"]["mark_read"] == "false"
     assert captured["params"]["thread"] == "42"
-    assert captured["params"]["turn_number"] == 3
+    assert "turn_number" not in captured["params"]
     names = {
         name
         for name, member in inspect.getmembers(working_set.WorkingSetClient)

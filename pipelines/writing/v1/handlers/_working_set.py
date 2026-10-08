@@ -118,19 +118,26 @@ class WorkingSetClient:
     async def bus_read(self, thread: str, turn: int | None = None) -> Any:
         """GET agent-bus turns for ``thread``, optionally one ``turn``.
 
-        Always sends ``mark_read=false``. Returns the JSON body (a turn list
-        or an object). Raises ``WorkingSetUnavailable`` on timeout, transport
-        error, HTTP 400+, or not-found. The ref is ``agent-bus:<thread>`` or
+        A numbered turn uses ``GET /turns/by-number``. A thread ref uses
+        ``GET /turns`` with ``mark_read=false``. Returns the JSON body.
+        Raises ``WorkingSetUnavailable`` on timeout, transport error, HTTP
+        400+, or not-found. The ref is ``agent-bus:<thread>`` or
         ``agent-bus:<thread>#<turn>``.
         """
         ref = f"agent-bus:{thread}" if turn is None else f"agent-bus:{thread}#{turn}"
-        params: dict[str, Any] = {"thread": str(thread), "mark_read": "false"}
         if turn is not None:
-            params["turn_number"] = turn
+            path = "/turns/by-number"
+            params: dict[str, Any] = {
+                "thread": str(thread),
+                "turn_number": turn,
+            }
+        else:
+            path = "/turns"
+            params = {"thread": str(thread), "mark_read": "false"}
         body = await self._http(
             ref,
             DEFAULT_AGENT_BUS_URL,
-            lambda client: client.get("/turns", params=params, headers=_bus_headers()),
+            lambda client: client.get(path, params=params, headers=_bus_headers()),
         )
         return body
 
