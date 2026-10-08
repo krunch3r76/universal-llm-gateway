@@ -87,7 +87,7 @@ operator work stopped.
 
 **Reconnect:** a dead dispatch id is not reopenable; `cse_session(op=followup)` into the same
 `chat_url` may reattach the CSE if a seat or dormant row holds it. Authoritative
-continuity = private request thread + `mark_read` before the next `team_dispatch`.
+continuity = private request thread + `mark_read` before the next bus `send`/`reply` with `after_turn`.
 
 ### Three git planes on CLOSEOUT (a:28271 — shared vocabulary)
 
@@ -175,7 +175,7 @@ Human-facing awareness (inv 22) is a separate plane.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
 14. **Reasoning posture when framing.** Before DIRECTIVE/path-sim: pin Question, OOS, detent; steelman/calibrate/courage. Stamp `operator_framed=true` + `pinned_question` + `frame_uri`. This seat stamps; does not run path-sim (`cursor_only`).
 15. **Codework → layer.** Code change ⇒ `abstraction-layering` G1–G6; no todo ⇒ `work-item-seed-path` first. Non-codework ⇒ commission cursor for `path-sim` (`cursor_only`).
-16. **Same `work_key` admit** — a second ulg-code `team_dispatch` while a non-terminal dispatch holds that `work_key` is refused with 409 `CURSOR_SOURCE_REF_IN_FLIGHT` (`retryable=false`; extra `holder_dispatch_id`, `holder_thread_id`, `steer`). The predecessor keeps running (§ Interrupt / supersede). Under backlog, wait on the predecessor's `poll_hint`. To stop a mistaken admit: `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)`. Exempt: `nest_under` the holder, or `resume_of` a terminal parent with the same `work_key`. `force=true` skips the gate (never on `git_integration_worker`, inv 24).
+16. **Same `work_key` admit** — a second ulg-code `team_dispatch` while a non-terminal dispatch holds that `work_key` is refused with 409 `CURSOR_SOURCE_REF_IN_FLIGHT` (`retryable=false`; extra `holder_dispatch_id`, `holder_thread_id`, `steer`). The predecessor keeps running (§ Interrupt / supersede). Under backlog, wait on the predecessor's `poll_hint`. To stop a mistaken admit: `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)`. Holder: queued, admitted, running, `parked_waiting`, or an open restart park. Exempt (among others): adhoc identity, or no effective `work_key`; `nest_under` the holder; `resume_of` when the parent has `park_kind`, or is `resume_eligible` with `bridge_read_timeout`, or is terminal with the same `work_key`; `effective_hop` terminal with the same `work_key`. `force=true` (needs `force_reason`) skips it; audited fan-out only. Same content fingerprint while a peer is queued, admitted, or running is 409 `CURSOR_WORK_FINGERPRINT_IN_FLIGHT` (`force` skips that too).
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
 18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
 19. **Escalation chain + nesting.** Executor is `cursor-sdk` on lane B. **CDP consult refused or failed** (including `X display exhausted`): do not wait and do not retry the CDP pool. The conductor chooses at once by the question and records `cdp_fail_route` on the scoreboard row. `nested-grok`: ulg-code `team_dispatch` nested `seat=cursor-sdk` `model=cursor/grok-4.7` `contract=freeform` `model_knobs={"effort":"xhigh"}`. `operator`: post the question and its context on the worker thread `to=web-anthropic`, plus a one-line pointer on the operator lane (`parent_thread`) `to=web-anthropic`. The operator answers on the worker thread. `CONSULT_PENDING` watches that reply. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Hop 5 is `cdp/opus-5.5`. Every later hop is nested `cursor-sdk`.
@@ -229,13 +229,13 @@ that clause cancels this ladder. Pure sealed R-admit / charter consumers keep it
 
 IDE slash commands are thin wrappers; machinery lives in plugin skills. cursor-sdk
 **never** invokes `/commands` — it loads skills by slug from the DIRECTIVE
-body or episode BRIEFING. The contract column lists live `team_dispatch` `contract` tokens only.
+body or episode BRIEFING. The contract column is `team_dispatch` `contract`.
 
-| Lane | IDE command | Headless skill (SOT) | DIRECTIVE `contract` |
+| Lane | IDE command | Headless skill (SOT) | `team_dispatch` `contract` |
 |---|---|---|---|
-| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `conductor` (S4a then spawn) |
+| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `freeform` (prompt `Use the work-item-seed-path skill`, `lane=B`, `work_key`). S4a mints the todo, then spawns the conductor (`contract=conductor` needs `source_ref=todo:<slug>` and no inline prompt, so it cannot be the mint call). `freeform` + `source_ref` is 422 `handle_forbidden`, so the mint uses prompt + `work_key`, not `source_ref`. |
 | Idea→implement codework | `/layer` (gate-shape) | `abstraction-layering` | re-admit `conductor`; `implement` \| `investigate` on existing todo; punch identity first if no todo |
-| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | — |
+| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | `freeform` (prompt `Use the path-sim skill`) |
 
 Commission grok sub-PM: body `Use the work-item-seed-path skill`; S6 **spawns
 conductor** (G-rows *are* layering). Existing `todo:{slug}` codework: body
@@ -287,7 +287,7 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Interrupt / supersede (BINDING)
 
-**The live hazard.** A second ulg-code `team_dispatch` (`op=generate`) on a `work_key` a non-terminal dispatch already holds is refused with 409 `CURSOR_SOURCE_REF_IN_FLIGHT` before admission (`retryable=false`; extra `holder_dispatch_id`, `holder_thread_id`, `steer`). The predecessor row is untouched and keeps running. Under backlog (slow admits looking like a lost enqueue), **wait** on the predecessor's `poll_hint`: a missing admit turn is not a lost enqueue. To stop a mistaken admit, `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)`. Exempt: `nest_under` the holder, or `resume_of` a terminal parent with the same `work_key`. `force=true` skips the gate (never on `git_integration_worker`, inv 24).
+**The live hazard.** A second ulg-code `team_dispatch` (`op=generate`) on a `work_key` a non-terminal dispatch already holds is refused with 409 `CURSOR_SOURCE_REF_IN_FLIGHT` before admission (`retryable=false`; extra `holder_dispatch_id`, `holder_thread_id`, `steer`). The predecessor row is untouched and keeps running. Under backlog (slow admits looking like a lost enqueue), **wait** on the predecessor's `poll_hint`: a missing admit turn is not a lost enqueue. To stop a mistaken admit, `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=<id>, reason=<why>)`. Holder: queued, admitted, running, `parked_waiting`, or an open restart park. Exempt (among others): adhoc identity, or no effective `work_key`; `nest_under` the holder; `resume_of` when the parent has `park_kind`, or is `resume_eligible` with `bridge_read_timeout`, or is terminal with the same `work_key`; `effective_hop` terminal with the same `work_key`. `force=true` (needs `force_reason`) skips it; audited fan-out only. Same content fingerprint while a peer is queued, admitted, or running is 409 `CURSOR_WORK_FINGERPRINT_IN_FLIGHT` (`force` skips that too).
 
 **Trigger.** The next commission is ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`).
 
