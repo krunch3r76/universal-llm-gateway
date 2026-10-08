@@ -116,8 +116,8 @@ def _build_close_claim(
     )
 
 
-def _commit_touches_paths(repo: str, sha: str, paths: list[str]) -> bool:
-    """True when ``sha`` modified every named path (git diff-tree name-only)."""
+def _commit_touched_set(repo: str, sha: str) -> set[str] | None:
+    """Paths modified by ``sha``, or None when git diff-tree fails."""
     proc = subprocess.run(
         ["git", "-C", repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
         capture_output=True,
@@ -125,14 +125,30 @@ def _commit_touches_paths(repo: str, sha: str, paths: list[str]) -> bool:
         timeout=5.0,
     )
     if proc.returncode != 0:
+        return None
+    return set(proc.stdout.strip().splitlines())
+
+
+def _path_touched_by_commit(path: str, touched: set[str]) -> bool:
+    if path in touched:
+        return True
+    return any(t == path or t.endswith(f"/{path}") for t in touched)
+
+
+def _paths_not_touched_by_commit(repo: str, sha: str, paths: list[str]) -> list[str] | None:
+    """Repo-relative paths from ``paths`` absent from ``sha`` (None if git fails)."""
+    touched = _commit_touched_set(repo, sha)
+    if touched is None:
+        return None
+    return [path for path in paths if not _path_touched_by_commit(path, touched)]
+
+
+def _commit_touches_paths(repo: str, sha: str, paths: list[str]) -> bool:
+    """True when ``sha`` modified every named path (git diff-tree name-only)."""
+    missing = _paths_not_touched_by_commit(repo, sha, paths)
+    if missing is None:
         return False
-    touched = set(proc.stdout.strip().splitlines())
-    for path in paths:
-        if path in touched:
-            continue
-        if not any(t == path or t.endswith(f"/{path}") for t in touched):
-            return False
-    return True
+    return not missing
 
 
 def _validate_commit_resolution(
@@ -168,11 +184,14 @@ def _validate_commit_resolution(
         )
     resolved = resolve_commit_sha(sha_slug)
     assert resolved is not None
-    if not _commit_touches_paths(repo, resolved, paths):
+    missing = _paths_not_touched_by_commit(repo, resolved, paths)
+    if missing is None:
+        return f"friction_close commit:{sha_slug} — git diff-tree failed for SHA"
+    if missing:
         return (
             f"friction_close {resolution_kind!r}: commit does not touch "
-            f"{paths!r} — use resolution_kind='uncommitted' or the commit "
-            "that actually contains the fix."
+            f"{missing!r} (requested {paths!r}) — use resolution_kind='uncommitted' "
+            "or the commit that actually contains the fix."
         )
     return None
 

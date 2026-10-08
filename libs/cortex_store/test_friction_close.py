@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from cortex_store.dispatch_ops._friction_close_impl import (
     _build_close_claim,
+    _paths_not_touched_by_commit,
     _validate_commit_resolution,
     close_friction_assertion,
     format_resolution_kind_catalog,
@@ -120,6 +122,37 @@ def test_build_close_claim_carries_symptom_and_fix() -> None:
     assert "[resolved:uncommitted]" in claim
     assert "Symptom: navigator_single_flight lease appears breached" in claim
     assert "Fix: path_flock on navigator lease RMW" in claim
+
+
+def test_validate_commit_resolution_lists_paths_missing_from_commit() -> None:
+    repo = str(Path(__file__).resolve().parents[2])
+    missing = _paths_not_touched_by_commit(
+        repo,
+        "c8fa90f4",
+        [
+            "libs/event_store/store.py",
+            "server.py",
+            "query.py",
+            "operations_impl.py",
+            "operations_trace.py",
+        ],
+    )
+    assert missing is not None
+    assert "operations_impl.py" in missing
+    assert "operations_trace.py" in missing
+    assert "libs/event_store/store.py" not in missing
+
+    err = _validate_commit_resolution(
+        "commit:c8fa90f4",
+        changed_paths=[
+            "libs/event_store/store.py",
+            "operations_impl.py",
+        ],
+        resolution_note=None,
+    )
+    assert err is not None
+    assert "operations_impl.py" in err
+    assert "requested" in err
 
 
 def test_validate_commit_resolution_rejects_uncommitted_paths(
