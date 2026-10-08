@@ -232,9 +232,7 @@ def render_navigator_doorbell(
     extras = tuple(policy.get("navigator_extra_addresses") or ())
     seat = resolve_navigator_seat(policy, register=register)
     default_fire = (
-        "cursor-auto request via liaison-ticker"
-        if seat == "cursor-auto"
-        else "cursor-sdk generate via liaison-ticker"
+        "cursor-sdk generate via liaison-ticker"
     )
     fired_by = policy.get("navigator_fired_by") or default_fire
     fp = str(digest.get("fingerprint") or "")

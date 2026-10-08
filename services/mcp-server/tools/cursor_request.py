@@ -20,7 +20,7 @@ _RETIRED_DOC = (
 )
 
 
-def register_cursor_request_tool(mcp: FastMCP) -> None:
+def register_operator_request_tool(mcp: FastMCP) -> None:
     """Register the retired ``operator_request`` tombstone on the life surface."""
 
     def operator_request(
@@ -48,30 +48,6 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         cse_chat_url: str | None = None,
     ) -> Any:
         """RETIRED (a:38728). Refuses every call."""
-        del (
-            subject,
-            body,
-            new_slug,
-            thread,
-            from_agent,
-            summary,
-            tags,
-            sidecar_content,
-            sidecar_slug,
-            desired_model,
-            desired_effort,
-            escalation,
-            contract,
-            require_attended,
-            after_turn,
-            lane,
-            workspace,
-            parent_thread,
-            lane_role,
-            request_id,
-            cse_registration_id,
-            cse_chat_url,
-        )
         return cursor_auto_retired_refusal()
 
     operator_request.__doc__ = _RETIRED_DOC

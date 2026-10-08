@@ -1,10 +1,9 @@
 """agent_bus ``request`` — retired cursor-auto entry (a:38728).
 
-``_request_dispatch`` returns ``cursor_auto_retired_refusal`` before author
-resolution, validation, CSE bind, or any turn write. ``_request_impl``,
-``request_intake``, ``request_cse_bind``, and ``request_worker_client`` stay
-until slice 2 deletes them. ``_resolve_hop_seat_request_refusal`` stays; hop
-imports it.
+``_request_dispatch`` returns ``cursor_auto_retired_refusal`` and does not
+write a turn. ``_request_impl`` stays until slice 2. ``_resolve_hop_seat_request_refusal``
+stays; hop imports it. ``resolve_request_id_intake`` lives in ``request_intake``
+and hop imports it from there.
 """
 
 from __future__ import annotations
@@ -14,18 +13,9 @@ from typing import Any
 from agent_bus_store.disposition import append_bus_lifecycle_tags
 from mcp_events import record
 
-from .._agent_bus_author import resolve_dispatch_from_agent
-from .lane_associations import refuse_lane_bind_incomplete_pair
-from .lane_provenance import observe_unparented_birth
 from .park_hint import build_poll_hint as _build_poll_hint
 from .park_hint import is_chat_delivery_capable
 from .request_cse_bind import maybe_bind_thread_cse
-from .request_intake import (
-    resolve_checkout_lane,
-    resolve_contract_intake,
-    resolve_request_id_intake,
-    stamp_contract_deprecation,
-)
 from .send import _send_dispatch
 
 _CURSOR_AUTO_RETIRED_ERROR = (
@@ -300,157 +290,5 @@ def _request_dispatch(
     advisor_brief: str | None = None,
     work_key: str | None = None,
 ) -> dict[str, Any]:
-    """Validate + dispatch ``agent_bus.request``.
-
-    ``require_attended`` (default false): when true, Auto refuses unattended
-    nested dispatch and in-seat substitute — terminal ``status:needs-attended``
-    with ``reason=operator_require_attended``. Body field ``require_attended:
-    true`` or ``executor_bind: attended`` ORs with the wire param.
-
-    ``summary``: standing human so-what title (ULG outcome line). Also accepted
-    fail-soft via body ``so_what:`` / ``ulg_gain:`` when wire summary omitted.
-
-    ``request_id``: optional caller idempotency key; echoed on success; duplicate
-    values are refused (``duplicate_request_id``) before the turn is written.
-
-    ``contract``: one of ``answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon``.
-    Unknown values are rejected (422 ``request_contract_unknown``) before the
-    turn is written; legacy ``consult`` is aliased to ``confer`` with a
-    deprecation note on the response. ``execute`` = one tier-M allowlisted op;
-    ``propagate`` = operator restart request (propagation ledger + drain-gated
-    sync_restart — not tier-M ``manage.*``).
-
-    ``lane``: optional GIW checkout-isolation. In-repo checkout uses lane B
-    (pass ``B``). Omit is not that default: empty ``files_expected`` + omit
-    selects Lane A (``select_lane`` ``opt_out``). ``parent_thread`` +
-    ``lane_role`` may atomically bind a newly minted
-    bus-thread lane; both must be supplied together. Invalid values reject 422 ``request_lane_invalid``
-    before the turn is written.
-
-    ``prompt_uri`` / ``advisor_brief``: sealed advisor brief for CDP escalation.
-    GIW ``AutoJob`` already stores these; omitting them on this surface ships
-    ``job.body`` instead (``prompt_source=job.body``).
-
-    ``work_key``: optional D4 identity. With ``lane=B`` and contract
-    ``investigate|recon|verify|implement|conductor`` plus a scheme-prefixed
-    key (``todo:``, ``plan:``, ``plan_phase:``, ``packet:``, ``agent-bus:``,
-    ``friction:``, ``decision:``) GIW selects concurrent Auto admission.
-    Omit the key, or use lane A, and the job stays serial. Same thread still
-    supersedes. ``conductor`` is recognized by that predicate; bus intake
-    still rejects it as ``request_contract_unknown`` — probes use ``implement``.
-
-    Slice 1 (a:38728): this entry refuses before any of the work below.
-    """
+    """Retired cursor-auto entry (a:38728). Refuses before any turn write."""
     return cursor_auto_retired_refusal()
-    if isinstance(thread, int):  # pragma: no cover
-        thread = str(thread)
-
-    from_agent, author_err = resolve_dispatch_from_agent(from_agent)
-    if author_err is not None:
-        return author_err
-
-    has_new_slug = new_slug is not None
-    has_thread = bool(thread)
-    if has_new_slug == has_thread:
-        record("mcp.agentbus.request.rejected", reason="xor")
-        return {
-            "error": ("request: exactly one of thread or new_slug is required"),
-            "reason": "request_xor_violation",
-        }
-    if not subject or not body:
-        return {
-            "error": "request: subject and body are required",
-            "missing_fields": [
-                f for f, v in (("subject", subject), ("body", body)) if not v
-            ],
-        }
-    if to and to != "cursor":
-        return {
-            "error": "request: v0 only supports to='cursor'",
-            "reason": "request_to_unsupported",
-            "provided": to,
-        }
-
-    intake = resolve_contract_intake(contract, from_agent=from_agent)
-    if intake.error is not None:
-        return intake.error
-
-    thread_hint = str(thread) if thread is not None else None
-    rid_intake = resolve_request_id_intake(
-        request_id,
-        thread_id=thread_hint,
-        contract=intake.contract,
-        from_agent=from_agent,
-    )
-    if rid_intake.error is not None:
-        return rid_intake.error
-
-    admission_audit: dict[str, Any] = {}
-    seat_refusal = _resolve_hop_seat_request_refusal(
-        thread_id=thread_hint,
-        cse_registration_id=cse_registration_id,
-        from_agent=from_agent,
-        audit=admission_audit,
-    )
-    if seat_refusal is not None:
-        return seat_refusal
-
-    checkout_lane, lane_err = resolve_checkout_lane(lane, from_agent=from_agent)
-    if lane_err is not None:
-        return lane_err
-    if work_key is not None and str(work_key).strip():
-        from .._frontier_intake import validate_work_key
-
-        work_key_err = validate_work_key(str(work_key).strip())
-        if work_key_err is not None:
-            return work_key_err
-        work_key = str(work_key).strip()
-    lane_bind_refusal = refuse_lane_bind_incomplete_pair(
-        parent_thread=parent_thread,
-        lane_role=lane_role,
-    )
-    if lane_bind_refusal is not None:
-        return lane_bind_refusal
-    observe_unparented_birth(
-        new_slug=new_slug,
-        parent_thread=parent_thread,
-        lane_role=lane_role,
-        request_id=rid_intake.request_id,
-    )
-
-    result = _request_impl(
-        new_slug=new_slug,
-        thread=thread,
-        to=to or "cursor",
-        subject=subject,
-        body=body,
-        from_agent=from_agent,
-        tags=tags,
-        sidecar_content=sidecar_content,
-        sidecar_slug=sidecar_slug,
-        desired_model=desired_model or "auto",
-        desired_effort=desired_effort or "auto",
-        contract=intake.contract,
-        require_attended=bool(require_attended),
-        request_id=rid_intake.request_id,
-        after_turn=after_turn,
-        summary=summary,
-        cse_chat_url=cse_chat_url,
-        cse_registration_id=cse_registration_id,
-        escalation=escalation,
-        lane=checkout_lane,
-        workspace=workspace,
-        parent_thread=parent_thread,
-        lane_role=lane_role,
-        prompt_uri=prompt_uri,
-        advisor_brief=advisor_brief,
-        census_mismatch=bool(admission_audit.get("census_mismatch")),
-        work_key=work_key,
-    )
-    if (
-        admission_audit.get("census_mismatch")
-        and isinstance(result, dict)
-        and "error" not in result
-    ):
-        result["census_mismatch"] = True
-    return stamp_contract_deprecation(result, intake)

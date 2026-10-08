@@ -18,7 +18,10 @@ _CODE_SEATS = frozenset({"cursor-sdk", "cursor"})
 
 
 def resolve_navigator_seat(policy: dict[str, Any] | None, *, register: str) -> str:
-    """Return ``cursor-sdk`` or ``cursor-auto``. Never ``cdp``."""
+    """Return ``cursor-sdk``, or ``cursor-auto`` when policy or register still names life.
+
+    Submit of a ``cursor-auto`` body is refused (``cursor_auto_retired``, a:38728).
+    """
     raw = str((policy or {}).get("navigator_seat") or "").strip().lower()
     if raw in _CODE_SEATS:
         return "cursor-sdk"
@@ -49,7 +52,7 @@ def model_for_navigator_seat(policy: dict[str, Any] | None, seat: str) -> str | 
 
 
 def navigator_lane_id(body: dict[str, Any]) -> str:
-    """Occupancy thread from either generate or cursor_request shape."""
+    """Occupancy thread from a generate payload or a legacy request-shaped body."""
     for key in ("parent_thread", "dispatch_thread_id", "thread"):
         value = str(body.get(key) or "").strip()
         if value:
@@ -111,16 +114,14 @@ def build_navigator_body(
 def submit_navigator(
     body: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
-    """POST the wake. Life ``cursor-auto`` uses the injected ``submit`` in tests.
+    """POST the wake. Default submit is Stargate ``team_dispatch`` for ``cursor-sdk``.
 
-    Default production submit is Stargate ``team_dispatch`` for ``cursor-sdk``.
-    ``cursor-auto`` is retired (a:38728); set ``navigator_seat=cursor-sdk``
-    (``team_dispatch``). A missing injector is a refused wake, not a silent CDP fallback.
+    A ``cursor-auto`` body is refused (a:38728). Set ``navigator_seat=cursor-sdk``.
     """
     if str(body.get("seat") or "") == "cursor-auto":
         return {
             "error": {
-                "code": "cursor_auto_submit_required",
+                "code": "cursor_auto_retired",
                 "message": (
                     "cursor-auto is retired (a:38728); "
                     "set navigator_seat=cursor-sdk (team_dispatch)"

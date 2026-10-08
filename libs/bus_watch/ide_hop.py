@@ -230,7 +230,7 @@ def build_ide_hop_message(
         "NOW non-empty ⇒ dispatch its first leg from this tab. "
         "LOAD liaison-cursor. Repo write on this seat → "
         "team_dispatch(seat=cursor-sdk, job=implement, lane=B). "
-        "cursor-auto implement is the life seat (no team_dispatch). "
+        "life repo-write → life_dispatch. "
         "Explore recon in-tab · design/judgment → cdp/fable-5.1 · "
         "independent check → cdp/opus-5. Before any STAY verdict. "
         "STAY = no hop, never = no dispatch.",
@@ -241,7 +241,7 @@ def build_ide_hop_message(
         "runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
         "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
-        "cursor-sdk; life repo-write → cursor-auto; then cdp/opus-5.5 (check) → "
+        "cursor-sdk; life repo-write → life_dispatch; then cdp/opus-5.5 (check) → "
         "cdp/opus-5 (design/judgment); cursor/grok-4.7 for live checkout; "
         "¬ cursor/claude-*; page human only on "
         "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",

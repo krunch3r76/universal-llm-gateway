@@ -1990,17 +1990,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_request
     substrate_qualified: user-vortex__agent_bus_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n\
-    \  ⟹ TurnSendCreated-shaped + poll_hint.\n\
-    Code work is team_dispatch (seat=cursor-sdk or model=cdp/…). ¬ dual-tag lane:life-to-code.\n\
-    parent_thread
-    + lane_role are optional birth-binding fields and must be supplied together.\ndesired_model/desired_effort/contract/require_attended?
-    are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon;
-    execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable
-    work item (architecture may be open).\nimplement|investigate DIRECTIVE body requires vision:
-    else admit blocks vision_field_missing (pre-model). See agent_skill:cdp-operator-proxy.\n\
-    require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\n\
-    Life-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "RETIRED (a:38728) — refuses. Code commission: team_dispatch on ulg-code. Life CSE: life_dispatch. A bus turn: send.\n"
   json_schema:
     type: object
     properties:
@@ -2191,14 +2181,10 @@ tools:
         type: string
       desired_model:
         type: string
-        description: auto | composer-2.5 | grok-4.7 | opus-5 (default auto).
+        description: retired
       desired_effort:
         type: string
-        description: "Portable wire intent; per-model acceptance from CURSOR_MODEL_CAPABILITIES
-          — composer-2.5: no effort axis; grok-4.7: low|medium|high|xhigh (default high);
-          opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
-          universal rung — models without max degrade to their ceiling. Omitted/auto resolves
-          per contract_effort (answer/ask/confer/verify/execute/propagate high; investigate high; seed low; conductor low; freeform low; implement/recon medium)."
+        description: retired
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
@@ -2226,8 +2212,7 @@ tools:
           lane_role.
       lane_role:
         type: string
-        description: Role of this lane under its parent — operator_proxy for a mission. 
-          Both-or-neither with parent_thread.
+        description: retired
       request_id:
         type: string
         description: Caller idempotency key; correlates admit and closeout.
@@ -5455,7 +5440,7 @@ tools:
   flat_call_shape:
     tool: life_dispatch
     substrate_qualified: user-vortex__life_dispatch
-  fol_descriptor: "Life→cursor operator-proxy. Mints a Life Cowork CSE (server-pinned project UUID) that drives cursor via request — ¬ life conversation, ¬ claude.ai→claude.ai chat. Stay in-session for correspondence. Code work: team_dispatch on ulg-code. A bus turn: agent_bus send. prompt XOR thread (thread latest to=life|dispatch, ¬ from=life). Default model=cdp/opus-5. See agent_skill:cdp-operator-proxy.\n"
+  fol_descriptor: "Life→cursor operator-proxy. Mints a Life Cowork CSE (server-pinned project UUID) that drives cursor — ¬ life conversation, ¬ claude.ai→claude.ai chat. Stay in-session for correspondence. Code work: team_dispatch on ulg-code. A bus turn: agent_bus send. prompt XOR thread (thread latest to=life|dispatch, ¬ from=life). Default model=cdp/opus-5. See agent_skill:cdp-operator-proxy.\n"
   json_schema:
     type: object
     properties:

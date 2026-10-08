@@ -74,24 +74,12 @@ def test_dispatch_refuses_before_turn_write() -> None:
     assert result["reason"] == "cursor_auto_retired"
 
 
-def test_request_lane_reaches_select_lane_as_explicit() -> None:
-    """select_lane still honors an explicit B. The request op no longer enqueues."""
+def test_select_lane_explicit_b() -> None:
+    """select_lane honors an explicit B."""
     from pathlib import Path
 
     from services.git_integration_worker.cursor_sdk_lane_select import select_lane
     from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
-
-    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
-        result = _request_dispatch(
-            new_slug="lane-rt",
-            to="cursor",
-            subject="probe",
-            body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
-            from_agent="web-anthropic",
-            lane="B",
-        )
-    assert result["reason"] == "cursor_auto_retired"
-    send_mock.assert_not_called()
 
     req = CursorDispatchRequest(
         thread_id="7224",
@@ -112,23 +100,12 @@ def test_request_lane_reaches_select_lane_as_explicit() -> None:
     assert reason == "explicit"
 
 
-def test_request_omitted_lane_keeps_select_lane_default() -> None:
-    """Request refuses. select_lane with no lane stays opt_out."""
+def test_select_lane_default_opt_out() -> None:
+    """select_lane with no lane stays opt_out."""
     from pathlib import Path
 
     from services.git_integration_worker.cursor_sdk_lane_select import select_lane
     from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
-
-    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
-        result = _request_dispatch(
-            new_slug="lane-default",
-            to="cursor",
-            subject="probe",
-            body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
-            from_agent="web-anthropic",
-        )
-    assert result["reason"] == "cursor_auto_retired"
-    send_mock.assert_not_called()
 
     req = CursorDispatchRequest(
         thread_id="7224",

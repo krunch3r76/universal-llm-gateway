@@ -18,7 +18,7 @@ from tools.continuity import register_continuity_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
 from tools.cse_session import register_cse_session_tool
-from tools.cursor_request import register_cursor_request_tool
+from tools.cursor_request import register_operator_request_tool
 from tools.delegate import register_delegate_schema_transform, register_delegate_tools
 from tools.events import register_event_tools
 from tools.extract_directory import register_extract_directory_tools
@@ -99,7 +99,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_cse_session_tool(mcp)
     register_chat_session_tool(mcp)
     if surface == "life":
-        register_cursor_request_tool(mcp)
+        register_operator_request_tool(mcp)
     register_fleet_liveness_tools(mcp)
     register_cortex_tools(mcp, surface=surface)
     register_cortex_named_tools(mcp, surface=surface)

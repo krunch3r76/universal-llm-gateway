@@ -13,7 +13,8 @@ def test_advertised_agent_bus_ops_excludes_deprecated() -> None:
     advertised = frozenset(advertised_agent_bus_ops())
     assert AGENT_BUS_DEPRECATED_OPS.isdisjoint(advertised)
     assert "send" in advertised
-    assert "request" in advertised
+    assert "request" not in advertised
+    assert "request" in AGENT_BUS_OPS
     assert "hop" in advertised
     assert "substrate_graph_write" in advertised
     assert "substrate_friction_file" in advertised
@@ -21,7 +22,7 @@ def test_advertised_agent_bus_ops_excludes_deprecated() -> None:
     assert "fetch" in advertised
     assert "lane_bind" in advertised
     assert "lane_current" in advertised
-    assert advertised | AGENT_BUS_DEPRECATED_OPS == frozenset(AGENT_BUS_OPS)
+    assert advertised | AGENT_BUS_DEPRECATED_OPS | {"request"} == frozenset(AGENT_BUS_OPS)
 
 
 def test_dispatch_ops_match_openapi_mcp_denominator() -> None:
@@ -56,7 +57,7 @@ def test_surface_enum_proxy_injects_agent_bus_ops() -> None:
     assert "reply" not in tool_prop["enum"]
     assert "post" not in tool_prop["enum"]
     assert "send" in tool_prop["enum"]
-    assert "request" in tool_prop["enum"]
+    assert "request" not in tool_prop["enum"]
     assert "hop" in tool_prop["enum"]
     assert "lane_bind" in tool_prop["enum"]
     assert "lane_current" in tool_prop["enum"]

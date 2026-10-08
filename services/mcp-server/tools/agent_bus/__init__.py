@@ -135,7 +135,11 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
 def advertised_agent_bus_ops() -> tuple[str, ...]:
     """Ops advertised on the wire ``tool`` enum — excludes deprecated post/reply."""
     return tuple(
-        sorted(op for op in AGENT_BUS_OPS if op not in AGENT_BUS_DEPRECATED_OPS)
+        sorted(
+            op
+            for op in AGENT_BUS_OPS
+            if op not in AGENT_BUS_DEPRECATED_OPS and op != "request"
+        )
     )
 
 
@@ -200,7 +204,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
 **send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
 
-**request:** XOR `new_slug`|`thread`, `to` literal `cursor`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. `auto_handler_status` is the handler heartbeat; `job_admission.outcome` is this job. Unknown contract → **422 `request_contract_unknown`** (`consult` aliases `confer`). Canonical `contract` names: `answer`, `ask`, `confer`, `investigate`, `implement`, `verify`, `execute`, `propagate`, `seed`, `recon`. `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → `status:needs-attended`. Replay → **422 `duplicate_request_id`**. Narrow path: `cursor_request`.
+**request:** RETIRED (a:38728) — refuses. Code commission: team_dispatch on ulg-code. Life CSE: life_dispatch. A bus turn: send.
 
 **hop:** `thread` + `reason`. `desired_model` defaults to `cdp/opus-5.5-high`; a bare id such as `fable-5.1-high` is sent as `cdp/fable-5.1-high`. A slash-prefixed id (`cdp/opus-5.5-max`, `cursor/grok-4.7`) is sent as given. `desired_effort` is optional. Returns `successor`, not `status:done`.
 
@@ -234,6 +238,10 @@ Depth: `agent_skill:agent-bus-discipline`.
         )
 
         handler = AGENT_BUS_OPS.get(tool)
+        if tool == "request":
+            from .request import cursor_auto_retired_refusal
+
+            return cursor_auto_retired_refusal()
         if handler is None:
             return {
                 "error": (

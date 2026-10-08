@@ -48,14 +48,9 @@ _ECHO_FIELDS = (
     "tools: <count>",
 )
 _SHEDDABLE_ECHO_FIELDS = ("tools: <count>", "objective: <root.last_subject>")
-# The admission gate reads line-start tokens, so a commission whose scope lives in
-# prose caps is refused ``empty_directive_scope``; a pinned model on the ask lane is
-# refused ``ask_escalation_unsupported``. Both refusals cost a whole tick, so the
-# doorbell names the tokens rather than leaving them to the seat's memory.
-_COMMISSION_HINT = (
-    "if attention mint; quiet echo; line-start `scope:` + `files_expected:` + "
-    "`vision:` (prose caps are not tokens); ¬desired_model; "
-)
+# Quiet-echo guard stays on the commission line so a shed cannot leave the
+# guard without the call shape.
+_COMMISSION_HINT = "if attention mint; quiet echo; "
 _STALE_CONTRACT = "re-fetch DIGEST; on epoch mismatch echo STALE and stop"
 
 _HEADER_RE = re.compile(
@@ -361,8 +356,20 @@ def render_doorbell(
             ]
         )
         if show_commission:
+            send = (
+                f"agent_bus(send, new_slug=r15-wake-<slug>, parent_thread={root}, "
+                f"lane_role=sub_mission, to=cursor, ...)"
+            )
+            if seat_dispatch_surface(seat) == "life":
+                follow = "life_dispatch(thread=<new thread>)"
+            else:
+                follow = (
+                    "team_dispatch(op=generate, seat=cursor-sdk, contract=freeform, "
+                    "lane=B, dispatch_thread_id=<new thread>, "
+                    "work_key=agent-bus:<new thread>)"
+                )
             lines.append(
-                f"commission: team_dispatch on ulg-code (new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
+                f"commission: {send} then {follow} — {_COMMISSION_HINT}¬thread={root}."
             )
         return "\n".join(lines) + "\n"
 
@@ -458,8 +465,12 @@ def _successor_duty_line(
 ) -> str:
     if contract != "none":
         return (
-            "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
-            "(team_dispatch on ulg-code, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
+            "duty: dispatch -> read back -> verify -> CP. Commission: "
+            "agent_bus(send, new_slug=r15-wake-<slug>, parent_thread=<root>, "
+            "lane_role=sub_mission, to=cursor, ...) then "
+            "team_dispatch(op=generate, seat=cursor-sdk, contract=freeform, lane=B, "
+            "dispatch_thread_id=<new thread>, work_key=agent-bus:<new thread>); "
+            "¬thread=<root>. Read its closeout; "
             "verify against git before any 'landed' word; then checkpoint. "
             "Repo-write goals ⇒ team_dispatch on ulg-code; design/judgment forks ⇒ cdp/fable-5.1 — never STAY. "
             "Orienting and writing STAY is not the leg."

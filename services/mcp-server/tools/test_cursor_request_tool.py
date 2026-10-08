@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.cursor_request import register_cursor_request_tool
+from tools.cursor_request import register_operator_request_tool
 
 
 class _ToolNameRecorder:
@@ -31,7 +33,7 @@ class _ToolNameRecorder:
 
 def test_operator_request_is_retired_tombstone() -> None:
     recorder = _ToolNameRecorder()
-    register_cursor_request_tool(recorder)  # type: ignore[arg-type]
+    register_operator_request_tool(recorder)  # type: ignore[arg-type]
     assert recorder.registered == ["operator_request"]
     description = recorder.kwargs["operator_request"].get("description") or ""
     assert "RETIRED (a:38728)" in description
@@ -53,9 +55,9 @@ def test_surface_registration_registers_operator_request_on_life_only() -> None:
         .joinpath("surface_registration.py")
         .read_text(encoding="utf-8")
     )
-    assert "register_cursor_request_tool" in source
+    assert "register_operator_request_tool" in source
     life_block = source.split('if surface == "life":', 1)[1]
-    assert "register_cursor_request_tool(mcp)" in life_block.split(
+    assert "register_operator_request_tool(mcp)" in life_block.split(
         "register_fleet_liveness_tools", 1
     )[0]
 
@@ -72,6 +74,36 @@ def test_cursor_request_absent_on_life_surface_tool_list() -> None:
     assert "cursor_request" not in overflow_reg
     assert "operator_request" in tool_names
     assert "operator_request" in derive_surface_primary_tools("life")
+    assert "dispatch" not in tool_names
+    assert "tool_search" not in tool_names
+
+    async def _call_pruned_name() -> None:
+        await mcp.call_tool(
+            "cursor_request",
+            {"subject": "s", "body": "b", "new_slug": "slug-test"},
+        )
+
+    with pytest.raises(Exception, match="Unknown tool"):
+        asyncio.run(_call_pruned_name())
+
+
+def test_operator_request_call_tool_returns_retirement() -> None:
+    from server import _build_server
+
+    mcp, _, _ = _build_server("life")
+
+    async def _call() -> dict:
+        return await mcp.call_tool(
+            "operator_request",
+            {"subject": "s", "body": "b", "new_slug": "x"},
+        )
+
+    result = asyncio.run(_call())
+    payload = result.data if hasattr(result, "data") else result
+    if isinstance(payload, list):
+        payload = payload[0]
+    text = str(payload)
+    assert "cursor_auto_retired" in text
 
 
 def test_cursor_request_absent_on_code_surface_tool_list() -> None:
@@ -86,3 +118,12 @@ def test_cursor_request_absent_on_code_surface_tool_list() -> None:
     assert "cursor_request" not in derive_surface_primary_tools("code")
     assert "operator_request" not in tool_names
     assert "operator_request" not in derive_surface_primary_tools("code")
+
+    async def _call_pruned_name() -> None:
+        await mcp.call_tool(
+            "cursor_request",
+            {"subject": "s", "body": "b", "new_slug": "slug-test"},
+        )
+
+    with pytest.raises(Exception, match="Unknown tool"):
+        asyncio.run(_call_pruned_name())

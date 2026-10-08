@@ -63,8 +63,8 @@ def test_ensure_doorbell_file_refreshes_stale_content(tmp_path: Path) -> None:
     path = tmp_path / "10479-liaison-wake-doorbell.md"
     fresh = _live_10479_render()
     stale = fresh.replace(
-        "line-start `scope:` + `files_expected:` + `vision:`",
-        "legacy commission hint without admission tokens",
+        "life_dispatch(thread=<new thread>)",
+        "legacy commission hint without the send step",
     )
     path.write_text(stale, encoding="utf-8")
 
@@ -389,7 +389,7 @@ def test_live_10479_web_anthropic_render_byte_length() -> None:
     """AC4 — 11655 regression pin corrected: life render is not the old 1019 B IDE paste."""
     text = _live_10479_render()
     encoded_len = len(text.encode("utf-8"))
-    assert encoded_len == 1164
+    assert encoded_len == 1106
     assert encoded_len != 1019
     assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
 
