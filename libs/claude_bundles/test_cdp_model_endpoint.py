@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from cdp_ask.poll_recovery import snapshot_from_archive_path
 
 from claude_bundles.cdp_model_endpoint import (
     CDP_SUBSTRATE,
     SUBMIT_RETRY_BACKOFF_S,
     UPSTREAM_OVERLOADED,
+    _grade_trace,
     _has_proof,
     _has_unresolved_artifact_card,
     _is_chrome_only_body,
@@ -19,6 +22,7 @@ from claude_bundles.cdp_model_endpoint import (
     _is_user_prompt_echo_body,
     has_proof,
     picker_from_model_id,
+    result_from_snapshot,
     run_cdp_generate,
 )
 from claude_bundles.cdp_model_endpoint_staging import (
@@ -32,6 +36,7 @@ from claude_bundles.cowork_skill_delivery import (
     extract_cdp_required_authority,
     prepend_cdp_dispatch_skills,
 )
+from claude_bundles.project_ask import archive_harvest
 from claude_bundles.sealed_cdp_prefix import peel_sealed_cdp_skill_prefix
 
 _recorded_staging_kwargs: list[dict[str, Any]] = []
@@ -2511,3 +2516,354 @@ def test_admit_then_worker_uri_does_not_double_prepend(
 
     _tokens, rest = split_leading_slash_skills(text)
     assert not rest.lstrip("\n").startswith("/")
+
+
+_LONG_SEAT_BODY = "VERDICT: APPROVE\n\n" + ("Seat review paragraph. " * 80)
+_STOP_BANNER = "You've hit your weekly limit. Try again next week."
+_GRADE_TRACE_INJECT = {
+    "rule": "weekly_limit_stop",
+    "banner_text": "You've hit your weekly limit",
+}
+
+
+def _grade_triple(result: Any) -> tuple[bool, str | None, str | None]:
+    return (result.ok, result.stall_stage, result.error)
+
+
+def _snapshot_grade(snapshot: dict[str, Any]) -> Any:
+    return result_from_snapshot(
+        snapshot=snapshot,
+        execution_id="dispatch-grade-trace",
+        satellite_execution_id="sat-grade-trace",
+        prompt_uri="cortex://prompt.md",
+        picker_model="opus-4.8",
+    )
+
+
+def _run_grade(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    execution_id: str,
+    polls: list[dict[str, Any]],
+    **kwargs: Any,
+) -> Any:
+    _mock_run_cdp_staging(monkeypatch, tmp_path, execution_id)
+    options = dict(kwargs)
+    client = _FakeClient(polls)
+    return run_cdp_generate(
+        execution_id=execution_id,
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        poll_interval_s=options.pop("poll_interval_s", 0),
+        client=client,  # type: ignore[arg-type]
+        sleep=options.pop("sleep", lambda _s: None),
+        **options,
+    )
+
+
+def _inject_grade_trace(polls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    injected: list[dict[str, Any]] = []
+    for index, snap in enumerate(polls):
+        item = dict(snap)
+        if index:
+            item["grade_trace"] = dict(_GRADE_TRACE_INJECT)
+        injected.append(item)
+    return injected
+
+
+def _proof_snapshot(**extra: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "status": "running",
+        "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-grade.md",
+        "body": _LONG_SEAT_BODY,
+        "attested_model": "Model: Opus 4.8",
+        "harvest_provenance": "chat",
+    }
+    base.update(extra)
+    return base
+
+
+class _RaisingMap(dict[str, Any]):
+    def get(self, key: str, default: Any = None) -> Any:
+        raise RuntimeError("snapshot get failed")
+
+
+def test_grade_trace_never_raises() -> None:
+    """Odd snapshots return a trace_error envelope instead of escaping."""
+    odd = _grade_trace(_RaisingMap(), rule="no_progress")
+    assert odd == {"rule": "no_progress", "trace_error": "RuntimeError"}
+    missing = _grade_trace(None, rule="terminal_failure")  # type: ignore[arg-type]
+    assert missing["trace_error"] == "TypeError"
+    assert missing["rule"] == "terminal_failure"
+    huge = _grade_trace(
+        {
+            "error_banner_text": "你" * 800,
+            "error_banner_match": "m" * 400,
+            "error": "e" * 900,
+            "status": "s" * 200,
+            "completion_phase": "p" * 200,
+            "harvest_provenance": "h" * 200,
+            "body": "API Error: 529 " + ("x" * 400),
+        },
+        rule="overload_only",
+        stall_stage="upstream_overloaded",
+    )
+    encoded = json.dumps(huge, separators=(",", ":"), ensure_ascii=False).encode()
+    assert len(encoded) <= 1500
+    assert all(not isinstance(value, (list, dict)) for value in huge.values())
+
+
+def test_weekly_limit_failed_envelopes_record_banner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """E2 and E12 keep the verbatim banner on the failed weekly_limit grade."""
+    snapshot = _proof_snapshot(
+        error_banner_text=_STOP_BANNER,
+        error_banner_match="weekly limit",
+    )
+    from_snapshot = _snapshot_grade(snapshot)
+    assert from_snapshot.ok is False
+    assert from_snapshot.stall_stage == "weekly_limit"
+    assert from_snapshot.extras["grade_trace"]["banner_text"] == _STOP_BANNER
+    assert from_snapshot.extras["grade_trace"]["rule"] == "weekly_limit_stop"
+    assert from_snapshot.extras["grade_trace"]["banner_match"] == "weekly limit"
+    assert from_snapshot.extras["grade_trace"]["matched_span"] in _STOP_BANNER
+
+    generated = _run_grade(
+        monkeypatch,
+        tmp_path,
+        "dispatch-grade-e12",
+        [
+            {"execution_id": "sat-e12", "status": "running"},
+            {
+                "execution_id": "sat-e12",
+                **snapshot,
+            },
+        ],
+    )
+    assert generated.ok is False
+    assert generated.stall_stage == "weekly_limit"
+    assert generated.error == from_snapshot.error
+    assert generated.extras["grade_trace"]["banner_text"] == _STOP_BANNER
+    assert generated.extras["grade_trace"]["rule"] == "weekly_limit_stop"
+
+
+def test_weekly_limit_warning_extra_unchanged_with_grade_trace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """W1 and W2 record grade_trace without rewriting weekly_limit_warning."""
+    snapshot = _proof_snapshot(
+        error_banner_text=_PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER,
+        error_banner_match="weekly limit",
+    )
+    from_snapshot = _snapshot_grade(snapshot)
+    warning = from_snapshot.extras["weekly_limit_warning"]
+    assert warning.startswith("se Used toys integration")
+    assert "Approaching weekly limit" in warning
+    assert len(warning) <= 200
+    assert from_snapshot.ok is True
+    assert from_snapshot.stall_stage is None
+    trace = from_snapshot.extras["grade_trace"]
+    assert trace["rule"] == "weekly_limit_warning"
+    assert trace["banner_text"] == _PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER
+
+    generated = _run_grade(
+        monkeypatch,
+        tmp_path,
+        "dispatch-grade-w2",
+        [
+            {"execution_id": "sat-w2", "status": "running"},
+            {"execution_id": "sat-w2", **snapshot},
+        ],
+    )
+    assert generated.ok is True
+    assert generated.extras["weekly_limit_warning"] == warning
+    assert (
+        generated.extras["grade_trace"]["banner_text"]
+        == _PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER
+    )
+
+
+def test_archive_rebuild_carries_banner_under_grade_trace_only(tmp_path: Path) -> None:
+    """A stored banner rebuilds under grade_trace and does not change the grade."""
+    archive = tmp_path / "cdp-ask-archive-grade.md"
+    execution_id = "exec" + "d" * 28
+    archive_harvest(
+        body=_LONG_SEAT_BODY,
+        url="https://claude.ai/cowork/cse_gradeTraceRebuild",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="Model: Opus 4.8",
+        archive_path=str(archive),
+        execution_id=execution_id,
+        error_banner_text=_STOP_BANNER,
+        error_banner_match="weekly limit",
+    )
+    snap = snapshot_from_archive_path(archive, execution_id=execution_id)
+    assert snap is not None
+    assert snap["grade_trace"]["banner_text"] == _STOP_BANNER
+    assert snap["grade_trace"]["banner_match"] == "weekly limit"
+    assert "error_banner_text" not in snap
+    assert "error_banner_match" not in snap
+    assert snap["body"] == _LONG_SEAT_BODY.strip()
+    assert "weekly limit" not in snap["body"]
+    without = dict(snap)
+    without.pop("grade_trace")
+    with_trace = _snapshot_grade(snap)
+    no_trace = _snapshot_grade(without)
+    assert _grade_triple(with_trace) == _grade_triple(no_trace)
+    assert with_trace.ok is True
+    assert with_trace.stall_stage is None
+    assert with_trace.extras["grade_trace"]["banner_text"] == _STOP_BANNER
+    assert "grade_trace" not in no_trace.extras
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    ["E1", "E2", "E3", "E4", "W1", "E11", "E12", "E13", "E14", "E15", "W2"],
+)
+def test_grade_invariant_with_and_without_trace(
+    case_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Falsifier: ok, stall_stage, and error ignore grade_trace."""
+    if case_id in {"E1", "E2", "E3", "E4", "W1"}:
+        snapshots = {
+            "E1": _proof_snapshot(body=_OVERLOAD_ONLY_BODY),
+            "E2": _proof_snapshot(
+                error_banner_text=_STOP_BANNER,
+                error_banner_match="weekly limit",
+            ),
+            "E3": {
+                "status": "completed",
+                "body": "seat answer without attested model",
+                "completion_phase": "terminal",
+            },
+            "E4": {"status": "failed", "error": "satellite exploded", "body": ""},
+            "W1": _proof_snapshot(
+                error_banner_text=_PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER,
+                error_banner_match="weekly limit",
+            ),
+        }
+        plain = snapshots[case_id]
+        traced = dict(plain)
+        traced["grade_trace"] = dict(_GRADE_TRACE_INJECT)
+        assert _grade_triple(_snapshot_grade(plain)) == _grade_triple(
+            _snapshot_grade(traced)
+        )
+        return
+
+    polls = {
+        "E11": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-e11.md",
+                "body": _OVERLOAD_ONLY_BODY,
+                "attested_model": "Model: Opus 4.8",
+            },
+        ],
+        "E12": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                **_proof_snapshot(
+                    error_banner_text=_STOP_BANNER,
+                    error_banner_match="weekly limit",
+                ),
+            },
+        ],
+        "W2": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                **_proof_snapshot(
+                    error_banner_text=_PRODUCTION_APPROACHING_WEEKLY_LIMIT_BANNER,
+                    error_banner_match="weekly limit",
+                ),
+            },
+        ],
+        "E13": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                "status": "completed",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-e13.md",
+                "body": "",
+                "completion_phase": "terminal",
+            },
+        ],
+        "E14": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                "status": "failed",
+                "error": "satellite exploded",
+                "body": "",
+            },
+        ],
+        "E15": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+                "streaming": True,
+                "tool_pause": False,
+            },
+            {
+                "execution_id": "sat-inv",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+                "streaming": True,
+                "tool_pause": False,
+            },
+            {
+                "execution_id": "sat-inv",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+                "streaming": True,
+                "tool_pause": False,
+            },
+        ],
+    }
+    kwargs: dict[str, Any] = {}
+    if case_id == "E15":
+        clock = {"t": 0.0}
+
+        def _now() -> float:
+            return clock["t"]
+
+        def _sleep(seconds: float) -> None:
+            clock["t"] += max(seconds, 6.0)
+
+        kwargs = {
+            "max_wall_s": 1800,
+            "no_progress_s": 5,
+            "poll_interval_s": 1,
+            "sleep": _sleep,
+            "now": _now,
+        }
+    plain = _run_grade(
+        monkeypatch,
+        tmp_path,
+        f"dispatch-inv-{case_id}-plain",
+        [dict(item) for item in polls[case_id]],
+        **kwargs,
+    )
+    if case_id == "E15":
+        clock["t"] = 0.0
+    traced = _run_grade(
+        monkeypatch,
+        tmp_path,
+        f"dispatch-inv-{case_id}-traced",
+        _inject_grade_trace(polls[case_id]),
+        **kwargs,
+    )
+    assert _grade_triple(plain) == _grade_triple(traced)
+    assert plain.body == traced.body

@@ -7,6 +7,7 @@ harvest proof (``content_proof`` or ``archive_uri``) or failed+stall_stage.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Callable
@@ -34,6 +35,7 @@ from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
 from claude_bundles.overload_only_harvest import (
+    _ERROR_BANNER_BODY_RE,
     _ERROR_BANNER_ONLY_MAX_LEN,
     is_error_banner_only_harvest,
 )
@@ -408,7 +410,9 @@ def _joined_error_banner(snapshot: dict[str, Any]) -> str:
     )
 
 
-def _classify_weekly_limit_banner(banner: str) -> Literal["stop", "warning", "other"] | None:
+def _classify_weekly_limit_banner(
+    banner: str,
+) -> Literal["stop", "warning", "other"] | None:
     """Classify joined harvest banner text when it mentions weekly limit."""
     if not _WEEKLY_LIMIT_RE.search(banner):
         return None
@@ -430,6 +434,260 @@ def _weekly_limit_warning_extra(snapshot: dict[str, Any]) -> dict[str, Any]:
     if len(text) > _WEEKLY_LIMIT_WARNING_MAX_LEN:
         text = text[:_WEEKLY_LIMIT_WARNING_MAX_LEN]
     return {"weekly_limit_warning": text}
+
+
+_GRADE_TRACE_RULES = frozenset(
+    {
+        "weekly_limit_stop",
+        "weekly_limit_short_body",
+        "weekly_limit_warning",
+        "overload_only",
+        "completed_without_proof",
+        "terminal_failure",
+        "wall_clock",
+        "no_progress",
+        "transport_miss",
+        "staging_error",
+        "submit_overload",
+        "submit_error",
+        "submit_no_id",
+    }
+)
+_GRADE_TRACE_BANNER_CAP = 500
+_GRADE_TRACE_MATCH_CAP = 120
+_GRADE_TRACE_SHORT_CAP = 64
+_GRADE_TRACE_ERROR_CAP = 300
+_GRADE_TRACE_MAX_BYTES = 1500
+_GRADE_TRACE_DROP_ORDER = (
+    "error",
+    "matched_span",
+    "banner_match",
+    "harvest_provenance",
+    "completion_phase",
+    "status",
+    "stall_stage",
+)
+
+
+def _collapse_trace_text(value: str) -> str:
+    """Collapse whitespace and replace backticks so a banner stays one scalar."""
+    return re.sub(r"\s+", " ", value).strip().replace("`", "'")
+
+
+def _trace_utf8_len(payload: dict[str, Any]) -> int:
+    return len(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    )
+
+
+def _fit_grade_trace(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop low-priority scalars until the trace is under 1.5KB."""
+    out = dict(payload)
+    if _trace_utf8_len(out) <= _GRADE_TRACE_MAX_BYTES:
+        return out
+    for key in _GRADE_TRACE_DROP_ORDER:
+        out.pop(key, None)
+        if _trace_utf8_len(out) <= _GRADE_TRACE_MAX_BYTES:
+            return out
+    text = out.get("banner_text")
+    if isinstance(text, str) and text:
+        lo = 0
+        hi = len(text)
+        best = ""
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            trial = dict(out)
+            trial["banner_text"] = text[:mid]
+            trial["banner_text_truncated"] = True
+            if _trace_utf8_len(trial) <= _GRADE_TRACE_MAX_BYTES:
+                best = text[:mid]
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        out["banner_text"] = best
+        out["banner_text_truncated"] = True
+    if _trace_utf8_len(out) > _GRADE_TRACE_MAX_BYTES:
+        rule = out.get("rule")
+        return {"rule": rule if isinstance(rule, str) else "trace_error"}
+    return out
+
+
+def _matched_span_for_rule(snapshot: dict[str, Any], rule: str) -> str:
+    """Return the regex match text for *rule*, never the pattern source."""
+    if rule in {"weekly_limit_stop", "weekly_limit_short_body", "weekly_limit_warning"}:
+        pattern = (
+            _WEEKLY_LIMIT_STOP_RE if rule == "weekly_limit_stop" else _WEEKLY_LIMIT_RE
+        )
+        if rule == "weekly_limit_warning":
+            pattern = _WEEKLY_LIMIT_APPROACHING_RE
+    elif rule == "overload_only":
+        pattern = _ERROR_BANNER_BODY_RE
+    else:
+        return ""
+    haystacks: list[str] = []
+    for key in ("error_banner_text", "error_banner_match", "error_banner", "body"):
+        raw = snapshot.get(key)
+        if isinstance(raw, str) and raw:
+            haystacks.append(raw)
+    for hay in haystacks:
+        found = pattern.search(hay)
+        if found:
+            return _collapse_trace_text(found.group(0))[:_GRADE_TRACE_MATCH_CAP]
+        if rule == "weekly_limit_stop":
+            fallback = _WEEKLY_LIMIT_RE.search(hay)
+            if fallback:
+                return _collapse_trace_text(fallback.group(0))[:_GRADE_TRACE_MATCH_CAP]
+    return ""
+
+
+def _grade_trace_fields(
+    snapshot: dict[str, Any],
+    *,
+    rule: str,
+    stall_stage: str | None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "rule": rule if rule in _GRADE_TRACE_RULES else rule[:_GRADE_TRACE_SHORT_CAP],
+    }
+    raw_banner = snapshot.get("error_banner_text")
+    if isinstance(raw_banner, str):
+        collapsed = _collapse_trace_text(raw_banner)
+        out["banner_text_len"] = len(raw_banner)
+        out["banner_text_truncated"] = len(collapsed) > _GRADE_TRACE_BANNER_CAP
+        out["banner_text"] = collapsed[:_GRADE_TRACE_BANNER_CAP]
+    else:
+        out["banner_text"] = None
+        out["banner_text_len"] = 0
+        out["banner_text_truncated"] = False
+    raw_match = snapshot.get("error_banner_match")
+    if isinstance(raw_match, str) and raw_match.strip():
+        out["banner_match"] = _collapse_trace_text(raw_match)[:_GRADE_TRACE_MATCH_CAP]
+    span = _matched_span_for_rule(snapshot, rule)
+    if span:
+        out["matched_span"] = span
+    stage = stall_stage if stall_stage is not None else snapshot.get("stall_stage")
+    if isinstance(stage, str) and stage:
+        out["stall_stage"] = stage[:_GRADE_TRACE_SHORT_CAP]
+    for key in ("status", "completion_phase", "harvest_provenance"):
+        raw = snapshot.get(key)
+        if isinstance(raw, str) and raw:
+            out[key] = raw[:_GRADE_TRACE_SHORT_CAP]
+    raw_error = snapshot.get("error")
+    if isinstance(raw_error, str) and raw_error:
+        out["error"] = raw_error[:_GRADE_TRACE_ERROR_CAP]
+    return out
+
+
+def _grade_trace(
+    snapshot: Any,
+    *,
+    rule: str,
+    stall_stage: str | None = None,
+) -> dict[str, Any]:
+    """Bounded recording of the snapshot that a grade already decided.
+
+    Reads only *snapshot*. No store and no I/O. Grading predicates must not
+    read the returned dict. On any internal failure returns ``rule`` plus
+    ``trace_error`` and does not raise.
+    """
+    try:
+        if not isinstance(rule, str):
+            raise TypeError("rule")
+        if not isinstance(snapshot, dict):
+            raise TypeError("snapshot")
+        return _fit_grade_trace(
+            _grade_trace_fields(snapshot, rule=rule, stall_stage=stall_stage)
+        )
+    except Exception as exc:
+        safe_rule = (
+            rule[:_GRADE_TRACE_SHORT_CAP] if isinstance(rule, str) else "trace_error"
+        )
+        return {"rule": safe_rule, "trace_error": type(exc).__name__}
+
+
+def _bound_borne_grade_trace(
+    borne: dict[str, Any], *, rule: str | None
+) -> dict[str, Any]:
+    """Copy a snapshot-borne trace without promoting it to grader inputs."""
+    clean: dict[str, Any] = {}
+    for key, value in borne.items():
+        if isinstance(value, (list, dict, tuple, set)):
+            continue
+        name = str(key)[:_GRADE_TRACE_SHORT_CAP]
+        if isinstance(value, str):
+            text = value.replace("`", "'")
+            if name == "banner_text":
+                text = text[:_GRADE_TRACE_BANNER_CAP]
+            elif name in {"banner_match", "matched_span", "error"}:
+                cap = (
+                    _GRADE_TRACE_ERROR_CAP
+                    if name == "error"
+                    else _GRADE_TRACE_MATCH_CAP
+                )
+                text = text[:cap]
+            elif name in {
+                "rule",
+                "stall_stage",
+                "status",
+                "completion_phase",
+                "harvest_provenance",
+                "trace_error",
+            }:
+                text = text[:_GRADE_TRACE_SHORT_CAP]
+            clean[name] = text
+        elif isinstance(value, (int, float, bool)) or value is None:
+            clean[name] = value
+    if "rule" not in clean and rule:
+        clean["rule"] = rule[:_GRADE_TRACE_SHORT_CAP]
+    return _fit_grade_trace(clean)
+
+
+def _attach_grade_trace(
+    extras: dict[str, Any],
+    snapshot: Any,
+    *,
+    rule: str | None,
+    stall_stage: str | None,
+) -> dict[str, Any]:
+    """Merge ``grade_trace`` into *extras*. A borne trace is copied, not graded."""
+    try:
+        out = dict(extras)
+    except Exception:
+        out = {}
+    try:
+        borne = snapshot.get("grade_trace") if isinstance(snapshot, dict) else None
+        if isinstance(borne, dict) and borne:
+            out["grade_trace"] = _bound_borne_grade_trace(borne, rule=rule)
+            return out
+        if not rule:
+            return out
+        snap = snapshot if isinstance(snapshot, dict) else {}
+        out["grade_trace"] = _grade_trace(snap, rule=rule, stall_stage=stall_stage)
+        return out
+    except Exception as exc:
+        safe_rule = (
+            rule[:_GRADE_TRACE_SHORT_CAP] if isinstance(rule, str) else "trace_error"
+        )
+        out["grade_trace"] = {"rule": safe_rule, "trace_error": type(exc).__name__}
+        return out
+
+
+def _weekly_limit_grade_rule(snapshot: dict[str, Any]) -> str:
+    """Name the weekly-limit branch already chosen. Does not decide the grade."""
+    banner = _joined_error_banner(snapshot)
+    kind = _classify_weekly_limit_banner(banner)
+    if kind == "warning":
+        body = str(snapshot.get("body") or "").strip()
+        if (
+            body
+            and len(body) <= _ERROR_BANNER_ONLY_MAX_LEN
+            and _WEEKLY_LIMIT_RE.search(body)
+        ):
+            return "weekly_limit_short_body"
+        return "weekly_limit_warning"
+    if kind in {"stop", "other"}:
+        return "weekly_limit_stop"
+    return "weekly_limit_short_body"
 
 
 def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
@@ -457,12 +715,20 @@ def _weekly_limit_result(
     carry: dict[str, str | None] | None = None,
     poll_snapshots: int = 0,
     abort: dict[str, Any] | None = None,
+    snapshot: dict[str, Any] | None = None,
 ) -> CdpGenerateResult:
     """Grade weekly-limit banner as ``cdp FAILED`` (mark: banner_not_a_seat)."""
     carry = carry or {}
+    snap = snapshot if isinstance(snapshot, dict) else {}
     extras: dict[str, Any] = {"mark": "banner_not_a_seat", "reason": WEEKLY_LIMIT}
     if abort is not None:
         extras["abort"] = abort
+    extras = _attach_grade_trace(
+        extras,
+        snap,
+        rule=_weekly_limit_grade_rule(snap),
+        stall_stage=WEEKLY_LIMIT,
+    )
     return CdpGenerateResult(
         ok=False,
         body=body,
@@ -537,6 +803,10 @@ def result_from_snapshot(
 
     ``job=delivery-review`` without a parseable verdict returns None so reconcile
     cannot race the worker keep-poll (a:37156 F1 / dogfood WITHHOLD).
+
+    When the snapshot already carries ``grade_trace``, that dict is copied into
+    extras and is not a grader input. Fresh traces record the snapshot in hand
+    under the same key after the grade is chosen.
     """
     if snapshot.get("error") and "status" not in snapshot:
         return None
@@ -559,7 +829,12 @@ def result_from_snapshot(
                 picker_model=picker_model,
                 stall_stage=UPSTREAM_OVERLOADED,
                 error="upstream overload-only harvest body",
-                extras=_upstream_overloaded_extras(),
+                extras=_attach_grade_trace(
+                    _upstream_overloaded_extras(),
+                    snapshot,
+                    rule="overload_only",
+                    stall_stage=UPSTREAM_OVERLOADED,
+                ),
                 archive_uri=carry["archive_uri"],
                 content_proof_uri=carry["content_proof_uri"],
                 content_proof_sha256=carry["content_proof_sha256"],
@@ -572,8 +847,15 @@ def result_from_snapshot(
                 prompt_uri=prompt_uri,
                 picker_model=picker_model,
                 carry=carry,
+                snapshot=snapshot,
             )
-        ok_extras = _weekly_limit_warning_extra(snapshot)
+        warning_extras = _weekly_limit_warning_extra(snapshot)
+        ok_extras = _attach_grade_trace(
+            warning_extras,
+            snapshot,
+            rule="weekly_limit_warning" if warning_extras else None,
+            stall_stage=None,
+        )
         return CdpGenerateResult(
             ok=True,
             body=body,
@@ -603,7 +885,12 @@ def result_from_snapshot(
             archive_uri=carry["archive_uri"],
             content_proof_uri=carry["content_proof_uri"],
             content_proof_sha256=carry["content_proof_sha256"],
-            extras=_deliverable_unproven_extras(carry),
+            extras=_attach_grade_trace(
+                _deliverable_unproven_extras(carry),
+                snapshot,
+                rule="completed_without_proof",
+                stall_stage="completed_without_proof",
+            ),
         )
 
     if _terminal_failure(snapshot):
@@ -620,7 +907,12 @@ def result_from_snapshot(
             archive_uri=carry["archive_uri"],
             content_proof_uri=carry["content_proof_uri"],
             content_proof_sha256=carry["content_proof_sha256"],
-            extras=dict(fields["extras"]),
+            extras=_attach_grade_trace(
+                dict(fields["extras"]),
+                snapshot,
+                rule="terminal_failure",
+                stall_stage=fields["stall_stage"],
+            ),
         )
 
     return None
@@ -732,7 +1024,12 @@ def run_cdp_generate(
             picker_model=picker,
             error=exc.reason,
             stall_stage=None,
-            extras={"code": exc.code},
+            extras=_attach_grade_trace(
+                {"code": exc.code},
+                {"error": exc.reason},
+                rule="staging_error",
+                stall_stage=None,
+            ),
         )
     mission_retain = staged.mission
 
@@ -773,7 +1070,12 @@ def run_cdp_generate(
                 picker_model=picker,
                 stall_stage=UPSTREAM_OVERLOADED,
                 error=str(exc),
-                extras=_upstream_overloaded_extras(exc),
+                extras=_attach_grade_trace(
+                    _upstream_overloaded_extras(exc),
+                    {"error": str(exc)},
+                    rule="submit_overload",
+                    stall_stage=UPSTREAM_OVERLOADED,
+                ),
             )
         return CdpGenerateResult(
             ok=False,
@@ -783,7 +1085,12 @@ def run_cdp_generate(
             prompt_uri=staged.prompt_uri,
             picker_model=picker,
             error=str(exc),
-            extras=_client_error_dict(exc),
+            extras=_attach_grade_trace(
+                _client_error_dict(exc),
+                {"error": str(exc)},
+                rule="submit_error",
+                stall_stage=None,
+            ),
         )
 
     sat_id = str(submitted.get("execution_id") or "")
@@ -797,6 +1104,12 @@ def run_cdp_generate(
             prompt_uri=staged.prompt_uri,
             picker_model=picker,
             error="satellite submit returned no execution_id",
+            extras=_attach_grade_trace(
+                {},
+                {"error": "satellite submit returned no execution_id"},
+                rule="submit_no_id",
+                stall_stage=None,
+            ),
         )
 
     if on_submitted is not None:
@@ -814,6 +1127,7 @@ def run_cdp_generate(
     proof_carry.absorb_status_snapshot(submitted)
     url_bound_emitted: set[tuple[str, str]] = set()
     distinct_cse_urls: list[str] = []
+    last_snapshot: dict[str, Any] = submitted
     _maybe_invoke_url_bound(
         proof_carry=proof_carry,
         snapshot=submitted,
@@ -859,14 +1173,19 @@ def run_cdp_generate(
                     f"(since_last_progress_s={since_last_progress_s:.1f})"
                 ),
                 poll_snapshots=polls,
-                extras={
-                    "abort": abort_info,
-                    "since_last_progress_s": since_last_progress_s,
-                    "progress_trace": trace.as_dict(
-                        now_s=clock() - trace_started, no_progress_s=no_progress_s
-                    ),
-                    **proof_carry.carry_extras(),
-                },
+                extras=_attach_grade_trace(
+                    {
+                        "abort": abort_info,
+                        "since_last_progress_s": since_last_progress_s,
+                        "progress_trace": trace.as_dict(
+                            now_s=clock() - trace_started, no_progress_s=no_progress_s
+                        ),
+                        **proof_carry.carry_extras(),
+                    },
+                    last_snapshot,
+                    rule="wall_clock",
+                    stall_stage=stall_stage,
+                ),
                 **proof_carry.as_result_fields(),
             )
 
@@ -880,6 +1199,7 @@ def run_cdp_generate(
             snapshot = relay.poll(sat_id, **poll_kwargs)
         except CdpAskClientError as exc:
             snapshot = _client_error_dict(exc)
+        last_snapshot = snapshot
         polls += 1
         transport_missed = bool(snapshot.get("error")) and "status" not in snapshot
         if transport_missed:
@@ -913,15 +1233,21 @@ def run_cdp_generate(
                     stall_stage=fields["stall_stage"],
                     error=fields["error"],
                     poll_snapshots=polls,
-                    extras={
-                        "abort": abort_info,
-                        "since_last_progress_s": since_last_progress_s,
-                        "progress_trace": trace.as_dict(
-                            now_s=clock() - trace_started, no_progress_s=no_progress_s
-                        ),
-                        **fields["extras"],
-                        **proof_carry.carry_extras(),
-                    },
+                    extras=_attach_grade_trace(
+                        {
+                            "abort": abort_info,
+                            "since_last_progress_s": since_last_progress_s,
+                            "progress_trace": trace.as_dict(
+                                now_s=clock() - trace_started,
+                                no_progress_s=no_progress_s,
+                            ),
+                            **fields["extras"],
+                            **proof_carry.carry_extras(),
+                        },
+                        snapshot,
+                        rule="transport_miss",
+                        stall_stage=fields["stall_stage"],
+                    ),
                     **proof_carry.as_result_fields(),
                 )
             continue
@@ -970,7 +1296,12 @@ def run_cdp_generate(
                     stall_stage=UPSTREAM_OVERLOADED,
                     error="upstream overload-only harvest body",
                     poll_snapshots=polls,
-                    extras=_upstream_overloaded_extras(abort=abort_info),
+                    extras=_attach_grade_trace(
+                        _upstream_overloaded_extras(abort=abort_info),
+                        snapshot,
+                        rule="overload_only",
+                        stall_stage=UPSTREAM_OVERLOADED,
+                    ),
                 )
             if _proof_rejects_weekly_limit(snapshot):
                 abort_info = _abort_then_sweep(
@@ -993,10 +1324,18 @@ def run_cdp_generate(
                     },
                     poll_snapshots=polls,
                     abort=abort_info,
+                    snapshot=snapshot,
                 )
             sweep_ephemeral(execution_id)
+            warning_extras = _weekly_limit_warning_extra(snapshot)
             ok_extras = proof_carry.carry_extras()
-            ok_extras.update(_weekly_limit_warning_extra(snapshot))
+            ok_extras.update(warning_extras)
+            ok_extras = _attach_grade_trace(
+                ok_extras,
+                snapshot,
+                rule="weekly_limit_warning" if warning_extras else None,
+                stall_stage=None,
+            )
             return CdpGenerateResult(
                 ok=True,
                 body=body,
@@ -1026,6 +1365,12 @@ def run_cdp_generate(
             carry_fields = proof_carry.as_result_fields()
             extras: dict[str, Any] = {"abort": abort_info, **proof_carry.carry_extras()}
             extras.update(_deliverable_unproven_extras(carry_fields))
+            extras = _attach_grade_trace(
+                extras,
+                snapshot,
+                rule="completed_without_proof",
+                stall_stage="completed_without_proof",
+            )
             return CdpGenerateResult(
                 ok=False,
                 body=str(snapshot.get("body") or ""),
@@ -1056,11 +1401,16 @@ def run_cdp_generate(
                 retain_cse=retain,
                 retain_reason=reason,
             )
-            extras = {
-                "abort": abort_info,
-                **fields["extras"],
-                **proof_carry.carry_extras(),
-            }
+            extras = _attach_grade_trace(
+                {
+                    "abort": abort_info,
+                    **fields["extras"],
+                    **proof_carry.carry_extras(),
+                },
+                snapshot,
+                rule="terminal_failure",
+                stall_stage=fields["stall_stage"],
+            )
             return CdpGenerateResult(
                 ok=False,
                 body=str(snapshot.get("body") or ""),
@@ -1098,14 +1448,19 @@ def run_cdp_generate(
                     f"(completion_phase={snapshot.get('completion_phase')!r})"
                 ),
                 poll_snapshots=polls,
-                extras={
-                    "abort": abort_info,
-                    "since_last_progress_s": since_last_progress_s,
-                    "progress_trace": trace.as_dict(
-                        now_s=clock() - trace_started,
-                        no_progress_s=no_progress_s,
-                    ),
-                    **proof_carry.carry_extras(),
-                },
+                extras=_attach_grade_trace(
+                    {
+                        "abort": abort_info,
+                        "since_last_progress_s": since_last_progress_s,
+                        "progress_trace": trace.as_dict(
+                            now_s=clock() - trace_started,
+                            no_progress_s=no_progress_s,
+                        ),
+                        **proof_carry.carry_extras(),
+                    },
+                    snapshot,
+                    rule="no_progress",
+                    stall_stage="no_progress",
+                ),
                 **proof_carry.as_result_fields(),
             )

@@ -14,6 +14,7 @@ from claude_bundles import project_ask_abort as abort
 from claude_bundles.chat_reply_wait import HarvestIncompleteError
 from claude_bundles.chat_session_hygiene import _page_score
 from claude_bundles.project_ask import (
+    _archive_body_section,
     archive_harvest,
     finalize_scrape_body,
     project_ask_on_page,
@@ -159,6 +160,68 @@ def test_archive_harvest_same_execution_growth_rewrites(tmp_path: Path) -> None:
         execution_id=execution_id,
     )
     assert "second body" in archive.read_text(encoding="utf-8")
+
+
+def test_archive_harvest_hostile_banner_does_not_corrupt_body(tmp_path: Path) -> None:
+    """Newline plus a body marker, and backticks, stay inside one metadata line."""
+    archive = tmp_path / "harvest.md"
+    body = "REAL BODY"
+    archive_harvest(
+        body=body,
+        url="https://claude.ai/cowork/cse_hostileBanner1",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="opus-4.8",
+        archive_path=str(archive),
+        execution_id="exec" + "h" * 28,
+        error_banner_text="hello\n## Body\n\nFAKE`tick",
+        error_banner_match="m`x\ny",
+    )
+    text = archive.read_text(encoding="utf-8")
+    head, section = text.split("## Body\n\n", 1)
+    assert section.strip() == body
+    assert _archive_body_section(text).strip() == body
+    assert "## Body\n\n" not in head
+    text_line = next(
+        line for line in head.splitlines() if line.startswith("- error_banner_text:")
+    )
+    match_line = next(
+        line for line in head.splitlines() if line.startswith("- error_banner_match:")
+    )
+    assert text_line.count("`") == 2
+    assert match_line.count("`") == 2
+    assert "FAKE'tick" in text_line
+    assert "FAKE`tick" not in text
+    assert "hello ## Body FAKE'tick" in text_line
+    assert "m'x y" in match_line
+
+
+def test_archive_harvest_same_body_rewrite_accepts_banner(tmp_path: Path) -> None:
+    """Same execution and same body still passes the clobber guard."""
+    archive = tmp_path / "harvest.md"
+    execution_id = "exec" + "c" * 28
+    archive_harvest(
+        body="same",
+        url="https://claude.ai/new",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="opus-4.8",
+        archive_path=str(archive),
+        execution_id=execution_id,
+    )
+    archive_harvest(
+        body="same",
+        url="https://claude.ai/new",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="opus-4.8",
+        archive_path=str(archive),
+        execution_id=execution_id,
+        error_banner_text="You've hit your weekly limit",
+    )
+    text = archive.read_text(encoding="utf-8")
+    assert _archive_body_section(text).strip() == "same"
+    assert "You've hit your weekly limit" in text
 
 
 def test_archive_harvest_foreign_execution_refused(tmp_path: Path) -> None:
@@ -831,4 +894,3 @@ async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> 
     draft = submit.await_args.kwargs["draft_text"]
     assert "Question. Is the desk memo" in draft
     attest.assert_not_called()
-

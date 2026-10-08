@@ -163,6 +163,16 @@ def read_archive_execution_id(archive_path: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _archive_banner_line(key: str, value: str | None, cap: int) -> str:
+    """One metadata line. Newlines and backticks cannot break the body marker."""
+    if not value:
+        return ""
+    collapsed = re.sub(r"\s+", " ", str(value)).strip().replace("`", "'")
+    if not collapsed:
+        return ""
+    return f"- {key}: `{collapsed[:cap]}`\n"
+
+
 def _archive_body_section(full_text: str) -> str:
     marker = "## Body\n\n"
     idx = full_text.find(marker)
@@ -183,8 +193,14 @@ def archive_harvest(
     stargate_execution_id: str | None = None,
     artifact_cards: list[dict[str, str]] | None = None,
     artifact_cards_unresolved: bool = False,
+    error_banner_text: str | None = None,
+    error_banner_match: str | None = None,
 ) -> str:
     """Persist raw harvest before delete. Returns cortex:// or file URI.
+
+    Optional banner arguments are sanitized onto metadata lines above the body
+    marker. They are not written into the body section. A same-execution rewrite
+    with an unchanged body still passes the clobber guard.
 
     Raises:
         HarvestArchiveError: When *archive_path* already exists and its on-disk
@@ -221,6 +237,8 @@ def archive_harvest(
         if artifact_cards or artifact_cards_unresolved
         else ""
     )
+    banner_lines = _archive_banner_line("error_banner_text", error_banner_text, 500)
+    banner_lines += _archive_banner_line("error_banner_match", error_banner_match, 120)
     text = (
         f"# CDP ask harvest\n\n"
         f"- archived_at: `{stamp}`\n"
@@ -230,7 +248,8 @@ def archive_harvest(
         f"- project_uuid: `{project_uuid}`\n"
         f"- model_select: `{model}`\n"
         f"- attested_model: `{attested_model}`\n"
-        f"{card_lines}\n"
+        f"{card_lines}"
+        f"{banner_lines}\n"
         f"## Body\n\n{body}\n"
     )
     if path.is_file():

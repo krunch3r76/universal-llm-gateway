@@ -34,6 +34,14 @@ from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.runner import verify_harvest_root
 
+_BANNER_TEXT_LINE = re.compile(
+    r"^- error_banner_text: `([^`]*)`",
+    re.MULTILINE,
+)
+_BANNER_MATCH_LINE = re.compile(
+    r"^- error_banner_match: `([^`]*)`",
+    re.MULTILINE,
+)
 _URL_LINE = re.compile(
     r"^-\s+url:\s+`(https://claude\.ai/(?:cowork/)?cse_[^`]+)`",
     re.MULTILINE,
@@ -128,12 +136,31 @@ def _path_to_cortex_uri(path: Path) -> str:
         return f"file://{resolved}"
 
 
+def _grade_trace_from_archive(text: str) -> dict[str, str] | None:
+    """Read banner metadata into ``grade_trace``. Never the flat grader keys."""
+    marker = "## Body\n\n"
+    idx = text.find(marker)
+    head = text if idx < 0 else text[:idx]
+    trace: dict[str, str] = {}
+    text_match = _BANNER_TEXT_LINE.search(head)
+    match_match = _BANNER_MATCH_LINE.search(head)
+    if text_match:
+        trace["banner_text"] = text_match.group(1)
+    if match_match:
+        trace["banner_match"] = match_match.group(1)
+    return trace or None
+
+
 def snapshot_from_archive_path(
     path: Path,
     *,
     execution_id: str,
 ) -> dict[str, Any] | None:
-    """Project one on-disk harvest archive into a poll-shaped dict."""
+    """Project one on-disk harvest archive into a poll-shaped dict.
+
+    Banner metadata, when present, lands only under ``grade_trace``. Archives
+    written before those lines rebuild with the same keys as before.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -146,7 +173,7 @@ def snapshot_from_archive_path(
     attested_match = _ATTESTED_LINE.search(text)
     attested = attested_match.group(1) if attested_match else None
     stamped = read_archive_execution_id(str(path)) or execution_id
-    return {
+    snapshot: dict[str, Any] = {
         "execution_id": stamped,
         "status": "completed",
         "ok": True,
@@ -158,6 +185,10 @@ def snapshot_from_archive_path(
         "harvest_provenance": "chat",
         "completion_phase": "terminal",
     }
+    grade_trace = _grade_trace_from_archive(text)
+    if grade_trace is not None:
+        snapshot["grade_trace"] = grade_trace
+    return snapshot
 
 
 def snapshot_from_archive_token(
@@ -192,7 +223,9 @@ def _body_from_harvest(response: HarvestResponse) -> str:
 
 def _default_recovery_archive_path(satellite_id: str) -> str:
     root = verify_harvest_root()
-    return str(root / "notes/system/threads" / f"cdp-ask-archive-cdp-recover-{satellite_id}.md")
+    return str(
+        root / "notes/system/threads" / f"cdp-ask-archive-cdp-recover-{satellite_id}.md"
+    )
 
 
 async def _harvest_chat_to_snapshot(
@@ -269,7 +302,9 @@ def cse_url_hint(raw: str | None) -> str | None:
     return token if _CSE_HINT.match(token) else None
 
 
-def _archive_snapshot_or_chat_url(tokens: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+def _archive_snapshot_or_chat_url(
+    tokens: list[str],
+) -> tuple[dict[str, Any] | None, str | None]:
     """Blocking harvest-root archive scan — run via ``asyncio.to_thread``."""
     for token in tokens:
         snap = snapshot_from_archive_token(token)

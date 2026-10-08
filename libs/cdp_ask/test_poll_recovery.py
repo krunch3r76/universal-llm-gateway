@@ -36,6 +36,19 @@ def test_snapshot_from_archive_token(tmp_path: Path) -> None:
     assert snap["body"] == body
     assert snap["attested_model"] == "Fable 5 High"
     assert snap["url"].endswith("cse_testRecovery1")
+    assert "grade_trace" not in snap
+    assert set(snap) == {
+        "execution_id",
+        "status",
+        "ok",
+        "archive_uri",
+        "body",
+        "body_len",
+        "url",
+        "attested_model",
+        "harvest_provenance",
+        "completion_phase",
+    }
 
 
 def test_snapshot_from_archive_token_rejects_chrome_only(tmp_path: Path) -> None:
@@ -116,7 +129,9 @@ def _no_satellite_url(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _token, archive_dir=None: None,
     )
     monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_archives", lambda _t: None)
-    monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_provenance", lambda _t: None)
+    monkeypatch.setattr(
+        "cdp_ask.poll_recovery.chat_url_from_provenance", lambda _t: None
+    )
     monkeypatch.setattr(
         "cdp_ask.poll_recovery.resolve_harvest_chat_url",
         AsyncMock(return_value=None),
@@ -160,7 +175,9 @@ async def test_recover_poll_snapshot_rejects_non_cse_hint(
     harvest.assert_not_awaited()
 
 
-def test_stargate_id_from_satellite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stargate_id_from_satellite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import sqlite3
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
