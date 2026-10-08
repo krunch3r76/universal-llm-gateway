@@ -276,12 +276,12 @@ class EventStore:
             rows.append(
                 (
                     event_id,
-                    ev.get("signal", "unknown"),
-                    ev.get("role", "observation"),
-                    ev.get("scope", "global"),
+                    ev.get("signal") or "unknown",
+                    ev.get("role") or "observation",
+                    ev.get("scope") or "global",
                     ts_ms,
                     ts_iso,
-                    ev.get("source", "unknown"),
+                    ev.get("source") or "unknown",
                     payload_str,
                 )
             )
