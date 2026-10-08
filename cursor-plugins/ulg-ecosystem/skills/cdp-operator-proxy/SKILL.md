@@ -234,9 +234,9 @@ body or episode BRIEFING. The contract column is `team_dispatch` `contract`.
 
 | Lane | IDE command | Headless skill (SOT) | `team_dispatch` `contract` |
 |---|---|---|---|
-| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `freeform` (prompt `Use the work-item-seed-path skill`, `lane=B`, `work_key`). S4a mints the todo, then spawns the conductor (`contract=conductor` needs `source_ref=todo:<slug>` and no inline prompt, so it cannot be the mint call). `freeform` + `source_ref` is 422 `handle_forbidden`, so the mint uses prompt + `work_key`, not `source_ref`. |
+| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `freeform` (prompt `Use the work-item-seed-path skill`, `lane=B`, `work_key`). S4a mints the todo; S6 spawns the conductor (`contract=conductor` needs `source_ref=todo:<slug>` and no inline prompt, so it cannot be the mint call). `freeform` + `source_ref` is 422 `handle_forbidden`, so the mint uses prompt + `work_key`, not `source_ref`. |
 | Idea→implement codework | `/layer` (gate-shape) | `abstraction-layering` | re-admit `conductor`; `implement` \| `investigate` on existing todo; punch identity first if no todo |
-| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | `freeform` (prompt `Use the path-sim skill`) |
+| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | `freeform` (prompt `Use the path-sim skill (layer=… detent=… effort=…)`) |
 
 Commission grok sub-PM: body `Use the work-item-seed-path skill`; S6 **spawns
 conductor** (G-rows *are* layering). Existing `todo:{slug}` codework: body

@@ -11,11 +11,11 @@ from datetime import UTC, datetime
 from universal_event_bus.events.event import Event
 from universal_event_bus.events.factory import event_factory
 
-_SOURCE = "giw.cursor_auto"
+_SOURCE = "mcp.agentbus"
 
 
 @event_factory
-def GiwCursorAutoHopCadenceIdentityBound(  # noqa: N802
+def HopCadenceIdentityBound(  # noqa: N802
     thread_id: str,
     identity_source: str,
     watch_present: bool,
@@ -23,7 +23,7 @@ def GiwCursorAutoHopCadenceIdentityBound(  # noqa: N802
 ) -> Event:
     """Caller identity resolved on a watched lane at request admission."""
     return Event(
-        signal="giw.cursor_auto.hop_cadence_identity_bound",
+        signal="mcp.agentbus.hop_cadence_identity_bound",
         payload={
             "thread_id": thread_id,
             "identity_source": identity_source,
@@ -36,7 +36,7 @@ def GiwCursorAutoHopCadenceIdentityBound(  # noqa: N802
 
 
 @event_factory
-def GiwCursorAutoHopCadenceLeaseLost(  # noqa: N802
+def HopCadenceLeaseLost(  # noqa: N802
     thread_id: str,
     registration_id: str,
     identity_source: str,
@@ -45,7 +45,7 @@ def GiwCursorAutoHopCadenceLeaseLost(  # noqa: N802
 ) -> Event:
     """Lease refused a superseded predecessor at agent_bus.request admission."""
     return Event(
-        signal="giw.cursor_auto.hop_cadence_lease_lost",
+        signal="mcp.agentbus.hop_cadence_lease_lost",
         payload={
             "thread_id": thread_id,
             "registration_id": registration_id,
@@ -59,7 +59,7 @@ def GiwCursorAutoHopCadenceLeaseLost(  # noqa: N802
 
 
 @event_factory
-def GiwCursorAutoHopCadenceFenceStarted(  # noqa: N802
+def HopCadenceFenceStarted(  # noqa: N802
     thread_id: str,
     superseded_registration_id: str,
     execution_id: str | None,
@@ -67,7 +67,7 @@ def GiwCursorAutoHopCadenceFenceStarted(  # noqa: N802
 ) -> Event:
     """Joinable hop-claim armed a request fence on the lane."""
     return Event(
-        signal="giw.cursor_auto.hop_cadence_fence_started",
+        signal="mcp.agentbus.hop_cadence_fence_started",
         payload={
             "thread_id": thread_id,
             "superseded_registration_id": superseded_registration_id,
@@ -80,7 +80,7 @@ def GiwCursorAutoHopCadenceFenceStarted(  # noqa: N802
 
 
 @event_factory
-def GiwCursorAutoHopCadenceLeaseReclaimed(  # noqa: N802
+def HopCadenceLeaseReclaimed(  # noqa: N802
     thread_id: str,
     superseded_registration_id: str,
     execution_id: str,
@@ -88,7 +88,7 @@ def GiwCursorAutoHopCadenceLeaseReclaimed(  # noqa: N802
 ) -> Event:
     """CSE-terminal release cleared the request fence for a superseded seat."""
     return Event(
-        signal="giw.cursor_auto.hop_cadence_lease_reclaimed",
+        signal="mcp.agentbus.hop_cadence_lease_reclaimed",
         payload={
             "thread_id": thread_id,
             "superseded_registration_id": superseded_registration_id,
@@ -128,9 +128,9 @@ def emit_identity_bound(
     watch_present: bool,
     registration_id: str | None,
 ) -> None:
-    """Emit ``giw.cursor_auto.hop_cadence_identity_bound`` (best-effort)."""
+    """Emit ``mcp.agentbus.hop_cadence_identity_bound`` (best-effort)."""
     _mirror_to_event_service(
-        GiwCursorAutoHopCadenceIdentityBound(
+        HopCadenceIdentityBound(
             thread_id=thread_id,
             identity_source=identity_source,
             watch_present=watch_present,
@@ -147,9 +147,9 @@ def emit_lease_lost(
     superseded_registration_id: str,
     successor_execution_id: str | None = None,
 ) -> None:
-    """Emit ``giw.cursor_auto.hop_cadence_lease_lost`` (best-effort)."""
+    """Emit ``mcp.agentbus.hop_cadence_lease_lost`` (best-effort)."""
     _mirror_to_event_service(
-        GiwCursorAutoHopCadenceLeaseLost(
+        HopCadenceLeaseLost(
             thread_id=thread_id,
             registration_id=registration_id,
             identity_source=identity_source,
@@ -166,9 +166,9 @@ def emit_fence_started(
     execution_id: str | None,
     satellite_execution_id: str | None,
 ) -> None:
-    """Emit ``giw.cursor_auto.hop_cadence_fence_started`` (best-effort)."""
+    """Emit ``mcp.agentbus.hop_cadence_fence_started`` (best-effort)."""
     _mirror_to_event_service(
-        GiwCursorAutoHopCadenceFenceStarted(
+        HopCadenceFenceStarted(
             thread_id=thread_id,
             superseded_registration_id=superseded_registration_id,
             execution_id=execution_id,
@@ -184,9 +184,9 @@ def emit_lease_reclaimed(
     execution_id: str,
     action: str,
 ) -> None:
-    """Emit ``giw.cursor_auto.hop_cadence_lease_reclaimed`` (best-effort)."""
+    """Emit ``mcp.agentbus.hop_cadence_lease_reclaimed`` (best-effort)."""
     _mirror_to_event_service(
-        GiwCursorAutoHopCadenceLeaseReclaimed(
+        HopCadenceLeaseReclaimed(
             thread_id=thread_id,
             superseded_registration_id=superseded_registration_id,
             execution_id=execution_id,

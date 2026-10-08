@@ -345,7 +345,7 @@ First codework utterance after S4a mint:
 team_dispatch(
   op="generate",
   seat="cursor-sdk",
-  contract="conductor",          # materializer — ¬ "freeform" (freeform + source_ref is 422 none_with_source_ref)
+  contract="conductor",          # materializer — ¬ "freeform" (freeform + source_ref is 422 handle_forbidden)
 
   lane="B",
   source_ref="todo:{slug}",      # ¬ packet_path (refused on this contract)
