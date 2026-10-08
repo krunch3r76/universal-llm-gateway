@@ -18,7 +18,7 @@ from implement_admission.spec import (
     WorkOutcome,
 )
 
-StatusIncompleteClass = Literal["work", "capture", "consult"]
+StatusIncompleteClass = Literal["work", "capture", "consult", "park"]
 StatusAuthorityWinner = Literal["measure", "claim"]
 NextStepAuthority = Literal[
     "deviations_qualified_measure",
@@ -27,7 +27,9 @@ NextStepAuthority = Literal[
 ]
 
 _PLANE_LEGEND_RE = re.compile(r"(?im)^plane-legend:\s*.+$")
-_INCOMPLETE_CLASS_SUFFIX_RE = re.compile(r"^(partial):(work|capture|consult)$", re.I)
+_INCOMPLETE_CLASS_SUFFIX_RE = re.compile(
+    r"^(partial):(work|capture|consult|park)$", re.I
+)
 _MEASURE_ALIAS_MAP = {
     "failed": "blocked",
     "gated": "blocked",
@@ -49,7 +51,7 @@ def normalize_measurement_token(measurement: str) -> str:
 
 
 def measurement_incomplete_class(measurement: str) -> StatusIncompleteClass | None:
-    """Return work/capture suffix when *measurement* carries ``partial:*``."""
+    """Return work/capture/consult/park suffix when *measurement* carries ``partial:*``."""
     match = _INCOMPLETE_CLASS_SUFFIX_RE.match((measurement or "").strip().lower())
     if match is None:
         return None
@@ -81,8 +83,11 @@ def classify_status_incomplete_class(
         return None
     from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
         CONDUCTOR_CONSULT_REASONS,
+        CONDUCTOR_PARK_HARVEST_OWED,
     )
 
+    if degraded_reason == CONDUCTOR_PARK_HARVEST_OWED:
+        return "park"
     if degraded_reason in CONDUCTOR_CONSULT_REASONS:
         return "consult"
     devs = list(deviations or [])
@@ -116,7 +121,7 @@ def incomplete_class_from_wrapper(
 ) -> StatusIncompleteClass | None:
     """Read stamped class from ImplementCloseout JSON when present."""
     raw = payload.get("status_incomplete_class")
-    if raw in ("work", "capture", "consult"):
+    if raw in ("work", "capture", "consult", "park"):
         return raw  # type: ignore[return-value]
     return None
 
@@ -127,7 +132,7 @@ def resolve_qualified_measurement_status(
     wrapper_text: str | None,
     incomplete_class: StatusIncompleteClass | None = None,
 ) -> str:
-    """Return measurement token with ``partial:work|capture|consult`` when applicable."""
+    """Return measurement token with ``partial:work|capture|consult|park`` when applicable."""
     normalized = (base_status or "").strip().lower()
     if normalized != "partial":
         return normalized
