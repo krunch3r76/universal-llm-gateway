@@ -85,6 +85,50 @@ def test_within_horizon_non_operator_counts_toward_busy() -> None:
     assert past_count == 0
 
 
+def test_exact_horizon_non_operator_is_past_only() -> None:
+    """Open seconds equal to max_open_leg_s are past-horizon, not busy."""
+    max_wall_s = 1800.0
+    admitted = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(max_wall_s))
+    ).isoformat()
+    leg = SimpleNamespace(
+        execution_id="exec-exact",
+        purpose="consult",
+        max_wall_s=max_wall_s,
+        admitted_at=admitted,
+    )
+    non_operator, orphans, past, past_count = cdp_open_leg_split([leg])
+    assert non_operator == 0
+    assert orphans == []
+    assert past_count == 1
+    assert past == [
+        {
+            "execution_id": "exec-exact",
+            "purpose": "consult",
+            "admitted_at": leg.admitted_at,
+        }
+    ]
+
+
+def test_one_second_under_horizon_non_operator_counts() -> None:
+    """Open seconds one under max_open_leg_s still count as non-operator."""
+    max_wall_s = 1800.0
+    admitted = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(max_wall_s) - 1)
+    ).isoformat()
+    leg = SimpleNamespace(
+        execution_id="exec-under",
+        purpose="consult",
+        max_wall_s=max_wall_s,
+        admitted_at=admitted,
+    )
+    non_operator, orphans, past, past_count = cdp_open_leg_split([leg])
+    assert non_operator == 1
+    assert orphans == []
+    assert past == []
+    assert past_count == 0
+
+
 def test_past_horizon_operator_proxy_absent_from_orphans() -> None:
     leg = _past_horizon_leg("exec-proxy-old", purpose="operator-proxy")
     non_operator, orphans, past, past_count = cdp_open_leg_split([leg])
