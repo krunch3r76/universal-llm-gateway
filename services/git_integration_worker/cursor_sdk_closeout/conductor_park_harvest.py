@@ -527,14 +527,15 @@ def consult_pending_continue_owed(
 
 def _park_harvest_stop_claim_exhausted(row: dict[str, Any]) -> bool:
     """True after two ``stop_not_claimed`` admits — no third POST on this path."""
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        park_harvest_stop_not_claimed_exhausted,
+    )
+
     rec = _record_data(row)
     admit_err = rec.get("hop_admit_error")
     if not isinstance(admit_err, dict):
         return False
-    if int(admit_err.get("attempts") or 0) < 2:
-        return False
-    last_error = str(admit_err.get("last_error") or "")
-    return "stop_not_claimed" in last_error
+    return park_harvest_stop_not_claimed_exhausted(admit_err)
 
 
 async def fire_consult_pending_continue(row: dict[str, Any]) -> bool:
@@ -696,7 +697,11 @@ async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
         emit_frontier_sdk_conductor_hop_admit_failed,
         emit_frontier_sdk_conductor_hop_admitted,
     )
-    from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        merge_hop_admit_error_into_record_json_conn,
+        merge_hop_patch,
+        park_harvest_stop_not_claimed_exhausted,
+    )
 
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
@@ -743,29 +748,27 @@ async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
         )
         return True
     error_text = json.dumps(detail, sort_keys=True)[:500]
-    rec_before = _record_data(row)
-    prior_err = rec_before.get("hop_admit_error")
-    prior_attempts = (
-        int(prior_err.get("attempts") or 0) if isinstance(prior_err, dict) else 0
-    )
     admit_patch: dict[str, Any] = {
         "error": error_text,
         "status_code": detail.get("status_code"),
     }
-    if (
-        detail.get("reason") == "stop_not_claimed"
-        and prior_attempts + 1 >= 2
-    ):
-        admit_patch["retryable"] = False
-    merged = merge_hop_patch(
-        record_json,
-        {"hop_admit_error": admit_patch},
-    )
+    failure_reason = detail.get("reason")
+    if isinstance(failure_reason, str) and failure_reason:
+        admit_patch["reason"] = failure_reason
+    def _finalize_admit_err(merged_err: dict[str, Any]) -> dict[str, Any]:
+        if park_harvest_stop_not_claimed_exhausted(merged_err):
+            out = dict(merged_err)
+            out["retryable"] = False
+            return out
+        return merged_err
+
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
-        conn.execute(
-            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
-            (merged, dispatch_id),
+        merge_hop_admit_error_into_record_json_conn(
+            conn,
+            dispatch_id=dispatch_id,
+            patch=admit_patch,
+            finalize=_finalize_admit_err,
         )
     emit_frontier_sdk_conductor_hop_admit_failed(
         dispatch_id=dispatch_id,

@@ -743,6 +743,8 @@ async def test_park_harvest_continue_stop_not_claimed_not_retried_a_third_time(
     err = rec["hop_admit_error"]
     assert err["retryable"] is True
     assert err["attempts"] == 1
+    assert err.get("stop_not_claimed_attempts") == 1
+    assert err.get("reason") == "stop_not_claimed"
     assert "stop_not_claimed" in err["last_error"]
 
     assert await fire_park_harvest_continue(row) is False
@@ -752,6 +754,7 @@ async def test_park_harvest_continue_stop_not_claimed_not_retried_a_third_time(
     err = rec["hop_admit_error"]
     assert err["retryable"] is False
     assert err["attempts"] >= 2
+    assert err.get("stop_not_claimed_attempts") == 2
     assert "hop_park_harvest_continued_at" not in rec
 
     assert await fire_park_harvest_continue(row) is False
@@ -787,3 +790,130 @@ async def test_park_harvest_continue_statusless_transport_still_retries(
     assert post_calls == 3
     err = json.loads(row["record_json"])["hop_admit_error"]
     assert err["retryable"] is True
+    assert err.get("stop_not_claimed_attempts") in (None, 0)
+    assert err["attempts"] == 3
+
+
+@pytest.mark.asyncio
+async def test_park_harvest_transport_then_stop_not_claimed_still_retries(
+    monkeypatch,
+) -> None:
+    """One transport failure then stop_not_claimed still POSTs a third time."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+    post_calls = 0
+    responses = [
+        {"error": "ConnectError", "reason": "stargate_unreachable"},
+        {"reason": "stop_not_claimed", "stop_id": req.dispatch_id},
+    ]
+
+    async def _sequenced(_body, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        if post_calls == 1:
+            detail = responses[0]
+        elif post_calls == 2:
+            detail = responses[1]
+        else:
+            detail = {"error": "ConnectError", "reason": "stargate_unreachable"}
+        return False, detail
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _sequenced,
+    )
+
+    row = _reload_row(ledger, req.dispatch_id)
+    assert await fire_park_harvest_continue(row) is False
+    row = _reload_row(ledger, req.dispatch_id)
+    assert await fire_park_harvest_continue(row) is False
+    row = _reload_row(ledger, req.dispatch_id)
+    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    assert await fire_park_harvest_continue(row) is False
+    assert post_calls == 3
+    row = _reload_row(ledger, req.dispatch_id)
+    err = json.loads(row["record_json"])["hop_admit_error"]
+    assert err["attempts"] == 3
+    assert err.get("stop_not_claimed_attempts") == 1
+    assert err["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_park_harvest_stop_not_claimed_legacy_last_error_only(
+    monkeypatch,
+) -> None:
+    """Pre-counter rows: exhaustion from attempts + last_error substring only."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "hop_admit_error": {
+                "retryable": True,
+                "attempts": 2,
+                "last_status_code": 409,
+                "last_error": '{"reason": "stop_not_claimed"}',
+            }
+        },
+    )
+    post_calls = 0
+
+    async def _unexpected(_body, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        return False, {"reason": "stop_not_claimed"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _unexpected,
+    )
+
+    row = _reload_row(ledger, req.dispatch_id)
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    assert await fire_park_harvest_continue(row) is False
+    assert post_calls == 0
+
+
+def test_park_harvest_admit_error_increment_race_safe() -> None:
+    """Stale snapshot merge under-counts; conn merge reads fresh row each time."""
+    from services.git_integration_worker.cursor_sdk_ledger_hop import (
+        merge_hop_admit_error_into_record_json_conn,
+        merge_hop_patch,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    stale_json = row["record_json"]
+    patch = {
+        "last_error": "x",
+        "reason": "stop_not_claimed",
+        "status_code": 409,
+    }
+    with ledger._connect() as conn:
+        merge_hop_admit_error_into_record_json_conn(
+            conn, dispatch_id=req.dispatch_id, patch=patch
+        )
+        merge_hop_admit_error_into_record_json_conn(
+            conn, dispatch_id=req.dispatch_id, patch=patch
+        )
+    with ledger._connect() as conn:
+        fresh = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    err = json.loads(fresh["record_json"])["hop_admit_error"]
+    assert err["attempts"] == 2
+    assert err["stop_not_claimed_attempts"] == 2
+
+    bad = merge_hop_patch(stale_json, {"hop_admit_error": patch})
+    bad_err = json.loads(bad)["hop_admit_error"]
+    assert bad_err["attempts"] == 1
+    assert bad_err.get("stop_not_claimed_attempts", 0) <= 1

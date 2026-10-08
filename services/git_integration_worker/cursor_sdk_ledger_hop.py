@@ -8,6 +8,7 @@ Ledger row is authority; CHECKPOINT/journal are projections. R3 reactor merges
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from services.git_integration_worker.cursor_sdk_hop_events import _HOP_REASONS
@@ -81,6 +82,27 @@ def _validate_hop_admit_error(value: Any) -> dict[str, Any]:
     raise ValueError(f"hop_admit_error must be dict or str, got {value!r}")
 
 
+def hop_admit_error_is_stop_not_claimed(admit_err: dict[str, Any]) -> bool:
+    """Structured ``reason`` first; legacy rows fall back to ``last_error`` substring."""
+    reason = admit_err.get("reason")
+    if reason == "stop_not_claimed":
+        return True
+    if isinstance(reason, str) and reason:
+        return False
+    last_error = str(admit_err.get("last_error") or "")
+    return "stop_not_claimed" in last_error
+
+
+def park_harvest_stop_not_claimed_exhausted(admit_err: dict[str, Any]) -> bool:
+    """Cap applies to dedicated counter; legacy rows without it use ``attempts`` + substring."""
+    sn = admit_err.get("stop_not_claimed_attempts")
+    if isinstance(sn, int):
+        return sn >= 2
+    if int(admit_err.get("attempts") or 0) < 2:
+        return False
+    return hop_admit_error_is_stop_not_claimed(admit_err)
+
+
 def _normalize_hop_admit_error(value: dict[str, Any]) -> dict[str, Any]:
     status = value.get("last_status_code")
     if status is None:
@@ -95,12 +117,19 @@ def _normalize_hop_admit_error(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(attempts, int):
         attempts = 1
     last_error = value.get("last_error") or value.get("error") or ""
-    return {
+    out: dict[str, Any] = {
         "retryable": bool(retryable),
         "attempts": attempts,
         "last_status_code": status,
         "last_error": str(last_error),
     }
+    reason = value.get("reason")
+    if isinstance(reason, str) and reason:
+        out["reason"] = reason
+    sn = value.get("stop_not_claimed_attempts")
+    if isinstance(sn, int):
+        out["stop_not_claimed_attempts"] = sn
+    return out
 
 
 def merge_hop_admit_error(
@@ -119,10 +148,50 @@ def merge_hop_admit_error(
     if "status_code" in merged_patch and "last_status_code" not in merged_patch:
         merged_patch["last_status_code"] = merged_patch.pop("status_code")
     attempt = int(base.get("attempts") or 0) + 1
-    normalized = _normalize_hop_admit_error(
-        {**base, **merged_patch, "attempts": attempt}
-    )
+    stop_sn = int(base.get("stop_not_claimed_attempts") or 0)
+    failure_reason = merged_patch.get("reason")
+    if failure_reason == "stop_not_claimed":
+        stop_sn += 1
+    merged_body: dict[str, Any] = {**base, **merged_patch, "attempts": attempt}
+    if stop_sn > 0 or failure_reason == "stop_not_claimed":
+        merged_body["stop_not_claimed_attempts"] = stop_sn
+    normalized = _normalize_hop_admit_error(merged_body)
     return normalized
+
+
+def merge_hop_admit_error_into_record_json_conn(
+    conn: Any,
+    *,
+    dispatch_id: str,
+    patch: dict[str, Any],
+    finalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Merge ``hop_admit_error`` from a fresh row read — safe under concurrent sweepers."""
+    row = conn.execute(
+        "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (dispatch_id,),
+    ).fetchone()
+    if row is None:
+        merged_err = merge_hop_admit_error(None, patch)
+        if finalize is not None:
+            merged_err = finalize(merged_err)
+        return merged_err
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    prior = data.get(_HOP_ADMIT_ERROR_KEY)
+    merged_err = merge_hop_admit_error(prior, patch)
+    if finalize is not None:
+        merged_err = finalize(merged_err)
+    data[_HOP_ADMIT_ERROR_KEY] = merged_err
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+        (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+    )
+    return merged_err
 
 
 def hop_fields_from_record_json(record_json: str | None) -> dict[str, Any]:
@@ -211,9 +280,12 @@ def merge_hop_patch(record_json: str, patch: dict[str, Any]) -> str:
 
 __all__ = [
     "HOP_REASONS",
+    "hop_admit_error_is_stop_not_claimed",
     "hop_fields_from_record_json",
     "merge_hop_admit_error",
+    "merge_hop_admit_error_into_record_json_conn",
     "merge_hop_patch",
+    "park_harvest_stop_not_claimed_exhausted",
     "stamp_hop_on_record_json",
     "validate_hop_reason",
 ]
