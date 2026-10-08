@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
+from contextlib import contextmanager
 
 import pytest
+from agent_bus_store.db import connection as connection_mod
 from agent_bus_store.db import init_db, insert_turn
 from agent_bus_store.db.turns import FirstTurnAuthorConflict
 
@@ -48,26 +49,36 @@ def test_integrity_error_fallback_returns_existing_id(
         idempotent_first_turn=True,
     )
     assert claimed is False
-    skipped = {"n": 0}
-    real_execute = sqlite3.Connection.execute
 
-    def wrapped(self, sql, *args, **kwargs):
-        if (
-            isinstance(sql, str)
-            and "turn_number = 1" in sql
-            and sql.lstrip().upper().startswith("SELECT")
-            and skipped["n"] == 0
-        ):
-            skipped["n"] += 1
+    class _Empty:
+        def fetchone(self):
+            return None
 
-            class _Empty:
-                def fetchone(self):  # noqa: ARG002
-                    return None
+    class _Proxy:
+        def __init__(self, conn) -> None:
+            self._conn = conn
+            self._hid_claim = False
 
-            return _Empty()
-        return real_execute(self, sql, *args, **kwargs)
+        def execute(self, sql, *args, **kwargs):
+            if (
+                isinstance(sql, str)
+                and "turn_number = 1" in sql
+                and sql.lstrip().upper().startswith("SELECT")
+                and not self._hid_claim
+            ):
+                self._hid_claim = True
+                return _Empty()
+            return self._conn.execute(sql, *args, **kwargs)
 
-    monkeypatch.setattr(sqlite3.Connection, "execute", wrapped)
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    @contextmanager
+    def _hiding_write():
+        with connection_mod.write_connect() as conn:
+            yield _Proxy(conn)
+
+    monkeypatch.setattr("agent_bus_store.db.turns.write_connect", _hiding_write)
     got, _, _, claimed_existing = insert_turn(
         thread="1",
         from_agent="cursor",
