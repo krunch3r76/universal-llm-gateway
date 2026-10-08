@@ -89,7 +89,7 @@ def _query_event_service(
     try:
         if operation == "operations":
             return list_members(url=url, timeout=_QUERY_TIMEOUT)
-        if operation == "raw_sql":
+        if operation in ("raw_sql", "sql"):
             params_dict = params or {}
             return query_sql(
                 str(params_dict.get("sql") or ""),
@@ -128,7 +128,7 @@ def register_event_tools(mcp: FastMCP) -> None:
                  (perps embedded event store on claudeburst-events-query.sock)
 
         operation is any member name. operation="operations" returns every
-        member with its declared params. operation="raw_sql" posts the sql member.
+        member with its declared params. operation="sql" or "raw_sql" POSTs the sql member.
 
         Example:
           observability(operation="recent-failures", params={"limit": 20})
