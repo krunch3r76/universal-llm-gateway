@@ -59,6 +59,9 @@ TRAILER_RE = re.compile(r"^\s*Older messages remain: call ReadTranscript again\b
 START_RE = re.compile(r"^\s*This is the start of the transcript\.\s*$")
 # No ReadTranscript truncation marker exists in this repo. Count explicit
 # elision markers that require a digit count (case-insensitive).
+TRUNCATION_PART_LEN = 4000
+TRUNCATION_LEN_WINDOW = (3990, 4010)
+TRUNCATION_ELLIPSIS = "..."
 TRUNCATION_MARKER_RE = re.compile(
     r"(?:\[\s*\.\.\.\s*\d+\s+chars?\s+truncated\s*\.\.\.\s*\]"
     r"|…\s*\[\s*truncated\s+\d+\s+chars?\s*\]\s*…"
@@ -95,10 +98,11 @@ def _header_agent_id(target: str) -> str | None:
     return m.group("uuid") if m else None
 
 
-def _split_pages(text: str) -> list[_Page] | None:
+def _split_pages(text: str) -> tuple[list[_Page] | None, bool]:
     """Split concatenated ReadTranscript outputs into pages; ``None`` if no header."""
     pages: list[_Page] = []
     current: _Page | None = None
+    start_sentinel = False
     for raw_line in text.splitlines():
         m = HEADER_RE.match(raw_line)
         if m:
@@ -112,22 +116,45 @@ def _split_pages(text: str) -> list[_Page] | None:
             )
             pages.append(current)
             continue
-        if (
-            TRAILER_RE.match(raw_line)
-            or START_RE.match(raw_line)
-            or not raw_line.strip()
-        ):
+        if START_RE.match(raw_line):
+            start_sentinel = True
+            continue
+        if TRAILER_RE.match(raw_line) or not raw_line.strip():
             continue
         if current is None:
             if pages:
                 continue
-            return None  # bare JSONL, no pages
+            return None, start_sentinel  # bare JSONL, no pages
         current.lines.append(raw_line.strip())
     if pages:
         targets = {p.target for p in pages}
         if len(targets) != 1:
             raise TranscriptPageError(f"pages disagree on target: {sorted(targets)}")
-    return pages
+    return pages, start_sentinel
+
+
+def _position_base(min_lo: int, max_hi: int, total: int) -> int:
+    """0 when a window touches position 0 or the 0-based end; else 1."""
+    if min_lo == 0 or max_hi == total - 1:
+        return 0
+    return 1
+
+
+def _coverage(
+    *,
+    min_lo: int,
+    max_hi: int,
+    total: int,
+    position_base: int,
+    start_sentinel: bool,
+) -> str:
+    end_reached = (position_base == 0 and max_hi == total - 1) or (
+        position_base == 1 and max_hi == total
+    )
+    start_reached = min_lo == 0 or (min_lo == 1 and max_hi == total) or start_sentinel
+    if end_reached and start_reached:
+        return "full"
+    return "tail"
 
 
 def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
@@ -136,43 +163,85 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
     Accepts pages in any order (ReadTranscript hands them newest-first) and
     bare JSONL (no header) for box snapshots.
     """
-    pages = _split_pages(text)
+    pages, start_sentinel = _split_pages(text)
     if pages is None:
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        return lines, {"positions": None, "total": None, "coverage": "full", "pages": 0}
+        return lines, {
+            "positions": None,
+            "total": None,
+            "coverage": "full",
+            "pages": 0,
+            "unrendered_positions": 0,
+        }
     if not pages:
         raise TranscriptPageError("no transcript pages found")
     totals = {p.total for p in pages}
     if len(totals) != 1:
         raise TranscriptPageError(f"pages disagree on total N: {sorted(totals)}")
     total = totals.pop()
-    by_pos: dict[int, str] = {}
-    for page in sorted(pages, key=lambda p: p.lo):
+    ordered = sorted(pages, key=lambda p: (p.lo, p.hi))
+    unrendered = 0
+    for page in ordered:
         expected = page.hi - page.lo + 1
-        if len(page.lines) != expected:
+        got = len(page.lines)
+        if got > expected:
             raise TranscriptPageError(
-                f"page {page.lo}-{page.hi}: {len(page.lines)} lines, expected {expected}"
+                f"page {page.lo}-{page.hi}: {got} lines, expected {expected}"
             )
-        for offset, line in enumerate(page.lines):
-            pos = page.lo + offset
-            prior = by_pos.get(pos)
-            if prior is not None and prior != line:
-                raise TranscriptPageError(f"position {pos}: overlapping pages differ")
-            by_pos[pos] = line
-    lo, hi = min(by_pos), max(by_pos)
-    missing = [p for p in range(lo, hi + 1) if p not in by_pos]
-    if missing:
-        raise TranscriptPageError(f"gap in positions: first missing {missing[0]}")
-    coverage = "full" if lo == 1 and hi == total else "tail"
+        unrendered += expected - got
+    for prev, nxt in zip(ordered, ordered[1:], strict=False):
+        if prev.hi + 1 < nxt.lo:
+            raise TranscriptPageError(f"gap in positions: first missing {prev.hi + 1}")
+        if prev.hi >= nxt.lo:
+            prev_full = len(prev.lines) == prev.hi - prev.lo + 1
+            nxt_full = len(nxt.lines) == nxt.hi - nxt.lo + 1
+            if not prev_full or not nxt_full:
+                raise TranscriptPageError(
+                    f"cannot align overlapping short page {prev.lo}-{prev.hi}"
+                )
+    overlaps = any(
+        prev.hi >= nxt.lo for prev, nxt in zip(ordered, ordered[1:], strict=False)
+    )
+    if overlaps:
+        by_pos: dict[int, str] = {}
+        for page in ordered:
+            for offset, line in enumerate(page.lines):
+                pos = page.lo + offset
+                prior = by_pos.get(pos)
+                if prior is not None and prior != line:
+                    raise TranscriptPageError(
+                        f"position {pos}: overlapping pages differ"
+                    )
+                by_pos[pos] = line
+        lo_r, hi_r = min(by_pos), max(by_pos)
+        missing = [p for p in range(lo_r, hi_r + 1) if p not in by_pos]
+        if missing:
+            raise TranscriptPageError(f"gap in positions: first missing {missing[0]}")
+        lines = [by_pos[p] for p in range(lo_r, hi_r + 1)]
+    else:
+        lines = [line for page in ordered for line in page.lines]
+    min_lo = min(p.lo for p in ordered)
+    max_hi = max(p.hi for p in ordered)
+    position_base = _position_base(min_lo, max_hi, total)
+    coverage = _coverage(
+        min_lo=min_lo,
+        max_hi=max_hi,
+        total=total,
+        position_base=position_base,
+        start_sentinel=start_sentinel,
+    )
     info = {
-        "positions": [lo, hi],
+        "positions": [min_lo, max_hi],
         "total": total,
         "coverage": coverage,
         "pages": len(pages),
         "header_target": pages[0].target,
         "header_agent_id": pages[0].header_agent_id,
+        "unrendered_positions": unrendered,
+        "start_sentinel": start_sentinel,
+        "position_base": position_base,
     }
-    return [by_pos[p] for p in range(lo, hi + 1)], info
+    return lines, info
 
 
 def _parse_records(lines: list[str]) -> list[dict[str, Any]]:
@@ -211,13 +280,28 @@ def _part_strings(block: dict[str, Any]) -> list[str]:
     return found
 
 
+def _string_truncated(text: str) -> bool:
+    lo, hi = TRUNCATION_LEN_WINDOW
+    if TRUNCATION_ELLIPSIS in text and lo <= len(text) <= hi:
+        return True
+    return TRUNCATION_MARKER_RE.search(text) is not None
+
+
+def _part_candidates(block: dict[str, Any]) -> list[str]:
+    found = _part_strings(block)
+    if block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
+        found.append(json.dumps(block["input"], ensure_ascii=False))
+    return found
+
+
 def _truncated_part_count(records: list[dict[str, Any]]) -> int:
     n = 0
     for rec in records:
         for block in _content(rec) or []:
-            if not isinstance(block, dict):
-                continue
-            n += sum(1 for s in _part_strings(block) if TRUNCATION_MARKER_RE.search(s))
+            if isinstance(block, dict) and any(
+                _string_truncated(s) for s in _part_candidates(block)
+            ):
+                n += 1
     return n
 
 
@@ -328,12 +412,15 @@ def _source_dict(
         "reassembled_jsonl_sha256": reassembled_sha256,
         "truncated_parts": truncated_parts,
         "truncated_parts_kept": truncated_parts_kept,
+        "unrendered_positions": cov.get("unrendered_positions", 0),
         **stats,
     }
     if cov["positions"] is not None:
         lo, hi = cov["positions"]
         source["window"] = {"lo": lo, "hi": hi, "total": cov["total"]}
         source["header_target"] = cov["header_target"]
+        source["start_sentinel"] = cov["start_sentinel"]
+        source["position_base"] = cov["position_base"]
         if cov.get("header_agent_id"):
             source["header_agent_id"] = cov["header_agent_id"]
     return source
@@ -348,6 +435,7 @@ def extract_grokbot_transcript(
     session_id: str | None = None,
     observed_at: str | None = None,
     capture_ref: str | None = None,
+    capture_sha256: str | None = None,
 ) -> ContinuityMessagesEnvelope:
     """ReadTranscript pages (any order) or bare JSONL -> raw L1 messages pour."""
     raw = text.encode("utf-8")
@@ -369,21 +457,23 @@ def extract_grokbot_transcript(
         msg["source"] = SOURCE
     reassembled = hashlib.sha256(body).hexdigest()
     truncated = truncated_parts > 0
-    meta = EnvelopeMeta(
-        surface="grok",
-        tools=tools,
-        tools_available=False,
-        extras=False,
-        turn_count=len(turns),
-        message_count=len(messages),
-        truncated=truncated,
-        messages_sha256=seal_messages_sha256(messages),
-        transcript_id=agent_id,
-        session_id=session_id,
-        observed_at=observed_at or datetime.now(tz=UTC).isoformat(),
-        source_sha256=reassembled,
-        coverage=cov["coverage"],
-        sources=[
+    cap_sha = pages_sha256 if capture_sha256 is None else capture_sha256
+    meta_kwargs: dict[str, Any] = {
+        "surface": "grok",
+        "tools": tools,
+        "tools_available": False,
+        "extras": False,
+        "turn_count": len(turns),
+        "message_count": len(messages),
+        "truncated": truncated,
+        "messages_sha256": seal_messages_sha256(messages),
+        "transcript_id": agent_id,
+        "session_id": session_id,
+        "observed_at": observed_at or datetime.now(tz=UTC).isoformat(),
+        "source_sha256": reassembled,
+        "coverage": cov["coverage"],
+        "provenance": "raw",
+        "sources": [
             _source_dict(
                 agent_id=agent_id,
                 bus_identity=bus_identity,
@@ -395,15 +485,15 @@ def extract_grokbot_transcript(
                 truncated_parts_kept=truncated_parts_kept,
             )
         ],
-    )
-    meta.provenance = "raw"
+    }
     if capture_ref is not None:
-        meta.capture = {
+        meta_kwargs["capture"] = {
             "kind": "dom_harvest",
             "ref": capture_ref,
-            "sha256": pages_sha256,
+            "sha256": cap_sha,
             "pseudo_byte_exact": True,
         }
+    meta = EnvelopeMeta(**meta_kwargs)
     envelope = ContinuityMessagesEnvelope(messages=messages, index=[], meta=meta)
     continuity_messages_extracted(
         surface="grok",
@@ -447,10 +537,14 @@ def extract_grokbot_pages_files(
     else:
         ref = capture_ref
         cap_sha = joined_sha
-    env = extract_grokbot_transcript(joined, agent_id=agent_id, capture_ref=ref, **kw)
+    env = extract_grokbot_transcript(
+        joined,
+        agent_id=agent_id,
+        capture_ref=ref,
+        capture_sha256=cap_sha,
+        **kw,
+    )
     env.meta.sources[0]["pages_files"] = blobs
-    if ref is not None:
-        env.meta.capture["sha256"] = cap_sha
     return env
 
 
@@ -488,6 +582,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         Path(ns.out).write_text(payload, encoding="utf-8")
     m = env.meta
+    capture = getattr(m, "capture", None)
+    if hasattr(capture, "model_dump"):
+        capture = capture.model_dump()
     print(
         json.dumps(
             {
@@ -498,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
                 "coverage": m.coverage,
                 "truncated_parts": m.sources[0]["truncated_parts"],
                 "provenance": m.provenance,
-                "capture": getattr(m, "capture", None),
+                "capture": capture,
                 "sources": m.sources,
             }
         ),
@@ -512,7 +609,10 @@ if __name__ == "__main__":  # pragma: no cover
 
 
 __all__ = [
+    "TRUNCATION_ELLIPSIS",
+    "TRUNCATION_LEN_WINDOW",
     "TRUNCATION_MARKER_RE",
+    "TRUNCATION_PART_LEN",
     "TranscriptPageError",
     "adapt_records",
     "extract_grokbot_pages_files",

@@ -55,6 +55,13 @@ RECORDS = [
 ]
 
 
+def _cap(meta: object) -> dict:
+    capture = getattr(meta, "capture")
+    if hasattr(capture, "model_dump"):
+        return capture.model_dump()
+    return capture
+
+
 def _lines(records: list[dict]) -> list[str]:
     return [json.dumps(r) for r in records]
 
@@ -146,9 +153,25 @@ def test_gap_between_pages_raises() -> None:
 
 
 def test_short_page_raises() -> None:
+    """A short page is accepted; a long page and an overlapping short page raise."""
     text = _pages(RECORDS, 4).replace(json.dumps(RECORDS[-1]) + "\n", "", 1)
+    _lines_out, info = reassemble_pages(text)
+    assert info["unrendered_positions"] == 1
+    assert info["coverage"] == "full"
+    needle = json.dumps(RECORDS[-1]) + "\n"
     with pytest.raises(TranscriptPageError):
-        reassemble_pages(text)
+        reassemble_pages(_pages(RECORDS, 4).replace(needle, needle + needle, 1))
+    short_overlap = (
+        "Transcript of this conversation, positions 1\u20134 of 8:\n"
+        + "\n".join(_lines(RECORDS[:3]))
+        + "\nTranscript of this conversation, positions 4\u20138 of 8:\n"
+        + "\n".join(_lines(RECORDS[:5]))
+        + "\n"
+    )
+    with pytest.raises(
+        TranscriptPageError, match="cannot align overlapping short page"
+    ):
+        reassemble_pages(short_overlap)
 
 
 NAME_FIX = "771821c5-de68-4b96-a914-edbb87a2e6bb"
@@ -314,7 +337,7 @@ def test_pages_sha_capture_and_provenance() -> None:
         assert blob == [
             {"path": str(path), "sha256": file_sha, "bytes": path.stat().st_size}
         ]
-        assert poured.meta.capture == {
+        assert _cap(poured.meta) == {
             "kind": "dom_harvest",
             "ref": str(path),
             "sha256": file_sha,
@@ -326,8 +349,9 @@ def test_pages_sha_capture_and_provenance() -> None:
             observed_at="t",
             capture_ref="cortex://notes/system/tape/captures/grok/x/t.pages.txt",
         )
-        assert overridden.meta.capture["ref"].startswith("cortex://")
-        assert overridden.meta.capture["sha256"] == file_sha
+        over = _cap(overridden.meta)
+        assert over["ref"].startswith("cortex://")
+        assert over["sha256"] == file_sha
     assert env.meta.provenance == "raw"
     assert env.meta.sources[0]["producer"] == {
         "id": "grok-bot-jsonl-extractor",
@@ -364,3 +388,132 @@ def test_seal_stable_across_capture_ref_and_observed_at() -> None:
         assert a.meta.sources[0]["reassembled_jsonl_sha256"] == a.meta.source_sha256
         assert a.meta.sources[0]["pages_files"][0]["sha256"] != a.meta.source_sha256
         assert envelope_wire_dict(a) != envelope_wire_dict(b)
+
+
+def test_capture_dict_matches_typed_rules() -> None:
+    env = extract_grokbot_transcript(
+        _pages(RECORDS, 4),
+        agent_id="x",
+        observed_at="t",
+        capture_ref="cortex://notes/system/tape/captures/grok/x/t.pages.txt",
+    )
+    cap = _cap(env.meta)
+    assert set(cap) == {"kind", "ref", "sha256", "pseudo_byte_exact"}
+    assert cap["kind"] in {"jsonl", "grok_export", "dom_harvest"}
+    assert len(cap["sha256"]) == 64 and all(
+        c in "0123456789abcdef" for c in cap["sha256"]
+    )
+    assert cap["pseudo_byte_exact"] is (cap["kind"] == "dom_harvest")
+
+
+L0_AGENT = "d4f7c50e-13c0-4fc7-a4ec-7a1594036da8"
+
+
+def _sized(n: int, *, ellipsis: bool) -> str:
+    if not ellipsis:
+        return "z" * n
+    left = (n - 3) // 2
+    return ("q" * left) + "..." + ("r" * (n - 3 - left))
+
+
+def _shell_result() -> str:
+    return (
+        '<cursor_untrusted_data_redacted source="Shell">\n'
+        "Exit code: 0\n\nCommand output:\n\n```\n"
+        + ("A" * 1917)
+        + "..."
+        + ("B" * 1873)
+        + "\n\n```\n\nCommand completed in 51 ms.\n\n"
+        "Shell state (cwd, env vars) persists for subsequent calls.\n"
+        "</cursor_untrusted_data_redacted>"
+    )
+
+
+def _l0_page() -> str:
+    user = "<memory_context>\n" + ("u" * 1990) + "..." + ("v" * 1989)
+    assert len(user) == 3999
+    shell = _shell_result()
+    assert len(shell) == 4004
+    tools = _sized(4007, ellipsis=True)
+    records = [
+        _u(user),
+        _a(
+            {
+                "type": "tool_use",
+                "id": "toolu_01HMMEJ1FDz6DJtNTKTL5QLq",
+                "name": "Shell",
+                "input": {
+                    "command": "python3 -c \"print('A'*2600 + 'MIDDLE-MARK' + 'B'*2600)\"",
+                    "description": "fixture print command",
+                },
+            }
+        ),
+        {
+            "role": "tool",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_01HMMEJ1FDz6DJtNTKTL5QLq",
+                        "name": "Shell",
+                        "result": shell,
+                    }
+                ]
+            },
+        },
+        {
+            "role": "tool",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_gdt",
+                        "name": "GetDynamicTools",
+                        "result": tools,
+                    }
+                ]
+            },
+        },
+        _a(
+            {
+                "type": "text",
+                "text": "The harvest bot's three-step test job is done, and I've told it so.",
+            }
+        ),
+    ]
+    body = "\n".join(_lines(records))
+    return (
+        'Transcript of agent "l0 fixture throwaway" '
+        f"({L0_AGENT}), positions 0\u20135 of 6:\n"
+        f"{body}\n"
+        "This is the start of the transcript.\n"
+    )
+
+
+def test_real_l0_page_shape() -> None:
+    page = _l0_page()
+    a = extract_grokbot_transcript(page, agent_id=L0_AGENT, observed_at="t1")
+    b = extract_grokbot_transcript(page, agent_id=L0_AGENT, observed_at="t2")
+    src = a.meta.sources[0]
+    assert a.meta.coverage == "full"
+    assert src["unrendered_positions"] == 1
+    assert src["position_base"] == 0
+    assert src["start_sentinel"] is True
+    assert src["truncated_parts"] == 3
+    assert src["truncated_parts_kept"] == 1
+    assert a.meta.truncated is True
+    assert src["window"] == {"lo": 0, "hi": 5, "total": 6}
+    assert a.meta.messages_sha256 == b.meta.messages_sha256
+    assert src["header_agent_id"] == L0_AGENT
+    plain = extract_grokbot_transcript(
+        "\n".join(_lines([_u(_sized(2337, ellipsis=True))])) + "\n",
+        agent_id="x",
+        observed_at="t",
+    )
+    assert plain.meta.sources[0]["truncated_parts"] == 0
+    no_dots = extract_grokbot_transcript(
+        "\n".join(_lines([_u(_sized(4004, ellipsis=False))])) + "\n",
+        agent_id="x",
+        observed_at="t",
+    )
+    assert no_dots.meta.sources[0]["truncated_parts"] == 0
