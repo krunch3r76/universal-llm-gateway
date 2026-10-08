@@ -16,7 +16,7 @@ from ...body_auto_spill import (
 )
 from ...checkpoint_projection import CheckpointBodyTooLargeError, is_checkpoint_subject
 from ...db import get_thread
-from ...db.thread_idempotency import existing_first_turn_for_idempotent_send
+from ...db.thread_idempotency import committed_first_turn
 from ...db.thread_mint import mint_thread
 from ...db.turns import insert_turn
 from ...events.lifecycle import emit_sidecar_orphaned
@@ -105,19 +105,19 @@ def run_new_thread_send(
     )
     thread_id = thread_row["id"]
     idempotent_replay = bool(thread_row.get("idempotent_replay"))
+    claim_first_turn = bool(idempotent_replay or idempotency_key)
 
-    existing = existing_first_turn_for_idempotent_send(
-        thread_id, idempotent_replay=idempotent_replay
-    )
-    if existing is not None:
-        prepared = PreparedBody(body=str(existing.get("body") or ""))
-        return (
-            thread_row,
-            int(existing["id"]),
-            str(existing["created_at"]),
-            int(existing["turn_number"]),
-            prepared,
-        )
+    if idempotent_replay:
+        existing = committed_first_turn(thread_id)
+        if existing is not None:
+            prepared = PreparedBody(body=str(existing.get("body") or ""))
+            return (
+                thread_row,
+                int(existing["id"]),
+                str(existing["created_at"]),
+                int(existing["turn_number"]),
+                prepared,
+            )
 
     if lane_bind_body is not None:
         _bind_lane_on_send(body=lane_bind_body, thread_id=thread_id)
@@ -136,19 +136,6 @@ def run_new_thread_send(
         _map_prepare_failure(exc, thread_id=thread_id)
     prepare_ms = (time.monotonic() - t_prepare) * 1000.0
 
-    existing = existing_first_turn_for_idempotent_send(
-        thread_id, idempotent_replay=idempotent_replay
-    )
-    if existing is not None:
-        prepared = PreparedBody(body=str(existing.get("body") or ""))
-        return (
-            thread_row,
-            int(existing["id"]),
-            str(existing["created_at"]),
-            int(existing["turn_number"]),
-            prepared,
-        )
-
     t_insert = time.monotonic()
     try:
         turn_id, ts, turn_number = insert_turn(
@@ -161,6 +148,7 @@ def run_new_thread_send(
             after_turn=None,
             supersedes_turn=None,
             attachments=attachments,
+            idempotent_first_turn=claim_first_turn,
         )
     except Exception as exc:
         if prepared.sidecar_uri:
@@ -203,5 +191,9 @@ def run_new_thread_send(
         insert_call_ms=insert_call_ms,
     )
 
-    thread_row = get_thread(thread_id) or thread_row
+    refreshed = get_thread(thread_id)
+    if refreshed is not None:
+        if idempotent_replay:
+            refreshed["idempotent_replay"] = True
+        thread_row = refreshed
     return thread_row, turn_id, ts, turn_number, prepared
