@@ -13,7 +13,8 @@ from ._clients import refuse, rel_path_ok, step_output_json
 _MODES = frozenset({"light", "seal", "verify_resume"})
 _PATH_KEYS = (
     "card_uri",
-    "envelope_ref",
+    "transcribed_ref",
+    "raw_ref",
     "snapshot_uri",
 )
 HOUSE_LOCKS: dict[str, asyncio.Lock] = {}

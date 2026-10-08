@@ -27,6 +27,7 @@ def compose_checkpoint_body(
     producer: str,
     house: str,
     n: int,
+    capture: str = "none",
 ) -> str:
     hop = " · channel=hop" if channel == "hop" else ""
     lines = [
@@ -42,12 +43,22 @@ def compose_checkpoint_body(
         (
             f"Harvest: transcript:{session_id} · messages_sha256:{messages_sha256} · "
             f"codec:messages-v1 · surface:{surface} · provenance:{provenance} · "
-            f"producer:{producer}"
+            f"producer:{producer} · capture:{capture}"
         ),
         "",
         CANONICAL_RESUME_FOOTER,
     ]
     return "\n".join(lines)
+
+
+def _capture_token(envelope_step: dict[str, Any]) -> str:
+    cap = envelope_step.get("capture")
+    if not isinstance(cap, dict):
+        return "none"
+    token = f"{cap.get('kind')}@{cap.get('sha256')}"
+    if cap.get("pseudo_byte_exact"):
+        token += " · pseudo_byte_exact"
+    return token
 
 
 def _duplicate(turns: list[dict[str, Any]], house: str, n: int) -> bool:
@@ -85,6 +96,7 @@ async def run_post(
         producer=str(envelope_step.get("producer") or ""),
         house=house,
         n=n,
+        capture=_capture_token(envelope_step),
     )
     payload, send_status = await send(
         thread=thread,

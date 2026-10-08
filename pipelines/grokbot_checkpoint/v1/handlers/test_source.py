@@ -41,11 +41,11 @@ async def test_sha_mismatch_and_valid(fs) -> None:
     body = json.dumps(_raw_pour()).encode()
     fs.files["notes/pour.json"] = body
     bad = await run_source(
-        {"envelope_ref": "notes/pour.json", "envelope_sha256": "0" * 64}, fs
+        {"raw_ref": "notes/pour.json", "raw_sha256": "0" * 64}, fs
     )
     assert bad["refused"]["code"] == "source.sha_mismatch"
     good = await run_source(
-        {"envelope_ref": "notes/pour.json", "envelope_sha256": file_sha256(body)},
+        {"raw_ref": "notes/pour.json", "raw_sha256": file_sha256(body)},
         fs,
     )
     assert good["refused"] is None
@@ -59,7 +59,30 @@ async def test_pour_codes_via_source(fs) -> None:
     raw = json.dumps(pour).encode()
     fs.files["notes/pour.json"] = raw
     out = await run_source(
-        {"envelope_ref": "notes/pour.json", "envelope_sha256": file_sha256(raw)},
+        {"raw_ref": "notes/pour.json", "raw_sha256": file_sha256(raw)},
         fs,
     )
     assert out["refused"]["code"] == "pour.provenance_missing"
+    valid = json.dumps(_raw_pour()).encode()
+    fs.files["notes/raw.json"] = valid
+    empty = await run_source({}, fs)
+    assert empty["refused"]["code"] == "source.no_pour"
+    mismatch = await run_source(
+        {
+            "transcribed_ref": "notes/raw.json",
+            "transcribed_sha256": file_sha256(valid),
+        },
+        fs,
+    )
+    assert mismatch["refused"]["code"] == "source.slot_mismatch"
+    fallback = await run_source(
+        {
+            "transcribed_ref": "notes/raw.json",
+            "transcribed_sha256": file_sha256(valid),
+            "raw_ref": "notes/raw.json",
+            "raw_sha256": file_sha256(valid),
+        },
+        fs,
+    )
+    assert fallback["provenance"] == "raw"
+    assert fallback["fallback"]["from"] == "transcribed"

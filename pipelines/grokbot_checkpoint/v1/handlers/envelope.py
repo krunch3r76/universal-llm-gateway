@@ -28,7 +28,10 @@ async def run_envelope(
 ) -> dict[str, Any]:
     uri = str(
         options.get("snapshot_uri")
-        or f"notes/system/threads/{options.get('house')}-{str(options.get('agent_id') or '')[:8]}.messages.json"
+        or (
+            f"notes/system/threads/{options.get('house')}-"
+            f"{str(options.get('agent_id') or '')[:8]}.{source.get('provenance')}.messages.json"
+        )
     )
     if not rel_path_ok(uri):
         return refuse("admit.path_escape", f"refused path {uri}")
@@ -51,6 +54,7 @@ async def run_envelope(
             "coverage": source.get("coverage"),
             "turn_count": source.get("turn_count"),
             "surface": source.get("surface"),
+            "capture": source.get("capture"),
         }
     try:
         old = json.loads(existing.decode("utf-8"))
@@ -69,6 +73,7 @@ async def run_envelope(
             "coverage": source.get("coverage"),
             "turn_count": source.get("turn_count"),
             "surface": source.get("surface"),
+            "capture": source.get("capture"),
         }
     old_msgs = old.get("messages") if isinstance(old, dict) else None
     new_msgs = envelope.get("messages")
@@ -88,9 +93,10 @@ async def run_envelope(
         "provenance": source.get("provenance"),
         "producer": source.get("producer"),
         "coverage": source.get("coverage"),
-        "turn_count": source.get("turn_count"),
-        "surface": source.get("surface"),
-    }
+            "turn_count": source.get("turn_count"),
+            "surface": source.get("surface"),
+            "capture": source.get("capture"),
+        }
 
 
 class GrokbotCheckpointEnvelopeHandler(BaseHandler):

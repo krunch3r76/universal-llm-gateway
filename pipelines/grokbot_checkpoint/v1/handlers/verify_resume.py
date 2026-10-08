@@ -45,7 +45,10 @@ async def run_verify_resume(
     snap_uri = str(options.get("snapshot_uri") or "")
     snap_raw = fs.read(snap_uri) if snap_uri else None
     snap_live = file_sha256(snap_raw) if snap_raw else ""
-    checks["snapshot_sha"] = snap_live == str(options.get("envelope_sha256") or "")
+    packet_snap = str(
+        options.get("snapshot_sha256") or options.get("envelope_sha256") or ""
+    )
+    checks["snapshot_sha"] = snap_live == packet_snap
     messages_sha = ""
     provenance = ""
     if snap_raw:
@@ -57,6 +60,19 @@ async def run_verify_resume(
         if isinstance(meta, dict):
             messages_sha = str(meta.get("messages_sha256") or "")
             provenance = str(meta.get("provenance") or "")
+            capture = meta.get("capture")
+            if isinstance(capture, dict) and str(capture.get("ref") or "").startswith(
+                ("cortex://", "workspaces://")
+            ):
+                rel = str(capture["ref"])
+                rel = rel.removeprefix("cortex://").removeprefix("workspaces://")
+                cap_raw = fs.read(rel)
+                checks["capture_sha"] = (
+                    cap_raw is not None
+                    and file_sha256(cap_raw) == capture.get("sha256")
+                )
+            else:
+                checks["capture_sha"] = True
     lane = str(options.get("verify_lane") or "")
     listing, _status = await get(f"/threads/{lane}/turns")
     turns = listing.get("turns") if isinstance(listing, dict) else []

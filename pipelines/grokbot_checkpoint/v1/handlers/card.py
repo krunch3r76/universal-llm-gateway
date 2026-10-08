@@ -81,8 +81,16 @@ async def run_card(
         msg = str(envelope_step.get("messages_sha256") or "")
         prov = str(envelope_step.get("provenance") or source.get("provenance") or "")
         prod = str(envelope_step.get("producer") or source.get("producer") or "")
+        cap = envelope_step.get("capture") or source.get("capture")
+        if isinstance(cap, dict):
+            short = str(cap.get("sha256") or "")[:12]
+            pseudo = "~pseudo" if cap.get("pseudo_byte_exact") else ""
+            cap_tok = f"{cap.get('kind')}@{short}{pseudo}"
+        else:
+            cap_tok = "none"
         cell = (
-            f"{snap}@{snap_sha} · {msg} · provenance:{prov} · producer:{prod}"
+            f"{snap}@{snap_sha} · {msg} · provenance:{prov} · producer:{prod} · "
+            f"capture:{cap_tok}"
         )
     row = (
         f"| {n} | {when} | {trigger} | {expected} | {cell} | pipeline {execution_id} |"

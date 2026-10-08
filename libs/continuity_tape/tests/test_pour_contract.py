@@ -67,5 +67,32 @@ def test_refusal_codes(mutate, code: str) -> None:
     assert exc.value.code == code
 
 
+def test_capture_rules() -> None:
+    payload = _ok()
+    payload["meta"]["capture"] = {
+        "kind": "dom_harvest",
+        "ref": "cortex://notes/x",
+        "sha256": "ab" * 32,
+        "pseudo_byte_exact": False,
+    }
+    with pytest.raises(PourRefused) as exc:
+        validate_pour(payload)
+    assert exc.value.code == "pour.capture_invalid"
+    payload["meta"]["capture"]["kind"] = "jsonl"
+    payload["meta"]["capture"]["pseudo_byte_exact"] = False
+    payload["meta"]["capture"]["sha256"] = "cd" * 32
+    with pytest.raises(PourRefused) as mismatch:
+        validate_pour(payload)
+    assert mismatch.value.code == "pour.capture_inconsistent"
+    payload["meta"]["source_sha256"] = "ab" * 32
+    payload["meta"]["capture"] = {
+        "kind": "jsonl",
+        "ref": "cortex://notes/x",
+        "sha256": "ab" * 32,
+        "pseudo_byte_exact": False,
+    }
+    assert validate_pour(payload).meta.capture is not None
+
+
 def test_import_without_stargate() -> None:
     assert callable(validate_pour)

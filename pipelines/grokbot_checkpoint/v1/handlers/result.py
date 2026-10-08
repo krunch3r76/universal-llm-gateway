@@ -48,7 +48,6 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "completed_steps": completed,
         "refused": refused,
         "envelope": {
-            "ref": options.get("envelope_ref"),
             "snapshot_uri": envelope.get("snapshot_uri"),
             "sha256": envelope.get("sha256"),
             "messages_sha256": envelope.get("messages_sha256")
@@ -57,6 +56,10 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             "producer": envelope.get("producer") or source.get("producer"),
             "coverage": envelope.get("coverage") or source.get("coverage"),
             "turn_count": envelope.get("turn_count") or source.get("turn_count"),
+            "ref": source.get("ref") or options.get("transcribed_ref") or options.get("raw_ref"),
+            "capture": source.get("capture") if isinstance(source.get("capture"), dict) else None,
+            "alternate": source.get("alternate"),
+            "fallback": source.get("fallback"),
         },
         "seal": {
             "session_id": seal.get("session_id"),

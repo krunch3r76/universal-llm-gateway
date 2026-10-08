@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
-from continuity_tape.messages import envelope_wire_dict
+from continuity_tape.messages import CaptureRef, envelope_wire_dict
 
 from ._clients import file_sha256
 from .admit import house_lock, run_admit
@@ -34,13 +34,21 @@ _CARD = """# house
 """
 
 
+def _jsonl() -> bytes:
+    return (_FIXTURES / "cursor_window.jsonl").read_bytes()
+
+
 def _stamp_raw() -> bytes:
-    env = extract_turns_from_jsonl_bytes(
-        (_FIXTURES / "cursor_window.jsonl").read_bytes(),
-        transcript_id="cursor-window",
-    )
+    raw = _jsonl()
+    env = extract_turns_from_jsonl_bytes(raw, transcript_id="cursor-window")
     env.meta.provenance = "raw"
     env.meta.coverage = "full"
+    env.meta.capture = CaptureRef(
+        kind="jsonl",
+        ref="cortex://fixtures/cursor_window.jsonl",
+        sha256=file_sha256(raw),
+        pseudo_byte_exact=False,
+    )
     env.meta.sources = [
         {
             "kind": "jsonl",
@@ -70,13 +78,14 @@ class Bus:
         return {"turn_number": turn["turn_number"]}, 200
 
 
-def _options(fs, pour: bytes, *, house: str = "house") -> dict:
+def _options(fs, pour: bytes, *, house: str = "house", slot: str = "raw") -> dict:
     card = _CARD.encode()
     card_uri = f"notes/{house}-card.md"
     pour_uri = f"notes/{house}-pour.json"
     snap_uri = f"notes/{house}-snap.json"
     fs.files[card_uri] = card
     fs.files[pour_uri] = pour
+    fs.files["fixtures/cursor_window.jsonl"] = _jsonl()
     return {
         "mode": "seal",
         "house": house,
@@ -89,8 +98,8 @@ def _options(fs, pour: bytes, *, house: str = "house") -> dict:
         "trigger": "hop",
         "card_uri": card_uri,
         "expected_card_sha256": file_sha256(card),
-        "envelope_ref": pour_uri,
-        "envelope_sha256": file_sha256(pour),
+        f"{slot}_ref": pour_uri,
+        f"{slot}_sha256": file_sha256(pour),
         "snapshot_uri": snap_uri,
         "channel": "cp",
         "residue": "r",
@@ -146,7 +155,7 @@ async def test_raw_and_transcribed(fs, patch_seal) -> None:
     transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
     for blob, prov in ((raw, "raw"), (transcribed, "transcribed")):
         bus = Bus()
-        options = _options(fs, blob, house=prov)
+        options = _options(fs, blob, house=prov, slot=prov)
         out = await _seal_graph(
             fs,
             options,
@@ -154,9 +163,38 @@ async def test_raw_and_transcribed(fs, patch_seal) -> None:
             dispatch=lambda tool, args: _ok_close(),
         )
         assert out["source"]["provenance"] == prov
+        assert out["source"]["fallback"] is None
+        assert out["source"]["alternate"] is None
         assert out["card"]["refused"] is None
         assert prov in out["post"]["body"]
         assert f"provenance {prov}" in out["fact"]["body"]
+
+
+@pytest.mark.asyncio
+async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
+    raw = _stamp_raw()
+    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    bus = Bus()
+    options = _options(fs, raw, house="both", slot="raw")
+    t_uri = "notes/both-transcribed.json"
+    fs.files[t_uri] = transcribed
+    options["transcribed_ref"] = t_uri
+    options["transcribed_sha256"] = file_sha256(transcribed)
+    out = await _seal_graph(fs, options, bus, dispatch=lambda tool, args: _ok_close())
+    assert out["source"]["provenance"] == "transcribed"
+    assert out["source"]["alternate"]["ref"] == options["raw_ref"]
+    writes = list(fs.writes)
+    bad = _stamp_raw()
+    payload = json.loads(bad)
+    payload["meta"]["capture"]["sha256"] = "ab" * 32
+    payload["meta"]["source_sha256"] = "ab" * 32
+    tampered = json.dumps(payload).encode()
+    options2 = _options(fs, tampered, house="badcap", slot="raw")
+    refused = await _seal_graph(
+        fs, options2, Bus(), dispatch=lambda tool, args: _ok_close()
+    )
+    assert refused["refused"]["code"] == "capture.sha_mismatch"
+    assert fs.writes == writes
 
 
 async def _ok_close():

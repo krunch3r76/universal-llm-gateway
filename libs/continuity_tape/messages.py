@@ -8,13 +8,15 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 SCHEMA_ID = "ulg.continuity.messages/1"
 CORE_KEYS = ("role", "content")
 SEAL_KEYS = (*CORE_KEYS, "turn_index")
 Tools = Literal["none", "marker", "openai"]
 Provenance = Literal["raw", "transcribed"]
+CaptureKind = Literal["jsonl", "grok_export", "dom_harvest"]
+_SHA64 = re.compile(r"^[0-9a-f]{64}$")
 TOOL_MARKER_RE = re.compile(r"^\[tool call: [^\]]+\]$", re.MULTILINE)
 
 
@@ -40,6 +42,25 @@ class TapeCell(BaseModel):
     turn_hi: int
     boundary: str | None = None
     bus_turn_id: int | None = None
+
+
+class CaptureRef(BaseModel):
+    """L0 byte-for-byte capture pointer. ``pseudo_byte_exact`` only for DOM harvest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: CaptureKind
+    ref: str
+    sha256: str
+    pseudo_byte_exact: bool
+
+    @model_validator(mode="after")
+    def _capture_rules(self) -> CaptureRef:
+        if not _SHA64.fullmatch(self.sha256):
+            raise ValueError("capture.sha256 must be 64 lowercase hex")
+        if self.pseudo_byte_exact != (self.kind == "dom_harvest"):
+            raise ValueError("pseudo_byte_exact must equal (kind == dom_harvest)")
+        return self
 
 
 class EnvelopeMeta(BaseModel):
@@ -72,13 +93,17 @@ class EnvelopeMeta(BaseModel):
     execution_id: str | None = None
     coverage: Literal["full", "tail"] | None = None
     provenance: Provenance | None = None
+    capture: CaptureRef | None = None
 
     @model_serializer(mode="wrap")
-    def _omit_unset_provenance(self, handler: Any) -> Any:
-        """Drop ``provenance`` when unset so existing wire bytes stay identical."""
+    def _omit_unset_optional_meta(self, handler: Any) -> Any:
+        """Drop unset provenance and capture so existing wire bytes stay identical."""
         data = handler(self)
-        if isinstance(data, dict) and data.get("provenance") is None:
-            data.pop("provenance", None)
+        if isinstance(data, dict):
+            if data.get("provenance") is None:
+                data.pop("provenance", None)
+            if data.get("capture") is None:
+                data.pop("capture", None)
         return data
 
 
@@ -177,6 +202,8 @@ __all__ = [
     "TOOL_MARKER_RE",
     "Tools",
     "Provenance",
+    "CaptureKind",
+    "CaptureRef",
     "ContinuityMessage",
     "IndexRow",
     "TapeCell",

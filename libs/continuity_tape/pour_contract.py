@@ -1,5 +1,14 @@
 """Pour contract for ``ulg.continuity.messages/1`` envelopes.
 
+Layers: L0 is the byte-for-byte capture (Cursor JSONL, a future grok export, or a
+claude.ai DOM harvest which is pseudo-byte-exact). L1 is the raw pour of that
+capture (``provenance=raw``). L2 is the transcribed pour, the preferred default,
+same messages format, produced by a bot (``provenance=transcribed``), and never
+required. ``meta.capture`` is an optional pointer at L0: ``{kind, ref, sha256,
+pseudo_byte_exact}``. Producers store L0 at a readable ``cortex://`` or
+``workspaces://`` ref. When capture is present on a raw pour whose kind is
+``jsonl`` or ``grok_export``, ``capture.sha256`` equals ``meta.source_sha256``.
+
 Location: ``cortex://notes/system/tape/pours/<surface>/<transcript_id>.messages.json``.
 Each pour is cumulative for one window. The first write is ``if_absent``. Later
 writes supply ``expected_sha256`` and are admitted only when the new ``messages``
@@ -25,8 +34,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import ValidationError
+
 from continuity_tape.messages import (
     SCHEMA_ID,
+    CaptureRef,
     ContinuityMessagesEnvelope,
     seal_messages_sha256,
 )
@@ -107,6 +119,21 @@ def validate_pour(
         _refuse("pour.coverage", "meta.coverage must be full")
     if provenance == "raw" and not meta.get("source_sha256"):
         _refuse("pour.source_sha_missing", "raw pour requires meta.source_sha256")
+    capture = meta.get("capture")
+    if capture is not None:
+        try:
+            parsed_capture = CaptureRef.model_validate(capture)
+        except ValidationError as exc:
+            _refuse("pour.capture_invalid", str(exc))
+        if (
+            provenance == "raw"
+            and parsed_capture.kind in ("jsonl", "grok_export")
+            and parsed_capture.sha256 != meta.get("source_sha256")
+        ):
+            _refuse(
+                "pour.capture_inconsistent",
+                "capture.sha256 != meta.source_sha256",
+            )
     window = source0.get("window")
     if window is not None:
         if not isinstance(window, dict):

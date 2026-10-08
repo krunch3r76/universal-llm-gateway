@@ -34,6 +34,7 @@ def test_unset_provenance_omitted_from_wire() -> None:
     assert "provenance" not in meta_dump
     blob = json.dumps(wire, sort_keys=True).encode()
     assert b'"provenance"' not in blob
+    assert b'"capture"' not in blob
 
 
 def test_provenance_literal_roundtrip() -> None:

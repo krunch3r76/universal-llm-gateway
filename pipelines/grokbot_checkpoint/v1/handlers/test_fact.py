@@ -46,3 +46,4 @@ async def test_fact_once() -> None:
     assert second["skipped"] is True
     assert len(sent) == 1
     assert "provenance raw" in sent[0]["body"]
+    assert "capture none" in sent[0]["body"]

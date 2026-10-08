@@ -28,9 +28,16 @@ def _fact_body(
         snap = "none"
         prov = "none"
     trigger = str(options.get("trigger") or "")
+    cap = envelope_step.get("capture")
+    if isinstance(cap, dict):
+        pointer = f"{cap.get('kind')}@{cap.get('sha256')}"
+        if cap.get("pseudo_byte_exact"):
+            pointer += " · pseudo_byte_exact"
+    else:
+        pointer = "none"
     return (
         f"card {card_uri}@{card_sha} trigger {trigger} snapshot {snap} "
-        f"provenance {prov}"
+        f"provenance {prov} capture {pointer}"
     )
 
 

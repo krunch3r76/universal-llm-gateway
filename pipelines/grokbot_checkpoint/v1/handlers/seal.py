@@ -50,6 +50,10 @@ async def run_seal(
         proposals.append(
             "session_close response omitted meta.provenance; cortex_store unchanged"
         )
+    if isinstance(envelope_step.get("capture"), dict) and not echoed.get("capture"):
+        proposals.append(
+            "session_close response omitted meta.capture; cortex_store unchanged"
+        )
     if not already:
         from cortex_store.dispatch_ops.ops_transcript_seal import (
             _stamp_succession_fields,

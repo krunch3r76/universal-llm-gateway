@@ -51,6 +51,7 @@ async def test_body_and_duplicate() -> None:
     assert "messages_sha256:abc123" in body
     assert "provenance:raw" in body
     assert "producer:cursor-jsonl-extractor" in body
+    assert "capture:none" in body
     assert CANONICAL_RESUME_FOOTER in body
     assert re.search(r"messages_sha256:([0-9a-f]+)", body).group(1) == "abc123"
     async def get_dup(path: str, params=None):

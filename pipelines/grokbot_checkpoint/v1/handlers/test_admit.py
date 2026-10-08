@@ -32,7 +32,7 @@ def test_register_handlers_covers_steps() -> None:
 @pytest.mark.asyncio
 async def test_path_escape_and_replay() -> None:
     bad = await run_admit(
-        {"mode": "seal", "house": "h", "n": 1, "envelope_ref": "../x"}, {}
+        {"mode": "seal", "house": "h", "n": 1, "raw_ref": "../x"}, {}
     )
     assert bad["refused"]["code"] == "admit.path_escape"
     replay = await run_admit(
