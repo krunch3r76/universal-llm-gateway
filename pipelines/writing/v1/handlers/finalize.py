@@ -45,6 +45,8 @@ def _json_of(outputs: dict[str, Any], name: str) -> dict[str, Any] | None:
     if not _step_ok(step):
         return None
     data = step.get("json") if isinstance(step, dict) else getattr(step, "json", None)
+    if isinstance(data, dict) and data.get("_skipped") is True:
+        return None
     return data if isinstance(data, dict) else None
 
 

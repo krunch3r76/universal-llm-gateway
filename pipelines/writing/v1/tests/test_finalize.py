@@ -172,6 +172,39 @@ def test_finalize_revision_happy_path() -> None:
     assert payload["review"]["status"] == "ok"
 
 
+def _skipped_revise_outputs(
+    verdict: str, findings: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "assemble": _Out(_assemble()),
+        "draft": _Out(_draft(), model_id=_HERMES, model_call_count=1),
+        "provenance_check": _Out({"violations": [], "pass": True}),
+        "independence": _Out({"refused": None, "independence": "full"}),
+        "review": _Out(
+            {"findings": findings, "verdict": verdict},
+            model_id=_QWEN,
+            model_call_count=1,
+        ),
+        "revise": _Out({"_skipped": True}),
+        "provenance_check_final": _Out({"_skipped": True}),
+    }
+
+
+def test_finalize_skipped_revise_on_ship() -> None:
+    payload = _run(_skipped_revise_outputs("ship", []))
+    assert payload["revision"] is None
+    assert payload["provenance"]["final"] is None
+    assert payload["seats_used"]["reviser"] is None
+    assert payload["ship_gate"]["pass"] is True
+
+
+def test_finalize_skipped_revise_on_revise_verdict() -> None:
+    findings = [{"ref": "s1", "type": "omission", "fix": "add the date"}]
+    payload = _run(_skipped_revise_outputs("revise", findings))
+    assert payload["ship_gate"]["pass"] is False
+    assert findings[0] in payload["ship_gate"]["unresolved"]
+
+
 def test_finalize_ship_without_revision() -> None:
     payload = _run(
         {
