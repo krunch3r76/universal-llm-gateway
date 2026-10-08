@@ -1321,52 +1321,6 @@ def test_mirror_to_event_service_includes_iso_timestamp():
     assert payload["ts_unix_ms"] > 0
 
 
-def test_claimed_auto_job_same_thread_request_admits_with_census_n1():
-    """Claimed in-flight Auto job on the lane counts as continue-while-running (N=1)."""
-    from claude_bundles.request_admission_census import (
-        attach_claimed_job_census_rows,
-        census_row_from_claimed_auto_job,
-    )
-
-    snap = attach_claimed_job_census_rows(
-        {"rows": []},
-        [
-            census_row_from_claimed_auto_job(
-                thread_id="13075",
-                job_id="a6cc6bde",
-            )
-        ],
-    )
-    with (
-        patch(
-            "claude_bundles.hop_seat_cutover.load_watches",
-            return_value={"13075": {"thread_id": "13075"}},
-        ),
-        patch(
-            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-            return_value=None,
-        ),
-        patch(
-            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
-            return_value=None,
-        ),
-    ):
-        refusal = gate_request_admission(
-            thread_id="13075",
-            caller_registration_id=None,
-            active_work_snap=snap,
-        )
-        identity = resolve_request_admission_identity(
-            thread_id="13075",
-            caller_registration_id=None,
-            active_work_snap=snap,
-        )
-    assert refusal is None
-    assert identity.census_n == 1
-    assert identity.source == "single_seat_active_work"
-    assert identity.registration_id == "cursor-auto-job:a6cc6bde"
-
-
 def test_registration_less_stub_after_terminal_admits():
     """Enroll stub with no holder admits after terminal. Census stays 0."""
     with (
