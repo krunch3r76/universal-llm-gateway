@@ -135,6 +135,12 @@ def retention_startup_mode() -> str:
     return "dry_run"
 
 
+def _log_shutdown_phase(phase: str, started: float) -> None:
+    """Log one shutdown phase with elapsed milliseconds for the next SIGKILL."""
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    logger.info("shutdown: %s in %d ms", phase, elapsed_ms)
+
+
 def _drop_query_peers(server: uvicorn.Server | None) -> None:
     """Close accepted query connections so uvicorn does not wait on them.
 
@@ -446,8 +452,11 @@ async def run_service(
         logger.critical("Event service lifecycle failure: %s", e, exc_info=True)
     finally:
         logger.info("Event service shutting down...")
+        phase = time.monotonic()
         if bridge is not None:
             await bridge.stop()
+            _log_shutdown_phase("bridge stopped", phase)
+        phase = time.monotonic()
         if retention_task is not None:
             store.stop_background_work()
             retention_task.cancel()
@@ -455,12 +464,20 @@ async def run_service(
                 await asyncio.wait_for(retention_task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
                 pass
+            _log_shutdown_phase("retention stopped", phase)
+        phase = time.monotonic()
         await live_subscribers.close_all(timeout=_SUBSCRIBER_SHUTDOWN_WAIT_S)
+        _log_shutdown_phase("subscribers closed", phase)
+        phase = time.monotonic()
         if ingest is not None:
             await ingest.stop()
+        _log_shutdown_phase("ingest closed", phase)
+        phase = time.monotonic()
         _drop_query_peers(uds_server)
         _drop_query_peers(tcp_server)
         await _finish_query_servers(serve_tasks, timeout=_QUERY_SHUTDOWN_WAIT_S)
+        _log_shutdown_phase("query servers stopped", phase)
+        phase = time.monotonic()
         if started and persist:
             ts_ms, ts_iso = _event_timestamp()
             await store.insert_events(
@@ -476,7 +493,10 @@ async def run_service(
                     }
                 ]
             )
+            _log_shutdown_phase("stopped event written", phase)
+        phase = time.monotonic()
         await store.close()
+        _log_shutdown_phase("store closed", phase)
         logger.info("Event service stopped")
 
 

@@ -169,6 +169,8 @@ def test_stop_with_idle_uds_publishers_exits_under_3s(tmp_path: Path) -> None:
         socks = [_open_uds(tmp_path / "ingest.sock") for _ in range(2)]
         time.sleep(0.2)
         elapsed = _sigterm_exit_s(proc)
+        assert proc.stdout is not None
+        tail = proc.stdout.read()
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -176,6 +178,13 @@ def test_stop_with_idle_uds_publishers_exits_under_3s(tmp_path: Path) -> None:
         for sock in socks:
             sock.close()
     assert elapsed < 3
+    for phase in (
+        "shutdown: subscribers closed in",
+        "shutdown: ingest closed in",
+        "shutdown: query servers stopped in",
+        "shutdown: store closed in",
+    ):
+        assert phase in tail, tail[-1500:]
 
 
 @pytest.mark.offline
