@@ -216,18 +216,6 @@ def _threads_dispatch(
     )
 
 
-def _enrich_with_cursor_auto_job(
-    detail: dict[str, Any], *, thread: str
-) -> dict[str, Any]:
-    """Return the thread unchanged.
-
-    The Auto job-state enrich left with the deleted worker client. ``thread``
-    is accepted so callers keep the same signature.
-    """
-    del thread
-    return detail
-
-
 def _thread_get_impl(
     *, thread: str, include_resume: bool = False, to: str | None = None
 ) -> dict[str, Any]:
@@ -236,9 +224,7 @@ def _thread_get_impl(
         thread = str(thread)
     if not thread:
         return {"error": "thread_get requires: thread (str)"}
-    params: dict[str, str] = {
-        "include_resume": "true" if include_resume else "false"
-    }
+    params: dict[str, str] = {"include_resume": "true" if include_resume else "false"}
     if to:
         params["to"] = to
     qs = urlencode(params)
@@ -257,7 +243,7 @@ def _thread_get_impl(
         if structured is not None:
             return structured
         return {"error": f"agent-bus error: {result['error']}"}
-    detail = _enrich_with_cursor_auto_job(result, thread=thread)
+    detail = result
     if isinstance(detail, dict) and detail.get("cse_chat_url") is not None:
         detail["cse_chat_url_basis"] = "last_associated"
         detail["cse_current_probe"] = (
@@ -274,9 +260,7 @@ def _thread_get_dispatch(
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
-    return _thread_get_impl(
-        thread=thread, include_resume=bool(include_resume), to=to
-    )
+    return _thread_get_impl(thread=thread, include_resume=bool(include_resume), to=to)
 
 
 def _job_state_dispatch(

@@ -12,10 +12,7 @@ from tools.agent_bus.request_intake import (
 
 
 def test_request_id_path_refuses_before_send() -> None:
-    with (
-        patch("tools.agent_bus.request._send_dispatch") as send_mock,
-        patch("tools.agent_bus.request.record") as record_mock,
-    ):
+    with patch("tools.agent_bus.request.record") as record_mock:
         result = _request_dispatch(
             new_slug="rid-echo",
             to="cursor",
@@ -32,7 +29,6 @@ def test_request_id_path_refuses_before_send() -> None:
         ),
         "reason": "cursor_auto_retired",
     }
-    send_mock.assert_not_called()
     record_mock.assert_called_once_with(
         "mcp.agentbus.request.rejected",
         reason="cursor_auto_retired",
@@ -82,6 +78,7 @@ def test_agent_bus_request_refuses_before_unknown_args() -> None:
             def deco(fn):
                 self.fn = fn
                 return fn
+
             return deco
 
     rec = _Rec()
@@ -90,4 +87,3 @@ def test_agent_bus_request_refuses_before_unknown_args() -> None:
         rec.fn(tool="request", arguments='{"bogus":1,"from":"nobody"}')
     )
     assert result["reason"] == "cursor_auto_retired"
-

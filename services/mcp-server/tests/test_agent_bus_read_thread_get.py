@@ -37,13 +37,7 @@ def test_thread_get_happy_path() -> None:
         "tags": ["role:root"],
     }
 
-    with (
-        patch("tools.agent_bus.threads.relay", return_value=detail) as relay,
-        patch(
-            "tools.agent_bus.request_worker_client.fetch_job_state",
-            return_value={"ok": True, "found": False, "job": None},
-        ),
-    ):
+    with patch("tools.agent_bus.threads.relay", return_value=detail) as relay:
         result = _thread_get_impl(thread="049")
 
     assert result == detail
@@ -69,42 +63,6 @@ def test_thread_get_forwards_to_query() -> None:
         result = _thread_get_impl(thread="049", to="web")
     assert "to=web" in relay.call_args[0][2]
     assert result["unread_basis"]["recipient"] == "web"
-
-
-def test_thread_get_includes_live_cursor_auto_job_phase() -> None:
-    """Auto-arm removal: a live job probe is not attached as cursor_auto_job."""
-    detail = {
-        "id": "7052",
-        "slug": "private-lane",
-        "status": "active",
-        "turn_count": 3,
-        "unread_count": 1,
-        "tags": [],
-    }
-    job = {
-        "job_id": "j-1",
-        "thread_id": "7052",
-        "status": "claimed",
-        "lifecycle_phase": "admitted",
-        "admitted_at": "2026-08-09T17:00:00+00:00",
-        "bound_at": None,
-        "dispatch_id": None,
-        "escalation": "cdp/fable",
-        "contract": "answer",
-    }
-
-    with (
-        patch("tools.agent_bus.threads.relay", return_value=detail),
-        patch(
-            "tools.agent_bus.request_worker_client.fetch_job_state",
-            return_value={"ok": True, "found": True, "job": job},
-        ) as probe,
-    ):
-        result = _thread_get_impl(thread="7052")
-
-    assert "cursor_auto_job" not in result
-    assert result["id"] == "7052"
-    probe.assert_not_called()
 
 
 def test_thread_get_missing_thread_structured_error() -> None:
@@ -136,13 +94,7 @@ def test_thread_get_include_resume_true_relays_flag_and_envelope() -> None:
         "resume_envelope": {"tape_verbal": [], "checkpoint_highlight": "hi"},
     }
 
-    with (
-        patch("tools.agent_bus.threads.relay", return_value=detail) as relay,
-        patch(
-            "tools.agent_bus.request_worker_client.fetch_job_state",
-            return_value={"ok": True, "found": False, "job": None},
-        ),
-    ):
+    with patch("tools.agent_bus.threads.relay", return_value=detail) as relay:
         result = _thread_get_dispatch(thread=49, include_resume=True)
 
     assert relay.call_args[0][2] == "/threads/49?include_resume=true"

@@ -22,7 +22,6 @@ from hop_handoff import (
 
 from tools.agent_bus.hop import _hop_dispatch, resolve_hop_successor_model
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
-from tools.agent_bus.request_worker_client import enqueue_auto_job
 
 
 def setup_function() -> None:
@@ -309,39 +308,6 @@ def test_hop_commission_refused_when_contract_job_unknown() -> None:
     result = asyncio.run(run())
     assert result["posted"] is False
     assert result["reason"] == "job_unknown"
-    assert result["continuity_hop"] is True
-
-
-def test_enqueue_omits_continuity_hop_when_false() -> None:
-    result = enqueue_auto_job(
-        thread_id="77",
-        turn_number=1,
-        subject="s",
-        body="b",
-        from_agent="web-anthropic",
-        to_agent="cursor",
-        desired_model="auto",
-        desired_effort="medium",
-        contract="answer",
-    )
-    assert result["reason"] == "auto_arm_removed"
-    assert result["continuity_hop"] is False
-
-
-def test_enqueue_includes_continuity_hop_when_true() -> None:
-    result = enqueue_auto_job(
-        thread_id="77",
-        turn_number=1,
-        subject="s",
-        body="TYPE: CONTINUITY_HANDOFF\n",
-        from_agent="web-anthropic",
-        to_agent="cursor",
-        desired_model="auto",
-        desired_effort="medium",
-        contract="answer",
-        continuity_hop=True,
-    )
-    assert result["reason"] == "auto_arm_removed"
     assert result["continuity_hop"] is True
 
 
