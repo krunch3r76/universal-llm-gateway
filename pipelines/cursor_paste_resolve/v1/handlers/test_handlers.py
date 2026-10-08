@@ -339,9 +339,7 @@ async def test_cursor_sdk_mint_sends_bearer(tmp_path: Path, monkeypatch) -> None
     assert out.json["dispatch_thread_id"] == "4242"
     mint = next(item for item in posts if item["path"] == "/threads")
     assert mint["headers"] == {"Authorization": "Bearer bus-secret"}
-    dispatch = next(
-        item for item in posts if item["path"] == "/api/v1/team/dispatch"
-    )
+    dispatch = next(item for item in posts if item["path"] == "/api/v1/team/dispatch")
     assert dispatch["json"]["dispatch_thread_id"] == "4242"
     assert dispatch["json"]["reuse_thread"] == "4242"
 
@@ -1058,7 +1056,9 @@ async def test_default_investigate_hop_keeps_poll_hint_after_turn(
         wait_pin["execution_id"] = execution_id
         return {"ok": True, "splice": "surfaces: pinned"}
 
-    monkeypatch.setattr(investigate_mod, "agent_bus_headers", lambda: {"Authorization": "Bearer x"})
+    monkeypatch.setattr(
+        investigate_mod, "agent_bus_headers", lambda: {"Authorization": "Bearer x"}
+    )
     monkeypatch.setattr(investigate_mod, "make_async_client", lambda *a, **k: _Client())
     monkeypatch.setattr(investigate_mod, "post_json", fake_post)
     monkeypatch.setattr(investigate_mod, "latest_turn_number", fake_latest)
@@ -1122,7 +1122,9 @@ async def test_default_investigate_hop_repins_when_hint_omits_after_turn(
         wait_pin["after_turn"] = after_turn
         return {"ok": True, "splice": "surfaces: repin"}
 
-    monkeypatch.setattr(investigate_mod, "agent_bus_headers", lambda: {"Authorization": "Bearer x"})
+    monkeypatch.setattr(
+        investigate_mod, "agent_bus_headers", lambda: {"Authorization": "Bearer x"}
+    )
     monkeypatch.setattr(investigate_mod, "make_async_client", lambda *a, **k: _Client())
     monkeypatch.setattr(investigate_mod, "post_json", fake_post)
     monkeypatch.setattr(investigate_mod, "latest_turn_number", fake_latest)
