@@ -570,6 +570,21 @@ def test_member_without_proxy_is_503(
     assert posted.json()["error"]["code"] == "pipeline_system_unavailable"
 
 
+def test_unknown_category_post_is_404_before_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    posted = client.post(
+        "/api/v1/capabilities/not-a-category/whatever",
+        content=b"not-json",
+        headers={"content-type": "application/json"},
+    )
+    assert posted.status_code == 404, posted.text
+    assert posted.json()["error"]["code"] == "capability_category_not_found"
+
+
 def test_ready_unknown_member_keeps_body_validation_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

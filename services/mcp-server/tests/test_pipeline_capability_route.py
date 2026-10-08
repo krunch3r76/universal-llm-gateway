@@ -65,6 +65,57 @@ def test_capability_async_passes_error_body(status_code: int, body: dict) -> Non
     client.get.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_zero_slash_id_is_not_a_capability_route() -> None:
+    mcp = FastMCP("cap-route-plain")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline.make_sync_client") as http:
+        with patch("tools.pipeline._capability_async") as capability:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "pipeline",
+                    {"op": "async", "pipeline_id": "jobs"},
+                )
+    body = result.structured_content
+    assert body["error"]["code"] == "missing_required"
+    capability.assert_not_called()
+    http.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline_id", ["a/b/c", "jobs/../x", "jobs/%2e%2e"])
+async def test_malformed_capability_id_rejects_before_http(pipeline_id: str) -> None:
+    mcp = FastMCP("cap-route-bad")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline.make_sync_client") as http:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "pipeline",
+                {"op": "async", "pipeline_id": pipeline_id},
+            )
+    body = result.structured_content
+    assert body["error"]["code"] == "capability_id_invalid"
+    http.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "/api/v1/capabilities/jobs/../x",
+        "/api/v1/capabilities/jobs/%2e%2e/x",
+        "/api/v1/capabilities/jobs/%2E%2E/x",
+        "/api/v1/capabilities/jobs/..\\x",
+    ],
+)
+def test_capability_result_href_dotdot_rejects_before_http(href: str) -> None:
+    with patch("tools.pipeline.make_sync_client") as http:
+        out = _pipeline_result(href, 0.0)
+    assert out["error"]["code"] == "capability_href_invalid"
+    http.assert_not_called()
+
+
 def test_pipeline_result_gets_capability_href_with_int_wait() -> None:
     href = "/api/v1/capabilities/jobs/bus-reply-watch/runs/r1"
     resp = MagicMock()

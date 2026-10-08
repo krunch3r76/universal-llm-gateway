@@ -10,7 +10,9 @@ one first-class schema.
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import unquote
 
 import httpx
 from mcp_events import monotonic_now, record
@@ -48,6 +50,7 @@ _DISPATCH_TIMEOUT = 15.0
 _RESULT_MAX_WAIT = 60.0
 _RESULT_POLL_BUFFER = 15.0
 _CAPABILITY_PREFIX = "/api/v1/capabilities/"
+_PATH_SPLIT = re.compile(r"[/\\]")
 
 _QUERY_SOCKET = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
@@ -353,6 +356,38 @@ def _pipeline_async(
         return {"error": {"code": "http_error", "message": str(exc)}}
 
 
+def _path_has_dotdot(value: str) -> bool:
+    """True when any slash or backslash segment is ``..`` or ``%2e%2e``."""
+    candidates = (value, unquote(value), unquote(unquote(value)))
+    for candidate in candidates:
+        for segment in _PATH_SPLIT.split(candidate):
+            if segment == ".." or segment.lower() == "%2e%2e":
+                return True
+    return False
+
+
+def _capability_id_shape_error(pipeline_id: str) -> dict[str, Any] | None:
+    """Reject anything other than exactly ``<category>/<member>`` with no ``..``."""
+    category, separator, member = pipeline_id.partition("/")
+    if (
+        separator != "/"
+        or "/" in member
+        or not category
+        or not member
+        or _path_has_dotdot(pipeline_id)
+    ):
+        return {
+            "error": {
+                "code": "capability_id_invalid",
+                "message": (
+                    "capability id must be exactly <category>/<member> "
+                    "with both halves non-empty and no '..' segment"
+                ),
+            }
+        }
+    return None
+
+
 def _capability_async(
     member_path: str,
     options: dict[str, Any] | None,
@@ -507,6 +542,13 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     url = f"/api/v1/executions/{execution_id}"
     wait_param: float = wait_clamped
     if execution_id.startswith(_CAPABILITY_PREFIX):
+        if _path_has_dotdot(execution_id):
+            return {
+                "error": {
+                    "code": "capability_href_invalid",
+                    "message": "capability result href contains a '..' segment",
+                }
+            }
         url = execution_id
         wait_param = int(wait_clamped)
     try:
@@ -695,6 +737,9 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
             return _pipeline_run(pipeline_id, messages, options, timeout)
         if op == "async":
             if pipeline_id and "/" in pipeline_id:
+                invalid = _capability_id_shape_error(pipeline_id)
+                if invalid is not None:
+                    return invalid
                 return _capability_async(pipeline_id, options, messages)
             if not pipeline_id or messages is None:
                 return {
