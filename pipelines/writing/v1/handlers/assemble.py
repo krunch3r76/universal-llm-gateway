@@ -65,9 +65,11 @@ def _record_text(record: Any) -> str:
             "content",
             "statement",
             "excerpt",
+            "description",
+            "notes",
+            "summary",
             "title",
             "name",
-            "summary",
         ):
             value = record.get(key)
             if isinstance(value, str) and value.strip():

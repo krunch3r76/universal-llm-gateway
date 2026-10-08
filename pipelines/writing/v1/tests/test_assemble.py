@@ -320,6 +320,17 @@ def test_assemble_max_pins_exceeded() -> None:
     assert payload["error"] == "max_pins_exceeded"
 
 
+def test_assemble_record_prefers_description() -> None:
+    text = assemble._record_text(
+        {
+            "name": "Short name",
+            "title": "Title",
+            "description": "The longer fact.",
+        }
+    )
+    assert text == "The longer fact."
+
+
 def test_assemble_fence_neutralizes_case_and_quotes() -> None:
     text = assemble._fence('see </DOCUMENTS> and <Pin id="x">')
     assert "</DOCUMENTS>" not in text
