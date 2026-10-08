@@ -1,5 +1,5 @@
 ---
-description: Load CDP operator-proxy protocol when Cowork web-anthropic holds the operator seat via agent_bus.request — co-developer posture, DIRECTIVE/CLOSEOUT/DISPOSITION discipline. Also load when diagnosing CSE stream stop / mid-mission idle.
+description: Load CDP operator-proxy protocol when Cowork web-anthropic holds the operator seat via ulg-code team_dispatch — co-developer posture, DIRECTIVE/CLOSEOUT/DISPOSITION discipline. Also load when diagnosing CSE stream stop / mid-mission idle.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
@@ -23,13 +23,13 @@ trigger_match_terms:
   - cse-stream-stop
   - Work beyond this close
   - COME TO IDE
-  - Auto wedged
+  - GIW queue wedged
   - send to cursor
   - operator-gate
 ---
 # CDP Operator Proxy
 
-**Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ follow this rule before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
+**Invariant:** `operator-proxy episode ∧ Cowork commissions via ulg-code team_dispatch ⇒ follow this rule before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
 
 **Skill homes (BINDING — do not mix planes):**
 
@@ -63,15 +63,15 @@ trigger_match_terms:
 
 **claude.ai and Cursor IDE are resilient to all service restarts (BINDING — 2026-08-13 / 2026-08-25):** includes `mcp` **and** `cdp_ask`. `drop(attach) ∧ ¬end(CSE ∨ IDE chat)`. Recover after `wait_healthy` (IDE: retry tools; CSE: followup/reattach by `chat_url`, or continuity hop for tooling chips). IDE/lead ¬ skip `mcp` or `cdp_ask` `sync_restart` citing “would drop Cowork attach” **or** “this session is in-flight” (`mcp_session_hot`). **Tab ⟂ session:** `open(tab) ⇏ alive(session ∨ stream)` — hop ≠ tab-keepalive (`decision:cse-tab-decoupled-from-session`). Rule: `restart-drain-discipline` § CSE vs service.
 
-**Transport vs bus (BINDING):** `team_dispatch(model=cdp/…)` / `cse_session(followup)` = IDE↔Cowork converse transport; operator commission = **`agent_bus.request` on private request thread**. Killing a transport handle does **not** cancel bus work — poll the request lane, not `active_work` alone. Reconnect: `cse_session(op=followup)` same `holder` (Cowork CSE) **or** continue on bus thread (`mark_read` → next `request`).
+**Transport vs bus (BINDING):** `team_dispatch(model=cdp/…)` / `cse_session(followup)` = IDE↔Cowork converse transport; operator commission = **ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`) on the private request thread** (bus `send` / DISPOSITION). Killing a transport handle does **not** cancel bus work — poll the request lane, not `active_work` alone. Reconnect: `cse_session(op=followup)` same `holder` (Cowork CSE) **or** continue on bus thread (`mark_read` → next commission).
 
 ## When
 
-- Cowork holds operator seat driving cursor via `agent_bus.request`
+- Cowork holds operator seat driving cursor via ulg-code `team_dispatch` on the private request lane
 - Authoring or reviewing `TYPE: DIRECTIVE` / `TYPE: DISPOSITION` turns
 - cursor-sdk nested dispatch arcs (5867-class dogfood)
 - Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
-- Life missing a code-seat tool (`manage`, reload, …) — commission **cursor** (`request` if Auto can claim; `send(to=cursor)` if Auto is wedged — inv 40); ¬ park on the human
+- Life missing a code-seat tool (`manage`, reload, …) — commission **cursor** via ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`); if GIW queue is wedged, `send(to=cursor)` attended IDE (inv 40); ¬ park on the human
 - **CSE stream stopped / mid-mission idle** — this rule (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
 
 ¬ load for IDE cursor lead orchestration (`lean-context-dispatch-first` + `operator-posture` instead).
