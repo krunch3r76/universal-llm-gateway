@@ -1,6 +1,6 @@
 """Cross-lane park/restore gate correctness (item 12 / AC-12a–c).
 
-Replays attempt-1 shape: operator parent ``auto-*`` nests standard child
+Replays attempt-1 shape: operator parent ``op-*`` nests standard child
 ``{uuid}-{hex8}``; restore must not install the operator id on the standard gate.
 """
 
@@ -34,7 +34,7 @@ from services.git_integration_worker.models.cursor_api import (
     CursorDispatchResponse,
 )
 
-_PARENT = "auto-4ef000000001"
+_PARENT = "op-4ef000000001"
 _CHILD = "d40677a34a06-f3af9df4"
 _IDE_PARENT = "c894cf038972-c567a692"
 _IDE_CHILD = "1a2296640389-b1ac0dc3"
@@ -64,7 +64,7 @@ def _admit(
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     if caller_agent is None:
-        caller_agent = "cursor-auto" if dispatch_id.startswith("auto-") else None
+        caller_agent = "cursor" if dispatch_id.startswith("op-") else None
     req = CursorDispatchRequest(
         thread_id="6655",
         model="cursor/composer-2.5",
@@ -99,10 +99,10 @@ async def test_ac12a_cross_lane_restore_leaves_standard_gate_clean() -> None:
     _admit(dispatch_id=_PARENT)
     _admit(dispatch_id=_CHILD, nest_under=_PARENT)
 
-    assert sdk_dispatch_lane(dispatch_id=_PARENT) == "operator"
+    assert sdk_dispatch_lane(dispatch_id=_PARENT, caller_agent="cursor") == "operator"
     assert sdk_dispatch_lane(dispatch_id=_CHILD) == "operator"
 
-    await acquire_sdk_dispatch_slot(dispatch_id=_PARENT, caller_agent="cursor-auto")
+    await acquire_sdk_dispatch_slot(dispatch_id=_PARENT, caller_agent="cursor")
     await transfer_capacity_after_park(
         parent_id=_PARENT, child_id=_CHILD, source_repo="/repo"
     )
@@ -120,6 +120,7 @@ async def test_ac12a_cross_lane_restore_leaves_standard_gate_clean() -> None:
 @pytest.mark.asyncio
 async def test_ac12a_transfer_rejects_cross_lane_restore() -> None:
     """Restore must not install operator parent on standard gate (attempt-1 defect)."""
+    _admit(dispatch_id=_PARENT, caller_agent="cursor")
     _STANDARD_GATE._holders.add(_CHILD)
     _STANDARD_GATE._active_count = 1
 
@@ -132,6 +133,7 @@ async def test_ac12a_transfer_rejects_cross_lane_restore() -> None:
 @pytest.mark.asyncio
 async def test_ac12b_reclaim_cross_lane_phantom_holders() -> None:
     """Misplaced operator id on standard gate is force-released."""
+    _admit(dispatch_id=_PARENT, caller_agent="cursor")
     await acquire_sdk_dispatch_slot(dispatch_id=_CHILD)
     _STANDARD_GATE._holders.discard(_CHILD)
     _STANDARD_GATE._holders.add(_PARENT)

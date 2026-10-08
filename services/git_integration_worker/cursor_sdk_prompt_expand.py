@@ -1,7 +1,6 @@
 """GIW-local prompt-expand prelude for cursor-sdk admits.
 
-Mirrors Stargate ``expand_consume_admit_path`` gates without routing
-cursor-auto nested work through ``team_dispatch`` generate.
+Mirrors Stargate ``expand_consume_admit_path`` gates for GIW admits.
 """
 
 from __future__ import annotations
@@ -81,7 +80,7 @@ def expand_contract_for_admit(
     *,
     handoff_contract: str | None,
 ) -> str:
-    """Contract token for prompt-expand admit — preserves operator intent on cursor-auto."""
+    """Contract token for prompt-expand admit — preserves operator intent."""
     operator = (getattr(req, "operator_contract", None) or "").strip()
     if operator:
         return operator

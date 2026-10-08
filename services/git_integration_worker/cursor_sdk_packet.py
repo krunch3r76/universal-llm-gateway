@@ -684,7 +684,7 @@ def resolve_prompt_preamble(
     the conductor's own ``dispatch_id`` and both nesting paths (independent
     judgment dispatch vs ``nest_under`` for mechanical landing). Identified by
     ``packet_path`` or the mandatory ``Use the conductor skill`` packet line
-    (message-body ``COMMISSION_CONDUCTOR`` dispatches from cursor-auto). The same
+    (message-body ``COMMISSION_CONDUCTOR`` dispatches). The same
     gate also restates run-to-completion: the admit already authorizes driving
     every G-row and landing on green without an interim plan/merge pause
     (friction 29694/29693). The first conductor line names the conductor skill.
@@ -847,9 +847,8 @@ def resolve_prompt_preamble(
         contract
     ) and not _already_invokes_ulg_for_llms(prompt_preamble, existing_text):
         parts.append(_ULG_FOR_LLMS_PREAMBLE)
-    if (
-        contract in _HYPOTHESIZE_ON_JOBS
-        and not _already_invokes_hypothesize_simulate(prompt_preamble, existing_text)
+    if contract in _HYPOTHESIZE_ON_JOBS and not _already_invokes_hypothesize_simulate(
+        prompt_preamble, existing_text
     ):
         parts.append(_HYPOTHESIZE_SIMULATE_PREAMBLE)
     effective_skills: list[str] = list(skills or [])

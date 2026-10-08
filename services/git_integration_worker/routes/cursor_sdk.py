@@ -160,7 +160,6 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_skills_mounted,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
-    emit_sdk_worker_dispatched,
     emit_sdk_worker_failed,
     emit_sdk_worker_orphaned,
     emit_sdk_worker_progress,
@@ -593,31 +592,6 @@ def _emit_enriched_queued(
         ),
         queued_on=f"write_lease:{lease_key}",
         workspace_inherited_from=req.workspace_inherited_from,
-    )
-
-
-def _maybe_emit_giw_dispatched(
-    *,
-    req: CursorDispatchRequest,
-    packet_text: str,
-) -> None:
-    """Emit GIW ``worker.dispatched`` only for nested ``admitted_via=cursor-auto``."""
-    if req.admitted_via != "cursor-auto":
-        return
-    association = build_dispatch_association_fields(req=req, packet_text=packet_text)
-    emit_sdk_worker_dispatched(
-        dispatch_id=req.dispatch_id,
-        thread_id=req.thread_id,
-        execution_id=req.execution_id,
-        request_id=req.request_id,
-        admitted_via=req.admitted_via,
-        asked_by=association["asked_by"],
-        purpose=association["purpose"],
-        story_id=association["story_id"],
-        topic=association["topic"],
-        nest_under=association["nest_under"],
-        packet_kind=association["packet_kind"],
-        model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
     )
 
 
@@ -1880,10 +1854,6 @@ async def _start_promoted_dispatch(
     ledger.register_task(promoted.dispatch_id, task)
     ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=promoted.dispatch_id)
-    packet_text = req.message or ""
-    if req.packet_path:
-        packet_text = _read_packet_text(req, ctx.hub) or packet_text
-    _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
 
 
 async def _resume_parked_rows(
@@ -2754,7 +2724,7 @@ async def _run_sdk_dispatch_gated(
     # slot is held (predecessor edits are included) and off the admission HTTP
     # request path (caller gets 200/202 immediately; no Stargate read-timeout
     # 599 on slow dirty-checkout baselines).
-    # cursor-auto maps operator implement → handoff_contract pure-mechanical
+    # Operator implement maps to handoff_contract pure-mechanical
     # (wire_map.derive_contract); both need admit_head for lane git_refs.
     if ctx.handoff_contract in (
         "implement",
@@ -3341,9 +3311,7 @@ async def _finalize_failed(
     )
     degraded_reasons = degraded_reasons_from_exception(exc) if exc is not None else ()
     stream_forensics = (
-        exc.stream_forensics
-        if isinstance(exc, SdkRunAbortedError)
-        else None
+        exc.stream_forensics if isinstance(exc, SdkRunAbortedError) else None
     )
     emit_sdk_worker_failed(
         dispatch_id=req.dispatch_id,
@@ -3586,45 +3554,6 @@ async def admit_cursor_dispatch(
     binding (S1 re-pin), write lease, work-key identity, resume eligibility —
     rather than a shortcut that would skip them.
     """
-    if req.admitted_via == "cursor-auto":
-        from job_grammar import resolve_job_token
-        from job_vocab import CURSOR_AUTO_ADMITTED_JOBS
-
-        raw_job = str(req.handoff_contract or "").strip()
-        if not raw_job:
-            # Breaks when cursor-auto admit proceeds with no handoff_contract.
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "field": "job",
-                    "error": {
-                        "code": "job_missing",
-                        "message": "job '(omitted)' is not admitted for cursor-auto",
-                        "event": "dispatch.job.refused",
-                        "reason": "job_missing",
-                        "registry_ref": "job_vocab:unresolved",
-                    },
-                },
-            )
-        parsed = resolve_job_token(raw_job)
-        # A registry id outside CURSOR_AUTO_ADMITTED_JOBS is not this surface.
-        # Breaks when check-review (generate-only) is admitted on cursor-auto.
-        if parsed.reason == "job_unknown" or (
-            parsed.job not in CURSOR_AUTO_ADMITTED_JOBS
-        ):
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "field": "job",
-                    "error": {
-                        "code": "job_unknown",
-                        "message": f"job {parsed.job!r} is not admitted for cursor-auto",
-                        "event": "dispatch.job.refused",
-                        "reason": "job_unknown",
-                        "registry_ref": parsed.registry_ref,
-                    },
-                },
-            )
     try:
         config = resolve_cursor(req.model)
     except ValueError as exc:
@@ -4650,7 +4579,6 @@ async def admit_cursor_dispatch(
     ledger.register_task(req.dispatch_id, task)
     ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
-    _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
     from services.git_integration_worker.cursor_sdk_prompt_expand import (
         giw_prompt_expand_pending,
     )

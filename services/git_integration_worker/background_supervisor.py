@@ -5,9 +5,9 @@ Because the lifespan pins every task on ``app.state``, the task is never garbage
 collected, so asyncio's "Task exception was never retrieved" warning never
 fires: the loop is simply gone, with no log line, no event, and no alarm.
 
-That is the 2026-08-09 cursor-auto outage. ``auto_worker_loop`` unwound at
+That is the 2026-08-09 outage. The worker loop unwound at
 21:27:58Z when ``await hb_task`` re-raised a dead heartbeat's exception; the
-handler deregistered in its ``finally`` and ``lane:cursor-auto`` read
+handler deregistered in its ``finally`` and the lane read
 ``handler_count: 0`` for the next four hours. Everything commissioned through
 ``agent_bus.request`` parked behind it — including ``contract: propagate``, the
 sanctioned repair path, which is why no agent could fix it.

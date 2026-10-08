@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-# ``none`` authors lane commits on conductor resumes (cursor-auto).
+# ``none`` authors lane commits on conductor resumes.
 # ``mechanical`` is a nested child contract that can author lane commits.
 # ``freeform`` is the nested implement contract when implement admission refuses.
 # The commits check below is the witness; the contract label is not.

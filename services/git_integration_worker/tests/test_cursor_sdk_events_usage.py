@@ -202,12 +202,12 @@ def test_dispatched_event_carries_request_id() -> None:
         thread_id="5867",
         execution_id="exec-1",
         request_id="ledger-req-abc123",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
         seat="cursor-sdk",
     )
     assert event.signal == "frontier.sdk.worker.dispatched"
     assert event.payload["request_id"] == "ledger-req-abc123"
-    assert event.payload["admitted_via"] == "cursor-auto"
+    assert event.payload["admitted_via"] == "stargate"
 
 
 def test_dispatched_event_carries_topic_and_nest_under() -> None:
@@ -216,7 +216,7 @@ def test_dispatched_event_carries_topic_and_nest_under() -> None:
         thread_id="5867",
         execution_id="exec-1",
         request_id="ledger-req-abc123",
-        admitted_via="cursor-auto",
+        admitted_via="stargate",
         topic="ULG gains a glanceable dispatch topic",
         nest_under="parent-disp",
     )

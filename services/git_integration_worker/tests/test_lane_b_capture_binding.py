@@ -180,7 +180,6 @@ async def test_ac_s0_4_promoted_dispatch_rebuilds_lane_b_binding(
         captured["ctx"] = kwargs.get("ctx")
 
     monkeypatch.setattr(route_mod, "_run_sdk_dispatch_gated", _capture_gated)
-    monkeypatch.setattr(route_mod, "_maybe_emit_giw_dispatched", lambda **_kw: None)
     monkeypatch.setattr(
         route_mod.CursorDispatchLedger.instance(),
         "load_promoted_request",
