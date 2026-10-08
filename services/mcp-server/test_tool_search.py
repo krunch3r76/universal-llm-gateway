@@ -96,6 +96,10 @@ GOLDEN_QUERIES: list[tuple[str, str]] = [
     ("pipeline consult", "pipeline_consult"),
 ]
 
+# Overflow tools under services/mcp-server/tools/local/ are private and
+# gitignored (.gitignore:107), so lane worktrees and CI load without them.
+_PRIVATE_LOCAL_GOLDEN_TOOLS = frozenset({"bot_supervisor"})
+
 
 def test_cortex_brief_is_primary_not_overflow(server_state: dict) -> None:
     """cortex_brief is primary — not in overflow manifest."""
@@ -108,6 +112,15 @@ def test_search_ranking_top_one(
     server_state: dict, query: str, expected_top: str
 ) -> None:
     from tool_search import search_manifest  # noqa: PLC0415
+
+    if (
+        expected_top in _PRIVATE_LOCAL_GOLDEN_TOOLS
+        and expected_top not in server_state["manifest"]
+    ):
+        pytest.skip(
+            f"{expected_top} is a private tool under services/mcp-server/tools/local/ "
+            "(gitignored, .gitignore:107) and is absent from this manifest"
+        )
 
     results = search_manifest(server_state["manifest"], query, limit=5)
     assert results, f"no results for {query!r}"
