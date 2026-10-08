@@ -1,0 +1,98 @@
+# grokbot-checkpoint-v1 — checkpoint a Grok Bot house from one poured envelope.
+schema_version: 6
+id: grokbot-checkpoint-v1
+version: "1.0"
+type: grokbot_checkpoint
+category: grokbot_checkpoint
+description: >
+  Admit, snapshot, succession-seal, card row, CHECKPOINT, FACT, and verify
+  poll for one house checkpoint. verify_resume is read-only.
+output: result
+
+concurrency:
+  key: "grokbot-cp:{options.house}"
+  scope: execution
+  timeout_seconds: 240
+
+options:
+  timeout_seconds: 1800
+  mode: seal
+  wait_verify_seconds: 900
+
+steps:
+  - name: admit
+    type: grokbot_checkpoint_admit_v1
+
+  - name: source
+    type: grokbot_checkpoint_source_v1
+    condition: "options.get('mode') == 'seal' and admit.json.get('refused') is None and not admit.json.get('replayed')"
+
+  - name: envelope
+    type: grokbot_checkpoint_envelope_v1
+    condition: "options.get('mode') == 'seal' and source.json.get('refused') is None"
+    reads_from:
+      - step: source
+        fields: [json]
+
+  - name: seal
+    type: grokbot_checkpoint_seal_v1
+    condition: "options.get('mode') == 'seal' and envelope.json.get('refused') is None"
+    reads_from:
+      - step: envelope
+        fields: [json]
+
+  - name: card
+    type: grokbot_checkpoint_card_v1
+    condition: "options.get('mode') in ('light', 'seal') and admit.json.get('refused') is None and not admit.json.get('replayed')"
+    reads_from:
+      - step: envelope
+        fields: [json]
+
+  - name: post
+    type: grokbot_checkpoint_post_v1
+    condition: "options.get('mode') == 'seal' and options.get('root_thread') and seal.json.get('refused') is None and card.json.get('refused') is None"
+    reads_from:
+      - step: seal
+        fields: [json]
+      - step: envelope
+        fields: [json]
+
+  - name: fact
+    type: grokbot_checkpoint_fact_v1
+    condition: "options.get('mode') in ('light', 'seal') and card.json.get('refused') is None"
+    reads_from:
+      - step: card
+        fields: [json]
+
+  - name: await_verify
+    type: grokbot_checkpoint_await_verify_v1
+    condition: "options.get('mode') in ('light', 'seal') and fact.json.get('refused') is None"
+    reads_from:
+      - step: fact
+        fields: [json]
+
+  - name: verify_resume
+    type: grokbot_checkpoint_verify_resume_v1
+    condition: "options.get('mode') == 'verify_resume' and admit.json.get('refused') is None"
+
+  - name: result
+    type: grokbot_checkpoint_result_v1
+    reads_from:
+      - step: admit
+        fields: [json]
+      - step: source
+        fields: [json]
+      - step: envelope
+        fields: [json]
+      - step: seal
+        fields: [json]
+      - step: card
+        fields: [json]
+      - step: post
+        fields: [json]
+      - step: fact
+        fields: [json]
+      - step: await_verify
+        fields: [json]
+      - step: verify_resume
+        fields: [json]

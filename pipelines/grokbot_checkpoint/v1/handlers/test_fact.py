@@ -1,0 +1,48 @@
+"""One FACT per (house, n)."""
+
+from __future__ import annotations
+
+import pytest
+
+from .fact import run_fact
+
+pytestmark = pytest.mark.offline
+
+
+@pytest.mark.asyncio
+async def test_fact_once() -> None:
+    sent: list[dict] = []
+    store: list[dict] = []
+
+    async def get(path: str, params=None):
+        return {"turns": list(store)}, 200
+
+    async def send(**kwargs):
+        sent.append(kwargs)
+        store.append(
+            {
+                "subject": kwargs["subject"],
+                "body": kwargs["body"],
+                "turn_number": 7,
+                "superseded": False,
+            }
+        )
+        return {"turn_number": 7}, 200
+
+    options = {
+        "house": "h",
+        "n": 1,
+        "verify_lane": "v",
+        "bus_identity": "bot",
+        "verifier": "verifier",
+        "trigger": "hop",
+        "card_uri": "notes/card.md",
+    }
+    card = {"uri": "notes/card.md", "written_sha256": "ccc"}
+    env = {"snapshot_uri": "notes/snap.json", "sha256": "sss", "provenance": "raw"}
+    first = await run_fact(options, card, env, get=get, send=send)
+    second = await run_fact(options, card, env, get=get, send=send)
+    assert first["skipped"] is False
+    assert second["skipped"] is True
+    assert len(sent) == 1
+    assert "provenance raw" in sent[0]["body"]

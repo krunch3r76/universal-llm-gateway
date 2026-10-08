@@ -1,0 +1,84 @@
+"""Aggregate step outputs into the pipeline result object."""
+
+from __future__ import annotations
+
+from typing import Any, override
+
+from systems.pipeline.core.handlers.builtin import BaseHandler
+from systems.pipeline.core.handlers.protocol import StepOutput
+
+from ._clients import step_output_json
+
+
+def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]:
+    steps = (
+        "admit",
+        "source",
+        "envelope",
+        "seal",
+        "card",
+        "post",
+        "fact",
+        "await_verify",
+        "verify_resume",
+    )
+    completed: list[str] = []
+    refused = None
+    for name in steps:
+        payload = step_output_json(outputs, name)
+        if not payload:
+            continue
+        completed.append(name)
+        if payload.get("refused"):
+            refused = payload["refused"]
+            break
+    admit = step_output_json(outputs, "admit")
+    source = step_output_json(outputs, "source")
+    envelope = step_output_json(outputs, "envelope")
+    seal = step_output_json(outputs, "seal")
+    card = step_output_json(outputs, "card")
+    post = step_output_json(outputs, "post")
+    fact = step_output_json(outputs, "fact")
+    verify = step_output_json(outputs, "await_verify")
+    return {
+        "house": options.get("house"),
+        "n": options.get("n"),
+        "mode": options.get("mode"),
+        "replayed": bool(admit.get("replayed") or card.get("replayed")),
+        "completed_steps": completed,
+        "refused": refused,
+        "envelope": {
+            "ref": options.get("envelope_ref"),
+            "snapshot_uri": envelope.get("snapshot_uri"),
+            "sha256": envelope.get("sha256"),
+            "messages_sha256": envelope.get("messages_sha256")
+            or source.get("messages_sha256"),
+            "provenance": envelope.get("provenance") or source.get("provenance"),
+            "producer": envelope.get("producer") or source.get("producer"),
+            "coverage": envelope.get("coverage") or source.get("coverage"),
+            "turn_count": envelope.get("turn_count") or source.get("turn_count"),
+        },
+        "seal": {
+            "session_id": seal.get("session_id"),
+            "already_closed": seal.get("already_closed"),
+        },
+        "card": {
+            "uri": card.get("uri") or options.get("card_uri"),
+            "prior_sha256": card.get("prior_sha256"),
+            "written_sha256": card.get("written_sha256"),
+        },
+        "cp_turn": post.get("turn"),
+        "fact_turn": fact.get("turn"),
+        "verify": {"state": verify.get("state"), "turn": verify.get("turn")},
+        "proposals": seal.get("proposals") or [],
+    }
+
+
+class GrokbotCheckpointResultHandler(BaseHandler):
+    step_type = "grokbot_checkpoint_result_v1"
+
+    @override
+    async def execute(self, step: Any, context: Any) -> StepOutput:
+        options = dict(getattr(context, "options", {}) or {})
+        payload = assemble(options, getattr(context, "outputs", {}) or {})
+        return StepOutput(raw="", json=payload)

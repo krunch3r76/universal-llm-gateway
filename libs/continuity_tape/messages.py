@@ -8,12 +8,13 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 SCHEMA_ID = "ulg.continuity.messages/1"
 CORE_KEYS = ("role", "content")
 SEAL_KEYS = (*CORE_KEYS, "turn_index")
 Tools = Literal["none", "marker", "openai"]
+Provenance = Literal["raw", "transcribed"]
 TOOL_MARKER_RE = re.compile(r"^\[tool call: [^\]]+\]$", re.MULTILINE)
 
 
@@ -70,6 +71,15 @@ class EnvelopeMeta(BaseModel):
     door: Literal["sync", "pipeline"] | None = None
     execution_id: str | None = None
     coverage: Literal["full", "tail"] | None = None
+    provenance: Provenance | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_provenance(self, handler: Any) -> Any:
+        """Drop ``provenance`` when unset so existing wire bytes stay identical."""
+        data = handler(self)
+        if isinstance(data, dict) and data.get("provenance") is None:
+            data.pop("provenance", None)
+        return data
 
 
 class ContinuityMessagesEnvelope(BaseModel):
@@ -166,6 +176,7 @@ __all__ = [
     "CORE_KEYS",
     "TOOL_MARKER_RE",
     "Tools",
+    "Provenance",
     "ContinuityMessage",
     "IndexRow",
     "TapeCell",
