@@ -167,6 +167,14 @@ def test_validate_commit_resolution_rejects_uncommitted_paths(
         lambda _sha: "a" * 40,
     )
     monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._commit_touched_set",
+        lambda _repo, _sha: {"libs/bus_watch/navigator_wake.py"},
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._paths_stageable",
+        lambda _repo, _paths: True,
+    )
+    monkeypatch.setattr(
         "cortex_store.dispatch_ops._friction_close_impl.commit_paths_fingerprint",
         lambda _repo, _paths: "deadbeef",
     )
@@ -177,6 +185,88 @@ def test_validate_commit_resolution_rejects_uncommitted_paths(
     )
     assert err is not None
     assert "uncommitted" in err
+
+
+def test_validate_commit_resolution_rejects_ambiguous_bare_filename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.get_workspace_root",
+        lambda: "/repo",
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.resolve_commit_sha",
+        lambda _sha: "a" * 40,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._commit_touched_set",
+        lambda _repo, _sha: {
+            "libs/event_store/store.py",
+            "libs/cortex_store/store.py",
+        },
+    )
+    err = _validate_commit_resolution(
+        "commit:deadbeef",
+        changed_paths=["store.py"],
+        resolution_note=None,
+    )
+    assert err is not None
+    assert "ambiguous" in err
+    assert "libs/event_store/store.py" in err
+    assert "libs/cortex_store/store.py" in err
+
+
+def test_validate_commit_resolution_rejects_bare_filename_with_no_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.get_workspace_root",
+        lambda: "/repo",
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.resolve_commit_sha",
+        lambda _sha: "a" * 40,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._commit_touched_set",
+        lambda _repo, _sha: {"libs/event_store/store.py"},
+    )
+    err = _validate_commit_resolution(
+        "commit:deadbeef",
+        changed_paths=["operations_impl.py"],
+        resolution_note=None,
+    )
+    assert err is not None
+    assert "operations_impl.py" in err
+    assert "matches no file" in err
+
+
+def test_validate_commit_resolution_could_not_verify_bad_pathspec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.get_workspace_root",
+        lambda: "/repo",
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.resolve_commit_sha",
+        lambda _sha: "a" * 40,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._commit_touched_set",
+        lambda _repo, _sha: {"libs/event_store/store.py"},
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._paths_stageable",
+        lambda _repo, _paths: False,
+    )
+    err = _validate_commit_resolution(
+        "commit:deadbeef",
+        changed_paths=["libs/event_store/store.py"],
+        resolution_note=None,
+    )
+    assert err is not None
+    assert "could not verify" in err
 
 
 def test_validate_resolution_kind_accepts_workflow_slug() -> None:

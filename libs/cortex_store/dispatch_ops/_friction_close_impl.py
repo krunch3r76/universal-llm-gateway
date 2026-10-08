@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 from datetime import UTC, datetime
 from typing import Any
 
@@ -130,9 +132,72 @@ def _commit_touched_set(repo: str, sha: str) -> set[str] | None:
 
 
 def _path_touched_by_commit(path: str, touched: set[str]) -> bool:
-    if path in touched:
+    return path in touched
+
+
+def _bare_path_commit_candidates(path: str, touched: set[str]) -> list[str]:
+    """Repo-relative paths in ``touched`` that match a basename-only ``path``."""
+    return sorted(t for t in touched if t == path or t.endswith(f"/{path}"))
+
+
+def _resolve_commit_verification_paths(
+    sha: str, paths: list[str], touched: set[str]
+) -> tuple[list[str] | None, str | None]:
+    """Expand bare filenames against ``touched``; reject ambiguous or missing."""
+    resolved: list[str] = []
+    for path in paths:
+        if "/" in path:
+            resolved.append(path)
+            continue
+        candidates = _bare_path_commit_candidates(path, touched)
+        if len(candidates) == 1:
+            resolved.append(candidates[0])
+        elif not candidates:
+            return None, (
+                f"friction_close commit:{sha}: bare path {path!r} matches no file "
+                "in commit — use a repo-relative path."
+            )
+        return None, (
+            f"friction_close commit:{sha}: bare path {path!r} is ambiguous "
+            f"({candidates!r}) — use the full repo-relative path."
+        )
+    return resolved, None
+
+
+def _paths_stageable(repo: str, paths: list[str]) -> bool:
+    """True when ``git add --`` succeeds for every path on a scratch index."""
+    if not paths:
         return True
-    return any(t == path or t.endswith(f"/{path}") for t in touched)
+    index_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            index_path = tmp.name
+        env = {**os.environ, "GIT_INDEX_FILE": index_path}
+        read_tree = subprocess.run(
+            ["git", "-C", repo, "read-tree", "HEAD"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+        if read_tree.returncode != 0:
+            return False
+        add = subprocess.run(
+            ["git", "-C", repo, "add", "--", *paths],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+        return add.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        if index_path:
+            try:
+                os.unlink(index_path)
+            except OSError:
+                pass
 
 
 def _paths_not_touched_by_commit(repo: str, sha: str, paths: list[str]) -> list[str] | None:
@@ -171,26 +236,39 @@ def _validate_commit_resolution(
         repo = str(get_workspace_root())
     except RuntimeError:
         return "friction_close commit: — workspace root unavailable for git verify"
-    if resolve_commit_sha(sha_slug) is None:
+    resolved = resolve_commit_sha(sha_slug)
+    if resolved is None:
         return f"friction_close commit:{sha_slug} — git cannot resolve SHA"
-    if commit_paths_fingerprint(repo, paths):
-        preview = ", ".join(paths[:3])
-        if len(paths) > 3:
+    touched = _commit_touched_set(repo, resolved)
+    if touched is None:
+        return f"friction_close commit:{sha_slug} — git diff-tree failed for SHA"
+    verified_paths, path_err = _resolve_commit_verification_paths(
+        sha_slug, paths, touched
+    )
+    if path_err:
+        return path_err
+    assert verified_paths is not None
+    if not _paths_stageable(repo, verified_paths):
+        return (
+            "friction_close commit: — could not verify uncommitted changes "
+            "for named paths"
+        )
+    if commit_paths_fingerprint(repo, verified_paths):
+        preview = ", ".join(verified_paths[:3])
+        if len(verified_paths) > 3:
             preview = f"{preview}, ..."
         return (
             f"friction_close {resolution_kind!r}: named paths have uncommitted "
             f"changes ({preview}) — use resolution_kind='uncommitted' until "
             "the fix is committed."
         )
-    resolved = resolve_commit_sha(sha_slug)
-    assert resolved is not None
-    missing = _paths_not_touched_by_commit(repo, resolved, paths)
+    missing = _paths_not_touched_by_commit(repo, resolved, verified_paths)
     if missing is None:
         return f"friction_close commit:{sha_slug} — git diff-tree failed for SHA"
     if missing:
         return (
             f"friction_close {resolution_kind!r}: commit does not touch "
-            f"{missing!r} (requested {paths!r}) — use resolution_kind='uncommitted' "
+            f"{missing!r} (requested {verified_paths!r}) — use resolution_kind='uncommitted' "
             "or the commit that actually contains the fix."
         )
     return None
