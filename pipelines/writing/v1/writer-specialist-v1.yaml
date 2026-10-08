@@ -1,0 +1,260 @@
+# writer-specialist-v1 — local draft, independent review, targeted revision.
+# UNSENT by construction: no send, post, file write, or mail draft.
+
+schema_version: 6
+id: writer-specialist-v1
+version: "1.0"
+type: writing
+category: writing
+description: >
+  Local writer, a different-family reviewer, and a targeted revision.
+  UNSENT by construction: every draft stays in the envelope.
+output: finalize
+
+options:
+  timeout_seconds: 1800
+  writer_seat:
+    type: string
+    description: S1 accepts only local
+    default: local
+  reviewer_seat:
+    type: string
+    description: S1 accepts only local
+    default: local
+  output:
+    type: string
+    description: envelope or packet
+    default: envelope
+  max_pins:
+    type: integer
+    description: cap on ledger rows including not-attested pins
+    default: 40
+  allow_partial_independence:
+    type: boolean
+    description: when true, unknown or same-family models yield partial instead of a refusal
+    default: false
+  working_set:
+    type: array
+    description: refs resolved into the pin ledger
+    default: []
+  brief:
+    type: object
+    description: signer, objective, recipient, deliverable, and attested lists
+    default: {}
+
+steps:
+  - name: assemble
+    type: writing_assemble_v1
+
+  - name: draft
+    type: generate
+    model_ref: writer
+    prompt_ref: writing.v1.writer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 3072
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            draft:
+              type: string
+            claims:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  claim_id:
+                    type: string
+                  text:
+                    type: string
+                  pin_ids:
+                    type: array
+                    items:
+                      type: string
+                  disposition:
+                    type: string
+                    enum: [express, imply, omit_with_reason]
+                  state:
+                    type: string
+                    enum: [backed, unverified, need]
+                required:
+                  - claim_id
+                  - text
+                  - pin_ids
+                  - disposition
+                  - state
+            need:
+              type: array
+              items:
+                type: string
+            dispositions:
+              type: array
+              items:
+                type: string
+          required:
+            - draft
+            - claims
+            - need
+            - dispositions
+
+  - name: provenance_check
+    type: writing_provenance_check_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+    handler_inputs:
+      pin_ledger: assemble.json.pin_ledger
+      draft: draft.json
+
+  - name: independence
+    type: writing_independence_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet'"
+
+  - name: review
+    type: generate
+    model_ref: reviewer
+    prompt_ref: writing.v1.reviewer
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and independence.json.get('refused') is None"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      draft: draft.json.draft
+    generation_parameters:
+      temperature: 0.1
+      max_tokens: 2048
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            findings:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  ref:
+                    type: string
+                  type:
+                    type: string
+                    enum:
+                      - unsupported
+                      - contradicts_pin
+                      - unattested_fact
+                      - unraised_denial
+                      - register
+                      - sequitur
+                      - omission
+                  fix:
+                    type: string
+                required:
+                  - ref
+                  - type
+                  - fix
+            verdict:
+              type: string
+              enum: [ship, revise]
+          required:
+            - findings
+            - verdict
+
+  - name: revise
+    type: generate
+    model_ref: reviser
+    prompt_ref: writing.v1.reviser
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    handler_inputs:
+      documents: assemble.json.documents_block
+      brief: assemble.json.brief_block
+      draft: draft.json.draft
+      findings: review.json.findings
+      violations: provenance_check.json.violations
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 3072
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            draft:
+              type: string
+            claims:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  claim_id:
+                    type: string
+                  text:
+                    type: string
+                  pin_ids:
+                    type: array
+                    items:
+                      type: string
+                  disposition:
+                    type: string
+                    enum: [express, imply, omit_with_reason]
+                  state:
+                    type: string
+                    enum: [backed, unverified, need]
+                required:
+                  - claim_id
+                  - text
+                  - pin_ids
+                  - disposition
+                  - state
+            need:
+              type: array
+              items:
+                type: string
+            dispositions:
+              type: array
+              items:
+                type: string
+            changed_claims:
+              type: array
+              items:
+                type: string
+          required:
+            - draft
+            - claims
+            - need
+            - dispositions
+            - changed_claims
+
+  - name: provenance_check_final
+    type: writing_provenance_check_v1
+    condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and independence.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)"
+    handler_inputs:
+      pin_ledger: assemble.json.pin_ledger
+      draft: revise.json
+
+  - name: finalize
+    type: writing_finalize_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: draft
+        fields: [json]
+      - step: provenance_check
+        fields: [json]
+      - step: independence
+        fields: [json]
+      - step: review
+        fields: [json]
+      - step: revise
+        fields: [json]
+      - step: provenance_check_final
+        fields: [json]
+    handler_outputs:
+      unsent: finalize.json.unsent

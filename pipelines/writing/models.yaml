@@ -1,0 +1,9 @@
+models:
+  writer:
+    # Local writer and automatic fallback (Llama family). Same live binding as writing_exemplar rewrite.
+    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+  reviser:
+    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+  reviewer:
+    # Qwen family: differs from the Llama-family local writer (originator != verifier).
+    model: qwen3-14b-q4-k-m-40960

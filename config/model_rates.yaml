@@ -184,6 +184,11 @@ models:
     output_rate_per_m: 0.0
     source: manual_seed_local
     pinned: true
+  - model_id: hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid
+    input_rate_per_m: 0.0
+    output_rate_per_m: 0.0
+    source: manual_seed_local
+    pinned: true
   - model_id: local/zero-cost
     input_rate_per_m: 0.0
     output_rate_per_m: 0.0
