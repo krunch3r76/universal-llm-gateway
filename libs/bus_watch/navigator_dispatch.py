@@ -1,7 +1,9 @@
-"""Navigator wake dispatch — ``cursor-sdk`` (code). ``cursor-auto`` is retired (a:38728).
+"""Navigator wake dispatch — ``cursor-sdk`` (code).
 
-CDP generate is not a navigator transport. A ``cdp/*`` ``navigator_model`` is
-ignored on the wire so Stargate cannot route the wake back onto project-ask.
+A life-register wake is refused (``navigator_life_unsupported``); life seats
+use ``life_dispatch``. CDP generate is not a navigator transport. A ``cdp/*``
+``navigator_model`` is ignored on the wire so Stargate cannot route the wake
+back onto project-ask.
 """
 
 from __future__ import annotations
@@ -13,22 +15,21 @@ from stargate_dispatch.client import submit_team_dispatch
 from bus_watch.model_pause import model_paused
 
 _LIFE_REGISTERS = frozenset({"cse", "life"})
-_LIFE_SEATS = frozenset({"cursor-auto", "life"})
+_LIFE_SEATS = frozenset({"life"})
 _CODE_SEATS = frozenset({"cursor-sdk", "cursor"})
 
 
 def resolve_navigator_seat(policy: dict[str, Any] | None, *, register: str) -> str:
-    """Return ``cursor-sdk``, or ``cursor-auto`` when policy or register still names life.
+    """Return ``cursor-sdk``, or ``life`` when policy or register names the life seat.
 
-    Submit of a ``cursor-auto`` body is refused (``cursor_auto_retired``, a:38728).
+    Submit of a life body is refused (``navigator_life_unsupported``). Life
+    seats use ``life_dispatch``; this function does not route there.
     """
     raw = str((policy or {}).get("navigator_seat") or "").strip().lower()
     if raw in _CODE_SEATS:
         return "cursor-sdk"
-    if raw in _LIFE_SEATS:
-        return "cursor-auto"
-    if register in _LIFE_REGISTERS:
-        return "cursor-auto"
+    if raw in _LIFE_SEATS or register in _LIFE_REGISTERS:
+        return "life"
     return "cursor-sdk"
 
 
@@ -46,8 +47,6 @@ def model_for_navigator_seat(policy: dict[str, Any] | None, seat: str) -> str | 
             return raw
         succ = str((policy or {}).get("successor_model") or "").strip()
         return succ if succ.startswith("cursor/") else None
-    if seat == "cursor-auto" and raw.startswith("cursor/"):
-        return raw
     return None
 
 
@@ -75,23 +74,14 @@ def build_navigator_body(
     seat = resolve_navigator_seat(policy, register=register)
     model = model_for_navigator_seat(policy, seat)
     timeout = int(wake_timeout)
-    if seat == "cursor-auto":
-        body: dict[str, Any] = {
-            "op": "request",
-            "seat": "cursor-auto",
-            "thread": tape,
-            "subject": f"WAKE {root_id} navigator",
-            "body": doorbell,
-            "from_agent": "liaison-ticker",
-            "to": "cursor",
-            "job": "recon",
+    if seat == "life":
+        return {
+            "register": register,
+            "seat": "life",
+            "dispatch_thread_id": tape,
+            "parent_thread": tape,
             "work_key": work_key,
-            "timeout_seconds": timeout,
-            "caller_agent": "liaison-ticker",
         }
-        if model:
-            body["desired_model"] = model
-        return body
     body = {
         "op": "generate",
         "seat": "cursor-sdk",
@@ -116,15 +106,16 @@ def submit_navigator(
 ) -> tuple[dict[str, Any], int]:
     """POST the wake. Default submit is Stargate ``team_dispatch`` for ``cursor-sdk``.
 
-    A ``cursor-auto`` body is refused (a:38728). Set ``navigator_seat=cursor-sdk``.
+    A life-register body is refused. Life seats use ``life_dispatch``.
     """
-    if str(body.get("seat") or "") == "cursor-auto":
+    register = str(body.get("register") or "")
+    if str(body.get("seat") or "") == "life" or register in _LIFE_REGISTERS:
         return {
             "error": {
-                "code": "cursor_auto_retired",
+                "code": "navigator_life_unsupported",
                 "message": (
-                    "cursor-auto is retired (a:38728); "
-                    "set navigator_seat=cursor-sdk (team_dispatch)"
+                    "life-register navigator wakes are unsupported (a:38728); "
+                    "life seats use life_dispatch"
                 ),
             }
         }, 422

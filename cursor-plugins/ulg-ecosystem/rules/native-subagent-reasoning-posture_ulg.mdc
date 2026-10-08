@@ -14,7 +14,7 @@ Native Task subagents start cold. Parent `alwaysApply` promotion does not reach 
 
 Applies: Cursor IDE `Task(...)` — `explore`, `generalPurpose`, `shell`, `cursor-guide`, `ci-investigator`, `bugbot`, `security-review`, `best-of-n-runner`.
 
-Does not apply: `team_dispatch` (generate, handoff, `cursor-sdk`, `cursor-auto`, CDP, panel). Those surfaces inject via GIW `resolve_prompt_preamble` or Stargate enrich. A second invoke there is out of scope.
+Does not apply: `team_dispatch` (generate, handoff, `cursor-sdk`, CDP, panel). Those surfaces inject via GIW `resolve_prompt_preamble` or Stargate enrich. A second invoke there is out of scope.
 
 ## Purely mechanical
 
