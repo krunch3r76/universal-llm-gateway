@@ -46,8 +46,6 @@ def _resolve_caller(state: object) -> tuple[str, str]:
     assert isinstance(state, SdkState)
     if state.caller_via == "mcp" and state.caller_from:
         return state.caller_from, state.caller_via
-    if state.admitted_via == "cursor-auto":
-        return "auto", "http"
     if state.asked_by == "web-anthropic":
         return "claude.ai", "http"
     return "ide", "http"

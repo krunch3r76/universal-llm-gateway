@@ -1296,7 +1296,7 @@ def test_mirror_to_event_service_includes_iso_timestamp():
     from unittest.mock import MagicMock
 
     from claude_bundles.hop_cadence_lease_events import (
-        GiwCursorAutoHopCadenceIdentityBound,
+        HopCadenceIdentityBound,
         _mirror_to_event_service,
     )
 
@@ -1307,7 +1307,7 @@ def test_mirror_to_event_service_includes_iso_timestamp():
     with patch("socket.socket") as socket_cls:
         socket_cls.return_value.__enter__.return_value = mock_sock
         _mirror_to_event_service(
-            GiwCursorAutoHopCadenceIdentityBound(
+            HopCadenceIdentityBound(
                 thread_id="7188",
                 identity_source="single_seat_active_work",
                 watch_present=True,

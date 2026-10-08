@@ -213,10 +213,18 @@ def assemble_resume_fence_in_txn(
     mission_bytes = len(json.dumps(mission, ensure_ascii=False))
     readable = bundle["read_set"]["readable"]
     skills_to_use = bundle["skills_to_use"]
+    # card_inlined is True iff the poured bundle carries card-derived
+    # directive content inline: at least one `## Rules` row in
+    # mission.standing_rules or one `## Skills` slug in
+    # mission.skills_to_use. Bundle v2 never inlines the full card body
+    # (bundle.card is uri + sha256 + read_via). False means the bundle
+    # has no card directives and the reader fs-reads bundle.card.uri
+    # for them.
+    standing_rules = mission.get("standing_rules") or []
     poured_payload: dict[str, Any] = {
         "bundle_bytes": bundle_bytes,
         "mission_bytes": mission_bytes,
-        "card_inlined": False,
+        "card_inlined": bool(standing_rules) or bool(skills_to_use),
         "bundle_version": _BUNDLE_VERSION,
         "skills_to_use_count": len(skills_to_use),
         "readable_counts": {

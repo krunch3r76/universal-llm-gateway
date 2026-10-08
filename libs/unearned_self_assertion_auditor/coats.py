@@ -206,7 +206,7 @@ def coat_four_absence_schema(repo: Path) -> CoatResult:
             coat_id="coat_four_absence_schema",
             verdict="finding",
             denominator_kind="schema_presence",
-            denominator_source="threads._enrich_with_cursor_auto_job",
+            denominator_source="threads.thread_get detail=result",
             denominator_count=1,
             coverage_rest=(
                 "read path has no liveness field; omitted cursor_auto_job "
@@ -221,7 +221,7 @@ def coat_four_absence_schema(repo: Path) -> CoatResult:
         coat_id="coat_four_absence_schema",
         verdict="checked_and_found_nothing",
         denominator_kind="schema_presence",
-        denominator_source="threads._enrich_with_cursor_auto_job",
+        denominator_source="threads.thread_get detail=result",
         denominator_count=1,
         coverage_rest="read path carries a liveness discriminator or does not omit",
     )

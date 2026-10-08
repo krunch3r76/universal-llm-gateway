@@ -133,7 +133,7 @@ async def test_f6_pointer_post_failed_payload_distinct(
 
     with (
         patch.object(tick_sos, "notify_tick_sos", new=AsyncMock(return_value=True)),
-        patch.object(tick_sos, "_post_cursor_auto_note", new=AsyncMock(return_value=True)),
+        patch.object(tick_sos, "_post_sos_note", new=AsyncMock(return_value=True)),
         patch.object(tick_sos, "_submit_cdp_heal", side_effect=fake_cdp),
         patch.object(tick_sos, "claim_tick_sos", return_value=True),
     ):

@@ -1,4 +1,4 @@
-"""Tests for navigator wake clauses and cursor-sdk / cursor-auto dispatch."""
+"""Tests for navigator wake clauses and cursor-sdk dispatch."""
 
 from __future__ import annotations
 
@@ -241,7 +241,7 @@ def test_paused_opus_navigator_refuses_instead_of_grok(
 
 
 @pytest.mark.offline
-def test_fire_navigator_life_register_refuses_cursor_auto(
+def test_fire_navigator_life_register_refuses(
     tmp_path: Path, monkeypatch
 ) -> None:
     from bus_watch.navigator_dispatch import submit_navigator
@@ -257,11 +257,12 @@ def test_fire_navigator_life_register_refuses_cursor_auto(
         "10479", _digest(), _state(), register="life", dry_run=True
     )
     doorbell = result["evaluation"]["doorbell"]
-    assert "refused cursor_auto_retired" in doorbell
+    assert "refused navigator_life_unsupported" in doorbell
     assert "cursor-sdk generate via liaison-ticker" not in doorbell
     refused, status = submit_navigator(result["body"])
     assert status == 422
-    assert refused["error"]["code"] == "cursor_auto_retired"
+    assert refused["error"]["code"] == "navigator_life_unsupported"
+    assert "life_dispatch" in refused["error"]["message"]
 
 
 @pytest.mark.offline
