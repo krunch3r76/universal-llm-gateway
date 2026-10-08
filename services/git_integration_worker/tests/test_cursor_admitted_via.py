@@ -62,6 +62,12 @@ def test_cursor_auto_admitted_via_http_422(
         },
     )
     assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert any(
+        err.get("loc") == ["body", "admitted_via"]
+        for err in detail
+        if isinstance(err, dict)
+    ), detail
 
 
 def test_record_json_persists_admitted_via() -> None:

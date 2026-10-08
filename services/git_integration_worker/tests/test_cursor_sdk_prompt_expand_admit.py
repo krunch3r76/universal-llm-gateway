@@ -106,12 +106,12 @@ def client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
+def test_enrolled_sketch_admit_records_prompt_expand_pending(
     _mock_task: MagicMock,
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC3 — enrolled-root admit with parent 10479 + sketch reaches prelude."""
+    """AC3 — stargate admit with parent 10479 + sketch reaches prompt-expand prelude."""
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     expand_calls: list[tuple[str, dict[str, str]]] = []

@@ -1,6 +1,6 @@
 """Cross-lane park/restore gate correctness (item 12 / AC-12a–c).
 
-Replays attempt-1 shape: operator parent ``auto-*`` nests standard child
+Replays attempt-1 shape: operator parent ``op-*`` nests standard child
 ``{uuid}-{hex8}``; restore must not install the operator id on the standard gate.
 """
 
@@ -34,7 +34,7 @@ from services.git_integration_worker.models.cursor_api import (
     CursorDispatchResponse,
 )
 
-_PARENT = "auto-4ef000000001"
+_PARENT = "op-4ef000000001"
 _CHILD = "d40677a34a06-f3af9df4"
 _IDE_PARENT = "c894cf038972-c567a692"
 _IDE_CHILD = "1a2296640389-b1ac0dc3"
@@ -64,7 +64,7 @@ def _admit(
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     if caller_agent is None:
-        caller_agent = "cursor" if dispatch_id.startswith("auto-") else None
+        caller_agent = "cursor" if dispatch_id.startswith("op-") else None
     req = CursorDispatchRequest(
         thread_id="6655",
         model="cursor/composer-2.5",
