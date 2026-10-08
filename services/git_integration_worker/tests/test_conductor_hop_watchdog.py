@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+    PARK_REASON_MISSION_CAP,
+)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
     maybe_fire_conductor_hop_watchdog,
     sweep_conductor_hop_watchdog,
@@ -788,9 +791,13 @@ async def test_watchdog_fires_park_harvest_continue_before_arm_recipe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_watchdog_parks_on_budget_exhaustion() -> None:
+async def test_watchdog_parks_on_budget_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_cap = 24
+    monkeypatch.setenv("CONDUCTOR_HOP_MISSION_CAP", str(mission_cap))
     ledger = CursorDispatchLedger.instance()
-    for idx in range(24):
+    for idx in range(mission_cap):
         dispatch_id = f"pred-cap-{idx}"
         _terminal_row(
             ledger,
@@ -805,6 +812,7 @@ async def test_watchdog_parks_on_budget_exhaustion() -> None:
         ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-cap-0")
     assert ok is False
     park_mock.assert_awaited_once()
+    assert park_mock.await_args.kwargs["reason"] == PARK_REASON_MISSION_CAP
 
 
 @pytest.mark.asyncio
