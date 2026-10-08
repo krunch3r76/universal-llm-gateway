@@ -113,12 +113,13 @@ async def execute(
                     "activation_validation_id",
                     "service",
                     "services",
+                    "projection",
                 }
             )
             if unexpected:
                 raise ValueError(
                     "fleet_liveness accepts only code_ref, "
-                    "activation_validation_id, service, services: "
+                    "activation_validation_id, service, services, projection: "
                     + ", ".join(unexpected)
                 )
             code_ref = params.get("code_ref")
@@ -137,6 +138,11 @@ async def execute(
             services = params.get("services")
             if services is not None and not isinstance(services, list):
                 raise ValueError("fleet_liveness services must be a list")
+            projection = params.get("projection")
+            if projection is not None and projection != "compact":
+                raise ValueError(
+                    'fleet_liveness projection must be "compact" when set'
+                )
             return await asyncio.to_thread(
                 build_snapshot,
                 ctl.root,
@@ -145,6 +151,7 @@ async def execute(
                 activation_validation_id=activation_validation_id,
                 service=service,
                 services=services,
+                projection=projection,
             )
 
         case "recycle_giw":

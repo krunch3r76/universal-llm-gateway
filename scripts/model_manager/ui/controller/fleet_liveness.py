@@ -179,6 +179,62 @@ def _code_ref_validation_with_provenance(
     return validation
 
 
+def _compact_code_ref_validation(full: dict[str, Any]) -> dict[str, Any]:
+    """Shrink code_ref_validation to liveness answer/relation plus failure evidence."""
+    liveness = full.get("liveness") or {}
+    observation = liveness.get("observation") or {}
+    answer = liveness.get("answer")
+    relation = liveness.get("relation")
+    reason = liveness.get("reason")
+    probe_error = observation.get("probe_error")
+    probe_unreachable = observation.get("probe_reachable") is False
+    failed_live = probe_unreachable or probe_error is not None
+
+    compact: dict[str, Any] = {}
+    if probe_error:
+        compact["probe_errors"] = [str(probe_error)]
+    liveness_out: dict[str, Any] = {}
+    if reason:
+        liveness_out["reason"] = reason
+    if answer is not None and not (failed_live and answer == "yes"):
+        liveness_out["answer"] = answer
+    if relation is not None:
+        liveness_out["relation"] = relation
+    if liveness_out:
+        compact["liveness"] = liveness_out
+    return compact
+
+
+def _compact_service_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Project one service row for ``projection=compact`` consumers."""
+    compact: dict[str, Any] = {
+        "service": row["service"],
+        "pid": row.get("pid"),
+        "reported_version": row.get("reported_version"),
+    }
+    if "status" in row:
+        compact["status"] = row["status"]
+    if row.get("probe_errors"):
+        compact["probe_errors"] = list(row["probe_errors"])
+    if "code_ref_validation" in row:
+        compact["code_ref_validation"] = _compact_code_ref_validation(
+            row["code_ref_validation"]
+        )
+    return compact
+
+
+def _compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Drop porcelain and per-service heavy fields; keep manage health signals."""
+    checkout = dict(snapshot.get("checkout") or {})
+    checkout.pop("porcelain_raw_open", None)
+    checkout.pop("porcelain_raw_close", None)
+    return {
+        **snapshot,
+        "checkout": checkout,
+        "services": [_compact_service_row(row) for row in snapshot.get("services", [])],
+    }
+
+
 def build_snapshot(
     root: Path,
     service_state: ServiceState,
@@ -187,6 +243,7 @@ def build_snapshot(
     activation_validation_id: str | None = None,
     service: str | None = None,
     services: list[str] | None = None,
+    projection: str | None = None,
 ) -> dict[str, Any]:
     """Build a fresh evidence snapshot without mutating checkout or services.
 
@@ -330,7 +387,7 @@ def build_snapshot(
     checkout_verdict = "index_behind_head" if behind else None
 
     finished = time.time()
-    return {
+    snapshot = {
         "schema_version": 1,
         "observed_at_utc": _utc(finished),
         "observation_window": {
@@ -370,6 +427,9 @@ def build_snapshot(
         "services": services_out,
         "probe_errors": before.get("errors", []) + after.get("errors", []),
     }
+    if projection == "compact":
+        return _compact_snapshot(snapshot)
+    return snapshot
 
 
 __all__ = ["SERVICE_SLUGS", "build_snapshot", "normalize_service_filter"]

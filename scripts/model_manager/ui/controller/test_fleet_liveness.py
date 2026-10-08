@@ -952,3 +952,213 @@ def test_filtered_service_probe_failure_keeps_unknown_row(
     assert row["service"] == "mcp"
     assert row["status"] == "unknown"
     assert row["probe_errors"] == ["service_probe:RuntimeError"]
+
+
+def test_default_snapshot_includes_checkout_porcelain_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Wrong ordering: default call must still expose porcelain for maestro step 3."""
+    probe = {
+        "raw": " M libs/example.py\0",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((probe, probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    result = live.build_snapshot(tmp_path, SimpleNamespace(), service="mcp")
+    assert result["checkout"]["porcelain_raw_open"] == " M libs/example.py\0"
+    assert "porcelain_raw_close" in result["checkout"]
+
+
+def test_compact_projection_omits_porcelain_and_heavy_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    probe = {
+        "raw": " M libs/example.py\0",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((probe, {**probe, "raw": ""}))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=42
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": "abc123",
+            "denotes": "checkout_head_at_source_sync",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "current_validation",
+        lambda service, code_ref, activation_validation_id=None: {
+            "verdict": "running_committed_code",
+            "liveness": {
+                "answer": "yes",
+                "relation": "equal",
+                "observation": {"probe_reachable": True, "code_version": code_ref},
+            },
+        },
+    )
+    result = live.build_snapshot(
+        tmp_path,
+        SimpleNamespace(),
+        service="mcp",
+        code_ref="abc123",
+        projection="compact",
+    )
+    checkout = result["checkout"]
+    assert "porcelain_raw_open" not in checkout
+    assert "porcelain_raw_close" not in checkout
+    assert checkout["head_sha"] == "head"
+    row = result["services"][0]
+    assert row == {
+        "service": "mcp",
+        "pid": 42,
+        "reported_version": {
+            "field": "code_version",
+            "value": "abc123",
+            "denotes": "checkout_head_at_source_sync",
+            "error": None,
+        },
+        "status": "running",
+        "code_ref_validation": {
+            "liveness": {"answer": "yes", "relation": "equal"},
+        },
+    }
+
+
+def test_compact_down_service_still_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Service down: compact row keeps status and probe_errors."""
+    _empty_probe_pair(monkeypatch)
+
+    def _boom(_state, service):
+        raise RuntimeError(f"down:{service}")
+
+    monkeypatch.setattr(live, "_service_info", _boom)
+    result = live.build_snapshot(
+        tmp_path, SimpleNamespace(), service="mcp", projection="compact"
+    )
+    row = result["services"][0]
+    assert row["service"] == "mcp"
+    assert row["status"] == "unknown"
+    assert row["probe_errors"] == ["service_probe:RuntimeError"]
+
+
+def test_compact_failed_code_ref_surfaces_reason_not_live_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Partial failure: unreachable code_ref probe must not claim answer=yes."""
+    _empty_probe_pair(monkeypatch)
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=7
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "current_validation",
+        lambda service, code_ref, activation_validation_id=None: {
+            "verdict": "unknown",
+            "liveness": {
+                "answer": "yes",
+                "relation": "equal",
+                "reason": "probe unreachable or returned no payload",
+                "observation": {
+                    "probe_reachable": False,
+                    "probe_error": "connection refused",
+                },
+            },
+        },
+    )
+    result = live.build_snapshot(
+        tmp_path,
+        SimpleNamespace(),
+        service="mcp",
+        code_ref="deadbeef",
+        projection="compact",
+    )
+    crv = result["services"][0]["code_ref_validation"]
+    assert crv["probe_errors"] == ["connection refused"]
+    assert crv["liveness"]["reason"] == "probe unreachable or returned no payload"
+    assert "answer" not in crv["liveness"]

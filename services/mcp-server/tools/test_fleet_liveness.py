@@ -30,6 +30,7 @@ def test_registers_optional_code_ref_and_activation_validation_id() -> None:
         "activation_validation_id",
         "service",
         "services",
+        "projection",
     ]
 
 
@@ -96,4 +97,26 @@ def test_wrapper_forwards_service_filter(monkeypatch) -> None:
     assert captured[0]["params"] == {
         "service": "git_integration_worker",
         "services": ["mcp", "agent_bus"],
+    }
+
+
+def test_wrapper_forwards_projection(monkeypatch) -> None:
+    recorder = _Recorder()
+    fleet_liveness.register_fleet_liveness_tools(recorder)  # type: ignore[arg-type]
+    captured: list[dict] = []
+
+    def _capture(body, timeout):
+        captured.append(body)
+        return {"result": {"schema_version": 1}}
+
+    monkeypatch.setattr(fleet_liveness, "_call_manage", _capture)
+    monkeypatch.setattr(
+        fleet_liveness,
+        "_extract_result",
+        lambda raw: raw["result"],
+    )
+    recorder.functions["fleet_liveness"](projection="compact", service="mcp")
+    assert captured[0]["params"] == {
+        "projection": "compact",
+        "service": "mcp",
     }

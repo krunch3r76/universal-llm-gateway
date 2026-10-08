@@ -24,6 +24,7 @@ def register_fleet_liveness_tools(mcp: FastMCP) -> None:
         activation_validation_id: str | None = None,
         service: str | None = None,
         services: list[str] | None = None,
+        projection: str | None = None,
     ) -> dict[str, Any]:
         """Return fresh service markers, dirty paths, and honest load evidence.
 
@@ -36,6 +37,10 @@ def register_fleet_liveness_tools(mcp: FastMCP) -> None:
         or empty ``services=[]`` raises (empty list raises even when
         ``service=`` is set). Rows and ``service_filter`` are deduped in
         ``SERVICE_SLUGS`` order. Unfiltered call preserves full fleet.
+
+        ``projection=compact`` omits checkout porcelain and heavy per-service
+        fields while keeping ``service``, ``pid``, ``reported_version``, and
+        optional ``code_ref_validation.liveness`` answer/relation.
         """
         params: dict[str, Any] = {}
         if code_ref is not None:
@@ -46,6 +51,8 @@ def register_fleet_liveness_tools(mcp: FastMCP) -> None:
             params["service"] = service
         if services is not None:
             params["services"] = services
+        if projection is not None:
+            params["projection"] = projection
         raw = _call_manage(
             {
                 "jsonrpc": "2.0",

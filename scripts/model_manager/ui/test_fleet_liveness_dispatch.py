@@ -29,7 +29,7 @@ def test_fleet_liveness_rejects_unknown_parameters() -> None:
     ctl = SimpleNamespace(root=Path("."), service_state=object())
     with pytest.raises(
         ValueError,
-        match="accepts only code_ref, activation_validation_id, service, services",
+        match="accepts only code_ref, activation_validation_id, service, services, projection",
     ):
         asyncio.run(
             api_dispatch.execute(
@@ -65,6 +65,7 @@ def test_fleet_liveness_forwards_activation_validation_id(
         "activation_validation_id": "val-1",
         "service": None,
         "services": None,
+        "projection": None,
     }
 
 
@@ -95,7 +96,31 @@ def test_fleet_liveness_forwards_service_filter(
         "activation_validation_id": None,
         "service": "mcp",
         "services": ["agent_bus", "mcp"],
+        "projection": None,
     }
+
+
+def test_fleet_liveness_forwards_projection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _capture(root, state, **kwargs):
+        captured.update(kwargs)
+        return {"schema_version": 1}
+
+    monkeypatch.setattr(api_dispatch, "build_snapshot", _capture)
+    ctl = SimpleNamespace(root=tmp_path, service_state=object())
+    asyncio.run(
+        api_dispatch.execute(
+            ctl,
+            "fleet_liveness",
+            "",
+            {"projection": "compact", "service": "mcp"},
+        )
+    )
+    assert captured["projection"] == "compact"
+    assert captured["service"] == "mcp"
 
 
 def test_fleet_liveness_rejects_non_list_services() -> None:
