@@ -164,6 +164,21 @@ def test_resolver_prefers_card_md_over_later_names(
     assert card.tried == ("notes/system/threads/10223-card.md",)
 
 
+def test_resolver_invalid_utf8_is_found_and_hashed_raw(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    directory = tmp_path / "notes" / "system" / "threads"
+    directory.mkdir(parents=True)
+    raw = b"live \xff card"
+    (directory / "10223-card.md").write_bytes(raw)
+    card = load_continuity_card("10223")
+    assert card.status == "found"
+    assert card.text == "live \ufffd card"
+    assert card.sha256 == hashlib.sha256(raw).hexdigest()
+
+
 def test_resolver_continuity_card_name(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

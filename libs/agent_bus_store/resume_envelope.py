@@ -12,7 +12,7 @@ from cortex_store.transcript_projection_membership import (
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
-from .house_pools import load_continuity_card
+from .house_pools import iter_present_continuity_cards
 from .tape_degrade import (
     TAPE_BUDGET_BYTES_DEFAULT,
     TapeBudgetExceeded,
@@ -121,21 +121,25 @@ def _summary_row_from_tip_cp(body: str) -> str | None:
 
 
 def _read_l3_summary_row(thread_id: str) -> tuple[str | None, str | None]:
-    """Best-effort Settled/Live/Next line from the resolved continuity card."""
-    card = load_continuity_card(thread_id)
-    if card.status != "found" or not card.text:
-        return None, None
-    text = card.text
-    for pattern in (
-        r"(?m)^\*\*Settled:\*\*\s*(.+)$",
-        r"(?m)^\*\*Live:\*\*\s*(.+)$",
-        r"(?m)^\*\*Next:\*\*\s*(.+)$",
-    ):
-        match = re.search(pattern, text)
-        if match:
-            line = match.group(1).strip()
-            if line:
-                return line[:600], "l3_continuity_card"
+    """Best-effort Settled/Live/Next line from the first card that carries one.
+
+    The fold writer patches only ``{id}-continuity.md``. When ``{id}-card.md``
+    is also present and has no summary lines, the row comes from the later
+    file. No summary line falls through to the tip checkpoint.
+    """
+    for card in iter_present_continuity_cards(thread_id):
+        if not card.text:
+            continue
+        for pattern in (
+            r"(?m)^\*\*Settled:\*\*\s*(.+)$",
+            r"(?m)^\*\*Live:\*\*\s*(.+)$",
+            r"(?m)^\*\*Next:\*\*\s*(.+)$",
+        ):
+            match = re.search(pattern, card.text)
+            if match:
+                line = match.group(1).strip()
+                if line:
+                    return line[:600], "l3_continuity_card"
     return None, None
 
 

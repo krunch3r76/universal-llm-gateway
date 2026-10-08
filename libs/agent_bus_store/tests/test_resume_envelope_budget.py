@@ -105,6 +105,43 @@ def test_consolidate_summary_row_from_card_only_house(
     assert envelope["summary_row_as_of_turn"] == 12
 
 
+def test_l3_summary_row_dual_file_reads_continuity_md(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Settled lives on -continuity.md when -card.md is also present."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "9582-card.md").write_text("# live card\n", encoding="utf-8")
+    (threads / "9582-continuity.md").write_text(
+        "**Settled:** fold wrote the archive\n",
+        encoding="utf-8",
+    )
+    row, source = env_mod._read_l3_summary_row("9582")
+    assert row == "fold wrote the archive"
+    assert source == "l3_continuity_card"
+
+
+def test_l3_summary_row_dual_file_prefers_card_md(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Settled on -card.md wins over a later -continuity.md line."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "9582-card.md").write_text(
+        "**Settled:** live card row\n",
+        encoding="utf-8",
+    )
+    (threads / "9582-continuity.md").write_text(
+        "**Settled:** archive row\n",
+        encoding="utf-8",
+    )
+    row, source = env_mod._read_l3_summary_row("9582")
+    assert row == "live card row"
+    assert source == "l3_continuity_card"
+
+
 def test_l3_summary_row_reads_continuity_card_name(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

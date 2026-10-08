@@ -11,6 +11,7 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from implement_admission.closeout_helpers import cortex_files_root
@@ -136,33 +137,65 @@ def _continuity_card_candidate_relpaths(house_id: str) -> tuple[str, ...]:
     )
 
 
-def load_continuity_card(house_id: str) -> ContinuityCard:
-    """Resolve one house card. Sole builder of a continuity-card path.
+def _read_present_card(path: Path) -> tuple[str, str]:
+    """Text plus sha256 of the raw file bytes.
 
-    Candidates, in order: ``{id}-card.md``, ``{id}-continuity-card.md``,
-    ``{id}-continuity.md``. A missing house returns status ``missing`` and
-    does not invent a URI.
+    Invalid UTF-8 is found text with ``errors="replace"``. The digest stays
+    over the bytes on disk, which matches a valid UTF-8 encode.
+    """
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    return text, hashlib.sha256(raw).hexdigest()
+
+
+def iter_present_continuity_cards(thread_id: str) -> list[ContinuityCard]:
+    """Every card file that exists, in the same order ``load_continuity_card`` tries.
+
+    A house can have both ``{id}-card.md`` and ``{id}-continuity.md``. Callers
+    that need a line the preferred file does not carry walk this list.
     """
     root = cortex_files_root()
+    found: list[ContinuityCard] = []
     tried: list[str] = []
-    for rel in _continuity_card_candidate_relpaths(house_id):
+    for rel in _continuity_card_candidate_relpaths(thread_id):
         tried.append(rel)
         path = root / rel
         if not path.is_file():
             continue
         try:
-            text = path.read_text(encoding="utf-8")
+            text, digest = _read_present_card(path)
         except FileNotFoundError:
             continue
-        return ContinuityCard(
-            status="found",
-            tried=tuple(tried),
-            relpath=rel,
-            uri=f"cortex://{rel}",
-            text=text,
-            sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        found.append(
+            ContinuityCard(
+                status="found",
+                tried=tuple(tried),
+                relpath=rel,
+                uri=f"cortex://{rel}",
+                text=text,
+                sha256=digest,
+            )
         )
-    return ContinuityCard(status="missing", tried=tuple(tried))
+    return found
+
+
+def load_continuity_card(house_id: str) -> ContinuityCard:
+    """Resolve one house card. Sole builder of a continuity-card path.
+
+    Candidates, in order: ``{id}-card.md``, ``{id}-continuity-card.md``,
+    ``{id}-continuity.md``. The first present file wins. A missing house
+    returns status ``missing`` and does not invent a URI.
+    """
+    present = iter_present_continuity_cards(house_id)
+    if present:
+        return present[0]
+    return ContinuityCard(
+        status="missing",
+        tried=_continuity_card_candidate_relpaths(house_id),
+    )
 
 
 def extract_pools_block(card_text: str) -> str | None:
@@ -352,7 +385,15 @@ def conductor_pool_gate(house_id: str) -> ConductorPoolGate:
         return ConductorPoolGate(basis="no_pools")
     try:
         row = parse_pools(card.text)["conductor"]
-    except (PoolsParseError, KeyError):
+    except KeyError:
+        logger.info("no_pools house_id=%s", house)
+        return ConductorPoolGate(basis="no_pools")
+    except PoolsParseError as exc:
+        if (
+            exc.cell == "status@conductor"
+            and str(exc) == "invalid pool status vocabulary: ''"
+        ):
+            return ConductorPoolGate(basis="blocked", pool_status="")
         logger.info("no_pools house_id=%s", house)
         return ConductorPoolGate(basis="no_pools")
     if pool_status_is_open(row.status):
@@ -482,6 +523,7 @@ __all__ = [
     "extract_pools_block",
     "extract_pools_residue_sha8",
     "inject_pools_checkpoint_projection",
+    "iter_present_continuity_cards",
     "load_continuity_card",
     "merge_house_pool_skills",
     "parse_closeout_thread_id",
