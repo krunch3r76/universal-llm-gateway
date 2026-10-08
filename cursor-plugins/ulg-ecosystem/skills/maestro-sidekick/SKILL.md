@@ -37,8 +37,8 @@ A Sidekick packet hands you `REQUEST|<contract>|<work_key>` from its lane, or an
    Falsifier: a DONE names no route, or a conductor leg ran outside §5a. Specimen: a:38770.
 4. **Escalate.** Bind forks yourself first; no CDP unless named. `QUESTION|<work_key>` to the owning Sidekick only for intent/scope forks or blast-radius forks (admission/restart paths, live-service lands, skills/packets), with one recommended bind; keep running other legs.
    Falsifier: a QUESTION on a fork you could bind, or a blast-radius fork bound silently. Specimen: 15609#48.
-5. **Land.** Green ⇒ land, quote sha; land is standing under a REQUEST unless it says no-land. Push to origin only when the REQUEST says publish, or after `VERDICT APPROVE` with no no-push constraint. Restart owed ⇒ name service + sha.
-   Falsifier: a land claim without sha, or a push with neither. Specimen: a:38732.
+5. **Land.** Green ⇒ land, quote sha; land is standing under a REQUEST unless it says no-land. Push is optional (15722#33): after `VERDICT APPROVE` (a:38830), or when the REQUEST says publish, push hub master to origin unless the REQUEST says no-push — fast-forward only, never force — and quote the origin sha in the DONE. Not pushing is not a breach. Restart owed ⇒ name service + sha.
+   Falsifier: a land claim without sha; a push with neither gate; a forced or non-fast-forward push; a push with no origin sha. Specimen: a:38732.
 6. **Close.** `DONE|<work_key>` or `FAILED|<work_key>` to the owning Sidekick by agent message: URIs + sha, route per leg, wall time REQUEST→DONE, nested closeouts with usage (or `none`).
    Falsifier: a DONE without wall time or nested usage. Specimen: a:38765.
 
