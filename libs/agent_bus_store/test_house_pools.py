@@ -296,8 +296,24 @@ def test_conductor_pool_gate_when_blocked(
     _write_card(tmp_path, "10223-continuity.md", f"# card\n\n{blocked}")
     gate = conductor_pool_gate("10223")
     assert gate.basis == "blocked"
-    assert gate.refusal is not None
-    assert gate.refusal.startswith("blocked")
+    assert gate.refusal == "blocked · bridge Timeout TypeError · since 2026-09-08"
+
+
+def test_conductor_pool_gate_serial_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    serial = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | serial · 1 |",
+        1,
+    )
+    _write_card(tmp_path, "10223-card.md", f"# card\n\n{serial}")
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "serial · 1"
+    assert gate.pool_status == "serial · 1"
 
 
 def test_conductor_pool_gate_card_missing_admits_and_logs(
@@ -316,12 +332,15 @@ def test_conductor_pool_gate_card_missing_admits_and_logs(
 def test_conductor_pool_gate_no_pools(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     _write_card(tmp_path, "10223-card.md", "# card\n\nno pools table\n")
-    gate = conductor_pool_gate("10223")
+    with caplog.at_level(logging.INFO, logger="agent_bus_store.house_pools"):
+        gate = conductor_pool_gate("10223")
     assert gate.basis == "no_pools"
     assert gate.refusal is None
+    assert any("no_pools" in record.message for record in caplog.records)
 
 
 def test_resolve_house_thread_id_from_context(

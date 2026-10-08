@@ -107,11 +107,10 @@ class ContinuityCard:
 class ConductorPoolGate:
     """Conductor-pool admission class for one house.
 
-    ``refusal`` is the pool status cell only when ``basis`` is ``blocked``.
-    ``card_missing`` and ``no_pools`` admit. A conductor row whose status is
-    not the blocked vocabulary, including ``serial``, admits with basis
-    ``open`` and the cell text in ``pool_status`` — the basis set has no
-    separate serial value, and refusal is blocked-only.
+    ``refusal`` is the pool status cell when ``basis`` is ``blocked``.
+    Any conductor status other than ``open``, including ``serial · N`` and
+    ``blocked · …``, is basis ``blocked`` and refuses with that cell text.
+    ``card_missing`` and ``no_pools`` admit.
     """
 
     basis: ConductorGateBasis
@@ -332,28 +331,33 @@ def parse_closeout_thread_id(closeout: str) -> str | None:
 
 
 def conductor_pool_gate(house_id: str) -> ConductorPoolGate:
-    """Classify conductor admission. Refuse only when the pool is blocked.
+    """Classify conductor admission. Refuse when the pool status is not open.
 
-    A missing card is logged and admitted (basis ``card_missing``). A card
-    with no conductor row admits as ``no_pools``.
+    The refusal string is the status cell, the same text the old
+    ``conductor_pool_admit_refusal`` returned, so the route message stays
+    ``status:blocked · pool_blocked · {cell}`` for both serial and blocked.
+    A missing card and a card with no conductor row admit, and both are logged.
     """
     card = load_continuity_card(house_id)
+    house = _normalized_house_id(house_id)
     if card.status == "missing":
         logger.info(
             "card_missing house_id=%s tried=%s",
-            _normalized_house_id(house_id),
+            house,
             list(card.tried),
         )
         return ConductorPoolGate(basis="card_missing")
     if card.text is None:
+        logger.info("no_pools house_id=%s", house)
         return ConductorPoolGate(basis="no_pools")
     try:
         row = parse_pools(card.text)["conductor"]
     except (PoolsParseError, KeyError):
+        logger.info("no_pools house_id=%s", house)
         return ConductorPoolGate(basis="no_pools")
-    if pool_status_is_blocked(row.status):
-        return ConductorPoolGate(basis="blocked", pool_status=row.status)
-    return ConductorPoolGate(basis="open", pool_status=row.status)
+    if pool_status_is_open(row.status):
+        return ConductorPoolGate(basis="open", pool_status=row.status)
+    return ConductorPoolGate(basis="blocked", pool_status=row.status)
 
 
 def format_house_read_first_block(

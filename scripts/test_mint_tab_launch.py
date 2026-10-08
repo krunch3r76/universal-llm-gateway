@@ -7,8 +7,11 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
-
-from agent_bus_store.house_pools import parse_closeout_thread_id, parse_pools, pool_status_is_blocked
+from agent_bus_store.house_pools import (
+    parse_closeout_thread_id,
+    parse_pools,
+    pool_status_is_open,
+)
 
 _SCRIPT_PATH = Path(__file__).resolve().parent / "mint-tab-launch.py"
 _FIXTURE_PATH = (
@@ -57,7 +60,7 @@ def test_mint_tab_launch_emits_pool_floor_and_closeout_fields(
     output = tmp_path / "tab-launch-W4.md"
     card = house_card.read_text(encoding="utf-8")
     rows = parse_pools(card)
-    assert pool_status_is_blocked(rows["conductor"].status)  # fixture carries blocked conductor
+    assert pool_status_is_open(rows["conductor"].status)
     work = rows["work"]
 
     rc = mint.main(
