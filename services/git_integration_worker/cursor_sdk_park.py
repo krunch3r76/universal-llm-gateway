@@ -449,6 +449,12 @@ def conductor_park_harvest_continue_candidates(
                 continue
             if rec.get(_HOP_PARK_HARVEST_CONTINUED_KEY):
                 continue
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+                _park_harvest_stop_claim_exhausted,
+            )
+
+            if _park_harvest_stop_claim_exhausted(mapped):
+                continue
             if rec.get("hop_parked"):
                 continue
             candidates.append(dispatch_id)

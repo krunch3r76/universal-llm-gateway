@@ -700,3 +700,90 @@ async def test_fire_park_harvest_failed_post_leaves_row_retryable(
     assert conductor_park_harvest_watchdog_candidates(ledger, grace_s=120.0) == [
         req.dispatch_id
     ]
+
+
+def _reload_row(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    return {k: row[k] for k in row.keys()}
+
+
+@pytest.mark.asyncio
+async def test_park_harvest_continue_stop_not_claimed_not_retried_a_third_time(
+    monkeypatch,
+) -> None:
+    """Two stop_not_claimed admits cap the path; third fire does not POST."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+    stop_id = req.dispatch_id
+    post_calls = 0
+
+    async def _stop_not_claimed(_body, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        return False, {"reason": "stop_not_claimed", "stop_id": stop_id}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _stop_not_claimed,
+    )
+
+    row = _reload_row(ledger, req.dispatch_id)
+    assert park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+
+    assert await fire_park_harvest_continue(row) is False
+    assert post_calls == 1
+    row = _reload_row(ledger, req.dispatch_id)
+    rec = json.loads(row["record_json"])
+    assert "hop_park_harvest_continued_at" not in rec
+    err = rec["hop_admit_error"]
+    assert err["retryable"] is True
+    assert err["attempts"] == 1
+    assert "stop_not_claimed" in err["last_error"]
+
+    assert await fire_park_harvest_continue(row) is False
+    assert post_calls == 2
+    row = _reload_row(ledger, req.dispatch_id)
+    rec = json.loads(row["record_json"])
+    err = rec["hop_admit_error"]
+    assert err["retryable"] is False
+    assert err["attempts"] >= 2
+    assert "hop_park_harvest_continued_at" not in rec
+
+    assert await fire_park_harvest_continue(row) is False
+    assert post_calls == 2
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+    assert conductor_park_harvest_continue_candidates(ledger) == []
+
+
+@pytest.mark.asyncio
+async def test_park_harvest_continue_statusless_transport_still_retries(
+    monkeypatch,
+) -> None:
+    """Status-less transport failures stay retryable; cap does not apply."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+    post_calls = 0
+
+    async def _unreachable(_body, **_kwargs):
+        nonlocal post_calls
+        post_calls += 1
+        return False, {"error": "ConnectError", "reason": "stargate_unreachable"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _unreachable,
+    )
+
+    row = _reload_row(ledger, req.dispatch_id)
+    for _ in range(3):
+        assert await fire_park_harvest_continue(row) is False
+        row = _reload_row(ledger, req.dispatch_id)
+    assert post_calls == 3
+    err = json.loads(row["record_json"])["hop_admit_error"]
+    assert err["retryable"] is True
