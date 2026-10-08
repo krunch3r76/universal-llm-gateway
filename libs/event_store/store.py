@@ -179,6 +179,7 @@ class EventStore:
         self._read_pool_size = _READ_POOL_SIZE
         self._retention_batch_size = _RETENTION_BATCH_SIZE
         self._retention_batch_sleep_s = _RETENTION_BATCH_SLEEP_S
+        self._retention_stop = threading.Event()
         self._realtime_buffer: deque[dict[str, Any]] = deque(
             maxlen=_REALTIME_BUFFER_SIZE
         )
@@ -205,8 +206,28 @@ class EventStore:
             raise
         logger.info("EventStore opened: %s", self._db_path)
 
+    def stop_background_work(self) -> None:
+        """Unblock retention so shutdown does not wait out the manage grace.
+
+        The retention pool is a non-daemon ``ThreadPoolExecutor``. Interpreter
+        exit joins that thread. A keyset batch inside SQLite or ``time.sleep``
+        ignores ``asyncio.Task.cancel`` until the call returns, so SIGTERM
+        sits until manage escalates to SIGKILL. This sets the stop event
+        (wakes the inter-batch sleep) and interrupts the retention connection
+        (aborts the in-flight statement). Safe to call more than once.
+        """
+        self._retention_stop.set()
+        conn = self._retention_conn
+        if conn is None:
+            return
+        try:
+            conn.interrupt()
+        except sqlite3.Error:
+            logger.exception("event-store retention interrupt failed")
+
     async def close(self) -> None:
         """Close SQLite connections and shut down the read and retention pools."""
+        self.stop_background_work()
         db = self._db
         if self._read_executor is not None:
             self._read_executor.shutdown(wait=False, cancel_futures=True)
@@ -656,8 +677,16 @@ class EventStore:
                     )
                     deleted = cursor.rowcount or 0
                     conn.commit()
-                except sqlite3.Error:
+                except sqlite3.Error as exc:
                     conn.rollback()
+                    if self._retention_stop.is_set():
+                        logger.info(
+                            "Retention batch stopped table=%s cumulative=%d: %s",
+                            table,
+                            total,
+                            exc,
+                        )
+                        return total
                     logger.exception(
                         "Retention batch failed table=%s cumulative=%d",
                         table,
@@ -675,7 +704,8 @@ class EventStore:
                 )
                 if deleted < batch_size:
                     break
-                time.sleep(max(sleep_s, elapsed_ms / 1000))
+                if self._retention_stop.wait(max(sleep_s, elapsed_ms / 1000)):
+                    return total
             return total
 
         loop = asyncio.get_running_loop()

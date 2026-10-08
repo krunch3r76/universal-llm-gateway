@@ -395,10 +395,11 @@ async def run_service(
         if bridge is not None:
             await bridge.stop()
         if retention_task is not None:
+            store.stop_background_work()
             retention_task.cancel()
             try:
-                await retention_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(retention_task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
                 pass
         if ingest is not None:
             await ingest.stop()
