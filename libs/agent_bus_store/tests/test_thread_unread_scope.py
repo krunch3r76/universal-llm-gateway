@@ -54,7 +54,7 @@ def _seed_mixed(thread_id: str) -> int:
         subject="to-team",
         body="t",
     )
-    old_id, _, _ = insert_turn(
+    old_id, _, _, _ = insert_turn(
         thread=thread_id,
         from_agent="cursor",
         to_agent="web",

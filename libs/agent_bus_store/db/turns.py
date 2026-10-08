@@ -50,6 +50,30 @@ class UnreadTurnsExist(Exception):  # noqa: N818
         }
 
 
+class FirstTurnAuthorConflict(Exception):  # noqa: N818
+    """Turn 1 exists but was written by a different ``from_agent``."""
+
+    def __init__(self, *, thread: str, existing_from: str, from_agent: str) -> None:
+        self.thread = thread
+        self.existing_from = existing_from
+        self.from_agent = from_agent
+        super().__init__(
+            f"turn 1 on thread {thread} belongs to {existing_from}, not {from_agent}"
+        )
+
+    def to_detail(self) -> dict[str, Any]:
+        return {
+            "error": "first_turn_author_conflict",
+            "reason": "first_turn_author_conflict",
+            "message": (
+                "Turn 1 on this idempotency key was written by a different agent"
+            ),
+            "thread_id": self.thread,
+            "existing_from": self.existing_from,
+            "from_agent": self.from_agent,
+        }
+
+
 class TurnAlreadyAcknowledged(Exception):  # noqa: N818
     """Raised when attempting to modify a turn whose read_at is already set."""
 
@@ -130,6 +154,18 @@ def _get_attachments_for_turns(
 # ── Turn CRUD ────────────────────────────────────────────────────────
 
 
+def _existing_first_turn(
+    row: sqlite3.Row, *, thread: str, from_agent: str
+) -> tuple[int, str, int, bool]:
+    """Return a committed turn 1, or raise when ``from_agent`` does not match."""
+    existing_from = str(row["from_agent"])
+    if existing_from != from_agent:
+        raise FirstTurnAuthorConflict(
+            thread=thread, existing_from=existing_from, from_agent=from_agent
+        )
+    return int(row["id"]), str(row["created_at"]), int(row["turn_number"]), True
+
+
 def insert_turn(
     *,
     thread: str,
@@ -144,8 +180,8 @@ def insert_turn(
     attachments: list[dict[str, Any]] | None = None,
     on_behalf: bool = False,
     idempotent_first_turn: bool = False,
-) -> tuple[int, str, int]:
-    """Returns (turn_id, created_at, turn_number).
+) -> tuple[int, str, int, bool]:
+    """Returns (turn_id, created_at, turn_number, claimed_existing).
 
     Raises UnreadTurnsExist if after_turn is provided and unread turns
     addressed to from_agent exist after that turn number.
@@ -209,15 +245,13 @@ def insert_turn(
 
         if idempotent_first_turn:
             existing_turn1 = conn.execute(
-                "SELECT id, created_at, turn_number FROM turns "
+                "SELECT id, created_at, turn_number, from_agent FROM turns "
                 "WHERE thread = ? AND turn_number = 1 LIMIT 1",
                 (thread,),
             ).fetchone()
             if existing_turn1 is not None:
-                return (
-                    int(existing_turn1["id"]),
-                    str(existing_turn1["created_at"]),
-                    int(existing_turn1["turn_number"]),
+                return _existing_first_turn(
+                    existing_turn1, thread=thread, from_agent=from_agent
                 )
 
         max_row = conn.execute(
@@ -269,13 +303,13 @@ def insert_turn(
             if not idempotent_first_turn:
                 raise
             raced = conn.execute(
-                "SELECT id, created_at, turn_number FROM turns "
+                "SELECT id, created_at, turn_number, from_agent FROM turns "
                 "WHERE thread = ? AND turn_number = 1 LIMIT 1",
                 (thread,),
             ).fetchone()
             if raced is None:
                 raise
-            return int(raced["id"]), str(raced["created_at"]), int(raced["turn_number"])
+            return _existing_first_turn(raced, thread=thread, from_agent=from_agent)
 
         if supersedes_turn is not None:
             conn.execute(
@@ -335,7 +369,7 @@ def insert_turn(
     maybe_enqueue_continuity_consolidate(
         thread_id=thread, turn_number=turn_number, subject=subject
     )
-    return turn_id, ts, turn_number
+    return turn_id, ts, turn_number, False
 
 
 def get_turns(
@@ -850,7 +884,7 @@ def create_turn(
         raise KeyError(thread_id)
 
     effective_after = after_turn if after_turn and after_turn > 0 else None
-    turn_id, ts, turn_number = insert_turn(
+    turn_id, ts, turn_number, _claimed_existing = insert_turn(
         thread=thread_id,
         from_agent=from_agent,
         to_agent=to_agent,

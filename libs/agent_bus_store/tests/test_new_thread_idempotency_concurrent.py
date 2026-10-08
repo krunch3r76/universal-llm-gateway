@@ -41,12 +41,15 @@ def test_new_thread_idempotency_key_concurrent_replay_single_turn(tmp_path) -> N
     }
     statuses: list[int] = []
     thread_ids: list[str] = []
+    by_role: dict[str, dict] = {}
 
-    def post_once(client: TestClient) -> None:
+    def post_once(client: TestClient, role: str) -> None:
         resp = client.post("/threads/send", json=payload)
         statuses.append(resp.status_code)
         if resp.status_code in (200, 201):
-            thread_ids.append(resp.json()["thread"]["id"])
+            body = resp.json()
+            thread_ids.append(body["thread"]["id"])
+            by_role[role] = body
 
     with _store_client(tmp_path) as client_a:
         client_b = _store_client(tmp_path)
@@ -54,8 +57,8 @@ def test_new_thread_idempotency_key_concurrent_replay_single_turn(tmp_path) -> N
             with patch.object(
                 new_thread_send_mod, "insert_turn", side_effect=gated_insert
             ):
-                t1 = threading.Thread(target=post_once, args=(client_a,))
-                t2 = threading.Thread(target=post_once, args=(client_b,))
+                t1 = threading.Thread(target=post_once, args=(client_a, "blocked"))
+                t2 = threading.Thread(target=post_once, args=(client_b, "inserter"))
                 t1.start()
                 assert gate.wait(timeout=5)
                 t2.start()
@@ -71,6 +74,9 @@ def test_new_thread_idempotency_key_concurrent_replay_single_turn(tmp_path) -> N
             ]
             assert len(turns) == 1
             assert sorted(statuses) == [200, 201]
+            assert by_role["blocked"]["turn"]["id"] == by_role["inserter"]["turn"]["id"]
+            assert by_role["inserter"].get("idempotent_replay") in (False, None)
+            assert by_role["blocked"].get("idempotent_replay") is True
         finally:
             client_b.close()
 
@@ -101,8 +107,8 @@ def test_failed_first_send_replay_inserts_turn_one(tmp_path) -> None:
             second = client.post("/threads/send", json=payload)
         elapsed = time.monotonic() - started
         assert first.status_code == 500, first.text
-        assert second.status_code == 200, second.text
-        assert second.json().get("idempotent_replay") is True
+        assert second.status_code == 201, second.text
+        assert second.json().get("idempotent_replay") in (False, None)
         thread_id = second.json()["thread"]["id"]
         turns = client.get("/turns", params={"thread": thread_id}).json()["turns"]
         assert len(turns) == 1
@@ -188,19 +194,22 @@ def test_sidecar_idempotency_key_concurrent_replay_single_turn(
     }
     statuses: list[int] = []
     thread_ids: list[str] = []
+    by_role: dict[str, dict] = {}
 
-    def post_once(client: TestClient) -> None:
+    def post_once(client: TestClient, role: str) -> None:
         resp = client.post("/threads/send", json=payload)
         statuses.append(resp.status_code)
         if resp.status_code in (200, 201):
-            thread_ids.append(resp.json()["thread"]["id"])
+            body = resp.json()
+            thread_ids.append(body["thread"]["id"])
+            by_role[role] = body
 
     with _store_client(tmp_path) as client_a:
         client_b = _store_client(tmp_path)
         try:
             with patch.object(turns_mod, "insert_turn", side_effect=gated_insert):
-                t1 = threading.Thread(target=post_once, args=(client_a,))
-                t2 = threading.Thread(target=post_once, args=(client_b,))
+                t1 = threading.Thread(target=post_once, args=(client_a, "blocked"))
+                t2 = threading.Thread(target=post_once, args=(client_b, "inserter"))
                 t1.start()
                 assert gate.wait(timeout=5)
                 t2.start()
@@ -216,6 +225,9 @@ def test_sidecar_idempotency_key_concurrent_replay_single_turn(
             assert len(turns) == 1
             assert turns[0]["turn_number"] == 1
             assert sorted(statuses) == [200, 201]
+            assert by_role["blocked"]["turn"]["id"] == by_role["inserter"]["turn"]["id"]
+            assert by_role["inserter"].get("idempotent_replay") in (False, None)
+            assert by_role["blocked"].get("idempotent_replay") is True
         finally:
             client_b.close()
 
@@ -252,7 +264,8 @@ def test_failed_first_sidecar_send_replay_inserts_turn_one(
             second = client.post("/threads/send", json=payload)
         elapsed = time.monotonic() - started
         assert first.status_code == 500, first.text
-        assert second.status_code == 200, second.text
+        assert second.status_code == 201, second.text
+        assert second.json().get("idempotent_replay") in (False, None)
         thread_id = second.json()["thread"]["id"]
         turns = client.get("/turns", params={"thread": thread_id}).json()["turns"]
         assert len(turns) == 1

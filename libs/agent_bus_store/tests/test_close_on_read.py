@@ -81,7 +81,7 @@ def _seed_on_behalf_generate_thread(
         pipeline_id="frontier-dispatch",
         caller_agent=caller,
     )
-    result_id, _, _ = insert_turn(
+    result_id, _, _, _ = insert_turn(
         thread=thread_id,
         from_agent=role,
         to_agent=caller,

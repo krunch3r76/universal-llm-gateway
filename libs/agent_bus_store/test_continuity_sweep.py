@@ -56,7 +56,7 @@ def _lane(parent: str, slug: str) -> str:
 
 def _closeout(thread_id: str, *, n: int = 1) -> int:
     for _ in range(n):
-        _, _, turn_number = insert_turn(
+        _, _, turn_number, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="cursor",

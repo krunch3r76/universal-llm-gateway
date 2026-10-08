@@ -62,7 +62,7 @@ def _assert_turn_created(
 
 def test_insert_turn_emits_turn_created(bus_db, capture_turn_created) -> None:
     thread_id = create_thread(thread_id=None, slug="insert-turn-emit")["id"]
-    turn_id, created_at, turn_number = insert_turn(
+    turn_id, created_at, turn_number, _claimed = insert_turn(
         thread=thread_id,
         from_agent="cursor",
         to_agent="web",
