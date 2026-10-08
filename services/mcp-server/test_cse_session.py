@@ -45,10 +45,10 @@ def code_server() -> dict:
     }
 
 
-def test_cse_session_on_both_surfaces(life_server: dict, code_server: dict) -> None:
-    assert "cse_session" in life_server["tool_names"]
+def test_cse_session_on_code_only(life_server: dict, code_server: dict) -> None:
+    assert "cse_session" not in life_server["tool_names"]
     assert "cse_session" in code_server["tool_names"]
-    assert "cse_session" in life_server["primary"]
+    assert "cse_session" not in life_server["primary"]
     assert "cse_session" in code_server["primary"]
 
 

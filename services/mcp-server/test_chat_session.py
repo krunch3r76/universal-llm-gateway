@@ -49,10 +49,10 @@ def code_server() -> dict:
     }
 
 
-def test_chat_session_on_both_surfaces(life_server: dict, code_server: dict) -> None:
-    assert "chat_session" in life_server["tool_names"]
+def test_chat_session_on_code_only(life_server: dict, code_server: dict) -> None:
+    assert "chat_session" not in life_server["tool_names"]
     assert "chat_session" in code_server["tool_names"]
-    assert "chat_session" in life_server["primary"]
+    assert "chat_session" not in life_server["primary"]
     assert "chat_session" in code_server["primary"]
 
 

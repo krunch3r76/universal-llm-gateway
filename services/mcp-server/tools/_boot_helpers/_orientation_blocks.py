@@ -103,13 +103,13 @@ def _dispatch_consult_block_life() -> str:
     The code form prescribes direct ``team_dispatch`` calls, which on a life
     seat is an instruction to call a tool that ``tools/list`` does not carry —
     the contradiction the web seat hit empirically before routing over the bus
-    (thread 6310). Life gets the sanctioned transport instead: in-seat cognitive
-    legs, ``agent_bus`` to a code seat, or honest deferral.
+    (thread 6310). Life lists only life-only tools. Shared primaries and
+    commissions go through the ulg-code connector.
     """
     return f"""\
 ## Dispatch & Consult — life surface
-`/mcp/life` does not list these names: {_code_only_primary_names()}. Toys omits them. The operator seat's ulg-code connector lists `agent_bus`, `agent_bus_read`, `team_dispatch`, `manage`, `observability`, `tool_search`, and those are the primary verbs. `panel_dispatch` and `claudeburst` are on neither connector. A life seat with no ulg-code connector does not invent a call. The operator seat does not commission via `agent_bus.request`.
-- **Cognitive leg** (reasoning, adjudication, cortex/rag/fs reads, bus synthesis) → run it in-seat.
+`/mcp/life` lists only the life-only tools (`cursor_request`, `operator_request`, `imprint`, `recall`, `delegate`, `notify`, `life_dispatch`, `recycle_giw`). It does not list these names: {_code_only_primary_names()}. Those live on the ulg-code connector. Toys omits them. A life seat with no ulg-code connector does not invent a call. The operator seat does not commission via `agent_bus.request`.
+- **Cognitive leg** (reasoning, adjudication, cortex/rag/fs reads, bus synthesis) → ulg-code `cortex`, `rag`, `fs`, `agent_bus`.
 - **Commission** (dispatch a model/seat, repo write, implement) → ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Poll that response's `poll_hint` (`tool=wait`, `arguments_json` unchanged). Do not rewrite it into `job_state`.
 - CSE continuity hop on an existing private lane → `agent_bus(tool="hop", thread=…, reason=…)` — ¬ hand-authored `TYPE: CONTINUITY_HANDOFF`; ¬ a contract token. Substrate graph assert → `agent_bus(tool="substrate_graph_write", entity_id=…, claim=…)` — wraps cortex assert; ¬ mint on 404. Substrate friction file → `agent_bus(tool="substrate_friction_file", owner=…, note=…)` — wraps cortex friction; ¬ mint on 404. Substrate entity mint → `agent_bus(tool="substrate_entity_mint", id=…, type=…, name=…)` — wraps cortex entity_create; 409 on collision.
 - **Neither** → honest deferral + `cortex(tool="friction", …)`; ¬ silent substitution.

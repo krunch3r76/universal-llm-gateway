@@ -312,10 +312,11 @@ def test_life_manifest_line_lists_life_primaries_only() -> None:
     joined = _web_orientation()
     line = joined[joined.index("## MCP server primary") :].split("\n")[1]
     assert "/mcp/life" in joined
+    advertised = set(line.split("`", 2)[1].split(", "))
     for name in sorted(derive_surface_primary_tools("life")):
-        assert f"{name}" in line, name
+        assert name in advertised, name
     for name in sorted(_code_extra()):
-        assert name not in line, name
+        assert name not in advertised, name
 
 
 def test_life_dispatch_block_delegates_code_extra_over_the_bus() -> None:

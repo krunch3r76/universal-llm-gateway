@@ -5944,30 +5944,18 @@ domain_endpoints:
     - life
     recycle_giw:
     - life
+# Life lists only tools that are not on code. Agents attach both connectors,
+# so the shared primaries (cortex, fs, agent_bus, …) stay on code once.
 surface_primary_domains:
   life:
-  - cortex
-  - cortex_brief
-  - agent_bus
-  - agent_bus_read
   - cursor_request
-  - cursor_bridge
-  - fs
-  - rag
-  - retrieve
-  - tool_search
-  - dispatch
+  - operator_request
   - imprint
   - recall
   - delegate
   - notify
   - life_dispatch
-  - fleet_liveness
-  - operator_request
-  - cse_session
-  - chat_session
   - recycle_giw
-  - pipeline
   code:
   - cortex
   - cortex_brief

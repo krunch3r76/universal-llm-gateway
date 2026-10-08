@@ -39,30 +39,18 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
 
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
 # (A9). Not generated — update this frozenset when the YAML primary set moves.
+# Shared primaries (cortex, fs, agent_bus, …) are code-only; both connectors
+# are attached, so life keeps the life-only names.
 LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
     {
-        "cortex",
-        "cortex_brief",
-        "agent_bus",
-        "agent_bus_read",
         "cursor_request",
-        "cursor_bridge",
         "operator_request",
-        "fs",
-        "rag",
-        "retrieve",
-        "tool_search",
-        "dispatch",
-        "fleet_liveness",
         "imprint",
         "recall",
         "delegate",
         "notify",
         "life_dispatch",
-        "cse_session",
-        "chat_session",
         "recycle_giw",
-        "pipeline",
     }
 )
 

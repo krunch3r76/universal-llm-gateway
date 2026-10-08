@@ -17,29 +17,35 @@ sys.path.insert(0, str(MCP_SERVER_DIR))
 os.environ.setdefault("MCP_AUTH_TOKEN", "test-noop")
 os.environ.setdefault("MCP_OAUTH_DISABLED", "1")
 
+# Life primary is the life-only set. Shared primaries stay on code so a
+# session that attaches both connectors does not receive two descriptor copies.
 LIFE_PRIMARY = frozenset(
+    {
+        "cursor_request",
+        "operator_request",
+        "imprint",
+        "recall",
+        "delegate",
+        "notify",
+        "life_dispatch",
+        "recycle_giw",
+    }
+)
+SHARED_ON_CODE = frozenset(
     {
         "cortex",
         "cortex_brief",
         "agent_bus",
         "agent_bus_read",
-        "cursor_request",
         "cursor_bridge",
-        "operator_request",
         "fs",
         "rag",
         "retrieve",
         "tool_search",
         "dispatch",
         "fleet_liveness",
-        "imprint",
-        "recall",
-        "delegate",
-        "notify",
-        "life_dispatch",
         "cse_session",
         "chat_session",
-        "recycle_giw",
         "pipeline",
     }
 )
@@ -53,23 +59,7 @@ CODE_EXTRA = frozenset(
 )
 # Declared on /mcp/code in canonical.yaml before a dedicated MCP registration lands.
 CODE_CANONICAL_ONLY = frozenset({"claudeburst"})
-# imprint/delegate/notify/recall and cursor_request/operator_request are life-only
-# (canonical domain_endpoints); trigger is overflow/relay, never surface_primary.
-CODE_PRIMARY = (
-    LIFE_PRIMARY
-    - frozenset(
-        {
-            "imprint",
-            "delegate",
-            "notify",
-            "life_dispatch",
-            "recall",
-            "recycle_giw",
-            "cursor_request",
-            "operator_request",
-        }
-    )
-) | CODE_EXTRA
+CODE_PRIMARY = SHARED_ON_CODE | CODE_EXTRA
 
 
 CODE_PRIMARY_CANONICAL = CODE_PRIMARY | CODE_CANONICAL_ONLY
@@ -125,13 +115,18 @@ def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
         LIFE_SURFACE_FORBIDDEN_TOOLS,
         ULG_CODE_PRIMARY_TOOLS,
     )
-    from endpoint_surface import derive_code_extra_primary_tools
+    from endpoint_surface import (
+        derive_code_extra_primary_tools,
+        derive_surface_primary_tools,
+    )
 
     derived = derive_code_extra_primary_tools()
+    assert derived == derive_surface_primary_tools("code")
+    assert derive_surface_primary_tools("life").isdisjoint(derived)
     assert LIFE_SURFACE_FORBIDDEN_TOOLS == frozenset({"panel_dispatch", "claudeburst"})
     assert LIFE_SURFACE_FORBIDDEN_TOOLS < derived
-    assert derived - LIFE_SURFACE_FORBIDDEN_TOOLS == frozenset(
-        {"team_dispatch", "manage", "observability"}
+    assert {"team_dispatch", "manage", "observability"} < (
+        derived - LIFE_SURFACE_FORBIDDEN_TOOLS
     )
     assert ULG_CODE_PRIMARY_TOOLS == frozenset(
         {
@@ -284,9 +279,25 @@ def _workspaces_read_probe_uri() -> str:
 
 
 def _fs_tool_fn(server_bundle: dict):
+    """Return the fs callable and an object with ``.description``.
+
+    On code, fs is primary. On life it is overflow: shared primaries are not
+    advertised there, but the life grant remains callable through dispatch.
+    """
     tools = asyncio.run(server_bundle["mcp"].list_tools())
-    fs_tool = next(t for t in tools if t.name == "fs")
-    return fs_tool.fn, fs_tool
+    fs_tool = next((t for t in tools if t.name == "fs"), None)
+    if fs_tool is not None:
+        return fs_tool.fn, fs_tool
+    fn = server_bundle["overflow_reg"]["fs"]
+    description = server_bundle["overflow_md"]["fs"][0]
+
+    class _OverflowFs:
+        pass
+
+    tool = _OverflowFs()
+    tool.fn = fn
+    tool.description = description
+    return fn, tool
 
 
 def test_life_fs_description_advertises_workspaces_read(life_server: dict) -> None:
