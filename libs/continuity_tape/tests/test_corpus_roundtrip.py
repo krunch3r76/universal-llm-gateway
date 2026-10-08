@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+
 from continuity_tape.corpus_roundtrip import (
     check_corpus_roundtrip,
     sealed_roundtrip_holds,

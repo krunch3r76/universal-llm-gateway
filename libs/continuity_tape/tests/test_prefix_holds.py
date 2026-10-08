@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from continuity_tape.messages import seal_messages_sha256
+
 from cortex_store.verbatim_succession import prefix_holds
+from continuity_tape.messages import seal_messages_sha256
 
 pytestmark = pytest.mark.offline
 

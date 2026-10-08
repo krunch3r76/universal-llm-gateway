@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl
 from continuity_tape.render_md import render_verbatim_md
 
