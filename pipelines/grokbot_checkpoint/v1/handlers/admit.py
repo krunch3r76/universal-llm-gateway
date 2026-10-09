@@ -100,6 +100,7 @@ async def run_admit(
             "house": house,
             "n": n,
             "mode": mode,
+            "agent_id": agent_id,
             "completed_steps": ["admit"],
         }
     return {
@@ -108,6 +109,7 @@ async def run_admit(
         "house": house,
         "n": n,
         "mode": mode,
+        "agent_id": agent_id,
     }
 
 

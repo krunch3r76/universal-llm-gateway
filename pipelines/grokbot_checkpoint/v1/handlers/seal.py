@@ -21,7 +21,9 @@ from ._clients import cortex_dispatch, refuse, step_output_json
 _SEAT = "grok-bot"
 
 
-def _structural(options: dict[str, Any], envelope_step: dict[str, Any], opened_at: str) -> str:
+def _structural(
+    options: dict[str, Any], envelope_step: dict[str, Any], opened_at: str
+) -> str:
     house = options.get("house")
     n = options.get("n")
     agent = options.get("bus_identity")
@@ -156,8 +158,10 @@ async def run_seal(
     execution_id: str,
     dispatch: Any = None,
 ) -> dict[str, Any]:
-    if envelope_step.get("_skipped") or envelope_step.get("refused") or not envelope_step.get(
-        "snapshot_uri"
+    if (
+        envelope_step.get("_skipped")
+        or envelope_step.get("refused")
+        or not envelope_step.get("snapshot_uri")
     ):
         return refuse("seal.upstream_skipped", "envelope did not produce a snapshot")
     snapshot = str(envelope_step.get("snapshot_uri") or "")
@@ -172,9 +176,11 @@ async def run_seal(
         return refuse("seal.missing_start", "conversation start is absent")
     opened = _normalise_utc(raw_opened)
     if not opened:
-        return refuse("seal.start_unparseable", "conversation start is not an ISO instant")
+        return refuse(
+            "seal.start_unparseable", "conversation start is not an ISO instant"
+        )
     agent = str(options.get("bus_identity") or "")
-    agent_id = str(options.get("agent_id") or "")
+    agent_id = str(options.get("agent_id") or "").strip()
     lane = str(options.get("root_thread") or options.get("verify_lane") or "")
     structural = _structural(options, envelope_step, opened)
     msg_sha = str(envelope_step.get("messages_sha256") or "")

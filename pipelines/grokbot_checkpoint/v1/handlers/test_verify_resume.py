@@ -21,7 +21,8 @@ async def test_read_only_checks(fs) -> None:
     fs.files["notes/card.md"] = card
     fs.files["notes/system/transcripts/grok/h-abcdefghi.raw.messages.json"] = snap
     body = (
-        "Window: agent_id=a · turns@cp=1 · coverage=full\n"
+        "Window: transcript_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890 · "
+        "turns@cp=1 · coverage=full\n"
         "Harvest: transcript:s · messages_sha256:abc · codec:messages-v1 · "
         "surface:cursor · provenance:raw · producer:cursor-jsonl-extractor\n"
     )
@@ -29,7 +30,12 @@ async def test_read_only_checks(fs) -> None:
     async def get(path, params=None):
         return {
             "turns": [
-                {"subject": "CHECKPOINT", "body": body, "turn_number": 2, "from": "bot"},
+                {
+                    "subject": "CHECKPOINT",
+                    "body": body,
+                    "turn_number": 2,
+                    "from": "bot",
+                },
                 {
                     "subject": "RECEIPT",
                     "body": "ok",

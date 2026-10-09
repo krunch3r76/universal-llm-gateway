@@ -14,7 +14,9 @@ class _Router:
     def __init__(self) -> None:
         self.rows: list[tuple[str, str]] = []
 
-    def register_domain_handler_class(self, domain: str, step_type: str, cls: type) -> None:
+    def register_domain_handler_class(
+        self, domain: str, step_type: str, cls: type
+    ) -> None:
         assert cls.step_type == step_type
         self.rows.append((domain, step_type))
 
@@ -31,9 +33,7 @@ def test_register_handlers_covers_steps() -> None:
 
 @pytest.mark.asyncio
 async def test_path_escape_and_replay(fs) -> None:
-    bad = await run_admit(
-        {"mode": "seal", "house": "h", "n": 1, "raw_ref": "../x"}, {}
-    )
+    bad = await run_admit({"mode": "seal", "house": "h", "n": 1, "raw_ref": "../x"}, {})
     assert bad["refused"]["code"] == "admit.path_escape"
     card = (
         "## Checkpoint log\n\n| n | when | trigger | expected | envelope | pipeline |\n"
@@ -78,7 +78,7 @@ async def test_seal_uuid_with_root_thread() -> None:
         },
         {},
     )
-    assert bad["refused"]["code"] == "admit.agent_id_not_uuid"
+    assert (bad.get("refused") or {}).get("code") == "admit.agent_id_not_uuid"
     upper = await run_admit(
         {
             "mode": "seal",
@@ -89,7 +89,7 @@ async def test_seal_uuid_with_root_thread() -> None:
         },
         {},
     )
-    assert upper["refused"]["code"] == "admit.agent_id_not_uuid"
+    assert (upper.get("refused") or {}).get("code") == "admit.agent_id_not_uuid"
     ok = await run_admit(
         {
             "mode": "seal",
@@ -116,3 +116,16 @@ async def test_seal_uuid_canonical() -> None:
         {},
     )
     assert out.get("refused") is None
+    assert out.get("agent_id") == agent
+    padded = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "root_thread": "15902",
+            "agent_id": f"  {agent}  ",
+        },
+        {},
+    )
+    assert padded.get("refused") is None
+    assert padded["agent_id"] == agent

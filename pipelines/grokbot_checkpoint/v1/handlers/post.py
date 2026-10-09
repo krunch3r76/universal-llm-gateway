@@ -19,11 +19,11 @@ def _format_mission(*, mission: str | None, house: str, n: int) -> str:
         text = " ".join(mission.splitlines()).strip()
     else:
         text = f"resume grok house {house} from checkpoint {n}"
+    if text.startswith("Mission:"):
+        text = text[len("Mission:") :].strip()
     if len(text) > 200:
         text = text[:200]
-    if not text.startswith("Mission:"):
-        text = f"Mission: {text}"
-    return text
+    return f"Mission: {text}"
 
 
 def compose_checkpoint_body(
@@ -118,7 +118,7 @@ async def run_post(
         return {"refused": None, "duplicate": True, "body": None, "turn": None}
     body = compose_checkpoint_body(
         residue=str(options.get("residue") or ""),
-        agent_id=str(options.get("agent_id") or ""),
+        agent_id=str(options.get("agent_id") or "").strip(),
         turn_count=int(envelope_step.get("turn_count") or 0),
         coverage=str(envelope_step.get("coverage") or ""),
         channel=str(options.get("channel") or "cp"),

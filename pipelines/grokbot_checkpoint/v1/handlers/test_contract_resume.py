@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from agent_bus_store import create_app
@@ -17,8 +17,9 @@ from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
 from cortex_store.transcript_cp_anchors import window_anchors_from_text
 from fastapi.testclient import TestClient
 
+from . import post as post_mod
+from ._test_call_post import call_post
 from .card import run_card
-from .post import run_post
 from .result import assemble
 from .verify_resume import _harvest_provenance, _harvest_sha
 
@@ -154,11 +155,15 @@ def _turn_number(send_payload: dict) -> int:
     return 0
 
 
-@patch("continuity_tape.events_checkpoint.record")
+@patch.object(
+    post_mod,
+    "stargate_continuity_checkpoint_posted",
+    create=True,
+)
 @pytest.mark.asyncio
-async def test_grok_tip_is_resume_readable(record_event: MagicMock, bus_client) -> None:
+async def test_grok_tip_is_resume_readable(posted_event, bus_client) -> None:
     get, send = _adapters(bus_client)
-    out = await run_post(
+    out = await call_post(
         _options(),
         _seal(),
         _envelope(),
@@ -168,13 +173,8 @@ async def test_grok_tip_is_resume_readable(record_event: MagicMock, bus_client) 
     )
     assert out.get("refused") is None, out
     assert out.get("duplicate") is False, out
-    posted = [
-        c
-        for c in record_event.call_args_list
-        if c.args and c.args[0] == "stargate.continuity.checkpoint.posted"
-    ]
-    assert len(posted) == 1
-    payload = posted[0].kwargs
+    assert posted_event.call_count == 1
+    payload = posted_event.call_args.kwargs
     assert payload["bus_turn"] == out["turn"]
     assert payload["surface"] == "grok"
     assert payload["execution_id"] == "exec-contract-1"
@@ -244,10 +244,12 @@ async def test_stale_tip_409_retries_once(bus_client) -> None:
         statuses.append(status)
         return payload, status
 
-    with patch(
-        "pipelines.grokbot_checkpoint.v1.handlers.post.stargate_continuity_checkpoint_posted",
+    with patch.object(
+        post_mod,
+        "stargate_continuity_checkpoint_posted",
+        create=True,
     ):
-        out = await run_post(
+        out = await call_post(
             _options(),
             _seal(),
             _envelope(),
@@ -281,10 +283,12 @@ async def test_stale_tip_409_twice_refuses(bus_client) -> None:
         calls["n"] += 1
         return await base_send(**kwargs)
 
-    with patch(
-        "pipelines.grokbot_checkpoint.v1.handlers.post.stargate_continuity_checkpoint_posted",
+    with patch.object(
+        post_mod,
+        "stargate_continuity_checkpoint_posted",
+        create=True,
     ):
-        out = await run_post(
+        out = await call_post(
             _options(),
             _seal(),
             _envelope(),
@@ -292,17 +296,19 @@ async def test_stale_tip_409_twice_refuses(bus_client) -> None:
             send=send,
             execution_id="exec-409-twice",
         )
-    assert out["refused"]["code"] == "post.bus"
+    assert (out.get("refused") or {}).get("code") == "post.bus"
     assert calls["n"] == 2
 
 
 @pytest.mark.asyncio
 async def test_user_speech_refused_422(bus_client) -> None:
     get, send = _adapters(bus_client)
-    with patch(
-        "pipelines.grokbot_checkpoint.v1.handlers.post.stargate_continuity_checkpoint_posted",
+    with patch.object(
+        post_mod,
+        "stargate_continuity_checkpoint_posted",
+        create=True,
     ) as spy:
-        out = await run_post(
+        out = await call_post(
             _options(residue="line\n### User\nspoken\n"),
             _seal(),
             _envelope(),
