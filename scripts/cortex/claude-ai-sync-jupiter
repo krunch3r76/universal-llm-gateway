@@ -287,7 +287,133 @@ remote_py() {
     qargs+=("$(printf '%q' "$a")")
   done
   # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} CDP_DISPLAY=${disp} DISPLAY=${disp} XAUTHORITY=${xauth} ${PY} ${script} ${qargs[*]}"
+  ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs PYTHONUNBUFFERED=1 CLAUDE_SYNC_NESTED=${CLAUDE_SYNC_NESTED:-} BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} CDP_DISPLAY=${disp} DISPLAY=${disp} XAUTHORITY=${xauth} ${PY} ${script} ${qargs[*]}"
+}
+
+# Line-buffered even when stdout is a pipe (caller tails the log).
+emit() {
+  "$HOME/.venvs/universal/bin/python" -c 'import sys; print(sys.argv[1], flush=True)' "$1"
+}
+
+# Inspect window for wrapper heartbeats. Not a failure bound.
+_liveness_window_s() {
+  local w="${CLAUDE_DUMP_LIVENESS_WINDOW_S:-30}"
+  if [[ ! "$w" =~ ^[0-9]+$ ]] || [[ "$w" -lt 1 ]]; then
+    echo 30
+  else
+    echo "$w"
+  fi
+}
+
+# Run a phase. Heartbeats while the child lives; the child decides stall.
+# Expiry of the window only prints PHASE <name> heartbeat — it does not fail.
+phase_exec() {
+  local name="$1"
+  shift
+  local window pid rc trc
+  window="$(_liveness_window_s)"
+  emit "PHASE ${name} start"
+  "$@" &
+  pid=$!
+  while :; do
+    set +e
+    timeout "${window}" tail --pid="${pid}" -f /dev/null
+    trc=$?
+    set -e
+    if [[ "${trc}" -eq 124 ]]; then
+      emit "PHASE ${name} heartbeat"
+      continue
+    fi
+    break
+  done
+  set +e
+  wait "${pid}"
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 0 ]]; then
+    emit "PHASE ${name} done"
+  fi
+  return "${rc}"
+}
+
+# Dump-skills always ends with one terminal line. A child that dies without
+# printing MIRROR_ERROR, STALLED, or MIRROR_DONE gets a wrapper line.
+_marked_dump_skills() {
+  local rc=0 dump_log
+  phase_exec ensure-chrome ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    emit "MIRROR_ERROR ensure-chrome rc=${rc}"
+    return "${rc}"
+  fi
+  dump_log="$(mktemp)"
+  set +e
+  remote_py scripts/cortex/dump_claude_container_skills.py "$@" 2>&1 | tee "${dump_log}"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if ! grep -Eq '^(MIRROR_ERROR|STALLED|MIRROR_DONE)( |$)' "${dump_log}"; then
+    emit "MIRROR_ERROR dump rc=${rc}"
+  fi
+  rm -f "${dump_log}"
+  return "${rc}"
+}
+
+# mirror --dry-run: reconcile rc=1 means drift, not a failed apply.
+_finish_reconcile() {
+  local rc="$1"
+  local dry="$2"
+  if [[ "${rc}" -eq 0 ]]; then
+    emit "MIRROR_DONE rc=0"
+    return 0
+  fi
+  if [[ "${dry}" -eq 1 && "${rc}" -eq 1 ]]; then
+    emit "MIRROR_DONE rc=0 dry_run=1 mirrored=false"
+    return 0
+  fi
+  emit "MIRROR_ERROR reconcile rc=${rc}"
+  return "${rc}"
+}
+
+_marked_mirror() {
+  local rc=0 dump_out dump_args mirror_apply a dry=0 dump_log
+  phase_exec ensure-chrome ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    emit "MIRROR_ERROR ensure-chrome rc=${rc}"
+    return "${rc}"
+  fi
+  dump_out="${REMOTE_REPO}/tmp/reviews/claude-skills-latest.zip"
+  dump_args=()
+  mirror_apply=(--apply)
+  for a in "$@"; do
+    case "$a" in
+      --dry-run) mirror_apply=(--dry-run) ;;
+      *) dump_args+=("$a") ;;
+    esac
+  done
+  dump_log="$(mktemp)"
+  set +e
+  CLAUDE_SYNC_NESTED=1 phase_exec dump remote_py \
+    scripts/cortex/dump_claude_container_skills.py --out "${dump_out}" \
+    "${dump_args[@]+"${dump_args[@]}"}" 2>&1 | tee "${dump_log}"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "${rc}" -ne 0 ]]; then
+    if ! grep -Eq '^(MIRROR_ERROR|STALLED)( |$)' "${dump_log}"; then
+      emit "MIRROR_ERROR dump rc=${rc}"
+    fi
+    rm -f "${dump_log}"
+    return "${rc}"
+  fi
+  rm -f "${dump_log}"
+  phase_exec reconcile remote_py scripts/cortex/reconcile_claude_user_skills.py \
+    --zip "${dump_out}" "${mirror_apply[@]}" || rc=$?
+  dry=0
+  for a in "${mirror_apply[@]}"; do
+    if [[ "${a}" == "--dry-run" ]]; then
+      dry=1
+    fi
+  done
+  _finish_reconcile "${rc}" "${dry}"
+  return $?
 }
 
 # 24911/24976: local SSH abort trap — pre-arm reg_id capture, ownership-safe cleanup.
@@ -382,8 +508,22 @@ case "$cmd" in
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     ;;
   status)
-    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
-    remote_py scripts/cortex/upload_claude_bundles_ui.py --status
+    _marked_status() {
+      local rc=0
+      phase_exec ensure-chrome ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}" || rc=$?
+      if [[ "${rc}" -ne 0 ]]; then
+        emit "MIRROR_ERROR ensure-chrome rc=${rc}"
+        return "${rc}"
+      fi
+      phase_exec status remote_py scripts/cortex/upload_claude_bundles_ui.py --status || rc=$?
+      if [[ "${rc}" -ne 0 ]]; then
+        emit "MIRROR_ERROR status rc=${rc}"
+        return "${rc}"
+      fi
+      emit "MIRROR_DONE rc=0"
+      return 0
+    }
+    _marked_status
     ;;
   preflight)
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
@@ -401,28 +541,18 @@ case "$cmd" in
     ;;
   dump-skills)
     # Cheap ordinary /chat/ code-exec zip of /mnt/skills. CSE submit refused.
-    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
-    remote_py scripts/cortex/dump_claude_container_skills.py "$@"
+    _marked_dump_skills "$@"
     ;;
   mirror|recon)
     # Dump /mnt/skills then apply catalog 1:1 (uninstall extras, upload missing,
     # replace stale). --dry-run prints the plan and skips Playwright apply.
     # `recon` is a deprecated alias of `mirror` (≠ work-item contract=recon).
+    # Terminal line is MIRROR_DONE / MIRROR_ERROR here. The dump script prints
+    # STALLED itself and skips MIRROR_DONE while CLAUDE_SYNC_NESTED=1.
     if [[ "$cmd" == "recon" ]]; then
       echo "deprecated: use 'mirror' (same dump + 1:1 catalog apply); 'recon' remains an alias" >&2
     fi
-    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
-    dump_out="${REMOTE_REPO}/tmp/reviews/claude-skills-latest.zip"
-    dump_args=()
-    mirror_apply=(--apply)
-    for a in "$@"; do
-      case "$a" in
-        --dry-run) mirror_apply=(--dry-run) ;;
-        *) dump_args+=("$a") ;;
-      esac
-    done
-    remote_py scripts/cortex/dump_claude_container_skills.py --out "${dump_out}" "${dump_args[@]+"${dump_args[@]}"}"
-    remote_py scripts/cortex/reconcile_claude_user_skills.py --zip "${dump_out}" "${mirror_apply[@]}"
+    _marked_mirror "$@"
     ;;
   reconcile)
     # Apply 1:1 from an existing zip (no new dump). Default zip is the last mirror dump.
