@@ -401,6 +401,16 @@ class RemoteIntegration:
         app.include_router(create_cancel_router(request_store))
 
     @property
+    def local_edge_client(self) -> "LocalEdgeClient | None":
+        """Read-only handle to the relay's in-process local edge websocket client.
+
+        Returns None until setup starts the client. Callers read ``is_connected``
+        on the result; this accessor does no I/O and does not speak HTTP on the
+        federation socket.
+        """
+        return self._local_edge_client
+
+    @property
     @property
     def connection_manager(self) -> ConnectionManager | None:
         """Returns the ConnectionManager instance."""

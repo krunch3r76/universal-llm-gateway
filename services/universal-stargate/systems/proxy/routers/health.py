@@ -72,6 +72,44 @@ async def health_check(
             "code_version": code_version,
         }
 
+    # Relay (remote + local edge): no gateway manager and no federated
+    # manager. Liveness is the in-process edge link, not forward_request.
+    # getattr keeps SimpleNamespace proxies that omit the attribute on the
+    # edge/standalone fallthrough below.
+    local_edge_client = getattr(proxy, "federation_local_edge_client", None)
+    if (
+        proxy.gateway_manager is None
+        and proxy.federated_manager is None
+        and local_edge_client is not None
+    ):
+        if local_edge_client.is_connected:
+            status = "healthy" if pipeline_ready else "stargate_proxy_healthy"
+            response = {
+                "status": status,
+                "gateway_status": "available",
+                "pipeline_system_ready": pipeline_ready,
+                "pipeline_count": pipeline_count,
+                "gateways_connected": 1,
+                "timestamp": int(time.time()),
+                "version": "1.0.0",
+                "code_version": code_version,
+            }
+            if not pipeline_ready:
+                response["message"] = (
+                    "Stargate proxy is running but pipeline execution is not ready yet"
+                )
+            return response
+        return {
+            "status": "stargate_proxy_healthy",
+            "gateway_status": "unavailable",
+            "pipeline_system_ready": pipeline_ready,
+            "pipeline_count": pipeline_count,
+            "message": ("Stargate proxy is running but local edge is not connected"),
+            "timestamp": int(time.time()),
+            "version": "1.0.0",
+            "code_version": code_version,
+        }
+
     # Edge/standalone: forward to local gateway directly
     try:
         gateway_response = await proxy.forward_request(

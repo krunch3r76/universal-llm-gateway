@@ -25,6 +25,12 @@ from pathlib import Path
 from typing import Any
 
 _REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_REPO / "libs"))
+
+from deploy_identity.mcp_external_probe import (  # noqa: E402
+    json_object_from_mixed_stdout,
+)
+
 _QUERY_SCRIPT = _REPO / "scripts" / "query-events"
 _DEFAULT_WINDOW_S = 300
 _DEFAULT_LOOKBACK_S = 86400
@@ -73,14 +79,19 @@ def _default_query(
     if proc.returncode != 0:
         err = proc.stderr.strip() or proc.stdout.strip() or "query-events failed"
         raise RuntimeError(err)
-    payload = json.loads(proc.stdout or "{}")
+    try:
+        payload = json_object_from_mixed_stdout(proc.stdout or "")
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
     rows = payload.get("rows")
     if isinstance(rows, list):
         return rows
     return []
 
 
-def _has_match(sql: str, params: list[str], query_fn: Callable[..., list[dict]]) -> bool:
+def _has_match(
+    sql: str, params: list[str], query_fn: Callable[..., list[dict]]
+) -> bool:
     return bool(query_fn(sql, params, limit=1))
 
 
@@ -143,12 +154,15 @@ def find_alertable_hints(
         if not thread_id:
             continue
         issued_ms = int(row.get("ts_unix_ms") or 0)
-        if classify_hint(
-            thread_id=thread_id,
-            issued_ms=issued_ms,
-            window_ms=window_ms,
-            query_fn=run_query,
-        ) != "alert":
+        if (
+            classify_hint(
+                thread_id=thread_id,
+                issued_ms=issued_ms,
+                window_ms=window_ms,
+                query_fn=run_query,
+            )
+            != "alert"
+        ):
             continue
         alerts.append(
             {
@@ -189,10 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         "(friction 24081 · todo:agent-bus-poll-hint-wait-correlation · "
         "todo:mcp-local-api-orphan-detector)"
     )
-    print(
-        f"window={args.window_s}s lookback={args.lookback_s}s "
-        f"dry_run={args.dry_run}"
-    )
+    print(f"window={args.window_s}s lookback={args.lookback_s}s dry_run={args.dry_run}")
 
     try:
         alerts = find_alertable_hints(
