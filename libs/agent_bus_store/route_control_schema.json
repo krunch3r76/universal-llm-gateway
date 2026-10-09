@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "route_control_envelope",
+  "title": "ROUTE/CONTROL house turn envelope",
+  "type": "object",
+  "required": ["from", "authority", "kind", "work_key", "read_shas"],
+  "additionalProperties": false,
+  "properties": {
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Sender seat (from_agent on the send payload); not an authority value."
+    },
+    "authority": {
+      "type": "string",
+      "enum": ["operator", "supervisor", "house"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "COMMISSION",
+        "DECOMMISSION",
+        "WAKE",
+        "ACK",
+        "RULING",
+        "AMEND",
+        "PARK",
+        "CANCEL"
+      ]
+    },
+    "work_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "read_shas": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

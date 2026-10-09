@@ -221,6 +221,16 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=seat_refusal,
         )
+    from ...house_route_control import assert_house_route_control
+
+    await asyncio.to_thread(
+        assert_house_route_control,
+        thread_id=thread_id,
+        from_agent=body.from_agent,
+        subject=body.subject,
+        body=body.body,
+        tags=thread_tags,
+    )
     storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
         _resolve_send_supersedes,
         thread_id=thread_id,
