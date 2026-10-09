@@ -45,3 +45,15 @@ class MemFs:
 @pytest.fixture
 def fs() -> MemFs:
     return MemFs()
+
+
+@pytest.fixture(autouse=True)
+def _no_checkpoint_events(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from . import post as post_mod, seal as seal_mod
+
+    posted, sealed = MagicMock(name="posted_spy"), MagicMock(name="sealed_spy")
+    monkeypatch.setattr(post_mod, "stargate_continuity_checkpoint_posted", posted)
+    monkeypatch.setattr(seal_mod, "stargate_continuity_checkpoint_sealed", sealed)
+    yield {"posted": posted, "sealed": sealed}

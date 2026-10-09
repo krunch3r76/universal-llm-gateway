@@ -144,7 +144,14 @@ def transport(monkeypatch: pytest.MonkeyPatch):
 
     async def get(path: str, params=None):
         get_sig.bind(path, params=params)
-        return {"turns": list(turns)}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
+            n = max((int(t.get("turn_number") or 0) for t in turns), default=0)
+            return {"turn_number": n}, 200
+        if path == "/turns":
+            return {"turns": list(turns)}, 200
+        return {}, 404
 
     async def send(**kwargs):
         send_sig.bind(**kwargs)

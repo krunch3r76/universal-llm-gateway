@@ -71,8 +71,8 @@ async def run_verify_resume(
                 checks["capture_sha"] = True
     lane = str(options.get("verify_lane") or "")
     root = str(options.get("root_thread") or lane)
-    cp_listing, _status = await get(f"/threads/{root}/turns")
-    receipt_listing, _status = await get(f"/threads/{lane}/turns")
+    cp_listing, _status = await get("/turns", params={"thread": root})
+    receipt_listing, _status = await get("/turns", params={"thread": lane})
     cp_turns = cp_listing.get("turns") if isinstance(cp_listing, dict) else []
     receipt_turns = (
         receipt_listing.get("turns") if isinstance(receipt_listing, dict) else []
@@ -82,9 +82,13 @@ async def run_verify_resume(
     successor = str(options.get("successor") or options.get("bus_identity") or "")
     fact_turn = int(options.get("fact_turn") or 0)
     if isinstance(cp_turns, list):
+        best_cp_turn = -1
         for turn in cp_turns:
             if turn.get("subject") == "CHECKPOINT":
-                cp_body = str(turn.get("body") or "")
+                num = int(turn.get("turn_number") or 0)
+                if num > best_cp_turn:
+                    best_cp_turn = num
+                    cp_body = str(turn.get("body") or "")
     if isinstance(receipt_turns, list):
         for turn in receipt_turns:
             num = int(turn.get("turn_number") or 0)

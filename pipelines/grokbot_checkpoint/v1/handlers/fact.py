@@ -60,7 +60,7 @@ async def run_fact(
     send = send or bus_send
     subject = fact_subject(options)
     lane = str(options.get("verify_lane") or "")
-    listing, status = await get(f"/threads/{lane}/turns")
+    listing, status = await get("/turns", params={"thread": lane})
     turns = listing.get("turns") if isinstance(listing, dict) else []
     body = _fact_body(options, card, envelope_step)
     if status < 400 and isinstance(turns, list):

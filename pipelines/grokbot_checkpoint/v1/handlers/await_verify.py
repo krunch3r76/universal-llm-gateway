@@ -52,8 +52,8 @@ async def run_await_verify(
     while now() < deadline:
         try:
             payload, status = await get(
-                f"/threads/{lane}/turns",
-                params={"after_turn": after},
+                "/turns",
+                params={"thread": lane, "after_turn": after},
             )
         except Exception:
             await sleep(wait_transport_backoff_s(round_index))

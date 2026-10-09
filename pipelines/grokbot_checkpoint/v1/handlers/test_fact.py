@@ -15,7 +15,11 @@ async def test_fact_once() -> None:
     store: list[dict] = []
 
     async def get(path: str, params=None):
-        return {"turns": list(store)}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {"turns": list(store)}, 200
+        return {"turns": []}, 200
 
     async def send(**kwargs):
         sent.append(kwargs)

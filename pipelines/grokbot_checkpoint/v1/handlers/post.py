@@ -112,7 +112,7 @@ async def run_post(
     thread = str(options.get("root_thread") or "")
     house = str(options["house"])
     n = int(options["n"])
-    listing, status = await get(f"/threads/{thread}/turns")
+    listing, status = await get("/turns", params={"thread": thread})
     turns = listing.get("turns") if isinstance(listing, dict) else None
     if status < 400 and isinstance(turns, list) and _duplicate(turns, house, n):
         return {"refused": None, "duplicate": True, "body": None, "turn": None}
@@ -166,13 +166,14 @@ async def run_post(
             }
         }
     bus_turn = _bus_turn_from_payload(payload if isinstance(payload, dict) else {})
-    stargate_continuity_checkpoint_posted(
-        execution_id=execution_id,
-        thread=thread,
-        surface=str(envelope_step.get("surface") or "grok"),
-        from_agent=str(options.get("bus_identity") or ""),
-        bus_turn=bus_turn,
-    )
+    if bus_turn > 0:
+        stargate_continuity_checkpoint_posted(
+            execution_id=execution_id,
+            thread=thread,
+            surface=str(envelope_step.get("surface") or "grok"),
+            from_agent=str(options.get("bus_identity") or ""),
+            bus_turn=bus_turn,
+        )
     return {
         "refused": None,
         "duplicate": False,

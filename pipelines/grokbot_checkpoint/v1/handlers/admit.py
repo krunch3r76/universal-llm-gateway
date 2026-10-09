@@ -86,7 +86,7 @@ async def run_admit(
     getter = get or bus_get
     lane = str(options.get("verify_lane") or "")
     if lane:
-        listing, status = await getter(f"/threads/{lane}/turns")
+        listing, status = await getter("/turns", params={"thread": lane})
         turns = listing.get("turns") if isinstance(listing, dict) else []
         subject = fact_subject(options)
         if status < 400 and isinstance(turns, list):

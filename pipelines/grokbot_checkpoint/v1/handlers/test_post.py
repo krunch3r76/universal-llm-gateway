@@ -11,6 +11,7 @@ from agent_bus_store.checkpoint_projection import (
 )
 
 from ._test_call_post import call_post
+from . import post as post_mod
 from .post import compose_checkpoint_body
 
 pytestmark = pytest.mark.offline
@@ -72,9 +73,13 @@ async def test_body_and_duplicate() -> None:
     sent: list[dict] = []
 
     async def get(path: str, params=None):
-        if params is not None:
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
             return {"turn_number": 0}, 200
-        return {"turns": []}, 200
+        if path == "/turns" and params and params.get("thread") == "9":
+            return {"turns": []}, 200
+        return {}, 404
 
     async def send(**kwargs):
         sent.append(kwargs)
@@ -114,9 +119,13 @@ async def test_body_and_duplicate() -> None:
     assert sent[0]["after_turn"] == 0
 
     async def get_dup(path: str, params=None):
-        if params is not None:
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
             return {"turn_number": 1}, 200
-        return {"turns": [{"body": body, "subject": "CHECKPOINT"}]}, 200
+        if path == "/turns" and params and params.get("thread") == "9":
+            return {"turns": [{"body": body, "subject": "CHECKPOINT"}]}, 200
+        return {}, 404
 
     again = await call_post(
         {
@@ -147,9 +156,13 @@ async def test_padded_agent_id_window_has_no_spaces() -> None:
     sent: list[dict] = []
 
     async def get(path: str, params=None):
-        if params is not None:
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
             return {"turn_number": 0}, 200
-        return {"turns": []}, 200
+        if path == "/turns" and params and params.get("thread") == "9":
+            return {"turns": []}, 200
+        return {}, 404
 
     async def send(**kwargs):
         sent.append(kwargs)
@@ -186,3 +199,40 @@ async def test_padded_agent_id_window_has_no_spaces() -> None:
     assert f"transcript_id={padded.strip()}" in window
     token = window.split("transcript_id=", 1)[1].split(" · ", 1)[0]
     assert token == padded.strip()
+
+
+@pytest.mark.asyncio
+async def test_no_posted_event_when_bus_turn_missing() -> None:
+    async def get(path: str, params=None):
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
+            return {"turn_number": 0}, 200
+        if path == "/turns" and params and params.get("thread") == "9":
+            return {"turns": []}, 200
+        return {}, 404
+
+    async def send(**kwargs):
+        return {}, 201
+
+    await call_post(
+        {
+            "house": "h",
+            "n": 3,
+            "root_thread": "9",
+            "agent_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "bus_identity": "bot",
+            "verifier": "verifier",
+        },
+        {"session_id": "sess"},
+        {
+            "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
+            "turn_count": 2,
+            "messages_sha256": "abc123",
+            "provenance": "raw",
+            "producer": "p",
+        },
+        get=get,
+        send=send,
+    )
+    assert post_mod.stargate_continuity_checkpoint_posted.call_count == 0

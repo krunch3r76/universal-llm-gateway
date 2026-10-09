@@ -116,18 +116,7 @@ def _envelope(**overrides: object) -> dict:
 
 def _adapters(client: TestClient):
     async def get(path: str, params=None):
-        if params is not None:
-            resp = client.get(path, params=params)
-            return resp.json(), resp.status_code
-        if path.startswith("/threads/") and path.endswith("/turns"):
-            thread_id = path.split("/")[2]
-            resp = client.get("/turns", params={"thread": thread_id})
-            if resp.status_code >= 400:
-                return resp.json(), resp.status_code
-            data = resp.json()
-            turns = data.get("turns") if isinstance(data, dict) else []
-            return {"turns": turns}, resp.status_code
-        resp = client.get(path)
+        resp = client.get(path, params=params) if params is not None else client.get(path)
         return resp.json(), resp.status_code
 
     async def send(**kwargs):
@@ -217,6 +206,38 @@ async def test_grok_tip_is_resume_readable(posted_event, bus_client) -> None:
         or (bundle.get("card") or {}).get("uri") == card_uri
     )
     _ = armed  # arm side effect consumed by assemble
+
+
+@pytest.mark.asyncio
+async def test_rerun_same_house_n_dedupes_via_real_route(bus_client) -> None:
+    get, send = _adapters(bus_client)
+    out1 = await call_post(
+        _options(),
+        _seal(),
+        _envelope(),
+        get=get,
+        send=send,
+        execution_id="exec-dup-1",
+    )
+    assert out1["duplicate"] is False
+    out2 = await call_post(
+        _options(),
+        _seal(),
+        _envelope(),
+        get=get,
+        send=send,
+        execution_id="exec-dup-2",
+    )
+    assert out2["duplicate"] is True
+    assert out2["refused"] is None
+    turns = bus_client.get("/turns", params={"thread": ROOT}).json()["turns"]
+    cp_turns = [
+        t
+        for t in turns
+        if str(t.get("subject", "")).startswith("CHECKPOINT")
+        and "house-cp:hm1:1" in str(t.get("body") or "")
+    ]
+    assert len(cp_turns) == 1
 
 
 @pytest.mark.asyncio

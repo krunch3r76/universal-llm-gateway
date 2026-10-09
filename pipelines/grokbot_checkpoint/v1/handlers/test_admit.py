@@ -42,7 +42,13 @@ async def test_path_escape_and_replay(fs) -> None:
     fs.files["notes/card.md"] = card.encode()
 
     async def get(path, params=None):
-        return {"turns": [{"subject": "FACT|house-cp|h|2", "superseded": False}]}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {
+                "turns": [{"subject": "FACT|house-cp|h|2", "superseded": False}]
+            }, 200
+        return {"turns": []}, 200
 
     replay = await run_admit(
         {

@@ -77,7 +77,14 @@ class Bus:
         self.posts = 0
 
     async def get(self, path: str, params=None):
-        return {"turns": list(self.turns)}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
+            n = max((int(t.get("turn_number") or 0) for t in self.turns), default=0)
+            return {"turn_number": n}, 200
+        if path == "/turns":
+            return {"turns": list(self.turns)}, 200
+        return {}, 404
 
     async def send(self, **kwargs):
         self.posts += 1
@@ -342,6 +349,10 @@ async def test_light_mode_no_pour(fs) -> None:
     }
 
     async def get(path, params=None):
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "11":
+            return {"turns": []}, 200
         return {"turns": []}, 200
 
     admitted = await run_admit(options, {}, fs=fs, get=get)
@@ -367,6 +378,10 @@ async def test_pending_is_graph_tail(fs) -> None:
         now_box["t"] += seconds
 
     async def silent(path, params=None):
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {"turns": []}, 200
         return {"turns": []}, 200
 
     out = await run_await_verify(
