@@ -19,10 +19,7 @@ def _fact_body(
     card_uri = str(card.get("uri") or options.get("card_uri") or "")
     card_sha = str(card.get("written_sha256") or "")
     if envelope_step.get("snapshot_uri"):
-        snap = (
-            f"{envelope_step.get('snapshot_uri')}@"
-            f"{envelope_step.get('sha256')}"
-        )
+        snap = f"{envelope_step.get('snapshot_uri')}@{envelope_step.get('sha256')}"
         prov = str(envelope_step.get("provenance") or "")
     else:
         snap = "none"

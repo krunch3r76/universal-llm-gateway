@@ -63,10 +63,9 @@ async def run_verify_resume(
                 ("cortex://", "workspaces://")
             ):
                 cap_raw = await fs.read_uri(str(capture["ref"]))
-                checks["capture_sha"] = (
-                    cap_raw is not None
-                    and file_sha256(cap_raw) == capture.get("sha256")
-                )
+                checks["capture_sha"] = cap_raw is not None and file_sha256(
+                    cap_raw
+                ) == capture.get("sha256")
             else:
                 checks["capture_sha"] = True
     lane = str(options.get("verify_lane") or "")
@@ -100,7 +99,9 @@ async def run_verify_resume(
                 receipt = True
     harvest = _harvest_sha(cp_body)
     checks["harvest_sha"] = bool(messages_sha) and harvest == messages_sha
-    checks["provenance"] = bool(provenance) and _harvest_provenance(cp_body) == provenance
+    checks["provenance"] = (
+        bool(provenance) and _harvest_provenance(cp_body) == provenance
+    )
     checks["receipt"] = receipt
     return {"refused": None, "checks": checks, "writes": 0, "posts": 0}
 

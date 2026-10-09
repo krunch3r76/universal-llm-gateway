@@ -33,7 +33,13 @@ async def test_outcomes() -> None:
         return {"turns": []}, 200
 
     pending = await run_await_verify(
-        {"n": 1, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 3},
+        {
+            "n": 1,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 3,
+        },
         {"turn": 1},
         get=silent,
         sleep=sleep,
@@ -55,7 +61,13 @@ async def test_outcomes() -> None:
         return {"turns": []}, 200
 
     synced = await run_await_verify(
-        {"n": 1, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 30},
+        {
+            "n": 1,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 30,
+        },
         {"turn": 1},
         get=insync,
         sleep=sleep,
@@ -75,7 +87,13 @@ async def test_outcomes() -> None:
         return {"turns": []}, 200
 
     drifted = await run_await_verify(
-        {"n": 1, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 30},
+        {
+            "n": 1,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 30,
+        },
         {"turn": 1},
         get=drift,
         sleep=sleep,
@@ -104,7 +122,13 @@ async def test_transport_backoff() -> None:
         return {"turns": []}, 200
 
     out = await run_await_verify(
-        {"n": 2, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 60},
+        {
+            "n": 2,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 60,
+        },
         {"turn": 1},
         get=flaky,
         sleep=sleep,
