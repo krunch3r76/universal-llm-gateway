@@ -11,13 +11,49 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/gateways", tags=["gateways"])
 
 
+def _model_distribution_from_status_full(status: dict) -> dict[str, list]:
+    """Invert full status rows into model id → gateway id lists.
+
+    FederatedGatewayManager exposes get_gateway_status_full and not
+    get_model_distribution. Each row's models list is the catalog already
+    used by /gateways/status/full.
+    """
+    distribution: dict[str, list] = {}
+    for gateway_id, row in status.items():
+        for model_id in row.get("models") or []:
+            distribution.setdefault(str(model_id), []).append(gateway_id)
+    return distribution
+
+
 @router.get("/status")
 async def gateway_status(
     proxy: StargateProxy = Depends(get_proxy),
     current_user: dict = Depends(get_auth_dependency),
 ):
-    """Get status of all gateways (basic health info)"""
-    status = proxy.gateway_manager.get_gateway_status()
+    """Return basic health for every gateway this proxy can see.
+
+    A router-only master has gateway_manager None. Status rows then come
+    from federated_manager.get_gateway_status_full, because that class has
+    no get_gateway_status. When both managers are absent the handler returns
+    a zeroed summary and an empty gateways map instead of raising. An
+    execution-capable proxy still calls gateway_manager.get_gateway_status.
+    """
+    # Router-only Master: use federated_manager for federated gateways
+    if proxy.gateway_manager is None:
+        if proxy.federated_manager is None:
+            return {
+                "summary": {
+                    "total_gateways": 0,
+                    "enabled_gateways": 0,
+                    "disabled_gateways": 0,
+                    "connected_gateways": 0,
+                    "disconnected_gateways": 0,
+                },
+                "gateways": {},
+            }
+        status = proxy.federated_manager.get_gateway_status_full()
+    else:
+        status = proxy.gateway_manager.get_gateway_status()
 
     # Add summary
     total = len(status)
@@ -103,8 +139,29 @@ async def model_distribution(
     proxy: StargateProxy = Depends(get_proxy),
     current_user: dict = Depends(get_auth_dependency),
 ):
-    """Get distribution of models across gateways"""
-    distribution = proxy.gateway_manager.get_model_distribution()
+    """Return which gateways serve each model, with single-vs-multi counts.
+
+    Same manager guard as gateway_status. FederatedGatewayManager has no
+    get_model_distribution, so a router-only master builds the map from
+    models lists on get_gateway_status_full rows. Both managers absent
+    yields a zero summary and an empty distribution. An execution-capable
+    proxy still calls gateway_manager.get_model_distribution.
+    """
+    if proxy.gateway_manager is None:
+        if proxy.federated_manager is None:
+            return {
+                "summary": {
+                    "total_models": 0,
+                    "models_on_multiple_gateways": 0,
+                    "models_on_single_gateway": 0,
+                },
+                "distribution": {},
+            }
+        distribution = _model_distribution_from_status_full(
+            proxy.federated_manager.get_gateway_status_full()
+        )
+    else:
+        distribution = proxy.gateway_manager.get_model_distribution()
 
     # Add statistics
     model_count = len(distribution)
