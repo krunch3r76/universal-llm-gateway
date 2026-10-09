@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
+from continuity_tape.messages import EnvelopeMeta
 from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel, Field
@@ -29,6 +30,8 @@ from ...resume_fence_store import (
 from ...thread_classification import classify_thread
 from . import router
 
+_ResumeSurface = EnvelopeMeta.model_fields["surface"].annotation
+
 
 class ResumeFenceCreate(BaseModel):
     """Body for POST /threads/{thread_id}/resume-fence."""
@@ -36,7 +39,7 @@ class ResumeFenceCreate(BaseModel):
     transcript_id: str | None = None
     source: str = "mcp"
     pool: str | None = None
-    surface: Literal["cursor", "claude_ai"] | None = None
+    surface: _ResumeSurface | None = None
 
 
 class FenceDeniedCreate(BaseModel):
