@@ -668,6 +668,11 @@ def test_non_202_admit_keeps_canonical_headers(
 def test_list_jobs_category_is_in_pipeline_vocabulary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import httpx
+
+    from systems.proxy.routers.api import capabilities as capability_routes
+    from systems.proxy.routers.api.test_capabilities import _Upstream
+
     root = tmp_path / "pipelines"
     _write_root(root)
     (root / "categories.yaml").write_text(
@@ -678,9 +683,21 @@ def test_list_jobs_category_is_in_pipeline_vocabulary(
         "    description: Host-bound operator jobs\n",
         encoding="utf-8",
     )
+    monkeypatch.setenv("JOBS_TOKEN", "secret-token")
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/jobs"
+        return httpx.Response(200, json={"members": []})
+
+    monkeypatch.setattr(
+        capability_routes,
+        "make_async_client",
+        lambda *args, **kwargs: _Upstream(responder),
+    )
     client = _client(_ready_proxy(_registry(root)), monkeypatch)
     listed = client.get("/api/v1/capabilities", params={"category": "jobs"})
     assert listed.status_code == 200, listed.text
     body = listed.json()
-    assert body["description"] == "Host-bound operator jobs"
-    assert body["members"] == {}
+    assert body["members"] == []
+    reg = _registry(root)
+    assert "jobs" in reg._category_vocabulary

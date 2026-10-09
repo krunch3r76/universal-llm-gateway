@@ -10,6 +10,7 @@ from request_profile import bind_request
 from tools.pipeline import (
     _CAPABILITY_PREFIX,
     _capability_async,
+    _pipeline_list,
     _pipeline_result,
     register_pipeline_tools,
 )
@@ -24,6 +25,23 @@ def _sync_ctx(**methods: MagicMock) -> MagicMock:
     client.__enter__ = MagicMock(return_value=client)
     client.__exit__ = MagicMock(return_value=False)
     return client
+
+
+def test_pipeline_list_category_uses_path_and_forwards_surface() -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "members": [{"name": "install-ecosystem-plugin", "href": "/x"}]
+    }
+    client = _sync_ctx(get=MagicMock(return_value=resp))
+    with bind_request("default", surface="code"):
+        with patch("tools.pipeline.make_sync_client", return_value=client):
+            out = _pipeline_list("jobs")
+    assert out["members"][0]["name"] == "install-ecosystem-plugin"
+    client.get.assert_called_once_with(
+        "/api/v1/capabilities/jobs",
+        headers={"X-ULG-Surface": "code"},
+    )
 
 
 def test_capability_async_posts_member_path() -> None:

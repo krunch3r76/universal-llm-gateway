@@ -404,6 +404,73 @@ def test_nested_member_non_satellite_is_404(
     assert missing.json()["code"] == "capability_not_found"
 
 
+def test_query_category_jobs_relays_with_surface_header(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """?category=jobs relays like the path route and forwards X-ULG-Surface."""
+    monkeypatch.setenv("JOBS_TOKEN", "secret-token")
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        seen.append(
+            (
+                request.url.path,
+                {
+                    k.lower(): v
+                    for k, v in request.headers.items()
+                    if k.lower() in ("authorization", "x-ulg-surface")
+                },
+            )
+        )
+        if request.url.path != "/api/v1/jobs":
+            return httpx.Response(404, json={"code": "unexpected"})
+        surface = request.headers.get("x-ulg-surface")
+        if surface != "code":
+            return httpx.Response(200, json={"members": []})
+        return httpx.Response(
+            200,
+            json={
+                "members": [
+                    {
+                        "name": "install-ecosystem-plugin",
+                        "description": "plugin install",
+                    }
+                ]
+            },
+        )
+
+    client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    listed = client.get(
+        "/api/v1/capabilities",
+        params={"category": "jobs"},
+        headers={"X-ULG-Surface": "code"},
+    )
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert isinstance(body["members"], list)
+    assert body["members"][0]["name"] == "install-ecosystem-plugin"
+    assert body["members"][0]["href"].endswith("/jobs/install-ecosystem-plugin")
+    assert seen[0][0] == "/api/v1/jobs"
+    assert seen[0][1]["authorization"] == "Bearer secret-token"
+    assert seen[0][1]["x-ulg-surface"] == "code"
+
+
+def test_query_category_jobs_without_surface_returns_empty_list(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOBS_TOKEN", "secret-token")
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/jobs"
+        assert request.headers.get("x-ulg-surface") is None
+        return httpx.Response(200, json={"members": []})
+
+    client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    listed = client.get("/api/v1/capabilities", params={"category": "jobs"})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["members"] == []
+
+
 def test_relay_events_reach_proxy_bus_for_one_run(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

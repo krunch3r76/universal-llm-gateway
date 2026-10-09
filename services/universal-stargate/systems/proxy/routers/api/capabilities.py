@@ -1,8 +1,10 @@
 """Capability catalog, invoke, and satellite relay routes.
 
 Local pipeline members and the satellite vocabulary share ``/capabilities``.
-A query ``id`` or ``category`` reads the local tree. A path category that is
-in the satellite vocabulary relays upstream. Anything else is a local member.
+A query ``id`` reads the local tree. A query ``category`` that is a satellite
+vocabulary entry relays upstream; other categories read the local tree. A path
+category that is in the satellite vocabulary relays upstream. Anything else is
+a local member.
 """
 
 from __future__ import annotations
@@ -362,6 +364,33 @@ def _rewrite_relay(
     return content, rewritten
 
 
+async def _satellite_category_list(
+    request: Request,
+    category: Category,
+) -> Response:
+    """Relay a category index and attach capability hrefs for list members."""
+    upstream = await _relay(request, category, "")
+    if upstream.status_code >= 400:
+        return upstream
+    try:
+        body = json.loads(upstream.body) if upstream.body else None
+    except Exception:
+        return upstream
+    if isinstance(body, dict) and isinstance(body.get("members"), list):
+        for member in body["members"]:
+            if isinstance(member, dict) and member.get("name"):
+                member["href"] = (
+                    f"/api/v1/capabilities/{category.name}/{member['name']}"
+                )
+        rebuilt = JSONResponse(body, status_code=upstream.status_code)
+        for key in ("location", "link"):
+            value = upstream.headers.get(key)
+            if value:
+                rebuilt.headers[key] = value
+        return rebuilt
+    return upstream
+
+
 def _local_list(
     proxy: StargateProxy | None,
     member_id: str | None,
@@ -477,9 +506,16 @@ async def list_capabilities(
     id: str | None = Query(default=None),
     category: str | None = Query(default=None),
 ) -> JSONResponse:
-    """Local member lookup when id or category is set; otherwise category links."""
-    if id is not None or category is not None:
-        return _local_list(_proxy(request), id, category)
+    """Local member lookup when id is set; satellite category query relays."""
+    if id is not None:
+        return _local_list(_proxy(request), id, None)
+    if category is not None:
+        categories, _skips = _categories()
+        by_name = {cat.name: cat for cat in categories}
+        cat = by_name.get(category)
+        if cat is not None and cat.implementation == "satellite":
+            return await _satellite_category_list(request, cat)
+        return _local_list(_proxy(request), None, category)
     reset_vocabulary_cache()
     categories, skips = _categories()
     await _emit_skips(request, skips)
@@ -522,27 +558,7 @@ async def capability_first(
     categories, skips = _categories()
     by_name = {cat.name: cat for cat in categories}
     if first in by_name:
-        category = by_name[first]
-        upstream = await _relay(request, category, "")
-        if upstream.status_code >= 400:
-            return upstream
-        try:
-            body = json.loads(upstream.body) if upstream.body else None
-        except Exception:
-            return upstream
-        if isinstance(body, dict) and isinstance(body.get("members"), list):
-            for member in body["members"]:
-                if isinstance(member, dict) and member.get("name"):
-                    member["href"] = (
-                        f"/api/v1/capabilities/{category.name}/{member['name']}"
-                    )
-            rebuilt = JSONResponse(body, status_code=upstream.status_code)
-            for key in ("location", "link"):
-                value = upstream.headers.get(key)
-                if value:
-                    rebuilt.headers[key] = value
-            return rebuilt
-        return upstream
+        return await _satellite_category_list(request, by_name[first])
     proxy = _proxy(request)
     if _local_ready(proxy):
         tree = build_tree(proxy)
