@@ -40,7 +40,7 @@ async def test_fact_once() -> None:
     }
     card = {"uri": "notes/card.md", "written_sha256": "ccc"}
     env = {
-        "snapshot_uri": "notes/snap.json",
+        "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
         "sha256": "sss",
         "provenance": "raw",
         "producer": "cursor-jsonl-extractor",

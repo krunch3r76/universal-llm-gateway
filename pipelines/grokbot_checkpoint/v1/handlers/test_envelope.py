@@ -38,21 +38,21 @@ def _source(messages: list[dict]) -> dict:
 
 @pytest.mark.asyncio
 async def test_write_skip_prefix_and_refuse(fs) -> None:
-    options = {"snapshot_uri": "notes/snap.json", "house": "h", "agent_id": "abcdefghi"}
+    options = {"snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json", "house": "h", "agent_id": "abcdefghi"}
     base = [{"role": "user", "content": "hello", "turn_index": 1}]
     first = await run_envelope(options, _source(base), fs)
     assert first["action"] == "write"
-    old = await fs.read("notes/snap.json")
+    old = await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
     skip = await run_envelope(options, _source(base), fs)
     assert skip["action"] == "skip"
-    assert await fs.read("notes/snap.json") == old
+    assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") == old
     extended = base + [{"role": "assistant", "content": "yo", "turn_index": 1}]
     over = await run_envelope(options, _source(extended), fs)
     assert over["action"] == "overwrite"
-    assert await fs.read("notes/snap.json") != old
-    saved = await fs.read("notes/snap.json")
+    assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") != old
+    saved = await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
     other = [{"role": "user", "content": "different", "turn_index": 1}]
     refused = await run_envelope(options, _source(other), fs)
     assert refused["refused"]["code"] == "envelope.not_prefix"
-    assert await fs.read("notes/snap.json") == saved
+    assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") == saved
     json.loads(saved)

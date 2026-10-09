@@ -30,7 +30,7 @@ async def test_append_mismatch_and_replay(fs) -> None:
         "trigger": "hop",
     }
     env = {
-        "snapshot_uri": "notes/snap.json",
+        "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
         "sha256": "snapsha",
         "messages_sha256": "msgsha",
         "provenance": "raw",

@@ -19,7 +19,7 @@ async def test_read_only_checks(fs) -> None:
         {"meta": {"messages_sha256": "abc", "provenance": "raw"}}
     ).encode()
     fs.files["notes/card.md"] = card
-    fs.files["notes/snap.json"] = snap
+    fs.files["notes/system/transcripts/grok/h-abcdefghi.raw.messages.json"] = snap
     body = (
         "Window: agent_id=a · turns@cp=1 · coverage=full\n"
         "Harvest: transcript:s · messages_sha256:abc · codec:messages-v1 · "
@@ -44,7 +44,7 @@ async def test_read_only_checks(fs) -> None:
         {
             "card_uri": "notes/card.md",
             "expected_card_sha256": file_sha256(card),
-            "snapshot_uri": "notes/snap.json",
+            "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
             "snapshot_sha256": file_sha256(snap),
             "verify_lane": "v",
             "successor": "successor",

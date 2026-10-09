@@ -68,10 +68,8 @@ def bind_files_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
 
     assert ops_journals._op_session_close is ops_session_close._op_session_close
 
-    monkeypatch.setattr(shared, "_FILES_ROOT", root)
-    monkeypatch.setattr(ops_session_close, "_FILES_ROOT", root)
-    monkeypatch.setattr(session_close_persist, "_FILES_ROOT", root)
-    monkeypatch.setattr(session_journals, "_FILES_ROOT", root)
+    for module in (shared, ops_session_close, session_close_persist, session_journals):
+        monkeypatch.setattr(module, "_FILES_ROOT", root)
 
 
 def boot_cortex(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
