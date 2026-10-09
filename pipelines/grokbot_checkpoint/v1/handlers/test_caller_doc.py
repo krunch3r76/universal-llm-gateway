@@ -81,7 +81,9 @@ async def test_caller_doc_example_admits() -> None:
 
     ok = await run_admit(options, {}, get=get)
     assert ok.get("refused") is None
-    refused = await run_admit({k: v for k, v in options.items() if k != "agent_id"}, {}, get=get)
+    refused = await run_admit(
+        {k: v for k, v in options.items() if k != "agent_id"}, {}, get=get
+    )
     assert (refused.get("refused") or {}).get("code") == "admit.agent_id"
 
 
