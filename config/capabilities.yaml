@@ -10,3 +10,8 @@ categories:
     upstream: jobs
     origin_prefix: /api/v1/jobs
     auth_env: JOBS_TOKEN
+  web_fetcher:
+    description: Browser fetch and binary download on the web-fetcher host
+    implementation: satellite
+    upstream: web_fetcher
+    origin_prefix: /fetch

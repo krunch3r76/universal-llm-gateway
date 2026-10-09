@@ -4,28 +4,22 @@ version: "1.0"
 type: ingest_article
 category: ingest_article
 description: >
-  Fetch one paper through the jobs satellite, then register the result with rag.
-  Metadata prefers caller options and falls back to the fetch result.
+  Download one paper through web-fetcher POST /fetch with save_to, then
+  register the file with rag. saved_to maps to source_path. web-fetcher
+  returns no digest, title, or filename, so those stay on caller options.
 options:
   timeout_seconds: 900
 steps:
   - name: fetch
     type: http_v1
-    service: jobs
-    operation_id: create_run
-    path:
-      job: article-fetch
+    service: web_fetcher
+    operation_id: fetch
     body:
-      args:
-        arxiv:
-          from: options.arxiv
-        url:
-          from: options.url
-        force:
-          from: options.force
-      output_contract: inline
-    await: terminal
-    stall_polls: 3
+      url:
+        from: options.url
+      save_to:
+        from: options.save_to
+    await: none
   - name: register
     type: http_v1
     service: rag
@@ -34,23 +28,15 @@ steps:
       source_path:
         first_present:
           - from: options.source_path
-          - from: steps.fetch.json.result.source_path
+          - from: steps.fetch.json.saved_to
       filename:
-        first_present:
-          - from: options.filename
-          - from: steps.fetch.json.result.filename
+        from: options.filename
       title:
-        first_present:
-          - from: options.title
-          - from: steps.fetch.json.result.title
+        from: options.title
       authors:
-        first_present:
-          - from: options.authors
-          - from: steps.fetch.json.result.authors
+        from: options.authors
       content_hash:
-        first_present:
-          - from: options.content_hash
-          - from: steps.fetch.json.result.sha256
+        from: options.content_hash
       subdirectory:
         first_present:
           - from: options.subdirectory
