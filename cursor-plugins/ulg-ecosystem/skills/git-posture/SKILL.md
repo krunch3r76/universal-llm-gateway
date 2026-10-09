@@ -530,7 +530,8 @@ ask. Otherwise do not reach for git.
 
 `∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash,
 git checkout <branch> -- <paths>(as_land)}`.
-No-force: `¬push --force` and `¬history_rewrite` on shared branches unless operator explicitly requests.
+No-force: `¬push --force` / `--force-with-lease` and `¬history_rewrite` on shared branches — no operator exception (Kaywan 2026-10-09).
+`forward_only`: never move a shared branch backward (no reset, `checkout -B`/`branch -f`/`switch -C` onto an existing branch, force-push, rebase of landed commits; branch from the local tip; drift ⇒ report DRIFT). Rule body: `shared-checkout-worktree_ulg` § Forward only.
 
 **Anti-pattern — "uncommitted" as a risk trigger.** Hearing "uncommitted" / "dirty working tree" is NOT a durability signal — on-disk is already real/durable/done. Do NOT reach for `git_status` / `git_diff` / `git_*` to "check working-tree state" on that basis. Read this skill FIRST whenever git state is mentioned, before touching any git tool.
 

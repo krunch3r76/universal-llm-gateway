@@ -43,6 +43,9 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     emit_git_worker_started,
     register_git_worker_lifecycle_event_publisher,
 )
+from services.git_integration_worker.lane_b_git_hook_install import (
+    ensure_git_hooks_installed,
+)
 from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
 from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_catalog import (
@@ -118,6 +121,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admission_controller = controller
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
+    try:
+        hooks_path = ensure_git_hooks_installed(cfg.source_repo)
+        app.state.giw_git_hooks_path = str(hooks_path)
+        logger.info(
+            "git hooks installed source_repo=%s hooksPath=%s",
+            cfg.source_repo,
+            hooks_path,
+        )
+    except (OSError, RuntimeError, FileNotFoundError) as exc:
+        app.state.giw_git_hooks_path = None
+        logger.warning(
+            "git hooks install skipped source_repo=%s err=%s",
+            cfg.source_repo,
+            exc,
+        )
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
     # Bind-first: persistence reconcile/replay must not hold the health port

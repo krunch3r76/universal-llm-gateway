@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# Lane-B hub checkout guard (reference-transaction, prepared phase only).
+# Lane-B forward-only guard (reference-transaction, prepared phase only).
 set -euo pipefail
 
 state="${1:-}"
 if [[ "${state}" != "prepared" ]]; then
-  exit 0
-fi
-
-if [[ -z "${CURSOR_SDK_DISPATCH_ID:-}" ]]; then
   exit 0
 fi
 

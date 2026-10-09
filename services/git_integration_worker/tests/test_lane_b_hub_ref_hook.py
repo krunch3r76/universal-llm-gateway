@@ -136,22 +136,44 @@ def test_worker_ff_land_without_dispatch_id_allowed(
     assert _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "master"
 
 
-def test_hub_checkout_dash_b_refused_with_dispatch_id(
+def test_hub_checkout_dash_b_new_branch_allowed_with_dispatch_id(
     source_repo: Path,
 ) -> None:
     env = _dispatch_env("hook-checkout-b")
-    before = _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env)
-    assert before.stdout.strip() == "master"
+    checkout = _git(
+        source_repo,
+        "checkout",
+        "-B",
+        "cursor-sdk/lane-new",
+        env=env,
+    )
+    assert checkout.returncode == 0
+
+
+def test_hub_checkout_dash_b_existing_ref_refused_with_dispatch_id(
+    source_repo: Path,
+) -> None:
+    env = _dispatch_env("hook-checkout-b-rewind")
+    base = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    (source_repo / "move_master.py").write_text("x\n", encoding="utf-8")
+    _git(source_repo, "add", "move_master.py", env=env)
+    _git(source_repo, "commit", "-m", "second", env=env)
+    tip = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    _git(source_repo, "branch", "cursor-sdk/lane-blocked", tip, env=env)
+    _git(source_repo, "checkout", "cursor-sdk/lane-blocked", env=env)
+    (source_repo / "lane_only.py").write_text("l\n", encoding="utf-8")
+    _git(source_repo, "add", "lane_only.py", env=env)
+    _git(source_repo, "commit", "-m", "lane tip", env=env)
+    _git(source_repo, "checkout", "master", env=env)
     checkout = _git(
         source_repo,
         "checkout",
         "-B",
         "cursor-sdk/lane-blocked",
+        base,
         env=env,
     )
     assert checkout.returncode != 0
-    after = _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env)
-    assert after.stdout.strip() == "master"
 
 
 def test_git_c_hub_checkout_refused_from_lane_cwd(
@@ -164,8 +186,20 @@ def test_git_c_hub_checkout_refused_from_lane_cwd(
         dispatch_id="hook-c-lane",
     )
     env = _dispatch_env("hook-c-hub")
+    base = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    (source_repo / "hub_adv.py").write_text("h\n", encoding="utf-8")
+    _git(source_repo, "add", "hub_adv.py", env=env)
+    _git(source_repo, "commit", "-m", "hub advance", env=env)
     checkout = subprocess.run(
-        ["git", "-C", str(source_repo), "checkout", "-B", "cursor-sdk/lane-c-block"],
+        [
+            "git",
+            "-C",
+            str(source_repo),
+            "checkout",
+            "-B",
+            "master",
+            base,
+        ],
         cwd=str(wt),
         capture_output=True,
         text=True,
@@ -238,8 +272,12 @@ def test_hub_refuse_emits_signal_in_process(
         run_reference_transaction_hook,
     )
 
+    (source_repo / "emit.py").write_text("e\n", encoding="utf-8")
+    _git(source_repo, "add", "emit.py")
+    _git(source_repo, "commit", "-m", "for emit test")
     tip = _git(source_repo, "rev-parse", "HEAD").stdout.strip()
-    stdin = f"0000000000000000000000000000000000000000 {tip} refs/heads/cursor-sdk/lane-emit\n"
+    parent = _git(source_repo, "rev-parse", "HEAD~1").stdout.strip()
+    stdin = f"{tip} {parent} refs/heads/master\n"
     code = run_reference_transaction_hook(
         state="prepared",
         stdin_text=stdin,
@@ -251,13 +289,13 @@ def test_hub_refuse_emits_signal_in_process(
     assert captured[0]["dispatch_id"] == "hook-emit"
 
 
-def test_git_branch_cursor_sdk_refused_on_hub(source_repo: Path) -> None:
+def test_git_branch_cursor_sdk_allowed_on_hub(source_repo: Path) -> None:
     env = _dispatch_env("hook-git-branch")
     branch = "cursor-sdk/lane-branch-cmd"
     create = _git(source_repo, "branch", branch, env=env)
-    assert create.returncode != 0
+    assert create.returncode == 0
     show = _git(source_repo, "show-ref", "--verify", f"refs/heads/{branch}", env=env)
-    assert show.returncode != 0
+    assert show.returncode == 0
 
 
 def test_hub_master_fast_forward_with_dispatch_id(source_repo: Path) -> None:
@@ -336,11 +374,16 @@ def test_symlink_hook_install_lane_commit_and_hub_refuse(
         _git(source_repo, "rev-parse", "--abbrev-ref", "HEAD", env=env_hub).stdout.strip()
         == "master"
     )
+    base = _git(source_repo, "rev-parse", "HEAD", env=env_hub).stdout.strip()
+    (source_repo / "symlink_hub.py").write_text("h\n", encoding="utf-8")
+    _git(source_repo, "add", "symlink_hub.py", env=env_hub)
+    _git(source_repo, "commit", "-m", "hub advance", env=env_hub)
     blocked = _git(
         source_repo,
         "checkout",
         "-B",
-        "cursor-sdk/lane-symlink-block",
+        "master",
+        base,
         env=env_hub,
     )
     assert blocked.returncode != 0
@@ -409,11 +452,16 @@ def test_failed_hub_checkout_emit_does_not_allow_checkout(
         _boom,
     )
     env = _dispatch_env("hook-emit-fail")
+    base = _git(source_repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    (source_repo / "emit_fail.py").write_text("x\n", encoding="utf-8")
+    _git(source_repo, "add", "emit_fail.py", env=env)
+    _git(source_repo, "commit", "-m", "advance", env=env)
     checkout = _git(
         source_repo,
         "checkout",
         "-B",
-        "cursor-sdk/lane-emit-fail",
+        "master",
+        base,
         env=env,
     )
     assert checkout.returncode != 0

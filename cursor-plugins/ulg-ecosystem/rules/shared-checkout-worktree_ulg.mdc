@@ -9,7 +9,8 @@ apply_tier: required_gate
 **Invariant:** `shared_attended_checkout ⇒ branch ∈ {master, current_unchanged}` ·
 `needs(feature_branch ∨ review_branch ∨ land_isolate) ⇒ git worktree add (clean)` ·
 `¬git checkout(other_branch) on the shared tree` ·
-`sole_maintainer_local ⇒ ¬push ∧ ¬pr` unless the operator names push / PR / publish.
+`sole_maintainer_local ⇒ ¬push ∧ ¬pr` unless the operator names push / PR / publish ·
+`forward_only ⇒ ¬move(shared_branch, backward)`.
 
 Switching the shared tip for side work steals it from peer WIP. Lane B already
 worktrees; attended seats owe the same. "Submit for review" ⇒ local branch +
@@ -22,6 +23,7 @@ worktrees; attended seats owe the same. "Submit for review" ⇒ local branch +
 | `git checkout` / `switch` onto a side branch on the shared tree | `git worktree add [-b <branch>] <path> <start>`; work there |
 | Stash to free the shared tip | Leave peer dirt; worktree isolates |
 | `git push` / `gh pr create` / ask to open a PR | Local `@sha` + diffstat; land when told |
+| `git reset` (any mode) on master or a shared/lane branch; `checkout -B` / `branch -f` / `switch -C` onto an existing branch; `push --force` / `--force-with-lease`; rebase of pushed or landed commits; `checkout origin/master -B master` | `git checkout -b <new> master` (or `worktree add -b <new> <path> master`) from the local tip; local ≠ origin ⇒ stop, report DRIFT; recover by merge or cherry-pick |
 
 ## Detents
 
@@ -36,6 +38,11 @@ shared tip stays master → worktree -b land/<slug> → commit → merge into ma
 ```
 
 No-PR removes the remote step, not the worktree.
+
+## Forward only
+
+`forward_only`: never move a shared branch backward. Forbidden: `git reset` (any mode) on master or any shared/lane branch; `git checkout -B` / `git branch -f` / `git switch -C` onto an existing branch; `git push --force` / `--force-with-lease`; `git rebase` of pushed or landed commits. Fresh worktrees branch from the local tip (`git checkout -b <new> master` or `git worktree add -b <new> <path> master`); never re-point master to origin. Local and origin diverge ⇒ stop and report DRIFT; recover dropped work only by forward merge or cherry-pick. Kaywan 2026-10-08/09: we always go forward.
+Specimen: GIW dispatch ebda76fee569-229874b7 (lane-16053, 2026-10-08 22:43 PT) ran `git checkout master || git checkout origin/master -B master` from its worktree and dropped 33 unpushed commits from hub master. Shared SoT: cortex://notes/system/operational/grok-bot-ulg-cursor-parity.md item 7.
 
 ## Anti-patterns
 
