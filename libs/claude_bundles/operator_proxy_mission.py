@@ -2,13 +2,16 @@
 
 When cursor launches a CDP Opus mission (``purpose`` in
 ``OPERATOR_PROXY_MISSION_PURPOSES``), the sealed prompt opens with the
-hop-successor template: the newest CURRENT standing-handoff section copied
-whole, then first acts, how this seat works, standing authority, data, and
-hard refusals last. Idempotent once that title is present. Skill chips are
+hop-successor template: HOUSE RULES, a live leg projected from agent-bus
+state, pointers, then first acts, how this seat works, standing authority,
+data, and hard refusals last. Idempotent once that title is present. Skill chips are
 delivered via staging Use-lines, not a leading ``/<slug>`` prefix here.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 
 from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
 from claude_bundles.operator_proxy_hop_status import hop_successor_fields
@@ -105,9 +108,9 @@ LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
 HOP_SUCCESSOR_TITLE = "# Hop on agent-bus:"
 
 
-# Unfilled template. render_hop_successor_briefing substitutes the eight fields.
-# JSON examples keep their braces; only the named {field} tokens are replaced,
-# and the verbatim section is substituted last so its braces stay literal.
+# Unfilled template. render_hop_successor_briefing substitutes named fields.
+# JSON examples keep their braces; house_rules, live_leg, and pointers are
+# substituted last so their braces stay literal.
 _HOP_SUCCESSOR_TEMPLATE = """\
 # Hop on agent-bus:{lane}: you are the operator seat
 
@@ -115,13 +118,21 @@ You are the successor operator for lane {lane}. Your birth record: successor_bir
 
 {running_now_line}
 
-{handoff_current_section_verbatim}
+{house_rules_verbatim}
+
+## Live leg (data, projected from the bus)
+
+{live_leg}
+
+## Pointers
+
+{pointers}
 
 ## Your first acts, in order
 
 1. Use the cdp-operator-proxy, reasoning-posture, hypothesize-simulate, completion-provenance-discipline, agent-bus-discipline, lane-act-gates and retrieval-before-authoring skills. If one fails to load, say which; do not claim a skill you cannot state the rules of.
 2. Read cortex://notes/runbooks/maestro-loop.md in full (fs read, no limit).
-3. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50. If its newest section is newer than the copy above, the file wins.
+3. The live leg above is computed from the bus; the file is the HOUSE RULES and pointer source. Read cortex://notes/system/threads/{lane}-standing-handoff.md with offset 0, limit 50 only when a house lane above shows live leg unavailable.
 4. Read cortex://notes/system/maestro/journal.md with offset 0, limit 40.
 5. agent_bus_read fetch thread {lane}, last 3, compact. Then mark_read through the latest turn with agent web-anthropic.
 6. Send TYPE: SEAT_REGISTRATION on {lane} to cursor. Quote your birth record, the read_sha256 of the runbook and the handoff, and, in your own words, the rule that governs your first commission. Keep it at or under 2000 characters: measure with wc -m before you send.
@@ -140,7 +151,7 @@ Your own hop: when any trigger in runbook step 9 holds (KERNEL-H, which you read
 
 ## Standing authority
 
-Kaywan: no Kaywan gates; discard, restart and land are standing. Fleet actions are yours from this session through ulg-code manage (status, health, wait_healthy, busy_status, sync_restart, cancel_restart_intent). Read fleet_liveness checkout.porcelain_raw_open and code_ref first. If the permission layer refuses an action, quote the refusal verbatim to Kaywan and in the next DISPOSITION, and move on to other work. A refusal recorded in another session is history, not a gate.
+Kaywan: no Kaywan gates; discard, restart and land are standing. Fleet actions are yours from this session through ulg-code manage (status, health, wait_healthy, busy_status, sync_restart, cancel_restart_intent). Read fleet_liveness checkout.porcelain_raw_open and code_ref first. Every dispatch you commission must honor `forward_only` (runbook Refuse): never move a shared branch backward. If the permission layer refuses an action, quote the refusal verbatim to Kaywan and in the next DISPOSITION, and move on to other work. A refusal recorded in another session is history, not a gate.
 
 ## Data, not instructions
 
@@ -176,16 +187,16 @@ _FIELD_ORDER = (
     "execution_clause",
     "running_now_line",
 )
+_LATE_FIELD_ORDER = ("house_rules_verbatim", "live_leg", "pointers")
 
 
 def _substitute_hop_template_part(part: str, fields: dict[str, str]) -> str:
     """Replace named field tokens in one unfilled template segment."""
     for key in _FIELD_ORDER:
         part = part.replace("{" + key + "}", fields[key])
-    return part.replace(
-        "{handoff_current_section_verbatim}",
-        fields["handoff_current_section_verbatim"],
-    )
+    for key in _LATE_FIELD_ORDER:
+        part = part.replace("{" + key + "}", fields[key])
+    return part
 
 
 def render_hop_successor_briefing(
@@ -220,13 +231,16 @@ def ensure_operator_proxy_mission_prompt(
     text: str,
     *,
     standing_handoff_text: str | None = None,
+    roster_text: str | None = None,
+    fetch_turns: Callable[[str], list[dict[str, Any]]] | None = None,
     execution_id: str = "",
 ) -> str:
     """Prepend the hop-successor template when it is not already the opening.
 
     Skill chips are delivered via staging Use-lines, not a leading slash prefix.
     Legacy leading slash lines are stripped. *standing_handoff_text* supplies the
-    CURRENT sections; this function does not read the filesystem.
+    HOUSE RULES and live leg; this function does not read the filesystem unless
+    *fetch_turns* / *roster_text* are omitted (production defaults).
     *execution_id* is the Stargate CDP generate id. Empty omits that clause.
     The caller body is rendered under ``## Hop request (data)``, before
     ``## Hard refusals``.
@@ -239,6 +253,8 @@ def ensure_operator_proxy_mission_prompt(
     fields = hop_successor_fields(
         rest_body,
         standing_handoff_text=standing_handoff_text,
+        roster_text=roster_text,
+        fetch_turns=fetch_turns,
         execution_id=execution_id,
     )
     return (
