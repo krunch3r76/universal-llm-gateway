@@ -17,6 +17,7 @@ from agent_bus_store.house_pools import (
     format_house_read_first_block,
     inject_pools_checkpoint_projection,
     load_continuity_card,
+    parse_pool_rows,
     parse_pools,
     pool_status_is_blocked,
     pool_status_is_open,
@@ -75,6 +76,7 @@ def test_parse_pools_invalid_status_raises() -> None:
     with pytest.raises(PoolsParseError) as exc:
         parse_pools(_card_with_manifest(bad))
     assert exc.value.cell == "status@orchestrator"
+    assert exc.value.kind == "invalid_status"
 
 
 def test_pools_block_sha_and_residue_token() -> None:
@@ -361,6 +363,87 @@ def test_conductor_pool_gate_card_missing_admits_and_logs(
     assert gate.basis == "card_missing"
     assert gate.refusal is None
     assert any("card_missing" in record.message for record in caplog.records)
+
+
+def test_empty_conductor_status_branches_on_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    empty = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) |  |",
+        1,
+    )
+    card = f"# card\n\n{empty}"
+    _rows, errors = parse_pool_rows(card)
+    assert errors[0].kind == "empty_status"
+    assert errors[0].cell == "status@conductor"
+    _write_card(tmp_path, "10223-card.md", card)
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == ""
+
+
+def test_malformed_blocked_conductor_cell_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    bad = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · x |",
+        1,
+    )
+    card = f"# card\n\n{bad}"
+    with pytest.raises(PoolsParseError) as exc:
+        parse_pools(card)
+    assert exc.value.kind == "malformed_blocked"
+    _write_card(tmp_path, "10223-card.md", card)
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · x"
+
+
+def test_malformed_sibling_does_not_void_blocked_conductor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    mixed = _MANIFEST_BLOCK.replace(
+        "| orchestrator | IDE cursor tab bound to this lane | open |",
+        "| orchestrator | IDE cursor tab bound to this lane | maybe |",
+        1,
+    ).replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · bridge Timeout TypeError · since 2026-09-08 |",
+        1,
+    )
+    card = f"# card\n\n{mixed}"
+    rows, errors = parse_pool_rows(card)
+    assert rows["conductor"].status.startswith("blocked · bridge")
+    assert errors[0].cell == "status@orchestrator"
+    _write_card(tmp_path, "10223-card.md", card)
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · bridge Timeout TypeError · since 2026-09-08"
+
+
+def test_malformed_conductor_row_fails_closed_beside_valid_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    bad = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · x |",
+        1,
+    )
+    _write_card(tmp_path, "10223-card.md", f"# card\n\n{bad}")
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · x"
+    assert gate.pool_status == "blocked · x"
 
 
 def test_conductor_pool_gate_no_pools(

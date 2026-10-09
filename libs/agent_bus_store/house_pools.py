@@ -49,11 +49,25 @@ _CLOSEOUT_THREAD_RE = re.compile(r"agent-bus:(\d+)")
 
 
 class PoolsParseError(ValueError):
-    """Invalid ``## Pools`` table cell or column header."""
+    """Invalid ``## Pools`` table cell or column header.
 
-    def __init__(self, message: str, *, cell: str | None = None) -> None:
+    ``kind`` is the branch key. Callers must not match ``str(exc)``.
+    ``status_text`` is the raw status cell when the failure is a status
+    cell or a row that still had one.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        cell: str | None = None,
+        kind: str = "parse",
+        status_text: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.cell = cell
+        self.kind = kind
+        self.status_text = status_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,9 +133,16 @@ class ConductorPoolGate:
     """Conductor-pool admission class for one house.
 
     ``refusal`` is the pool status cell when ``basis`` is ``blocked``.
-    Any conductor status other than ``open``, including ``serial · N`` and
-    ``blocked · …``, is basis ``blocked`` and refuses with that cell text.
-    ``card_missing`` and ``no_pools`` admit.
+    Any parsed conductor status other than ``open``, including ``serial · N``
+    and a well-formed ``blocked · … · since YYYY-MM-DD`` cell, is basis
+    ``blocked`` and refuses with that cell text.
+    A conductor status cell that fails vocabulary checks also refuses
+    (fail closed): an empty cell refuses with the empty string, and a
+    malformed blocked cell (``blocked`` prefix, not the dated form) refuses
+    with that cell text. A malformed sibling row is skipped and cannot void
+    a conductor row that parsed. A missing card, a card with no conductor
+    row, and a table that fails before any row is read (``card_missing`` /
+    ``no_pools``) admit.
     """
 
     basis: ConductorGateBasis
@@ -279,9 +300,17 @@ def _validate_status(status: str, *, cell: str) -> None:
         or _STATUS_SERIAL.match(cleaned)
     ):
         return
+    if not cleaned:
+        kind = "empty_status"
+    elif cleaned.lower().startswith("blocked"):
+        kind = "malformed_blocked"
+    else:
+        kind = "invalid_status"
     raise PoolsParseError(
         f"invalid pool status vocabulary: {status!r}",
         cell=cell,
+        kind=kind,
+        status_text=status,
     )
 
 
@@ -290,12 +319,45 @@ def _split_list_field(raw: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
-def _parse_table(block: str) -> dict[str, PoolRow]:
+def _parse_data_row(line: str) -> PoolRow:
+    cells = [cell.strip() for cell in line.strip("|").split("|")]
+    if len(cells) != len(POOL_COLUMNS):
+        status_text = cells[2] if len(cells) > 2 else None
+        raise PoolsParseError(
+            f"row has {len(cells)} cells, expected {len(POOL_COLUMNS)}",
+            cell=f"row:{cells[0] if cells else '?'}",
+            kind="row_shape",
+            status_text=status_text,
+        )
+    data = dict(zip(POOL_COLUMNS, cells, strict=True))
+    pool_name = data["pool"]
+    _validate_status(data["status"], cell=f"status@{pool_name}")
+    return PoolRow(
+        pool=pool_name,
+        executor=data["executor"],
+        status=data["status"],
+        must_load=_split_list_field(data["must_load"]),
+        must_read=_split_list_field(data["must_read"]),
+        closeout=data["closeout"],
+        forbidden=data["forbidden"],
+    )
+
+
+def _parse_table(block: str) -> tuple[dict[str, PoolRow], tuple[PoolsParseError, ...]]:
+    """Parse rows independently.
+
+    Header and an empty table still raise. A bad data row is recorded and
+    does not discard rows that parsed. ``parse_pools`` re-raises the first
+    row error so other callers stay fail-loud.
+    """
     lines = [
         line.strip() for line in block.splitlines() if line.strip().startswith("|")
     ]
     if len(lines) < 2:
-        raise PoolsParseError("## Pools table missing header or rows")
+        raise PoolsParseError(
+            "## Pools table missing header or rows",
+            kind="header",
+        )
     header_cells = [cell.strip().lower() for cell in lines[0].strip("|").split("|")]
     if header_cells != list(POOL_COLUMNS):
         unknown = [cell for cell in header_cells if cell not in POOL_COLUMNS]
@@ -304,38 +366,49 @@ def _parse_table(block: str) -> dict[str, PoolRow]:
         raise PoolsParseError(
             f"unknown or misordered Pools columns: {detail}",
             cell="header",
+            kind="header",
         )
     rows: dict[str, PoolRow] = {}
+    errors: list[PoolsParseError] = []
     for line in lines[2:]:
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) != len(POOL_COLUMNS):
-            raise PoolsParseError(
-                f"row has {len(cells)} cells, expected {len(POOL_COLUMNS)}",
-                cell=f"row:{cells[0] if cells else '?'}",
-            )
-        data = dict(zip(POOL_COLUMNS, cells, strict=True))
-        pool_name = data["pool"]
-        _validate_status(data["status"], cell=f"status@{pool_name}")
-        rows[pool_name] = PoolRow(
-            pool=pool_name,
-            executor=data["executor"],
-            status=data["status"],
-            must_load=_split_list_field(data["must_load"]),
-            must_read=_split_list_field(data["must_read"]),
-            closeout=data["closeout"],
-            forbidden=data["forbidden"],
+        try:
+            row = _parse_data_row(line)
+        except PoolsParseError as exc:
+            errors.append(exc)
+            continue
+        rows[row.pool] = row
+    if not rows and not errors:
+        raise PoolsParseError("## Pools table has no data rows", kind="no_rows")
+    return rows, tuple(errors)
+
+
+def parse_pool_rows(
+    card_text: str,
+) -> tuple[dict[str, PoolRow], tuple[PoolsParseError, ...]]:
+    """Parse ``## Pools`` without letting one bad row discard the others.
+
+    Structural failures (no block, bad header, no data rows) still raise.
+    """
+    block = extract_pools_block(card_text)
+    if block is None:
+        raise PoolsParseError(
+            "continuity card has no ## Pools block",
+            kind="no_block",
         )
-    if not rows:
-        raise PoolsParseError("## Pools table has no data rows")
-    return rows
+    return _parse_table(block)
 
 
 def parse_pools(card_text: str) -> dict[str, PoolRow]:
-    """Parse ``## Pools`` into a pool-name → row map."""
-    block = extract_pools_block(card_text)
-    if block is None:
-        raise PoolsParseError("continuity card has no ## Pools block")
-    return _parse_table(block)
+    """Parse ``## Pools`` into a pool-name → row map.
+
+    The first bad data row raises, matching callers that want a loud parse.
+    Admission uses ``parse_pool_rows`` so a sibling error cannot hide a
+    conductor row.
+    """
+    rows, errors = parse_pool_rows(card_text)
+    if errors:
+        raise errors[0]
+    return rows
 
 
 def pool_status_is_open(status: str) -> bool:
@@ -376,13 +449,28 @@ def parse_closeout_thread_id(closeout: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _conductor_row_error(
+    errors: tuple[PoolsParseError, ...],
+) -> PoolsParseError | None:
+    for exc in errors:
+        if exc.cell in {"status@conductor", "row:conductor"}:
+            return exc
+    return None
+
+
 def conductor_pool_gate(house_id: str) -> ConductorPoolGate:
     """Classify conductor admission. Refuse when the pool status is not open.
 
     The refusal string is the status cell, the same text the old
     ``conductor_pool_admit_refusal`` returned, so the route message stays
     ``status:blocked · pool_blocked · {cell}`` for both serial and blocked.
-    A missing card and a card with no conductor row admit, and both are logged.
+    An empty conductor status cell refuses with the empty string. Branch on
+    ``PoolsParseError.kind``, not the message text.
+
+    A malformed conductor row refuses (fail closed), including a ``blocked``
+    cell that does not match the dated vocabulary. A malformed sibling row
+    is skipped. A missing card and a card with no conductor row admit, and
+    both are logged. A found card always has text (``ContinuityCard``).
     """
     card = load_continuity_card(house_id)
     house = _normalized_house_id(house_id)
@@ -393,25 +481,27 @@ def conductor_pool_gate(house_id: str) -> ConductorPoolGate:
             list(card.tried),
         )
         return ConductorPoolGate(basis="card_missing")
-    if card.text is None:
-        logger.info("no_pools house_id=%s", house)
-        return ConductorPoolGate(basis="no_pools")
+    assert card.text is not None
     try:
-        row = parse_pools(card.text)["conductor"]
-    except KeyError:
+        rows, errors = parse_pool_rows(card.text)
+    except PoolsParseError:
         logger.info("no_pools house_id=%s", house)
         return ConductorPoolGate(basis="no_pools")
-    except PoolsParseError as exc:
-        if (
-            exc.cell == "status@conductor"
-            and str(exc) == "invalid pool status vocabulary: ''"
-        ):
+    row = rows.get("conductor")
+    if row is not None:
+        if pool_status_is_open(row.status):
+            return ConductorPoolGate(basis="open", pool_status=row.status)
+        return ConductorPoolGate(basis="blocked", pool_status=row.status)
+    conductor_error = _conductor_row_error(errors)
+    if conductor_error is not None:
+        if conductor_error.kind == "empty_status":
             return ConductorPoolGate(basis="blocked", pool_status="")
-        logger.info("no_pools house_id=%s", house)
-        return ConductorPoolGate(basis="no_pools")
-    if pool_status_is_open(row.status):
-        return ConductorPoolGate(basis="open", pool_status=row.status)
-    return ConductorPoolGate(basis="blocked", pool_status=row.status)
+        return ConductorPoolGate(
+            basis="blocked",
+            pool_status=conductor_error.status_text or "",
+        )
+    logger.info("no_pools house_id=%s", house)
+    return ConductorPoolGate(basis="no_pools")
 
 
 def format_house_read_first_block(
@@ -494,6 +584,8 @@ def apply_fable_house_staging(
         raise PoolsParseError(
             f"fable pool blocked: {row.status}",
             cell="status@fable",
+            kind="blocked_pool",
+            status_text=row.status,
         )
     merged_skills = merge_house_pool_skills(skills, extra=row.must_load)
     block = format_house_read_first_block(house_id=house_id, row=row, card=card)
