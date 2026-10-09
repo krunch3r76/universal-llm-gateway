@@ -116,7 +116,9 @@ def _envelope(**overrides: object) -> dict:
 
 def _adapters(client: TestClient):
     async def get(path: str, params=None):
-        resp = client.get(path, params=params) if params is not None else client.get(path)
+        resp = (
+            client.get(path, params=params) if params is not None else client.get(path)
+        )
         return resp.json(), resp.status_code
 
     async def send(**kwargs):
