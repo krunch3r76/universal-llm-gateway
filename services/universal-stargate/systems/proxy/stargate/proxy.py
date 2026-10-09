@@ -371,6 +371,17 @@ class StargateProxy:
         return None
 
     @property
+    def federation_local_edge_client(self):
+        """Relay local-edge client, or None when federation is absent or not remote.
+
+        Health reads ``is_connected`` here. No federation integration yields
+        None so edge and standalone keep forwarding ``GET /health``.
+        """
+        if self.federation_integration is None:
+            return None
+        return self.federation_integration.local_edge_client
+
+    @property
     def federation_circuit_breaker(self):
         """
         Get FederationCircuitBreaker if federation is enabled and in Master mode.
