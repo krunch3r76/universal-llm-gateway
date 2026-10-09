@@ -201,3 +201,117 @@ def test_provenance_draft_unparseable() -> None:
         violations = provenance.check_provenance(_LEDGER, bad)
         assert _types(violations) == ["draft_unparseable"]
         assert violations[0]["claim_id"] is None
+
+
+_ASK_LEDGER = [
+    {"pin_id": "P5", "attested": False},
+    {"pin_id": "P6", "attested": False},
+    {"pin_id": "P7", "attested": False},
+    {"pin_id": "P1", "attested": True},
+]
+_C2 = (
+    "could you send me the specific complaints in writing: which stores, "
+    "which dates, and what was reported?"
+)
+_C3 = "Could you also confirm the date of my review?"
+
+
+def test_provenance_request_asks_are_not_unattested() -> None:
+    draft = _draft(
+        f"{_C2} {_C3}",
+        [
+            {
+                "claim_id": "c2",
+                "text": _C2,
+                "pin_ids": ["P5", "P6"],
+                "disposition": "request",
+                "state": "need",
+            },
+            {
+                "claim_id": "c3",
+                "text": _C3,
+                "pin_ids": ["P7"],
+                "disposition": "request",
+                "state": "need",
+            },
+        ],
+    )
+    assert provenance.check_provenance(_ASK_LEDGER, draft) == []
+    express = _draft(
+        f"{_C2} {_C3}",
+        [
+            {
+                "claim_id": "c2",
+                "text": _C2,
+                "pin_ids": ["P5", "P6"],
+                "disposition": "express",
+                "state": "backed",
+            },
+            {
+                "claim_id": "c3",
+                "text": _C3,
+                "pin_ids": ["P7"],
+                "disposition": "express",
+                "state": "backed",
+            },
+        ],
+    )
+    kinds = _types(provenance.check_provenance(_ASK_LEDGER, express))
+    assert kinds.count("unattested_pin") == 3
+
+
+def test_provenance_request_cannot_cite_attested_pin() -> None:
+    """A request that cites attested=true is refused, not exempt."""
+    violations = provenance.check_provenance(
+        _ASK_LEDGER,
+        _draft(
+            "Could you confirm the date?",
+            [
+                {
+                    "claim_id": "c1",
+                    "text": "Could you confirm the date?",
+                    "pin_ids": ["P1"],
+                    "disposition": "request",
+                    "state": "need",
+                }
+            ],
+        ),
+    )
+    assert "request_cites_attested" in _types(violations)
+    assert "unattested_pin" not in _types(violations)
+
+
+def test_provenance_revision_catches_new_clause_and_dropped_name() -> None:
+    v1 = _draft(
+        "I spoke with Jennifer about the record.",
+        [
+            {
+                "claim_id": "c1",
+                "text": "I spoke with Jennifer about the record.",
+                "pin_ids": ["P1"],
+                "disposition": "express",
+                "state": "backed",
+            }
+        ],
+    )
+    v2 = _draft(
+        "I spoke about the record. as I was told on the call.",
+        [
+            {
+                "claim_id": "c1",
+                "text": "I spoke about the record.",
+                "pin_ids": ["P1"],
+                "disposition": "express",
+                "state": "backed",
+            }
+        ],
+    )
+    kinds = _types(provenance.revision_delta(v1, v2))
+    assert "v2_new_unpinned_clause" in kinds
+    assert "v2_dropped_name" in kinds
+    dropped = [
+        row
+        for row in provenance.revision_delta(v1, v2)
+        if row["type"] == "v2_dropped_name"
+    ]
+    assert dropped[0]["detail"] == "Jennifer"

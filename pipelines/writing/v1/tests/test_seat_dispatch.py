@@ -266,62 +266,9 @@ def test_seat_dispatch_cursor_pool1_body() -> None:
 
 
 def _assert_team_dispatch_body(body: dict[str, Any]) -> None:
-    """Validate against TeamDispatchGenerateBody, or its declared field set.
+    """Validate against TeamDispatchGenerateBody. Import failure fails the test."""
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
 
-    Field set copied from route.py:149-170 (_DispatchCommon) and
-    route.py:173-278 (TeamDispatchGenerateBody) if the import is unavailable.
-    """
-    try:
-        from systems.frontier_consult.route import TeamDispatchGenerateBody
-    except ImportError:
-        allowed = {
-            "system",
-            "reasoning_effort",
-            "generation_options",
-            "max_tool_turns",
-            "transcript_id",
-            "caller_agent",
-            "timeout_seconds",
-            "bus_lifecycle",
-            "skills",
-            "server_tools",
-            "wake_lane",
-            "op",
-            "role",
-            "seat",
-            "dispatch_thread_id",
-            "model",
-            "mcp",
-            "packet_path",
-            "source_ref",
-            "dispatch_lane",
-            "prompt",
-            "sidecar_ref",
-            "job",
-            "reuse_thread",
-            "split_thread",
-            "density_triage",
-            "review_opt_out_reason_code",
-            "auto_review_child",
-            "model_knobs",
-            "spawn_review_provenance",
-            "cost_intent",
-            "suppress_cost_warning",
-            "cost_intent_reason",
-            "nest_under",
-            "resume_of",
-            "lane",
-            "workspace",
-            "read_only",
-            "refuse_if_lease_held",
-            "prompt_turn_number",
-            "prompt_bind_mode",
-            "purpose",
-            "session",
-            "work_key",
-        }
-        assert set(body) <= allowed
-        return
     TeamDispatchGenerateBody.model_validate(body)
 
 
@@ -458,3 +405,28 @@ def test_seat_dispatch_2xx_without_execution_id_is_unknown() -> None:
     assert payload["reason"] == "missing_execution_id"
     assert "idempotency_key" in payload
     assert "prompt_sha256" in payload
+
+
+def test_seat_dispatch_sensitive_brief_does_not_post() -> None:
+    marker = "PINMARKER-15962"
+    client = _Client()
+    handler = seat_dispatch.WritingSeatDispatchHandler(client=client)
+    payload = asyncio.run(
+        handler.execute(
+            _Step("draft_dispatch"),
+            _Ctx(
+                {
+                    "assemble": _Out(
+                        _assemble(
+                            sensitivity="sensitive",
+                            documents_block=marker,
+                            brief_block=marker,
+                        )
+                    )
+                }
+            ),
+        )
+    ).json
+    assert payload["refused"] == "sensitive_bus_seat_refused"
+    assert client.posts == []
+    assert marker not in json.dumps(payload)

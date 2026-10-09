@@ -96,6 +96,31 @@ def _rates() -> tuple[dict[str, tuple[float, float]], dict[str, str]]:
     return table, aliases
 
 
+def _violation_key(row: Any) -> tuple[tuple[str, str], ...] | None:
+    if not isinstance(row, dict):
+        return None
+    return tuple(sorted((str(key), str(value)) for key, value in row.items()))
+
+
+def _v2_worse(initial: list[Any], final: list[Any]) -> bool:
+    """True when final is a proper multiset superset of initial, or longer.
+
+    Equal violation lists are not worse. Gate evaluation then stays on v2.
+    """
+    if len(final) > len(initial):
+        return True
+    initial_keys = [key for row in initial if (key := _violation_key(row))]
+    final_keys = [key for row in final if (key := _violation_key(row))]
+    bag = list(final_keys)
+    contained = True
+    for key in initial_keys:
+        if key not in bag:
+            contained = False
+            break
+        bag.remove(key)
+    return contained and len(final_keys) > len(initial_keys)
+
+
 def _cost(
     outputs: dict[str, Any],
     usage: dict[str, dict[str, int] | None],
@@ -126,6 +151,11 @@ class WritingFinalizeHandler(BaseHandler):
     Missing steps and steps whose ``error`` is set count as not ok. Token
     cost uses ``config/model_rates.yaml`` via the manual rate loader. A model
     with no row nulls ``est_cost_usd`` and sets ``cost_note``.
+
+    Review transport or model failure after draft yields an envelope with
+    draft_v1, provenance, review.status=failed, a review_unresolved row in
+    ship_gate.unresolved, no revision, and ship_gate.pass=false. Partial
+    independence adds independence_partial and cannot pass. Only full can.
     """
 
     step_type = "writing_finalize_v1"
@@ -198,14 +228,32 @@ class WritingFinalizeHandler(BaseHandler):
             if revision_ran and final_payload is not None
             else None
         )
-        if review_ok and revision_ran:
+        selected = "draft_v1"
+        if (
+            review_ok
+            and revision_ran
+            and final is not None
+            and not _v2_worse(initial, final)
+        ):
+            selected = "draft_v2"
+        if not review_ok:
+            passed = False
+        elif selected == "draft_v2":
             passed = final == []
         elif review_ok and initial_payload is not None:
             passed = initial == [] and review.get("verdict") == "ship"
         else:
             passed = False
-        active = final if final is not None else initial
+        active = initial if selected == "draft_v1" else list(final or [])
         unresolved = list(active)
+        if not review_ok:
+            unresolved.append(
+                {
+                    "type": "review_unresolved",
+                    "claim_id": None,
+                    "detail": (review or {}).get("refused") or "review_failed",
+                }
+            )
         if not revision_ran and review_ok and review.get("verdict") == "revise":
             unresolved.extend(list(review.get("findings") or []))
         options = getattr(context, "options", {}) or {}
@@ -223,7 +271,16 @@ class WritingFinalizeHandler(BaseHandler):
             live_independence = "partial"
         else:
             live_independence = None
-        if live_independence is None and not _allow_partial(options):
+        if live_independence == "partial":
+            passed = False
+            unresolved.append(
+                {
+                    "type": "independence_partial",
+                    "claim_id": None,
+                    "detail": f"{writer_live}->{reviewer_live}",
+                }
+            )
+        elif live_independence is None and not _allow_partial(options):
             passed = False
             unresolved.append(
                 {
@@ -259,7 +316,11 @@ class WritingFinalizeHandler(BaseHandler):
                 "verdict": review.get("verdict") if review_ok else None,
             },
             "revision": revision,
-            "ship_gate": {"pass": passed, "unresolved": unresolved},
+            "ship_gate": {
+                "pass": passed,
+                "unresolved": unresolved,
+                "selected": selected,
+            },
             "seats_used": {
                 "writer": _model_of(_raw_step(outputs, "draft"))
                 or models.get("writer"),

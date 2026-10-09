@@ -193,6 +193,15 @@ class WritingSeatDispatchHandler(BaseHandler):
             return _step(
                 {"ok": False, "refused": "dispatch_thread_id_invalid", "posted": False}
             )
+        if assemble.get("sensitivity") == "sensitive":
+            return _step(
+                {
+                    "ok": False,
+                    "refused": "sensitive_bus_seat_refused",
+                    "posted": False,
+                    "error": "sensitive_bus_seat_refused",
+                }
+            )
         run_id = _run_id(context)
         key = f"writer-specialist-v1:{run_id}:{role}"
         if key in _POSTED:

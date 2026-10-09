@@ -627,3 +627,52 @@ def test_seat_wait_missing_execution_id_no_get() -> None:
     ).json
     assert clock.gets == []
     assert payload["seat_fallback"]["reason"] == "admit_unknown"
+
+
+def test_select_drops_conceded_findings_keeps_the_rest() -> None:
+    findings = [
+        {"ref": "1", "type": "unsupported", "fix": "says the call was with Victor"},
+        {"ref": "2", "type": "unsupported", "fix": "should not be stated as facts"},
+        {"ref": "3", "type": "unsupported", "fix": "review date is requested"},
+        {
+            "ref": "4",
+            "type": "unsupported",
+            "fix": "This is supported by the documents",
+        },
+        {"ref": "5", "type": "unattested_fact", "fix": "acceptable"},
+        {
+            "ref": "6",
+            "type": "unsupported",
+            "fix": "consistent with the voice anchor and is supported",
+        },
+    ]
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_local": _Out({"findings": findings, "verdict": "revise"})}),
+        )
+    ).json
+    refs = [row["ref"] for row in payload["findings_actionable"]]
+    assert refs == ["1", "2", "3"]
+
+
+def test_select_local_reviewer_missing_findings_refused() -> None:
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_local": _Out({"verdict": "revise"})}),
+        )
+    ).json
+    assert payload["refused"] == "reviewer_seat_failed"
+    assert payload["reason"] == "local_result_invalid"
+
+
+def test_select_local_writer_missing_draft_refused() -> None:
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("draft"),
+            _Ctx({"draft_local": _Out({"claims": [], "need": [], "dispositions": []})}),
+        )
+    ).json
+    assert payload["refused"] == "writer_seat_failed"
+    assert payload["reason"] == "local_result_invalid"

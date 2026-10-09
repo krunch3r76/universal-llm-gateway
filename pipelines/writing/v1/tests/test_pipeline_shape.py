@@ -180,7 +180,20 @@ def test_pipeline_shape() -> None:
         ("writing", "writing_seat_dispatch_v1"),
         ("writing", "writing_seat_wait_v1"),
         ("writing", "writing_seat_select_v1"),
+        ("writing", "writing_review_local_v1"),
     }
+    reviewer = prompts["reviewer"]["template"]
+    assert "does not state X" in reviewer
+    assert "never unsupported or unattested_fact" in reviewer
+    assert "must not be typed unattested_fact" in reviewer
+    assert "concedes the sentence is supported or acceptable" in reviewer
+    handlers_dir = _V1 / "handlers"
+    for path in handlers_dir.glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert 'post("/turns"' not in text
+        assert "post('/turns'" not in text
+        if path.name == "seat_dispatch.py":
+            assert "/api/v1/team/dispatch" in text
 
 
 def test_go_review_revise_conditions_on_step_outputs() -> None:
