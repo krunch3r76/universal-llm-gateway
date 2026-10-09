@@ -173,7 +173,9 @@ async def test_authority_seal_sha_and_staging_fallback(fs) -> None:
     )
     rel = f"notes/system/seals/{sid}.messages.json"
     fs.files[rel] = good
-    digest = sha(good)
+    from continuity_tape.messages import seal_messages_sha256
+
+    digest = seal_messages_sha256([{"role": "user", "content": "a"}])
     card = b"card-bytes"
     fs.files["notes/card.md"] = card
 
@@ -209,7 +211,9 @@ async def test_authority_seal_sha_and_staging_fallback(fs) -> None:
     assert out["checks"]["authority"] == "seal"
     assert out["checks"]["authority_sha"] is True
 
-    fs.files[rel] = good + b" "
+    tampered = json.loads(good)
+    tampered["messages"][0]["content"] = "changed"
+    fs.files[rel] = json.dumps(tampered).encode()
     bad = await run_verify_resume(
         {
             "card_uri": "notes/card.md",
@@ -346,7 +350,9 @@ async def test_selects_house_cp_marker_not_newest(fs) -> None:
     fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
     card = b"card"
     fs.files["notes/card.md"] = card
-    digest = sha(doc)
+    from continuity_tape.messages import seal_messages_sha256
+
+    digest = seal_messages_sha256([{"role": "user", "content": "a"}])
     ours = _cp_body(
         sha=digest,
         provenance="raw",
@@ -406,14 +412,21 @@ async def test_window_transcript_and_turns_match_seal(fs) -> None:
 
     sid = "sess-v4"
     tid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    doc = _seal_doc(
-        transcript_id=tid,
-        provenance="raw",
-        messages=[
-            {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "b"},
-        ],
-    )
+    doc = json.dumps(
+        {
+            "conversation_uuid": tid,
+            "messages": [
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+            ],
+            "meta": {
+                "transcript_id": tid,
+                "provenance": "raw",
+                "message_count": 2,
+                "turn_count": 2,
+            },
+        }
+    ).encode()
     fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
     card = b"card"
     fs.files["notes/card.md"] = card
@@ -476,7 +489,9 @@ async def test_window_transcript_and_turns_match_seal(fs) -> None:
     assert passed["checks"]["window_turns"] is True
 
 
-def _writer_seal_bytes(messages: list, *, turn_count: int, transcript_id: str) -> tuple[bytes, str]:
+def _writer_seal_bytes(
+    messages: list, *, turn_count: int, transcript_id: str
+) -> tuple[bytes, str]:
     """Same bytes as session_close_persist: build_seal_envelope_meta then indent-2 JSON.
 
     The persist function itself writes through durable_write_text onto the cortex
@@ -575,9 +590,7 @@ async def test_authority_sha_matches_writer_digest_not_file_bytes(fs) -> None:
         {"role": "user", "content": "hello", "turn_index": 0},
         {"role": "assistant", "content": "TAMPERED", "turn_index": 0},
     ]
-    bad_doc, _bad_digest = _writer_seal_bytes(
-        tampered, turn_count=1, transcript_id=tid
-    )
+    bad_doc, _bad_digest = _writer_seal_bytes(tampered, turn_count=1, transcript_id=tid)
     failed = await run(digest, bad_doc)
     assert failed["checks"]["authority_sha"] is False
 
@@ -648,7 +661,10 @@ async def test_window_turns_unknown_without_turn_count(fs) -> None:
     doc = _seal_doc(
         transcript_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         provenance="raw",
-        messages=[{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}],
+        messages=[
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+        ],
     )
     fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
     card = b"card"
@@ -717,9 +733,7 @@ async def test_session_id_prefers_seal_step(fs) -> None:
         "successor": "x",
         "fact_turn": 9,
     }
-    picked = await run_verify_resume(
-        opts, fs, get=get, seal_step={"session_id": sid}
-    )
+    picked = await run_verify_resume(opts, fs, get=get, seal_step={"session_id": sid})
     assert picked["checks"]["authority"] == "seal"
     clash = await run_verify_resume(
         {**opts, "session_id": "from-options"},

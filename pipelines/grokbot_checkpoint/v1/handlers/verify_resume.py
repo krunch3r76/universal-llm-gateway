@@ -6,10 +6,11 @@ import json
 import re
 from typing import Any, override
 
+from continuity_tape.messages import seal_messages_sha256
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import bus_get, file_sha256, fs_of
+from ._clients import bus_get, file_sha256, fs_of, step_output_json
 
 
 def _harvest_sha(body: str) -> str | None:
@@ -52,15 +53,38 @@ def _select_checkpoint(
     return str(best.get("body") or ""), None
 
 
+def _bound_session_id(
+    options: dict[str, Any], seal_step: dict[str, Any]
+) -> tuple[str, str | None]:
+    """Seal step ``session_id`` (seal.py return) wins; options is the fallback."""
+    from_step = str(seal_step.get("session_id") or "")
+    from_opts = str(options.get("session_id") or "")
+    if from_step and from_opts and from_step != from_opts:
+        return "", "verify_resume.session_id_mismatch"
+    return from_step or from_opts, None
+
+
 async def run_verify_resume(
     options: dict[str, Any],
     fs: Any,
     *,
     get: Any = None,
+    seal_step: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     get = get or bus_get
+    seal_step = seal_step or {}
     checks: dict[str, Any] = {}
     warnings: list[str] = []
+    session_id, sid_code = _bound_session_id(options, seal_step)
+    if sid_code:
+        return {
+            "refused": None,
+            "checks": {"session_id": False},
+            "warnings": warnings,
+            "writes": 0,
+            "posts": 0,
+            "code": sid_code,
+        }
     card_uri = str(options.get("card_uri") or "")
     packet_sha = str(options.get("expected_card_sha256") or "")
     card_raw = await fs.read(card_uri)
@@ -78,7 +102,6 @@ async def run_verify_resume(
     snap_live = file_sha256(snap_raw) if snap_raw else ""
     packet_snap = str(options.get("snapshot_sha256") or "")
     checks["snapshot_sha"] = snap_live == packet_snap
-    session_id = str(options.get("session_id") or "")
     seal_raw = await fs.read(_seal_rel(session_id)) if session_id else None
     if seal_raw is not None:
         doc_raw = seal_raw
@@ -89,6 +112,9 @@ async def run_verify_resume(
     provenance = ""
     window_tid = ""
     window_count: int | None = None
+    turns_known = False
+    messages: Any = None
+    meta_messages_sha = ""
     if doc_raw:
         try:
             parsed = json.loads(doc_raw.decode("utf-8"))
@@ -109,16 +135,15 @@ async def run_verify_resume(
                 checks["capture_sha"] = True
             if meta.get("transcript_id"):
                 window_tid = str(meta["transcript_id"])
+            if meta.get("turn_count") is not None:
+                window_count = int(meta["turn_count"])
+                turns_known = True
+            if meta.get("messages_sha256"):
+                meta_messages_sha = str(meta["messages_sha256"])
         if isinstance(parsed, dict):
             if parsed.get("conversation_uuid"):
                 window_tid = str(parsed["conversation_uuid"])
             messages = parsed.get("messages")
-            # turns@cp is a count of sealed messages, not a max index:
-            # indexes can be sparse or zero-based, so the array length is the window.
-            if isinstance(messages, list):
-                window_count = len(messages)
-            elif isinstance(meta, dict) and meta.get("message_count") is not None:
-                window_count = int(meta["message_count"])
     lane = str(options.get("verify_lane") or "")
     root = str(options.get("root_thread") or lane)
     cp_listing, _status = await get("/turns", params={"thread": root})
@@ -148,8 +173,14 @@ async def run_verify_resume(
             ):
                 receipt = True
     harvest = _harvest_sha(cp_body)
-    doc_sha = file_sha256(doc_raw) if doc_raw else ""
-    checks["authority_sha"] = bool(doc_sha) and harvest == doc_sha
+    file_sha = file_sha256(doc_raw) if doc_raw else ""
+    checks["authority_file_sha256"] = file_sha
+    if checks.get("authority") == "seal" and isinstance(messages, list):
+        recomputed = seal_messages_sha256(messages)
+        meta_ok = not meta_messages_sha or meta_messages_sha == recomputed
+        checks["authority_sha"] = bool(recomputed) and harvest == recomputed and meta_ok
+    else:
+        checks["authority_sha"] = bool(file_sha) and harvest == file_sha
     checks["harvest_sha"] = checks["authority_sha"]
     tip_prov = _harvest_provenance(cp_body)
     if tip_prov is None:
@@ -160,11 +191,14 @@ async def run_verify_resume(
     if window_tid:
         found = _WINDOW_TID.search(cp_body)
         checks["window_transcript"] = bool(found) and found.group(1) == window_tid
-    if window_count is not None:
+    if turns_known and window_count is not None:
         found_turns = _WINDOW_TURNS.search(cp_body)
         checks["window_turns"] = (
             bool(found_turns) and int(found_turns.group(1)) == window_count
         )
+    elif checks.get("authority") == "seal":
+        checks["window_turns"] = "unknown"
+        warnings.append("window_turns: turn_count absent")
     checks["receipt"] = receipt
     payload: dict[str, Any] = {
         "refused": None,
@@ -185,5 +219,6 @@ class GrokbotCheckpointVerifyResumeHandler(BaseHandler):
     @override
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
-        payload = await run_verify_resume(options, fs_of(context))
+        seal_step = step_output_json(getattr(context, "outputs", {}) or {}, "seal")
+        payload = await run_verify_resume(options, fs_of(context), seal_step=seal_step)
         return StepOutput(raw="", json=payload)
