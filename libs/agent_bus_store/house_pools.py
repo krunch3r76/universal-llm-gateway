@@ -75,7 +75,10 @@ class ContinuityCard:
 
     ``relpath``, ``uri``, ``text``, and ``sha256`` are set only when
     ``status`` is ``found``. ``tried`` is the candidate relpaths examined,
-    in ladder order, on both outcomes.
+    in ladder order, on both outcomes. A zero-byte file is ``found`` with
+    ``empty`` true: the file is present, ``text`` is ``""``, and ``sha256``
+    is the digest of those empty bytes. ``empty`` is false on every miss
+    and on every non-empty file.
     """
 
     status: CardStatus
@@ -84,6 +87,7 @@ class ContinuityCard:
     uri: str | None = None
     text: str | None = None
     sha256: str | None = None
+    empty: bool = False
 
     def __post_init__(self) -> None:
         if self.status == "found":
@@ -92,9 +96,15 @@ class ContinuityCard:
                 for value in (self.relpath, self.uri, self.text, self.sha256)
             ):
                 raise ValueError("found card requires relpath, uri, text, and sha256")
+            if self.empty and self.text != "":
+                raise ValueError("empty found card requires text ''")
+            if not self.empty and self.text == "":
+                raise ValueError("non-empty found card requires non-empty text")
             return
         if self.status != "missing":
             raise ValueError(f"unknown card status: {self.status}")
+        if self.empty:
+            raise ValueError("missing card must not be marked empty")
         if any(
             value is not None
             for value in (self.relpath, self.uri, self.text, self.sha256)
@@ -137,18 +147,19 @@ def _continuity_card_candidate_relpaths(house_id: str) -> tuple[str, ...]:
     )
 
 
-def _read_present_card(path: Path) -> tuple[str, str]:
-    """Text plus sha256 of the raw file bytes.
+def _read_present_card(path: Path) -> tuple[str, str, bool]:
+    """Text, sha256 of the raw file bytes, and whether those bytes are empty.
 
     Invalid UTF-8 is found text with ``errors="replace"``. The digest stays
-    over the bytes on disk, which matches a valid UTF-8 encode.
+    over the bytes on disk, which matches a valid UTF-8 encode. Zero bytes
+    are a found card: text ``""``, the empty-bytes digest, empty flag true.
     """
     raw = path.read_bytes()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = raw.decode("utf-8", errors="replace")
-    return text, hashlib.sha256(raw).hexdigest()
+    return text, hashlib.sha256(raw).hexdigest(), len(raw) == 0
 
 
 def iter_present_continuity_cards(thread_id: str) -> list[ContinuityCard]:
@@ -166,7 +177,7 @@ def iter_present_continuity_cards(thread_id: str) -> list[ContinuityCard]:
         if not path.is_file():
             continue
         try:
-            text, digest = _read_present_card(path)
+            text, digest, empty = _read_present_card(path)
         except FileNotFoundError:
             continue
         found.append(
@@ -177,6 +188,7 @@ def iter_present_continuity_cards(thread_id: str) -> list[ContinuityCard]:
                 uri=f"cortex://{rel}",
                 text=text,
                 sha256=digest,
+                empty=empty,
             )
         )
     return found
@@ -186,8 +198,9 @@ def load_continuity_card(house_id: str) -> ContinuityCard:
     """Resolve one house card. Sole builder of a continuity-card path.
 
     Candidates, in order: ``{id}-card.md``, ``{id}-continuity-card.md``,
-    ``{id}-continuity.md``. The first present file wins. A missing house
-    returns status ``missing`` and does not invent a URI.
+    ``{id}-continuity.md``. The first present file wins, including a
+    zero-byte file (``empty`` true, sha256 of empty bytes). A house with
+    no candidate file returns status ``missing`` and does not invent a URI.
     """
     present = iter_present_continuity_cards(house_id)
     if present:

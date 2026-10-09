@@ -207,6 +207,24 @@ def test_resolver_falls_back_to_archive(
     assert card.text == "archive"
 
 
+def test_resolver_zero_byte_card_is_found_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A present zero-byte file is found, not missing, with the empty-bytes digest."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    directory = tmp_path / "notes" / "system" / "threads"
+    directory.mkdir(parents=True)
+    (directory / "10223-card.md").write_bytes(b"")
+    card = load_continuity_card("10223")
+    assert card.status == "found"
+    assert card.empty is True
+    assert card.text == ""
+    assert card.sha256 == hashlib.sha256(b"").hexdigest()
+    assert card.relpath == "notes/system/threads/10223-card.md"
+    assert card.uri == "cortex://notes/system/threads/10223-card.md"
+
+
 def test_resolver_missing_card_has_no_uri(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -218,6 +236,7 @@ def test_resolver_missing_card_has_no_uri(
     assert card.relpath is None
     assert card.text is None
     assert card.sha256 is None
+    assert card.empty is False
     assert card.tried == (
         "notes/system/threads/10223-card.md",
         "notes/system/threads/10223-continuity-card.md",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -94,6 +95,26 @@ def test_mint_tab_launch_emits_pool_floor_and_closeout_fields(
     assert coord is not None
     assert f"agent-bus:{coord}" in prompt
     assert "Implement slice W4." in prompt
+
+
+def test_mint_tab_launch_zero_byte_card_is_found_and_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mint consumes house_pools: zero bytes are found+empty, and still cannot launch."""
+    from agent_bus_store.house_pools import load_continuity_card
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card_path = tmp_path / "notes/system/threads/10223-card.md"
+    card_path.parent.mkdir(parents=True)
+    card_path.write_bytes(b"")
+    resolved = load_continuity_card("10223")
+    assert resolved.status == "found"
+    assert resolved.empty is True
+    assert resolved.sha256 == hashlib.sha256(b"").hexdigest()
+    mint = _load_mint_tab_launch()
+    rc = mint.main(["--house", "10223", "--slice", "W4"])
+    assert rc == 1
+    assert "continuity card missing" in capsys.readouterr().err
 
 
 def test_mint_tab_launch_missing_card_returns_error(

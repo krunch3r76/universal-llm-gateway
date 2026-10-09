@@ -224,7 +224,9 @@ def assemble_resume_fence_in_txn(
     # mission.skills_to_use. Bundle v2 never inlines the full card body
     # (bundle.card is uri + sha256 + read_via). False means the bundle
     # has no card directives and the reader fs-reads bundle.card.uri
-    # for them.
+    # for them. A missing card has no rules and no skills to inline, so
+    # the flag is False; bundle.card is then status=missing with tried
+    # paths and no uri to read.
     standing_rules = mission.get("standing_rules") or []
     poured_payload: dict[str, Any] = {
         "bundle_bytes": bundle_bytes,

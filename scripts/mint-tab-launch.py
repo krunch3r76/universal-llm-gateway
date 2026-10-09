@@ -117,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
 
     house_id = args.house.strip().removeprefix("agent-bus:")
     card = load_continuity_card(house_id)
-    if card.status != "found" or not card.text or not card.uri:
+    # Presence is house_pools' rule: a zero-byte file is found+empty, not missing.
+    if card.status != "found" or card.empty or not card.uri:
         print(
             f"error: continuity card missing for house {house_id}",
             file=sys.stderr,
