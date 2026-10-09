@@ -1,4 +1,4 @@
-"""Friction 38968 — ``_finalize_success`` must pass inline ``message`` as ``packet_text``."""
+"""Friction 38968 — inline ``land: silent`` uses ``land_text``; ``packet_text`` stays empty."""
 
 from __future__ import annotations
 
@@ -83,11 +83,56 @@ def _lane_b_req(
     )
 
 
+def _settle_lane_b_with_land(
+    *,
+    source_repo: Path,
+    binding: CaptureBinding,
+    dispatch_id: str,
+    packet_text: str | None,
+    land_text: str | None,
+) -> tuple[bool | None, str | None, int | None, str | None]:
+    from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.lane_settlement import (
+        settle_lane_and_dispatch_fields,
+    )
+
+    fields = settle_lane_and_dispatch_fields(
+        binding=binding,
+        dispatch_id=dispatch_id,
+        write_tree=binding.write_tree,
+        receipt_tree=binding.receipt_tree,
+        repo_change_set=ChangeSet(created=(), modified=(), deleted=()),
+        outcome=_outcome(),
+        deviations=[],
+        divergence_reason=None,
+        baseline=None,
+        files_untracked_or_ignored=(),
+        offgit_uris=(),
+        thread_id="t-landed-resolution",
+        gate_d_created_rels=(),
+        files_outside_repo=(),
+        packet_text=packet_text,
+        land_text=land_text,
+    )
+    (
+        _lane,
+        _branch,
+        _branch_point,
+        head_sha,
+        commits_ahead,
+        _unfiltered,
+        landed,
+        *_rest,
+    ) = fields
+    landed_resolution_reason = fields[-1]
+    return landed, head_sha, commits_ahead, landed_resolution_reason
+
+
 @pytest.mark.asyncio
 async def test_finalize_success_inline_message_passes_opt_in_to_closeout(
     source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Inline ``message`` with ``land: silent`` → captured packet_text lands on hub master."""
+    """Inline ``message`` with ``land: silent`` → ``land_text`` lands; ``packet_text`` empty."""
     dispatch_id = "auto-38968-inline-token"
     _wt, binding, tip = _mint_lane_with_commit(source_repo, tmp_path, dispatch_id)
     message = f"---\ncontract: none\n---\nwork\n{OPT_IN_LINE}\n"
@@ -97,6 +142,7 @@ async def test_finalize_success_inline_message_passes_opt_in_to_closeout(
 
     async def _capture(**kwargs: object) -> None:
         captured["packet_text"] = str(kwargs.get("packet_text", ""))
+        captured["land_text"] = str(kwargs.get("land_text", ""))
 
     monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", _capture)
     await route_mod._finalize_success(
@@ -109,15 +155,15 @@ async def test_finalize_success_inline_message_passes_opt_in_to_closeout(
         controller=MagicMock(),
         worktree_isolated=True,
     )
-    packet_text = captured["packet_text"]
-    assert OPT_IN_LINE in packet_text
+    assert captured["packet_text"] == ""
+    assert OPT_IN_LINE in captured["land_text"]
 
-    landed, head_sha, _ahead, _reason = _settle_lane_b(
+    landed, head_sha, _ahead, _reason = _settle_lane_b_with_land(
         source_repo=source_repo,
         binding=binding,
         dispatch_id=dispatch_id,
-        files_outside_repo=(),
-        packet_text=packet_text,
+        packet_text="",
+        land_text=message,
     )
     assert landed is True
     assert head_sha == tip
@@ -133,19 +179,18 @@ async def test_finalize_success_inline_message_passes_opt_in_to_closeout(
 async def test_finalize_success_inline_without_token_does_not_land(
     source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Inline message without opt-in → empty effective packet_text at settle → no hub merge."""
+    """Inline message without opt-in → empty ``packet_text``; no hub merge."""
     dispatch_id = "auto-38968-inline-no-token"
     _wt, binding, tip = _mint_lane_with_commit(source_repo, tmp_path, dispatch_id)
     master_before = _git("rev-parse", "master", cwd=source_repo).stdout.strip()
-    req = _lane_b_req(
-        dispatch_id=dispatch_id,
-        message="---\ncontract: none\n---\nwork only\n",
-    )
+    message = "---\ncontract: none\n---\nwork only\n"
+    req = _lane_b_req(dispatch_id=dispatch_id, message=message)
 
     captured: dict[str, str] = {}
 
     async def _capture(**kwargs: object) -> None:
         captured["packet_text"] = str(kwargs.get("packet_text", ""))
+        captured["land_text"] = str(kwargs.get("land_text", ""))
 
     monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", _capture)
     await route_mod._finalize_success(
@@ -158,14 +203,15 @@ async def test_finalize_success_inline_without_token_does_not_land(
         controller=MagicMock(),
         worktree_isolated=True,
     )
-    packet_text = captured["packet_text"]
+    assert captured["packet_text"] == ""
+    assert captured["land_text"] == message
 
-    landed, head_sha, _ahead, _reason = _settle_lane_b(
+    landed, head_sha, _ahead, _reason = _settle_lane_b_with_land(
         source_repo=source_repo,
         binding=binding,
         dispatch_id=dispatch_id,
-        files_outside_repo=(),
-        packet_text=packet_text,
+        packet_text="",
+        land_text=message,
     )
     assert landed is not True
     assert head_sha == tip
@@ -194,6 +240,7 @@ async def test_finalize_success_packet_path_passes_opt_in_to_closeout(
 
     async def _capture(**kwargs: object) -> None:
         captured["packet_text"] = str(kwargs.get("packet_text", ""))
+        captured["land_text"] = str(kwargs.get("land_text", ""))
 
     expected_packet = route_mod._read_packet_text(req, source_repo)
     assert OPT_IN_LINE in expected_packet
@@ -211,6 +258,7 @@ async def test_finalize_success_packet_path_passes_opt_in_to_closeout(
     )
     packet_text = captured["packet_text"]
     assert packet_text == expected_packet
+    assert captured["land_text"] == expected_packet
 
     landed, head_sha, _ahead, _reason = _settle_lane_b(
         source_repo=source_repo,
@@ -227,6 +275,40 @@ async def test_finalize_success_packet_path_passes_opt_in_to_closeout(
         check=False,
     )
     assert ancestor.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_finalize_success_inline_todo_line_not_in_packet_text_readers(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inline ``todo:`` in ``message`` must not populate ``packet_text`` closeout readers."""
+    dispatch_id = "auto-38968-inline-todo-guard"
+    _wt, binding, _tip = _mint_lane_with_commit(source_repo, tmp_path, dispatch_id)
+    todo_slug = "todo:friction-38968-close-guard"
+    message = f"---\ntodo: {todo_slug}\ncontract: none\n---\nwork\n"
+    req = _lane_b_req(dispatch_id=dispatch_id, message=message)
+
+    captured: dict[str, object] = {}
+
+    async def _capture(**kwargs: object) -> None:
+        captured["packet_text"] = kwargs.get("packet_text", "")
+        captured["land_text"] = kwargs.get("land_text", "")
+        captured["work_item_ref"] = kwargs.get("work_item_ref")
+
+    monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", _capture)
+    await route_mod._finalize_success(
+        req=req,
+        source_repo=source_repo,
+        binding=binding,
+        outcome=_outcome(),
+        bus=MagicMock(),
+        reply_to="dispatch",
+        controller=MagicMock(),
+        worktree_isolated=True,
+    )
+    assert captured["packet_text"] == ""
+    assert todo_slug in str(captured["land_text"])
+    assert captured["work_item_ref"] is None
 
 
 def test_debt_opened_emits_land_silent_token_absent_reason(
