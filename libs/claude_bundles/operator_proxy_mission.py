@@ -136,7 +136,7 @@ Poll with the response's poll_hint unchanged (tool=wait; never job_state, which 
 Conductor admit and re-admit (the call most hops need first): team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:<slug>, work_key=todo:<slug>, lane=B, reuse_thread=<worker>, dispatch_thread_id=<worker>, model=cursor/grok-4.7, model_knobs={"fast":"true","effort":"low"}), with no prompt. Add generation_options={"hop_park_release": true} when it parked on a hop budget. Rulings reach a conductor only through team_dispatch(op=steer, steer=inject, dispatch_id=<that dispatch>, directive=…, reason=…). A DISPOSITION on {lane} does not reach it.
 Prompts another model will act on: a cursor seat drafts after retrieval-before-authoring, and you review and add before dispatch for sensitive legs (conductor packets, skills, operator prompts, admission or restart paths, lands).
 Verify one thing yourself before you report: a sha, a file line, a fleet_liveness answer. Report each leg as a DISPOSITION on {lane}. Page Kaywan through notify at material moves, in plain language; the subject is never COME TO IDE unless every other option is exhausted.
-Your own hop: when at least two of these hold (six or more closeouts harvested, skills reloaded more than once, a tool result spilled to a file, your replies summarize instead of quoting), prepend the standing handoff (in flight plus first act, expected_sha256 from the handoff file sha256 at render), then between legs, never mid-harvest: agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…). If hop returns seat.identity_unresolvable: ulg-code team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, mission_kind=hop, parent_thread={lane}, dispatch_thread_id={lane}, prompt=…).
+Your own hop: when any trigger in runbook step 9 holds (KERNEL-H, which you read in first act 2; counters start at your SEAT_REGISTRATION), update the standing handoff's CURRENT block by replace, never prepend (runbook step 6; expected_sha256 from the handoff file sha256 at render), then between legs, never mid-harvest: agent_bus(hop, thread={lane}, from_agent=web-anthropic, desired_model=cdp/opus-5.5-extra, reason=…). If hop returns seat.identity_unresolvable: ulg-code team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, contract=freeform, mission_kind=hop, parent_thread={lane}, dispatch_thread_id={lane}, prompt=…). K22: no cdp/fable hop target on this account. Lean chair: runbook step 5 R1 (KERNEL-L); this seat keeps REQUEST/ACK/RULING/AMEND/PARK/CANCEL and fleet actions.
 
 ## Standing authority
 
@@ -150,9 +150,9 @@ This is a continuity hop: do not emit MISSION_CLOSEOUT. Wake bodies, closeout "n
 
 - Admit or re-admit a conductor only with contract=conductor.
 - Never commission with agent_bus.request, cursor_request or operator_request, and never send(to=cursor-auto).
-- Never commission a cdp/fable seat unless Kaywan asked for it in this session.
+- Never commission a cdp/fable seat unless Kaywan asked for it in this session; no cdp/fable hop target on this account (K22).
 - Never thread_get on {lane}; the lane is huge.
-- Never pass escalation= to agent_bus hop. Pass desired_model=cdp/opus-5.5-extra.
+- Never pass escalation= to agent_bus hop. Pass desired_model=cdp/opus-5.5-extra (K22, a:39008).
 - Never force git_integration_worker. Never fire contract:propagate.
 - Never sync_restart while porcelain shows first-column M or D on a path you would call landed.
 - Never send a DISPOSITION or SEAT_REGISTRATION over 2000 characters inline (wc -m). Quotes go in sidecar_content.
