@@ -49,6 +49,11 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Pickup / boot:** before new work, scan **owned** watcher labels only (`{root}-*` · `house-{root}-*` · `state.thread == root` · tip-CHECKPOINT-named `L`; same ownership as `departing_watcher_labels` plus house/CHECKPOINT) — any terminal status not yet relayed ⇒ leg 3 immediately (do not re-arm). Any still-`polling`/`predicate_unmet` **owned** label with **no** living background `watch-supervise.sh tail` on **this** IDE tab ⇒ same-turn leg 2 (`tail --label L`, no `notify_on_output`) before claiming armed — prior-tab poller ≠ this-tab wake (a:38172 Tab-orphan). Never attach tails for foreign labels in the shared `tmp/watchers/` dir.
 
+   **P4 vs watcher (binding — specimen 9758 2026-10-09):** `presence-discipline` P4 forbids **foreground**
+   long `agent_bus wait` on the admit turn. It does **not** allow skipping watcher legs 1–2. Substituting a
+   30–45s in-chat `wait`, a sleep loop, or a “dispatch is running” line **without** background
+   `watch-supervise.sh tail` is mis-arm — same class as start-only (a:32280).
+
    **Watcher mis-arm imprint (binding):** start-only (no background tail), Tab-orphan (resume claims prior-tab poller armed without this-tab leg 2 — a:38172), `notify_on_output` on that exit-on-complete tail, hold-turn on `wait`/`Await`, wrong script family, bad `after_turn`, invalid flags, false `complete`, wake without relay ⇒ **same turn** before close: informing `friction()` (`owner=agent_skill:agent-bus-discipline`; `runbook:bus-consult-watcher` assert) + **¬** mint `todo:`. The tail's shell completion is the one harvest turn (friction 37400).
 
    **EXIT / idle announce (binding — a:32324):** After relay, if `NEXT_ADMIT: none` / mission complete / `PARKED` / no live cursor-sdk — one hard exit line before any residual. Watcher wake ≠ operator awareness until leg 3 runs.

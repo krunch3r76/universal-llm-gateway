@@ -26,6 +26,10 @@ recycle proof. Recycle-without-commit is not finishing. Seat self-report ("I sho
 never sit in `AwaitShell` / multi-minute polling. Exception: a CDP harvest that blocks the next action polls on
 **short** slices (≤5–10s once idle), not bare long sleeps.
 
+**P4.1 — Dispatch admit.** After `team_dispatch` admit: **no** foreground long `wait`; **yes** watcher legs 1–2
+same turn (`dispatch-kernel_ulg` § Admit turn; `runbook:bus-consult-watcher`). ¬ sleep loops / “in flight” prose
+without bg `tail`.
+
 Applies to all Cursor-surface models; Opus-class makes these implicit, below Opus they are explicit obligations.
 Out of scope: headless dispatch trust (`todo:cursor-sdk-dispatch-report-verification`) · durable completion
 provenance at close (`provenance-discipline.mdc`). Shell cap hook + AwaitShell residual: `decision:` on the
