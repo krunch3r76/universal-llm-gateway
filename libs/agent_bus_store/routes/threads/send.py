@@ -229,7 +229,17 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         )
     from ...house_route_control import assert_house_route_control
 
-    prior_turn = await asyncio.to_thread(get_latest_turn, thread_id)
+    try:
+        prior_turn = await asyncio.to_thread(get_latest_turn, thread_id)
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "get_latest_turn failed: thread=%s",
+            thread_id,
+            exc_info=True,
+        )
+        prior_turn = None
     await asyncio.to_thread(
         assert_house_route_control,
         thread_id=thread_id,
