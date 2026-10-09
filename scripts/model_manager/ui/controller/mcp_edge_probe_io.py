@@ -1,14 +1,13 @@
 """Sockets for the public MCP edge probe: DNS, TLS, and the wait-call query.
 
-The manage loop calls these. DNS goes to a resolv.conf nameserver so the
-hosts file cannot answer ``mcp.k-1.me`` with ``127.0.0.1``. TLS uses that
-public address with the public name as SNI. The wait-call query is the
-event-service read the listener-silence check classifies.
+The manage loop calls these. DNS skips the resolved stub, which answers
+``mcp.k-1.me`` from ``/etc/hosts``, and asks an uplink resolver instead.
+TLS uses that public address with the public name as SNI. The wait-call
+query is the event-service read the listener-silence check classifies.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import socket
 import ssl
@@ -18,9 +17,11 @@ from pathlib import Path
 from deploy_identity.mcp_external_probe import (
     HEALTH_PATH,
     build_dns_query,
+    choose_public_ipv4,
     http_status_from_bytes,
-    nameservers_from_resolv,
+    json_object_from_mixed_stdout,
     parse_dns_a_records,
+    probe_nameservers,
 )
 
 _DNS_TIMEOUT_S = 3.0
@@ -39,23 +40,37 @@ GROUP BY thread
 """
 
 
-def resolve_a_records(host: str, *, resolv_text: str | None = None) -> list[str]:
-    """Query the first resolv.conf nameserver for ``host`` A records.
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
-    Uses DNS, not ``getaddrinfo``, so ``/etc/hosts`` cannot substitute
-    ``127.0.0.1``. Raises ``TimeoutError`` or ``OSError`` when no nameserver
-    answers. Returns the parsed A list, which may be empty.
+
+def resolve_a_records(
+    host: str,
+    *,
+    resolv_text: str | None = None,
+    uplink_text: str | None = None,
+) -> list[str]:
+    """Query an uplink nameserver for ``host`` A records.
+
+    Skips the systemd-resolved stub. A packet that contains only loopback
+    or private addresses is not the answer: the next nameserver is tried.
+    Raises ``TimeoutError`` or ``OSError`` when no nameserver answers.
     """
-    text = resolv_text
-    if text is None:
-        try:
-            text = Path("/etc/resolv.conf").read_text(encoding="utf-8")
-        except OSError:
-            text = ""
-    servers = nameservers_from_resolv(text) or [_FALLBACK_NAMESERVER]
+    read_disk = resolv_text is None and uplink_text is None
+    if resolv_text is None:
+        resolv_text = _read_text(Path("/etc/resolv.conf"))
+    if uplink_text is None:
+        uplink_path = Path("/run/systemd/resolve/resolv.conf")
+        uplink_text = _read_text(uplink_path) if read_disk else ""
+    servers = probe_nameservers(resolv_text, uplink_text) or [_FALLBACK_NAMESERVER]
     query = build_dns_query(host)
     last_error: BaseException | None = None
-    for server in servers[:2]:
+    last_records: list[str] = []
+    saw_answer = False
+    for server in servers:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.settimeout(_DNS_TIMEOUT_S)
@@ -66,10 +81,14 @@ def resolve_a_records(host: str, *, resolv_text: str | None = None) -> list[str]
             continue
         finally:
             sock.close()
-        return parse_dns_a_records(packet)
-    if last_error is not None:
+        records = parse_dns_a_records(packet)
+        saw_answer = True
+        last_records = records
+        if choose_public_ipv4(records):
+            return records
+    if last_error is not None and not saw_answer:
         raise last_error
-    return []
+    return last_records
 
 
 def fetch_health(ip: str, host: str) -> int:
@@ -132,7 +151,7 @@ def query_wait_rows(workspace_root: Path, *, floor_ms: int) -> list[dict[str, ob
     if proc.returncode != 0:
         err = proc.stderr.strip() or proc.stdout.strip() or "query-events failed"
         raise RuntimeError(err)
-    payload = json.loads(proc.stdout or "{}")
+    payload = json_object_from_mixed_stdout(proc.stdout or "")
     rows = payload.get("rows")
     if isinstance(rows, list):
         return rows

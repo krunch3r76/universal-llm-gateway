@@ -3,16 +3,19 @@
 Manage's edge-probe loop calls these helpers. The MCP container healthcheck
 hits ``https://localhost/health`` from inside the container, and io's hosts
 file maps ``mcp.k-1.me`` to ``127.0.0.1``, so a hostname GET from this host
-is loopback. Callers resolve an A record over DNS (``/etc/resolv.conf``,
-which does not consult the hosts file) and connect only to a globally
-routable IPv4 address.
+is loopback. Callers resolve an A record over DNS and connect only to a
+globally routable IPv4 address. The local resolver stub is not that DNS
+server: it answers this name from the hosts file.
 
 ``/health`` is the path AuthMiddleware short-circuits. ``/mcp/code/health``
 is not that route; probing it reports a false outage while TLS is fine.
+The systemd-resolved stub still answers from ``/etc/hosts``; callers must
+use ``probe_nameservers`` so that stub is not the server they query.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import struct
@@ -59,6 +62,48 @@ def nameservers_from_resolv(text: str) -> list[str]:
             continue
         found.append(socket.inet_ntoa(packed))
     return found
+
+
+def probe_nameservers(stub_text: str, uplink_text: str = "") -> list[str]:
+    """Return nameservers that will not answer from the local hosts file.
+
+    The systemd-resolved stub (``127.0.0.53``) returns ``127.0.0.1`` for
+    ``mcp.k-1.me`` because ``/etc/hosts`` maps that name. Loopback servers
+    are dropped. When none remain, uplink resolv text is used, then
+    ``1.1.1.1``. A LAN resolver such as ``10.0.0.1`` is kept.
+    """
+    import ipaddress
+
+    def usable(text: str) -> list[str]:
+        kept: list[str] = []
+        for raw in nameservers_from_resolv(text):
+            try:
+                ip = ipaddress.ip_address(raw)
+            except ValueError:
+                continue
+            if ip.is_loopback:
+                continue
+            kept.append(raw)
+        return kept
+
+    servers = usable(stub_text) or usable(uplink_text)
+    return servers[:2] or ["1.1.1.1"]
+
+
+def json_object_from_mixed_stdout(text: str) -> dict[str, object]:
+    """Parse the JSON object from stdout that may start with a log banner.
+
+    ``query-events`` prints a workspace-validation banner on stdout before
+    the JSON document. Loading the whole buffer raises ``JSONDecodeError``,
+    and the listener check would report ``query_failed`` on every tick.
+    """
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("no JSON object in tool stdout")
+    payload = json.loads(text[start:])
+    if not isinstance(payload, dict):
+        raise ValueError("tool stdout JSON is not an object")
+    return payload
 
 
 def build_dns_query(hostname: str, txn_id: int = 1) -> bytes:
@@ -265,6 +310,8 @@ __all__ = [
     "classify_probe_error",
     "external_probe_hostname",
     "http_status_from_bytes",
+    "json_object_from_mixed_stdout",
     "nameservers_from_resolv",
     "parse_dns_a_records",
+    "probe_nameservers",
 ]

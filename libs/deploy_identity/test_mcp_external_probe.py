@@ -20,8 +20,10 @@ from deploy_identity.mcp_external_probe import (
     classify_probe_error,
     external_probe_hostname,
     http_status_from_bytes,
+    json_object_from_mixed_stdout,
     nameservers_from_resolv,
     parse_dns_a_records,
+    probe_nameservers,
 )
 
 _PUBLIC = "73.189.160.136"
@@ -51,6 +53,21 @@ def test_hostname_reads_public_url_host(monkeypatch):
 def test_nameservers_keep_ipv4_only():
     text = "nameserver 127.0.0.53\nnameserver 2001:db8::1\n# comment\n"
     assert nameservers_from_resolv(text) == ["127.0.0.53"]
+
+
+def test_probe_nameservers_skip_resolved_stub():
+    stub = "nameserver 127.0.0.53\n"
+    uplink = "nameserver 1.1.1.1\nnameserver 10.0.0.1\n"
+    assert probe_nameservers(stub, uplink) == ["1.1.1.1", "10.0.0.1"]
+
+
+def test_probe_nameservers_keep_lan_resolver():
+    assert probe_nameservers("nameserver 10.0.0.1\n") == ["10.0.0.1"]
+
+
+def test_json_object_ignores_debug_banner():
+    text = '[DEBUG] Workspace validation\n{"rows": [], "count": 0}\n'
+    assert json_object_from_mixed_stdout(text) == {"rows": [], "count": 0}
 
 
 def test_dns_round_trip_parses_public_a():
