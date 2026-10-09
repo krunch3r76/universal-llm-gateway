@@ -246,12 +246,18 @@ class WritingFinalizeHandler(BaseHandler):
             passed = False
         active = initial if selected == "draft_v1" else list(final or [])
         unresolved = list(active)
+        review_reason = None
         if not review_ok:
+            review_reason = (
+                (review or {}).get("reason")
+                or (review or {}).get("refused")
+                or "review_failed"
+            )
             unresolved.append(
                 {
                     "type": "review_unresolved",
                     "claim_id": None,
-                    "detail": (review or {}).get("refused") or "review_failed",
+                    "detail": review_reason,
                 }
             )
         if not revision_ran and review_ok and review.get("verdict") == "revise":
@@ -309,6 +315,7 @@ class WritingFinalizeHandler(BaseHandler):
             },
             "review": {
                 "status": "ok" if review_ok else "failed",
+                "reason": review_reason,
                 "writer_seat": assemble.get("writer_seat"),
                 "reviewer_seat": assemble.get("reviewer_seat"),
                 "independence": live_independence,

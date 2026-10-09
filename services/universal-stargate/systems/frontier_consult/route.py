@@ -205,6 +205,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # Inline prompt (SF1): bypass thread latch — prefer over bus-turn-only dispatch.
     prompt: str | None = None
     sidecar_ref: str | None = None
+    prompt_sha256: str | None = None
+    # Writer pipeline opt-in. ``pointer_only`` keeps prompt and harvest text
+    # off agent-bus turns. Omitted leaves every other caller unchanged.
+    bus_body: Literal["pointer_only"] | None = None
     # When set and packet_path is absent (job=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
@@ -700,9 +704,7 @@ async def team_dispatch(
         hop_from=getattr(body, "hop_from", None),
     ):
         try:
-            await validate_wake_lane(
-                body.wake_lane, request_id=request_id
-            )
+            await validate_wake_lane(body.wake_lane, request_id=request_id)
         except FrontierEndpointError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     # job=wrap on an explicit non-sdk role must refuse before check-review

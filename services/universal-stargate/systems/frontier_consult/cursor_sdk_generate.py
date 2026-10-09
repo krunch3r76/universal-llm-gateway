@@ -352,6 +352,9 @@ async def dispatch_cursor_sdk_generate(
     hop_park_release: bool = False,
     transcript_id: str | None = None,
     wake_lane: str | None = None,
+    bus_body: str | None = None,
+    off_bus_ref: str | None = None,
+    prompt_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -407,5 +410,8 @@ async def dispatch_cursor_sdk_generate(
         force_reason=force_reason,
         hop_park_release=hop_park_release,
         wake_lane=wake_lane,
+        bus_body=bus_body,
+        off_bus_ref=off_bus_ref,
+        prompt_sha256=prompt_sha256,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

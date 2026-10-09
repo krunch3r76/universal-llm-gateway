@@ -610,6 +610,23 @@ def build_generate_dispatch_pointer(
     return "\n".join(lines)
 
 
+def build_pointer_only_dispatch_pointer(
+    *,
+    lane: str,
+    contract: str,
+    sidecar_ref: str | None,
+    prompt_sha256: str | None,
+    correlation_id: str,
+) -> str:
+    """Bus pointer that cites a sidecar and a digest, never prompt text."""
+    return (
+        f"{lane} {contract} generate — prompt off bus. "
+        f"sidecar `{sidecar_ref or 'unknown'}` "
+        f"sha256 `{prompt_sha256 or 'unknown'}` "
+        f"correlation `{correlation_id}`."
+    )
+
+
 def _slug_from_subject(subject: str) -> str:
     """Derive a kebab slug from a human subject string."""
     slug = subject.lower()

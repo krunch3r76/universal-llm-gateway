@@ -407,10 +407,13 @@ def test_seat_dispatch_2xx_without_execution_id_is_unknown() -> None:
     assert "prompt_sha256" in payload
 
 
-def test_seat_dispatch_sensitive_brief_does_not_post() -> None:
-    marker = "PINMARKER-15962"
+def test_seat_dispatch_sensitive_brief_posts_sidecar_not_prompt() -> None:
+    marker = "PINMARKER-16001"
     client = _Client()
-    handler = seat_dispatch.WritingSeatDispatchHandler(client=client)
+    handler = seat_dispatch.WritingSeatDispatchHandler(
+        client=client,
+        sidecar_writer=lambda prompt, key: "cortex://notes/off-bus.txt",
+    )
     payload = asyncio.run(
         handler.execute(
             _Step("draft_dispatch"),
@@ -427,6 +430,12 @@ def test_seat_dispatch_sensitive_brief_does_not_post() -> None:
             ),
         )
     ).json
-    assert payload["refused"] == "sensitive_bus_seat_refused"
-    assert client.posts == []
-    assert marker not in json.dumps(payload)
+    assert payload.get("refused") is None
+    assert payload["ok"] is True
+    body = client.posts[0]
+    assert "prompt" not in body
+    assert body["bus_body"] == "pointer_only"
+    assert body["sidecar_ref"] == "cortex://notes/off-bus.txt"
+    assert body["prompt_sha256"]
+    blob = json.dumps({"body": body, "payload": payload, "subject": body.get("system")})
+    assert marker not in blob

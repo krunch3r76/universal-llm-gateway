@@ -113,10 +113,9 @@ def _valid(role: str, obj: dict[str, Any] | None) -> bool:
             if str(disposition) not in _DISPOSITIONS:
                 return False
         return True
-    return isinstance(obj.get("findings"), list) and obj.get("verdict") in {
-        "ship",
-        "revise",
-    }
+    from .review_schema import review_result_error
+
+    return review_result_error(obj) is None
 
 
 def _result_text(data: dict[str, Any]) -> str:
@@ -643,6 +642,18 @@ class WritingSeatSelectHandler(BaseHandler):
                 )
             return _step(result, model_id=str(model) if model else None)
         fallback = waited.get("seat_fallback") if isinstance(waited, dict) else None
+        if (
+            isinstance(local_json, dict)
+            and local_json.get("refused") == "review_transport_failed"
+        ):
+            return _step(
+                {
+                    "refused": "review_transport_failed",
+                    "reason": "review_transport_failed",
+                    "error": local_json.get("error") or "review_transport_failed",
+                    "seat_fallback": fallback,
+                }
+            )
         if local is not None and not local_error and isinstance(local_json, dict):
             if not _valid(role, local_json):
                 refused = (

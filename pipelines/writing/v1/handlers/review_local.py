@@ -19,6 +19,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
 
 from .independence import load_writing_models
+from .review_schema import REVIEW_RESULT_SCHEMA
 from .seat_dispatch import _prompts
 
 _JSON_ONLY = "Return only the JSON object, with no prose before or after it."
@@ -77,7 +78,7 @@ class WritingReviewLocalHandler(BaseHandler):
         system = str(row.get("system_prompt") or "")
         try:
             if self._caller is not None:
-                content = await self._caller()
+                content = await self._caller(json_schema=REVIEW_RESULT_SCHEMA)
             else:
                 models = load_writing_models()
                 result = await self._call_model(
@@ -88,6 +89,7 @@ class WritingReviewLocalHandler(BaseHandler):
                     system_prompt=system,
                     temperature=0.1,
                     max_tokens=2048,
+                    json_schema=REVIEW_RESULT_SCHEMA,
                 )
                 content = result.content
         except Exception as exc:  # noqa: BLE001 — must not escape to the executor
