@@ -8,18 +8,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from services.git_integration_worker.config import WorkerConfig
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
-from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
-    SdkRunOutcome,
-)
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     branch_state,
     commit_on_terminal,
 )
-from services.git_integration_worker.cursor_sdk_worktree import resolve_master_branch_point
-from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
+from services.git_integration_worker.cursor_sdk_worktree import (
+    mint_dispatch_worktree,
+    resolve_master_branch_point,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 from services.git_integration_worker.routes import cursor_sdk as route_mod
 from services.git_integration_worker.tests.test_lane_b_hub_master_landed_resolution import (
@@ -230,3 +227,63 @@ async def test_finalize_success_packet_path_passes_opt_in_to_closeout(
         check=False,
     )
     assert ancestor.returncode == 0
+
+
+def test_debt_opened_emits_land_silent_token_absent_reason(
+    source_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Missing opt-in on the no-disposition debt path tags ``land:silent_token_absent``."""
+    from services.git_integration_worker.cursor_sdk_branch_terminal import (
+        settle_lane_branch,
+    )
+
+    dispatch_id = "auto-38968-debt-reason"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    _git("checkout", "-b", branch, cwd=source_repo)
+    (source_repo / "lane_only.py").write_text("lane\n", encoding="utf-8")
+    _git("add", "lane_only.py", cwd=source_repo)
+    _git("commit", "-m", "lane", cwd=source_repo)
+    tip = _git("rev-parse", "HEAD", cwd=source_repo).stdout.strip()
+    _git("checkout", "master", cwd=source_repo)
+
+    emitted: list[dict[str, object]] = []
+
+    def _capture_emit(**kwargs: object) -> None:
+        emitted.append(dict(kwargs))
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal.emit_sdk_lane_b_debt_opened",
+        _capture_emit,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal.open_branch_debt",
+        lambda **_kw: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal.add_land_required_tag",
+        lambda **_kw: None,
+    )
+
+    with caplog.at_level("WARNING"):
+        settlement = settle_lane_branch(
+            source_repo=source_repo,
+            branch_name=branch,
+            thread_id="t-debt-reason",
+            dispatch_id=dispatch_id,
+            closeout_text="status: complete",
+            commits_ahead=1,
+            landed=False,
+            head_sha=tip,
+            files=["lane_only.py"],
+            packet_text="work without silent land opt-in\n",
+        )
+
+    assert settlement.outcome == "debt_opened"
+    assert emitted
+    assert emitted[-1].get("reason") == "land:silent_token_absent"
+    assert any(
+        "debt_reason=land:silent_token_absent" in record.message
+        for record in caplog.records
+    )
