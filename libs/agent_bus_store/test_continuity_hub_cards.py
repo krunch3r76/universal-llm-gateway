@@ -49,3 +49,16 @@ def test_hub_card_uri_uses_card_md_only_house(
     card.parent.mkdir(parents=True)
     card.write_text("# live\n", encoding="utf-8")
     assert hub_card_uri("10479") == "cortex://notes/system/threads/10479-card.md"
+
+
+def test_hub_card_uri_uses_continuity_card_only_house(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-continuity-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("# continuity card\n", encoding="utf-8")
+    assert (
+        hub_card_uri("10479")
+        == "cortex://notes/system/threads/10479-continuity-card.md"
+    )

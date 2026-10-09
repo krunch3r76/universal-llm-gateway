@@ -105,6 +105,41 @@ def test_rearm_refreshes_stale_cached_card_uri(
     assert "cortex://notes/system/threads/10223-continuity.md" not in fs_allow["paths"]
 
 
+def test_rearm_keeps_sidecar_archive_and_drops_stale_guess(
+    root_thread, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Dual-file sidecars stay; a guessed ladder URI that is not derived does not."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    stale = "cortex://notes/system/threads/10223-continuity-card.md"
+    archive = "cortex://notes/system/threads/10223-continuity.md"
+    card_uri = "cortex://notes/system/threads/10223-card.md"
+    (threads / "10223-continuity-card.md").write_text("# guessed\n", encoding="utf-8")
+    first = arm_resume_fence("10223", transcript_id="tab-archive", source="hook_prompt")
+    assert stale in first["read_set"]["readable"]["cortex_uris"]
+    (threads / "10223-card.md").write_text(
+        "# live\n## Sidecars\n- Archive: `cortex://notes/system/threads/10223-continuity.md`\n",
+        encoding="utf-8",
+    )
+    (threads / "10223-continuity.md").write_text("# archive\n", encoding="utf-8")
+    second = arm_resume_fence(
+        "10223", transcript_id="tab-archive", source="hook_prompt"
+    )
+    uris = second["read_set"]["readable"]["cortex_uris"]
+    fs_allow = next(
+        row
+        for row in second["read_set"]["readable"]["mcp_allow"]
+        if row["tool"] == "fs"
+    )
+    assert archive in uris
+    assert archive in fs_allow["paths"]
+    assert card_uri in uris
+    assert card_uri in fs_allow["paths"]
+    assert stale not in uris
+    assert stale not in fs_allow["paths"]
+
+
 def test_arm_resume_fence_journals_armed_only(root_thread) -> None:
     with (
         patch(

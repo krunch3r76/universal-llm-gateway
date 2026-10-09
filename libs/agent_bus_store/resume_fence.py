@@ -10,6 +10,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from implement_admission.closeout_helpers import cortex_files_root
+
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL
 from .continuity_card_scratchboards import extract_scratchboard_uris
 from .db.connection import connect, write_connect
@@ -278,27 +280,60 @@ def _format_pool_row(row: Any) -> str:
     )
 
 
+def _otherwise_derived_uris(tip_body: str, card: ContinuityCard) -> set[str]:
+    """URIs a fresh derivation would keep besides the resolved card itself."""
+    card_text = card.text if card.status == "found" else ""
+    return (
+        set(_CORTEX_URI_RE.findall(tip_body))
+        | set(_sidecar_uris(card_text or ""))
+        | set(extract_scratchboard_uris(card_text or ""))
+    )
+
+
+def _card_uri_on_disk(uri: str) -> bool:
+    if not isinstance(uri, str) or not uri.startswith("cortex://"):
+        return False
+    return (cortex_files_root() / uri.removeprefix("cortex://")).is_file()
+
+
 def _reresolve_card_uris(
     read_set: dict[str, Any],
     *,
     thread_id: str,
     card: ContinuityCard,
+    tip_body: str,
 ) -> dict[str, Any]:
-    """Drop ladder card URIs in a cached read set and insert the current one.
+    """Replace a stale guessed card URI and keep derived archive URIs.
 
-    An armed fence can keep a guessed ``{id}-continuity.md`` URI for its
-    lifetime. Serving re-resolves that entry from ``house_pools``.
+    A cached ``{id}-continuity.md`` that is no longer the resolved card, and
+    is not cited by the tip or listed under ``## Sidecars``, is dropped.
+    The same name stays when the current card lists it (dual-file archive).
+    A ladder URI whose file is gone is dropped either way.
     """
     ladder = {
         f"cortex://{rel}" for rel in _continuity_card_candidate_relpaths(thread_id)
     }
     resolved = card.uri if card.status == "found" else None
+    derived = _otherwise_derived_uris(tip_body, card)
+
+    def _keep(item: Any) -> bool:
+        if item not in ladder:
+            return True
+        if not _card_uri_on_disk(item):
+            return False
+        if resolved and item == resolved:
+            return True
+        return item in derived
 
     def _rewrite(values: list[Any]) -> list[Any]:
-        kept = [item for item in values if item not in ladder]
-        if resolved and resolved not in kept:
-            kept.append(resolved)
-        return kept
+        kept = [item for item in values if _keep(item)]
+        extras = {uri for uri in derived if uri in ladder and _card_uri_on_disk(uri)}
+        if resolved and _card_uri_on_disk(resolved):
+            extras.add(resolved)
+        for uri in extras:
+            if uri not in kept:
+                kept.append(uri)
+        return sorted(kept)
 
     readable = read_set.get("readable")
     if not isinstance(readable, dict):
@@ -412,7 +447,12 @@ def _arm_resume_fence_in_txn(
             opened_at = folded.last_event_at or opened_at
             cached = read_set_from_journal(fence_id)
             if cached is not None:
-                read_set = _reresolve_card_uris(cached, thread_id=thread_id, card=card)
+                read_set = _reresolve_card_uris(
+                    cached,
+                    thread_id=thread_id,
+                    card=card,
+                    tip_body=str(tip["body"]),
+                )
 
     card_text = card.text if card.status == "found" else None
     open_line_match = _OPEN_LINE_RE.search(card_text or "")

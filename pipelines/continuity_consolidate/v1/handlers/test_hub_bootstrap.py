@@ -62,3 +62,16 @@ def test_default_hub_description_uses_summary():
     )
     assert "Mission: Monitor lane." in text
     assert "agent-bus:10327" in text
+
+
+def test_hub_card_uri_continuity_card_only_house(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-continuity-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("# continuity card\n", encoding="utf-8")
+    assert (
+        cortex.hub_card_uri("10479")
+        == "cortex://notes/system/threads/10479-continuity-card.md"
+    )
