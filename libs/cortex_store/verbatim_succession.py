@@ -266,12 +266,16 @@ def build_seal_envelope_meta(
     tools: str = "marker",
     sealed_at: str,
     source_sha256: str | None = None,
+    surface: str | None = None,
 ) -> ContinuityMessagesEnvelope:
     """Stamp seal-time meta fields on an envelope before writing JSON."""
     sha = seal_messages_sha256(envelope.messages)
+    effective_surface = surface if surface is not None else envelope.meta.surface
+    # Only grok keeps its surface; cursor/claude_ai/mixed/empty stay cursor (legacy).
+    stamped_surface = "grok" if effective_surface == "grok" else "cursor"
     meta = envelope.meta.model_copy(
         update={
-            "surface": "cursor",
+            "surface": stamped_surface,
             "session_id": session_id,
             "tools": tools,
             "sealed_at": sealed_at,
