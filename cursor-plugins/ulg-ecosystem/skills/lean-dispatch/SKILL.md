@@ -1,7 +1,7 @@
 ---
 name: lean-dispatch
 description: >-
-  Lean-context outsourcing for any seat, Cursor agent or Grok Bot, that dispatches work (friction, todo,
+  Lean-context dispatch balance for any seat, Cursor agent or Grok Bot, that dispatches work (friction, todo,
   or greenfield): diagnosis+land stay on the parent; choose the lowest
   sufficient duty wire; packet in / envelope out; red closeout one tier up.
   Activate when authoring or citing a dispatch ladder, caste/Huxley table, or
@@ -59,16 +59,20 @@ line; the ladder still names the default reviewer duty.
 
 ## Grok Bot seats
 
-Lean context binds Grok Bot seats exactly as it binds Cursor agents (Kaywan
-2026-10-08 09:21 PT and 23:02 PT; 2026-10-09 09:22 PT). A bot keeps its OWN
-context lean, and its weekly Grok Bot usage is capped, so a leg leaves the bot
-by default: `team_dispatch` seat=`cursor-sdk` lane=B with `cursor/composer-2.5`
-for well-specified runs and lands, `cursor/grok-4.7` for judgment and reviews,
-or CDP per § Duty → wire. Doing the leg inline, or handing it to a bot subagent
-or peer bot, is not lean: use a bot child only when the leg needs a tool only a
-bot has (browser/desktop, SendToAgent/CreateAgent wake path, connected apps, a
-user's registered machine). The do-it-yourself bar above still holds: a few
-edits with files already in view stay on the seat.
+Lean context binds Grok Bot seats as it binds Cursor agents (Kaywan
+2026-10-08 09:21 PT and 23:02 PT; 2026-10-09 09:22 PT), as a balance of
+workload across Maestro (claude.ai), the Grok Bot seat, cursor-sdk and CDP,
+not a rule to outsource everything (Kaywan 2026-10-09 10:00 PT). A bot keeps
+its OWN context lean and leans toward `team_dispatch` seat=`cursor-sdk`
+lane=B for sizable legs (a large read sweep, a multi-file change, a long run
+or land): `cursor/composer-2.5` for well-specified runs and lands,
+`cursor/grok-4.7` for judgment and reviews, or CDP per § Duty → wire. The
+seat still does work that fits it: judgment, short edits with files in view,
+coordination, and legs that need a tool only a bot has (browser/desktop,
+SendToAgent/CreateAgent wake path, connected apps, a user's registered
+machine); hand a leg to a bot subagent or peer bot only for such a tool.
+Weekly Grok Bot usage is capped; that is a reason to spread load, not a ban
+on bot work.
 
 ## Duty → wire
 
