@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import zipfile
@@ -11,8 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from claude_bundles.container_skills_dump import (
+    PlaywrightTimeoutError as DumpTimeout,
+)
+from claude_bundles.container_skills_dump import (
     _click_chat_zip_card,
     _fresh_chat,
+    _ZipHarvest,
     download_skills_zip,
 )
 from claude_bundles.liveness_wait import (
@@ -166,7 +171,8 @@ async def test_download_path_uses_liveness_loop(tmp_path: Path) -> None:
 
     async def fake_wait(**kwargs):
         seen["phase"] = kwargs["phase"]
-        with zipfile.ZipFile(out, "w") as zf:
+        partial = out.with_name(out.name + ".partial")
+        with zipfile.ZipFile(partial, "w") as zf:
             zf.writestr("skills/user/fs/SKILL.md", b"# fs\n")
 
     with patch(
@@ -320,3 +326,117 @@ def test_wrapper_heartbeat_is_not_a_failure() -> None:
     assert "PHASE nap heartbeat" in proc.stdout
     assert "PHASE nap done" in proc.stdout
     assert "RC=0" in proc.stdout
+
+
+@pytest.mark.asyncio
+async def test_stale_zip_is_not_a_finished_download(tmp_path: Path) -> None:
+    """A previous mirror zip at the destination is not this harvest."""
+    out = tmp_path / "claude-skills.zip"
+    with zipfile.ZipFile(out, "w") as zf:
+        zf.writestr("old.md", b"old")
+    harvest = _ZipHarvest(AsyncMock(), out)
+    assert await harvest.complete() is False
+
+    async def hang(*_args, **_kwargs):
+        await asyncio.Event().wait()
+
+    with (
+        patch(
+            "claude_bundles.container_skills_dump._click_chat_zip_card",
+            new=hang,
+        ),
+        patch(
+            "claude_bundles.container_skills_dump._save_cowork_zip",
+            new=hang,
+        ),
+        pytest.raises(asyncio.TimeoutError),
+    ):
+        await asyncio.wait_for(download_skills_zip(AsyncMock(), out), timeout=0.6)
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("old.md") == b"old"
+
+
+@pytest.mark.asyncio
+async def test_click_timeout_falls_through_to_cowork(tmp_path: Path) -> None:
+    """A quiet chat click ends its slice and Cowork can still return the zip."""
+    out = tmp_path / "skills.zip"
+    seen: dict[str, int] = {}
+
+    async def click(_page, _out, *, timeout_ms: int = 0):
+        seen["click"] = timeout_ms
+        raise DumpTimeout("attempt slice")
+
+    async def save(_page, dest: Path, *, timeout_ms: int = 0):
+        seen["save"] = timeout_ms
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(dest, "w") as zf:
+            zf.writestr("skills/user/x/SKILL.md", b"x")
+        return dest
+
+    with (
+        patch(
+            "claude_bundles.container_skills_dump._click_chat_zip_card",
+            new=click,
+        ),
+        patch(
+            "claude_bundles.container_skills_dump._save_cowork_zip",
+            new=save,
+        ),
+    ):
+        result = await download_skills_zip(AsyncMock(), out)
+    assert result == out
+    assert seen["click"] > 0
+    assert seen["save"] > 0
+    assert zipfile.is_zipfile(out)
+
+
+def test_remote_py_forwards_nested_flag() -> None:
+    """CLAUDE_SYNC_NESTED is inside the remote command, not only the local shell."""
+    script = _REPO / "scripts" / "cortex" / "claude-ai-sync-jupiter"
+    text = script.read_text(encoding="utf-8")
+    start = text.index("remote_py() {")
+    end = text.index("# Line-buffered")
+    driver = (
+        "_cdp_display() { echo :1; }\n"
+        "_cdp_xauthority() { echo /tmp/xa; }\n"
+        "ssh() { printf '%s\\n' \"$2\"; }\n"
+        "SSH=box\nREMOTE_REPO=/repo\nPY=/usr/bin/python\nCDP_PORT=9\n"
+        "CLAUDE_SYNC_NESTED=1\n"
+        + text[start:end]
+        + "\nremote_py scripts/cortex/dump_claude_container_skills.py\n"
+    )
+    import subprocess
+
+    proc = subprocess.run(
+        ["bash", "-c", driver],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "CLAUDE_SYNC_NESTED=1" in proc.stdout
+
+
+def test_dump_cli_early_failure_emits_terminal_line(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Bad flags and a missing prompt file still print MIRROR_ERROR."""
+    script = _REPO / "scripts" / "cortex" / "dump_claude_container_skills.py"
+    spec = importlib.util.spec_from_file_location("dump_cli_early", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(sys, "argv", ["dump_claude_container_skills.py", "--nope"])
+    assert module.main() == 2
+    assert "MIRROR_ERROR" in capsys.readouterr().out
+    missing = tmp_path / "missing.md"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dump_claude_container_skills.py", "--prompt-file", str(missing)],
+    )
+    assert module.main() == 1
+    missing_out = capsys.readouterr().out
+    assert "MIRROR_ERROR" in missing_out
+    assert "FileNotFoundError" in missing_out

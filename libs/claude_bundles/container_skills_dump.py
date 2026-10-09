@@ -32,6 +32,8 @@ from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _COMPOSER = '[data-testid="chat-input"]'
 _PROBE_S = 2.0
+# Bounds one click or Cowork attempt so the other path can run. Not a failure bound.
+_ATTEMPT_MS = 15_000
 _LIFE_JS = """() => {
   const ready = document.readyState || "";
   const dom = document.documentElement ? document.documentElement.outerHTML.length : 0;
@@ -249,7 +251,10 @@ class _ZipHarvest:
 
     A running attempt is cancelled when the wait stalls. Button-not-found is
     not an error event: the loop keeps watching for new buttons, a growing DOM,
-    or a growing zip. Any other exception fails immediately as an error.
+    or a growing zip. Each attempt has a short slice so a quiet click falls
+    through to Cowork Output. Completion is the attempt's returned zip, never
+    a file that was already at the destination. Any other exception fails
+    immediately as an error.
     """
 
     def __init__(self, page: Page, out: Path) -> None:
@@ -301,13 +306,15 @@ class _ZipHarvest:
 
     async def _once(self) -> Path | None:
         try:
-            return await _click_chat_zip_card(self.page, self.out, timeout_ms=0)
+            return await _click_chat_zip_card(
+                self.page, self.out, timeout_ms=_ATTEMPT_MS
+            )
         except RuntimeError as exc:
             if "not found" not in str(exc):
                 raise
         except PlaywrightTimeoutError:
-            return None
-        return await _save_cowork_zip(self.page, self.out, timeout_ms=0)
+            pass
+        return await _save_cowork_zip(self.page, self.out, timeout_ms=_ATTEMPT_MS)
 
     async def signature(self) -> tuple[int, int, int, int, int, int]:
         self._kick()
@@ -329,8 +336,16 @@ class _ZipHarvest:
         return (*page_sig, self.max_buttons, self.max_file)
 
     async def complete(self) -> bool:
+        task = self.task
+        if task is None or not task.done() or task.cancelled():
+            return False
+        if task.exception() is not None:
+            return False
+        result = task.result()
+        if not isinstance(result, Path):
+            return False
         try:
-            return self.out.is_file() and zipfile.is_zipfile(self.out)
+            return result.is_file() and zipfile.is_zipfile(result)
         except (OSError, zipfile.BadZipFile):
             return False
 
@@ -357,7 +372,9 @@ async def download_skills_zip(page: Page, out: Path) -> Path:
     inspect window. No progress across one full window stalls. An explicit
     download exception fails immediately.
     """
-    harvest = _ZipHarvest(page, out)
+    partial = out.with_name(out.name + ".partial")
+    partial.unlink(missing_ok=True)
+    harvest = _ZipHarvest(page, partial)
     try:
         await liveness_wait(
             progress=harvest.signature,
@@ -365,9 +382,12 @@ async def download_skills_zip(page: Page, out: Path) -> Path:
             error=harvest.error_check,
             phase="download",
         )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(partial, out)
+        return out
     finally:
         await harvest.cancel()
-    return out
+        partial.unlink(missing_ok=True)
 
 
 async def dump_container_skills(

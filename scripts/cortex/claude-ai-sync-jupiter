@@ -287,7 +287,7 @@ remote_py() {
     qargs+=("$(printf '%q' "$a")")
   done
   # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs PYTHONUNBUFFERED=1 BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} CDP_DISPLAY=${disp} DISPLAY=${disp} XAUTHORITY=${xauth} ${PY} ${script} ${qargs[*]}"
+  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs PYTHONUNBUFFERED=1 CLAUDE_SYNC_NESTED=${CLAUDE_SYNC_NESTED:-} BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} CDP_DISPLAY=${disp} DISPLAY=${disp} XAUTHORITY=${xauth} ${PY} ${script} ${qargs[*]}"
 }
 
 # Line-buffered even when stdout is a pipe (caller tails the log).
@@ -461,8 +461,17 @@ case "$cmd" in
     ;;
   dump-skills)
     # Cheap ordinary /chat/ code-exec zip of /mnt/skills. CSE submit refused.
-    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
-    remote_py scripts/cortex/dump_claude_container_skills.py "$@"
+    rc=0
+    phase_exec ensure-chrome ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}" || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+      emit "MIRROR_ERROR ensure-chrome rc=${rc}"
+      exit "${rc}"
+    fi
+    remote_py scripts/cortex/dump_claude_container_skills.py "$@" || rc=$?
+    if [[ "${rc}" -eq 255 ]]; then
+      emit "MIRROR_ERROR dump rc=255"
+    fi
+    exit "${rc}"
     ;;
   mirror|recon)
     # Dump /mnt/skills then apply catalog 1:1 (uninstall extras, upload missing,
@@ -489,13 +498,22 @@ case "$cmd" in
           *) dump_args+=("$a") ;;
         esac
       done
+      dump_log="$(mktemp)"
+      set +e
       CLAUDE_SYNC_NESTED=1 phase_exec dump remote_py \
         scripts/cortex/dump_claude_container_skills.py --out "${dump_out}" \
-        "${dump_args[@]+"${dump_args[@]}"}" || rc=$?
+        "${dump_args[@]+"${dump_args[@]}"}" 2>&1 | tee "${dump_log}"
+      rc=${PIPESTATUS[0]}
+      set -e
       if [[ "${rc}" -ne 0 ]]; then
-        # Dump already printed STALLED or MIRROR_ERROR. Do not add a second one.
+        # An ssh failure never reaches the dump script, so it prints no line.
+        if ! grep -Eq '^(MIRROR_ERROR|STALLED)( |$)' "${dump_log}"; then
+          emit "MIRROR_ERROR dump rc=${rc}"
+        fi
+        rm -f "${dump_log}"
         return "${rc}"
       fi
+      rm -f "${dump_log}"
       phase_exec reconcile remote_py scripts/cortex/reconcile_claude_user_skills.py \
         --zip "${dump_out}" "${mirror_apply[@]}" || rc=$?
       if [[ "${rc}" -ne 0 ]]; then

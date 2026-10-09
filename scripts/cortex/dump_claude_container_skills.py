@@ -88,12 +88,12 @@ def main() -> int:
     ``STALLED`` and ``MIRROR_ERROR`` still print here: those end the wait.
     Reply wait stays on ``wait_assistant_reply`` (idle budget, friction 24666).
     """
-    args = parse_args()
-    prompt = DUMP_PROMPT
-    if args.prompt_file:
-        prompt = args.prompt_file.read_text(encoding="utf-8")
-    nested = _nested()
     try:
+        args = parse_args()
+        prompt = DUMP_PROMPT
+        if args.prompt_file:
+            prompt = args.prompt_file.read_text(encoding="utf-8")
+        nested = _nested()
         _emit("PHASE dump start")
         out = asyncio.run(
             dump_container_skills(
@@ -113,6 +113,10 @@ def main() -> int:
             f"public={len(inv['public'])} examples={len(inv['examples'])} "
             f"user={len(inv['user'])}"
         )
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 2
+        _emit(f"MIRROR_ERROR argparse rc={code}")
+        return code if isinstance(code, int) else 2
     except LivenessStalledError as exc:
         _emit(f"STALLED {exc.phase}")
         return 3
