@@ -27,7 +27,7 @@ def _sync_ctx(**methods: MagicMock) -> MagicMock:
     return client
 
 
-def test_pipeline_list_category_uses_path_and_forwards_surface() -> None:
+def test_pipeline_list_category_uses_query_relay_and_forwards_surface() -> None:
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = {
@@ -39,8 +39,9 @@ def test_pipeline_list_category_uses_path_and_forwards_surface() -> None:
             out = _pipeline_list("jobs")
     assert out["members"][0]["name"] == "install-ecosystem-plugin"
     client.get.assert_called_once_with(
-        "/api/v1/capabilities/jobs",
+        "/api/v1/capabilities",
         headers={"X-ULG-Surface": "code"},
+        params={"category": "jobs"},
     )
 
 

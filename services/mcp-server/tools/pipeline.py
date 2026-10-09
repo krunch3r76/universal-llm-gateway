@@ -593,11 +593,12 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
 
 
 def _pipeline_list(category: str | None = None) -> dict[str, Any]:
-    """List capabilities; category filters use the category resource path."""
-    path = f"/api/v1/capabilities/{category}" if category else "/api/v1/capabilities"
+    """List capabilities; category filters use Stargate's query relay."""
+    path = "/api/v1/capabilities"
+    params = {"category": category} if category else None
     try:
         with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
-            resp = client.get(path, headers=_stargate_headers())
+            resp = client.get(path, headers=_stargate_headers(), params=params)
         if resp.status_code >= 400:
             try:
                 return resp.json()

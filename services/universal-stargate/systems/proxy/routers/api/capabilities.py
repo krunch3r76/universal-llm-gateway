@@ -370,6 +370,13 @@ async def _satellite_category_list(
 ) -> Response:
     """Relay a category index and attach capability hrefs for list members."""
     upstream = await _relay(request, category, "")
+    if upstream.status_code == 403:
+        try:
+            body = json.loads(upstream.body) if upstream.body else None
+        except Exception:
+            body = None
+        if isinstance(body, dict) and body.get("code") == "surface_undeclared":
+            return JSONResponse({"members": []}, status_code=200)
     if upstream.status_code >= 400:
         return upstream
     try:
@@ -507,6 +514,8 @@ async def list_capabilities(
     category: str | None = Query(default=None),
 ) -> JSONResponse:
     """Local member lookup when id is set; satellite category query relays."""
+    if id is not None and category is not None:
+        return _local_list(_proxy(request), id, category)
     if id is not None:
         return _local_list(_proxy(request), id, None)
     if category is not None:
@@ -562,9 +571,7 @@ async def capability_first(
     proxy = _proxy(request)
     if _local_ready(proxy):
         tree = build_tree(proxy)
-        if first in proxy.pipeline_registry._category_vocabulary and tree.by_category(
-            first
-        ):
+        if first in proxy.pipeline_registry._category_vocabulary:
             return _local_list(proxy, None, first)
         member = tree.resolve(first)
         if member is not None:

@@ -463,7 +463,10 @@ def test_query_category_jobs_without_surface_returns_empty_list(
     def responder(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/jobs"
         assert request.headers.get("x-ulg-surface") is None
-        return httpx.Response(200, json={"members": []})
+        return httpx.Response(
+            403,
+            json={"code": "surface_undeclared", "message": "X-ULG-Surface is required"},
+        )
 
     client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
     listed = client.get("/api/v1/capabilities", params={"category": "jobs"})
