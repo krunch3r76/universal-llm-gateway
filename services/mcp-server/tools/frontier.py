@@ -292,7 +292,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     """Register the team_dispatch MCP tool."""
 
     async def team_dispatch(
-        op: Literal["generate", "to_thread", "handoff", "steer"],
+        op: Literal[
+            "generate", "to_thread", "handoff", "steer", "claim", "claim_release", "occupancy"
+        ],
         role: str | None = None,
         seat: str | None = None,
         dispatch_thread_id: str = "",
@@ -520,14 +522,41 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             int | None,
             Field(
                 description=(
-                    "Optional spool TTL seconds when steer='inject' (default 300)."
+                    "When steer='inject', optional spool TTL seconds (default 300). "
+                    "When op='claim', house-claim TTL seconds (default 7200, "
+                    "min 60, max 86400); renewed on each house poll."
+                ),
+            ),
+        ] = None,
+        claim_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "House claim id. Required when op='claim_release'. "
+                    "On op='generate', pass it inside generation_options.claim_id "
+                    "so the successor admit is exempt from its own claim."
+                ),
+            ),
+        ] = None,
+        outcome: Annotated[
+            Literal["completed", "failed", "withdrawn"] | None,
+            Field(
+                description=(
+                    "Release outcome when op='claim_release': completed, failed, "
+                    "or withdrawn (withdrawn cancels the claim row)."
                 ),
             ),
         ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch to Stargate. Returns `{execution_id, pipeline, started_at, status}`. Poll `agent_bus(tool="wait")` via `poll_hint`. Role-less one-shots: `pipeline(op="async", pipeline_id="chat-dispatch")`.
 
-        **Ops:** `generate` | `to_thread` | `handoff` | `steer`.
+        **Ops:** `generate` | `to_thread` | `handoff` | `steer` | `claim` | `claim_release` | `occupancy`.
+
+        **claim:** `work_key` + `thread`. Holder is `caller_agent`. 409 `WORK_KEY_HELD`. 422 `INVALID_WORK_KEY` or `INVALID_TTL`.
+
+        **claim_release:** `claim_id` + `outcome`∈{completed,failed,withdrawn}. 404 `CLAIM_NOT_FOUND`. 409 `CLAIM_NOT_HELD`. 422 bad outcome.
+
+        **occupancy:** `work_key`. 422 `INVALID_WORK_KEY`. Returns occupancy, not progress.
 
         **Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role). MCP `contract` forwards as Stargate body `job` (generate/to_thread/handoff); `purpose` forwards as body `purpose` on generate only.
 
@@ -617,6 +646,66 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 endpoint="/api/v1/team/dispatch",
                 body=steer_body,
                 record_prefix="mcp.team.steer",
+            )
+
+        if op in ("claim", "claim_release", "occupancy"):
+            if op == "claim" and (not work_key or not thread):
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "work_key and thread are required when op='claim'",
+                    },
+                    "field": "work_key" if not work_key else "thread",
+                }
+            if op == "claim_release" and not claim_id:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "claim_id is required when op='claim_release'",
+                    },
+                    "field": "claim_id",
+                }
+            if op == "claim_release" and outcome not in (
+                "completed",
+                "failed",
+                "withdrawn",
+            ):
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "outcome must be completed, failed, or withdrawn "
+                            "when op='claim_release'"
+                        ),
+                    },
+                    "field": "outcome",
+                }
+            if op == "occupancy" and not work_key:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "work_key is required when op='occupancy'",
+                    },
+                    "field": "work_key",
+                }
+            claim_body: dict[str, Any] = {"op": op}
+            if work_key is not None:
+                claim_body["work_key"] = work_key
+            if thread is not None:
+                claim_body["thread"] = thread
+            if claim_id is not None:
+                claim_body["claim_id"] = claim_id
+            if outcome is not None:
+                claim_body["outcome"] = outcome
+            if ttl_s is not None and op == "claim":
+                claim_body["ttl_s"] = ttl_s
+            if caller_agent is not None:
+                claim_body["caller_agent"] = caller_agent
+            record("mcp.team.claim.called", op=op)
+            return await _relay(
+                endpoint="/api/v1/team/dispatch",
+                body=claim_body,
+                record_prefix="mcp.team.claim",
             )
 
         if op == "handoff":
