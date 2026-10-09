@@ -124,8 +124,6 @@ async def run_card(
     if mode == "light":
         cell = "none"
     else:
-        snap = str(envelope_step.get("snapshot_uri") or "")
-        snap_sha = str(envelope_step.get("sha256") or "")
         msg = str(envelope_step.get("messages_sha256") or "")
         prov = str(envelope_step.get("provenance") or source.get("provenance") or "")
         prod = str(envelope_step.get("producer") or source.get("producer") or "")
@@ -139,17 +137,17 @@ async def run_card(
         session_id = str((seal or {}).get("session_id") or "")
         attribution = str(options.get("bus_identity") or "")
         suppressed = str((seal or {}).get("event_suppressed_reason") or "")
-        authority = ""
+        seal_cite = ""
         if session_id:
             from cortex_store.verbatim_succession import transcript_messages_path
 
             seal_path = transcript_messages_path(
                 f"notes/system/transcripts/{session_id}.md"
             )
-            authority = f"transcript:{session_id} · {seal_path} · "
+            seal_cite = f"{seal_path} · "
         suppressed_tok = f" · event_suppressed:{suppressed}" if suppressed else ""
         cell = (
-            f"{authority}staging:{snap}@{snap_sha} · {msg} · provenance:{prov} · "
+            f"{seal_cite}{msg} · provenance:{prov} · "
             f"producer:{prod} · capture:{cap_tok} · attribution:{attribution}"
             f"{suppressed_tok}"
         )
@@ -161,7 +159,7 @@ async def run_card(
     written = await fs.write(uri, data, expected_sha256=expected)
     if not written.get("ok"):
         return refuse("card.conflict", "409 card write")
-    return {
+    result = {
         "refused": None,
         "replayed": False,
         "uri": uri,
@@ -170,6 +168,10 @@ async def run_card(
         "row": row,
         "warnings": warnings,
     }
+    if mode != "light":
+        result["snapshot_uri"] = str(envelope_step.get("snapshot_uri") or "")
+        result["snapshot_sha256"] = str(envelope_step.get("sha256") or "")
+    return result
 
 
 class GrokbotCheckpointCardHandler(BaseHandler):

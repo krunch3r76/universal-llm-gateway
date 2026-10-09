@@ -20,10 +20,11 @@ async def test_read_only_checks(fs) -> None:
     ).encode()
     fs.files["notes/card.md"] = card
     fs.files["notes/system/transcripts/grok/h-abcdefghi.raw.messages.json"] = snap
+    snap_sha = file_sha256(snap)
     body = (
         "Window: transcript_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890 · "
         "turns@cp=1 · coverage=full\n"
-        "Harvest: transcript:s · messages_sha256:abc · codec:messages-v1 · "
+        f"Harvest: transcript:s · messages_sha256:{snap_sha} · codec:messages-v1 · "
         "surface:cursor · provenance:raw · producer:cursor-jsonl-extractor\n"
     )
 
@@ -76,10 +77,11 @@ async def test_picks_newest_checkpoint_regardless_of_order(fs) -> None:
     ).encode()
     fs.files["notes/card.md"] = card
     fs.files["notes/system/transcripts/grok/h-abcdefghi.raw.messages.json"] = snap
+    snap_sha = file_sha256(snap)
     newer_body = (
         "Window: transcript_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890 · "
         "turns@cp=1 · coverage=full\n"
-        "Harvest: transcript:s · messages_sha256:abc · codec:messages-v1 · "
+        f"Harvest: transcript:s · messages_sha256:{snap_sha} · codec:messages-v1 · "
         "surface:cursor · provenance:raw · producer:cursor-jsonl-extractor\n"
     )
     older_body = (
@@ -363,7 +365,12 @@ async def test_selects_house_cp_marker_not_newest(fs) -> None:
     async def get(path, params=None):
         return {
             "turns": [
-                {"subject": "CHECKPOINT", "body": ours, "turn_number": 4, "from": "bot"},
+                {
+                    "subject": "CHECKPOINT",
+                    "body": ours,
+                    "turn_number": 4,
+                    "from": "bot",
+                },
                 {
                     "subject": "CHECKPOINT",
                     "body": newer,
@@ -402,7 +409,10 @@ async def test_window_transcript_and_turns_match_seal(fs) -> None:
     doc = _seal_doc(
         transcript_id=tid,
         provenance="raw",
-        messages=[{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}],
+        messages=[
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+        ],
     )
     fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
     card = b"card"
@@ -447,11 +457,19 @@ async def test_window_transcript_and_turns_match_seal(fs) -> None:
     )
     assert (await run(wrong_id))["checks"]["window_transcript"] is False
     wrong_turns = _cp_body(
-        sha=digest, provenance="raw", transcript_id=tid, turns=9, marker="house-cp:hm1:1"
+        sha=digest,
+        provenance="raw",
+        transcript_id=tid,
+        turns=9,
+        marker="house-cp:hm1:1",
     )
     assert (await run(wrong_turns))["checks"]["window_turns"] is False
     ok = _cp_body(
-        sha=digest, provenance="raw", transcript_id=tid, turns=2, marker="house-cp:hm1:1"
+        sha=digest,
+        provenance="raw",
+        transcript_id=tid,
+        turns=2,
+        marker="house-cp:hm1:1",
     )
     passed = await run(ok)
     assert passed["checks"]["window_transcript"] is True

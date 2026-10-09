@@ -48,7 +48,12 @@ async def test_append_mismatch_and_replay(fs) -> None:
     assert stale["refused"]["code"] == "card.sha_mismatch"
     assert fs.writes == []
     out = await run_card(
-        options, {}, env, fs, execution_id="e1", seal={"session_id": "s", "refused": None}
+        options,
+        {},
+        env,
+        fs,
+        execution_id="e1",
+        seal={"session_id": "s", "refused": None},
     )
     assert out["refused"] is None
     body = (await fs.read("notes/card.md")).decode()

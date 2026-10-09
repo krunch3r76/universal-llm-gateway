@@ -371,6 +371,13 @@ def test_resume_route_accepts_grok_surface_and_rejects_unknown(
     monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
     monkeypatch.setenv("AGENT_BUS_EVENTS_ENABLED", "false")
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    import cortex_store.db as cortex_db
+    from cortex_store._test_db_bootstrap import materialize_head_schema_template
+
+    cortex_path = tmp_path / "cortex.db"
+    materialize_head_schema_template(cortex_path)
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", cortex_path)
+    cortex_db.run_migrations(cortex_db.cortex_conn())
     init_db()
     create_thread(thread_id="16101", slug="ck3", tags=["role:root"])
     create_turn(

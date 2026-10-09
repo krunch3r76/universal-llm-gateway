@@ -22,6 +22,36 @@ def _harvest_provenance(body: str) -> str | None:
     return match.group(1) if match else None
 
 
+_WINDOW_TID = re.compile(r"transcript_id=([0-9a-fA-F-]{8,})")
+_WINDOW_TURNS = re.compile(r"turns@cp=(\d+)")
+
+
+def _seal_rel(session_id: str) -> str:
+    return f"notes/system/seals/{session_id}.messages.json"
+
+
+def _select_checkpoint(
+    turns: list,
+    *,
+    house: str,
+    n: object,
+    warnings: list[str],
+) -> tuple[str, str | None]:
+    checkpoints = [t for t in turns if t.get("subject") == "CHECKPOINT"]
+    if house and n is not None and str(n) != "":
+        marker = f"house-cp:{house}:{n}"
+        matched = [t for t in checkpoints if marker in str(t.get("body") or "")]
+        if not matched:
+            return "", "verify_resume.house_cp_missing"
+        if len(matched) > 1:
+            warnings.append("verify_resume.house_cp_ambiguous")
+        checkpoints = matched
+    if not checkpoints:
+        return "", None
+    best = max(checkpoints, key=lambda t: int(t.get("turn_number") or 0))
+    return str(best.get("body") or ""), None
+
+
 async def run_verify_resume(
     options: dict[str, Any],
     fs: Any,
@@ -29,7 +59,8 @@ async def run_verify_resume(
     get: Any = None,
 ) -> dict[str, Any]:
     get = get or bus_get
-    checks: dict[str, bool] = {}
+    checks: dict[str, Any] = {}
+    warnings: list[str] = []
     card_uri = str(options.get("card_uri") or "")
     packet_sha = str(options.get("expected_card_sha256") or "")
     card_raw = await fs.read(card_uri)
@@ -47,16 +78,24 @@ async def run_verify_resume(
     snap_live = file_sha256(snap_raw) if snap_raw else ""
     packet_snap = str(options.get("snapshot_sha256") or "")
     checks["snapshot_sha"] = snap_live == packet_snap
-    messages_sha = ""
+    session_id = str(options.get("session_id") or "")
+    seal_raw = await fs.read(_seal_rel(session_id)) if session_id else None
+    if seal_raw is not None:
+        doc_raw = seal_raw
+        checks["authority"] = "seal"
+    else:
+        doc_raw = snap_raw
+        checks["authority"] = "staging_fallback"
     provenance = ""
-    if snap_raw:
+    window_tid = ""
+    window_count: int | None = None
+    if doc_raw:
         try:
-            parsed = json.loads(snap_raw.decode("utf-8"))
+            parsed = json.loads(doc_raw.decode("utf-8"))
         except json.JSONDecodeError:
             parsed = {}
         meta = parsed.get("meta") if isinstance(parsed, dict) else {}
         if isinstance(meta, dict):
-            messages_sha = str(meta.get("messages_sha256") or "")
             provenance = str(meta.get("provenance") or "")
             capture = meta.get("capture")
             if isinstance(capture, dict) and str(capture.get("ref") or "").startswith(
@@ -68,6 +107,18 @@ async def run_verify_resume(
                 ) == capture.get("sha256")
             else:
                 checks["capture_sha"] = True
+            if meta.get("transcript_id"):
+                window_tid = str(meta["transcript_id"])
+        if isinstance(parsed, dict):
+            if parsed.get("conversation_uuid"):
+                window_tid = str(parsed["conversation_uuid"])
+            messages = parsed.get("messages")
+            # turns@cp is a count of sealed messages, not a max index:
+            # indexes can be sparse or zero-based, so the array length is the window.
+            if isinstance(messages, list):
+                window_count = len(messages)
+            elif isinstance(meta, dict) and meta.get("message_count") is not None:
+                window_count = int(meta["message_count"])
     lane = str(options.get("verify_lane") or "")
     root = str(options.get("root_thread") or lane)
     cp_listing, _status = await get("/turns", params={"thread": root})
@@ -78,16 +129,15 @@ async def run_verify_resume(
     )
     cp_body = ""
     receipt = False
+    code: str | None = None
     successor = str(options.get("successor") or options.get("bus_identity") or "")
     fact_turn = int(options.get("fact_turn") or 0)
+    house = str(options.get("house") or "")
+    n_opt = options.get("n")
     if isinstance(cp_turns, list):
-        best_cp_turn = -1
-        for turn in cp_turns:
-            if turn.get("subject") == "CHECKPOINT":
-                num = int(turn.get("turn_number") or 0)
-                if num > best_cp_turn:
-                    best_cp_turn = num
-                    cp_body = str(turn.get("body") or "")
+        cp_body, code = _select_checkpoint(
+            cp_turns, house=house, n=n_opt, warnings=warnings
+        )
     if isinstance(receipt_turns, list):
         for turn in receipt_turns:
             num = int(turn.get("turn_number") or 0)
@@ -98,12 +148,35 @@ async def run_verify_resume(
             ):
                 receipt = True
     harvest = _harvest_sha(cp_body)
-    checks["harvest_sha"] = bool(messages_sha) and harvest == messages_sha
-    checks["provenance"] = (
-        bool(provenance) and _harvest_provenance(cp_body) == provenance
-    )
+    doc_sha = file_sha256(doc_raw) if doc_raw else ""
+    checks["authority_sha"] = bool(doc_sha) and harvest == doc_sha
+    checks["harvest_sha"] = checks["authority_sha"]
+    tip_prov = _harvest_provenance(cp_body)
+    if tip_prov is None:
+        checks["provenance"] = True
+        warnings.append("provenance: unknown")
+    else:
+        checks["provenance"] = bool(provenance) and tip_prov == provenance
+    if window_tid:
+        found = _WINDOW_TID.search(cp_body)
+        checks["window_transcript"] = bool(found) and found.group(1) == window_tid
+    if window_count is not None:
+        found_turns = _WINDOW_TURNS.search(cp_body)
+        checks["window_turns"] = (
+            bool(found_turns) and int(found_turns.group(1)) == window_count
+        )
     checks["receipt"] = receipt
-    return {"refused": None, "checks": checks, "writes": 0, "posts": 0}
+    payload: dict[str, Any] = {
+        "refused": None,
+        "checks": checks,
+        "warnings": warnings,
+        "writes": 0,
+        "posts": 0,
+    }
+    if code:
+        payload["code"] = code
+        checks["house_cp"] = False
+    return payload
 
 
 class GrokbotCheckpointVerifyResumeHandler(BaseHandler):
