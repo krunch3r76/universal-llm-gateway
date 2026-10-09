@@ -122,17 +122,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
     try:
-        hooks_path = ensure_git_hooks_installed(cfg.source_repo)
-        app.state.giw_git_hooks_path = str(hooks_path)
-        logger.info(
-            "git hooks installed source_repo=%s hooksPath=%s",
-            cfg.source_repo,
-            hooks_path,
-        )
+        hook_result = ensure_git_hooks_installed(cfg.source_repo)
+        app.state.giw_git_hook_install = hook_result
+        if hook_result.status == "installed":
+            logger.info(
+                "git hooks installed source_repo=%s common_hooks_dir=%s giw_hooks_dir=%s",
+                cfg.source_repo,
+                hook_result.common_hooks_dir,
+                hook_result.giw_hooks_dir,
+            )
+        elif hook_result.status == "skipped_hooks_path":
+            logger.warning(
+                "git hooks install skipped source_repo=%s core.hooksPath=%s",
+                cfg.source_repo,
+                hook_result.detail,
+            )
+        else:
+            logger.warning(
+                "git hooks install refused source_repo=%s detail=%s",
+                cfg.source_repo,
+                hook_result.detail,
+            )
     except (OSError, RuntimeError, FileNotFoundError) as exc:
-        app.state.giw_git_hooks_path = None
+        app.state.giw_git_hook_install = None
         logger.warning(
-            "git hooks install skipped source_repo=%s err=%s",
+            "git hooks install failed source_repo=%s err=%s",
             cfg.source_repo,
             exc,
         )
