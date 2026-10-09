@@ -6,12 +6,15 @@ import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from jobs.registry import (
     BusReplyWatchArgs,
     ClaudeSyncArgs,
     IdeHopArgs,
+    InstallEcosystemPluginArgs,
     _ide_argv,
+    _install_plugin_argv,
     _sync_argv,
     _watch_argv,
 )
@@ -113,3 +116,42 @@ def test_production_flags_match_scripts() -> None:
         check=False,
     )
     assert dry.returncode == 0
+
+
+@pytest.mark.offline
+def test_install_plugin_argv_defaults_dry_run() -> None:
+    argv = _install_plugin_argv(InstallEcosystemPluginArgs())
+    assert argv == ["--dry-run"]
+    assert "--local-only" not in argv
+
+
+@pytest.mark.offline
+def test_install_plugin_dest_local_omits_dry_run() -> None:
+    argv = _install_plugin_argv(InstallEcosystemPluginArgs(dest="local"))
+    assert "--dry-run" not in argv
+    assert argv == []
+
+
+@pytest.mark.offline
+def test_install_plugin_local_only_flag() -> None:
+    dry = _install_plugin_argv(InstallEcosystemPluginArgs(local_only=True))
+    assert dry == ["--dry-run", "--local-only"]
+    live = _install_plugin_argv(InstallEcosystemPluginArgs(dest="local", local_only=True))
+    assert live == ["--local-only"]
+    assert "--dry-run" not in live
+
+
+@pytest.mark.offline
+def test_install_plugin_rejects_unknown_and_bad_dest() -> None:
+    with pytest.raises(ValidationError):
+        InstallEcosystemPluginArgs.model_validate({"home": "/tmp/evil"})
+    with pytest.raises(ValidationError):
+        InstallEcosystemPluginArgs.model_validate({"dest": "remote"})
+
+
+@pytest.mark.offline
+def test_install_plugin_http_rejects(prod: TestClient) -> None:
+    unknown = _post(prod, "install-ecosystem-plugin", {"dest_path": "/tmp/x"})
+    other = _post(prod, "install-ecosystem-plugin", {"dest": "hub"})
+    assert unknown.status_code == 422
+    assert other.status_code == 422
