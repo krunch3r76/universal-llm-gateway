@@ -154,7 +154,7 @@ def test_gap_between_pages_raises() -> None:
         reassemble_pages("\n".join(broken))
 
 
-def test_short_page_raises() -> None:
+def test_short_page_accepted_long_page_raises() -> None:
     """A short page is accepted; a long page and an overlapping short page raise."""
     text = _pages(RECORDS, 4).replace(json.dumps(RECORDS[-1]) + "\n", "", 1)
     _lines_out, info = reassemble_pages(text)
@@ -222,10 +222,11 @@ def test_by_agent_header_matches_own_conversation_and_bare_jsonl() -> None:
     assert a.meta.messages_sha256 == b.meta.messages_sha256 == c.meta.messages_sha256
     assert a.meta.sources[0]["header_agent_id"] == NAME_FIX
     assert a.meta.sources[0]["window"] == {
-        "lo": 0,
-        "hi": len(RECORDS) - 1,
+        "lo": 1,
+        "hi": len(RECORDS),
         "total": len(RECORDS),
     }
+    assert a.meta.sources[0]["positions"] == [0, len(RECORDS) - 1]
 
 
 def test_maestro_parentheses_and_messages_of_header() -> None:
@@ -321,9 +322,7 @@ def test_pages_sha_capture_and_provenance() -> None:
     assert (
         env.meta.sources[0]["pages_sha256"] == hashlib.sha256(text.encode()).hexdigest()
     )
-    assert not hasattr(env.meta, "capture") or getattr(env.meta, "capture", None) in (
-        None,
-    )
+    assert getattr(env.meta, "capture", None) is None
     wire = envelope_wire_dict(env)
     assert "capture" not in wire["meta"]
     path_text = text
@@ -360,7 +359,11 @@ def test_pages_sha_capture_and_provenance() -> None:
         "kind": "extractor",
         "version": "2",
     }
-    assert env.meta.sources[0]["window"]["lo"] == 0
+    assert env.meta.sources[0]["window"]["lo"] == 1
+    assert _full_coverage_window_ok(env.meta.sources[0]["window"])
+    assert not _full_coverage_window_ok(
+        {"lo": 0, "hi": len(RECORDS) - 1, "total": len(RECORDS)}
+    )
     checked = ContinuityMessagesEnvelope.model_validate(wire)
     again = envelope_wire_dict(checked)
     assert again["meta"]["provenance"] == "raw"
@@ -505,7 +508,8 @@ def test_real_l0_page_shape() -> None:
     assert src["truncated_parts"] == 3
     assert src["truncated_parts_kept"] == 0
     assert a.meta.truncated is True
-    assert src["window"] == {"lo": 0, "hi": 5, "total": 6}
+    assert src["window"] == {"lo": 1, "hi": 6, "total": 6}
+    assert _full_coverage_window_ok(src["window"])
     assert a.meta.messages_sha256 == b.meta.messages_sha256
     assert src["header_agent_id"] == L0_AGENT
     plain = extract_grokbot_transcript(
@@ -545,6 +549,171 @@ def test_memory_context_dropped_and_wrapped_hidden_prompt_kept() -> None:
     assert env.messages[2]["content"] == "Go."
     assert env.messages[3]["content"] == "done"
     assert env.messages[4]["content"] == wrapped
+
+
+def _full_coverage_window_ok(window: dict) -> bool:
+    """Mirror pour_contract.py@bcfa09d8 lines 144-145.
+
+    Full coverage requires ``lo == 1`` and ``hi == total``.
+    """
+    return window["lo"] == 1 and window["hi"] == window["total"]
+
+
+def test_unicode_line_separators_stay_inside_json_string() -> None:
+    text = "line with \u2028 and \u0085 inside"
+    raw = json.dumps(_u(text), ensure_ascii=False) + "\n"
+    env = extract_grokbot_transcript(raw, agent_id="x", observed_at="t")
+    assert env.messages[0]["content"] == text
+
+
+def test_contained_page_is_not_a_false_gap() -> None:
+    lines = _lines(RECORDS[:8])
+    text = "\n".join(
+        [
+            "Transcript of this conversation, positions 6\u20137 of 8:",
+            lines[6],
+            lines[7],
+            "Transcript of this conversation, positions 2\u20133 of 8:",
+            lines[2],
+            lines[3],
+            "Transcript of this conversation, positions 0\u20135 of 8:",
+            *lines[0:6],
+            "This is the start of the transcript.",
+        ]
+    )
+    got, info = reassemble_pages(text)
+    assert got == lines
+    assert info["coverage"] == "full"
+
+
+def test_ellipsis_near_edge_is_not_truncated() -> None:
+    near_start = "..." + ("a" * 3997)
+    near_end = ("b" * 3997) + "..."
+    middle = _sized(4000, ellipsis=True)
+    assert len(near_start) == len(near_end) == len(middle) == 4000
+    for sample, expect in ((near_start, 0), (near_end, 0), (middle, 1)):
+        env = extract_grokbot_transcript(
+            "\n".join(_lines([_u(sample)])) + "\n",
+            agent_id="x",
+            observed_at="t",
+        )
+        assert env.meta.sources[0]["truncated_parts"] == expect
+
+
+def test_memory_context_block_keeps_sibling_user_text() -> None:
+    mixed = {
+        "role": "user",
+        "message": {
+            "content": [
+                {"type": "text", "text": "<memory_context>\nsecret"},
+                {"type": "text", "text": "real user text"},
+            ]
+        },
+    }
+    only = _u("<memory_context>only")
+    env = extract_grokbot_transcript(
+        "\n".join(_lines([mixed, only, _a({"type": "text", "text": "ack"})])) + "\n",
+        agent_id="x",
+        observed_at="t",
+    )
+    assert env.meta.sources[0]["memory_context_dropped"] == 2
+    assert env.messages[0]["content"] == "real user text"
+    assert env.messages[1]["content"] == "ack"
+
+
+def test_capture_sha256_must_be_64_lowercase_hex() -> None:
+    text = _pages(RECORDS[:1], 1)
+    with pytest.raises(ValueError, match="64 lowercase hex"):
+        extract_grokbot_transcript(
+            text,
+            agent_id="x",
+            capture_ref="cortex://x",
+            capture_sha256="A" * 64,
+        )
+    with pytest.raises(ValueError, match="64 lowercase hex"):
+        extract_grokbot_transcript(
+            text,
+            agent_id="x",
+            capture_ref="cortex://x",
+            capture_sha256="ab",
+        )
+
+
+def test_multi_file_requires_capture_ref(tmp_path) -> None:
+    first = tmp_path / "a.pages.txt"
+    second = tmp_path / "b.pages.txt"
+    first.write_text(_pages(RECORDS[:2], 2), encoding="utf-8")
+    second.write_text(_pages(RECORDS[:2], 2), encoding="utf-8")
+    with pytest.raises(ValueError, match="capture_ref is required"):
+        extract_grokbot_pages_files([first, second], agent_id="x")
+
+
+def test_kept_hidden_prompt_preserves_whitespace() -> None:
+    raw = "  \n<user_query>\n[GROK_BOT_HIDDEN_PROMPT] land\n</user_query>  \n"
+    env = extract_grokbot_transcript(
+        "\n".join(_lines([_u(raw), _a({"type": "text", "text": "ok"})])) + "\n",
+        agent_id="x",
+        observed_at="t",
+    )
+    assert env.messages[0]["content"] == raw
+
+
+def test_empty_input_raises() -> None:
+    with pytest.raises(TranscriptPageError):
+        reassemble_pages("")
+
+
+def test_pages_disagree_on_total() -> None:
+    body = "\n".join(_lines(RECORDS[:2]))
+    text = (
+        "Transcript of this conversation, positions 0\u20131 of 4:\n"
+        + body
+        + "\nTranscript of this conversation, positions 0\u20131 of 5:\n"
+        + body
+        + "\n"
+    )
+    with pytest.raises(TranscriptPageError, match="disagree on total"):
+        reassemble_pages(text)
+
+
+def test_one_based_page_header_raises() -> None:
+    body = "\n".join(_lines(RECORDS[:2]))
+    text = "Transcript of this conversation, positions 1\u20132 of 2:\n" + body + "\n"
+    with pytest.raises(TranscriptPageError, match="not 0-based"):
+        reassemble_pages(text)
+
+
+def test_overlapping_page_missing_a_line_raises() -> None:
+    lines = _lines(RECORDS[:6])
+    text = (
+        "Transcript of this conversation, positions 0\u20133 of 6:\n"
+        + "\n".join(lines[:4])
+        + "\nTranscript of this conversation, positions 2\u20135 of 6:\n"
+        + "\n".join(lines[2:4])
+        + "\n"
+    )
+    with pytest.raises(TranscriptPageError, match="overlapping short page"):
+        reassemble_pages(text)
+
+
+def test_tool_use_id_with_escaped_newline_pairs() -> None:
+    tid = "toolu_\n01"
+    records = [
+        _a({"type": "tool_use", "id": tid, "name": "", "input": {}}),
+        _tool_result(tid, "fs"),
+        _a({"type": "text", "text": "ok"}),
+    ]
+    env = extract_grokbot_transcript(
+        "\n".join(_lines(records)) + "\n", agent_id="x", observed_at="t"
+    )
+    assert env.meta.sources[0]["tool_pairs_by_id"] == 1
+    assert "fs" in env.messages[1]["content"]
+
+
+def test_stray_line_before_header_raises() -> None:
+    text = "not a header\n" + _pages(RECORDS[:1], 1)
+    with pytest.raises(TranscriptPageError, match="stray non-blank line"):
+        reassemble_pages(text)
 
 
 def test_zero_based_span_without_sentinel_is_tail() -> None:

@@ -37,6 +37,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -58,11 +59,14 @@ HEADER_RE = re.compile(
 TRAILER_RE = re.compile(r"^\s*Older messages remain: call ReadTranscript again\b")
 START_RE = re.compile(r"^\s*This is the start of the transcript\.\s*$")
 # ReadTranscript middle-truncates a part to about TRUNCATION_PART_LEN chars by
-# splicing a bare ``...`` (three ASCII dots, no count or brackets). A part counts
-# as truncated when it contains ``...`` and its decoded length falls in
-# TRUNCATION_LEN_WINDOW. This can miss a truncated part outside the window and
-# can flag an untruncated ~4000-char part that contains ``...``. The bracket
-# regex is kept for older/other renderers.
+# splicing a bare ``...`` (three ASCII dots, no count or brackets). The length
+# window is applied only to the decoded string (``len(text)`` of a text,
+# thinking, tool-result, or tool-input string value). It is not applied to
+# ``len(json.dumps(input))``. A decoded string counts when that decoded length
+# falls in TRUNCATION_LEN_WINDOW and the first ``...`` begins in the middle
+# half (index in ``[len//4, 3*len//4]``). An untruncated ~4000-char string
+# whose ``...`` sits near the start or end does not count. Bracket markers
+# still match on the decoded string and on ``json.dumps`` of tool input.
 TRUNCATION_PART_LEN = 4000
 TRUNCATION_LEN_WINDOW = (3990, 4010)
 TRUNCATION_ELLIPSIS = "..."
@@ -102,14 +106,31 @@ def _header_agent_id(target: str) -> str | None:
     return m.group("uuid") if m else None
 
 
+def _physical_lines(text: str) -> list[str]:
+    """Split on ``\\n`` only and drop a trailing ``\\r``.
+
+    ``str.splitlines()`` also breaks on U+2028 and U+0085, which can appear
+    raw inside a JSON string and must stay on that record's line.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [ln[:-1] if ln.endswith("\r") else ln for ln in lines]
+
+
 def _split_pages(text: str) -> tuple[list[_Page] | None, bool]:
     """Split concatenated ReadTranscript outputs into pages; ``None`` if no header."""
     pages: list[_Page] = []
     current: _Page | None = None
     start_sentinel = False
-    for raw_line in text.splitlines():
+    stray_before_header = False
+    for raw_line in _physical_lines(text):
         m = HEADER_RE.match(raw_line)
         if m:
+            if stray_before_header and not pages:
+                raise TranscriptPageError(
+                    "stray non-blank line before the first page header"
+                )
             target = m.group("target").strip()
             current = _Page(
                 int(m.group(2)),
@@ -126,14 +147,16 @@ def _split_pages(text: str) -> tuple[list[_Page] | None, bool]:
         if TRAILER_RE.match(raw_line) or not raw_line.strip():
             continue
         if current is None:
-            if pages:
-                continue
-            return None, start_sentinel  # bare JSONL, no pages
+            stray_before_header = True
+            continue
         current.lines.append(raw_line.strip())
-    if pages:
-        targets = {p.target for p in pages}
-        if len(targets) != 1:
-            raise TranscriptPageError(f"pages disagree on target: {sorted(targets)}")
+    if not pages:
+        if stray_before_header:
+            return None, start_sentinel
+        return pages, start_sentinel
+    targets = {p.target for p in pages}
+    if len(targets) != 1:
+        raise TranscriptPageError(f"pages disagree on target: {sorted(targets)}")
     return pages, start_sentinel
 
 
@@ -158,7 +181,7 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
     """
     pages, start_sentinel = _split_pages(text)
     if pages is None:
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        lines = [ln.strip() for ln in _physical_lines(text) if ln.strip()]
         return lines, {
             "positions": None,
             "total": None,
@@ -186,9 +209,13 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
                 f"page {page.lo}-{page.hi}: {got} lines, expected {expected}"
             )
         unrendered += expected - got
-    for prev, nxt in zip(ordered, ordered[1:], strict=False):
-        if prev.hi + 1 < nxt.lo:
-            raise TranscriptPageError(f"gap in positions: first missing {prev.hi + 1}")
+    running_hi = ordered[0].hi
+    for prev, nxt in pairwise(ordered):
+        if running_hi + 1 < nxt.lo:
+            raise TranscriptPageError(
+                f"gap in positions: first missing {running_hi + 1}"
+            )
+        running_hi = max(running_hi, nxt.hi)
         if prev.hi >= nxt.lo:
             prev_full = len(prev.lines) == prev.hi - prev.lo + 1
             nxt_full = len(nxt.lines) == nxt.hi - nxt.lo + 1
@@ -196,9 +223,7 @@ def reassemble_pages(text: str) -> tuple[list[str], dict[str, Any]]:
                 raise TranscriptPageError(
                     f"cannot align overlapping short page {prev.lo}-{prev.hi}"
                 )
-    overlaps = any(
-        prev.hi >= nxt.lo for prev, nxt in zip(ordered, ordered[1:], strict=False)
-    )
+    overlaps = any(prev.hi >= nxt.lo for prev, nxt in pairwise(ordered))
     if overlaps:
         by_pos: dict[int, str] = {}
         for page in ordered:
@@ -274,32 +299,49 @@ def _part_strings(block: dict[str, Any]) -> list[str]:
     return found
 
 
-def _string_truncated(text: str) -> bool:
+def _ellipsis_in_middle(text: str) -> bool:
+    """True when decoded ``len(text)`` is in the window and ``...`` is mid-string.
+
+    Measures the decoded string only, never ``json.dumps`` length.
+    """
     lo, hi = TRUNCATION_LEN_WINDOW
-    if TRUNCATION_ELLIPSIS in text and lo <= len(text) <= hi:
-        return True
-    return TRUNCATION_MARKER_RE.search(text) is not None
-
-
-def _part_candidates(block: dict[str, Any]) -> list[str]:
-    found = _part_strings(block)
-    if block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
-        found.append(json.dumps(block["input"], ensure_ascii=False))
-    return found
+    if not (lo <= len(text) <= hi):
+        return False
+    idx = text.find(TRUNCATION_ELLIPSIS)
+    if idx < 0:
+        return False
+    return len(text) // 4 <= idx <= (3 * len(text)) // 4
 
 
 def _truncated_part_count(records: list[dict[str, Any]]) -> int:
     n = 0
     for rec in records:
         for block in _content(rec) or []:
-            if isinstance(block, dict) and any(
-                _string_truncated(s) for s in _part_candidates(block)
+            if not isinstance(block, dict):
+                continue
+            decoded = _part_strings(block)
+            hit = any(
+                _ellipsis_in_middle(s) or TRUNCATION_MARKER_RE.search(s)
+                for s in decoded
+            )
+            if (
+                not hit
+                and block.get("type") == "tool_use"
+                and isinstance(block.get("input"), dict)
             ):
+                dumped = json.dumps(block["input"], ensure_ascii=False)
+                hit = TRUNCATION_MARKER_RE.search(dumped) is not None
+            if hit:
                 n += 1
     return n
 
 
 def _user_text(content: list[Any]) -> str:
+    """Joined user text for injection and memory matching only.
+
+    The result is stripped so a leading indent still matches. Stored message
+    content is the original block text, not this string.
+    """
     return "\n\n".join(
         b.get("text", "")
         for b in content
@@ -378,10 +420,20 @@ def adapt_records(
             stats["tool_result_records_dropped"] += 1
             continue
         if role == "user":
-            user_text = _user_text(blocks)
-            if user_text.lstrip().startswith("<memory_context>"):
+            memory_ids = {
+                id(b)
+                for b in blocks
+                if isinstance(b, dict)
+                and b.get("type") == "text"
+                and isinstance(b.get("text"), str)
+                and b["text"].lstrip().startswith("<memory_context>")
+            }
+            if memory_ids:
                 stats["memory_context_dropped"] += 1
-                continue
+                blocks = [b for b in blocks if id(b) not in memory_ids]
+                if not blocks:
+                    continue
+            user_text = _user_text(blocks)
             if INJECTED_USER_RE.match(user_text):
                 stats["injected_user_dropped"] += 1
                 continue
@@ -417,12 +469,51 @@ def _source_dict(
     }
     if cov["positions"] is not None:
         lo, hi = cov["positions"]
-        source["window"] = {"lo": lo, "hi": hi, "total": cov["total"]}
+        source["window"] = {"lo": lo + 1, "hi": hi + 1, "total": cov["total"]}
         source["header_target"] = cov["header_target"]
         source["start_sentinel"] = cov["start_sentinel"]
         if cov.get("header_agent_id"):
             source["header_agent_id"] = cov["header_agent_id"]
     return source
+
+
+def _kept_user_strings(records: list[dict[str, Any]]) -> list[str]:
+    """Original user text per kept record, with edge whitespace intact.
+
+    The shared walker strips the joined string. Matching uses the stripped
+    form; the string returned here is what we store.
+    """
+    found: list[str] = []
+    for rec in records:
+        if rec.get("role") != "user":
+            continue
+        content = (rec.get("message") or {}).get("content") or []
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text", "")
+            if isinstance(text, str) and text.strip():
+                parts.append(text)
+        if parts:
+            found.append("\n\n".join(parts))
+    return found
+
+
+def _restore_unstripped_user_content(
+    messages: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+) -> None:
+    """Put original user block text back after the walker strips it."""
+    originals = _kept_user_strings(records)
+    index = 0
+    for msg in messages:
+        if msg.get("role") != "user" or index >= len(originals):
+            continue
+        original = originals[index]
+        if msg.get("content") == original.strip():
+            msg["content"] = original
+            index += 1
 
 
 def extract_grokbot_transcript(
@@ -437,6 +528,8 @@ def extract_grokbot_transcript(
     capture_sha256: str | None = None,
 ) -> ContinuityMessagesEnvelope:
     """ReadTranscript pages (any order) or bare JSONL -> raw L1 messages pour."""
+    if capture_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", capture_sha256):
+        raise ValueError("capture_sha256 must be exactly 64 lowercase hex characters")
     raw = text.encode("utf-8")
     pages_sha256 = hashlib.sha256(raw).hexdigest()
     lines, cov = reassemble_pages(text)
@@ -452,6 +545,7 @@ def extract_grokbot_transcript(
     truncated_parts_kept = _truncated_part_count(records)
     turns = _walk_turns(records, tools=tools)
     messages = _turns_to_messages(turns)
+    _restore_unstripped_user_content(messages, records)
     for msg in messages:
         msg["source"] = SOURCE
     reassembled = hashlib.sha256(body).hexdigest()
@@ -514,7 +608,12 @@ def extract_grokbot_pages_files(
     capture_ref: str | None = None,
     **kw: Any,
 ) -> ContinuityMessagesEnvelope:
-    """Read L0 pages files in order and pour them through the transcript adapter."""
+    """Read L0 pages files in order and pour them through the transcript adapter.
+
+    With one file and no ``capture_ref``, the capture ref defaults to that
+    file's local path. With several files, ``capture.sha256`` is the sha256
+    of the ``"\\n"``-joined blob, and ``capture_ref`` is required.
+    """
     blobs: list[dict[str, Any]] = []
     texts: list[str] = []
     for raw_path in paths:
@@ -534,6 +633,10 @@ def extract_grokbot_pages_files(
         ref: str | None = blobs[0]["path"] if capture_ref is None else capture_ref
         cap_sha = blobs[0]["sha256"]
     else:
+        if capture_ref is None:
+            raise ValueError(
+                "capture_ref is required when more than one pages file is given"
+            )
         ref = capture_ref
         cap_sha = joined_sha
     env = extract_grokbot_transcript(
@@ -564,7 +667,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--capture-ref",
         default=None,
-        help="cortex capture ref; defaults to the single local pages-file path",
+        help=(
+            "cortex capture ref. With one file and no --capture-ref, the ref "
+            "defaults to the local pages-file path. With several files, "
+            "capture.sha256 is the sha256 of the newline-joined blob and "
+            "--capture-ref is required"
+        ),
     )
     ap.add_argument("--out", default="-")
     ns = ap.parse_args(argv)
