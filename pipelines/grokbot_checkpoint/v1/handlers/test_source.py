@@ -43,9 +43,7 @@ def _raw_pour() -> dict:
 async def test_sha_mismatch_and_valid(fs) -> None:
     body = json.dumps(_raw_pour()).encode()
     fs.files["notes/pour.json"] = body
-    bad = await run_source(
-        {"raw_ref": "notes/pour.json", "raw_sha256": "0" * 64}, fs
-    )
+    bad = await run_source({"raw_ref": "notes/pour.json", "raw_sha256": "0" * 64}, fs)
     assert bad["refused"]["code"] == "source.sha_mismatch"
     good = await run_source(
         {"raw_ref": "notes/pour.json", "raw_sha256": file_sha256(body)},

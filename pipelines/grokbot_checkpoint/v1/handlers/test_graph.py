@@ -14,8 +14,8 @@ from continuity_tape.messages import CaptureRef, envelope_wire_dict
 from systems.pipeline.core.conditions import evaluate_condition
 
 from ._clients import file_sha256
-from .conftest import FIXTURE_TRANSCRIPT_ID, restamp_transcript_id
 from ._test_call_post import call_post
+from .conftest import restamp_transcript_id
 from .admit import run_admit
 from .await_verify import run_await_verify
 from .card import run_card
