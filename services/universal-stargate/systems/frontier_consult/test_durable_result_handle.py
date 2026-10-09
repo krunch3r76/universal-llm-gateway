@@ -121,16 +121,12 @@ def test_build_handoff_result_forwards_poll_wait_seconds() -> None:
 def test_build_poll_hint_wait_after_turn_default_and_override() -> None:
     default = build_poll_hint_wait(thread_id="t2", from_agent="reviewer")
     assert default["arguments"]["after_turn"] == 1
-    custom = build_poll_hint_wait(
-        thread_id="t2", from_agent="reviewer", after_turn=3
-    )
+    custom = build_poll_hint_wait(thread_id="t2", from_agent="reviewer", after_turn=3)
     assert custom["arguments"]["after_turn"] == 3
 
 
 def test_build_handoff_result_threads_after_turn() -> None:
-    result = build_handoff_result(
-        thread_id="t3", to_agent="synthesizer", after_turn=5
-    )
+    result = build_handoff_result(thread_id="t3", to_agent="synthesizer", after_turn=5)
     assert result["result_handle"]["after_turn"] == 5
     assert result["poll_hint"]["arguments"]["after_turn"] == 5
 
@@ -408,3 +404,61 @@ def test_probe_find_alertable_hints_filters_matched() -> None:
         query_fn=_query,
     )
     assert alerts == []
+
+
+def _load_poll_hint_probe():
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[4]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from scripts.probes import poll_hint_wait_correlation as probe
+
+    return probe
+
+
+def _stub_query_events(monkeypatch: pytest.MonkeyPatch, stdout: str):
+    import subprocess
+
+    probe = _load_poll_hint_probe()
+
+    def _run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(probe.subprocess, "run", _run)
+    return probe
+
+
+def test_probe_default_query_parses_banner_prefixed_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Banner-prefixed query-events stdout still yields rows."""
+    probe = _stub_query_events(
+        monkeypatch,
+        'workspace validation ok\n{"rows":[{"seq":1}],"count":1}',
+    )
+    assert probe._default_query("SELECT 1", []) == [{"seq": 1}]
+
+
+def test_probe_default_query_no_json_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stdout with no JSON object becomes RuntimeError, not a traceback."""
+    probe = _stub_query_events(monkeypatch, "workspace validation ok\n")
+    with pytest.raises(RuntimeError, match="no JSON object"):
+        probe._default_query("SELECT 1", [])
+
+
+def test_probe_default_query_malformed_json_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A banner plus a broken object becomes RuntimeError."""
+    probe = _stub_query_events(monkeypatch, "workspace validation ok\n{not-json")
+    with pytest.raises(RuntimeError):
+        probe._default_query("SELECT 1", [])

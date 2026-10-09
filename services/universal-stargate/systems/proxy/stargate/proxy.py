@@ -33,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only imports
     from intelligence_profiles import IntelligenceProfileStore
 
     from systems.federation import FederationIntegration
+    from systems.federation.link.ws.local.client import LocalEdgeClient
     from systems.federation.master.orchestration import FederatedLoadOrchestrator
 
     from ...profiles import ProfileManager
@@ -369,6 +370,17 @@ class StargateProxy:
         if self.federation_integration:
             return self.federation_integration.forwarder
         return None
+
+    @property
+    def federation_local_edge_client(self) -> LocalEdgeClient | None:
+        """Relay local-edge client, or None when federation is absent or not remote.
+
+        Health reads ``is_connected`` here. No federation integration yields
+        None so edge and standalone keep forwarding ``GET /health``.
+        """
+        if self.federation_integration is None:
+            return None
+        return self.federation_integration.local_edge_client
 
     @property
     def federation_circuit_breaker(self):

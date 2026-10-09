@@ -8,17 +8,26 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jobs.server import create_app
-from jobs.spec import JobSpecInvalidError, RegistryUnboundedError, load_registry
+from jobs.spec import (
+    MAX_JOBS,
+    JobSpecInvalidError,
+    RegistryUnboundedError,
+    load_registry,
+)
 from jobs.tests.conftest import HEADERS, TOKEN, make_spec
 from scripts.model_manager.ui.api_dispatch import VALID_SERVICES
 
-_NAMES = {"ide-hop", "bus-reply-watch", "claude-ai-sync"}
+_NAMES = {"ide-hop", "bus-reply-watch", "claude-ai-sync", "install-ecosystem-plugin"}
 
 
 @pytest.mark.offline
 def test_production_names_and_graduation() -> None:
     specs = load_registry()
+    assert len(specs) == 4
+    assert len(specs) <= MAX_JOBS
     assert {spec.name for spec in specs} == _NAMES
+    install = next(spec for spec in specs if spec.name == "install-ecosystem-plugin")
+    assert install.handle == "capability:jobs/install-ecosystem-plugin"
     for spec in specs:
         assert spec.sunset == date(2027, 4, 1)
         assert spec.graduates_to.kind in {"satellite_route", "manage_lifecycle"}

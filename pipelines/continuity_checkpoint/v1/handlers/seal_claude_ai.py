@@ -9,6 +9,7 @@ from typing import Any
 from agent_seat.session_id import derive_session_id_from_timestamp
 from chat_harvest.messages import ensure_turn_index, turns_to_messages
 from continuity_tape.messages import ContinuityMessagesEnvelope, EnvelopeMeta
+from continuity_tape.seal_messages import seal_messages_envelope
 
 _AGENT = "web-anthropic"
 _SUCCESSION_STUB = (
@@ -152,20 +153,24 @@ async def seal_claude_ai(
             truncated=truncated,
         ),
     )
-    close_args: dict[str, Any] = {
-        "session_id": session_id,
-        "agent": _AGENT,
-        "session_summary_md": _SUCCESSION_STUB,
-        "summary": _SUMMARY,
-        "transcript_messages": envelope.model_dump(mode="json", by_alias=True),
-        "transcript_depth": "verbatim",
-        "entity_ids": [f"agent-bus:{thread}"],
-        "closed_by": "succession",
-        "assistant_label": "Assistant",
-        "succession_seal_authority": True,
-    }
-
-    close = await cortex_dispatch_fn("session_close", close_args)
+    dumped = envelope.model_dump(mode="json", by_alias=True)
+    sealed = await seal_messages_envelope(
+        dumped,
+        agent=_AGENT,
+        seat_slug=_AGENT,
+        conversation_uuid=None,
+        opened_at=None,
+        thread=thread,
+        structural_md=_SUCCESSION_STUB,
+        summary=_SUMMARY,
+        cortex_dispatch_fn=cortex_dispatch_fn,
+        session_id=session_id,
+        assistant_label="Assistant",
+        attach_conversation_uuid=False,
+    )
+    close = sealed.close or {}
+    if sealed.refused and sealed.close is None:
+        return {"refused": sealed.refused, "already_closed": False}
     if close.get("already_closed"):
         turn_count = int(close.get("turn_count") or len(messages))
         if turn_count == 0:

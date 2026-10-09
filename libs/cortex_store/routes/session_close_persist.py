@@ -311,8 +311,8 @@ def persist_session_close(
         handoff_source_path=body.handoff_source_path,
     )
 
-    conversation_uuid: str | None = None
-    if body.transcript_jsonl_path:
+    conversation_uuid: str | None = body.conversation_uuid or None
+    if conversation_uuid is None and body.transcript_jsonl_path:
         from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
         from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 

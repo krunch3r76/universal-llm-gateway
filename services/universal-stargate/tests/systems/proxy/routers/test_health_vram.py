@@ -179,6 +179,89 @@ async def test_gateways_connected_is_reachable_count() -> None:
     assert payload["vram_total_mb"] == 1000
 
 
+def _relay_proxy(
+    *,
+    connected: bool,
+    pipeline_ready: bool = True,
+    pipeline_count: int = 2,
+) -> SimpleNamespace:
+    pipelines = MagicMock()
+    pipelines.pipelines = [object()] * pipeline_count
+    proxy = SimpleNamespace(
+        federated_manager=None,
+        gateway_manager=None,
+        is_pipeline_system_ready=pipeline_ready,
+        pipeline_registry=pipelines,
+        federation_local_edge_client=SimpleNamespace(is_connected=connected),
+    )
+
+    async def _forward_request(**_kwargs):
+        raise AssertionError("relay health must not fall through to forward_request")
+
+    proxy.forward_request = _forward_request
+    return proxy
+
+
+@pytest.mark.asyncio
+async def test_health_relay_local_edge_connected_reports_available() -> None:
+    """Relay with an authenticated local edge reports the gateway available."""
+    ready = await health_check(
+        request=MagicMock(),
+        proxy=_relay_proxy(connected=True, pipeline_ready=True),
+        _current_user={},
+    )
+    assert ready["status"] == "healthy"
+    assert ready["gateway_status"] == "available"
+    assert ready["gateways_connected"] == 1
+    assert ready["pipeline_system_ready"] is True
+    assert ready["pipeline_count"] == 2
+    assert ready["version"] == "1.0.0"
+    assert "code_version" in ready
+
+    not_ready = await health_check(
+        request=MagicMock(),
+        proxy=_relay_proxy(connected=True, pipeline_ready=False, pipeline_count=0),
+        _current_user={},
+    )
+    assert not_ready["status"] == "stargate_proxy_healthy"
+    assert not_ready["gateway_status"] == "available"
+    assert not_ready["gateways_connected"] == 1
+    assert not_ready["message"] == (
+        "Stargate proxy is running but pipeline execution is not ready yet"
+    )
+
+
+@pytest.mark.asyncio
+async def test_health_relay_local_edge_disconnected_reports_unavailable() -> None:
+    """A present but unauthenticated local edge is unavailable, not a forward error."""
+    payload = await health_check(
+        request=MagicMock(),
+        proxy=_relay_proxy(connected=False),
+        _current_user={},
+    )
+    assert payload["gateway_status"] == "unavailable"
+    assert payload["status"] == "stargate_proxy_healthy"
+    assert payload["message"] == (
+        "Stargate proxy is running but local edge is not connected"
+    )
+    assert "temporarily unavailable" not in payload["message"]
+
+
+def test_remote_and_master_local_edge_client_accessors() -> None:
+    """Remote exposes its client; a master-like mode integration does not."""
+    from systems.federation.integration.core import FederationIntegration
+    from systems.federation.remote.integration import RemoteIntegration
+
+    client = object()
+    remote = RemoteIntegration.__new__(RemoteIntegration)
+    remote._local_edge_client = client
+    assert remote.local_edge_client is client
+
+    federation = FederationIntegration.__new__(FederationIntegration)
+    federation._mode_integration = SimpleNamespace(federated_manager=object())
+    assert federation.local_edge_client is None
+
+
 def test_status_full_best_vram_helper() -> None:
     """status/full route uses the same selection helper (regression guard)."""
     status = {

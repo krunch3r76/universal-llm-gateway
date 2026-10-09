@@ -161,6 +161,27 @@ scripts/cortex/claude-ai-sync-jupiter dump-skills \
 # stock + user slug list (entity refresh): add --inventory
 ```
 
+## Wait contract
+
+Dump and mirror waits are inspect windows, not failure deadlines. Expiry never
+means the run failed.
+
+Background `scripts/cortex/claude-ai-sync-jupiter` (`mirror`, `status`, or
+`dump-skills`) and tail its log. On each poll expiry, look for new lines.
+`PHASE <name> progress` or `PHASE <name> heartbeat` is life: reset the poll
+window and keep waiting. Finish only on a terminal line:
+
+| Line | Meaning |
+|---|---|
+| `MIRROR_DONE rc=0` | Success |
+| `MIRROR_ERROR <reason>` | Explicit error — stop; this is not a stall |
+| `STALLED <phase>` | One full window with no monotonic progress |
+
+Never infer failure from a short wait. `CLAUDE_DUMP_LIVENESS_WINDOW_S` is the
+inspect window. Its expiry triggers an inspection for monotonic progress, then
+a full fresh window when progress is present. It is not a cap on how long a
+moving dump may run.
+
 `mirror` **applies** the catalog 1:1 library sync (not report-only).
 `recon` is a deprecated alias of `mirror` (≠ work-item `contract=recon`):
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -136,6 +138,30 @@ async def test_seal_claude_ai_happy_path_tail() -> None:
     assert payload["turn_count"] == 1
     assert payload["content_provenance"] == "cse-dom"
     close_args = dispatch.await_args.args[1]
+    golden_dir = Path(__file__).parent / "fixtures"
+    minted = close_args["session_id"]
+
+    def _norm(obj: dict) -> str:
+        return json.dumps(obj, sort_keys=True).replace(minted, "{{session_id}}")
+
+    assert _norm(close_args) == (
+        golden_dir / "claude_ai_close_args_076effa0.json"
+    ).read_text(encoding="utf-8")
+    assert _norm(payload) == (
+        golden_dir / "claude_ai_payload_076effa0.json"
+    ).read_text(encoding="utf-8")
+    assert set(close_args) == {
+        "session_id",
+        "agent",
+        "session_summary_md",
+        "summary",
+        "transcript_messages",
+        "transcript_depth",
+        "entity_ids",
+        "closed_by",
+        "assistant_label",
+        "succession_seal_authority",
+    }
     assert close_args["agent"] == "web-anthropic"
     assert close_args["closed_by"] == "succession"
     assert close_args["succession_seal_authority"] is True
@@ -431,3 +457,90 @@ async def test_seal_handler_claude_ai_branch() -> None:
         out = await handler.execute(_Step(), _ClaudeCtx())
     assert out.json["coverage"] == "tail"
     assert out.json["refused"] is None
+
+
+@pytest.mark.asyncio
+async def test_seal_claude_ai_real_op_succession(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """claude.ai seal through execute_op on a temp DB. Harvest is the only fake."""
+    import inspect
+
+    import cortex_store.db as cortex_db
+    import cortex_store.dispatch_ops._shared as shared
+    import cortex_store.dispatch_ops.ops_session_close as ops_session_close
+    import cortex_store.routes.session_close_persist as session_close_persist
+    import cortex_store.routes.session_journals as session_journals
+    from cortex_store._test_db_bootstrap import materialize_head_schema_template
+    from cortex_store.dispatch_ops import execute_op
+
+    for module in (shared, ops_session_close, session_close_persist, session_journals):
+        monkeypatch.setattr(module, "_FILES_ROOT", tmp_path)
+    db_path = tmp_path / "cortex.db"
+    materialize_head_schema_template(db_path)
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
+    cortex_db.run_migrations(cortex_db.cortex_conn())
+
+    dispatch_sig = inspect.signature(execute_op)
+    closes: list[dict] = []
+
+    async def cortex_dispatch(tool: str, args: dict) -> dict:
+        dispatch_sig.bind(tool, args)
+        result = execute_op(tool, args)
+        if tool == "session_close" and isinstance(result, dict):
+            closes.append(result)
+        return result if isinstance(result, dict) else {"error": "non_object_response"}
+
+    async def harvest(chat_url: str, limit: int = 50, source: str = "chat") -> dict:
+        assert chat_url == _CSE_URL
+        return {
+            "outcome": "harvested",
+            "content_provenance": "cse-dom",
+            "coverage": "full",
+            "messages": [
+                {"role": "assistant", "content": "pre-sealed body", "turn_index": 1}
+            ],
+            "truncated": False,
+            "cursor": 1,
+        }
+
+    payload = await seal_claude_ai(
+        thread="10479",
+        chat_url=_CSE_URL,
+        transcript_id=_CSE_ID,
+        from_agent="cursor",
+        harvest_fn=harvest,
+        cortex_dispatch_fn=cortex_dispatch,
+    )
+    assert payload["refused"] is None
+    assert closes[0]["debrief_status"] == "skipped_existing"
+    conn = cortex_db.cortex_conn()
+    try:
+        rows = list(
+            conn.execute(
+                "SELECT id, session_id, closed_by FROM session_journals"
+            ).fetchall()
+        )
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["closed_by"] == "succession"
+    assert payload["journal_row_id"] == rows[0]["id"]
+    assert payload["session_id"] == rows[0]["session_id"]
+
+    again = await seal_claude_ai(
+        thread="10479",
+        chat_url=_CSE_URL,
+        transcript_id=_CSE_ID,
+        from_agent="cursor",
+        harvest_fn=harvest,
+        cortex_dispatch_fn=cortex_dispatch,
+    )
+    conn = cortex_db.cortex_conn()
+    try:
+        count = conn.execute("SELECT COUNT(*) AS n FROM session_journals").fetchone()["n"]
+    finally:
+        conn.close()
+    assert count == 1
+    assert again["journal_row_id"] == payload["journal_row_id"]
+    assert again["session_id"] == payload["session_id"]

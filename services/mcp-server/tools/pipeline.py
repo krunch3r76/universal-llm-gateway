@@ -400,10 +400,17 @@ def _capability_async(
     ``status_code`` so an unknown category or member is not a local error.
     Local pipeline members take ``options.model`` (or flat options/messages).
     The bare id (e.g. ``writer-specialist-v1``) is an alias.
+    A top-level ``dispatch_thread_id`` is forwarded on both paths; on the local path a flat one also stays in pipeline_options.
     """
     opts = options or {}
     flat = any(
-        key not in {"args", "output_contract", "model", "pipeline_options"}
+        key not in {
+            "args",
+            "output_contract",
+            "model",
+            "pipeline_options",
+            "dispatch_thread_id",
+        }
         for key in opts
     )
     model = opts.get("model")
@@ -422,7 +429,12 @@ def _capability_async(
             flat = {
                 key: value
                 for key, value in opts.items()
-                if key not in {"args", "output_contract", "model", "pipeline_options"}
+                if key not in {
+                    "args",
+                    "output_contract",
+                    "model",
+                    "pipeline_options",
+                }
             }
             pipeline_options = {**args, **flat}
         body: dict[str, Any] = {
@@ -436,6 +448,9 @@ def _capability_async(
             "args": opts.get("args") or {},
             "output_contract": opts.get("output_contract", "inline"),
         }
+    thread_id = opts.get("dispatch_thread_id")
+    if isinstance(thread_id, str) and thread_id.strip():
+        body["dispatch_thread_id"] = thread_id.strip()
     record("mcp.pipeline.async.called", pipeline=member_path)
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:

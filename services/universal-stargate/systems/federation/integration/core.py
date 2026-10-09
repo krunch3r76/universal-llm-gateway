@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from ..common.health.status import FederationHealthHandler
     from ..edge.server import EdgeFederationServer
+    from ..link.ws.local.client import LocalEdgeClient
     from ..master.circuit_breaker import FederationCircuitBreaker
     from ..master.integration import MasterIntegration
     from ..master.manager.federated_gateway_manager import FederatedGatewayManager
@@ -71,6 +72,17 @@ class FederationIntegration:
     def federated_manager(self) -> "FederatedGatewayManager | None":
         if hasattr(self._mode_integration, "federated_manager"):
             return self._mode_integration.federated_manager
+        return None
+
+    @property
+    def local_edge_client(self) -> "LocalEdgeClient | None":
+        """Relay local-edge client via mode delegation, else None.
+
+        Master and edge mode objects omit this attribute, so the property
+        returns None and callers do not inherit Master gateway-manager semantics.
+        """
+        if hasattr(self._mode_integration, "local_edge_client"):
+            return self._mode_integration.local_edge_client
         return None
 
     @property

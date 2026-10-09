@@ -1,0 +1,2 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "Ping the house."}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "House is up."}]}}

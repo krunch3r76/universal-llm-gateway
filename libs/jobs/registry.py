@@ -1,4 +1,4 @@
-"""The three production JobSpecs. Argv builders return argument lists only.
+"""The four production JobSpecs. Argv builders return argument lists only.
 
 No shell string is assembled here. Runner-owned flags (the watch state
 file) are appended by the runner, not accepted from the create body.
@@ -136,6 +136,17 @@ class ClaudeSyncArgs(_Forbid):
         return self
 
 
+class InstallEcosystemPluginArgs(_Forbid):
+    """Cursor plugin install. ``dest`` is the only mutating switch.
+
+    ``None`` (the default) forces ``--dry-run``. ``"local"`` installs into
+    the Cursor local-plugin path. HOME and install directories stay off the wire.
+    """
+
+    dest: Literal["local"] | None = None
+    local_only: bool = False
+
+
 def _ide_argv(args: BaseModel) -> list[str]:
     body = args
     assert isinstance(body, IdeHopArgs)
@@ -197,12 +208,23 @@ def _sync_argv(args: BaseModel) -> list[str]:
     return ["refresh-operator-connectors"]
 
 
+def _install_plugin_argv(args: BaseModel) -> list[str]:
+    body = args
+    assert isinstance(body, InstallEcosystemPluginArgs)
+    argv: list[str] = []
+    if body.dest is None:
+        argv.append("--dry-run")
+    if body.local_only:
+        argv.append("--local-only")
+    return argv
+
+
 def _target(kind: Literal["satellite_route", "manage_lifecycle"], owner: str, note: str) -> GraduationTarget:
     return GraduationTarget(kind=kind, owner=owner, note=note)
 
 
 def production_specs() -> tuple[JobSpec, ...]:
-    """Return the three inventory jobs. ``load_registry`` enforces the cap."""
+    """Return the four inventory jobs. ``load_registry`` enforces the cap."""
     idle_watch = int(3 * DEFAULT_WAIT_SLICE_S)
     return (
         JobSpec(
@@ -256,6 +278,23 @@ def production_specs() -> tuple[JobSpec, ...]:
             ),
             sunset=_SUNSET,
             handle="capability:jobs/claude-ai-sync",
+        ),
+        JobSpec(
+            name="install-ecosystem-plugin",
+            description="Dry-run or install the Cursor ulg-ecosystem plugin.",
+            surfaces=frozenset({"code"}),
+            args_model=InstallEcosystemPluginArgs,
+            argv=_install_plugin_argv,
+            executable="scripts/cursor/install-ecosystem-plugin.sh",
+            result_schema=None,
+            idle_seconds=300,
+            graduates_to=_target(
+                "manage_lifecycle",
+                "cursor-plugins",
+                "Install becomes a managed reconcile of the cursor-plugins owner.",
+            ),
+            sunset=_SUNSET,
+            handle="capability:jobs/install-ecosystem-plugin",
         ),
     )
 

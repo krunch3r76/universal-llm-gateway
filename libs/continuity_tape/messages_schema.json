@@ -15,6 +15,18 @@
           "default": null,
           "title": "Budget Bytes"
         },
+        "chat_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chat Url"
+        },
         "checkpoint_turns": {
           "anyOf": [
             {
@@ -30,12 +42,26 @@
           "default": null,
           "title": "Checkpoint Turns"
         },
-        "segment_codec_counts": {
+        "coverage": {
           "anyOf": [
             {
-              "additionalProperties": {
-                "type": "integer"
-              },
+              "enum": [
+                "full",
+                "tail"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coverage"
+        },
+        "degraded": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
               "type": "object"
             },
             {
@@ -43,7 +69,7 @@
             }
           ],
           "default": null,
-          "title": "Codec Counts"
+          "title": "Degraded"
         },
         "door": {
           "anyOf": [
@@ -88,6 +114,18 @@
           "title": "Messages Sha256",
           "type": "string"
         },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed At"
+        },
         "payload_bytes": {
           "anyOf": [
             {
@@ -113,6 +151,57 @@
           "default": null,
           "title": "Request"
         },
+        "sealed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sealed At"
+        },
+        "segment_codec_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Codec Counts"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
+        "source_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Sha256"
+        },
         "sources": {
           "anyOf": [
             {
@@ -128,6 +217,18 @@
           ],
           "default": null,
           "title": "Sources"
+        },
+        "streaming": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Streaming"
         },
         "surface": {
           "default": "mixed",
@@ -170,6 +271,18 @@
           "title": "Tools Available",
           "type": "boolean"
         },
+        "transcript_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transcript Id"
+        },
         "truncated": {
           "default": false,
           "title": "Truncated",
@@ -188,6 +301,14 @@
   "$id": "ulg.continuity.messages/1",
   "additionalProperties": true,
   "properties": {
+    "cells": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Cells",
+      "type": "array"
+    },
     "index": {
       "items": {
         "additionalProperties": true,
