@@ -61,7 +61,7 @@ Canonical pour: `tape/pours/<surface>/<transcript_id>.messages.json`. Authority 
 
 ### Harvest (source)
 
-Preconditions: seal mode; pour file present; sha matches. Call is the pipeline above with `transcribed_ref` / `transcribed_sha256` and/or `raw_ref` / `raw_sha256`. Postconditions: source `refused` null; `messages_sha256` set. Side effects: none (read). Refusals: `source.no_pour` (supply a slot), `source.missing` / `source.sha_mismatch` (fix the ref or sha), `source.slot_mismatch` (slots disagree — pick one valid pour), `admit.transcript_id_mismatch` (align ids). Fallback: stop; do not seal.
+Preconditions: seal mode; pour file present; sha matches. Call is the pipeline above with `transcribed_ref` / `transcribed_sha256` and/or `raw_ref` / `raw_sha256`. Put each pour in the slot named by its `meta.provenance`: raw pours (e.g. grok L0 `grok_bot_jsonl` dom_harvest pours) belong in `raw_ref` / `raw_sha256`; the transcribed slot refuses `source.slot_mismatch` if given a raw pour. Postconditions: source `refused` null; `messages_sha256` set. Side effects: none (read). Refusals: `source.no_pour` (supply a slot), `source.missing` / `source.sha_mismatch` (fix the ref or sha), `source.slot_mismatch` (slots disagree — pick one valid pour), `admit.transcript_id_mismatch` (align ids). Fallback: stop; do not seal.
 
 ### Seal
 
@@ -73,7 +73,7 @@ Preconditions: seal object `session_id` and card `written_sha256`; `root_thread`
 
 ### Verify
 
-Preconditions: `fact_turn` posted. Coordinator answers `IN-SYNC|<house>|<n>` or `DRIFT|…` on the verify lane. Postconditions: result `verify.state` `in_sync` or `drift`, and `verify.turn`. Side effects: read of the verify lane. Until house_verify (CK-3) lands, `await_verify` may return `verify.state=pending`. Fallback: treat `pending` and `drift` as not sealed-for-hop.
+Preconditions: `fact_turn` posted. Coordinator answers `IN-SYNC|<house>|<n>` or `DRIFT|…` on the verify lane. Postconditions: result `verify.state` `in_sync` or `drift`, and `verify.turn`. Side effects: read of the verify lane. house_verify landed in CK-3 (master `1ce72202`); `await_verify` returns a real verify state when the lane answers. Fallback: treat `pending` and `drift` as not sealed-for-hop.
 
 ### Hop
 
@@ -81,15 +81,15 @@ Cite `runbook:operator-grok-bot-liaison` (hop / successor spawn). Packet source 
 
 ### Resume
 
-`continuity(op=resume)` / the resume-fence route, after hop, with the same uuid `transcript_id`. Do not invent a grok surface workaround.
+`continuity(op=resume)` / the resume-fence route, after hop, with the same uuid `transcript_id`. A newly created root lane needs tag `role:root` (`agent_bus add_tags`) before resume, else 403 `resume_fence.not_root`. Do not invent a grok surface workaround.
 
 ## Known gaps
 
-- R1: `libs/agent_bus_store/routes/threads/resume_fence.py` accepts only `surface` `cursor` or `claude_ai`, so a grok resumer gets 422 until CK-3. State the dependency; do not work around it.
-- Verify `pending` until house_verify lands.
+- R1 (grok resume fence): landed in CK-3 (master `1ce72202`); grok surface is accepted on resume-fence.
+- Grok pours made before commit `67c8e151` (0-based `window`) refuse `pour.window`. Re-pour from the cortex capture with current `continuity_tape.extract_grokbot_jsonl` (`--capture-ref cortex://…pages.txt`); `messages_sha256` is unchanged by the re-pour.
 - One grok checkpoint per house at a time (minor-1 race). Serialize per house; the concurrency key is the dispatch thread, not the house.
 - A naive start (no `Z` or offset) is read as UTC. Pass an offset instant.
 
 ## Result fields
 
-Read `cp_turn`, `fact_turn`, card `written_sha256`, `envelope.snapshot_uri` @ `envelope.sha256`, seal `session_id`, `warnings[]`, `verify.state`. `refused` non-null means stop at that code.
+MCP `pipeline(op=result)` `content` is JSON for the full result object. Read `cp_turn`, `fact_turn`, card `written_sha256`, `envelope.snapshot_uri` @ `envelope.sha256`, seal `session_id`, `warnings[]`, `verify.state`, `refused`, and `verify_resume.checks` when verify_resume ran. `refused` non-null means stop at that code.
