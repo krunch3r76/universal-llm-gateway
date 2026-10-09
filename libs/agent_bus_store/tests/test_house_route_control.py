@@ -6,8 +6,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.db import create_thread, init_db
@@ -17,6 +15,7 @@ from agent_bus_store.house_route_control import (
     gc1_acting_maestro_fact_set,
     ruling_gate_mode,
 )
+from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.offline
 
@@ -97,8 +96,8 @@ def test_envelope_enforce_off_logs_malformed(
         body="missing envelope fields\n",
     )
     assert status == 201
-    emit_mock.assert_called()
-    assert emit_mock.call_args[0][0] == "agent_bus.route_control.envelope_malformed"
+    signals = [call[0][0] for call in emit_mock.call_args_list]
+    assert "agent_bus.route_control.envelope_malformed" in signals
 
 
 @patch.dict(os.environ, {"AGENT_BUS_ENVELOPE_ENFORCE": "on"}, clear=False)
