@@ -1967,6 +1967,11 @@ async def reconcile_stale_leases(
             sweep.stale_metadata_pruned,
         )
     ledger = CursorDispatchLedger.instance()
+    from services.git_integration_worker.cursor_sdk_work_claim import expire_claims
+
+    expired_claims = await asyncio.to_thread(expire_claims)
+    if expired_claims:
+        logger.info("claim expiry cancelled=%d", len(expired_claims))
     orphan_ids = await asyncio.to_thread(
         ledger.orphan_holders,
         threshold_s=_STALE_LEASE_S,
@@ -4153,6 +4158,8 @@ async def admit_cursor_dispatch(
             admit_kwargs["hop_reason"] = req.hop_reason
         if req.hop_park_release:
             admit_kwargs["hop_park_release"] = True
+        if req.claim_id:
+            admit_kwargs["claim_id"] = req.claim_id
         cached = await asyncio.to_thread(ledger.admit, **admit_kwargs)
     except WriteLeaseHeld as exc:
         await _rollback_lane_b_mint_if_needed(

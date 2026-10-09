@@ -49,7 +49,8 @@ _STATUS_PARKED_WAITING = "parked_waiting"
 _STATUS_TERMINAL = ("completed", "failed", "cancelled")
 _ACTIVE_WRITER_STATUSES = (_STATUS_ADMITTED, _STATUS_RUNNING)
 _STATUS_CHECK = (
-    "'queued','admitted','running','parked_waiting','completed','failed','cancelled'"
+    "'queued','admitted','running','parked_waiting','completed','failed','cancelled',"
+    "'claimed'"
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
 _ACTIVE_IDENTITY_STATUSES = "'queued','admitted','running','parked_waiting'"
@@ -67,7 +68,7 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
     state_root         TEXT,
     sdk_agent_id       TEXT,
     sdk_run_id         TEXT,
-    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','parked_waiting','completed','failed','cancelled')),
+    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','parked_waiting','completed','failed','cancelled','claimed')),
     started_at         TEXT,
     last_heartbeat_at  TEXT,
     terminal_status    TEXT CHECK (terminal_status IN ('completed','failed','cancelled')),
@@ -147,7 +148,7 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer work-identity gate
         work_fingerprint: Content-identity fingerprint when the dup gate fires.
         holder_dispatch_id: In-flight peer dispatch id.
         holder_thread_id: In-flight peer bus thread id, when persisted.
-        holder_kind: ``conductor`` | ``implement`` | ``other`` for steer hints.
+        holder_kind: ``conductor`` | ``implement`` | ``claim`` | ``other`` for steer hints.
         steer: Caller may pass ``nest_under`` / ``resume_of`` / ``reuse_thread``.
     """
 
@@ -856,6 +857,75 @@ def _migrate_park_columns(conn: sqlite3.Connection) -> None:
     )
 
 
+def _column_ddl(col: sqlite3.Row) -> str:
+    """Render one ``PRAGMA table_info`` row as a CREATE TABLE column clause."""
+    name = str(col["name"])
+    if name == "status":
+        return (
+            "status TEXT NOT NULL CHECK (status IN ("
+            f"{_STATUS_CHECK}))"
+        )
+    if name == "terminal_status":
+        return (
+            "terminal_status TEXT CHECK (terminal_status IN ("
+            f"{_TERMINAL_STATUS_CHECK}))"
+        )
+    parts = [name, str(col["type"] or "TEXT")]
+    if int(col["pk"] or 0):
+        parts.append("PRIMARY KEY")
+    elif int(col["notnull"] or 0):
+        parts.append("NOT NULL")
+    default = col["dflt_value"]
+    if default is not None:
+        parts.append(f"DEFAULT {default}")
+    return " ".join(parts)
+
+
+def _migrate_claimed_status(conn: sqlite3.Connection) -> None:
+    """Widen the status CHECK with ``claimed`` when an older database lacks it.
+
+    SQLite cannot ALTER a CHECK. This rebuild copies every column and recreates
+    every explicit index captured from ``sqlite_master`` before the drop. A
+    database whose table SQL already names ``claimed`` is left untouched, so a
+    second call is a no-op. ``_ACTIVE_IDENTITY_STATUSES`` is not widened.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cursor_sdk_dispatches'"
+    ).fetchone()
+    if row is None or row["sql"] is None or "'claimed'" in row["sql"]:
+        return
+    index_sql = [
+        str(idx["sql"])
+        for idx in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='cursor_sdk_dispatches' AND sql IS NOT NULL"
+        ).fetchall()
+        if idx["sql"]
+    ]
+    cols = list(conn.execute("PRAGMA table_info(cursor_sdk_dispatches)"))
+    col_names = [str(col["name"]) for col in cols]
+    col_ddl = ",\n            ".join(_column_ddl(col) for col in cols)
+    name_list = ", ".join(col_names)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        f"CREATE TABLE cursor_sdk_dispatches_claim (\n            {col_ddl}\n        )"
+    )
+    conn.execute(
+        f"INSERT INTO cursor_sdk_dispatches_claim ({name_list}) "
+        f"SELECT {name_list} FROM cursor_sdk_dispatches"
+    )
+    conn.execute("DROP TABLE cursor_sdk_dispatches")
+    conn.execute(
+        "ALTER TABLE cursor_sdk_dispatches_claim RENAME TO cursor_sdk_dispatches"
+    )
+    for sql in index_sql:
+        conn.execute(sql)
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=ON")
+
+
 def _migrate_active_lease_index(conn: sqlite3.Connection) -> None:
     """Partial index for write-lease holder lookups on the drain probe path (a:37853).
 
@@ -1137,6 +1207,8 @@ class CursorDispatchLedger:
             _migrate_cancelled_status(conn)
             _migrate_park_columns(conn)
             _migrate_memo_columns(conn)
+            _add_column_if_missing(conn, cols, "claim_expires_at", "TEXT")
+            _migrate_claimed_status(conn)
             _migrate_active_lease_index(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
                 ensure_land_lease_schema,
@@ -1169,6 +1241,10 @@ class CursorDispatchLedger:
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_active "
                 "ON cursor_sdk_dispatches(work_key, status) "
                 f"WHERE status IN ({_ACTIVE_IDENTITY_STATUSES})"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_claimed "
+                "ON cursor_sdk_dispatches(work_key) WHERE status='claimed'"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_started "
@@ -1262,14 +1338,18 @@ class CursorDispatchLedger:
         lineage_depth: int | None = None,
         work_key_seq: int | None = None,
         hop_park_release: bool = False,
+        claim_id: str | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
 
         Work-identity gate (contract-agnostic): when ``identity_class != adhoc``,
         ``work_key`` is set, and ``force`` is false, a peer row with the same
-        ``work_key`` and status in ``{queued,admitted,running,parked_waiting}``
-        raises ``SourceRefConflict`` without inserting. Lineage exemptions:
+        ``work_key`` and status in ``{queued,admitted,running,parked_waiting}``,
+        an open restart park, or an unexpired ``claimed`` row
+        raises ``SourceRefConflict`` without inserting. A request ``claim_id``
+        that is that claimed row does not block (the house successor). ``force``
+        skips the gate, including claims. Lineage exemptions:
         ``nest_under == holder``, terminal ``resume_of`` / ``hop_from`` same key.
         A hand ``resume_of`` of an open ``park_for_restart`` row stamps
         ``park_resumed_by`` in that same transaction. ``giw_park_resume``
@@ -1426,16 +1506,34 @@ class CursorDispatchLedger:
                         computed_seq = parent_row["work_key_seq"]
 
             if identity_class != "adhoc" and effective_work_key and not force:
+                gate_now = _now()
                 peer = conn.execute(
-                    "SELECT dispatch_id, thread_id, contract, packet_kind, "
-                    "record_json FROM cursor_sdk_dispatches "
+                    "SELECT dispatch_id, thread_id, status, contract, packet_kind, "
+                    "record_json, work_key FROM cursor_sdk_dispatches "
                     "WHERE work_key=? AND dispatch_id<>? "
                     f"AND (status IN ({_ACTIVE_IDENTITY_STATUSES}) "
-                    f"OR {OPEN_RESTART_PARK_SQL}) LIMIT 1",
-                    (effective_work_key, req.dispatch_id, _now()),
+                    f"OR {OPEN_RESTART_PARK_SQL} "
+                    "OR (status='claimed' AND claim_expires_at > ?)) "
+                    "AND NOT (? IS NOT NULL AND status='claimed' AND dispatch_id = ?) "
+                    "LIMIT 1",
+                    (
+                        effective_work_key,
+                        req.dispatch_id,
+                        gate_now,
+                        gate_now,
+                        claim_id,
+                        claim_id,
+                    ),
                 ).fetchone()
                 if peer is not None:
                     exempt = False
+                    if (
+                        claim_id
+                        and peer["status"] == "claimed"
+                        and peer["dispatch_id"] == claim_id
+                        and peer["work_key"] == effective_work_key
+                    ):
+                        exempt = True
                     if nest_under and peer["dispatch_id"] == nest_under:
                         exempt = True
                     if req.resume_of and _resume_parent_work_key_exempt(
@@ -2651,7 +2749,11 @@ class CursorDispatchLedger:
                             "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                             (child_id,),
                         ).fetchone()
-                    if child is not None and child["status"] not in _STATUS_TERMINAL:
+                    if (
+                        child is not None
+                        and child["status"] not in _STATUS_TERMINAL
+                        and child["status"] != "claimed"
+                    ):
                         self.mark_terminal(
                             dispatch_id=child_id, terminal_status="failed"
                         )
@@ -2674,7 +2776,11 @@ class CursorDispatchLedger:
                     "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                     (child_id,),
                 ).fetchone()
-            if child is not None and child["status"] not in _STATUS_TERMINAL:
+            if (
+                child is not None
+                and child["status"] not in _STATUS_TERMINAL
+                and child["status"] != "claimed"
+            ):
                 self.mark_terminal(dispatch_id=child_id, terminal_status="failed")
             self.clear_park_child(parent_id=parent_id)
         with self._connect() as conn:

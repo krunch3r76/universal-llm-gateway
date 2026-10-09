@@ -58,6 +58,22 @@ def latest_terminal_conductor_row_for_thread(
     return best
 
 
+def occupancy_projection(
+    work_key: str,
+    *,
+    now: str | None = None,
+    ledger: CursorDispatchLedger | None = None,
+) -> dict[str, Any]:
+    """Thin read of house occupancy for ``GET /occupancy``.
+
+    Delegates to the claim module. The label is occupancy, not progress:
+    the payload has no landed, done, or progress fields.
+    """
+    from services.git_integration_worker.cursor_sdk_work_claim import occupancy
+
+    return occupancy(work_key, now, ledger=ledger)
+
+
 def latest_terminal_conductor_api_payload(
     *,
     thread_id: str,

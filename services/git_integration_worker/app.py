@@ -48,6 +48,9 @@ from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_catalog import (
     router as cursor_catalog_router,
 )
+from services.git_integration_worker.routes.cursor_claim import (
+    router as cursor_claim_router,
+)
 from services.git_integration_worker.routes.cursor_sdk import (
     bridge_sweeper,
     stale_lease_sweeper,
@@ -241,6 +244,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(integrate_router)
     app.include_router(cursor_sdk_router)
+    app.include_router(cursor_claim_router)
     app.include_router(cursor_sdk_tail_router)
     app.include_router(cursor_catalog_router)
     app.include_router(admin_router)

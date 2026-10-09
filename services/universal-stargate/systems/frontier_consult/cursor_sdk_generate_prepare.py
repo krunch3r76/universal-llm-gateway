@@ -125,6 +125,7 @@ async def prepare_cursor_sdk_generate(
     force: bool = False,
     force_reason: str | None = None,
     hop_park_release: bool = False,
+    claim_id: str | None = None,
     wake_lane: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
@@ -575,6 +576,7 @@ async def prepare_cursor_sdk_generate(
         force=force,
         force_reason=force_reason,
         hop_park_release=hop_park_release,
+        claim_id=claim_id,
         requested_model_knobs=dict(model_knobs or {}),
         wake_lane=wake_lane,
     )

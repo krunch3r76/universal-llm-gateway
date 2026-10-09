@@ -145,6 +145,7 @@ async def _finish_prepared_dispatch(
             force=handle.force,
             force_reason=handle.force_reason,
             hop_park_release=handle.hop_park_release,
+            claim_id=handle.claim_id,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
             wake_lane=handle.wake_lane,
@@ -176,6 +177,7 @@ async def _finish_prepared_dispatch(
             source_ref=handle.source_ref,
             force=handle.force,
             force_reason=handle.force_reason,
+            claim_id=handle.claim_id,
             caller_transcript_id=transcript_id,
             bus_lifecycle=handle.effective_bus_lifecycle,
             wake_lane=handle.wake_lane,
@@ -350,6 +352,7 @@ async def dispatch_cursor_sdk_generate(
     force: bool = False,
     force_reason: str | None = None,
     hop_park_release: bool = False,
+    claim_id: str | None = None,
     transcript_id: str | None = None,
     wake_lane: str | None = None,
 ) -> dict[str, Any]:
@@ -406,6 +409,7 @@ async def dispatch_cursor_sdk_generate(
         force=force,
         force_reason=force_reason,
         hop_park_release=hop_park_release,
+        claim_id=claim_id,
         wake_lane=wake_lane,
     )
     return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)

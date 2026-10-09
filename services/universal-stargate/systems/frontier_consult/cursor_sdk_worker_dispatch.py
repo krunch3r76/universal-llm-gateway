@@ -231,6 +231,7 @@ async def dispatch_cursor_sdk_worker(
     force: bool = False,
     force_reason: str | None = None,
     hop_park_release: bool = False,
+    claim_id: str | None = None,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     wake_lane: str | None = None,
@@ -290,6 +291,8 @@ async def dispatch_cursor_sdk_worker(
         payload["force_reason"] = force_reason
     if hop_park_release:
         payload["hop_park_release"] = True
+    if claim_id:
+        payload["claim_id"] = claim_id
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
     if wake_lane:
@@ -359,6 +362,7 @@ async def dispatch_cursor_sdk_worker_message(
     source_ref: str | None = None,
     force: bool = False,
     force_reason: str | None = None,
+    claim_id: str | None = None,
     caller_transcript_id: str | None = None,
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
     wake_lane: str | None = None,
@@ -405,6 +409,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["force"] = True
     if force_reason:
         payload["force_reason"] = force_reason
+    if claim_id:
+        payload["claim_id"] = claim_id
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
     if wake_lane:
