@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_bus_store import create_app
@@ -154,36 +154,31 @@ def _turn_number(send_payload: dict) -> int:
     return 0
 
 
+@patch("continuity_tape.events_checkpoint.record")
 @pytest.mark.asyncio
-async def test_grok_tip_is_resume_readable(bus_client) -> None:
+async def test_grok_tip_is_resume_readable(record_event: MagicMock, bus_client) -> None:
     get, send = _adapters(bus_client)
-    posted_calls: list[dict] = []
-
-    def _spy(**kwargs):
-        posted_calls.append(kwargs)
-
-    import pipelines.grokbot_checkpoint.v1.handlers.post as post_mod
-
-    with patch.object(
-        post_mod,
-        "stargate_continuity_checkpoint_posted",
-        side_effect=_spy,
-    ):
-        out = await run_post(
-            _options(),
-            _seal(),
-            _envelope(),
-            get=get,
-            send=send,
-            execution_id="exec-contract-1",
-        )
-        assert len(posted_calls) == 1
-        assert posted_calls[0]["bus_turn"] == out["turn"]
-        assert posted_calls[0]["surface"] == "grok"
-        assert posted_calls[0]["execution_id"] == "exec-contract-1"
-        assert posted_calls[0]["thread"] == ROOT
-    assert out.get("refused") is None
-    assert out.get("duplicate") is False
+    out = await run_post(
+        _options(),
+        _seal(),
+        _envelope(),
+        get=get,
+        send=send,
+        execution_id="exec-contract-1",
+    )
+    assert out.get("refused") is None, out
+    assert out.get("duplicate") is False, out
+    posted = [
+        c
+        for c in record_event.call_args_list
+        if c.args and c.args[0] == "stargate.continuity.checkpoint.posted"
+    ]
+    assert len(posted) == 1
+    payload = posted[0].kwargs
+    assert payload["bus_turn"] == out["turn"]
+    assert payload["surface"] == "grok"
+    assert payload["execution_id"] == "exec-contract-1"
+    assert payload["thread"] == ROOT
     turn = out["turn"]
     assert turn is not None
 
@@ -217,9 +212,10 @@ async def test_grok_tip_is_resume_readable(bus_client) -> None:
     entities = bundle["read_set"]["readable"]["entities"]
     assert f"transcript:{SESSION_ID}" in entities
     card_uri = f"cortex://notes/system/threads/{ROOT}-card.md"
-    assert card_uri in bundle["read_set"]["readable"]["cortex_uris"] or (
-        bundle.get("card") or {}
-    ).get("uri") == card_uri
+    assert (
+        card_uri in bundle["read_set"]["readable"]["cortex_uris"]
+        or (bundle.get("card") or {}).get("uri") == card_uri
+    )
     _ = armed  # arm side effect consumed by assemble
 
 
@@ -325,8 +321,8 @@ async def test_user_speech_refused_422(bus_client) -> None:
 
 @pytest.mark.asyncio
 async def test_card_binding_warnings() -> None:
-    from .conftest import MemFs
     from ._clients import file_sha256
+    from .conftest import MemFs
 
     env = _envelope()
     seal = _seal()

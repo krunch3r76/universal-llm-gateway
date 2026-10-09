@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, override
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -56,6 +57,20 @@ async def run_admit(
             return refuse("admit.path_escape", f"refused path {path}")
     if mode == "seal" and not str(options.get("agent_id") or "").strip():
         return refuse("admit.agent_id", "agent_id required in seal mode")
+    root_thread = str(options.get("root_thread") or "").strip()
+    agent_id = str(options.get("agent_id") or "").strip()
+    if mode == "seal" and root_thread and agent_id:
+        try:
+            if str(uuid.UUID(agent_id)) != agent_id:
+                return refuse(
+                    "admit.agent_id_not_uuid",
+                    "agent_id must be canonical lowercase uuid",
+                )
+        except ValueError:
+            return refuse(
+                "admit.agent_id_not_uuid",
+                "agent_id must be canonical lowercase uuid",
+            )
     residue = options.get("residue")
     if isinstance(residue, str) and len(residue) > 800:
         return refuse("admit.residue", "residue exceeds 800 chars")

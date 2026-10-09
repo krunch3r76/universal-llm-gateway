@@ -40,6 +40,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
     post = step_output_json(outputs, "post")
     fact = step_output_json(outputs, "fact")
     verify = step_output_json(outputs, "await_verify")
+    warnings = list(card.get("warnings") or [])
     return {
         "house": options.get("house"),
         "n": options.get("n"),
@@ -56,8 +57,12 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             "producer": envelope.get("producer") or source.get("producer"),
             "coverage": envelope.get("coverage") or source.get("coverage"),
             "turn_count": envelope.get("turn_count") or source.get("turn_count"),
-            "ref": source.get("ref") or options.get("transcribed_ref") or options.get("raw_ref"),
-            "capture": source.get("capture") if isinstance(source.get("capture"), dict) else None,
+            "ref": source.get("ref")
+            or options.get("transcribed_ref")
+            or options.get("raw_ref"),
+            "capture": source.get("capture")
+            if isinstance(source.get("capture"), dict)
+            else None,
             "alternate": source.get("alternate"),
             "fallback": source.get("fallback"),
         },
@@ -74,6 +79,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "fact_turn": fact.get("turn"),
         "verify": {"state": verify.get("state"), "turn": verify.get("turn")},
         "proposals": seal.get("proposals") or [],
+        "warnings": warnings,
     }
 
 
