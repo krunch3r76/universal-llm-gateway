@@ -25,6 +25,10 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
+# Terminal rows and house claims do not own a vanished lane tree. A negative
+# ``not in (completed, failed, cancelled)`` scan would treat ``claimed`` as live
+# and remint a worktree for an occupancy row.
+_REMIT_SKIP_STATUSES = frozenset({"completed", "failed", "cancelled", "claimed"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +155,7 @@ def sweep_vanished_pinned_worktrees(*, source_repo: Path) -> int:
         )
         count += 1
         if (
-            ledger_status not in ("completed", "failed", "cancelled")
+            ledger_status not in _REMIT_SKIP_STATUSES
             and bridge_pid is None
         ):
             try:

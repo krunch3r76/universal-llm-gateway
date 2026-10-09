@@ -155,6 +155,7 @@ def count_root_rows_24h(
         "SELECT dispatch_id, resume_of, record_json, hop_from, nest_under "
         "FROM cursor_sdk_dispatches "
         "WHERE work_key=? AND dispatch_id<>? "
+        "AND COALESCE(contract,'') != 'claim' "
         "AND COALESCE(started_at, queued_at, terminal_at) >= ?",
         (work_key, exclude_dispatch_id, cutoff),
     ).fetchall()
@@ -170,14 +171,31 @@ def count_root_rows_24h(
     return count
 
 
+def _row_field(row: sqlite3.Row | dict[str, Any], name: str) -> Any:
+    """Read one column from a sqlite Row or a plain dict holder projection."""
+    if isinstance(row, dict):
+        return row.get(name)
+    if name in row.keys():
+        return row[name]
+    return None
+
+
 def holder_kind_from_row(row: sqlite3.Row | dict[str, Any]) -> str:
+    """Classify the in-flight peer a work-key gate is refusing against.
+
+    ``claim`` is a house occupancy row (``status='claimed'`` or
+    ``contract='claim'``). It is not a conductor, implement, or writer.
+    """
     from services.git_integration_worker.cursor_sdk_conductor_identity import (
         is_conductor_dispatch_row,
     )
 
+    status = _row_field(row, "status")
+    contract = _row_field(row, "contract")
+    if status == "claimed" or contract == "claim":
+        return "claim"
     if is_conductor_dispatch_row(row):
         return "conductor"
-    contract = row["contract"] if "contract" in row.keys() else None
     if contract == "implement":
         return "implement"
     return "other"

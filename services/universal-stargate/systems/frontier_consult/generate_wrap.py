@@ -30,6 +30,16 @@ from .implement_admission_bridge import resolve_source_ref_to_packet
 from .implement_ready_gate import require_implement_ready
 from .stargate_cortex_reader import StargateCortexReader
 
+
+def _claim_id_from_options(generation_options: dict[str, Any] | None) -> str | None:
+    """Read generation_options.claim_id the same way hop_park_release is read."""
+    raw = (generation_options or {}).get("claim_id")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None
+
+
 if TYPE_CHECKING:
     from fastapi import Response
 
@@ -38,6 +48,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class GenerateWrapResult:
+    """Outcome of gate-then-materialize before a cursor-sdk generate dispatch."""
+
     packet_path: str | None
     gated: bool = False
     gated_reason: str | None = None
@@ -525,6 +537,7 @@ async def dispatch_cursor_sdk_generate_route(
                     "hop_park_release"
                 )
             ),
+            claim_id=_claim_id_from_options(getattr(body, "generation_options", None)),
             transcript_id=getattr(body, "transcript_id", None),
             wake_lane=getattr(body, "wake_lane", None),
             bus_body=getattr(body, "bus_body", None),
