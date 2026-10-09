@@ -32,7 +32,9 @@ def test_pointer_only_dispatch_omits_prompt_line() -> None:
     assert "exec-1" in body
 
 
-def test_pointer_only_cdp_delivery_omits_harvest(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pointer_only_cdp_delivery_omits_harvest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def _sidecar(**kwargs: object) -> object:
         assert _MARKER in str(kwargs.get("content"))
 
