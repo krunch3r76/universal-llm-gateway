@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from deploy_identity.source_sync_stamp import STAMP_BASENAME
 from universal_event_bus.events.debug import emit_debug_event
 
 from scripts.model_manager import relay_state
@@ -236,6 +237,8 @@ def _run_start(
     stargate_env = _build_env(node_env)
     rendered_config = _render_template(_RELAY_TEMPLATE, stargate_env)
     stargate_env["STARGATE_CONFIG"] = str(rendered_config)
+    # Host-mode Stargate (not /app): deploy rsync writes STAMP_BASENAME at repo root.
+    stargate_env["ULG_DEPLOY_STAMP_PATH"] = str(_ROOT / STAMP_BASENAME)
     return _launch_stargate(node_id, stargate_env)
 
 

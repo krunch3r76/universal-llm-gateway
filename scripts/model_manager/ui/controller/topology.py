@@ -11,6 +11,7 @@ import os
 import secrets
 import shlex
 import signal
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -18,6 +19,10 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 import yaml
+from deploy_identity.source_sync_stamp import (
+    STAMP_BASENAME,
+    plan_source_sync_stamp,
+)
 
 from scripts.model_manager.observation_event import (
     emit_build_image_completed,
@@ -183,6 +188,32 @@ async def _stream_subprocess(
     if code != 0:
         yield f"{exit_failure_prefix} (exit {code}).[/red]"
         raise _StreamedCommandError
+
+
+async def _upload_remote_source_sync_stamp(
+    ssh_target: str, content: str
+) -> AsyncIterator[str]:
+    """Copy a deploy stamp into the rsynced relay tree (no shell interpolation)."""
+    remote_path = f"{ssh_target}:~/universal-llm-gateway/{STAMP_BASENAME}"
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", delete=False, suffix=f"-{STAMP_BASENAME}"
+    ) as handle:
+        handle.write(content)
+        local_path = handle.name
+    scp_args = ["scp", local_path, remote_path]
+    yield f"$ {shlex.join(scp_args)}"
+    try:
+        async for line in _stream_subprocess(
+            scp_args,
+            stream_failure_line="[red]scp deploy stamp failed to stream output.[/red]",
+            exit_failure_prefix="[red]scp deploy stamp failed",
+        ):
+            yield line
+    finally:
+        try:
+            os.unlink(local_path)
+        except OSError:
+            logger.warning("Failed to remove temp deploy stamp %s", local_path)
 
 
 async def _verify_deploy_paths(ssh_target: str) -> tuple[bool, list[str]]:
@@ -559,6 +590,26 @@ async def deploy_remote(
             "Check .gitignore root-anchoring (/models/, /templates/).[/red]"
         )
         return
+
+    stamp_plan = plan_source_sync_stamp(repo)
+    if stamp_plan is None:
+        yield (
+            f"[{hostname}] Skipping source sync stamp: checkout is not clean "
+            "(dirty or unknown); remote Stargate may keep legacy git HEAD for "
+            "code_version until the next clean deploy."
+        )
+    else:
+        try:
+            async for line in _upload_remote_source_sync_stamp(
+                ssh_target, stamp_plan.content
+            ):
+                yield line
+        except _StreamedCommandError:
+            return
+        yield (
+            f"[{hostname}] Wrote {STAMP_BASENAME} "
+            f"(checkout_head_label={stamp_plan.checkout_head})."
+        )
 
     scp_args = [
         "scp",
