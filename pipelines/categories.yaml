@@ -37,5 +37,7 @@ categories:
     description: gate1_audit
   grokbot_checkpoint:
     description: grokbot_checkpoint
+  jobs:
+    description: Host-bound operator jobs (bounded registry; operator-only)
   writing:
     description: writing
