@@ -40,7 +40,9 @@ async def health_check(
             if not gw.is_unreachable
         ]
         if live:
-            vram_free_mb, vram_total_mb = vram_mb_for_health_reachable_gateways(live)
+            vram_free_mb, vram_total_mb = vram_mb_for_health_reachable_gateways(
+                live
+            )
             status = "healthy" if pipeline_ready else "stargate_proxy_healthy"
             response = {
                 "status": status,
