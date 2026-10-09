@@ -11,10 +11,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
+from implement_admission.closeout_helpers import cortex_files_root
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from systems.pipeline.core.prompts import PromptBuilder
@@ -41,6 +43,20 @@ _POLL_ARG_KEYS = ("thread", "after_turn", "execution_id", "from_agent", "complet
 
 def _step(payload: dict[str, Any]) -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload, error=None)
+
+
+def write_prompt_sidecar(prompt: str, key: str) -> str:
+    """Write a rendered prompt under the cortex files root and return its uri.
+
+    The bus body carries the uri and sha256. The prompt bytes stay in the file.
+    """
+    digest = hashlib.sha256(prompt.encode()).hexdigest()
+    relative = f"notes/system/threads/writer-prompts/{digest}.txt"
+    path = cortex_files_root() / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(prompt, encoding="utf-8")
+    del key
+    return f"cortex://{relative}"
 
 
 def _error_code(data: dict[str, Any], status: int) -> str:
@@ -161,9 +177,14 @@ class WritingSeatDispatchHandler(BaseHandler):
 
     step_type = "writing_seat_dispatch_v1"
 
-    def __init__(self, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        client: Any | None = None,
+        sidecar_writer: Callable[[str, str], str] | None = None,
+    ) -> None:
         super().__init__()
         self._client = client
+        self._sidecar_writer = sidecar_writer or write_prompt_sidecar
 
     async def execute(self, step: Any, context: Any) -> StepOutput:
         """Admit the seat or return a typed refusal without ``StepOutput.error``.
@@ -193,6 +214,7 @@ class WritingSeatDispatchHandler(BaseHandler):
             return _step(
                 {"ok": False, "refused": "dispatch_thread_id_invalid", "posted": False}
             )
+        sensitive = assemble.get("sensitivity") != "non_sensitive"
         run_id = _run_id(context)
         key = f"writer-specialist-v1:{run_id}:{role}"
         if key in _POSTED:
@@ -236,6 +258,12 @@ class WritingSeatDispatchHandler(BaseHandler):
             body["work_key"] = f"packet:writer-specialist-v1:{run_id}:{role}"
             body["model_knobs"] = {"fast": "true"}
         digest = hashlib.sha256(prompt.encode()).hexdigest()
+        if sensitive:
+            sidecar_ref = self._sidecar_writer(prompt, key)
+            body.pop("prompt", None)
+            body["sidecar_ref"] = sidecar_ref
+            body["prompt_sha256"] = digest
+            body["bus_body"] = "pointer_only"
         _POSTED.add(key)
         if self._client is not None:
             dispatched = await _post_json(self._client, "/api/v1/team/dispatch", body)

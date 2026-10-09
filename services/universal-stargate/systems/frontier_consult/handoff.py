@@ -610,6 +610,42 @@ def build_generate_dispatch_pointer(
     return "\n".join(lines)
 
 
+def build_pointer_only_dispatch_pointer(
+    *,
+    lane: str,
+    contract: str,
+    sidecar_ref: str | None,
+    prompt_sha256: str | None,
+    correlation_id: str,
+) -> str:
+    """Bus pointer that cites a sidecar and a digest, never prompt text."""
+    return (
+        f"{lane} {contract} generate — prompt off bus. "
+        f"sidecar `{sidecar_ref or 'unknown'}` "
+        f"sha256 `{prompt_sha256 or 'unknown'}` "
+        f"correlation `{correlation_id}`."
+    )
+
+
+def build_pointer_only_worker_message(
+    *,
+    sidecar_ref: str | None,
+    prompt_sha256: str | None,
+) -> str:
+    """Worker text: read the sidecar, verify its digest, then follow it.
+
+    The message names the ref and the digest. It does not carry prompt text.
+    """
+    ref = sidecar_ref or "unknown"
+    digest = prompt_sha256 or "unknown"
+    return (
+        f'Read the prompt with fs(op="read", path={ref}). '
+        f"Check that its sha256 equals {digest} before acting. "
+        "Stop with a clear error if it does not match or cannot be read. "
+        "Then follow the prompt."
+    )
+
+
 def _slug_from_subject(subject: str) -> str:
     """Derive a kebab slug from a human subject string."""
     slug = subject.lower()

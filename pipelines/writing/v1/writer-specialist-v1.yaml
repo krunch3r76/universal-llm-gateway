@@ -1,6 +1,12 @@
 # writer-specialist-v1 — local draft, independent review, targeted revision.
 # bare id writer-specialist-v1 is an alias of writing/writer-specialist-v1 (both resolve to this member).
 # UNSENT by construction: no send, post, file write, or mail draft.
+# delivery: id_status_only — admit refuses bus or async delivery of draft bodies.
+# AC6: review transport or model failure after draft -> envelope with draft_v1, provenance,
+# review.status=failed, a review_unresolved row in ship_gate.unresolved, no revision,
+# ship_gate.pass=false; the run completes.
+# T8: review error -> envelope with draft_v1 + provenance, review.status=failed,
+# review_unresolved in ship_gate.unresolved, no revision, ship_gate false; the run completes.
 
 schema_version: 6
 id: writer-specialist-v1
@@ -10,6 +16,7 @@ category: writing
 description: >
   Local writer, a different-family reviewer, and a targeted revision.
   UNSENT by construction: every draft stays in the envelope.
+delivery: id_status_only
 output: finalize
 
 options:
@@ -104,7 +111,7 @@ steps:
                       type: string
                   disposition:
                     type: string
-                    enum: [express, imply, omit_with_reason]
+                    enum: [express, imply, omit_with_reason, request]
                   state:
                     type: string
                     enum: [backed, unverified, need]
@@ -152,53 +159,8 @@ steps:
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and assemble.json.get('reviewer_seat') == 'cdp'"
 
   - name: review_local
-    type: generate
-    model_ref: reviewer
-    prompt_ref: writing.v1.reviewer
+    type: writing_review_local_v1
     condition: "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and (assemble.json.get('reviewer_seat') == 'local' or review_wait.json.get('fallback_to') == 'local')"
-    handler_inputs:
-      documents: assemble.json.documents_block
-      brief: assemble.json.brief_block
-      draft: draft.json.draft
-    generation_parameters:
-      temperature: 0.1
-      max_tokens: 2048
-      response_format:
-        type: json_object
-        schema:
-          type: object
-          additionalProperties: false
-          properties:
-            findings:
-              type: array
-              items:
-                type: object
-                additionalProperties: false
-                properties:
-                  ref:
-                    type: string
-                  type:
-                    type: string
-                    enum:
-                      - unsupported
-                      - contradicts_pin
-                      - unattested_fact
-                      - unraised_denial
-                      - register
-                      - sequitur
-                      - omission
-                  fix:
-                    type: string
-                required:
-                  - ref
-                  - type
-                  - fix
-            verdict:
-              type: string
-              enum: [ship, revise]
-          required:
-            - findings
-            - verdict
 
   - name: review
     type: writing_seat_select_v1
@@ -213,7 +175,7 @@ steps:
       documents: assemble.json.documents_block
       brief: assemble.json.brief_block
       draft: draft.json.draft
-      findings: review.json.findings
+      findings: review.json.findings_actionable
       violations: provenance_check.json.violations
     generation_parameters:
       temperature: 0.3
@@ -242,7 +204,7 @@ steps:
                       type: string
                   disposition:
                     type: string
-                    enum: [express, imply, omit_with_reason]
+                    enum: [express, imply, omit_with_reason, request]
                   state:
                     type: string
                     enum: [backed, unverified, need]
@@ -277,6 +239,7 @@ steps:
     handler_inputs:
       pin_ledger: assemble.json.pin_ledger
       draft: revise.json
+      draft_v1: draft.json
 
   - name: finalize
     type: writing_finalize_v1

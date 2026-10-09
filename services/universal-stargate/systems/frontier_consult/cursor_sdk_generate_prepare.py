@@ -36,6 +36,8 @@ from .handoff import (
     PendingShellContention,
     admit_handoff_dispatch,
     build_generate_dispatch_pointer,
+    build_pointer_only_dispatch_pointer,
+    build_pointer_only_worker_message,
     claim_and_post_pointer_turn,
     create_handoff_thread,
     extract_generate_pointer_summary,
@@ -126,6 +128,9 @@ async def prepare_cursor_sdk_generate(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     wake_lane: str | None = None,
+    bus_body: str | None = None,
+    off_bus_ref: str | None = None,
+    prompt_sha256: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .generate_lane_ac_observer import (
@@ -243,6 +248,20 @@ async def prepare_cursor_sdk_generate(
         )
         worker_packet = None
         worker_message = last_user
+
+    if bus_body == "pointer_only":
+        pointer_body = build_pointer_only_dispatch_pointer(
+            lane="SDK",
+            contract=contract,
+            sidecar_ref=off_bus_ref,
+            prompt_sha256=prompt_sha256,
+            correlation_id=execution_id,
+        )
+        worker_message = build_pointer_only_worker_message(
+            sidecar_ref=off_bus_ref,
+            prompt_sha256=prompt_sha256,
+        )
+        worker_packet = None
 
     handoff_contract = contract
     effective_bus_lifecycle: Literal["persistent", "ephemeral"] = (

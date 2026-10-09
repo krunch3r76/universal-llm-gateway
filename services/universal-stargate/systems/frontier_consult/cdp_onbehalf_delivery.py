@@ -115,9 +115,42 @@ async def build_cdp_success_delivery_body(
     thread_id: str,
     subject: str,
     format_metadata: str,
+    pointer_only: bool = False,
 ) -> str | None:
-    """Build ok=True delivery body; None when oversized sidecar write failed."""
+    """Build ok=True delivery body; None when oversized sidecar write failed.
+
+    ``pointer_only`` writes the harvest to cortex and posts uri, sha256, and
+    execution id. The bus body has no harvest text and no summary.
+    """
     harvest = result.body or "_empty harvest_"
+    if pointer_only:
+        body_chars = len(result.body or "")
+        if result.archive_uri:
+            pointer = build_relocation_pointer(
+                result,
+                sidecar_uri=result.archive_uri,
+                sha256=result.content_proof_sha256 or "unavailable",
+                body_chars=body_chars,
+                summary=None,
+            )
+            return f"{format_metadata}\n\n{pointer}"
+        sidecar = await write_cdp_harvest_sidecar(
+            result=result,
+            thread_id=thread_id,
+            subject=subject,
+            content=result.body or "",
+            oversized=True,
+        )
+        if sidecar is None:
+            return None
+        pointer = build_relocation_pointer(
+            result,
+            sidecar_uri=sidecar.uri,
+            sha256=sidecar.sha256,
+            body_chars=body_chars,
+            summary=None,
+        )
+        return f"{format_metadata}\n\n{pointer}"
     inline_body = f"{format_metadata}\n\n{harvest}"
     if len(inline_body) <= BUS_MAX_BODY_CHARS:
         return inline_body
@@ -163,6 +196,7 @@ async def deliver_cdp_result_turn(
     to_agent: str,
     request_id: str,
     pointer_turn: int = 1,
+    pointer_only: bool = False,
 ) -> bool:
     """Post CDP result with spill/pointer for oversized ok=True harvests."""
     from .cdp_events import CdpGenerateDeliveryFailed, publish_cdp_kwargs
@@ -182,6 +216,7 @@ async def deliver_cdp_result_turn(
             thread_id=thread_id,
             subject=subject,
             format_metadata=metadata,
+            pointer_only=pointer_only,
         )
         if body is None:
             fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"

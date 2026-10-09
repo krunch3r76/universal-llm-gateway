@@ -57,8 +57,11 @@ class _Out:
 
 
 class _Ctx:
-    def __init__(self, outputs: dict[str, Any]) -> None:
+    def __init__(
+        self, outputs: dict[str, Any], options: dict[str, Any] | None = None
+    ) -> None:
         self.outputs = outputs
+        self.options = options or {}
 
 
 def _assemble(**extra: Any) -> dict[str, Any]:
@@ -394,3 +397,43 @@ def test_finalize_refused_review_with_violations_preserves_draft_v1() -> None:
     assert payload["review"]["status"] == "failed"
     assert payload["ship_gate"]["pass"] is False
     assert payload["seat_fallback"]["review"] == fallback
+    assert any(
+        row.get("type") == "review_unresolved"
+        for row in payload["ship_gate"]["unresolved"]
+    )
+
+
+def test_finalize_partial_independence_fails_gate() -> None:
+    outputs = {
+        "assemble": _Out(_assemble()),
+        "draft": _Out(_draft(), model_id=_HERMES, model_call_count=1),
+        "provenance_check": _Out({"violations": [], "pass": True}),
+        "independence": _Out({"refused": None, "independence": "partial"}),
+        "review": _Out(
+            {"findings": [], "verdict": "ship"},
+            model_id=_HERMES,
+            model_call_count=1,
+        ),
+    }
+    partial = asyncio.run(
+        finalize.WritingFinalizeHandler().execute(
+            None,
+            _Ctx(outputs, {"allow_partial_independence": True}),
+        )
+    ).json
+    assert partial["ship_gate"]["pass"] is False
+    assert any(
+        row["type"] == "independence_partial"
+        for row in partial["ship_gate"]["unresolved"]
+    )
+    full = _run(
+        {
+            **outputs,
+            "review": _Out(
+                {"findings": [], "verdict": "ship"},
+                model_id=_QWEN,
+                model_call_count=1,
+            ),
+        }
+    )
+    assert full["ship_gate"]["pass"] is True

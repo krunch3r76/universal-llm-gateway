@@ -1,9 +1,9 @@
 """Register writer-specialist v1 handlers on the writing domain.
 
 The pipeline loader calls ``register_handlers`` while scanning
-``pipelines/writing``. The seven step types are assemble, provenance_check,
-independence, finalize, seat_dispatch, seat_wait, and seat_select. Generate
-steps stay on the built-in generate handler.
+``pipelines/writing``. Registered step types are assemble, provenance_check, independence, finalize,
+seat_dispatch, seat_wait, seat_select, and review_local. Draft and revise
+generate steps stay on the built-in generate handler.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from .assemble import WritingAssembleHandler
 from .finalize import WritingFinalizeHandler
 from .independence import WritingIndependenceHandler
 from .provenance_check import WritingProvenanceCheckHandler
+from .review_local import WritingReviewLocalHandler
 from .seat_dispatch import WritingSeatDispatchHandler
 from .seat_wait import WritingSeatSelectHandler, WritingSeatWaitHandler
 
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 
 def register_handlers(router: DomainRouter) -> None:
-    """Bind the seven writing v1 step types on ``router``.
+    """Bind the writing v1 step types on ``router``.
 
     Domain is ``writing``. Each class's ``step_type`` matches the key
     passed here. Later pipeline versions must use a different suffix so
@@ -62,4 +63,9 @@ def register_handlers(router: DomainRouter) -> None:
         "writing",
         "writing_seat_select_v1",
         WritingSeatSelectHandler,
+    )
+    router.register_domain_handler_class(
+        "writing",
+        "writing_review_local_v1",
+        WritingReviewLocalHandler,
     )

@@ -291,6 +291,8 @@ async def finalize_cdp_generate(
 
     envelope = get_cdp_dispatch_envelope(result.execution_id)
     dispatch_link_terminal: bool | None = None
+    leg_for_bus = read_inflight_leg(result.execution_id)
+    pointer_only = bool(leg_for_bus and leg_for_bus.bus_body == "pointer_only")
 
     async def _terminate_dispatch_link(
         *,
@@ -377,6 +379,7 @@ async def finalize_cdp_generate(
             to_agent=to_agent,
             request_id=request_id,
             pointer_turn=pointer_turn,
+            pointer_only=pointer_only,
         )
         if not posted:
             clear_delivery_claim(result.execution_id)
@@ -460,6 +463,7 @@ async def finalize_cdp_generate(
             to_agent=to_agent,
             request_id=request_id,
             pointer_turn=pointer_turn,
+            pointer_only=pointer_only,
         )
         if posted:
             await _terminate_dispatch_link(terminal_status="completed")
@@ -478,6 +482,7 @@ async def finalize_cdp_generate(
             to_agent=to_agent,
             request_id=request_id,
             pointer_turn=pointer_turn,
+            pointer_only=pointer_only,
         )
     if not posted:
         clear_delivery_claim(result.execution_id)

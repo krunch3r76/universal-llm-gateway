@@ -359,9 +359,7 @@ async def dispatch_cursor_sdk_generate_route(
                     source_ref=source_ref,
                     caller_agent=body.caller_agent,
                     summon_text=getattr(body, "prompt", None),
-                    summon_mode=(
-                        str(raw_summon).strip() if raw_summon else None
-                    ),
+                    summon_mode=(str(raw_summon).strip() if raw_summon else None),
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
                     summoning_thread_id=(
@@ -499,18 +497,12 @@ async def dispatch_cursor_sdk_generate_route(
                 getattr(body, "prompt_turn_number", None)
                 if getattr(body, "prompt_turn_number", None) is not None
                 else (
-                    prompt_resolution.prompt_turn_number
-                    if prompt_resolution
-                    else None
+                    prompt_resolution.prompt_turn_number if prompt_resolution else None
                 )
             ),
             prompt_bind_mode=(
                 getattr(body, "prompt_bind_mode", None)
-                or (
-                    prompt_resolution.prompt_bind_mode
-                    if prompt_resolution
-                    else None
-                )
+                or (prompt_resolution.prompt_bind_mode if prompt_resolution else None)
             ),
             source_ref=getattr(body, "source_ref", None),
             dispatch_lane=getattr(body, "dispatch_lane", None),
@@ -535,6 +527,9 @@ async def dispatch_cursor_sdk_generate_route(
             ),
             transcript_id=getattr(body, "transcript_id", None),
             wake_lane=getattr(body, "wake_lane", None),
+            bus_body=getattr(body, "bus_body", None),
+            off_bus_ref=getattr(body, "sidecar_ref", None),
+            prompt_sha256=getattr(body, "prompt_sha256", None),
         )
         if isinstance(result, dict):
             if operator_lane_summon_warning:

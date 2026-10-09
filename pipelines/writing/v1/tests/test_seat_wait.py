@@ -627,3 +627,133 @@ def test_seat_wait_missing_execution_id_no_get() -> None:
     ).json
     assert clock.gets == []
     assert payload["seat_fallback"]["reason"] == "admit_unknown"
+
+
+def test_select_drops_conceded_findings_keeps_the_rest() -> None:
+    findings = [
+        {"ref": "1", "type": "unsupported", "fix": "says the call was with Victor"},
+        {"ref": "2", "type": "unsupported", "fix": "should not be stated as facts"},
+        {"ref": "3", "type": "unsupported", "fix": "review date is requested"},
+        {
+            "ref": "4",
+            "type": "unsupported",
+            "fix": "This is supported by the documents",
+        },
+        {"ref": "5", "type": "unattested_fact", "fix": "acceptable"},
+        {
+            "ref": "6",
+            "type": "unsupported",
+            "fix": "consistent with the voice anchor and is supported",
+        },
+    ]
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_local": _Out({"findings": findings, "verdict": "revise"})}),
+        )
+    ).json
+    refs = [row["ref"] for row in payload["findings_actionable"]]
+    assert refs == ["1", "2", "3"]
+
+
+def test_select_refuses_invalid_local_review_before_revise() -> None:
+    from systems.pipeline.core.conditions import ConditionEvaluator
+
+    cases = [
+        {"findings": [], "verdict": "revise", "extra": 1},
+        {
+            "findings": [{"ref": "s", "type": "not_a_type", "fix": "x"}],
+            "verdict": "revise",
+        },
+        {"findings": []},
+    ]
+    for raw in cases:
+        payload = asyncio.run(
+            seat_wait.WritingSeatSelectHandler().execute(
+                _Step("review"),
+                _Ctx({"review_local": _Out(raw)}),
+            )
+        ).json
+        assert payload["refused"] == "reviewer_seat_failed"
+        assert payload["reason"] == "local_result_invalid"
+        assert payload["refused"] != "review_transport_failed"
+    evaluator = ConditionEvaluator()
+    outputs = {
+        "assemble": _Out({"refused": None}),
+        "draft": _Out({"refused": None, "draft": "x"}),
+        "independence": _Out({"refused": None}),
+        "review": _Out(
+            {"refused": "reviewer_seat_failed", "reason": "local_result_invalid"}
+        ),
+        "provenance_check": _Out({"violations": [{"type": "x"}]}),
+    }
+    assert (
+        evaluator.evaluate(
+            "assemble.json.get('refused') is None and options.get('output', 'envelope') != 'packet' and draft.json.get('refused') is None and independence.json.get('refused') is None and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or len(provenance_check.json.get('violations', [])) > 0)",
+            outputs,
+            {},
+        )
+        is False
+    )
+
+
+def test_concession_consistent_with_drops_a_real_finding() -> None:
+    """False-negative risk: a real omission whose fix says consistent with is dropped."""
+    findings = [
+        {
+            "ref": "s9",
+            "type": "omission",
+            "fix": "the date is consistent with the pin but still name the store",
+        }
+    ]
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_local": _Out({"findings": findings, "verdict": "revise"})}),
+        )
+    ).json
+    assert payload["findings_actionable"] == []
+
+
+def test_select_copies_local_review_usage() -> None:
+    local = _Out(
+        {
+            "findings": [],
+            "verdict": "ship",
+        },
+        model_id="qwen3-14b-q4-k-m-40960",
+        prompt_tokens=12,
+        completion_tokens=3,
+        model_call_count=1,
+    )
+    selected = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_local": local}),
+        )
+    )
+    assert selected.model_id == "qwen3-14b-q4-k-m-40960"
+    assert selected.prompt_tokens == 12
+    assert selected.completion_tokens == 3
+
+
+def test_select_local_reviewer_missing_findings_refused() -> None:
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("review"),
+            _Ctx({"review_local": _Out({"verdict": "revise"})}),
+        )
+    ).json
+    assert payload["refused"] == "reviewer_seat_failed"
+    assert payload["reason"] == "local_result_invalid"
+
+
+def test_select_local_writer_missing_draft_refused() -> None:
+    payload = asyncio.run(
+        seat_wait.WritingSeatSelectHandler().execute(
+            _Step("draft"),
+            _Ctx({"draft_local": _Out({"claims": [], "need": [], "dispositions": []})}),
+        )
+    ).json
+    assert payload["refused"] == "writer_seat_failed"
+    assert payload["reason"] == "local_result_invalid"

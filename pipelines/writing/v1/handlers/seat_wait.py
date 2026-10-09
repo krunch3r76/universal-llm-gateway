@@ -63,20 +63,59 @@ def _first_json(text: str) -> dict[str, Any] | None:
     return obj if isinstance(obj, dict) else None
 
 
+_DISPOSITIONS = frozenset({"express", "imply", "omit_with_reason", "request"})
+# Fix text that concedes the sentence is fine is not an actionable finding.
+_CONCESSION = (
+    "is supported",
+    "supported by the documents",
+    "acceptable",
+    "consistent with",
+)
+
+
+def findings_actionable(findings: Any) -> list[Any]:
+    """Drop findings whose fix text concedes the sentence.
+
+    The list is the documented concession phrases, matched case-insensitively
+    as substrings. Provenance violations are not findings and are not filtered.
+    """
+    if not isinstance(findings, list):
+        return []
+    kept: list[Any] = []
+    for row in findings:
+        if not isinstance(row, dict):
+            kept.append(row)
+            continue
+        fix = str(row.get("fix") or "").lower()
+        if any(phrase in fix for phrase in _CONCESSION):
+            continue
+        kept.append(row)
+    return kept
+
+
 def _valid(role: str, obj: dict[str, Any] | None) -> bool:
     if not isinstance(obj, dict):
         return False
     if role == "writer":
-        return (
+        if not (
             isinstance(obj.get("draft"), str)
             and isinstance(obj.get("claims"), list)
             and isinstance(obj.get("need"), list)
             and isinstance(obj.get("dispositions"), list)
-        )
-    return isinstance(obj.get("findings"), list) and obj.get("verdict") in {
-        "ship",
-        "revise",
-    }
+        ):
+            return False
+        for claim in obj["claims"]:
+            if not isinstance(claim, dict):
+                continue
+            disposition = claim.get("disposition")
+            if disposition is None:
+                continue
+            if str(disposition) not in _DISPOSITIONS:
+                return False
+        return True
+    from .review_schema import review_result_error
+
+    return review_result_error(obj) is None
 
 
 def _result_text(data: dict[str, Any]) -> str:
@@ -597,14 +636,46 @@ class WritingSeatSelectHandler(BaseHandler):
                 model = record_model
             if model:
                 result["seat_record"]["model_id"] = model
+            if role == "reviewer":
+                result["findings_actionable"] = findings_actionable(
+                    result.get("findings")
+                )
             return _step(result, model_id=str(model) if model else None)
         fallback = waited.get("seat_fallback") if isinstance(waited, dict) else None
+        if (
+            isinstance(local_json, dict)
+            and local_json.get("refused") == "review_transport_failed"
+        ):
+            return _step(
+                {
+                    "refused": "review_transport_failed",
+                    "reason": "review_transport_failed",
+                    "error": local_json.get("error") or "review_transport_failed",
+                    "seat_fallback": fallback,
+                }
+            )
         if local is not None and not local_error and isinstance(local_json, dict):
+            if not _valid(role, local_json):
+                refused = (
+                    "writer_seat_failed" if role == "writer" else "reviewer_seat_failed"
+                )
+                return _step(
+                    {
+                        "refused": refused,
+                        "reason": "local_result_invalid",
+                        "seat_fallback": fallback,
+                        "error": refused,
+                    }
+                )
             payload = dict(local_json)
             payload["seat_record"] = {
                 "seat": "local",
                 "model_id": getattr(local, "model_id", None),
             }
+            if role == "reviewer":
+                payload["findings_actionable"] = findings_actionable(
+                    payload.get("findings")
+                )
             if fallback:
                 payload["seat_fallback"] = fallback
             return _copy_usage(_step(payload), local)

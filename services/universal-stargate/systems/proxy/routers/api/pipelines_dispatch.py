@@ -282,6 +282,22 @@ def continuation_refusal_response(decision: Any) -> JSONResponse | None:
     )
 
 
+def _writer_body_delivery(dispatch: DispatchRequest) -> bool:
+    """True when the request can post a draft, summary, or attachment.
+
+    Legacy envelopes can carry ``bus_brief_summary``, attachments, and a close
+    summary derived from result content. ``op=to_thread`` posts the result
+    verbatim. Id-and-status-only is not offered: those channels are refused.
+    """
+    if dispatch.result_delivery is not None:
+        return True
+    if dispatch.output_contract == "thread":
+        return True
+    if dispatch.target_thread:
+        return True
+    return dispatch.op == "to_thread"
+
+
 async def admit_dispatch(
     request: Request,
     proxy: StargateProxy,
@@ -314,6 +330,16 @@ async def admit_dispatch(
             503,
             "pipeline_executor_unavailable",
             "Pipeline executor is not initialized.",
+        )
+
+    pipeline = proxy.pipeline_registry.get_pipeline(dispatch.model)
+    extra = getattr(pipeline, "model_extra", None) if pipeline is not None else None
+    delivery_mode = (extra or {}).get("delivery")
+    if delivery_mode == "id_status_only" and _writer_body_delivery(dispatch):
+        return _error_response(
+            422,
+            "writer_delivery_refused",
+            "writer-specialist-v1 refuses delivery that can carry a draft body",
         )
 
     execution_id = executor.generate_execution_id()

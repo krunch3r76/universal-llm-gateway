@@ -705,6 +705,7 @@ async def dispatch_cdp_generate(
         model_id=str(model),
         max_wall_s=max_wall,
         purpose=purpose,
+        bus_body=getattr(body, "bus_body", None),
     )
 
     if is_operator_proxy_mission_purpose(purpose):
