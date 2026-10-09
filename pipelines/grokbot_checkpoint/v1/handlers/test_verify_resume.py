@@ -474,3 +474,258 @@ async def test_window_transcript_and_turns_match_seal(fs) -> None:
     passed = await run(ok)
     assert passed["checks"]["window_transcript"] is True
     assert passed["checks"]["window_turns"] is True
+
+
+def _writer_seal_bytes(messages: list, *, turn_count: int, transcript_id: str) -> tuple[bytes, str]:
+    """Same bytes as session_close_persist: build_seal_envelope_meta then indent-2 JSON.
+
+    The persist function itself writes through durable_write_text onto the cortex
+    files root and a journal row, so the test calls the stamp helper and copies
+    the dumps at session_close_persist.py (json.dumps(..., indent=2) + newline).
+    """
+    from continuity_tape.messages import (
+        ContinuityMessagesEnvelope,
+        EnvelopeMeta,
+        seal_messages_sha256,
+    )
+    from cortex_store.verbatim_succession import build_seal_envelope_meta
+
+    env = ContinuityMessagesEnvelope(
+        messages=messages,
+        meta=EnvelopeMeta(
+            turn_count=turn_count,
+            provenance="raw",
+            transcript_id=transcript_id,
+            message_count=len(messages),
+        ),
+    )
+    sealed = build_seal_envelope_meta(
+        env,
+        session_id="writer-sid",
+        sealed_at="2026-01-01T00:00:00+00:00",
+    )
+    raw = (
+        json.dumps(
+            sealed.model_dump(mode="json", by_alias=True),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    ).encode()
+    return raw, seal_messages_sha256(messages)
+
+
+@pytest.mark.asyncio
+async def test_authority_sha_matches_writer_digest_not_file_bytes(fs) -> None:
+    """B1: tip messages_sha256 is seal_messages_sha256, not sha256 of the file."""
+    from ._clients import file_sha256 as sha
+
+    sid = "sess-b1"
+    tid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    messages = [
+        {"role": "user", "content": "hello", "turn_index": 0},
+        {"role": "assistant", "content": "world", "turn_index": 0},
+    ]
+    doc, digest = _writer_seal_bytes(messages, turn_count=1, transcript_id=tid)
+    assert sha(doc) != digest
+    fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
+    card = b"card"
+    fs.files["notes/card.md"] = card
+
+    async def run(body_sha: str, raw: bytes):
+        fs.files[f"notes/system/seals/{sid}.messages.json"] = raw
+
+        async def get(path, params=None):
+            return {
+                "turns": [
+                    {
+                        "subject": "CHECKPOINT",
+                        "body": _cp_body(
+                            sha=body_sha,
+                            provenance="raw",
+                            transcript_id=tid,
+                            turns=1,
+                            marker="house-cp:hm1:1",
+                        ),
+                        "turn_number": 2,
+                        "from": "bot",
+                    }
+                ]
+            }, 200
+
+        return await run_verify_resume(
+            {
+                "card_uri": "notes/card.md",
+                "expected_card_sha256": sha(card),
+                "session_id": sid,
+                "house": "hm1",
+                "n": 1,
+                "verify_lane": "v",
+                "root_thread": "v",
+                "successor": "x",
+                "fact_turn": 9,
+            },
+            fs,
+            get=get,
+        )
+
+    passed = await run(digest, doc)
+    assert passed["checks"]["authority_sha"] is True
+    tampered = [
+        {"role": "user", "content": "hello", "turn_index": 0},
+        {"role": "assistant", "content": "TAMPERED", "turn_index": 0},
+    ]
+    bad_doc, _bad_digest = _writer_seal_bytes(
+        tampered, turn_count=1, transcript_id=tid
+    )
+    failed = await run(digest, bad_doc)
+    assert failed["checks"]["authority_sha"] is False
+
+
+@pytest.mark.asyncio
+async def test_window_turns_follows_meta_turn_count(fs) -> None:
+    """B2: turns@cp is meta.turn_count; two messages per turn."""
+    from ._clients import file_sha256 as sha
+
+    sid = "sess-b2"
+    tid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    messages = [
+        {"role": "user", "content": "a", "turn_index": 0},
+        {"role": "assistant", "content": "b", "turn_index": 0},
+        {"role": "user", "content": "c", "turn_index": 1},
+        {"role": "assistant", "content": "d", "turn_index": 1},
+    ]
+    doc, digest = _writer_seal_bytes(messages, turn_count=2, transcript_id=tid)
+    fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
+    card = b"card"
+    fs.files["notes/card.md"] = card
+
+    async def run(turns: int):
+        async def get(path, params=None):
+            return {
+                "turns": [
+                    {
+                        "subject": "CHECKPOINT",
+                        "body": _cp_body(
+                            sha=digest,
+                            provenance="raw",
+                            transcript_id=tid,
+                            turns=turns,
+                            marker="house-cp:hm1:1",
+                        ),
+                        "turn_number": 3,
+                        "from": "bot",
+                    }
+                ]
+            }, 200
+
+        return await run_verify_resume(
+            {
+                "card_uri": "notes/card.md",
+                "expected_card_sha256": sha(card),
+                "session_id": sid,
+                "house": "hm1",
+                "n": 1,
+                "verify_lane": "v",
+                "root_thread": "v",
+                "successor": "x",
+                "fact_turn": 9,
+            },
+            fs,
+            get=get,
+        )
+
+    assert (await run(2))["checks"]["window_turns"] is True
+    assert (await run(4))["checks"]["window_turns"] is False
+
+
+@pytest.mark.asyncio
+async def test_window_turns_unknown_without_turn_count(fs) -> None:
+    """B2: missing meta.turn_count is unknown, not a pass or a fail."""
+    from ._clients import file_sha256 as sha
+
+    sid = "sess-b2u"
+    doc = _seal_doc(
+        transcript_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        provenance="raw",
+        messages=[{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}],
+    )
+    fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
+    card = b"card"
+    fs.files["notes/card.md"] = card
+
+    async def get(path, params=None):
+        return {
+            "turns": [
+                {
+                    "subject": "CHECKPOINT",
+                    "body": _cp_body(
+                        sha=sha(doc),
+                        provenance="raw",
+                        transcript_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                        turns=2,
+                        marker="house-cp:hm1:1",
+                    ),
+                    "turn_number": 2,
+                    "from": "bot",
+                }
+            ]
+        }, 200
+
+    out = await run_verify_resume(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": sha(card),
+            "session_id": sid,
+            "house": "hm1",
+            "n": 1,
+            "verify_lane": "v",
+            "root_thread": "v",
+            "successor": "x",
+            "fact_turn": 9,
+        },
+        fs,
+        get=get,
+    )
+    assert out["checks"]["window_turns"] == "unknown"
+    assert any("turn_count" in w for w in out["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_session_id_prefers_seal_step(fs) -> None:
+    """m1: seal step session_id wins; options is the fallback; mismatch is named."""
+    from ._clients import file_sha256 as sha
+
+    sid = "from-seal-step"
+    doc = _seal_doc(
+        transcript_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        provenance="raw",
+        messages=[{"role": "user", "content": "a"}],
+    )
+    fs.files[f"notes/system/seals/{sid}.messages.json"] = doc
+    card = b"card"
+    fs.files["notes/card.md"] = card
+
+    async def get(path, params=None):
+        return {"turns": []}, 200
+
+    opts = {
+        "card_uri": "notes/card.md",
+        "expected_card_sha256": sha(card),
+        "verify_lane": "v",
+        "root_thread": "v",
+        "successor": "x",
+        "fact_turn": 9,
+    }
+    picked = await run_verify_resume(
+        opts, fs, get=get, seal_step={"session_id": sid}
+    )
+    assert picked["checks"]["authority"] == "seal"
+    clash = await run_verify_resume(
+        {**opts, "session_id": "from-options"},
+        fs,
+        get=get,
+        seal_step={"session_id": sid},
+    )
+    assert clash.get("code") == "verify_resume.session_id_mismatch"
+    assert clash["checks"].get("session_id") is False
