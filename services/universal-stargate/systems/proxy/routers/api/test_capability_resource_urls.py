@@ -663,3 +663,24 @@ def test_non_202_admit_keeps_canonical_headers(
     assert 'rel="canonical"' in response.headers["link"]
     assert canonical in response.headers["link"]
     assert "links" not in response.json()
+
+
+def test_list_jobs_category_is_in_pipeline_vocabulary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "pipelines"
+    _write_root(root)
+    (root / "categories.yaml").write_text(
+        "categories:\n"
+        "  demo:\n"
+        "    description: d\n"
+        "  jobs:\n"
+        "    description: Host-bound operator jobs\n",
+        encoding="utf-8",
+    )
+    client = _client(_ready_proxy(_registry(root)), monkeypatch)
+    listed = client.get("/api/v1/capabilities", params={"category": "jobs"})
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["description"] == "Host-bound operator jobs"
+    assert body["members"] == {}
