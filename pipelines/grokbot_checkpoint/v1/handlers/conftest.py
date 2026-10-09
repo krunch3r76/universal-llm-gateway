@@ -7,6 +7,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
+FIXTURE_TRANSCRIPT_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
+def restamp_transcript_id(blob: bytes, transcript_id: str) -> bytes:
+    """Return pour bytes with meta.transcript_id replaced (messages unchanged)."""
+    import json
+
+    payload = json.loads(blob)
+    payload["meta"]["transcript_id"] = transcript_id
+    return json.dumps(payload).encode()
+
 
 class MemFs:
     def __init__(self) -> None:

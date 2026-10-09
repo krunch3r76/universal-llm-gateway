@@ -50,6 +50,7 @@ async def _load_slot(
         "coverage": envelope.meta.coverage,
         "messages_sha256": envelope.meta.messages_sha256,
         "surface": envelope.meta.surface,
+        "transcript_id": envelope.meta.transcript_id,
         "turn_count": envelope.meta.turn_count,
         "sha256": digest,
         "ref": ref,
@@ -116,6 +117,17 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
             continue
         assert body is not None
         loaded[slot] = body
+    root_thread = str(options.get("root_thread") or "").strip()
+    agent_id = str(options.get("agent_id") or "").strip()
+    if root_thread and agent_id:
+        for slot_name in ("transcribed", "raw"):
+            body = loaded.get(slot_name)
+            if body is not None and body.get("transcript_id") != agent_id:
+                return refuse(
+                    "admit.transcript_id_mismatch",
+                    f"{slot_name} pour meta.transcript_id "
+                    f"{body.get('transcript_id')!r} != agent_id {agent_id!r}",
+                )
     selected: dict[str, Any] | None = None
     alternate = None
     fallback = None

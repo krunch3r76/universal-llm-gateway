@@ -427,3 +427,37 @@ async def test_card_binding_warnings() -> None:
         },
     )
     assert top["warnings"] == nonconf["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_fact_turn_from_real_send_route(bus_client) -> None:
+    from .await_verify import run_await_verify
+    from .fact import run_fact
+
+    lane = "16046"
+    create_thread(thread_id=lane, slug="hm1-verify")
+    get, send = _adapters(bus_client)
+    options = {
+        "house": "hm1",
+        "n": 1,
+        "verify_lane": lane,
+        "bus_identity": "grok-bot-hm1",
+        "verifier": "cursor",
+        "trigger": "hop",
+        "card_uri": f"notes/system/threads/{ROOT}-card.md",
+        "wait_verify_seconds": 0,
+    }
+    card = {"uri": options["card_uri"], "written_sha256": "c" * 64}
+    first = await run_fact(options, card, {}, get=get, send=send)
+    assert first["refused"] is None
+    assert first["skipped"] is False
+    listed = bus_client.get("/turns", params={"thread": lane}).json()["turns"]
+    facts = [t for t in listed if t["subject"] == "FACT|house-cp|hm1|1"]
+    assert len(facts) == 1
+    assert first["turn"] == facts[0]["turn_number"]
+    second = await run_fact(options, card, {}, get=get, send=send)
+    assert second["skipped"] is True
+    assert second["turn"] == first["turn"]
+    waited = await run_await_verify(options, first, get=get)
+    assert waited["refused"] is None
+    assert waited["state"] == "pending"

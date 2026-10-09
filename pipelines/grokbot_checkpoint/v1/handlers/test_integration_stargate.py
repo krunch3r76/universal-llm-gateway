@@ -23,6 +23,7 @@ from systems.pipeline.registry.core import PipelineRegistry
 
 from . import register_handlers
 from ._clients import file_sha256
+from .conftest import FIXTURE_TRANSCRIPT_ID, restamp_transcript_id
 
 pytestmark = pytest.mark.offline
 
@@ -58,10 +59,11 @@ def _load_registry(tmp: Path) -> PipelineRegistry:
     return registry
 
 
-def _raw_bytes() -> bytes:
+def _raw_bytes(transcript_id: str = FIXTURE_TRANSCRIPT_ID) -> bytes:
     env = json.loads((_FIXTURES / "grok_transcribed_pour.json").read_text())
     env["meta"]["provenance"] = "raw"
     env["meta"]["source_sha256"] = "ab" * 32
+    env["meta"]["transcript_id"] = transcript_id
     return json.dumps(env).encode()
 
 
@@ -165,7 +167,10 @@ def transport(monkeypatch: pytest.MonkeyPatch):
                 "from": kwargs.get("from_agent"),
             }
         )
-        return {"turn_number": len(turns)}, 200
+        return {
+            "send_path": "continue",
+            "turn": {"turn_number": len(turns)},
+        }, 200
 
     from . import admit, await_verify, fact, post, seal
 
@@ -229,8 +234,11 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     card = _CARD.encode()
     (tmp_path / "notes").mkdir()
     (tmp_path / "notes" / "card.md").write_bytes(card)
-    raw = _raw_bytes()
-    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    raw = _raw_bytes(_AGENT_HAPPY)
+    transcribed = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_HAPPY,
+    )
     (tmp_path / "notes" / "raw.json").write_bytes(raw)
     (tmp_path / "notes" / "tr.json").write_bytes(transcribed)
     base = {
@@ -318,6 +326,11 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
 
     tr_card = _CARD.encode()
     (tmp_path / "notes" / "tronly.md").write_bytes(tr_card)
+    tr_tronly = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_TRONLY,
+    )
+    (tmp_path / "notes" / "tr-tronly.json").write_bytes(tr_tronly)
     tr_only = await _run(
         registry,
         {
@@ -328,8 +341,8 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
             "card_uri": "notes/tronly.md",
             "expected_card_sha256": file_sha256(tr_card),
             "snapshot_uri": "notes/system/transcripts/grok/tronly.transcribed.messages.json",
-            "transcribed_ref": "notes/tr.json",
-            "transcribed_sha256": file_sha256(transcribed),
+            "transcribed_ref": "notes/tr-tronly.json",
+            "transcribed_sha256": file_sha256(tr_tronly),
         },
         tmp_path,
     )
@@ -340,6 +353,8 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
 
     raw_card = _CARD.encode()
     (tmp_path / "notes" / "rawonly.md").write_bytes(raw_card)
+    raw_rawonly = _raw_bytes(_AGENT_RAWONLY)
+    (tmp_path / "notes" / "raw-rawonly.json").write_bytes(raw_rawonly)
     raw_only = await _run(
         registry,
         {
@@ -350,8 +365,8 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
             "card_uri": "notes/rawonly.md",
             "expected_card_sha256": file_sha256(raw_card),
             "snapshot_uri": "notes/system/transcripts/grok/rawonly.raw.messages.json",
-            "raw_ref": "notes/raw.json",
-            "raw_sha256": file_sha256(raw),
+            "raw_ref": "notes/raw-rawonly.json",
+            "raw_sha256": file_sha256(raw_rawonly),
         },
         tmp_path,
     )
@@ -367,7 +382,7 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
 
     calls_before = len(transport["calls"])
     posts_before = len(transport["posts"])
-    bad = json.loads(raw)
+    bad = json.loads(_raw_bytes(_AGENT_BAD))
     bad["meta"]["capture"] = {
         "kind": "jsonl",
         "ref": "cortex://notes/cap.bin",
@@ -464,6 +479,7 @@ def _seal_options(
     (tmp_path / "notes").mkdir(exist_ok=True)
     (tmp_path / card_name).write_bytes(card)
     raw_name = f"notes/{house}-raw.json"
+    raw = restamp_transcript_id(raw, agent_id)
     (tmp_path / raw_name).write_bytes(raw)
     return {
         "house": house,

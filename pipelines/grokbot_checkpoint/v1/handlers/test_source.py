@@ -10,11 +10,14 @@ from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
 from continuity_tape.messages import envelope_wire_dict
 
 from ._clients import file_sha256
+from .conftest import FIXTURE_TRANSCRIPT_ID, restamp_transcript_id
 from .source import run_source
 
 pytestmark = pytest.mark.offline
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "cursor_window.jsonl"
+_FIXTURE_TR = Path(__file__).parent / "fixtures" / "grok_transcribed_pour.json"
+OTHER = "00000000-0000-0000-0000-000016045099"
 
 
 def _raw_pour() -> dict:
@@ -169,3 +172,84 @@ async def test_capture_uri_missing_is_unreadable(fs) -> None:
         fs,
     )
     assert out["refused"]["code"] == "capture.unreadable"
+
+
+@pytest.mark.asyncio
+async def test_transcript_id_mismatch_transcribed(fs) -> None:
+    transcribed = _FIXTURE_TR.read_bytes()
+    fs.files["notes/tr.json"] = transcribed
+    sha = file_sha256(transcribed)
+    mismatch = await run_source(
+        {
+            "transcribed_ref": "notes/tr.json",
+            "transcribed_sha256": sha,
+            "root_thread": "10",
+            "agent_id": OTHER,
+        },
+        fs,
+    )
+    assert mismatch["refused"]["code"] == "admit.transcript_id_mismatch"
+    ok = await run_source(
+        {
+            "transcribed_ref": "notes/tr.json",
+            "transcribed_sha256": sha,
+            "root_thread": "10",
+            "agent_id": FIXTURE_TRANSCRIPT_ID,
+        },
+        fs,
+    )
+    assert ok["refused"] is None
+    assert ok["provenance"] == "transcribed"
+
+
+@pytest.mark.asyncio
+async def test_transcript_id_mismatch_raw_and_alternate(fs) -> None:
+    raw_blob = restamp_transcript_id(
+        json.dumps(_raw_pour()).encode(),
+        FIXTURE_TRANSCRIPT_ID,
+    )
+    fs.files["notes/raw-only.json"] = raw_blob
+    raw_sha = file_sha256(raw_blob)
+    mismatch_raw = await run_source(
+        {
+            "raw_ref": "notes/raw-only.json",
+            "raw_sha256": raw_sha,
+            "root_thread": "10",
+            "agent_id": OTHER,
+        },
+        fs,
+    )
+    assert mismatch_raw["refused"]["code"] == "admit.transcript_id_mismatch"
+
+    transcribed = _FIXTURE_TR.read_bytes()
+    raw_other = restamp_transcript_id(json.dumps(_raw_pour()).encode(), OTHER)
+    fs.files["notes/tr-both.json"] = transcribed
+    fs.files["notes/raw-both.json"] = raw_other
+    mismatch_both = await run_source(
+        {
+            "transcribed_ref": "notes/tr-both.json",
+            "transcribed_sha256": file_sha256(transcribed),
+            "raw_ref": "notes/raw-both.json",
+            "raw_sha256": file_sha256(raw_other),
+            "root_thread": "10",
+            "agent_id": FIXTURE_TRANSCRIPT_ID,
+        },
+        fs,
+    )
+    assert mismatch_both["refused"]["code"] == "admit.transcript_id_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_identity_check_needs_root_thread(fs) -> None:
+    transcribed = _FIXTURE_TR.read_bytes()
+    fs.files["notes/tr.json"] = transcribed
+    sha = file_sha256(transcribed)
+    out = await run_source(
+        {
+            "transcribed_ref": "notes/tr.json",
+            "transcribed_sha256": sha,
+            "agent_id": OTHER,
+        },
+        fs,
+    )
+    assert out["refused"] is None

@@ -39,6 +39,16 @@ def _fact_body(
     )
 
 
+def _turn_from_send(payload: Any) -> int | None:
+    """POST /threads/send nests the number under ``turn`` (TurnSendCreated)."""
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("turn_number")
+    if raw is None and isinstance(payload.get("turn"), dict):
+        raw = payload["turn"].get("turn_number")
+    return int(raw) if raw else None
+
+
 async def run_fact(
     options: dict[str, Any],
     card: dict[str, Any],
@@ -88,7 +98,7 @@ async def run_fact(
         "refused": None,
         "skipped": False,
         "subject": subject,
-        "turn": payload.get("turn_number") if isinstance(payload, dict) else None,
+        "turn": _turn_from_send(payload),
         "body": body,
     }
 

@@ -14,6 +14,7 @@ from continuity_tape.messages import CaptureRef, envelope_wire_dict
 from systems.pipeline.core.conditions import evaluate_condition
 
 from ._clients import file_sha256
+from .conftest import FIXTURE_TRANSCRIPT_ID, restamp_transcript_id
 from ._test_call_post import call_post
 from .admit import run_admit
 from .await_verify import run_await_verify
@@ -47,9 +48,9 @@ def _jsonl() -> bytes:
     return (_FIXTURES / "cursor_window.jsonl").read_bytes()
 
 
-def _stamp_raw() -> bytes:
+def _stamp_raw(transcript_id: str = _AGENT_DEFAULT) -> bytes:
     raw = _jsonl()
-    env = extract_turns_from_jsonl_bytes(raw, transcript_id="cursor-window")
+    env = extract_turns_from_jsonl_bytes(raw, transcript_id=transcript_id)
     env.meta.provenance = "raw"
     env.meta.coverage = "full"
     env.meta.capture = CaptureRef(
@@ -91,7 +92,10 @@ class Bus:
         turn = {"turn_number": len(self.turns) + 1, "superseded": False, **kwargs}
         turn["from"] = kwargs.get("from_agent")
         self.turns.append(turn)
-        return {"turn_number": turn["turn_number"]}, 200
+        return {
+            "send_path": "continue",
+            "turn": {"turn_number": turn["turn_number"]},
+        }, 200
 
 
 def _options(fs, pour: bytes, *, house: str = "house", slot: str = "raw") -> dict:
@@ -208,8 +212,11 @@ def patch_seal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_raw_and_transcribed(fs, patch_seal) -> None:
-    raw = _stamp_raw()
-    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    raw = _stamp_raw(_AGENT_BY_PROV["raw"])
+    transcribed = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_BY_PROV["transcribed"],
+    )
     for blob, prov in ((raw, "raw"), (transcribed, "transcribed")):
         bus = Bus()
         options = _options(fs, blob, house=prov, slot=prov)
@@ -232,7 +239,10 @@ async def test_raw_and_transcribed(fs, patch_seal) -> None:
 @pytest.mark.asyncio
 async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
     raw = _stamp_raw()
-    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    transcribed = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_DEFAULT,
+    )
     bus = Bus()
     options = _options(fs, raw, house="both", slot="raw")
     t_uri = "notes/both-transcribed.json"
@@ -260,7 +270,7 @@ async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
 @pytest.mark.asyncio
 async def test_dom_harvest_graph(fs, patch_seal) -> None:
     raw = _jsonl()
-    env = extract_turns_from_jsonl_bytes(raw, transcript_id="cursor-window")
+    env = extract_turns_from_jsonl_bytes(raw, transcript_id=_AGENT_DEFAULT)
     env.meta.provenance = "raw"
     env.meta.coverage = "full"
     env.meta.capture = CaptureRef(
@@ -392,3 +402,15 @@ async def test_pending_is_graph_tail(fs) -> None:
         now=now,
     )
     assert out["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_transcript_id_mismatch_refuses_before_seal(fs, patch_seal) -> None:
+    fixture_bytes = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    bus = Bus()
+    options = _options(fs, fixture_bytes, house="tidm", slot="transcribed")
+    out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
+    assert (out.get("refused") or {}).get("code") == "admit.transcript_id_mismatch"
+    assert out["seal_calls"] == 0
+    assert bus.posts == 0
+    assert options["card_uri"] not in fs.writes

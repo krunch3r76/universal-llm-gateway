@@ -31,7 +31,7 @@ async def test_fact_once() -> None:
                 "superseded": False,
             }
         )
-        return {"turn_number": 7}, 200
+        return {"send_path": "continue", "turn": {"turn_number": 7}}, 200
 
     options = {
         "house": "h",
@@ -52,7 +52,9 @@ async def test_fact_once() -> None:
     first = await run_fact(options, card, env, get=get, send=send)
     second = await run_fact(options, card, env, get=get, send=send)
     assert first["skipped"] is False
+    assert first["turn"] == 7
     assert second["skipped"] is True
+    assert second["turn"] == 7
     assert len(sent) == 1
     assert "provenance raw" in sent[0]["body"]
     assert "capture none" in sent[0]["body"]
