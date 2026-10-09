@@ -1,7 +1,8 @@
 """Real Stargate registry, concurrency key, and DAG executor.
 
-Fakes only cortex_dispatch (session_close), the agent-bus client, and the
-succession stamp. File IO uses RootFs under CORTEX_FILES_ROOT.
+The seal step calls the real in-process session_close handler (validate,
+persist, dedupe, succession stamp). Fakes are the HTTP transport hop and the
+bus (agent-bus client and the sealed-event publisher).
 """
 
 from __future__ import annotations
@@ -55,42 +56,90 @@ def _raw_bytes() -> bytes:
     return json.dumps(env).encode()
 
 
+def bind_files_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Point every session_close binding of the files root at this temp tree."""
+    # ops_journals first: importing ops_session_close before it cycles through routes.
+    from cortex_store.dispatch_ops import ops_journals  # isort: skip
+
+    import cortex_store.dispatch_ops._shared as shared
+    import cortex_store.dispatch_ops.ops_session_close as ops_session_close
+    import cortex_store.routes.session_close_persist as session_close_persist
+    import cortex_store.routes.session_journals as session_journals
+
+    assert ops_journals._op_session_close is ops_session_close._op_session_close
+
+    monkeypatch.setattr(shared, "_FILES_ROOT", root)
+    monkeypatch.setattr(ops_session_close, "_FILES_ROOT", root)
+    monkeypatch.setattr(session_close_persist, "_FILES_ROOT", root)
+    monkeypatch.setattr(session_journals, "_FILES_ROOT", root)
+
+
+def boot_cortex(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import cortex_store.db as cortex_db
+    from cortex_store._test_db_bootstrap import materialize_head_schema_template
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
+    bind_files_root(monkeypatch, tmp_path)
+    db_path = tmp_path / "cortex.db"
+    materialize_head_schema_template(db_path)
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
+    cortex_db.run_migrations(cortex_db.cortex_conn())
+
+
+def journal_count(agent_id: str) -> int:
+    import cortex_store.db as cortex_db
+
+    conn = cortex_db.cortex_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM session_journals WHERE conversation_uuid = ?",
+            (agent_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row["n"])
+
+
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
     import inspect
 
     from continuity_tape.events import stargate_continuity_checkpoint_sealed
-    from cortex_store.dispatch_ops.ops_transcript_seal import _stamp_succession_fields
+    from cortex_store.dispatch_ops import execute_op
+
+    from ._clients import bus_get, bus_send
 
     calls: list[str] = []
     close_args: list[dict] = []
-    seen_ids: set[str] = set()
     posts: list[dict] = []
     turns: list[dict] = []
-    stamp_sig = inspect.signature(_stamp_succession_fields)
+    events: list[dict] = []
     event_sig = inspect.signature(stargate_continuity_checkpoint_sealed)
+    get_sig = inspect.signature(bus_get)
+    send_sig = inspect.signature(bus_send)
+    dispatch_sig = inspect.signature(execute_op)
 
     async def dispatch(tool: str, args: dict) -> dict:
         assert tool in _OP_SPECS
+        dispatch_sig.bind(tool, args)
         calls.append(tool)
         if tool != "session_close":
             return {}
         close_args.append(dict(args))
-        sid = str(args["session_id"])
-        already = sid in seen_ids
-        seen_ids.add(sid)
-        return {"session_id": sid, "already_closed": already, "reason": None}
-
-    def stamp(**kwargs):
-        stamp_sig.bind(**kwargs)
+        result = execute_op(tool, args)
+        return result if isinstance(result, dict) else {"error": "non_object_response"}
 
     def event(**kwargs):
         event_sig.bind(**kwargs)
+        events.append(kwargs)
 
     async def get(path: str, params=None):
+        get_sig.bind(path, params=params)
         return {"turns": list(turns)}, 200
 
     async def send(**kwargs):
+        send_sig.bind(**kwargs)
         posts.append(kwargs)
         turns.append(
             {
@@ -107,15 +156,18 @@ def transport(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(seal, "cortex_dispatch", dispatch)
     monkeypatch.setattr(seal, "stargate_continuity_checkpoint_sealed", event)
-    monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
-        stamp,
-    )
     for mod in (admit, post, fact, await_verify):
         monkeypatch.setattr(mod, "bus_get", get)
         if hasattr(mod, "bus_send"):
             monkeypatch.setattr(mod, "bus_send", send)
-    return {"calls": calls, "posts": posts, "turns": turns, "close_args": close_args}
+    return {
+        "calls": calls,
+        "posts": posts,
+        "turns": turns,
+        "close_args": close_args,
+        "events": events,
+        "dispatch": dispatch,
+    }
 
 
 async def _run(registry: PipelineRegistry, options: dict, root: Path) -> dict:
@@ -155,15 +207,7 @@ def test_registry_keeps_pipeline_and_renders_key(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) -> None:
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKSPACES_ROOT", str(tmp_path / "ws"))
-    import cortex_store.db as cortex_db
-    from cortex_store._test_db_bootstrap import materialize_head_schema_template
-
-    db_path = tmp_path / "cortex.db"
-    materialize_head_schema_template(db_path)
-    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
-    cortex_db.run_migrations(cortex_db.cortex_conn())
+    boot_cortex(monkeypatch, tmp_path)
     registry = _load_registry(tmp_path / "reg")
     card = _CARD.encode()
     (tmp_path / "notes").mkdir()
@@ -209,26 +253,39 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     snap_rel = base["snapshot_uri"]
     snap_bytes = (tmp_path / snap_rel).read_bytes()
     assert b'"provenance": "transcribed"' in snap_bytes or b'"provenance":"transcribed"' in snap_bytes
-    from cortex_store.dispatch_ops import _shared
     from cortex_store.models import SessionCloseRequest
     from cortex_store.routes.session_close_validate import (
         _resolve_transcript_messages_envelope,
     )
+    from cortex_store.session_close_validation import _validate_session_close_args
 
-    monkeypatch.setattr(_shared, "_FILES_ROOT", tmp_path)
+    sent = transport["close_args"][0]
     resolved = _resolve_transcript_messages_envelope(
         SessionCloseRequest(
-            session_id=happy["seal"]["session_id"],
-            agent="grok-bot",
-            summary="succession seal (grokbot-checkpoint-v1)",
-            session_summary_md="succession seal (grokbot-checkpoint-v1)",
-            transcript_messages_path=snap_rel,
-            transcript_depth="verbatim",
-            closed_by="succession",
-            succession_seal_authority=True,
+            session_id=sent["session_id"],
+            agent=sent["agent"],
+            summary=sent["summary"],
+            session_summary_md=sent["session_summary_md"],
+            transcript_messages_path=sent["transcript_messages_path"],
+            transcript_depth=sent["transcript_depth"],
+            closed_by=sent["closed_by"],
+            succession_seal_authority=sent["succession_seal_authority"],
+            entity_ids=sent["entity_ids"],
         )
     )
     assert resolved.meta.provenance == "transcribed"
+    assert _validate_session_close_args(
+        session_id=sent["session_id"],
+        agent=sent["agent"],
+        transcript_jsonl_path=None,
+        session_summary_md=sent["session_summary_md"],
+        summary=sent["summary"],
+        transcript_messages_path=sent["transcript_messages_path"],
+        transcript_depth=sent["transcript_depth"],
+        emit_rejected=False,
+    ) is None
+    assert sent["agent"] == "grok-bot"
+    assert sent["transcript_messages_path"] == snap_rel
     from agent_seat.session_id import SESSION_ID_RE
 
     assert SESSION_ID_RE.fullmatch(happy["seal"]["session_id"])
@@ -367,83 +424,173 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
         },
         tmp_path,
     )
-    rerun_card = _CARD.encode()
-    (tmp_path / "notes" / "rerun.md").write_bytes(rerun_card)
-    first = await _run(
-        registry,
-        {
-            **base,
-            "mode": "seal",
-            "house": "rerun",
-            "agent_id": "grok-rerun",
-            "n": 3,
-            "card_uri": "notes/rerun.md",
-            "expected_card_sha256": "ab" * 32,
-            "snapshot_uri": "notes/system/transcripts/grok/rerun.raw.messages.json",
-            "raw_ref": "notes/raw.json",
-            "raw_sha256": file_sha256(raw),
-        },
-        tmp_path,
-    )
-    assert first["seal"].get("session_id")
-    assert first["card"].get("refused")
-    seeded = "grok-bot-2026-01-01-000000-abc"
-    conn = cortex_db.cortex_conn()
-    conn.execute(
-        "INSERT INTO session_journals (session_id, conversation_uuid, closed_by, "
-        "file_path, agent, summary, timestamp) VALUES (?, ?, 'succession', ?, ?, ?, ?)",
-        (seeded, "grok-rerun", "notes/x", "grok-bot", "seeded row", "2026-01-01T00:00:00Z"),
-    )
-    conn.commit()
-    conn.close()
-    calls_at_rerun = len(transport["calls"])
-    second = await _run(
-        registry,
-        {
-            **base,
-            "mode": "seal",
-            "house": "rerun",
-            "agent_id": "grok-rerun",
-            "n": 3,
-            "card_uri": "notes/rerun.md",
-            "expected_card_sha256": file_sha256(rerun_card),
-            "snapshot_uri": "notes/system/transcripts/grok/rerun.raw.messages.json",
-            "raw_ref": "notes/raw.json",
-            "raw_sha256": file_sha256(raw),
-        },
-        tmp_path,
-    )
-    assert second["seal"]["session_id"] == seeded
-    assert second["seal"]["session_id"] != first["seal"]["session_id"]
-    from cortex_store.models import SessionCloseRequest
-    from cortex_store.routes.session_close_persist import try_idempotent_session_close
-    from cortex_store.routes.session_close_validate import ValidatedCloseContext
-
-    response, row_id = try_idempotent_session_close(
-        SessionCloseRequest(
-            session_id=seeded,
-            agent="grok-bot",
-            summary="succession seal (grokbot-checkpoint-v1)",
-            session_summary_md="succession seal (grokbot-checkpoint-v1)",
-            transcript_messages_path="notes/system/transcripts/grok/rerun.raw.messages.json",
-            transcript_depth="verbatim",
-            closed_by="succession",
-            succession_seal_authority=True,
-        ),
-        ValidatedCloseContext(
-            composed_md=None,
-            turn_count=0,
-            heading_warning=None,
-            transcript_entity_id=None,
-            transcript_path=None,
-            source_uri=None,
-            now="2026-01-01T00:00:00Z",
-            opened_at=None,
-        ),
-    )
-    assert response is None
-    assert row_id is not None
-    assert len(transport["calls"]) == calls_at_rerun + 1
-
     assert light["card"].get("written_sha256")
     assert light["seal"].get("_skipped") is True
+
+
+def _seal_options(tmp_path: Path, *, house: str, agent_id: str, n: int, raw: bytes) -> dict:
+    card = _CARD.encode()
+    card_name = f"notes/{house}-card.md"
+    (tmp_path / "notes").mkdir(exist_ok=True)
+    (tmp_path / card_name).write_bytes(card)
+    raw_name = f"notes/{house}-raw.json"
+    (tmp_path / raw_name).write_bytes(raw)
+    return {
+        "house": house,
+        "n": n,
+        "agent_id": agent_id,
+        "bus_identity": "grok-bot-hm1",
+        "root_thread": "10",
+        "verify_lane": "11",
+        "verifier": "verifier",
+        "trigger": "hop",
+        "card_uri": card_name,
+        "expected_card_sha256": file_sha256(card),
+        "snapshot_uri": (
+            f"notes/system/transcripts/grok/{house}-{agent_id[:8]}.raw.messages.json"
+        ),
+        "channel": "cp",
+        "residue": "r",
+        "wait_verify_seconds": 0,
+        "mode": "seal",
+        "raw_ref": raw_name,
+        "raw_sha256": file_sha256(raw),
+    }
+
+
+def _sealed_on(agent_id: str) -> str | None:
+    import cortex_store.db as cortex_db
+
+    conn = cortex_db.cortex_conn()
+    try:
+        row = conn.execute(
+            "SELECT sealed_on FROM session_journals WHERE conversation_uuid = ?",
+            (agent_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row["sealed_on"] is None:
+        return None
+    return str(row["sealed_on"])
+
+
+@pytest.mark.asyncio
+async def test_rerun_is_idempotent_until_snapshot_grows(
+    tmp_path: Path, monkeypatch, transport
+) -> None:
+    from datetime import UTC, datetime
+
+    from . import seal as seal_mod
+
+    boot_cortex(monkeypatch, tmp_path)
+    registry = _load_registry(tmp_path / "reg")
+    raw = _raw_bytes()
+    agent_id = "agent-hm1idem"
+    options = _seal_options(tmp_path, house="idem", agent_id=agent_id, n=1, raw=raw)
+    stamps = iter(
+        [
+            datetime(2026, 3, 1, 0, 0, 1, tzinfo=UTC),
+            datetime(2026, 3, 1, 0, 0, 2, tzinfo=UTC),
+            datetime(2026, 3, 1, 0, 0, 3, tzinfo=UTC),
+        ]
+    )
+
+    class _Clock:
+        @staticmethod
+        def now(tz=None):
+            return next(stamps)
+
+    monkeypatch.setattr(seal_mod, "datetime", _Clock)
+    first = await _run(registry, options, tmp_path)
+    assert first["seal"].get("refused") is None
+    assert first["seal"]["already_closed"] is False
+    assert journal_count(agent_id) == 1
+    sid = first["seal"]["session_id"]
+    sealed = _sealed_on(agent_id)
+    assert sealed == "2026-03-01T00:00:01Z"
+    assert len(transport["events"]) == 1
+    assert len(transport["calls"]) == 1
+
+    second = await _run(
+        registry,
+        _seal_options(tmp_path, house="idem", agent_id=agent_id, n=2, raw=raw),
+        tmp_path,
+    )
+    assert second["seal"]["already_closed"] is True
+    assert second["seal"]["session_id"] == sid
+    assert journal_count(agent_id) == 1
+    assert _sealed_on(agent_id) == sealed
+    assert len(transport["events"]) == 1
+    assert len(transport["calls"]) == 1
+
+    from continuity_tape.messages import seal_messages_sha256
+
+    grown = json.loads(raw)
+    grown["messages"].append(
+        {"role": "user", "content": "one more turn", "turn_index": 2}
+    )
+    grown["meta"]["messages_sha256"] = seal_messages_sha256(grown["messages"])
+    grown["meta"]["message_count"] = len(grown["messages"])
+    grown["meta"]["turn_count"] = 2
+    grown_bytes = json.dumps(grown).encode()
+    grown_options = _seal_options(
+        tmp_path, house="idem", agent_id=agent_id, n=3, raw=grown_bytes
+    )
+    third = await _run(registry, grown_options, tmp_path)
+    assert third["seal"].get("refused") is None
+    assert third["seal"]["already_closed"] is False
+    assert third["seal"]["session_id"] == sid
+    assert journal_count(agent_id) == 1
+    assert _sealed_on(agent_id) == "2026-03-01T00:00:03Z"
+    assert len(transport["events"]) == 2
+    assert len(transport["calls"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_crash_before_session_close_reseals(tmp_path: Path, monkeypatch, transport) -> None:
+    from . import seal as seal_mod
+
+    boot_cortex(monkeypatch, tmp_path)
+    registry = _load_registry(tmp_path / "reg")
+    raw = _raw_bytes()
+    agent_id = "agent-hm1crash"
+    options = _seal_options(tmp_path, house="crash", agent_id=agent_id, n=1, raw=raw)
+
+    async def die(tool: str, args: dict) -> dict:
+        raise RuntimeError("died before session_close")
+
+    monkeypatch.setattr(seal_mod, "cortex_dispatch", die)
+    from systems.pipeline.core.dag import PipelineExecutionError
+
+    with pytest.raises(PipelineExecutionError, match="died before session_close"):
+        await _run(registry, options, tmp_path)
+    assert journal_count(agent_id) == 0
+    snap = tmp_path / options["snapshot_uri"]
+    assert snap.is_file()
+    monkeypatch.setattr(seal_mod, "cortex_dispatch", transport["dispatch"])
+    calls_before = len(transport["calls"])
+    second = await _run(registry, options, tmp_path)
+    assert second["seal"].get("refused") is None
+    assert second["seal"]["already_closed"] is False
+    assert journal_count(agent_id) == 1
+    assert len(transport["calls"]) == calls_before + 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_threads_path_refused(tmp_path: Path, monkeypatch, transport) -> None:
+    boot_cortex(monkeypatch, tmp_path)
+    registry = _load_registry(tmp_path / "reg")
+    raw = _raw_bytes()
+    agent_id = "agent-hm1old"
+    options = _seal_options(tmp_path, house="oldp", agent_id=agent_id, n=1, raw=raw)
+    options["snapshot_uri"] = "notes/system/threads/oldp.messages.json"
+    card_before = (tmp_path / options["card_uri"]).read_bytes()
+    out = await _run(registry, options, tmp_path)
+    refused = out["seal"]["refused"]
+    assert "transcript_messages_path.invalid" in refused["message"]
+    assert journal_count(agent_id) == 0
+    assert transport["events"] == []
+    assert _sealed_on(agent_id) is None
+    snap_after = (tmp_path / options["snapshot_uri"]).read_bytes()
+    assert (tmp_path / options["card_uri"]).read_bytes() == card_before
+    assert snap_after.startswith(b"{") or snap_after.startswith(b"[")
