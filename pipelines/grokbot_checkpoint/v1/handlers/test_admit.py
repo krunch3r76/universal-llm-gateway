@@ -49,6 +49,7 @@ async def test_path_escape_and_replay(fs) -> None:
             "mode": "seal",
             "house": "h",
             "n": 2,
+            "agent_id": "agent-replay",
             "card_uri": "notes/card.md",
             "verify_lane": "v",
         },
@@ -57,3 +58,9 @@ async def test_path_escape_and_replay(fs) -> None:
         get=get,
     )
     assert replay["replayed"] is True
+
+
+@pytest.mark.asyncio
+async def test_seal_mode_requires_agent_id() -> None:
+    out = await run_admit({"mode": "seal", "house": "h", "n": 1}, {})
+    assert out["refused"]["code"] == "admit.agent_id"

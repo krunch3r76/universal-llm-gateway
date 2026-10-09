@@ -109,6 +109,8 @@ async def run_card(
         else:
             cap_tok = "none"
         session_id = str((seal or {}).get("session_id") or "")
+        attribution = str(options.get("bus_identity") or "")
+        suppressed = str((seal or {}).get("event_suppressed_reason") or "")
         authority = ""
         if session_id:
             from cortex_store.verbatim_succession import transcript_messages_path
@@ -117,9 +119,11 @@ async def run_card(
                 f"notes/system/transcripts/{session_id}.md"
             )
             authority = f"transcript:{session_id} · {seal_path} · "
+        suppressed_tok = f" · event_suppressed:{suppressed}" if suppressed else ""
         cell = (
             f"{authority}staging:{snap}@{snap_sha} · {msg} · provenance:{prov} · "
-            f"producer:{prod} · capture:{cap_tok}"
+            f"producer:{prod} · capture:{cap_tok} · attribution:{attribution}"
+            f"{suppressed_tok}"
         )
     row = (
         f"| {n} | {when} | {trigger} | {expected} | {cell} | pipeline {execution_id} |"

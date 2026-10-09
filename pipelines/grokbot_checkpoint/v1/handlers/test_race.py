@@ -25,6 +25,22 @@ def _count_rows() -> int:
 
 def test_concurrent_first_seals_one_row(monkeypatch, tmp_path) -> None:
     _boot(monkeypatch, tmp_path)
+    import inspect
+
+    from continuity_tape.events_checkpoint import (
+        stargate_continuity_checkpoint_sealed,
+    )
+
+    event_sig = inspect.signature(stargate_continuity_checkpoint_sealed)
+    seen_events: list[dict] = []
+
+    def _event(**kwargs):
+        event_sig.bind(**kwargs)
+        seen_events.append(kwargs)
+
+    from . import seal as seal_mod
+
+    monkeypatch.setattr(seal_mod, "stargate_continuity_checkpoint_sealed", _event)
     import cortex_store.routes.session_close as session_close
 
     barrier = threading.Barrier(2, timeout=10)
@@ -92,6 +108,8 @@ def test_concurrent_first_seals_one_row(monkeypatch, tmp_path) -> None:
     assert results[0]["session_id"] == results[1]["session_id"]
     assert results[0].get("refused") is None
     assert results[1].get("refused") is None
+    assert seen_events
+    assert all("execution_id" in ev for ev in seen_events)
 
 
 def test_other_integrity_error_is_not_retried(monkeypatch, tmp_path) -> None:

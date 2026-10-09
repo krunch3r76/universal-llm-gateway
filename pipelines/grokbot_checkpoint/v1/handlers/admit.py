@@ -54,6 +54,8 @@ async def run_admit(
     for path in _paths(options):
         if not rel_path_ok(path):
             return refuse("admit.path_escape", f"refused path {path}")
+    if mode == "seal" and not str(options.get("agent_id") or "").strip():
+        return refuse("admit.agent_id", "agent_id required in seal mode")
     residue = options.get("residue")
     if isinstance(residue, str) and len(residue) > 800:
         return refuse("admit.residue", "residue exceeds 800 chars")

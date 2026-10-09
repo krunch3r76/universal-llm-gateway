@@ -30,6 +30,7 @@ def _boot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import cortex_store.routes.session_journals as journals
     from cortex_store._test_db_bootstrap import materialize_head_schema_template
 
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     for module in (shared, ops, persist, journals):
         monkeypatch.setattr(module, "_FILES_ROOT", tmp_path)
     db_path = tmp_path / "cortex.db"
@@ -92,16 +93,26 @@ def _options(agent_id: str = "agent-contract-1") -> dict:
 
 
 class _Spy:
-    def __init__(self, *, prior_http_error: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        prior_http_error: str | None = None,
+        prior_body: dict | None = None,
+        close_body: dict | None = None,
+    ) -> None:
         self.events: list[dict] = []
         self.closes = 0
         self.prior_http_error = prior_http_error
+        self.prior_body = prior_body
+        self.close_body = close_body
         self.close_sig = inspect.signature(_op_session_close)
         self.entity_sig = inspect.signature(_op_entity_get)
 
     async def dispatch(self, tool: str, args: dict) -> dict:
         if tool == "entity_get":
             self.entity_sig.bind(**args)
+            if self.prior_body is not None:
+                return self.prior_body
             if self.prior_http_error is not None:
                 return {"error": self.prior_http_error}
             from fastapi import HTTPException
@@ -115,6 +126,8 @@ class _Spy:
             raise AssertionError(tool)
         self.close_sig.bind(**args)
         self.closes += 1
+        if self.close_body is not None:
+            return self.close_body
         result = _op_session_close(**args)
         return result if isinstance(result, dict) else {"error": "non_object"}
 
@@ -151,13 +164,27 @@ def _opened(session_id: str) -> str | None:
     return json.loads(row["attributes"]).get("opened_at")
 
 
+def _bound_event(spy: _Spy):
+    from continuity_tape.events_checkpoint import (
+        stargate_continuity_checkpoint_sealed,
+    )
+
+    event_sig = inspect.signature(stargate_continuity_checkpoint_sealed)
+
+    def _event(**kwargs):
+        event_sig.bind(**kwargs)
+        spy.events.append(kwargs)
+
+    return _event
+
+
 @pytest.fixture
 def spy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Spy:
     _boot(monkeypatch, tmp_path)
     made = _Spy()
     monkeypatch.setattr(
         "pipelines.grokbot_checkpoint.v1.handlers.seal.stargate_continuity_checkpoint_sealed",
-        lambda **kw: made.events.append(kw),
+        _bound_event(made),
     )
     return made
 
@@ -168,7 +195,7 @@ def _patch_event(monkeypatch, spy: _Spy) -> None:
     monkeypatch.setattr(
         seal_mod,
         "stargate_continuity_checkpoint_sealed",
-        lambda **kw: spy.events.append(kw),
+        _bound_event(spy),
     )
 
 
@@ -222,7 +249,7 @@ async def test_3_prefix_extend(monkeypatch, tmp_path: Path) -> None:
     )
     assert second["refused"] is None
     assert second["session_id"] == first["session_id"]
-    assert second["messages_sha256"] != first["messages_sha256"]
+    assert len(_journal_rows("agent-contract-1")) == 1
     assert len(spy.events) == 2
 
 
@@ -235,9 +262,6 @@ async def test_4_diverged_refuses(monkeypatch, tmp_path: Path) -> None:
     await run_seal(
         _options(), _step(_envelope(_messages(1)), uri), execution_id="e", dispatch=spy.dispatch
     )
-    card = tmp_path / "card.md"
-    card.write_text("untouched", encoding="utf-8")
-    before = card.read_bytes()
     out = await run_seal(
         _options(),
         _step(_envelope(_messages(2, diverged=True)), uri),
@@ -245,7 +269,7 @@ async def test_4_diverged_refuses(monkeypatch, tmp_path: Path) -> None:
         dispatch=spy.dispatch,
     )
     assert out["refused"]["code"] == "succession.verbatim_diverged"
-    assert card.read_bytes() == before
+    assert len(_journal_rows("agent-contract-1")) == 1
     assert len(spy.events) == 1
 
 
@@ -271,28 +295,17 @@ async def test_5_short_turns_clear_minimum(monkeypatch, tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_6_threads_path_refused(monkeypatch, tmp_path: Path) -> None:
     _boot(monkeypatch, tmp_path)
-    from continuity_tape.seal_messages import seal_messages_envelope
-
-    called: list[str] = []
-
-    async def dispatch(tool: str, args: dict) -> dict:
-        called.append(tool)
-        return {}
-
-    result = await seal_messages_envelope(
-        _envelope(_messages(1)),
-        agent="grok-bot-hm1",
-        seat_slug="grok-bot",
-        conversation_uuid="agent-contract-1",
-        opened_at=_START,
-        thread="15903",
-        structural_md="## Session Summary\n\n" + ("x" * 180),
-        summary="short summary text here!!",
-        cortex_dispatch_fn=dispatch,
-        transcript_messages_path="notes/system/threads/x.messages.json",
+    spy = _Spy()
+    _patch_event(monkeypatch, spy)
+    out = await run_seal(
+        _options(),
+        _step(_envelope(_messages(1)), "notes/system/threads/x.messages.json"),
+        execution_id="e",
+        dispatch=spy.dispatch,
     )
-    assert result.refused
-    assert called == []
+    assert out["refused"]["code"] == "seal.path_rejected"
+    assert spy.closes == 0
+    assert spy.events == []
     assert _journal_rows("agent-contract-1") == []
 
 
@@ -314,6 +327,12 @@ async def test_7_default_staging_slug(fs) -> None:
     assert "/" not in out["snapshot_uri"].split("ephemeral/harvests/grok/", 1)[1].split("-")[0]
     assert " " not in out["snapshot_uri"]
     assert ".." not in out["snapshot_uri"]
+    slashy = await run_envelope(
+        {"house": house, "agent_id": "ab/cd!!gh"}, source, fs
+    )
+    assert slashy["refused"] is None
+    assert "/cd" not in slashy["snapshot_uri"]
+    assert "ab-cd--" in slashy["snapshot_uri"]
 
 
 @pytest.mark.asyncio
@@ -338,10 +357,15 @@ async def test_8_agent_and_id_prefix(monkeypatch, tmp_path: Path) -> None:
 async def test_9_lookup_raise_same_id(monkeypatch, tmp_path: Path) -> None:
     """Identity is the pure derivation. A lookup result must not supply the id."""
     import cortex_store.db as cortex_db
-    from continuity_tape.seal_messages import derive_anchored_session_id
+    from agent_seat.session_id import derive_session_id_from_timestamp
 
     _boot(monkeypatch, tmp_path)
-    expected = derive_anchored_session_id("grok-bot", _START, "agent-lookup")
+    expected = derive_session_id_from_timestamp(
+        "grok-bot",
+        _START,
+        deterministic=True,
+        conversation_uuid="agent-lookup",
+    )
     conn = cortex_db.cortex_conn()
     try:
         conn.execute(
@@ -401,16 +425,23 @@ async def test_suppression_unchanged_extend_and_read_error(
 
 @pytest.mark.asyncio
 async def test_suppression_ignores_files_root(monkeypatch, tmp_path: Path) -> None:
+    """Prior hash comes from the entity, so a decoy files root cannot re-fire."""
+    import cortex_store.dispatch_ops.ops_session_close as ops
+    import cortex_store.routes.session_close_persist as persist
+
     _boot(monkeypatch, tmp_path)
-    decoy = tmp_path / "stargate-other-root"
-    decoy.mkdir()
-    monkeypatch.setattr("cortex_store.dispatch_ops._shared._FILES_ROOT", decoy)
     spy = _Spy()
     _patch_event(monkeypatch, spy)
     step = _step(_envelope(_messages(1)), _URI)
     first = await run_seal(
         _options("agent-root"), step, execution_id="e", dispatch=spy.dispatch
     )
+    decoy = tmp_path / "stargate-other-root"
+    sealed = decoy / "notes" / "system" / "transcripts"
+    sealed.mkdir(parents=True)
+    (sealed / f"{first['session_id']}.md").write_text("different bytes", encoding="utf-8")
+    monkeypatch.setattr(ops, "_FILES_ROOT", decoy)
+    monkeypatch.setattr(persist, "_FILES_ROOT", decoy)
     second = await run_seal(
         _options("agent-root"), step, execution_id="e", dispatch=spy.dispatch
     )
@@ -463,6 +494,147 @@ def test_conversation_uuid_on_insert_and_reclose(monkeypatch, tmp_path: Path) ->
     import asyncio
 
     asyncio.run(_go())
+
+
+@pytest.mark.asyncio
+async def test_unparseable_start_refuses_before_close(monkeypatch, tmp_path: Path) -> None:
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy()
+    _patch_event(monkeypatch, spy)
+    env = _envelope(_messages(1))
+    env["meta"]["opened_at"] = "not-a-timestamp"
+    env["messages"][0].pop("timestamp", None)
+    out = await run_seal(
+        _options("agent-badstart"),
+        _step(env, _URI),
+        execution_id="e",
+        dispatch=spy.dispatch,
+    )
+    assert out["refused"]["code"] == "seal.start_unparseable"
+    assert spy.closes == 0
+    assert spy.events == []
+    assert _journal_rows("agent-badstart") == []
+
+
+@pytest.mark.asyncio
+async def test_later_message_timestamp_does_not_change_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy()
+    _patch_event(monkeypatch, spy)
+    start = "2026-04-05T06:07:08Z"
+    first_msgs = [
+        {"role": "user", "content": "turn one", "turn_index": 1},
+        {"role": "assistant", "content": "ack one", "turn_index": 1},
+    ]
+    first_env = _envelope(first_msgs)
+    first_env["meta"]["opened_at"] = start
+    first = await run_seal(
+        {**_options("agent-anchor"), "opened_at": start},
+        _step(first_env, _URI),
+        execution_id="e",
+        dispatch=spy.dispatch,
+    )
+    second_msgs = [
+        {"role": "user", "content": "turn one", "turn_index": 1},
+        {"role": "assistant", "content": "ack one", "turn_index": 1},
+        {
+            "role": "user",
+            "content": "turn two",
+            "turn_index": 2,
+            "timestamp": "2026-08-01T00:00:00Z",
+        },
+    ]
+    second_env = _envelope(second_msgs)
+    second_env["meta"].pop("opened_at", None)
+    second = await run_seal(
+        {**_options("agent-anchor"), "n": 2, "opened_at": start},
+        _step(second_env, _URI),
+        execution_id="e",
+        dispatch=spy.dispatch,
+    )
+    assert second["refused"] is None
+    assert second["session_id"] == first["session_id"]
+    assert len(_journal_rows("agent-anchor")) == 1
+
+
+@pytest.mark.asyncio
+async def test_offset_and_zulu_share_session_id(monkeypatch, tmp_path: Path) -> None:
+    ids: list[str] = []
+    for label, opened in (
+        ("off", "2026-04-05T06:07:08-07:00"),
+        ("z", "2026-04-05T13:07:08Z"),
+    ):
+        root = tmp_path / label
+        root.mkdir()
+        _boot(monkeypatch, root)
+        spy = _Spy()
+        _patch_event(monkeypatch, spy)
+        env = _envelope(_messages(1))
+        env["meta"]["opened_at"] = opened
+        env["messages"][0]["timestamp"] = opened
+        out = await run_seal(
+            _options("agent-tz"),
+            _step(env, _URI),
+            execution_id="e",
+            dispatch=spy.dispatch,
+        )
+        assert out["refused"] is None
+        ids.append(out["session_id"])
+    assert ids[0] == ids[1]
+
+
+@pytest.mark.asyncio
+async def test_detail_body_is_transport_failure(monkeypatch, tmp_path: Path) -> None:
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy(close_body={"detail": "missing"})
+    _patch_event(monkeypatch, spy)
+    out = await run_seal(
+        _options("agent-detail"),
+        _step(_envelope(_messages(1)), _URI),
+        execution_id="e",
+        dispatch=spy.dispatch,
+    )
+    assert out["refused"]["code"] == "seal.transport"
+    assert _journal_rows("agent-detail") == []
+
+
+@pytest.mark.asyncio
+async def test_entity_without_id_or_attributes_is_prior_read_failed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy(prior_body={"detail": "not an entity"})
+    _patch_event(monkeypatch, spy)
+    out = await run_seal(
+        _options("agent-prior"),
+        _step(_envelope(_messages(1)), _URI),
+        execution_id="e",
+        dispatch=spy.dispatch,
+    )
+    assert out["refused"] is None
+    assert out["event_suppressed_reason"] == "prior_read_failed"
+    assert spy.events == []
+    assert len(_journal_rows("agent-prior")) == 1
+
+
+@pytest.mark.asyncio
+async def test_status_404_without_error_key_is_first_seal(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy(prior_body={"status_code": 404, "detail": "Entity not found"})
+    _patch_event(monkeypatch, spy)
+    out = await run_seal(
+        _options("agent-404"),
+        _step(_envelope(_messages(1)), _URI),
+        execution_id="e",
+        dispatch=spy.dispatch,
+    )
+    assert out["refused"] is None
+    assert out["event_suppressed_reason"] is None
+    assert len(spy.events) == 1
 
 
 def test_roots_disagree(monkeypatch, tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any, override
 
 from continuity_tape.events import stargate_continuity_checkpoint_sealed
@@ -39,26 +40,61 @@ def _structural(options: dict[str, Any], envelope_step: dict[str, Any], opened_a
     return f"## Session Summary\n\n{body}\n"
 
 
-def _opened_at(options: dict[str, Any], envelope: dict[str, Any]) -> str | None:
+def _normalise_utc(raw: str) -> str | None:
+    """Parse one ISO instant and return ``YYYY-MM-DDTHH:MM:SSZ``.
+
+    A trailing ``Z`` is accepted. Naive or non-ISO text returns None so the
+    caller refuses before any close. Offset forms of the same instant share
+    one UTC string, so preview and close cannot mint different ids.
+    """
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _first_message_timestamp(envelope: dict[str, Any]) -> str | None:
     messages = envelope.get("messages")
-    if isinstance(messages, list):
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            for key in ("timestamp", "created_at", "ts"):
-                value = message.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
+    if not isinstance(messages, list) or not messages:
+        return None
+    message = messages[0]
+    if not isinstance(message, dict):
+        return None
+    for key in ("timestamp", "created_at", "ts"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _raw_opened_at(options: dict[str, Any], envelope: dict[str, Any]) -> str | None:
+    """meta.opened_at, then meta.started_at, else the first message, else options."""
     meta = envelope.get("meta") if isinstance(envelope.get("meta"), dict) else {}
     for key in ("opened_at", "started_at"):
         value = meta.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    first = _first_message_timestamp(envelope)
+    if first:
+        return first
     for key in ("opened_at", "house_opened_at"):
         value = options.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _opened_at(options: dict[str, Any], envelope: dict[str, Any]) -> str | None:
+    raw = _raw_opened_at(options, envelope)
+    if raw is None:
+        return None
+    return _normalise_utc(raw)
 
 
 def _entity_missing(value: object) -> bool:
@@ -93,9 +129,11 @@ async def _prior_messages_sha(
         return None, "prior_read_failed"
     if not isinstance(body, dict):
         return None, "prior_read_failed"
-    if "error" in body:
-        if _entity_missing(body.get("error")):
+    if "error" in body or "status_code" in body or "detail" in body:
+        if _entity_missing(body):
             return None, None
+        return None, "prior_read_failed"
+    if "id" not in body and "attributes" not in body:
         return None, "prior_read_failed"
     attrs = body.get("attributes")
     if isinstance(attrs, str):
@@ -129,9 +167,12 @@ async def run_seal(
     envelope = envelope_step.get("envelope")
     if not isinstance(envelope, dict):
         return refuse("seal.envelope_missing", "envelope step did not carry messages")
-    opened = _opened_at(options, envelope)
-    if not opened:
+    raw_opened = _raw_opened_at(options, envelope)
+    if not raw_opened:
         return refuse("seal.missing_start", "conversation start is absent")
+    opened = _normalise_utc(raw_opened)
+    if not opened:
+        return refuse("seal.start_unparseable", "conversation start is not an ISO instant")
     agent = str(options.get("bus_identity") or "")
     agent_id = str(options.get("agent_id") or "")
     lane = str(options.get("root_thread") or options.get("verify_lane") or "")

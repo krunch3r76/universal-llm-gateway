@@ -1,8 +1,10 @@
 """Migration 081: one session_journals row per non-null session_id.
 
-The head schema template already carries this index. This migration installs
-it on databases created before that template. Duplicate non-null session_ids
-are refused: the database is left unchanged and the index is not created.
+Migration 034 already created ``idx_session_journals_session_id_unique`` on
+the head schema template, so 081 is redundant and harmless on databases that
+already ran 034. This migration installs the index on databases created
+before that template. Duplicate non-null session_ids are refused: the
+database is left unchanged and the index is not created.
 """
 
 from __future__ import annotations

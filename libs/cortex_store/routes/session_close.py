@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from ..db import json_encode  # re-export for tests patching session_close.json_encode
@@ -64,13 +65,14 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         return _close_or_reuse(body, ctx)
 
 
+_SESSION_ID_UNIQUE_RE = re.compile(
+    r"UNIQUE constraint failed: .*\bsession_journals\.session_id\b"
+)
+
+
 def _session_id_unique_violation(exc: sqlite3.IntegrityError) -> bool:
     """True only for the partial unique index on session_journals.session_id."""
-    text = str(exc)
-    return (
-        "idx_session_journals_session_id_unique" in text
-        or "session_journals.session_id" in text
-    )
+    return _SESSION_ID_UNIQUE_RE.search(str(exc)) is not None
 
 
 def _close_or_reuse(

@@ -111,6 +111,10 @@ async def seal_messages_envelope(
             },
             session_id=session_id,
         )
+    # FastAPI ``{"detail": ...}`` and other bodies with no journal id are not
+    # a successful close. Treating them as success stored journal_row_id None.
+    if close.get("journal_row_id") is None and not close.get("already_closed"):
+        return _refuse("seal.transport", "session_close returned no journal row", session_id)
     return SealResult(
         close_args=close_args,
         close=close,

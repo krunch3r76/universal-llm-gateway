@@ -31,7 +31,7 @@ def files_roots_agree() -> bool:
 def staging_uri(house: str, agent_id: str, provenance: str) -> str:
     return (
         "ephemeral/harvests/grok/"
-        f"{slug_house(house)}-{agent_id[:8]}.{provenance}.messages.json"
+        f"{slug_house(house)}-{slug_house(agent_id)[:8]}.{provenance}.messages.json"
     )
 
 

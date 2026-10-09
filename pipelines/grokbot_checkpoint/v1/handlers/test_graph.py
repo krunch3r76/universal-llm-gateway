@@ -21,6 +21,7 @@ from .fact import run_fact
 from .post import run_post
 from .seal import run_seal
 from .source import run_source
+from .test_contract import _boot, _patch_event, _Spy
 
 pytestmark = pytest.mark.offline
 
@@ -183,16 +184,10 @@ async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispat
 
 @pytest.fixture
 def patch_seal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    import cortex_store.db as cortex_db
-    from cortex_store._test_db_bootstrap import materialize_head_schema_template
-
-    from . import seal as seal_mod
-
-    db_path = tmp_path / "cortex.db"
-    materialize_head_schema_template(db_path)
-    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
-    cortex_db.run_migrations(cortex_db.cortex_conn())
-    monkeypatch.setattr(seal_mod, "stargate_continuity_checkpoint_sealed", lambda **k: None)
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy()
+    _patch_event(monkeypatch, spy)
+    return spy
 
 
 @pytest.mark.asyncio
@@ -202,15 +197,17 @@ async def test_raw_and_transcribed(fs, patch_seal) -> None:
     for blob, prov in ((raw, "raw"), (transcribed, "transcribed")):
         bus = Bus()
         options = _options(fs, blob, house=prov, slot=prov)
+        options["agent_id"] = f"agent-{prov}"
         out = await _seal_graph(
             fs,
             options,
             bus,
-            dispatch=lambda tool, args: _ok_close(),
+            dispatch=patch_seal.dispatch,
         )
         assert out["source"]["provenance"] == prov
         assert out["source"]["fallback"] is None
         assert out["source"]["alternate"] is None
+        assert out["seal"]["refused"] is None
         assert out["card"]["refused"] is None
         assert prov in out["post"]["body"]
         assert f"provenance {prov}" in out["fact"]["body"]
@@ -226,7 +223,7 @@ async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
     fs.files[t_uri] = transcribed
     options["transcribed_ref"] = t_uri
     options["transcribed_sha256"] = file_sha256(transcribed)
-    out = await _seal_graph(fs, options, bus, dispatch=lambda tool, args: _ok_close())
+    out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
     assert out["source"]["provenance"] == "transcribed"
     assert out["source"]["alternate"]["ref"] == options["raw_ref"]
     writes = list(fs.writes)
@@ -238,7 +235,7 @@ async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
     options2 = _options(fs, tampered, house="badcap", slot="raw")
     refused_bus = Bus()
     refused = await _seal_graph(
-        fs, options2, refused_bus, dispatch=lambda tool, args: _ok_close()
+        fs, options2, refused_bus, dispatch=patch_seal.dispatch
     )
     assert refused["refused"]["code"] == "capture.sha_mismatch"
     assert refused["seal_calls"] == 0
@@ -271,15 +268,11 @@ async def test_dom_harvest_graph(fs, patch_seal) -> None:
         fs,
         _options(fs, pour, house="dom"),
         bus,
-        dispatch=lambda tool, args: _ok_close(),
+        dispatch=patch_seal.dispatch,
     )
     assert out["source"]["capture"]["kind"] == "dom_harvest"
     assert "producer dom-harvester" in out["fact"]["body"]
     assert bus.posts == 2
-
-
-async def _ok_close():
-    return {"session_id": "sess", "already_closed": False, "meta": {"provenance": "raw"}}
 
 
 @pytest.mark.asyncio
@@ -287,19 +280,18 @@ async def test_rerun_after_seal(fs, patch_seal) -> None:
     bus = Bus()
     options = _options(fs, _stamp_raw())
     first = await _seal_graph(
-        fs, options, bus, stop_after="seal", dispatch=lambda t, a: _ok_close()
+        fs, options, bus, stop_after="seal", dispatch=patch_seal.dispatch
     )
-    assert first["seal"]["session_id"] == "sess"
+    assert first["seal"]["refused"] is None
+    assert first["seal"]["session_id"]
 
-    async def already(tool, args):
-        return {"session_id": "sess", "already_closed": True, "meta": {"provenance": "raw"}}
-
-    second = await _seal_graph(fs, options, bus, dispatch=already)
+    second = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
     assert second["envelope"]["action"] == "skip"
-    assert second["seal"]["already_closed"] is True
+    assert second["seal"]["already_closed"] is False
+    assert second["seal"]["session_id"] == first["seal"]["session_id"]
     assert second["card"]["refused"] is None
     assert bus.posts == 2  # CHECKPOINT + FACT
-    third = await _seal_graph(fs, options, bus, dispatch=already)
+    third = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
     assert third["admit"]["replayed"] is True
     assert third["post"].get("_skipped") is True
     assert bus.posts == 2
@@ -311,7 +303,7 @@ async def test_stale_card_then_fresh(fs, patch_seal) -> None:
     options = _options(fs, _stamp_raw())
     options["expected_card_sha256"] = "ab" * 32
     out = await _seal_graph(
-        fs, options, bus, dispatch=lambda t, a: _ok_close()
+        fs, options, bus, dispatch=patch_seal.dispatch
     )
     assert out["card"]["refused"]["code"] == "card.sha_mismatch"
     assert options["card_uri"] not in fs.writes
@@ -321,14 +313,11 @@ async def test_stale_card_then_fresh(fs, patch_seal) -> None:
         fs,
         options,
         bus,
-        dispatch=lambda t, a: _async_already(),
+        dispatch=patch_seal.dispatch,
     )
     assert again["envelope"]["action"] == "skip"
-    assert again["seal"]["already_closed"] is True
-
-
-async def _async_already():
-    return {"session_id": "sess", "already_closed": True, "meta": {"provenance": "raw"}}
+    assert again["seal"]["already_closed"] is False
+    assert again["seal"]["session_id"] == out["seal"]["session_id"]
 
 
 @pytest.mark.asyncio
