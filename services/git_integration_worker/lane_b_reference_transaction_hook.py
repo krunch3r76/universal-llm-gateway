@@ -1,8 +1,9 @@
-"""Hub ``reference-transaction`` hook logic (Lane-B git integrity B2).
+"""``reference-transaction`` hook logic (Lane-B forward-only git integrity).
 
 Invoked from ``hooks/reference-transaction`` during the ``prepared`` phase only.
-While ``CURSOR_SDK_DISPATCH_ID`` is set in the hub worktree, refuses ref creates
-and non-fast-forward updates under ``refs/heads/*`` (git 2.43 prepared stdin).
+Always refuses non-fast-forward updates to existing ``refs/heads/*`` refs from
+any worktree (hub or linked). Ref creates (``oldrev`` all-zero) and branch
+deletes (``newrev`` all-zero) stay allowed.
 """
 
 from __future__ import annotations
@@ -56,20 +57,24 @@ def parse_ref_updates(stdin_lines: list[str]) -> list[RefUpdate]:
     return updates
 
 
-def resolve_hub_toplevel(from_repo: Path) -> Path:
-    """Primary worktree path (hub checkout) for a linked repo."""
-    from services.git_integration_worker.cursor_sdk_hub_land_scope import (
-        resolve_hub_git_repo,
-    )
-
-    return resolve_hub_git_repo(from_repo.resolve())
-
-
 def is_ancestor(repo: Path, *, oldrev: str, newrev: str) -> bool:
     if oldrev == _ZERO_OID or newrev == _ZERO_OID:
         return False
     proc = _git_capture(repo, "merge-base", "--is-ancestor", oldrev, newrev)
     return proc.returncode == 0
+
+
+def _ref_exists(repo: Path, ref_name: str) -> bool:
+    proc = _git_capture(repo, "show-ref", "--verify", "--hash", ref_name)
+    return proc.returncode == 0
+
+
+def _resolve_ref(repo: Path, ref_name: str) -> str | None:
+    proc = _git_capture(repo, "rev-parse", "--verify", ref_name)
+    if proc.returncode != 0:
+        return None
+    value = proc.stdout.strip()
+    return value or None
 
 
 def refuse_reason(
@@ -81,9 +86,6 @@ def refuse_reason(
     """Return the first offending ref update, or ``None`` when the txn is allowed."""
     _ = dispatch_id
     toplevel = repo.resolve()
-    hub = resolve_hub_toplevel(toplevel)
-    if toplevel != hub.resolve():
-        return None
 
     for upd in updates:
         if upd.ref_name == _HEAD_REF:
@@ -97,7 +99,14 @@ def refuse_reason(
             continue
 
         if upd.oldrev == _ZERO_OID:
-            return upd
+            # ``switch -C`` / recreate paths may queue a pseudo-create for an existing ref.
+            if _ref_exists(toplevel, upd.ref_name):
+                current = _resolve_ref(toplevel, upd.ref_name)
+                if current and not is_ancestor(
+                    toplevel, oldrev=current, newrev=upd.newrev
+                ):
+                    return upd
+            continue
 
         if not is_ancestor(toplevel, oldrev=upd.oldrev, newrev=upd.newrev):
             return upd
@@ -115,15 +124,14 @@ def run_reference_transaction_hook(
     """Hook entry: return process exit code (0 allow, HOOK_POLICY_REFUSE_EXIT refuse)."""
     if state != "prepared":
         return 0
-    if not (dispatch_id or "").strip():
-        return 0
 
     cwd = repo or Path.cwd()
     updates = parse_ref_updates(stdin_text.splitlines())
     if not updates:
         return 0
 
-    offending = refuse_reason(cwd, updates=updates, dispatch_id=dispatch_id.strip())
+    dispatch_marker = (dispatch_id or "").strip() or "none"
+    offending = refuse_reason(cwd, updates=updates, dispatch_id=dispatch_marker)
     if offending is None:
         return 0
 
@@ -133,7 +141,7 @@ def run_reference_transaction_hook(
 
     try:
         emit_sdk_lane_hub_checkout_refused(
-            dispatch_id=dispatch_id.strip(),
+            dispatch_id=dispatch_marker,
             toplevel=str(cwd.resolve()),
             ref_name=offending.ref_name,
         )

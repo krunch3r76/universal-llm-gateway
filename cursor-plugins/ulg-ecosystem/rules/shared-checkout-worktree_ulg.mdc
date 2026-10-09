@@ -9,7 +9,8 @@ apply_tier: required_gate
 **Invariant:** `shared_attended_checkout ⇒ branch ∈ {master, current_unchanged}` ·
 `needs(feature_branch ∨ review_branch ∨ land_isolate) ⇒ git worktree add (clean)` ·
 `¬git checkout(other_branch) on the shared tree` ·
-`sole_maintainer_local ⇒ ¬push ∧ ¬pr` unless the operator names push / PR / publish.
+`sole_maintainer_local ⇒ ¬push ∧ ¬pr` unless the operator names push / PR / publish ·
+`forward_only ⇒ ¬move(shared_branch, backward)` — full rule: Use the `git-posture` skill § Forward only.
 
 Switching the shared tip for side work steals it from peer WIP. Lane B already
 worktrees; attended seats owe the same. "Submit for review" ⇒ local branch +

@@ -517,6 +517,16 @@ change for rebuild-persistence; **or** work-complete finishing (path-explicit co
 session paths, no ask). Opportunistic branch/PR/cleanup git still waits for an operator
 ask. Otherwise do not reach for git.
 
+## Forward only
+
+`forward_only`: never move a shared branch backward. Forbidden: `git reset` (any mode) on master or any shared/lane branch; `git checkout -B` / `git branch -f` / `git switch -C` onto an existing branch; `git push --force` / `--force-with-lease`; `git rebase` of pushed or landed commits; `git checkout origin/master -B master`. Fresh worktrees branch from the local tip (`git checkout -b <new> master` or `git worktree add -b <new> <path> master`); never re-point master to origin. Local and origin diverge ⇒ stop and report DRIFT; recover dropped work only by forward merge or cherry-pick onto the current tip. Kaywan 2026-10-08/09: we always go forward.
+
+| Forbidden | Required |
+|---|---|
+| `git reset` (any mode) on master or a shared/lane branch; `checkout -B` / `branch -f` / `switch -C` onto an existing branch; `push --force` / `--force-with-lease`; rebase of pushed or landed commits; `checkout origin/master -B master` | `git checkout -b <new> master` (or `worktree add -b <new> <path> master`) from the local tip; local ≠ origin ⇒ stop, report DRIFT; recover by merge or cherry-pick |
+
+Specimen: GIW dispatch ebda76fee569-229874b7 (lane-16053, 2026-10-08 22:43 PT) ran `git checkout master || git checkout origin/master -B master` from its worktree and dropped 33 unpushed commits from hub master incl. seal 53f24125 (15851#169/#170). Shared SoT: cortex://notes/system/operational/grok-bot-ulg-cursor-parity.md item 7.
+
 ## Cursor IDE seat scope (folded from `commit-and-git-scope`)
 
 `seat ∈ Cursor_IDE ⇒ ¬use(git_* MCP tools ∨ raw git CLI)` in normal work. Those are for headless seats when the operator directs them.
@@ -530,7 +540,7 @@ ask. Otherwise do not reach for git.
 
 `∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash,
 git checkout <branch> -- <paths>(as_land)}`.
-No-force: `¬push --force` and `¬history_rewrite` on shared branches unless operator explicitly requests.
+No-force: `¬push --force` / `--force-with-lease` and `¬history_rewrite` on shared branches — no operator exception (Kaywan 2026-10-09); full rule: § Forward only above.
 
 **Anti-pattern — "uncommitted" as a risk trigger.** Hearing "uncommitted" / "dirty working tree" is NOT a durability signal — on-disk is already real/durable/done. Do NOT reach for `git_status` / `git_diff` / `git_*` to "check working-tree state" on that basis. Read this skill FIRST whenever git state is mentioned, before touching any git tool.
 

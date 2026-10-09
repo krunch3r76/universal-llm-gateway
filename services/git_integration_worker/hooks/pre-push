@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Lane-B forward-only pre-push guard.
+set -euo pipefail
+
+hook_script="$(readlink -f "$0")"
+hook_dir="$(dirname "${hook_script}")"
+root="$(cd "${hook_dir}/../../.." && pwd)"
+export PYTHONPATH="${root}:${root}/libs:${root}/services/universal-stargate${PYTHONPATH:+:${PYTHONPATH}}"
+
+_passwd_home="$(getent passwd "$(id -un)" | cut -d: -f6)"
+py="${_passwd_home}/.venvs/universal/bin/python"
+if [[ ! -x "${py}" ]]; then
+  py="$(command -v python3 || true)"
+fi
+if [[ -z "${py}" || ! -x "${py}" ]]; then
+  echo "pre-push: no python interpreter; allowing push" >&2
+  exit 0
+fi
+
+rc=0
+"${py}" -m services.git_integration_worker.lane_b_pre_push_hook || rc=$?
+
+if [[ "${rc}" -eq 0 ]]; then
+  exit 0
+fi
+if [[ "${rc}" -eq 2 ]]; then
+  exit 1
+fi
+echo "pre-push hook internal error (exit ${rc}); allowing push" >&2
+exit 0
