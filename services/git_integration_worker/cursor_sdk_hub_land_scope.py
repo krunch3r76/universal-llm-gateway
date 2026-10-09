@@ -168,6 +168,20 @@ def _ff_ready(
     return _FfReadyOk(hub, tip.stdout.strip())
 
 
+def _porcelain_dirty_paths(porcelain: str) -> list[str]:
+    paths: list[str] = []
+    for line in porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        body = line[3:].strip()
+        if " -> " in body:
+            body = body.split(" -> ", 1)[1]
+        rel = body.strip()
+        if rel:
+            paths.append(rel)
+    return paths
+
+
 def _lane_land_path_names(hub: Path, branch: str) -> frozenset[str]:
     proc = _git_capture(hub, "diff", "--name-only", f"master...{branch}")
     if proc.returncode != 0:
@@ -198,10 +212,20 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
     land_paths = _lane_land_path_names(hub, branch)
     cached = _git_capture(hub, "diff", "--cached", "--name-only")
     if cached.returncode == 0 and cached.stdout.strip():
+        staged = [
+            line.strip()
+            for line in cached.stdout.splitlines()
+            if line.strip()
+        ]
+        logger.info(
+            "hub land refuse hub_index_staged dirty_paths=%s",
+            staged,
+        )
         return "hub_index_staged"
     porcelain = _git_capture(hub, "status", "--porcelain=v1")
     if porcelain.returncode != 0:
         return "hub_dirty_overlap"
+    dirty_paths = _porcelain_dirty_paths(porcelain.stdout)
     if not porcelain.stdout.strip():
         return None
     for line in porcelain.stdout.splitlines():
@@ -217,11 +241,24 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
         if rel not in land_paths:
             continue
         if xy == "??":
+            logger.info(
+                "hub land refuse hub_dirty_overlap dirty_paths=%s",
+                dirty_paths,
+            )
             return "hub_dirty_overlap"
         hub_bytes = _worktree_file_bytes(hub, rel)
         branch_bytes = _blob_at_branch(hub, branch, rel)
         if hub_bytes != branch_bytes:
+            logger.info(
+                "hub land refuse hub_dirty_overlap dirty_paths=%s",
+                dirty_paths,
+            )
             return "hub_dirty_overlap"
+    if dirty_paths:
+        logger.info(
+            "hub land proceed disjoint dirty_paths=%s",
+            dirty_paths,
+        )
     return None
 
 

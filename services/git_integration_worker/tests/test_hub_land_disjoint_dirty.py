@@ -52,6 +52,46 @@ def _master(repo: Path) -> str:
     return _git(repo, "rev-parse", "refs/heads/master").stdout.strip()
 
 
+def test_disjoint_dirty_hub_logs_paths_at_info(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-disjoint-log"
+    _commit_on_branch(repo, branch, "lane.md", "lane\n")
+    (repo / "foreign-wip.md").write_text("peer wip\n", encoding="utf-8")
+    with caplog.at_level(logging.INFO):
+        land_lane_branch_onto_hub_master(
+            repo, branch_name=branch, holder_op_id="d-disjoint-log"
+        )
+    assert any(
+        "hub land proceed disjoint dirty_paths=" in r.message
+        and "foreign-wip.md" in r.message
+        for r in caplog.records
+    )
+
+
+def test_overlapping_dirty_hub_logs_paths_on_refuse(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-overlap-log"
+    _commit_on_branch(repo, branch, "lane.md", "lane tip\n")
+    (repo / "lane.md").write_text("hub divergent\n", encoding="utf-8")
+    with caplog.at_level(logging.INFO):
+        result = land_lane_branch_onto_hub_master(
+            repo, branch_name=branch, holder_op_id="d-overlap-log"
+        )
+    assert result.refuse_reason == "hub_dirty_overlap"
+    assert any(
+        "hub land refuse hub_dirty_overlap dirty_paths=" in r.message
+        for r in caplog.records
+    )
+
+
 def test_disjoint_dirty_hub_allows_silent_land(tmp_path: Path) -> None:
     repo = _init_hub(tmp_path)
     branch = "cursor-sdk/lane-disjoint"
