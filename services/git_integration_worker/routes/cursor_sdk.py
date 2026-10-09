@@ -3372,7 +3372,7 @@ async def _finalize_success(
     controller: WorkAdmissionController,
     worktree_isolated: bool = False,
 ) -> None:
-    packet_text = _read_packet_text(req, source_repo) if req.packet_path else ""
+    packet_text = _read_packet_text(req, source_repo)
     instruction_text = packet_text if req.packet_path else (req.message or "")
     inferred_contract = (
         infer_contract_from_text(packet_text)
