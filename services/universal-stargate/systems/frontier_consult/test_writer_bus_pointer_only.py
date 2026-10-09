@@ -57,13 +57,15 @@ def test_pointer_only_cdp_delivery_omits_harvest(
         prompt_uri="cortex://notes/prompt.txt",
         picker_model="opus",
     )
-    body = asyncio.run(build_cdp_success_delivery_body(
-        result=result,
-        thread_id="15790",
-        subject="cdp generate — exec-9",
-        format_metadata="meta",
-        pointer_only=True,
-    ))
+    body = asyncio.run(
+        build_cdp_success_delivery_body(
+            result=result,
+            thread_id="15790",
+            subject="cdp generate — exec-9",
+            format_metadata="meta",
+            pointer_only=True,
+        )
+    )
     assert body is not None
     assert _MARKER not in body
     assert "Summary:" not in body
