@@ -889,6 +889,8 @@ async def project_ask_on_page(
                     stargate_execution_id=stargate_execution_id or None,
                     artifact_cards=cards,
                     artifact_cards_unresolved=False,
+                    error_banner_text=state.get("error_banner_text"),
+                    error_banner_match=state.get("error_banner_match"),
                 )
             except HarvestArchiveError as exc:
                 return ProjectAskResult(

@@ -20,6 +20,7 @@ from claude_bundles.cdp_model_endpoint import (
     _is_chrome_only_body,
     _is_overload_only_harvest,
     _is_user_prompt_echo_body,
+    _matched_span_for_rule,
     has_proof,
     picker_from_model_id,
     result_from_snapshot,
@@ -2714,13 +2715,73 @@ def test_archive_rebuild_carries_banner_under_grade_trace_only(tmp_path: Path) -
     assert _grade_triple(with_trace) == _grade_triple(no_trace)
     assert with_trace.ok is True
     assert with_trace.stall_stage is None
-    assert with_trace.extras["grade_trace"]["banner_text"] == _STOP_BANNER
+    carried = with_trace.extras["grade_trace"]
+    assert carried["archived_banner_text"] == _STOP_BANNER
+    assert carried["archived_banner_match"] == "weekly limit"
+    assert carried.get("rule") != "weekly_limit_stop"
     assert "grade_trace" not in no_trace.extras
+
+
+def test_short_body_matched_span_reads_the_body_first() -> None:
+    """weekly_limit_short_body records the body that fired, not the warning banner."""
+    span = _matched_span_for_rule(
+        {
+            "error_banner_text": "Approaching weekly limit",
+            "body": "You've hit your weekly limit",
+        },
+        "weekly_limit_short_body",
+    )
+    assert "you've hit your" in span.lower()
+    assert "approaching" not in span.lower()
+
+
+def _without_grade_trace(result: Any) -> dict[str, Any]:
+    payload = result.as_dict()
+    payload.pop("grade_trace", None)
+    return payload
+
+
+def _assert_attach_cannot_change_grade(
+    monkeypatch: pytest.MonkeyPatch,
+    grade,
+) -> None:
+    """A trace that is a no-op or that raises leaves every other field alone."""
+    from claude_bundles import cdp_model_endpoint as mod
+
+    baseline = _without_grade_trace(grade())
+
+    def _echo(extras, _snapshot, *, rule, stall_stage):
+        del rule, stall_stage
+        return dict(extras)
+
+    monkeypatch.setattr(mod, "_attach_grade_trace", _echo)
+    assert _without_grade_trace(grade()) == baseline
+
+    def _boom(extras, _snapshot, *, rule, stall_stage):
+        del extras, _snapshot, rule, stall_stage
+        raise RuntimeError("grade trace attach failed")
+
+    monkeypatch.setattr(mod, "_attach_grade_trace", _boom)
+    assert _without_grade_trace(grade()) == baseline
 
 
 @pytest.mark.parametrize(
     "case_id",
-    ["E1", "E2", "E3", "E4", "W1", "E11", "E12", "E13", "E14", "E15", "W2"],
+    [
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "W1",
+        "E9",
+        "E10",
+        "E11",
+        "E12",
+        "E13",
+        "E14",
+        "E15",
+        "W2",
+    ],
 )
 def test_grade_invariant_with_and_without_trace(
     case_id: str,
@@ -2749,8 +2810,19 @@ def test_grade_invariant_with_and_without_trace(
         plain = snapshots[case_id]
         traced = dict(plain)
         traced["grade_trace"] = dict(_GRADE_TRACE_INJECT)
-        assert _grade_triple(_snapshot_grade(plain)) == _grade_triple(
-            _snapshot_grade(traced)
+        plain_result = _snapshot_grade(plain)
+        traced_result = _snapshot_grade(traced)
+        assert _grade_triple(plain_result) == _grade_triple(traced_result)
+        assert (
+            traced_result.extras["grade_trace"]["rule"]
+            == plain_result.extras["grade_trace"]["rule"]
+        )
+        assert (
+            traced_result.extras["grade_trace"]["archived_banner_text"]
+            == _GRADE_TRACE_INJECT["banner_text"]
+        )
+        _assert_attach_cannot_change_grade(
+            monkeypatch, lambda: _snapshot_grade(plain)
         )
         return
 
@@ -2804,6 +2876,21 @@ def test_grade_invariant_with_and_without_trace(
                 "body": "",
             },
         ],
+        "E9": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {"execution_id": "sat-inv", "status": "running"},
+        ],
+        "E10": [
+            {"execution_id": "sat-inv", "status": "running"},
+            {
+                "execution_id": "sat-inv",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 1,
+                "url": "https://claude.ai/new",
+            },
+            {"error": "connection reset"},
+        ],
         "E15": [
             {"execution_id": "sat-inv", "status": "running"},
             {
@@ -2833,7 +2920,37 @@ def test_grade_invariant_with_and_without_trace(
         ],
     }
     kwargs: dict[str, Any] = {}
-    if case_id == "E15":
+    if case_id == "E9":
+        clock = {"t": 0.0}
+
+        def _now() -> float:
+            return clock["t"]
+
+        def _sleep(_seconds: float) -> None:
+            clock["t"] = 50.0
+
+        kwargs = {
+            "max_wall_s": 10,
+            "poll_interval_s": 0,
+            "sleep": _sleep,
+            "now": _now,
+        }
+    elif case_id == "E10":
+        clock = {"t": 0.0}
+
+        def _now() -> float:
+            return clock["t"]
+
+        def _sleep(_seconds: float) -> None:
+            clock["t"] += 6.0
+
+        kwargs = {
+            "no_progress_s": 5,
+            "poll_interval_s": 0,
+            "sleep": _sleep,
+            "now": _now,
+        }
+    elif case_id == "E15":
         clock = {"t": 0.0}
 
         def _now() -> float:
@@ -2856,7 +2973,7 @@ def test_grade_invariant_with_and_without_trace(
         [dict(item) for item in polls[case_id]],
         **kwargs,
     )
-    if case_id == "E15":
+    if case_id in {"E9", "E10", "E15"}:
         clock["t"] = 0.0
     traced = _run_grade(
         monkeypatch,
@@ -2867,3 +2984,21 @@ def test_grade_invariant_with_and_without_trace(
     )
     assert _grade_triple(plain) == _grade_triple(traced)
     assert plain.body == traced.body
+    assert traced.extras["grade_trace"]["rule"] == plain.extras["grade_trace"]["rule"]
+    assert (
+        traced.extras["grade_trace"]["archived_banner_text"]
+        == _GRADE_TRACE_INJECT["banner_text"]
+    )
+
+    def _grade_plain():
+        if case_id in {"E9", "E10", "E15"}:
+            clock["t"] = 0.0
+        return _run_grade(
+            monkeypatch,
+            tmp_path,
+            f"dispatch-inv-{case_id}-side",
+            [dict(item) for item in polls[case_id]],
+            **kwargs,
+        )
+
+    _assert_attach_cannot_change_grade(monkeypatch, _grade_plain)

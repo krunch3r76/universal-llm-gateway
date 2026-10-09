@@ -381,6 +381,65 @@ async def test_submit_composer_draft_auto_refuses(
 
 
 @pytest.mark.asyncio
+async def test_project_ask_on_page_archives_harvest_banner(tmp_path: Path) -> None:
+    """Non-converse archive writes the same banner fields the converse path does."""
+    from claude_bundles.cowork_output_download import HarvestBody
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_bannerArchive"
+    captured: dict = {}
+
+    def _archive(**kwargs):
+        captured.update(kwargs)
+        return "cortex://notes/system/threads/cdp-ask-archive-banner.md"
+
+    with (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"anchor_matches": 0}),
+        ),
+        patch("claude_bundles.project_ask.send_prompt", new=AsyncMock()),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "Seat answer long enough to archive.",
+                    "url": page.url,
+                    "error_banner_text": "You've hit your weekly limit",
+                    "error_banner_match": "weekly limit",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=HarvestBody(
+                    content="Seat answer long enough to archive.", provenance="chat"
+                )
+            ),
+        ),
+        patch("claude_bundles.project_ask.archive_harvest", side_effect=_archive),
+    ):
+        result = await project_ask_on_page(
+            page,
+            "ask prompt",
+            project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
+            model="opus-5",
+            delete_after=False,
+            archive_path=str(tmp_path / "archive.md"),
+            execution_id="c" * 32,
+        )
+
+    assert result.ok is True
+    assert captured["error_banner_text"] == "You've hit your weekly limit"
+    assert captured["error_banner_match"] == "weekly limit"
+
+
+@pytest.mark.asyncio
 async def test_project_ask_on_page_harvest_incomplete_preserves_body() -> None:
     """a:37226 review A2 — project_ask_on_page must keep last scrape."""
     page = AsyncMock()

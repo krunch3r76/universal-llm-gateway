@@ -49,6 +49,9 @@ _URL_LINE = re.compile(
 _ATTESTED_LINE = re.compile(r"^-\s+attested_model:\s+`([^`]+)`", re.MULTILINE)
 _CSE_HINT = re.compile(r"^https://claude\.ai/(?:cowork/)?cse_[A-Za-z0-9_-]+$")
 _STARGATE_LINE = re.compile(r"^-\s+stargate_execution_id:\s+`([^`]+)`", re.MULTILINE)
+# Same caps as claude_bundles.cdp_model_endpoint grade traces (500 / 120).
+_ARCHIVE_TRACE_BANNER_CAP = 500
+_ARCHIVE_TRACE_MATCH_CAP = 120
 
 _RECOVERY_MIN_RETRY_S = 60.0
 _recovery_last_attempt: dict[str, float] = {}
@@ -136,6 +139,12 @@ def _path_to_cortex_uri(path: Path) -> str:
         return f"file://{resolved}"
 
 
+def _cap_archive_banner(value: str, cap: int) -> str:
+    """Collapse whitespace and cap a hand-edited archive banner scalar."""
+    collapsed = re.sub(r"\s+", " ", value).strip().replace("`", "'")
+    return collapsed[:cap]
+
+
 def _grade_trace_from_archive(text: str) -> dict[str, str] | None:
     """Read banner metadata into ``grade_trace``. Never the flat grader keys."""
     marker = "## Body\n\n"
@@ -145,9 +154,13 @@ def _grade_trace_from_archive(text: str) -> dict[str, str] | None:
     text_match = _BANNER_TEXT_LINE.search(head)
     match_match = _BANNER_MATCH_LINE.search(head)
     if text_match:
-        trace["banner_text"] = text_match.group(1)
+        capped = _cap_archive_banner(text_match.group(1), _ARCHIVE_TRACE_BANNER_CAP)
+        if capped:
+            trace["banner_text"] = capped
     if match_match:
-        trace["banner_match"] = match_match.group(1)
+        capped = _cap_archive_banner(match_match.group(1), _ARCHIVE_TRACE_MATCH_CAP)
+        if capped:
+            trace["banner_match"] = capped
     return trace or None
 
 
@@ -269,6 +282,9 @@ async def _harvest_chat_to_snapshot(
         return None
     archive_path = _default_recovery_archive_path(satellite_id)
     try:
+        # HarvestResponse has no error_banner_text / error_banner_match, so this
+        # recovery archive cannot record a banner until the harvest model grows
+        # those fields.
         archive_uri = archive_harvest(
             body=body,
             url=chat_url,
