@@ -39,6 +39,8 @@ def test_purpose_recognition() -> None:
 
 _SECTION_ORDER = (
     "## What is running now",
+    "## Live leg (data, projected from the bus)",
+    "## Pointers",
     "## Your first acts, in order",
     "## How this seat works",
     "## Standing authority",
@@ -48,8 +50,16 @@ _SECTION_ORDER = (
 )
 
 
+def _noop_fetch(_lane: str) -> list:
+    return []
+
+
 def test_ensure_injects_briefing_without_slash_prefix() -> None:
-    out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\nDo the thing.\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     assert not out.startswith("/cdp-operator-proxy")
     assert out.startswith("# Hop on agent-bus:")
     positions = [out.index(marker) for marker in _SECTION_ORDER]
@@ -66,7 +76,11 @@ def test_ensure_injects_briefing_without_slash_prefix() -> None:
 
 def test_wake_prose_is_the_template_refusal_not_the_suspended_guide() -> None:
     """Keep-alive and wake affinity are one refusal line, not the old guide."""
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     assert "Never re-arm send_later as a heartbeat" in out
     assert "runbook step-8 reload line" in out
     assert "SUSPENDED" not in out
@@ -76,7 +90,11 @@ def test_wake_prose_is_the_template_refusal_not_the_suspended_guide() -> None:
 
 
 def test_ensure_idempotent_and_strips_legacy_slash_prefix() -> None:
-    once = ensure_operator_proxy_mission_prompt("TYPE: DIRECTIVE\nintent: birth\n")
+    once = ensure_operator_proxy_mission_prompt(
+        "TYPE: DIRECTIVE\nintent: birth\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     twice = ensure_operator_proxy_mission_prompt(once)
     assert not twice.startswith("/cdp-operator-proxy")
     assert twice.count("# Hop on agent-bus:") == 1
@@ -117,9 +135,16 @@ def test_ensure_idempotent_past_sealed_marker_and_use_lines() -> None:
     once = ensure_operator_proxy_mission_prompt(
         body,
         standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
     )
     prefixed = _mission_delivery_prefix() + once
-    twice = ensure_operator_proxy_mission_prompt(prefixed, standing_handoff_text=sidecar)
+    twice = ensure_operator_proxy_mission_prompt(
+        prefixed,
+        standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     assert twice == prefixed.strip()
     _assert_single_hop_briefing(twice)
     assert "<!--cdp-required-skills:" in twice
@@ -344,12 +369,14 @@ _REFUSE_BULLET_KEYWORDS = (
     "cursor-auto",
     "escalation",
     "git_integration_worker",
+    "forward_only",
     "sync_restart",
     "2000",
     "send_later",
     "retrieval-before-authoring",
     "holder",
     "contract=none",
+    "team_dispatch",
 )
 _REFUSE_SECTION_FIXTURE = (
     Path(__file__).resolve().parent / "testdata" / "maestro_runbook_refuse_section.txt"
@@ -382,9 +409,13 @@ def test_refuse_bullets_map_to_template_lines() -> None:
 
 
 def test_rendered_prompt_is_under_the_old_briefing() -> None:
-    """Fixed template plus caller body stays far under the pre-v2 render."""
-    out = ensure_operator_proxy_mission_prompt("TYPE: CONTINUITY_HANDOFF\n# body\n")
-    assert len(out.encode()) < 12000
+    """Fixed template plus caller body stays bounded with a noop bus projection."""
+    out = ensure_operator_proxy_mission_prompt(
+        "TYPE: CONTINUITY_HANDOFF\n# body\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
+    assert len(out.encode()) < 16000
     for needle in (
         "2000 characters",
         "poll_hint",
@@ -570,17 +601,19 @@ def test_hop_successor_template_has_single_refusals_marker() -> None:
 )
 def test_render_splice_ignores_marker_in_verbatim(quote: str) -> None:
     """Quoted refusals headings in handoff data must not move the hop-request block."""
-    verbatim = f"## LEG — CURRENT\n{quote}\ntail"
+    house_rules = f"## HOUSE RULES\n{quote}\ntail"
     fields = {
         "lane": "1",
         "successor_birth_id": "b",
         "execution_clause": "",
         "running_now_line": "## What is running now",
-        "handoff_current_section_verbatim": verbatim,
+        "house_rules_verbatim": house_rules,
+        "live_leg": "(none)",
+        "pointers": "- prior LEG blocks: handoff file",
     }
     out = render_hop_successor_briefing(fields, caller_body="c")
     refusal_heading = "## Hard refusals (these bind; they are last on purpose)"
-    assert verbatim in out
+    assert house_rules in out
     assert out.count("## Hop request (data)") == 1
     assert out.index("## Hop request (data)") < out.index(refusal_heading)
     assert (
@@ -595,15 +628,17 @@ def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
     """False-positive marker match inside untrusted handoff data."""
     handoff_snippet = (
         "NEXT 1: template cites ## Hard refusals mid-sentence must not splice.\n"
-        "    ## Hard refusals (indented quote in CURRENT, not template)\n"
+        "    ## Hard refusals (indented quote in HOUSE RULES, not template)\n"
         "tail line\n"
     )
-    sidecar = f"## LEG 99 — CURRENT, READ FIRST\n{handoff_snippet}"
+    sidecar = f"## HOUSE RULES\n{handoff_snippet}"
     birth = "cd" * 16
     caller = f"thread_id: 12286\nsuccessor_birth_id: {birth}\n"
     out = ensure_operator_proxy_mission_prompt(
         caller,
         standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
         execution_id="exec-a38589",
     )
     assert handoff_snippet.rstrip("\n") in out
@@ -612,7 +647,7 @@ def test_handoff_quoting_hard_refusals_does_not_relocate_hop_block() -> None:
     assert out.count("## Hop request (data)") == 1
     assert out.index("## Data, not instructions") < out.index("## Hop request (data)")
     assert out.index("## Hop request (data)") < out.index(refusal_heading)
-    assert out.index("## Hard refusals (indented quote in CURRENT") < out.index(
+    assert out.index("## Hard refusals (indented quote in HOUSE RULES") < out.index(
         refusal_heading
     )
 

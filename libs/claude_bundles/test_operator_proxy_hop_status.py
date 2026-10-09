@@ -1,17 +1,16 @@
-"""Offline tests for hop-successor standing-handoff section copy."""
+"""Offline tests for hop-successor standing-handoff and house rules."""
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from claude_bundles.operator_proxy_hop_status import (
     MISSING_HANDOFF_INSTRUCTION,
     extract_thread_id,
-    handoff_file_sha256,
-    newest_current_section,
+    house_rules_section,
     standing_handoff_text_for_prompt,
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
@@ -25,6 +24,8 @@ _HANDOFF_HEAD = (
 )
 _SECTION_ORDER = (
     "## What is running now",
+    "## Live leg (data, projected from the bus)",
+    "## Pointers",
     "## Your first acts, in order",
     "## How this seat works",
     "## Standing authority",
@@ -32,6 +33,10 @@ _SECTION_ORDER = (
     "## Hop request (data)",
     "## Hard refusals",
 )
+
+
+def _noop_fetch(_lane: str) -> list[dict[str, Any]]:
+    return []
 
 
 def test_extract_thread_id_prefers_thread_id() -> None:
@@ -61,33 +66,27 @@ def test_loader_seam_does_not_touch_disk() -> None:
     assert standing_handoff_text_for_prompt("# no thread") is None
 
 
-def test_fixture_head_copies_leg_11_10_and_9_then_stops() -> None:
-    """Real handoff head: LEG 11, LEG 10, LEG 9; stop at LEG 9's supersedes."""
+def test_house_rules_extracted_verbatim() -> None:
+    sidecar = "## HOUSE RULES\nrule A\n\n## LEG 11\nstale\n"
+    rules = house_rules_section(sidecar)
+    assert rules is not None
+    assert "rule A" in rules
+    assert "LEG 11" not in rules
+
+
+def test_fixture_head_does_not_copy_leg_stack() -> None:
+    """Real handoff head: LEG blocks stay out of the rendered hop body."""
     sidecar = _HANDOFF_HEAD.read_text(encoding="utf-8")
-    assert sidecar.startswith("## LEG 11 ")
-    assert "## LEG 10 " in sidecar
-    assert "## LEG 9 " in sidecar
-    assert "## LEG 8 " in sidecar
-    heading, verbatim = newest_current_section(sidecar) or ("", "")
-    assert heading.startswith("LEG 11 ")
-    assert "LEG 11 ~21:00Z" in verbatim
-    assert "LEG 10 ~20:55Z" in verbatim
-    assert "LEG 9 ~20:50Z" in verbatim
-    assert "Do NOT re-admit until 14611 closes" in verbatim
-    assert "supersedes LEG 8 IN FLIGHT" in verbatim
-    assert verbatim.index("LEG 11 ~21:00Z") < verbatim.index("LEG 10 ~20:55Z")
-    assert verbatim.index("LEG 10 ~20:55Z") < verbatim.index("LEG 9 ~20:50Z")
-    assert "LEG 8 ~20:45Z" not in verbatim
-    assert "consolidated section not found" not in verbatim
     birth = "ab" * 16
     out = ensure_operator_proxy_mission_prompt(
         f"thread_id: 12286\nsuccessor_birth_id: {birth}\n",
         standing_handoff_text=sidecar,
+        roster_text="| N | Display name | Lane | Mailbox | State |\n",
+        fetch_turns=_noop_fetch,
         execution_id="exec-from-satellite",
     )
-    assert f"handoff file sha256 at render {handoff_file_sha256(sidecar)}" in out
-    assert handoff_file_sha256(sidecar) == hashlib.sha256(sidecar.encode()).hexdigest()
-    assert "written_sha256" not in out.split("## Your first acts", 1)[0]
+    assert "LEG 11 ~21:00Z" not in out
+    assert "LEG 10 ~20:55Z" not in out
     assert "execution_id exec-from-satellite" in out
     assert "CDP generate" not in out
     positions = [out.index(marker) for marker in _SECTION_ORDER]
@@ -97,28 +96,18 @@ def test_fixture_head_copies_leg_11_10_and_9_then_stops() -> None:
     assert "This is a continuity hop: do not emit MISSION_CLOSEOUT." in out
 
 
-def test_section_cap_adds_the_read_the_head_line() -> None:
-    parts = [
-        f"## LEG {number} — CURRENT, READ FIRST\nitem {number}\n"
-        for number in range(5, 0, -1)
-    ]
-    sidecar = "\n".join(parts)
-    heading, verbatim = newest_current_section(sidecar) or ("", "")
-    assert heading.startswith("LEG 5")
-    assert "LEG 2 — CURRENT" in verbatim
-    assert "LEG 1 — CURRENT" not in verbatim
-    assert verbatim.endswith("consolidated section not found; read the handoff head")
-
-
 def test_missing_handoff_renders_the_author_instruction() -> None:
-    out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\nDo the thing.\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     assert MISSING_HANDOFF_INSTRUCTION in out
     assert "Author the standing handoff before you leave." in out
     assert "execution_id unknown" not in out
     assert "CDP generate" not in out
     assert "successor_birth_id unknown" in out
     running = out.split("## Your first acts", 1)[0]
-    assert "handoff file sha256 at render" not in running
     assert "standing handoff file absent" in running
 
 
@@ -126,46 +115,40 @@ def test_empty_execution_id_omits_the_clause_even_when_prompt_names_one() -> Non
     out = ensure_operator_proxy_mission_prompt(
         "thread_id: 1\nexecution_id: from-prompt\n"
         "cdp_dispatch_id: cdp-1\nbirth_turn: 1#3\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
         execution_id="",
     )
     assert "execution_id" not in out.split("## What is running now", 1)[0]
     assert "from-prompt" not in out.split("## Hop request (data)", 1)[0]
     assert "CDP generate" not in out
-    assert "1#3" in out  # caller body, under the hop-request heading
+    assert "1#3" in out
 
 
-def test_rendered_prompt_section_order_and_unclipped_current_section() -> None:
-    """One long CURRENT line is copied whole; no rendered line ends in …."""
-    long_line = "IN FLIGHT " + ("alpha " * 40).rstrip()
-    assert len(long_line) > 120
-    assert not long_line.endswith("…")
-    sidecar = (
-        "## LEG 9 — CURRENT, READ FIRST\n"
-        f"{long_line}\n"
-        "\n"
-        "## LEG 8 — CURRENT, READ FIRST\n"
-        "older section must not be copied\n"
-    )
+def test_rendered_prompt_section_order() -> None:
+    sidecar = "## HOUSE RULES\nR0\n\n## LEG 9\nmust not copy\n"
     birth = "ab" * 16
     out = ensure_operator_proxy_mission_prompt(
         f"thread_id: 9501\nsuccessor_birth_id: {birth}\n",
         standing_handoff_text=sidecar,
+        roster_text="",
+        fetch_turns=_noop_fetch,
         execution_id="exec-1",
     )
     positions = [out.index(marker) for marker in _SECTION_ORDER]
     assert positions == sorted(positions)
-    assert out.index("## Hop request (data)") < out.index("thread_id: 9501")
-    assert out.index("thread_id: 9501") < out.index("## Hard refusals")
-    assert long_line in out
-    assert "older section must not be copied" not in out
-    assert "LEG 9 — CURRENT, READ FIRST" in out
-    assert not any(line.endswith("…") for line in out.splitlines())
+    assert "must not copy" not in out
+    assert "R0" in out
     assert f"successor_birth_id {birth}" in out
     assert "execution_id exec-1" in out
 
 
 def test_first_acts_are_numbered_in_order() -> None:
-    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     start = out.index("## Your first acts, in order")
     end = out.index("## How this seat works")
     block = out[start:end]
@@ -174,10 +157,15 @@ def test_first_acts_are_numbered_in_order() -> None:
     assert "2. Read" in block
     assert block.index("1. Use") < block.index("2. Read")
     assert block.index("2. Read") < block.index("7. Act")
+    assert "live leg unavailable" in block
 
 
 def test_mission_ensure_opens_on_successor_template() -> None:
-    out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
+    out = ensure_operator_proxy_mission_prompt(
+        "# Mission\nDo the thing.\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     assert out.startswith("# Hop on agent-bus:")
     assert out.index("## What is running now") < out.index("## Hard refusals")
     assert out.index("## Hop request (data)") < out.index("# Mission\nDo the thing.")
@@ -185,7 +173,11 @@ def test_mission_ensure_opens_on_successor_template() -> None:
 
 
 def test_mission_ensure_idempotent_with_this_hop() -> None:
-    once = ensure_operator_proxy_mission_prompt("TYPE: DIRECTIVE\nintent: birth\n")
+    once = ensure_operator_proxy_mission_prompt(
+        "TYPE: DIRECTIVE\nintent: birth\n",
+        roster_text="",
+        fetch_turns=_noop_fetch,
+    )
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.rstrip("\n") == once.rstrip("\n")
     assert once.count("# Hop on agent-bus:") == 1
