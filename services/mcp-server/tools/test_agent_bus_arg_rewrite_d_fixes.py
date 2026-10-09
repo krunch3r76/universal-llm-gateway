@@ -408,7 +408,29 @@ def test_fetch_unread_thread_mark_read_passes_resolved_reader() -> None:
     assert captured.get("unread") == "true"
     assert captured.get("mark_read") == "true"
     assert captured.get("mark_read_seat") == "cursor"
+    assert "to" not in captured
     assert "resolve_dispatch_from_agent()" in out["argument_rewrite_advisory"]
+
+
+def test_fetch_tool_passes_supplied_from_agent(agent_bus_read_fn) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_resolve(*, op: str, from_agent: str, to_seat: str | None):
+        del op, to_seat
+        seen["from_agent"] = from_agent
+        return "cursor", [], None, True
+
+    with patch(
+        "tools.agent_bus.fetch._resolve_mark_reader", side_effect=fake_resolve
+    ):
+        with patch("tools.agent_bus.fetch.relay", return_value={"turns": []}):
+            out = agent_bus_read_fn(
+                tool="fetch",
+                arguments='{"thread": "1", "mark_read": true, "from_agent": "cursor"}',
+            )
+    assert seen["from_agent"] == "cursor"
+    advisory = str(out.get("argument_rewrite_advisory") or "")
+    assert "omitted" not in advisory
 
 
 def test_fetch_thread_mark_read_marks_for_reader(tmp_path) -> None:

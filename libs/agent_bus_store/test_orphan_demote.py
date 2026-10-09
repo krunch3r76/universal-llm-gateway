@@ -100,7 +100,7 @@ def test_late_closeout_demotes_orphan(bus_db) -> None:
         "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted",
         side_effect=lambda **kwargs: emitted.append(kwargs),
     ):
-        closeout_id, _, _ = insert_turn(
+        closeout_id, _, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
@@ -126,7 +126,7 @@ def test_late_cursor_sdk_dispatch_demotes_orphan(bus_db) -> None:
     with patch(
         "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
     ) as mock_emit:
-        closeout_id, _, _ = insert_turn(
+        closeout_id, _, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
@@ -176,14 +176,14 @@ def test_second_terminal_idempotent(bus_db) -> None:
     with patch(
         "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
     ) as mock_emit:
-        first_id, _, _ = insert_turn(
+        first_id, _, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
             subject=_producer_closeout_subject(dispatch_id="disp-first"),
             body="done",
         )
-        second_id, _, _ = insert_turn(
+        second_id, _, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
@@ -234,7 +234,7 @@ def test_producer_closeout_subject_demotes_orphan(bus_db) -> None:
     with patch(
         "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
     ) as mock_emit:
-        closeout_id, _, _ = insert_turn(
+        closeout_id, _, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
@@ -256,7 +256,7 @@ def test_demotion_via_insert_turn_shared_choke(bus_db) -> None:
     """insert_turn is the shared choke for POST /turns and send paths."""
     thread_id = _seed_orphan_thread(bus_db, slug="choke")
 
-    closeout_id, _, _ = insert_turn(
+    closeout_id, _, _, _ = insert_turn(
         thread=thread_id,
         from_agent="cursor-sdk",
         to_agent="dispatch",

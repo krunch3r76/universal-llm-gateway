@@ -80,7 +80,7 @@ def _house(slug: str) -> tuple[str, str]:
 
 
 def _closeout(thread_id: str, *, body: str = "ok") -> int:
-    _, _, turn_number = insert_turn(
+    _, _, turn_number, _ = insert_turn(
         thread=thread_id,
         from_agent="cursor-sdk",
         to_agent="cursor",
@@ -175,7 +175,7 @@ def test_build_options_carries_residue_and_trigger(bus_db):
     )
     lane = _thread("lane", subject="dispatch")
     associate_lane(thread_id=lane, parent_thread_id=root, lane_role="sub_mission")
-    _, _, turn_number = insert_turn(
+    _, _, turn_number, _ = insert_turn(
         thread=lane,
         from_agent="cursor-sdk",
         to_agent="cursor",
@@ -231,7 +231,7 @@ def test_insert_turn_invokes_trigger(bus_db):
     with patch.object(
         trig, "maybe_enqueue_continuity_consolidate", return_value=False
     ) as hook:
-        _, _, turn_number = insert_turn(
+        _, _, turn_number, _ = insert_turn(
             thread=lane,
             from_agent="cursor-sdk",
             to_agent="cursor",
@@ -258,7 +258,7 @@ def test_burst_coalesces_to_single_dispatch(bus_db, monkeypatch: pytest.MonkeyPa
     associate_lane(thread_id=lane, parent_thread_id=root, lane_role="sub_mission")
     turn_numbers: list[int] = []
     for _ in range(3):
-        _, _, turn_number = insert_turn(
+        _, _, turn_number, _ = insert_turn(
             thread=lane,
             from_agent="cursor-sdk",
             to_agent="cursor",
@@ -301,14 +301,14 @@ def test_cross_root_independent_debounce(bus_db, monkeypatch: pytest.MonkeyPatch
     lane_b = _thread("lane-b", subject="dispatch")
     associate_lane(thread_id=lane_a, parent_thread_id=root_a, lane_role="sub_mission")
     associate_lane(thread_id=lane_b, parent_thread_id=root_b, lane_role="sub_mission")
-    _, _, turn_a = insert_turn(
+    _, _, turn_a, _ = insert_turn(
         thread=lane_a,
         from_agent="cursor-sdk",
         to_agent="cursor",
         subject="CLOSEOUT — a",
         body="ok",
     )
-    _, _, turn_b = insert_turn(
+    _, _, turn_b, _ = insert_turn(
         thread=lane_b,
         from_agent="cursor-sdk",
         to_agent="cursor",
@@ -339,7 +339,7 @@ def test_debounce_second_timer_tick_after_clear_is_noop(
     )
     lane = _thread("lane", subject="dispatch")
     associate_lane(thread_id=lane, parent_thread_id=root, lane_role="sub_mission")
-    _, _, turn_number = insert_turn(
+    _, _, turn_number, _ = insert_turn(
         thread=lane,
         from_agent="cursor-sdk",
         to_agent="cursor",

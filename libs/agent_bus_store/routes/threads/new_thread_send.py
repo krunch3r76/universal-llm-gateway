@@ -18,7 +18,7 @@ from ...checkpoint_projection import CheckpointBodyTooLargeError, is_checkpoint_
 from ...db import get_thread
 from ...db.thread_idempotency import committed_first_turn
 from ...db.thread_mint import mint_thread
-from ...db.turns import insert_turn
+from ...db.turns import FirstTurnAuthorConflict, insert_turn
 from ...events.lifecycle import emit_sidecar_orphaned
 from ...events.send_hold import emit_send_hold_measured
 from ...turns_models import TurnSendCreate
@@ -138,7 +138,7 @@ def run_new_thread_send(
 
     t_insert = time.monotonic()
     try:
-        turn_id, ts, turn_number = insert_turn(
+        turn_id, ts, turn_number, claimed_existing = insert_turn(
             thread=thread_id,
             from_agent=from_agent,
             to_agent=to_agent,
@@ -149,6 +149,19 @@ def run_new_thread_send(
             supersedes_turn=None,
             attachments=attachments,
             idempotent_first_turn=claim_first_turn,
+        )
+    except FirstTurnAuthorConflict as exc:
+        if prepared.sidecar_uri:
+            emit_sidecar_orphaned(
+                uri=prepared.sidecar_uri,
+                error=str(exc),
+                thread_id=thread_id,
+            )
+        _raise_post_mint_http(
+            thread_id=thread_id,
+            status_code=status.HTTP_409_CONFLICT,
+            detail=exc.to_detail(),
+            orphan_reason="first_turn_author_conflict",
         )
     except Exception as exc:
         if prepared.sidecar_uri:
@@ -190,6 +203,21 @@ def run_new_thread_send(
         prepare_ms=prepare_ms,
         insert_call_ms=insert_call_ms,
     )
+
+    caller_sidecar = prepared.sidecar_uri
+    if claimed_existing:
+        existing = committed_first_turn(thread_id)
+        if existing is not None:
+            prepared = PreparedBody(body=str(existing.get("body") or ""))
+        if caller_sidecar:
+            emit_sidecar_orphaned(
+                uri=caller_sidecar,
+                error="turn 1 already claimed by a concurrent send",
+                thread_id=thread_id,
+            )
+        idempotent_replay = True
+    else:
+        idempotent_replay = False
 
     refreshed = get_thread(thread_id)
     if refreshed is not None:

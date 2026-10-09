@@ -41,12 +41,15 @@ def test_new_thread_idempotency_key_concurrent_replay_single_turn(tmp_path) -> N
     }
     statuses: list[int] = []
     thread_ids: list[str] = []
+    bodies: list[tuple[int, dict]] = []
 
     def post_once(client: TestClient) -> None:
         resp = client.post("/threads/send", json=payload)
         statuses.append(resp.status_code)
         if resp.status_code in (200, 201):
-            thread_ids.append(resp.json()["thread"]["id"])
+            body = resp.json()
+            thread_ids.append(body["thread"]["id"])
+            bodies.append((resp.status_code, body))
 
     with _store_client(tmp_path) as client_a:
         client_b = _store_client(tmp_path)
@@ -66,11 +69,14 @@ def test_new_thread_idempotency_key_concurrent_replay_single_turn(tmp_path) -> N
 
             assert len(set(thread_ids)) == 1
             thread_id = thread_ids[0]
-            turns = client_a.get("/turns", params={"thread": thread_id}).json()[
-                "turns"
-            ]
+            turns = client_a.get("/turns", params={"thread": thread_id}).json()["turns"]
             assert len(turns) == 1
             assert sorted(statuses) == [200, 201]
+            created = next(b for code, b in bodies if code == 201)
+            replayed = next(b for code, b in bodies if code == 200)
+            assert created["turn"]["id"] == replayed["turn"]["id"] == turns[0]["id"]
+            assert created.get("idempotent_replay") in (False, None)
+            assert replayed.get("idempotent_replay") is True
         finally:
             client_b.close()
 
@@ -101,8 +107,8 @@ def test_failed_first_send_replay_inserts_turn_one(tmp_path) -> None:
             second = client.post("/threads/send", json=payload)
         elapsed = time.monotonic() - started
         assert first.status_code == 500, first.text
-        assert second.status_code == 200, second.text
-        assert second.json().get("idempotent_replay") is True
+        assert second.status_code == 201, second.text
+        assert second.json().get("idempotent_replay") in (False, None)
         thread_id = second.json()["thread"]["id"]
         turns = client.get("/turns", params={"thread": thread_id}).json()["turns"]
         assert len(turns) == 1
@@ -188,12 +194,15 @@ def test_sidecar_idempotency_key_concurrent_replay_single_turn(
     }
     statuses: list[int] = []
     thread_ids: list[str] = []
+    bodies: list[tuple[int, dict]] = []
 
     def post_once(client: TestClient) -> None:
         resp = client.post("/threads/send", json=payload)
         statuses.append(resp.status_code)
         if resp.status_code in (200, 201):
-            thread_ids.append(resp.json()["thread"]["id"])
+            body = resp.json()
+            thread_ids.append(body["thread"]["id"])
+            bodies.append((resp.status_code, body))
 
     with _store_client(tmp_path) as client_a:
         client_b = _store_client(tmp_path)
@@ -210,12 +219,15 @@ def test_sidecar_idempotency_key_concurrent_replay_single_turn(
                 t2.join(timeout=15)
             assert len(set(thread_ids)) == 1, statuses
             thread_id = thread_ids[0]
-            turns = client_a.get("/turns", params={"thread": thread_id}).json()[
-                "turns"
-            ]
+            turns = client_a.get("/turns", params={"thread": thread_id}).json()["turns"]
             assert len(turns) == 1
             assert turns[0]["turn_number"] == 1
             assert sorted(statuses) == [200, 201]
+            created = next(b for code, b in bodies if code == 201)
+            replayed = next(b for code, b in bodies if code == 200)
+            assert created["turn"]["id"] == replayed["turn"]["id"] == turns[0]["id"]
+            assert created.get("idempotent_replay") in (False, None)
+            assert replayed.get("idempotent_replay") is True
         finally:
             client_b.close()
 
@@ -252,7 +264,8 @@ def test_failed_first_sidecar_send_replay_inserts_turn_one(
             second = client.post("/threads/send", json=payload)
         elapsed = time.monotonic() - started
         assert first.status_code == 500, first.text
-        assert second.status_code == 200, second.text
+        assert second.status_code == 201, second.text
+        assert second.json().get("idempotent_replay") in (False, None)
         thread_id = second.json()["thread"]["id"]
         turns = client.get("/turns", params={"thread": thread_id}).json()["turns"]
         assert len(turns) == 1

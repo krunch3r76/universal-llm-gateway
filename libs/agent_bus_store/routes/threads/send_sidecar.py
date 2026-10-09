@@ -47,7 +47,12 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         write_thread_sidecar_for_send,
     )
 
-    from ...db.turns import UnreadTurnsExist, insert_turn, mark_sender_unread_in_thread
+    from ...db.turns import (
+        FirstTurnAuthorConflict,
+        UnreadTurnsExist,
+        insert_turn,
+        mark_sender_unread_in_thread,
+    )
     from ...events.lifecycle import (
         emit_sidecar_orphaned,
         emit_sidecar_written,
@@ -234,7 +239,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         turn_id_alias=body.supersedes_turn_id,
     )
     try:
-        turn_id, ts, turn_number = insert_turn(
+        turn_id, ts, turn_number, claimed_existing = insert_turn(
             thread=thread_id,
             from_agent=body.from_agent,
             to_agent=body.to,
@@ -270,6 +275,27 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=detail,
+        ) from exc
+    except FirstTurnAuthorConflict as exc:
+        emit_sidecar_orphaned(
+            uri=sidecar.uri,
+            error=str(exc),
+            thread_id=thread_id,
+        )
+        detail = exc.to_detail()
+        if send_path == "new_thread":
+            emit_thread_orphaned(
+                thread_id=thread_id,
+                reason="first_turn_author_conflict",
+                error="first_turn_author_conflict",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=post_mint_detail(detail, thread_id=thread_id),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=detail,
         ) from exc
     except Exception as exc:
@@ -312,19 +338,36 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
     if body.close:
         close_thread(thread_id, mark_all_read=True)
 
-    emit_sidecar_written(
-        thread=thread_id,
-        turn_number=turn_number,
-        uri=sidecar.uri,
-        sha256=sidecar.sha256,
-        bytes_written=sidecar.body_chars,
-    )
+    response_sidecar_uri = sidecar.uri
+    response_sidecar_sha = sidecar.sha256
+    response_body = final_body
+    if claimed_existing:
+        existing = committed_first_turn(thread_id)
+        if existing is not None:
+            response_body = str(existing.get("body") or "")
+        emit_sidecar_orphaned(
+            uri=sidecar.uri,
+            error="turn 1 already claimed by a concurrent send",
+            thread_id=thread_id,
+        )
+        idempotent_replay = True
+        response_sidecar_uri = None
+        response_sidecar_sha = None
+    else:
+        idempotent_replay = False
+        emit_sidecar_written(
+            thread=thread_id,
+            turn_number=turn_number,
+            uri=sidecar.uri,
+            sha256=sidecar.sha256,
+            bytes_written=sidecar.body_chars,
+        )
 
     turn_created = build_turn_created(
         PreparedBody(
-            body=final_body,
-            sidecar_uri=sidecar.uri,
-            sidecar_sha256=sidecar.sha256,
+            body=response_body,
+            sidecar_uri=response_sidecar_uri,
+            sidecar_sha256=response_sidecar_sha,
         ),
         turn_id=turn_id,
         thread=thread_id,
@@ -349,7 +392,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         thread=_thread_detail(thread_row),
         turn=turn_created,
         marked_read=marked_read,
-        sidecar_uri=sidecar.uri,
-        sidecar_sha256=sidecar.sha256,
+        sidecar_uri=response_sidecar_uri,
+        sidecar_sha256=response_sidecar_sha,
         idempotent_replay=idempotent_replay,
     )

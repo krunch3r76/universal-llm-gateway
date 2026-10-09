@@ -153,7 +153,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         raise HTTPException(status_code=status_code, detail=detail) from exc
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
-        turn_id, ts, turn_number = await asyncio.to_thread(
+        turn_id, ts, turn_number, _claimed_existing = await asyncio.to_thread(
             insert_turn,
             thread=turn.thread,
             from_agent=turn.from_agent,
