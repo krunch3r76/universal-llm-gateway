@@ -58,5 +58,5 @@ are not work-complete.
 Stamp after recycle+proof when the stamp cites that commit. Proof: services ·
 `live|live@sha|not_live|drain_pending` · commit SHA · `restart_intent_id` or process start UTC ·
 path probe. Satellites: same via their deploy script.
-Restart-after-land is the default, and the gateway GPU pre-check (`/run/nvidia-persistenced/socket` present before any gateway stop/restart) applies — both per `runbook:restart-drain` (Kaywan 2026-10-08).
+Restart-after-land is the default, and the gateway GPU pre-check (`/run/nvidia-persistenced/socket` present before any gateway stop/restart) applies — a missing or uncheckable socket withholds the gateway stop (not a busy-skip) — both per `runbook:restart-drain` (Kaywan 2026-10-08).
 `runbook:restart-drain` · `decision:go-live-proof-loop` · `git-posture`.
