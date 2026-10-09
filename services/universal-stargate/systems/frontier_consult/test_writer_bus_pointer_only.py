@@ -10,7 +10,10 @@ from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 from systems.frontier_consult.cdp_onbehalf_delivery import (
     build_cdp_success_delivery_body,
 )
-from systems.frontier_consult.handoff import build_pointer_only_dispatch_pointer
+from systems.frontier_consult.handoff import (
+    build_pointer_only_dispatch_pointer,
+    build_pointer_only_worker_message,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -30,6 +33,19 @@ def test_pointer_only_dispatch_omits_prompt_line() -> None:
     assert "cortex://notes/off-bus.txt" in body
     assert "sha256 `abc`" in body
     assert "exec-1" in body
+
+
+def test_pointer_only_worker_message_reads_and_verifies_sidecar() -> None:
+    message = build_pointer_only_worker_message(
+        sidecar_ref="cortex://notes/off-bus.txt",
+        prompt_sha256="abc",
+    )
+    assert _MARKER not in message
+    assert "cortex://notes/off-bus.txt" in message
+    assert "abc" in message
+    assert 'fs(op="read"' in message
+    assert "sha256" in message
+    assert "cannot be read" in message
 
 
 def test_pointer_only_cdp_delivery_omits_harvest(

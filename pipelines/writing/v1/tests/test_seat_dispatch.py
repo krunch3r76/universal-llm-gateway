@@ -90,6 +90,7 @@ def _assemble(**extra: Any) -> dict[str, Any]:
         "reviewer_seat": "local",
         "documents_block": "DOCUNIQUE",
         "brief_block": "BRIEFUNIQUE",
+        "sensitivity": "non_sensitive",
     }
     payload.update(extra)
     return payload
@@ -405,6 +406,35 @@ def test_seat_dispatch_2xx_without_execution_id_is_unknown() -> None:
     assert payload["reason"] == "missing_execution_id"
     assert "idempotency_key" in payload
     assert "prompt_sha256" in payload
+
+
+@pytest.mark.parametrize("writer_seat", ["cdp", "cursor_pool1"])
+def test_seat_dispatch_missing_sensitivity_fails_closed(writer_seat: str) -> None:
+    marker = "PINMARKER-16055-MISSING"
+    client = _Client()
+    handler = seat_dispatch.WritingSeatDispatchHandler(
+        client=client,
+        sidecar_writer=lambda prompt, key: "cortex://notes/off-bus.txt",
+    )
+    assembled = _assemble(
+        writer_seat=writer_seat,
+        documents_block=marker,
+        brief_block=marker,
+    )
+    del assembled["sensitivity"]
+    payload = asyncio.run(
+        handler.execute(
+            _Step("draft_dispatch"),
+            _Ctx({"assemble": _Out(assembled)}),
+        )
+    ).json
+    assert "sensitivity" not in payload
+    body = client.posts[0]
+    assert "prompt" not in body
+    assert body["bus_body"] == "pointer_only"
+    assert body["sidecar_ref"] == "cortex://notes/off-bus.txt"
+    assert body["prompt_sha256"]
+    assert marker not in json.dumps(body)
 
 
 def test_seat_dispatch_sensitive_brief_posts_sidecar_not_prompt() -> None:

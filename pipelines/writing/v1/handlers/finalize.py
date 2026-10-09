@@ -103,9 +103,12 @@ def _violation_key(row: Any) -> tuple[tuple[str, str], ...] | None:
 
 
 def _v2_worse(initial: list[Any], final: list[Any]) -> bool:
-    """True when final is a proper multiset superset of initial, or longer.
+    """True only when final has more violations than initial.
 
-    Equal violation lists are not worse. Gate evaluation then stays on v2.
+    A longer list returns immediately, so the keyed branch runs only when
+    the lists are the same length or final is shorter. Equal or fewer
+    violations are not worse. A different set of the same size is not worse.
+    Gate evaluation then stays on v2.
     """
     if len(final) > len(initial):
         return True
