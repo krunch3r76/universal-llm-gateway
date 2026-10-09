@@ -81,8 +81,8 @@ Background the wrapper and tail its log. A poll expiry is not failure. New
 `PHASE <name> progress` or `PHASE <name> heartbeat` lines reset the poll
 window. Finish only on `MIRROR_DONE rc=0`, `MIRROR_ERROR <reason>`, or
 `STALLED <phase>`. Never infer failure from a short wait.
-`CLAUDE_DUMP_LIVENESS_WINDOW_S` (default 30) is that inspect window, not a
-duration cap. Same contract as skill `claude-ai-bundle-sync`.
+`CLAUDE_DUMP_LIVENESS_WINDOW_S` is that inspect window. Expiry triggers an
+inspection, not a failure. Same contract as skill `claude-ai-bundle-sync`.
 
 ### 4. Preflight (before any upload)
 

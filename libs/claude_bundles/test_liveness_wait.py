@@ -11,12 +11,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from claude_bundles.chat_reply_wait import HarvestIncompleteError
 from claude_bundles.container_skills_dump import (
     PlaywrightTimeoutError as DumpTimeout,
 )
 from claude_bundles.container_skills_dump import (
     _click_chat_zip_card,
     _fresh_chat,
+    _guarded_call,
+    _PageLife,
+    _select_chat_compose,
+    _wait_reply,
     _ZipHarvest,
     download_skills_zip,
 )
@@ -46,11 +51,21 @@ class _Clock:
 
 @pytest.mark.asyncio
 async def test_consecutive_expiries_with_progress_then_complete() -> None:
-    """Several window expiries that each see progress, then completion, succeed."""
+    """Several window expiries that each see progress, then completion, succeed.
+
+    ``poll_s`` is shorter than the window, and each probe itself advances the
+    clock. The next expiry must start a full window after the probe returns,
+    not a window added to the pre-probe deadline.
+    """
     clock = _Clock()
     values = [0, 1, 2, 3]
+    started: list[float] = []
+    ended: list[float] = []
 
     async def progress() -> int:
+        started.append(clock.t)
+        clock.t += 1.0
+        ended.append(clock.t)
         return values.pop(0)
 
     async def complete() -> bool:
@@ -64,14 +79,18 @@ async def test_consecutive_expiries_with_progress_then_complete() -> None:
         complete=complete,
         error=error,
         window_s=10,
-        poll_s=10,
+        poll_s=3,
         phase="probe",
         on_progress=lambda _sig: None,
         clock=clock,
         sleep=clock.sleep,
     )
-    assert clock.slept == [10, 10, 10]
     assert values == []
+    assert clock.slept
+    assert all(gap <= 3 for gap in clock.slept)
+    assert started[0] == 0
+    for index in range(1, len(started)):
+        assert started[index] == ended[index - 1] + 10
 
 
 @pytest.mark.asyncio
@@ -399,7 +418,7 @@ def test_remote_py_forwards_nested_flag() -> None:
     driver = (
         "_cdp_display() { echo :1; }\n"
         "_cdp_xauthority() { echo /tmp/xa; }\n"
-        "ssh() { printf '%s\\n' \"$2\"; }\n"
+        "ssh() { printf '%s\\n' \"$*\"; }\n"
         "SSH=box\nREMOTE_REPO=/repo\nPY=/usr/bin/python\nCDP_PORT=9\n"
         "CLAUDE_SYNC_NESTED=1\n"
         + text[start:end]
@@ -416,6 +435,8 @@ def test_remote_py_forwards_nested_flag() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "CLAUDE_SYNC_NESTED=1" in proc.stdout
+    assert "ServerAliveInterval=15" in proc.stdout
+    assert "ServerAliveCountMax=4" in proc.stdout
 
 
 def test_dump_cli_early_failure_emits_terminal_line(
@@ -440,3 +461,322 @@ def test_dump_cli_early_failure_emits_terminal_line(
     missing_out = capsys.readouterr().out
     assert "MIRROR_ERROR" in missing_out
     assert "FileNotFoundError" in missing_out
+
+
+def _wrapper_fns() -> str:
+    script = _REPO / "scripts" / "cortex" / "claude-ai-sync-jupiter"
+    text = script.read_text(encoding="utf-8")
+    return text[text.index("emit() {") : text.index("# 24911/24976:")]
+
+
+@pytest.mark.asyncio
+async def test_compose_retries_after_miss_when_page_progresses(monkeypatch) -> None:
+    """An 8s-style miss is retried once the page signature advances."""
+    monkeypatch.setenv("CLAUDE_DUMP_LIVENESS_WINDOW_S", "0.2")
+    calls = {"n": 0}
+
+    async def signature(self):
+        calls["sig"] = calls.get("sig", 0) + 1
+        return (1, calls["sig"], 0, 1)
+
+    async def select(_page):
+        calls["n"] += 1
+        return {"ok": False}
+
+    async def fingerprint(_page):
+        return {"mode": "chat" if calls["n"] >= 2 else "cowork"}
+
+    page = MagicMock()
+    page.url = "https://claude.ai/new"
+    with (
+        patch.object(_PageLife, "signature", signature),
+        patch(
+            "claude_bundles.container_skills_dump.ensure_chat_compose",
+            new=select,
+        ),
+        patch(
+            "claude_bundles.container_skills_dump.compose_mode_fingerprint",
+            new=fingerprint,
+        ),
+    ):
+        await _select_chat_compose(page)
+    assert calls["n"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_compose_stalls_when_the_miss_has_no_progress(monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_DUMP_LIVENESS_WINDOW_S", "0.2")
+
+    async def signature(self):
+        return (1, 1, 0, 1)
+
+    async def select(_page):
+        return {"ok": False}
+
+    async def fingerprint(_page):
+        return {"mode": "cowork"}
+
+    with (
+        patch.object(_PageLife, "signature", signature),
+        patch(
+            "claude_bundles.container_skills_dump.ensure_chat_compose",
+            new=select,
+        ),
+        patch(
+            "claude_bundles.container_skills_dump.compose_mode_fingerprint",
+            new=fingerprint,
+        ),
+        pytest.raises(LivenessStalledError) as raised,
+    ):
+        await _select_chat_compose(MagicMock())
+    assert raised.value.phase == "compose"
+
+
+@pytest.mark.asyncio
+async def test_quiet_reply_is_stalled_not_error() -> None:
+    async def fake_wait(*_args, **_kwargs):
+        raise HarvestIncompleteError(
+            "timed out incomplete",
+            state={"error_banner": False, "n": 0, "body_len": 0},
+        )
+
+    with (
+        patch(
+            "claude_bundles.container_skills_dump.wait_assistant_reply",
+            new=fake_wait,
+        ),
+        pytest.raises(LivenessStalledError) as raised,
+    ):
+        await _wait_reply(AsyncMock(), {"n": 0, "body_len": 0}, 360)
+    assert raised.value.phase == "reply"
+
+
+@pytest.mark.asyncio
+async def test_fatal_banner_on_incomplete_reply_is_error() -> None:
+    async def fake_wait(*_args, **_kwargs):
+        raise HarvestIncompleteError(
+            "error_banner on timeout",
+            state={
+                "error_banner": True,
+                "error_banner_match": "overloaded",
+                "n": 0,
+                "streaming": False,
+                "stop": False,
+                "tool_pause": False,
+            },
+        )
+
+    with (
+        patch(
+            "claude_bundles.container_skills_dump.wait_assistant_reply",
+            new=fake_wait,
+        ),
+        pytest.raises(LivenessError) as raised,
+    ):
+        await _wait_reply(AsyncMock(), {"n": 0}, 360)
+    assert raised.value.phase == "reply"
+
+
+@pytest.mark.asyncio
+async def test_idle_banner_with_no_new_turn_fails_fast(capsys) -> None:
+    async def fake_wait(_page, *, before, timeout_s, on_harvest=None, **_kwargs):
+        del before, timeout_s
+        await on_harvest(
+            {
+                "error_banner": True,
+                "error_banner_match": "overloaded",
+                "n": 0,
+                "body_len": 4,
+                "streaming": False,
+                "stop": False,
+                "tool_pause": False,
+            }
+        )
+        await asyncio.Event().wait()
+
+    with (
+        patch(
+            "claude_bundles.container_skills_dump.wait_assistant_reply",
+            new=fake_wait,
+        ),
+        pytest.raises(LivenessError) as raised,
+    ):
+        await _wait_reply(AsyncMock(), {"n": 0}, 360)
+    assert raised.value.phase == "reply"
+    out = capsys.readouterr().out
+    assert "PHASE reply start" in out
+    assert "PHASE reply done" not in out
+
+
+@pytest.mark.asyncio
+async def test_reply_progress_line_on_growth(capsys) -> None:
+    async def fake_wait(_page, *, before, timeout_s, on_harvest=None, **_kwargs):
+        del before, timeout_s
+        await on_harvest(
+            {
+                "n": 1,
+                "body_len": 10,
+                "error_banner": False,
+                "streaming": True,
+                "stop": True,
+                "tool_pause": False,
+            }
+        )
+        await on_harvest(
+            {
+                "n": 1,
+                "body_len": 40,
+                "error_banner": False,
+                "streaming": True,
+                "stop": True,
+                "tool_pause": False,
+            }
+        )
+        return {"n": 1, "body_len": 40}
+
+    with patch(
+        "claude_bundles.container_skills_dump.wait_assistant_reply",
+        new=fake_wait,
+    ):
+        state = await _wait_reply(AsyncMock(), {"n": 0}, 360)
+    assert state["body_len"] == 40
+    out = capsys.readouterr().out
+    assert "PHASE reply start" in out
+    assert "PHASE reply progress n=1 bytes=40" in out
+    assert "PHASE reply done" in out
+
+
+@pytest.mark.asyncio
+async def test_hung_reply_probe_stalls(monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_DUMP_LIVENESS_WINDOW_S", "0.2")
+
+    async def fake_wait(*_args, **_kwargs):
+        await asyncio.Event().wait()
+
+    with (
+        patch(
+            "claude_bundles.container_skills_dump.wait_assistant_reply",
+            new=fake_wait,
+        ),
+        pytest.raises(LivenessStalledError) as raised,
+    ):
+        await _wait_reply(AsyncMock(), {"n": 0}, 360)
+    assert raised.value.phase == "reply"
+
+
+@pytest.mark.asyncio
+async def test_hung_send_probe_stalls(monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_DUMP_LIVENESS_WINDOW_S", "0.2")
+
+    async def evaluate(*_args, **_kwargs):
+        raise TimeoutError("renderer")
+
+    page = MagicMock()
+    page.evaluate = evaluate
+
+    async def work():
+        await asyncio.Event().wait()
+
+    with pytest.raises(LivenessStalledError) as raised:
+        await _guarded_call(page, work, "send")
+    assert raised.value.phase == "send"
+
+
+def test_dry_run_drift_is_mirror_done() -> None:
+    """reconcile rc=1 under --dry-run is drift, and remote_py is the child."""
+    driver = (
+        _wrapper_fns()
+        + "ensure_chrome() { return 0; }\n"
+        + "CDP_PORT=1\nPROFILE_SUFFIX=ask\nREMOTE_REPO=/tmp\n"
+        + "remote_py() {\n"
+        + '  case "$1" in\n'
+        + "    *reconcile*) return 1 ;;\n"
+        + "  esac\n"
+        + "  return 0\n"
+        + "}\n"
+        + "set +e\n"
+        + "_marked_mirror --dry-run\n"
+        + "printf 'RC=%s\\n' \"$?\"\n"
+    )
+    import subprocess
+
+    proc = subprocess.run(
+        ["bash", "-c", driver],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "MIRROR_DONE rc=0 dry_run=1 mirrored=false" in proc.stdout
+    assert "MIRROR_ERROR" not in proc.stdout
+    assert "RC=0" in proc.stdout
+
+
+def test_apply_reconcile_failure_stays_an_error() -> None:
+    driver = (
+        _wrapper_fns()
+        + "ensure_chrome() { return 0; }\n"
+        + "CDP_PORT=1\nPROFILE_SUFFIX=ask\nREMOTE_REPO=/tmp\n"
+        + "remote_py() {\n"
+        + '  case "$1" in\n'
+        + "    *reconcile*) return 1 ;;\n"
+        + "  esac\n"
+        + "  return 0\n"
+        + "}\n"
+        + "_marked_mirror\n"
+    )
+    import subprocess
+
+    proc = subprocess.run(
+        ["bash", "-c", driver],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 1, proc.stdout
+    assert "MIRROR_ERROR reconcile rc=1" in proc.stdout
+    assert "MIRROR_DONE" not in proc.stdout
+
+
+def test_dump_skills_always_has_one_terminal_line() -> None:
+    silent = (
+        _wrapper_fns()
+        + "ensure_chrome() { return 0; }\n"
+        + "CDP_PORT=1\nPROFILE_SUFFIX=ask\n"
+        + "remote_py() { return 137; }\n"
+        + "_marked_dump_skills\n"
+    )
+    spoken = (
+        _wrapper_fns()
+        + "ensure_chrome() { return 0; }\n"
+        + "CDP_PORT=1\nPROFILE_SUFFIX=ask\n"
+        + "remote_py() { printf '%s\\n' 'MIRROR_DONE rc=0'; return 0; }\n"
+        + "set +e\n"
+        + "_marked_dump_skills\n"
+        + "printf 'RC=%s\\n' \"$?\"\n"
+    )
+    import subprocess
+
+    killed = subprocess.run(
+        ["bash", "-c", silent],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert killed.returncode == 137, killed.stderr
+    assert killed.stdout.count("MIRROR_ERROR dump rc=137") == 1
+    assert "MIRROR_DONE" not in killed.stdout
+    done = subprocess.run(
+        ["bash", "-c", spoken],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.count("MIRROR_DONE rc=0") == 1
+    assert "MIRROR_ERROR" not in done.stdout
+    assert "RC=0" in done.stdout

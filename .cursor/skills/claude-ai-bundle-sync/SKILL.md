@@ -177,9 +177,10 @@ window and keep waiting. Finish only on a terminal line:
 | `MIRROR_ERROR <reason>` | Explicit error — stop; this is not a stall |
 | `STALLED <phase>` | One full window with no monotonic progress |
 
-Never infer failure from a short wait. `CLAUDE_DUMP_LIVENESS_WINDOW_S` (default
-30) is the inspect window. It resets when progress is observed. It is not a cap
-on how long a moving dump may run.
+Never infer failure from a short wait. `CLAUDE_DUMP_LIVENESS_WINDOW_S` is the
+inspect window. Its expiry triggers an inspection for monotonic progress, then
+a full fresh window when progress is present. It is not a cap on how long a
+moving dump may run.
 
 `mirror` **applies** the catalog 1:1 library sync (not report-only).
 `recon` is a deprecated alias of `mirror` (≠ work-item `contract=recon`):

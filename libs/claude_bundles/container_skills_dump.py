@@ -23,11 +23,23 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from claude_bundles.chat_cowork_mode import ensure_chat_compose
-from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
+from claude_bundles.chat_reply_wait import (
+    HarvestIncompleteError,
+    harvest_assistant,
+    wait_assistant_reply,
+)
+from claude_bundles.compose_attest import compose_mode_fingerprint
 from claude_bundles.container_skills_zip import pick_download_label
 from claude_bundles.cowork_output_download import download_cowork_output
-from claude_bundles.liveness_wait import liveness_wait
+from claude_bundles.cse_idle_probe import in_flight_from_state
+from claude_bundles.liveness_wait import (
+    LivenessError,
+    LivenessStalledError,
+    liveness_wait,
+    signature_progressed,
+)
 from claude_bundles.project_ask import send_prompt
+from claude_bundles.reply_completion import fatal_error_banner
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _COMPOSER = '[data-testid="chat-input"]'
@@ -390,6 +402,187 @@ async def download_skills_zip(page: Page, out: Path) -> Path:
         partial.unlink(missing_ok=True)
 
 
+async def _cancel_task(task: asyncio.Task | None) -> None:
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        return
+
+
+async def _select_chat_compose(page: Page) -> None:
+    """Select Chat under the inspect loop.
+
+    ``ensure_chat_compose`` still uses its own short chip poll. A miss is not
+    a failure: the loop retries that select only when the page signature
+    advanced, and a quiet window raises ``LivenessStalledError`` for compose.
+    """
+    life = _PageLife(page)
+    task: asyncio.Task | None = None
+    last: object | None = None
+
+    def _kick() -> None:
+        nonlocal task
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(ensure_chat_compose(page))
+
+    async def progress() -> object:
+        nonlocal last
+        sig = await life.signature()
+        if task is None or (
+            task.done() and last is not None and signature_progressed(last, sig)
+        ):
+            _kick()
+        last = sig
+        return sig
+
+    async def complete() -> bool:
+        try:
+            fp = await asyncio.wait_for(
+                compose_mode_fingerprint(page), timeout=_PROBE_S
+            )
+        except Exception:
+            return False
+        return fp.get("mode") == "chat"
+
+    async def error() -> BaseException | None:
+        if task is None or not task.done() or task.cancelled():
+            return None
+        return task.exception()
+
+    try:
+        await liveness_wait(
+            progress=progress,
+            complete=complete,
+            error=error,
+            phase="compose",
+        )
+    finally:
+        await _cancel_task(task)
+    print(f"compose chat url={page.url}", flush=True)
+
+
+async def _guarded_call(page: Page, work, phase: str):
+    """Run ``work`` beside a probe counter.
+
+    Each inspect expiry pings ``evaluate('1')`` with a ``_PROBE_S`` cap. A
+    ping that returns increments the counter and resets the window. A hung
+    renderer leaves the counter unchanged and the phase stalls. Completion is
+    the task finishing without an exception.
+    """
+    task = asyncio.create_task(work())
+    probes = {"n": 0}
+
+    async def progress() -> int:
+        try:
+            await asyncio.wait_for(page.evaluate("1"), timeout=_PROBE_S)
+        except Exception:
+            return probes["n"]
+        probes["n"] += 1
+        return probes["n"]
+
+    async def complete() -> bool:
+        return task.done() and not task.cancelled() and task.exception() is None
+
+    async def error() -> BaseException | None:
+        if not task.done() or task.cancelled():
+            return None
+        return task.exception()
+
+    try:
+        await liveness_wait(
+            progress=progress,
+            complete=complete,
+            error=error,
+            phase=phase,
+        )
+    finally:
+        await _cancel_task(task)
+    return task.result()
+
+
+async def _wait_reply(page: Page, before: dict, timeout_s: int) -> dict:
+    """Wait for the assistant reply without labelling a quiet page as an error.
+
+    ``wait_assistant_reply`` is unchanged and still owns the idle budget.
+    Harvest samples that return bump a probe counter, so a live renderer
+    resets the inspect window. A hung renderer stops that counter and stalls.
+    ``HarvestIncompleteError`` with a fatal banner is an error; the same
+    exception without one is a stall. A banner with nothing in flight and no
+    new turn raises ``LivenessError`` from the harvest callback immediately.
+    """
+    base_n = int((before or {}).get("n") or 0)
+    probes = {"n": 0}
+    last_key: dict[str, tuple[int, int] | None] = {"v": None}
+    task: asyncio.Task | None = None
+
+    async def on_harvest(state: dict) -> None:
+        n = int(state.get("n") or 0)
+        body_len = int(state.get("body_len") or 0)
+        if (
+            state.get("error_banner")
+            and not in_flight_from_state(state)
+            and n <= base_n
+        ):
+            detail = (
+                state.get("error_banner_match")
+                or state.get("error_banner_text")
+                or "banner"
+            )
+            raise LivenessError(f"fatal error banner: {detail}", phase="reply")
+        key = (n, body_len)
+        prev = last_key["v"]
+        if prev is not None and (key[0] > prev[0] or key[1] > prev[1]):
+            print(f"PHASE reply progress n={n} bytes={body_len}", flush=True)
+        last_key["v"] = key
+        probes["n"] += 1
+
+    async def _run() -> dict:
+        return await wait_assistant_reply(
+            page,
+            before=before,
+            timeout_s=timeout_s,
+            on_harvest=on_harvest,
+        )
+
+    task = asyncio.create_task(_run())
+
+    async def progress() -> int:
+        return probes["n"]
+
+    async def complete() -> bool:
+        return task.done() and not task.cancelled() and task.exception() is None
+
+    async def error() -> BaseException | str | None:
+        if not task.done() or task.cancelled():
+            return None
+        exc = task.exception()
+        if exc is None:
+            return None
+        if isinstance(exc, LivenessError):
+            return exc
+        if isinstance(exc, HarvestIncompleteError):
+            state = exc.state or {}
+            if fatal_error_banner(state):
+                return exc
+            raise LivenessStalledError(str(exc), phase="reply")
+        return exc
+
+    try:
+        await liveness_wait(
+            progress=progress,
+            complete=complete,
+            error=error,
+            phase="reply",
+        )
+    finally:
+        await _cancel_task(task)
+    return task.result()
+
+
 async def dump_container_skills(
     *,
     out: Path,
@@ -402,8 +595,10 @@ async def dump_container_skills(
 ) -> Path:
     """Submit (optional) then download ``claude-skills.zip`` from the chat card.
 
-    Navigation and zip harvest use the inspect-window loop. The assistant reply
-    wait is unchanged: ``timeout_s`` stays an idle budget.
+    Navigation, Chat selection, send, reply, and zip harvest use the
+    inspect-window loop. ``timeout_s`` stays the reply idle budget inside
+    ``wait_assistant_reply``. A quiet reply is a stall; a fatal banner is an
+    error.
     """
     if download_only and not chat_url:
         raise ValueError("download_only requires chat_url")
@@ -419,13 +614,14 @@ async def dump_container_skills(
             if chat_compose:
                 # Operator-gated: /new defaults to Cowork; Chat is the standing
                 # /mnt/skills dump transport (a23741). Cowork dumps omit user/.
-                mode = await ensure_chat_compose(page)
-                if not mode.get("ok"):
-                    raise RuntimeError(f"ensure_chat_compose failed: {mode}")
-                print(f"compose chat url={page.url}", flush=True)
-            before = await harvest_assistant(page, min_msg_chars=10)
-            await send_prompt(page, prompt)
-            await wait_assistant_reply(page, before=before, timeout_s=timeout_s)
+                await _select_chat_compose(page)
+            before = await _guarded_call(
+                page,
+                lambda: harvest_assistant(page, min_msg_chars=10),
+                "harvest",
+            )
+            await _guarded_call(page, lambda: send_prompt(page, prompt), "send")
+            await _wait_reply(page, before, timeout_s)
             print(f"after send url={page.url}", flush=True)
         await download_skills_zip(page, out)
         return out
