@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, override
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -40,6 +41,12 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
     post = step_output_json(outputs, "post")
     fact = step_output_json(outputs, "fact")
     verify = step_output_json(outputs, "await_verify")
+    verify_resume_step = step_output_json(outputs, "verify_resume")
+    verify_resume = (
+        verify_resume_step
+        if verify_resume_step and not verify_resume_step.get("_skipped")
+        else None
+    )
     warnings = list(card.get("warnings") or [])
     return {
         "house": options.get("house"),
@@ -78,6 +85,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "cp_turn": post.get("turn"),
         "fact_turn": fact.get("turn"),
         "verify": {"state": verify.get("state"), "turn": verify.get("turn")},
+        "verify_resume": verify_resume,
         "proposals": seal.get("proposals") or [],
         "warnings": warnings,
     }
@@ -90,4 +98,5 @@ class GrokbotCheckpointResultHandler(BaseHandler):
     async def execute(self, step: Any, context: Any) -> StepOutput:
         options = dict(getattr(context, "options", {}) or {})
         payload = assemble(options, getattr(context, "outputs", {}) or {})
-        return StepOutput(raw="", json=payload)
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        return StepOutput(raw=raw, json=payload)

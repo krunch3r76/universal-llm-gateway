@@ -66,7 +66,9 @@ def split_verbatim_layer(
     return full_md[:idx]
 
 
-def verbatim_fingerprint(codec: str, payload: str | Sequence[Mapping[str, Any]]) -> tuple[str, int]:
+def verbatim_fingerprint(
+    codec: str, payload: str | Sequence[Mapping[str, Any]]
+) -> tuple[str, int]:
     """Return ``(sha256:…, byte length)`` for a verbatim payload by codec."""
     if codec == "messages-v1":
         assert not isinstance(payload, str)
@@ -234,9 +236,7 @@ def load_sealed_payload_for_session(
     if not path.is_file():
         return None
     full = path.read_text(encoding="utf-8")
-    verbatim_md = split_verbatim_layer(
-        full, verbatim_bytes=journal_verbatim_bytes(row)
-    )
+    verbatim_md = split_verbatim_layer(full, verbatim_bytes=journal_verbatim_bytes(row))
     return SealedPayload(
         codec="md-v1",
         rel_path=rel_path,
@@ -266,21 +266,24 @@ def build_seal_envelope_meta(
     tools: str = "marker",
     sealed_at: str,
     source_sha256: str | None = None,
+    surface: str | None = None,
 ) -> ContinuityMessagesEnvelope:
     """Stamp seal-time meta fields on an envelope before writing JSON."""
     sha = seal_messages_sha256(envelope.messages)
+    effective_surface = surface if surface is not None else envelope.meta.surface
+    # Only grok keeps its surface; cursor/claude_ai/mixed/empty stay cursor (legacy).
+    stamped_surface = "grok" if effective_surface == "grok" else "cursor"
     meta = envelope.meta.model_copy(
         update={
-            "surface": "cursor",
+            "surface": stamped_surface,
             "session_id": session_id,
             "tools": tools,
             "sealed_at": sealed_at,
             "messages_sha256": sha,
             "turn_count": envelope.meta.turn_count,
             "message_count": len(envelope.messages),
-            "source_sha256": source_sha256 or getattr(
-                envelope.meta, "source_sha256", None
-            ),
+            "source_sha256": source_sha256
+            or getattr(envelope.meta, "source_sha256", None),
         }
     )
     return envelope.model_copy(update={"meta": meta})
