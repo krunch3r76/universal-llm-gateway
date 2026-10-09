@@ -14,6 +14,7 @@ support is residue plus a false report, not a clean exit.
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,6 +85,49 @@ def _land_disposition_verb_from_value(value: str) -> str | None:
     if lead == "discard":
         return "discard"
     return None
+
+
+def _branch_tip_sha(repo: Path, branch_name: str) -> str | None:
+    branch = (branch_name or "").strip()
+    if not branch:
+        return None
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{branch}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10.0,
+    )
+    if proc.returncode != 0:
+        return None
+    tip = proc.stdout.strip().lower()
+    return tip or None
+
+
+def _unlanded_tip_agrees_with_branch(declared: str, branch_tip: str) -> bool:
+    declared = declared.strip().lower()
+    tip = branch_tip.strip().lower()
+    if not declared or not tip:
+        return False
+    if declared == tip:
+        return True
+    if len(declared) >= 7 and tip.startswith(declared):
+        return True
+    if len(tip) >= 7 and declared.startswith(tip[:7]):
+        return True
+    return False
+
+
+def _silent_land_unlanded_tip_agrees(
+    repo: Path, branch_name: str, closeout_text: str | None
+) -> bool:
+    verb, _reason, unlanded_sha = parse_land_disposition(closeout_text)
+    if verb != DISCHARGE_UNLANDED or not unlanded_sha:
+        return False
+    tip = _branch_tip_sha(repo, branch_name)
+    if tip is None:
+        return False
+    return _unlanded_tip_agrees_with_branch(unlanded_sha, tip)
 
 
 def parse_land_disposition(
@@ -251,7 +295,12 @@ def silent_land_attempt(
         return SilentLandOutcome(False)
     verb, _reason, _sha = parse_land_disposition(closeout_text)
     if verb is not None:
-        return SilentLandOutcome(False)
+        if verb == DISCHARGE_UNLANDED and _silent_land_unlanded_tip_agrees(
+            repo, branch_name, closeout_text
+        ):
+            pass
+        else:
+            return SilentLandOutcome(False)
     if not packet_requests_silent_land(silent_source):
         return SilentLandOutcome(False)
     result = land_lane_branch_onto_hub_master(
