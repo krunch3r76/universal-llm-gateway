@@ -245,3 +245,8 @@ libs/cortex_store/migrations/
 # Ecosystem plugin SoT — skills, commands, seat overlays (markdown re-included)
 !cursor-plugins/**
 cursor-plugins/**/.cursor-plugin/
+
+# durable_io.atomic flock siblings (.lock.<dest>). Empty sentinels; the next
+# writer recreates them. Must follow the un-ignore rules above, which would
+# otherwise surface them under cursor-plugins/ and .cursor/rules/.
+**/.lock.*
