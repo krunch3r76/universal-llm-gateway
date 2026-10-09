@@ -485,6 +485,9 @@ def _op_session_close(
     promote_todos: list[dict[str, Any]] | None = None,
     dry_run: bool = False,
     digest: dict[str, Any] | None = None,
+    closed_by: str | None = None,
+    succession_seal_authority: bool = False,
+    conversation_uuid: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Atomic session close (server-side transcript derivation).
@@ -672,9 +675,13 @@ def _op_session_close(
         ("assistant_label", assistant_label),
         ("source_ref", source_ref),
         ("source_ref_derivation", source_ref_derivation),
+        ("closed_by", closed_by),
+        ("conversation_uuid", conversation_uuid),
     ]:
         if val is not None:
             body[key] = val
+    if succession_seal_authority:
+        body["succession_seal_authority"] = True
 
     try:
         result = _close_session_impl(body)

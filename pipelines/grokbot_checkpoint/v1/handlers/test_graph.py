@@ -104,6 +104,7 @@ def _options(fs, pour: bytes, *, house: str = "house", slot: str = "raw") -> dic
         "snapshot_uri": snap_uri,
         "channel": "cp",
         "residue": "r",
+        "opened_at": "2026-03-01T00:00:01Z",
     }
 
 

@@ -136,6 +136,18 @@ async def test_seal_claude_ai_happy_path_tail() -> None:
     assert payload["turn_count"] == 1
     assert payload["content_provenance"] == "cse-dom"
     close_args = dispatch.await_args.args[1]
+    assert set(close_args) == {
+        "session_id",
+        "agent",
+        "session_summary_md",
+        "summary",
+        "transcript_messages",
+        "transcript_depth",
+        "entity_ids",
+        "closed_by",
+        "assistant_label",
+        "succession_seal_authority",
+    }
     assert close_args["agent"] == "web-anthropic"
     assert close_args["closed_by"] == "succession"
     assert close_args["succession_seal_authority"] is True

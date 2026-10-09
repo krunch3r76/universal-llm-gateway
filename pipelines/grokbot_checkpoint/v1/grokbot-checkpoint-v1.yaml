@@ -8,6 +8,10 @@ description: >
   Admit, snapshot, succession-seal, card row, CHECKPOINT, FACT, and verify
   poll for one house checkpoint. Seal reads transcribed_ref plus
   transcribed_sha256 and/or raw_ref plus raw_sha256. verify_resume is read-only.
+  Invoke with POST /api/v1/capabilities/grokbot_checkpoint/grokbot-checkpoint-v1
+  and a top-level dispatch_thread_id. input_extraction reads that field from
+  original_request. Omitting it refuses at admit with admit.dispatch_thread_missing.
+  The MCP pipeline tool copies options.dispatch_thread_id onto that POST body.
 output: result
 
 # Serializes per dispatch thread, the same convention as continuity-checkpoint-v1.

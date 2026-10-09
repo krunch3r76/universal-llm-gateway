@@ -360,10 +360,13 @@ def _capability_async(member_path: str, options: dict[str, Any] | None) -> dict[
     ``status_code`` so an unknown category or member is not a local error.
     """
     opts = options or {}
-    body = {
+    body: dict[str, Any] = {
         "args": opts.get("args") or {},
         "output_contract": opts.get("output_contract", "inline"),
     }
+    thread_id = opts.get("dispatch_thread_id")
+    if isinstance(thread_id, str) and thread_id.strip():
+        body["dispatch_thread_id"] = thread_id.strip()
     record("mcp.pipeline.async.called", pipeline=member_path)
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:

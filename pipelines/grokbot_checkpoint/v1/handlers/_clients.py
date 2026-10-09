@@ -1,41 +1,22 @@
 """Shared helpers for grokbot-checkpoint-v1.
 
-Bus and cortex_dispatch are loaded from
-pipelines/continuity_checkpoint/v1/handlers/_clients.py by file path. That
-couples this package to that layout; the functions are not a separate installable
-module. File bytes use cortex_files_root / workspaces_root, not a cortex tool.
+Bus and cortex_dispatch come from ``continuity_tape.checkpoint_http``.
+File bytes use cortex_files_root / workspaces_root, not a cortex tool.
 """
 
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
-
-def _cc_clients() -> Any:
-    path = (
-        Path(__file__).resolve().parents[3]
-        / "continuity_checkpoint"
-        / "v1"
-        / "handlers"
-        / "_clients.py"
-    )
-    spec = importlib.util.spec_from_file_location("_cc_clients_for_grokbot", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load continuity checkpoint clients from {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_cc = _cc_clients()
-bus_get = _cc.bus_get
-bus_send = _cc.bus_send
-cortex_dispatch = _cc.cortex_dispatch
-step_output_json = _cc.step_output_json
+from continuity_tape.checkpoint_http import (
+    bus_get,
+    bus_send,
+    cortex_dispatch,
+    step_output_json,
+)
 
 __all__ = [
     "bus_get",

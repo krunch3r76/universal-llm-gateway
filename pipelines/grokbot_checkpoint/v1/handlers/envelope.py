@@ -3,12 +3,36 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, override
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
+
+
+def slug_house(house: str) -> str:
+    """One path segment. ``/``, ``..`` and spaces cannot nest or escape."""
+    chars: list[str] = []
+    for ch in house:
+        chars.append(ch if ch.isalnum() or ch in "-_" else "-")
+    slug = "".join(chars).strip("-")
+    return slug or "house"
+
+
+def files_roots_agree() -> bool:
+    from cortex_store.dispatch_ops._shared import _FILES_ROOT
+    from implement_admission.closeout_helpers import cortex_files_root
+
+    return cortex_files_root().resolve() == Path(_FILES_ROOT).resolve()
+
+
+def staging_uri(house: str, agent_id: str, provenance: str) -> str:
+    return (
+        "ephemeral/harvests/grok/"
+        f"{slug_house(house)}-{agent_id[:8]}.{provenance}.messages.json"
+    )
 
 
 def _producer_id(meta: dict[str, Any]) -> str:
@@ -50,14 +74,19 @@ async def run_envelope(
         return refuse("envelope.upstream_skipped", "source did not yield a pour")
     uri = str(
         options.get("snapshot_uri")
-        or (
-            "notes/system/transcripts/grok/"
-            f"{options.get('house')}-{str(options.get('agent_id') or '')[:8]}."
-            f"{source.get('provenance')}.messages.json"
+        or staging_uri(
+            str(options.get("house") or ""),
+            str(options.get("agent_id") or ""),
+            str(source.get("provenance") or "raw"),
         )
     )
     if not rel_path_ok(uri):
         return refuse("admit.path_escape", f"refused path {uri}")
+    if not files_roots_agree():
+        return refuse(
+            "fs.roots_disagree",
+            "cortex_files_root() and cortex _FILES_ROOT differ",
+        )
     envelope = source.get("envelope")
     if not isinstance(envelope, dict):
         return refuse("envelope.missing", "source produced no envelope")
@@ -80,6 +109,7 @@ async def run_envelope(
             "turn_count": source.get("turn_count"),
             "surface": source.get("surface"),
             "capture": source.get("capture"),
+            "envelope": envelope,
         }
     try:
         old = json.loads(existing.decode("utf-8"))
@@ -105,6 +135,7 @@ async def run_envelope(
             "turn_count": source.get("turn_count"),
             "surface": source.get("surface"),
             "capture": source.get("capture"),
+            "envelope": envelope,
         }
     old_msgs = old.get("messages") if isinstance(old, dict) else None
     new_msgs = envelope.get("messages")
@@ -127,6 +158,7 @@ async def run_envelope(
             "turn_count": source.get("turn_count"),
             "surface": source.get("surface"),
             "capture": source.get("capture"),
+            "envelope": envelope,
         }
 
 

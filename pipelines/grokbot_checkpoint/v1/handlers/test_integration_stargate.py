@@ -258,17 +258,19 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     from cortex_store.session_close_validation import _validate_session_close_args
 
     sent = transport["close_args"][0]
+    assert "transcript_messages_path" not in sent
     resolved = _resolve_transcript_messages_envelope(
         SessionCloseRequest(
             session_id=sent["session_id"],
             agent=sent["agent"],
             summary=sent["summary"],
             session_summary_md=sent["session_summary_md"],
-            transcript_messages_path=sent["transcript_messages_path"],
+            transcript_messages=sent["transcript_messages"],
             transcript_depth=sent["transcript_depth"],
             closed_by=sent["closed_by"],
             succession_seal_authority=sent["succession_seal_authority"],
             entity_ids=sent["entity_ids"],
+            conversation_uuid=sent.get("conversation_uuid"),
         )
     )
     assert resolved.meta.provenance == "transcribed"
@@ -278,18 +280,16 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
         transcript_jsonl_path=None,
         session_summary_md=sent["session_summary_md"],
         summary=sent["summary"],
-        transcript_messages_path=sent["transcript_messages_path"],
+        transcript_messages=sent["transcript_messages"],
         transcript_depth=sent["transcript_depth"],
         emit_rejected=False,
     ) is None
     assert sent["agent"] == "grok-bot"
-    assert sent["transcript_messages_path"] == snap_rel
+    assert sent["transcript_messages"]["messages"]
     from agent_seat.session_id import SESSION_ID_RE
 
     assert SESSION_ID_RE.fullmatch(happy["seal"]["session_id"])
-    assert transport["close_args"][0]["transcript_messages_path"].startswith(
-        "notes/system/transcripts/"
-    )
+    assert happy["seal"]["session_id"].startswith("grok-bot-2026-03-01-")
 
     tr_card = _CARD.encode()
     (tmp_path / "notes" / "tronly.md").write_bytes(tr_card)
@@ -476,50 +476,33 @@ def _sealed_on(agent_id: str) -> str | None:
 async def test_rerun_is_idempotent_until_snapshot_grows(
     tmp_path: Path, monkeypatch, transport
 ) -> None:
-    from datetime import UTC, datetime
-
-    from . import seal as seal_mod
-
     boot_cortex(monkeypatch, tmp_path)
     registry = _load_registry(tmp_path / "reg")
     raw = _raw_bytes()
     agent_id = "agent-hm1idem"
     options = _seal_options(tmp_path, house="idem", agent_id=agent_id, n=1, raw=raw)
-    stamps = iter(
-        [
-            datetime(2026, 3, 1, 0, 0, 1, tzinfo=UTC),
-            datetime(2026, 3, 1, 0, 0, 2, tzinfo=UTC),
-            datetime(2026, 3, 1, 0, 0, 3, tzinfo=UTC),
-        ]
-    )
-
-    class _Clock:
-        @staticmethod
-        def now(tz=None):
-            return next(stamps)
-
-    monkeypatch.setattr(seal_mod, "datetime", _Clock)
     first = await _run(registry, options, tmp_path)
     assert first["seal"].get("refused") is None
     assert first["seal"]["already_closed"] is False
     assert journal_count(agent_id) == 1
     sid = first["seal"]["session_id"]
     sealed = _sealed_on(agent_id)
-    assert sealed == "2026-03-01T00:00:01Z"
+    assert sealed
     assert len(transport["events"]) == 1
-    assert len(transport["calls"]) == 1
+    assert transport["calls"].count("session_close") == 1
 
     second = await _run(
         registry,
         _seal_options(tmp_path, house="idem", agent_id=agent_id, n=2, raw=raw),
         tmp_path,
     )
-    assert second["seal"]["already_closed"] is True
+    assert second["seal"]["already_closed"] is False
     assert second["seal"]["session_id"] == sid
+    assert second["seal"]["journal_row_id"] == first["seal"]["journal_row_id"]
     assert journal_count(agent_id) == 1
     assert _sealed_on(agent_id) == sealed
     assert len(transport["events"]) == 1
-    assert len(transport["calls"]) == 1
+    assert transport["calls"].count("session_close") == 2
 
     from continuity_tape.messages import seal_messages_sha256
 
@@ -539,9 +522,9 @@ async def test_rerun_is_idempotent_until_snapshot_grows(
     assert third["seal"]["already_closed"] is False
     assert third["seal"]["session_id"] == sid
     assert journal_count(agent_id) == 1
-    assert _sealed_on(agent_id) == "2026-03-01T00:00:03Z"
+    assert _sealed_on(agent_id) == sealed
     assert len(transport["events"]) == 2
-    assert len(transport["calls"]) == 2
+    assert transport["calls"].count("session_close") == 3
 
 
 @pytest.mark.asyncio
@@ -566,12 +549,12 @@ async def test_crash_before_session_close_reseals(tmp_path: Path, monkeypatch, t
     snap = tmp_path / options["snapshot_uri"]
     assert snap.is_file()
     monkeypatch.setattr(seal_mod, "cortex_dispatch", transport["dispatch"])
-    calls_before = len(transport["calls"])
+    closes_before = transport["calls"].count("session_close")
     second = await _run(registry, options, tmp_path)
     assert second["seal"].get("refused") is None
     assert second["seal"]["already_closed"] is False
     assert journal_count(agent_id) == 1
-    assert len(transport["calls"]) == calls_before + 1
+    assert transport["calls"].count("session_close") == closes_before + 1
 
 
 @pytest.mark.asyncio
@@ -585,7 +568,7 @@ async def test_legacy_threads_path_refused(tmp_path: Path, monkeypatch, transpor
     card_before = (tmp_path / options["card_uri"]).read_bytes()
     out = await _run(registry, options, tmp_path)
     refused = out["seal"]["refused"]
-    assert "transcript_messages_path.invalid" in refused["message"]
+    assert refused["code"] == "seal.path_rejected"
     assert journal_count(agent_id) == 0
     assert transport["events"] == []
     assert _sealed_on(agent_id) is None

@@ -7577,6 +7577,17 @@
             ],
             "title": "Closed By"
           },
+          "conversation_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Uuid"
+          },
           "decisions": {
             "anyOf": [
               {

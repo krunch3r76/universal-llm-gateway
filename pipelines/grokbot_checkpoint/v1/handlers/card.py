@@ -108,9 +108,18 @@ async def run_card(
             cap_tok = f"{cap.get('kind')}@{short}{pseudo}"
         else:
             cap_tok = "none"
+        session_id = str((seal or {}).get("session_id") or "")
+        authority = ""
+        if session_id:
+            from cortex_store.verbatim_succession import transcript_messages_path
+
+            seal_path = transcript_messages_path(
+                f"notes/system/transcripts/{session_id}.md"
+            )
+            authority = f"transcript:{session_id} · {seal_path} · "
         cell = (
-            f"{snap}@{snap_sha} · {msg} · provenance:{prov} · producer:{prod} · "
-            f"capture:{cap_tok}"
+            f"{authority}staging:{snap}@{snap_sha} · {msg} · provenance:{prov} · "
+            f"producer:{prod} · capture:{cap_tok}"
         )
     row = (
         f"| {n} | {when} | {trigger} | {expected} | {cell} | pipeline {execution_id} |"

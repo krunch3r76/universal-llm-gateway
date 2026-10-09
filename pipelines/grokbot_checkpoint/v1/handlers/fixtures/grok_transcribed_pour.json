@@ -20,6 +20,7 @@
     "provenance": "transcribed",
     "messages_sha256": "60c9f55f6e5ef6c729e38e9130829c839b66702fd45c6213fffb4022f01aaf35",
     "coverage": "full",
+    "opened_at": "2026-03-01T00:00:01Z",
     "sources": [
       {
         "kind": "transcript",
