@@ -103,3 +103,44 @@ async def test_generate_forwards_generation_options_claim_id() -> None:
         )
     body = relay.await_args.kwargs["body"]
     assert body["generation_options"]["claim_id"] == "claim-house"
+
+
+@pytest.mark.asyncio
+async def test_generate_forwards_top_level_claim_id_into_generation_options() -> None:
+    fn = _tool()
+    relay = AsyncMock(return_value={"dispatch_id": "d1"})
+    with patch("tools.frontier._relay", relay):
+        await fn(
+            op="generate",
+            seat="cursor-sdk",
+            contract="freeform",
+            lane="B",
+            dispatch_thread_id="15945",
+            prompt="successor admit",
+            model="cursor/grok-4.7",
+            claim_id="claim-top",
+            caller_agent="cursor-sdk",
+        )
+    body = relay.await_args.kwargs["body"]
+    assert body["generation_options"]["claim_id"] == "claim-top"
+
+
+@pytest.mark.asyncio
+async def test_generate_top_level_claim_id_does_not_override_generation_options() -> None:
+    fn = _tool()
+    relay = AsyncMock(return_value={"dispatch_id": "d1"})
+    with patch("tools.frontier._relay", relay):
+        await fn(
+            op="generate",
+            seat="cursor-sdk",
+            contract="freeform",
+            lane="B",
+            dispatch_thread_id="15945",
+            prompt="explicit wins",
+            model="cursor/grok-4.7",
+            claim_id="claim-top",
+            generation_options={"claim_id": "claim-explicit"},
+            caller_agent="cursor-sdk",
+        )
+    body = relay.await_args.kwargs["body"]
+    assert body["generation_options"]["claim_id"] == "claim-explicit"

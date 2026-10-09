@@ -12,21 +12,24 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
-    CursorDispatchLedger,
     _ACTIVE_IDENTITY_STATUSES,
+    CursorDispatchLedger,
 )
 from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
     OPEN_RESTART_PARK_SQL,
     open_parks,
 )
-from services.git_integration_worker.cursor_sdk_work_key_gate import holder_kind_from_row
+from services.git_integration_worker.cursor_sdk_work_key_gate import (
+    holder_kind_from_row,
+)
 
 logger = get_logger(__name__)
 
@@ -56,7 +59,7 @@ _RELEASE_STATUS = {
 Poster = Callable[[dict[str, Any]], None]
 
 
-class WorkKeyHeld(Exception):
+class WorkKeyHeld(Exception):  # noqa: N818 — HTTP 409 WORK_KEY_HELD (spec name)
     """Another live holder already occupies this work_key.
 
     The claim route maps this to HTTP 409 ``WORK_KEY_HELD``. Attributes are the
@@ -64,6 +67,7 @@ class WorkKeyHeld(Exception):
     """
 
     def __init__(self, *, work_key: str, holder: dict[str, Any]) -> None:
+        """Attach the conflicting holder projection for the 409 envelope."""
         self.work_key = work_key
         self.holder = holder
         super().__init__(
@@ -83,6 +87,7 @@ class ClaimError(Exception):
     """
 
     def __init__(self, *, code: str, http_status: int, message: str) -> None:
+        """Store the worker error code and HTTP status for the claim route."""
         self.code = code
         self.http_status = http_status
         super().__init__(message)

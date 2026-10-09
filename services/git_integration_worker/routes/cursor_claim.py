@@ -105,7 +105,9 @@ def get_occupancy(
     work_key: str = Query(..., min_length=1),
 ) -> Any:
     """Occupancy projection for one work_key. Not a progress report."""
-    from services.git_integration_worker.cursor_dispatch_read import occupancy_projection
+    from services.git_integration_worker.cursor_dispatch_read import (
+        occupancy_projection,
+    )
 
     if not validate_work_key_scheme(work_key):
         return _invalid("INVALID_WORK_KEY", "work_key failed D4 grammar")

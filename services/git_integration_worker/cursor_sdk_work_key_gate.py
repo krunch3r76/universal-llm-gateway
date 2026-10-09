@@ -172,6 +172,7 @@ def count_root_rows_24h(
 
 
 def _row_field(row: sqlite3.Row | dict[str, Any], name: str) -> Any:
+    """Read one column from a sqlite Row or a plain dict holder projection."""
     if isinstance(row, dict):
         return row.get(name)
     if name in row.keys():

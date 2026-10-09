@@ -30,6 +30,7 @@ from .implement_admission_bridge import resolve_source_ref_to_packet
 from .implement_ready_gate import require_implement_ready
 from .stargate_cortex_reader import StargateCortexReader
 
+
 def _claim_id_from_options(generation_options: dict[str, Any] | None) -> str | None:
     """Read generation_options.claim_id the same way hop_park_release is read."""
     raw = (generation_options or {}).get("claim_id")
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class GenerateWrapResult:
+    """Outcome of gate-then-materialize before a cursor-sdk generate dispatch."""
+
     packet_path: str | None
     gated: bool = False
     gated_reason: str | None = None

@@ -1067,13 +1067,24 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             caller_agent,
             contract=contract,
         )
+        relay_generation_options = generation_options
+        if op == "generate" and claim_id:
+            top_claim = str(claim_id).strip()
+            if top_claim:
+                opts = dict(generation_options) if generation_options else {}
+                existing = opts.get("claim_id")
+                if not (
+                    isinstance(existing, str) and str(existing).strip()
+                ):
+                    opts["claim_id"] = top_claim
+                    relay_generation_options = opts
         for key, val in (
             ("model", model),
             ("mcp", mcp),
             ("skills", skills),
             ("server_tools", server_tools),
             ("reasoning_effort", effort_for_relay),
-            ("generation_options", generation_options),
+            ("generation_options", relay_generation_options),
             ("model_knobs", model_knobs),
             ("max_tool_turns", max_tool_turns),
             ("transcript_id", transcript_id),

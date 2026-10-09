@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 
 
 def _success(resp: httpx.Response) -> dict[str, Any]:
+    """Parse a GIW JSON body and attach the HTTP status_code."""
     try:
         body = resp.json()
     except ValueError:
