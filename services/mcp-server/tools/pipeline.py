@@ -400,7 +400,7 @@ def _capability_async(
     ``status_code`` so an unknown category or member is not a local error.
     Local pipeline members take ``options.model`` (or flat options/messages).
     The bare id (e.g. ``writer-specialist-v1``) is an alias.
-    A top-level ``dispatch_thread_id`` is forwarded on both paths.
+    A top-level ``dispatch_thread_id`` is forwarded on both paths; on the local path a flat one also stays in pipeline_options.
     """
     opts = options or {}
     flat = any(
@@ -434,7 +434,6 @@ def _capability_async(
                     "output_contract",
                     "model",
                     "pipeline_options",
-                    "dispatch_thread_id",
                 }
             }
             pipeline_options = {**args, **flat}
