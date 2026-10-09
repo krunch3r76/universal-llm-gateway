@@ -104,7 +104,7 @@ async def health_check(
             "gateway_status": "unavailable",
             "pipeline_system_ready": pipeline_ready,
             "pipeline_count": pipeline_count,
-            "message": ("Stargate proxy is running but local edge is not connected"),
+            "message": "Stargate proxy is running but local edge is not connected",
             "timestamp": int(time.time()),
             "version": "1.0.0",
             "code_version": code_version,
