@@ -627,7 +627,11 @@ async def reclaim_orphan_holder(
                     "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                     (child_id,),
                 ).fetchone()
-            if child is not None and child["status"] not in _TERMINAL:
+            if (
+                child is not None
+                and child["status"] not in _TERMINAL
+                and child["status"] != "claimed"
+            ):
                 bridge_aborted = await _stop_orphan_bridge(child_id)
                 child_row = load_ledger_row(ledger, dispatch_id=child_id)
                 if child_row is not None:

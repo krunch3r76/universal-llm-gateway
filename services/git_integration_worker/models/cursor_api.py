@@ -122,6 +122,13 @@ class CursorDispatchRequest(BaseModel):
         | None
     ) = None
     hop_park_release: bool = False
+    claim_id: str | None = Field(
+        default=None,
+        description=(
+            "House claim id this admit is the successor of. An unexpired "
+            "claimed row with this dispatch_id does not block the work_key gate."
+        ),
+    )
     wake_lane: str | None = Field(
         default=None,
         description=(

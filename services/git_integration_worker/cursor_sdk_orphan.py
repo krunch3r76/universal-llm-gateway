@@ -354,7 +354,10 @@ def _bridge_is_owned(
         return True
     if row is None:
         return False
-    return str(row.get("status") or "") not in _TERMINAL_STATUSES
+    status = str(row.get("status") or "")
+    if status == "claimed":
+        return False
+    return status not in _TERMINAL_STATUSES
 
 
 def sweep_unowned_bridges(
