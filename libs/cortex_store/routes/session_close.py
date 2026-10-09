@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from ..db import json_encode  # re-export for tests patching session_close.json_encode
 from ..dispatch_ops._shared import _FILES_ROOT  # re-export for tests / session_journals
 from ..models import SessionCloseRequest, SessionCloseResponse
 from .session_close_persist import persist_session_close, try_idempotent_session_close
-from .session_close_validate import validate_session_close
+from .session_close_validate import ValidatedCloseContext, validate_session_close
 
 __all__ = [
     "_FILES_ROOT",
@@ -52,6 +54,17 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     and does not suppress the original exception.
     """
     ctx = validate_session_close(body)
+    try:
+        return _close_or_reuse(body, ctx)
+    except sqlite3.IntegrityError:
+        # Concurrent first seals both pass the existence read. The unique
+        # index rejects the second insert; reuse the committed row.
+        return _close_or_reuse(body, ctx)
+
+
+def _close_or_reuse(
+    body: SessionCloseRequest, ctx: ValidatedCloseContext
+) -> SessionCloseResponse:
     idempotent, reuse_journal_row_id = try_idempotent_session_close(body, ctx)
     if idempotent is not None:
         return idempotent

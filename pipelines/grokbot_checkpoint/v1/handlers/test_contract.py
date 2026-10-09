@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -330,16 +331,95 @@ async def test_8_agent_and_id_prefix(monkeypatch, tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_9_lookup_raise_same_id(monkeypatch, tmp_path: Path) -> None:
+    """Identity is the pure derivation. A lookup result must not supply the id."""
+    import cortex_store.db as cortex_db
+    from continuity_tape.seal_messages import derive_anchored_session_id
+
     _boot(monkeypatch, tmp_path)
-    happy = _Spy()
-    _patch_event(monkeypatch, happy)
-    step = _step(_envelope(_messages(1)), _URI)
-    first = await run_seal(_options("agent-lookup"), step, execution_id="e", dispatch=happy.dispatch)
+    expected = derive_anchored_session_id("grok-bot", _START, "agent-lookup")
+    conn = cortex_db.cortex_conn()
+    try:
+        conn.execute(
+            "INSERT INTO session_journals "
+            "(timestamp, agent, summary, session_id, conversation_uuid) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "2020-01-01T00:00:00Z",
+                "grok-bot-hm1",
+                "conflicting lookup row",
+                "grok-bot-from-lookup",
+                "agent-lookup",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
     boom = _Spy(lookup_raises=True)
+    _patch_event(monkeypatch, boom)
+    out = await run_seal(
+        _options("agent-lookup"),
+        _step(_envelope(_messages(1)), _URI),
+        execution_id="e",
+        dispatch=boom.dispatch,
+    )
+    assert out["session_id"] == expected
+    assert out["session_id"] != "grok-bot-from-lookup"
+
+
+@pytest.mark.asyncio
+async def test_suppression_unchanged_extend_and_read_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _boot(monkeypatch, tmp_path)
+    spy = _Spy()
+    _patch_event(monkeypatch, spy)
+    step = _step(_envelope(_messages(1)), _URI)
+    await run_seal(_options("agent-suppress"), step, execution_id="e", dispatch=spy.dispatch)
+    assert len(spy.events) == 1
+    await run_seal(_options("agent-suppress"), step, execution_id="e", dispatch=spy.dispatch)
+    assert len(spy.events) == 1
+    extended = _step(_envelope(_messages(2)), _URI)
+    await run_seal(
+        _options("agent-suppress"), extended, execution_id="e", dispatch=spy.dispatch
+    )
+    assert len(spy.events) == 2
+    before = len(spy.events)
+    import cortex_store.db as cortex_db
+
+    real_conn = cortex_db.cortex_conn
+    state = {"n": 0}
+
+    def _flaky_conn():
+        state["n"] += 1
+        if state["n"] == 1:
+            raise sqlite3.OperationalError("prior read down")
+        return real_conn()
+
+    monkeypatch.setattr(cortex_db, "cortex_conn", _flaky_conn)
+    failed = await run_seal(
+        _options("agent-suppress"), extended, execution_id="e", dispatch=spy.dispatch
+    )
+    assert len(spy.events) == before
+    assert failed["event_suppressed_reason"] == "prior_read_failed"
+
+
+@pytest.mark.asyncio
+async def test_suppression_ignores_files_root(monkeypatch, tmp_path: Path) -> None:
+    _boot(monkeypatch, tmp_path)
+    decoy = tmp_path / "stargate-other-root"
+    decoy.mkdir()
+    monkeypatch.setattr("cortex_store.dispatch_ops._shared._FILES_ROOT", decoy)
+    spy = _Spy()
+    _patch_event(monkeypatch, spy)
+    step = _step(_envelope(_messages(1)), _URI)
+    first = await run_seal(
+        _options("agent-root"), step, execution_id="e", dispatch=spy.dispatch
+    )
     second = await run_seal(
-        _options("agent-lookup"), step, execution_id="e", dispatch=boom.dispatch
+        _options("agent-root"), step, execution_id="e", dispatch=spy.dispatch
     )
     assert second["session_id"] == first["session_id"]
+    assert len(spy.events) == 1
 
 
 def test_10_missing_dispatch_thread(monkeypatch, tmp_path: Path) -> None:

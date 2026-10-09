@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -136,6 +138,18 @@ async def test_seal_claude_ai_happy_path_tail() -> None:
     assert payload["turn_count"] == 1
     assert payload["content_provenance"] == "cse-dom"
     close_args = dispatch.await_args.args[1]
+    golden_dir = Path(__file__).parent / "fixtures"
+    minted = close_args["session_id"]
+
+    def _norm(obj: dict) -> str:
+        return json.dumps(obj, sort_keys=True).replace(minted, "{{session_id}}")
+
+    assert _norm(close_args) == (
+        golden_dir / "claude_ai_close_args_076effa0.json"
+    ).read_text(encoding="utf-8")
+    assert _norm(payload) == (
+        golden_dir / "claude_ai_payload_076effa0.json"
+    ).read_text(encoding="utf-8")
     assert set(close_args) == {
         "session_id",
         "agent",

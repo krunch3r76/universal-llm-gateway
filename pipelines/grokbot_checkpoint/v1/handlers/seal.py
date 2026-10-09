@@ -1,9 +1,9 @@
-"""Succession seal via the shared messages helper. No sqlite."""
+"""Succession seal via the shared messages helper. No files-root read."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import sqlite3
 from typing import Any, override
 
 from continuity_tape.events import stargate_continuity_checkpoint_sealed
@@ -11,7 +11,6 @@ from continuity_tape.seal_messages import (
     derive_anchored_session_id,
     seal_messages_envelope,
 )
-from cortex_store.verbatim_succession import transcript_messages_path
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -63,22 +62,36 @@ def _opened_at(options: dict[str, Any], envelope: dict[str, Any]) -> str | None:
     return None
 
 
-def _prior_messages_sha(session_id: str) -> str | None:
-    from cortex_store.dispatch_ops._shared import _FILES_ROOT
+def _prior_messages_sha(session_id: str) -> tuple[str | None, str | None]:
+    """Prior messages hash from the transcript entity, not the files root.
 
-    rel = transcript_messages_path(f"notes/system/transcripts/{session_id}.md")
-    path = Path(_FILES_ROOT) / rel
-    if not path.is_file():
-        return None
+    Returns ``(sha, None)`` when the read succeeds. A missing entity is
+    ``(None, None)`` (first seal). ``(None, "prior_read_failed")`` means the
+    read failed; the caller must not treat that as a new extension.
+    """
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    meta = payload.get("meta") if isinstance(payload, dict) else None
-    if not isinstance(meta, dict):
-        return None
-    sha = meta.get("messages_sha256")
-    return str(sha) if isinstance(sha, str) and sha else None
+        import cortex_store.db as cortex_db
+
+        conn = cortex_db.cortex_conn()
+        try:
+            row = conn.execute(
+                "SELECT attributes FROM entities WHERE id = ?",
+                (f"transcript:{session_id}",),
+            ).fetchone()
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError):
+        return None, "prior_read_failed"
+    if row is None or not row["attributes"]:
+        return None, None
+    try:
+        attrs = json.loads(row["attributes"])
+    except json.JSONDecodeError:
+        return None, "prior_read_failed"
+    if not isinstance(attrs, dict):
+        return None, None
+    sha = attrs.get("messages_sha256")
+    return (str(sha) if isinstance(sha, str) and sha else None), None
 
 
 async def run_seal(
@@ -106,19 +119,9 @@ async def run_seal(
     agent_id = str(options.get("agent_id") or "")
     lane = str(options.get("root_thread") or options.get("verify_lane") or "")
     structural = _structural(options, envelope_step, opened)
-    # Optional identity read. A failure keeps the derived id (test 9).
-    try:
-        await post(
-            "entity_get",
-            {"entity_id": f"journal:{agent_id}", "intent": "card"},
-        )
-    except Exception:
-        pass
     msg_sha = str(envelope_step.get("messages_sha256") or "")
-    # Read the authority seal before close. An unchanged rerun already has this sha.
-    preview_id = ""
     preview_id = derive_anchored_session_id(_SEAT, opened, agent_id or None)
-    prior = _prior_messages_sha(preview_id)
+    prior, prior_err = _prior_messages_sha(preview_id)
     result = await seal_messages_envelope(
         envelope,
         agent=agent,
@@ -140,7 +143,8 @@ async def run_seal(
         }
     session_id = result.session_id
     close = result.close or {}
-    extended = prior != msg_sha
+    # A failed prior read is not "no prior": skip the event instead of re-firing.
+    extended = prior_err is None and prior != msg_sha
     if extended:
         surface = str(envelope_step.get("surface") or "")
         stargate_continuity_checkpoint_sealed(
@@ -164,6 +168,7 @@ async def run_seal(
         "producer": envelope_step.get("producer"),
         "proposals": [],
         "close_args": result.close_args,
+        "event_suppressed_reason": prior_err,
     }
 
 
