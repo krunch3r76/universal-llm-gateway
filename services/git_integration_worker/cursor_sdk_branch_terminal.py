@@ -143,6 +143,7 @@ def _open_debt(
     tip_sha: str | None,
     files: list[str] | None,
     detail: str,
+    reason: str | None = None,
 ) -> LaneBranchSettlement:
     from services.git_integration_worker.config import load_config
 
@@ -169,13 +170,15 @@ def _open_debt(
         dispatch_id=dispatch_id,
         caller_agent=caller_agent,
         tip_sha=tip_sha,
+        reason=reason,
     )
     logger.warning(
-        "lane_b branch debt opened branch=%s thread_id=%s dispatch_id=%s reason=%s",
+        "lane_b branch debt opened branch=%s thread_id=%s dispatch_id=%s reason=%s debt_reason=%s",
         branch_name,
         thread_id,
         dispatch_id,
         detail,
+        reason,
     )
     return LaneBranchSettlement(
         outcome="debt_opened",
@@ -435,6 +438,11 @@ def _settle(
                 verb=DISCHARGE_LANDED,
                 detail=result.refused_reason,
             )
+        debt_reason = (
+            "land:silent_token_absent"
+            if not packet_requests_silent_land(packet_text)
+            else None
+        )
         return _open_debt(
             source_repo=source_repo,
             branch_name=branch_name,
@@ -443,6 +451,7 @@ def _settle(
             tip_sha=head_sha,
             files=files,
             detail="no land_disposition declared while branch carries commits",
+            reason=debt_reason,
         )
 
     return LaneBranchSettlement(outcome="nothing_owed", branch=branch_name)

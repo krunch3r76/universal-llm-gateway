@@ -1334,6 +1334,7 @@ def SdkLaneBDebtOpened(  # noqa: N802
     dispatch_id: str | None = None,
     caller_agent: str | None = None,
     tip_sha: str | None = None,
+    reason: str | None = None,
 ) -> Event:
     payload: dict[str, Any] = {"branch": branch}
     for key, value in (
@@ -1341,6 +1342,7 @@ def SdkLaneBDebtOpened(  # noqa: N802
         ("dispatch_id", dispatch_id),
         ("caller_agent", caller_agent),
         ("tip_sha", tip_sha),
+        ("reason", reason),
     ):
         if value is not None:
             payload[key] = value
@@ -1358,6 +1360,7 @@ def emit_sdk_lane_b_debt_opened(
     dispatch_id: str | None = None,
     caller_agent: str | None = None,
     tip_sha: str | None = None,
+    reason: str | None = None,
 ) -> None:
     """Emit when an undeclared unlanded branch becomes an attributed debt."""
     _emit(
@@ -1367,6 +1370,7 @@ def emit_sdk_lane_b_debt_opened(
             dispatch_id=dispatch_id,
             caller_agent=caller_agent,
             tip_sha=tip_sha,
+            reason=reason,
         )
     )
 
