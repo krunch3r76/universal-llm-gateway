@@ -1,7 +1,7 @@
 ---
 name: lean-dispatch
 description: >-
-  Lean-context outsourcing for any seat that dispatches work (friction, todo,
+  Lean-context outsourcing for any seat, Cursor agent or Grok Bot, that dispatches work (friction, todo,
   or greenfield): diagnosis+land stay on the parent; choose the lowest
   sufficient duty wire; packet in / envelope out; red closeout one tier up.
   Activate when authoring or citing a dispatch ladder, caste/Huxley table, or
@@ -57,6 +57,19 @@ with the same AC; it is not retried at the same tier.
 If this surface has no dispatch primitive, do the leg yourself and say so in one
 line; the ladder still names the default reviewer duty.
 
+## Grok Bot seats
+
+Lean context binds Grok Bot seats exactly as it binds Cursor agents (Kaywan
+2026-10-08 09:21 PT and 23:02 PT; 2026-10-09 09:22 PT). A bot keeps its OWN
+context lean, and its weekly Grok Bot usage is capped, so a leg leaves the bot
+by default: `team_dispatch` seat=`cursor-sdk` lane=B with `cursor/composer-2.5`
+for well-specified runs and lands, `cursor/grok-4.7` for judgment and reviews,
+or CDP per § Duty → wire. Doing the leg inline, or handing it to a bot subagent
+or peer bot, is not lean: use a bot child only when the leg needs a tool only a
+bot has (browser/desktop, SendToAgent/CreateAgent wake path, connected apps, a
+user's registered machine). The do-it-yourself bar above still holds: a few
+edits with files already in view stay on the seat.
+
 ## Duty → wire
 
 Labels are routing shorthand for the wires beside them. Address a child with
@@ -80,6 +93,7 @@ Choose the lowest sufficient tier first.
 | Friction implementer | `Use the lean-dispatch skill` + one-line "diagnosis+land here; dispatch per lean-dispatch" |
 | Todo implementer | Same cite; no local wire table |
 | Greenfield start | Same cite at seat boot / first dispatch |
+| Grok Bot seat (any instance) | `runbook:coding-boot` step 2 loads this skill; parity note item 8 points to § Grok Bot seats |
 | `pipeline_id=cursor-paste-resolve` | **Mechanics only** (compose/launch). Does **not** own the ladder — cite this skill for duty→wire |
 
 Do not paste this table into system prompts or Grok Bot profile descriptions.
