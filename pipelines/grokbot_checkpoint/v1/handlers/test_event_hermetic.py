@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
+from . import post as post_mod
+from . import seal as seal_mod
 from ._test_call_post import call_post
-from . import post as post_mod, seal as seal_mod
 
 pytestmark = pytest.mark.offline
 
