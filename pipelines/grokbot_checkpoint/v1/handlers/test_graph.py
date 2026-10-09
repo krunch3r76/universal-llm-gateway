@@ -193,10 +193,6 @@ def patch_seal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
     cortex_db.run_migrations(cortex_db.cortex_conn())
     monkeypatch.setattr(seal_mod, "stargate_continuity_checkpoint_sealed", lambda **k: None)
-    monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
-        lambda **k: None,
-    )
 
 
 @pytest.mark.asyncio
