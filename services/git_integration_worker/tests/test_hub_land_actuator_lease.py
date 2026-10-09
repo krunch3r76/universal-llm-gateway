@@ -134,7 +134,7 @@ def test_subprocess_without_lease_cannot_move_master(tmp_path: Path) -> None:
     )
     try:
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.strip() == "False"
+        assert proc.stdout.strip().splitlines()[-1] == "False"
         assert _master(repo) == before
     finally:
         release_land_lease(lease_key=key, holder_op_id="parent-land")
@@ -195,7 +195,7 @@ def test_actuator_from_other_process_cannot_move_master(tmp_path: Path) -> None:
             env={**env, "HUB": str(repo)},
         )
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.strip() == "False"
+        assert proc.stdout.strip().splitlines()[-1] == "False"
         assert _master(repo) == before
     finally:
         release_land_lease(lease_key=key, holder_op_id=holder)

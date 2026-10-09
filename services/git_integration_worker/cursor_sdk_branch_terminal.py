@@ -14,6 +14,7 @@ support is residue plus a false report, not a clean exit.
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,6 +85,47 @@ def _land_disposition_verb_from_value(value: str) -> str | None:
     if lead == "discard":
         return "discard"
     return None
+
+
+def _branch_tip_sha(repo: Path, branch_name: str) -> str | None:
+    branch = (branch_name or "").strip()
+    if not branch:
+        return None
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{branch}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10.0,
+    )
+    if proc.returncode != 0:
+        return None
+    tip = proc.stdout.strip().lower()
+    return tip or None
+
+
+def _unlanded_tip_agrees_with_branch(declared: str, branch_tip: str) -> bool:
+    declared = declared.strip().lower()
+    tip = branch_tip.strip().lower()
+    if not declared or not tip:
+        return False
+    if declared == tip:
+        return True
+    if len(declared) >= 7 and tip.startswith(declared):
+        return True
+    return False
+
+
+def _silent_land_unlanded_tip_agrees(
+    repo: Path, branch_name: str, closeout_text: str | None
+) -> bool:
+    verb, _reason, unlanded_sha = parse_land_disposition(closeout_text)
+    if verb != DISCHARGE_UNLANDED or not unlanded_sha:
+        return False
+    tip = _branch_tip_sha(repo, branch_name)
+    if tip is None:
+        return False
+    return _unlanded_tip_agrees_with_branch(unlanded_sha, tip)
 
 
 def parse_land_disposition(
@@ -209,7 +251,13 @@ def _silent_land_source(
     return packet_text
 
 
-def maybe_ff_land_silent_lane(
+@dataclass(frozen=True)
+class SilentLandOutcome:
+    landed: bool
+    refuse_reason: str | None = None
+
+
+def silent_land_attempt(
     *,
     repo: Path,
     branch_name: str,
@@ -218,7 +266,7 @@ def maybe_ff_land_silent_lane(
     land_text: str | None = None,
     closeout_text: str | None,
     commits_ahead: int | None,
-) -> bool:
+) -> SilentLandOutcome:
     """Land a silent in-scope lane onto hub master, only when opted in.
 
     The packet must contain a line-start ``land: silent`` (see
@@ -232,9 +280,9 @@ def maybe_ff_land_silent_lane(
     Side effects: may fast-forward or merge the hub master worktree.
     """
     if (commits_ahead or 0) < 1:
-        return False
+        return SilentLandOutcome(False)
     if _dispatch_read_only(dispatch_id):
-        return False
+        return SilentLandOutcome(False)
     from services.git_integration_worker.cursor_sdk_hub_land_scope import (
         land_lane_branch_onto_hub_master,
         packet_hub_land_scoped_out,
@@ -242,16 +290,44 @@ def maybe_ff_land_silent_lane(
 
     silent_source = _silent_land_source(packet_text, land_text)
     if packet_hub_land_scoped_out(silent_source):
-        return False
+        return SilentLandOutcome(False)
     verb, _reason, _sha = parse_land_disposition(closeout_text)
     if verb is not None:
-        return False
+        if verb == DISCHARGE_UNLANDED and _silent_land_unlanded_tip_agrees(
+            repo, branch_name, closeout_text
+        ):
+            pass
+        else:
+            return SilentLandOutcome(False)
     if not packet_requests_silent_land(silent_source):
-        return False
-    return land_lane_branch_onto_hub_master(
+        return SilentLandOutcome(False)
+    result = land_lane_branch_onto_hub_master(
         repo,
         branch_name=branch_name,
         holder_op_id=f"silent-land:{dispatch_id}",
+    )
+    return SilentLandOutcome(result.landed, result.refuse_reason)
+
+
+def maybe_ff_land_silent_lane(
+    *,
+    repo: Path,
+    branch_name: str,
+    dispatch_id: str,
+    packet_text: str | None,
+    land_text: str | None = None,
+    closeout_text: str | None,
+    commits_ahead: int | None,
+) -> bool:
+    """Return True only when hub master now contains the branch tip."""
+    return silent_land_attempt(
+        repo=repo,
+        branch_name=branch_name,
+        dispatch_id=dispatch_id,
+        packet_text=packet_text,
+        land_text=land_text,
+        closeout_text=closeout_text,
+        commits_ahead=commits_ahead,
     ).landed
 
 
@@ -417,7 +493,7 @@ def _settle(
         )
 
     if (commits_ahead or 0) >= 1 and landed is not True:
-        if maybe_ff_land_silent_lane(
+        silent = silent_land_attempt(
             repo=source_repo,
             branch_name=branch_name,
             dispatch_id=dispatch_id,
@@ -425,7 +501,8 @@ def _settle(
             land_text=land_text,
             closeout_text=closeout_text,
             commits_ahead=commits_ahead,
-        ):
+        )
+        if silent.landed:
             result = discharge(
                 repo=source_repo,
                 branch_name=branch_name,
@@ -454,11 +531,17 @@ def _settle(
                 verb=DISCHARGE_LANDED,
                 detail=result.refused_reason,
             )
-        debt_reason = (
-            "land:silent_token_absent"
-            if not packet_requests_silent_land(silent_source)
-            else None
-        )
+        if packet_requests_silent_land(silent_source):
+            hub_reason = silent.refuse_reason or "hub_dirty"
+            debt_reason = f"land:{hub_reason}"
+            logger.warning(
+                "lane_b silent hub land refused branch=%s dispatch_id=%s reason=%s",
+                branch_name,
+                dispatch_id,
+                hub_reason,
+            )
+        else:
+            debt_reason = "land:silent_token_absent"
         return _open_debt(
             source_repo=source_repo,
             branch_name=branch_name,

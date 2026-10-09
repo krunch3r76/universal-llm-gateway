@@ -37,6 +37,13 @@ class LaneBranchLandResult:
     landed: bool
     before_sha: str
     after_sha: str
+    refuse_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class _FfReadyOk:
+    hub: Path
+    tip_sha: str
 
 
 def land_lane_branch_onto_hub_master(
@@ -81,11 +88,17 @@ def land_lane_branch_onto_hub_master(
             holder,
         )
         return LaneBranchLandResult(False, before, before)
+    refuse_reason: str | None = None
     try:
         try:
-            moved = ff_only_onto_hub_master(repo, branch_name=branch_name)
+            moved, ff_reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
             if not moved:
-                moved = clean_merge_onto_hub_master(repo, branch_name=branch_name)
+                refuse_reason = ff_reason
+                moved, merge_reason = _clean_merge_onto_hub_master(
+                    repo, branch_name=branch_name
+                )
+                if not moved:
+                    refuse_reason = merge_reason or refuse_reason or "not_ff"
         except Exception:
             logger.error(
                 "lane land actuator failed lease_key=%s branch=%s holder=%s",
@@ -95,8 +108,12 @@ def land_lane_branch_onto_hub_master(
             )
             _abort_merge_if_started(hub)
             moved = False
+            refuse_reason = refuse_reason or "merge_conflict"
         after = _master_sha(hub)
-        return LaneBranchLandResult(bool(moved) and after != before, before, after)
+        landed = bool(moved) and after != before
+        return LaneBranchLandResult(
+            landed, before, after, refuse_reason=None if landed else refuse_reason
+        )
     finally:
         release_land_lease_best_effort(lease_key=lease_key, holder_op_id=holder)
 
@@ -109,27 +126,37 @@ def can_ff_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     ``git merge`` and never writes refs, the index, or the worktree.
     """
     ready = _ff_ready(repo, branch_name=branch_name)
-    if ready is None:
+    if not isinstance(ready, _FfReadyOk):
         return False
-    hub, _tip_sha = ready
+    hub = ready.hub
     ancestor = _git_capture(
         hub, "merge-base", "--is-ancestor", "refs/heads/master", branch_name.strip()
     )
     return ancestor.returncode == 0
 
 
-def _ff_ready(repo: Path, *, branch_name: str) -> tuple[Path, str] | None:
-    """Hub and branch tip when the fast-forward actuator's pre-merge checks pass."""
+def hub_land_precondition_reason(repo: Path, *, branch_name: str) -> str | None:
+    """Return a refuse reason when hub prechecks block land, else ``None``."""
+    ready = _ff_ready(repo, branch_name=branch_name)
+    if isinstance(ready, str):
+        return ready
+    return None
+
+
+def _ff_ready(
+    repo: Path, *, branch_name: str
+) -> _FfReadyOk | str | None:
+    """Hub and branch tip when ff pre-merge checks pass, else a reason or ``None``."""
     branch = (branch_name or "").strip()
     if not branch or branch == "master":
         return None
     hub = resolve_hub_git_repo(repo)
     head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
     if head.returncode != 0 or head.stdout.strip() != "master":
-        return None
-    porcelain = _git_capture(hub, "status", "--porcelain=v1")
-    if porcelain.returncode != 0 or porcelain.stdout.strip():
-        return None
+        return "hub_head_not_master"
+    dirty_reason = _hub_worktree_dirty_refusal(hub, branch_name=branch)
+    if dirty_reason:
+        return dirty_reason
     ahead = _git_capture(hub, "rev-list", "--count", f"master..{branch}")
     if ahead.returncode != 0 or not ahead.stdout.strip().isdigit():
         return None
@@ -138,7 +165,107 @@ def _ff_ready(repo: Path, *, branch_name: str) -> tuple[Path, str] | None:
     tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
     if tip.returncode != 0 or not tip.stdout.strip():
         return None
-    return hub, tip.stdout.strip()
+    return _FfReadyOk(hub, tip.stdout.strip())
+
+
+def _porcelain_dirty_paths(porcelain: str) -> list[str]:
+    paths: list[str] = []
+    for line in porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        body = line[3:].strip()
+        if " -> " in body:
+            body = body.split(" -> ", 1)[1]
+        rel = body.strip()
+        if rel:
+            paths.append(rel)
+    return paths
+
+
+def _lane_land_path_names(hub: Path, branch: str) -> frozenset[str] | None:
+    proc = _git_capture(hub, "diff", "--name-only", f"master...{branch}")
+    if proc.returncode != 0:
+        return None
+    return frozenset(line.strip() for line in proc.stdout.splitlines() if line.strip())
+
+
+def _blob_at_branch(hub: Path, branch: str, rel_path: str) -> bytes | None:
+    proc = _git_capture(hub, "show", f"{branch}:{rel_path}")
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.encode()
+
+
+def _worktree_file_bytes(hub: Path, rel_path: str) -> bytes | None:
+    path = hub / rel_path
+    if not path.is_file():
+        return None
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
+    """Disjoint-only dirty on hub master, matching manual S1a land discipline."""
+    branch = branch_name.strip()
+    land_paths = _lane_land_path_names(hub, branch)
+    if land_paths is None:
+        logger.info(
+            "hub land refuse hub_land_paths_unknown branch=%s",
+            branch,
+        )
+        return "hub_land_paths_unknown"
+    cached = _git_capture(hub, "diff", "--cached", "--name-only")
+    if cached.returncode == 0 and cached.stdout.strip():
+        staged = [
+            line.strip()
+            for line in cached.stdout.splitlines()
+            if line.strip()
+        ]
+        logger.info(
+            "hub land refuse hub_index_staged dirty_paths=%s",
+            staged,
+        )
+        return "hub_index_staged"
+    porcelain = _git_capture(hub, "status", "--porcelain=v1")
+    if porcelain.returncode != 0:
+        return "hub_dirty_overlap"
+    dirty_paths = _porcelain_dirty_paths(porcelain.stdout)
+    if not porcelain.stdout.strip():
+        return None
+    for line in porcelain.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        xy = line[:2]
+        body = line[3:].strip()
+        if " -> " in body:
+            body = body.split(" -> ", 1)[1]
+        rel = body.strip()
+        if not rel:
+            continue
+        if rel not in land_paths:
+            continue
+        if xy == "??":
+            logger.info(
+                "hub land refuse hub_dirty_overlap dirty_paths=%s",
+                dirty_paths,
+            )
+            return "hub_dirty_overlap"
+        hub_bytes = _worktree_file_bytes(hub, rel)
+        branch_bytes = _blob_at_branch(hub, branch, rel)
+        if hub_bytes != branch_bytes:
+            logger.info(
+                "hub land refuse hub_dirty_overlap dirty_paths=%s",
+                dirty_paths,
+            )
+            return "hub_dirty_overlap"
+    if dirty_paths:
+        logger.info(
+            "hub land proceed disjoint dirty_paths=%s",
+            dirty_paths,
+        )
+    return None
 
 
 def _refuse_without_land_lease(hub: Path, actuator: str) -> bool:
@@ -166,17 +293,26 @@ def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     Side effects: ``git merge --ff-only`` on the hub master worktree when the
     preconditions hold.
     """
+    moved, _reason = _ff_only_onto_hub_master(repo, branch_name=branch_name)
+    return moved
+
+
+def _ff_only_onto_hub_master(
+    repo: Path, *, branch_name: str
+) -> tuple[bool, str | None]:
     branch = (branch_name or "").strip()
     ready = _ff_ready(repo, branch_name=branch)
-    if ready is None:
-        return False
-    hub, tip_sha = ready
+    if isinstance(ready, str):
+        return False, ready
+    if not isinstance(ready, _FfReadyOk):
+        return False, None
+    hub, tip_sha = ready.hub, ready.tip_sha
     if _refuse_without_land_lease(hub, "ff_only_onto_hub_master"):
-        return False
+        return False, None
     pre_sha = _master_sha(hub)
     merged = _git_capture(hub, "merge", "--ff-only", branch)
     if merged.returncode != 0:
-        return False
+        return False, "not_ff"
     post_sha = _master_sha(hub)
     if post_sha and post_sha != pre_sha:
         before_sha, after_sha = _ff_range(hub, merged.stdout, tip_sha)
@@ -184,8 +320,8 @@ def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
             hub, before_sha, after_sha, "ff_only_onto_hub_master"
         )
     if commit_is_ancestor_of_hub_master(hub, tip_sha) is not True:
-        return False
-    return True
+        return False, "not_ff"
+    return True, None
 
 
 def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
@@ -201,37 +337,47 @@ def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     Side effects: ``git merge --no-edit`` on the hub master worktree when the
     preconditions hold and the merge does not conflict.
     """
+    moved, _reason = _clean_merge_onto_hub_master(repo, branch_name=branch_name)
+    return moved
+
+
+def _clean_merge_onto_hub_master(
+    repo: Path, *, branch_name: str
+) -> tuple[bool, str | None]:
     branch = (branch_name or "").strip()
     if not branch or branch == "master":
-        return False
+        return False, None
     hub = resolve_hub_git_repo(repo)
     if _refuse_without_land_lease(hub, "clean_merge_onto_hub_master"):
-        return False
+        return False, None
     head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
     if head.returncode != 0 or head.stdout.strip() != "master":
-        return False
-    porcelain = _git_capture(hub, "status", "--porcelain=v1")
-    if porcelain.returncode != 0 or porcelain.stdout.strip():
-        return False
+        return False, "hub_head_not_master"
+    dirty_reason = _hub_worktree_dirty_refusal(hub, branch_name=branch)
+    if dirty_reason:
+        return False, dirty_reason
     ahead = _git_capture(hub, "rev-list", "--count", f"master..{branch}")
     if ahead.returncode != 0 or not ahead.stdout.strip().isdigit():
-        return False
+        return False, None
     if int(ahead.stdout.strip()) < 1:
-        return False
+        return False, None
     behind = _git_capture(hub, "rev-list", "--count", f"{branch}..master")
     if behind.returncode != 0 or not behind.stdout.strip().isdigit():
-        return False
+        return False, None
     if int(behind.stdout.strip()) < 1:
-        return False
+        return False, None
     tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
     if tip.returncode != 0 or not tip.stdout.strip():
-        return False
+        return False, None
     pre_sha = _master_sha(hub)
     tip_sha = tip.stdout.strip()
     merged = _git_capture(hub, "merge", "--no-edit", branch)
     if merged.returncode != 0:
         _abort_merge_if_started(hub)
-        return False
+        combined = f"{merged.stdout}\n{merged.stderr}"
+        if "CONFLICT" in combined:
+            return False, "merge_conflict"
+        return False, "merge_conflict"
     post_sha = _master_sha(hub)
     if post_sha and post_sha != pre_sha:
         before_sha, after_sha = _clean_merge_range(hub, tip_sha, post_sha)
@@ -239,8 +385,8 @@ def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
             hub, before_sha, after_sha, "clean_merge_onto_hub_master"
         )
     if commit_is_ancestor_of_hub_master(hub, tip_sha) is not True:
-        return False
-    return True
+        return False, "merge_conflict"
+    return True, None
 
 
 def _master_sha(hub: Path) -> str:
