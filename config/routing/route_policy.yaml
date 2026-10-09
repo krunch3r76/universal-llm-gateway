@@ -77,7 +77,7 @@ routes:
       operator_pickup_required: false
 
 # Workflow → {seat, model} registry (todo:model-workflow-config-first, P0).
-# Sole authority for every GIW cursor-auto omit-model resolution. Readers cache
+# Sole authority for every GIW omit-model resolution. Readers cache
 # at process start: edit here → verify_workflow_registry_conformance() →
 # `manage sync_restart git_integration_worker`. Loader rejects the file when
 # any Auto contract is unclaimed or claimed twice.

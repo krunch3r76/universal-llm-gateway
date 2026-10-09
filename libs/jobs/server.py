@@ -40,7 +40,7 @@ def create_app(
     today: Callable[[], date] | None = None,
     client_factory: Any | None = None,
 ) -> FastAPI:
-    """Build the jobs app. ``registry=None`` selects the four production jobs.
+    """Build the jobs app. ``registry=None`` selects the three production jobs.
 
     The journal opens ``JOBS_STATE_DIR`` immediately. Reconcile runs in the
     lifespan, before requests are served. ``today`` freezes the sunset clock

@@ -36,6 +36,67 @@ def test_snapshot_from_archive_token(tmp_path: Path) -> None:
     assert snap["body"] == body
     assert snap["attested_model"] == "Fable 5 High"
     assert snap["url"].endswith("cse_testRecovery1")
+    assert "grade_trace" not in snap
+    assert set(snap) == {
+        "execution_id",
+        "status",
+        "ok",
+        "archive_uri",
+        "body",
+        "body_len",
+        "url",
+        "attested_model",
+        "harvest_provenance",
+        "completion_phase",
+    }
+
+
+def test_snapshot_from_archive_caps_banner_trace(tmp_path: Path) -> None:
+    """A hand-edited archive cannot push an uncapped banner through the rebuild."""
+    exe = "68a8129ca2264fe088ec267a20d88376"
+    archive = tmp_path / f"cdp-ask-archive-{exe}.md"
+    archive.write_text(
+        "# CDP ask harvest\n\n"
+        f"- execution_id: `{exe}`\n"
+        "- url: `https://claude.ai/cowork/cse_capBanner1`\n"
+        f"- error_banner_text: `{'weekly limit ' * 80}`\n"
+        f"- error_banner_match: `{'m' * 200}`\n"
+        "\n## Body\n\nseat answer with proof\n",
+        encoding="utf-8",
+    )
+    snap = snapshot_from_archive_token(exe, archive_dir=tmp_path)
+    assert snap is not None
+    assert len(snap["grade_trace"]["banner_text"]) == 500
+    assert len(snap["grade_trace"]["banner_match"]) == 120
+    assert "\n" not in snap["grade_trace"]["banner_text"]
+
+
+def test_recovered_grade_trace_survives_poll_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The HTTP poll path keeps grade_trace that ExecutionPollResponse used to drop."""
+    from fastapi.testclient import TestClient
+
+    from cdp_ask.app import create_app
+
+    exe = "b" * 32
+    snap = {
+        "execution_id": exe,
+        "status": "completed",
+        "ok": True,
+        "completion_phase": "terminal",
+        "body": "seat answer",
+        "grade_trace": {"archived_banner_text": "You've hit your weekly limit"},
+    }
+
+    async def _recover(*_args, **_kwargs):
+        return snap
+
+    monkeypatch.setattr("cdp_ask.poll_recovery.recover_poll_snapshot", _recover)
+    client = TestClient(create_app())
+    response = client.get(f"/v1/project-ask/executions/{exe}")
+    assert response.status_code == 200
+    assert response.json()["grade_trace"]["archived_banner_text"].startswith("You've")
 
 
 def test_snapshot_from_archive_token_rejects_chrome_only(tmp_path: Path) -> None:
@@ -116,7 +177,9 @@ def _no_satellite_url(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda _token, archive_dir=None: None,
     )
     monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_archives", lambda _t: None)
-    monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_provenance", lambda _t: None)
+    monkeypatch.setattr(
+        "cdp_ask.poll_recovery.chat_url_from_provenance", lambda _t: None
+    )
     monkeypatch.setattr(
         "cdp_ask.poll_recovery.resolve_harvest_chat_url",
         AsyncMock(return_value=None),
@@ -160,7 +223,9 @@ async def test_recover_poll_snapshot_rejects_non_cse_hint(
     harvest.assert_not_awaited()
 
 
-def test_stargate_id_from_satellite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stargate_id_from_satellite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import sqlite3
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))

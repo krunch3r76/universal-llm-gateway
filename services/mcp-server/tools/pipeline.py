@@ -10,7 +10,9 @@ one first-class schema.
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import unquote
 
 import httpx
 from mcp_events import monotonic_now, record
@@ -39,6 +41,7 @@ def _stargate_headers() -> dict[str, str]:
         return {"X-ULG-Surface": surface}
     return {}
 
+
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
 _TIMEOUT_BUFFER = 30.0
@@ -47,6 +50,7 @@ _DISPATCH_TIMEOUT = 15.0
 _RESULT_MAX_WAIT = 60.0
 _RESULT_POLL_BUFFER = 15.0
 _CAPABILITY_PREFIX = "/api/v1/capabilities/"
+_PATH_SPLIT = re.compile(r"[/\\]")
 
 _QUERY_SOCKET = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
@@ -352,18 +356,99 @@ def _pipeline_async(
         return {"error": {"code": "http_error", "message": str(exc)}}
 
 
-def _capability_async(member_path: str, options: dict[str, Any] | None) -> dict[str, Any]:
+def _path_has_dotdot(value: str) -> bool:
+    """True when any slash or backslash segment is ``..`` or ``%2e%2e``."""
+    candidates = (value, unquote(value), unquote(unquote(value)))
+    for candidate in candidates:
+        for segment in _PATH_SPLIT.split(candidate):
+            if segment == ".." or segment.lower() == "%2e%2e":
+                return True
+    return False
+
+
+def _capability_id_shape_error(pipeline_id: str) -> dict[str, Any] | None:
+    """Reject anything other than exactly ``<category>/<member>`` with no ``..``."""
+    category, separator, member = pipeline_id.partition("/")
+    if (
+        separator != "/"
+        or "/" in member
+        or not category
+        or not member
+        or _path_has_dotdot(pipeline_id)
+    ):
+        return {
+            "error": {
+                "code": "capability_id_invalid",
+                "message": (
+                    "capability id must be exactly <category>/<member> "
+                    "with both halves non-empty and no '..' segment"
+                ),
+            }
+        }
+    return None
+
+
+def _capability_async(
+    member_path: str,
+    options: dict[str, Any] | None,
+    messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """POST a ``<category>/<member>`` run through the Stargate capability relay.
 
     Stargate swaps in the satellite token (capabilities.yaml ``auth_env``); this
     call carries only the bound surface. Error bodies pass through with
     ``status_code`` so an unknown category or member is not a local error.
+    Local pipeline members take ``options.model`` (or flat options/messages).
+    The bare id (e.g. ``writer-specialist-v1``) is an alias.
+    A top-level ``dispatch_thread_id`` is forwarded on both paths.
     """
     opts = options or {}
-    body: dict[str, Any] = {
-        "args": opts.get("args") or {},
-        "output_contract": opts.get("output_contract", "inline"),
-    }
+    flat = any(
+        key not in {
+            "args",
+            "output_contract",
+            "model",
+            "pipeline_options",
+            "dispatch_thread_id",
+        }
+        for key in opts
+    )
+    model = opts.get("model")
+    local = (
+        (isinstance(model, str) and bool(model.strip()))
+        or isinstance(opts.get("pipeline_options"), dict)
+        or (isinstance(messages, list) and len(messages) > 0)
+        or flat
+    )
+    if local:
+        member = member_path.split("/")[-1]
+        args = opts.get("args") if isinstance(opts.get("args"), dict) else {}
+        if isinstance(opts.get("pipeline_options"), dict):
+            pipeline_options = {**args, **opts["pipeline_options"]}
+        else:
+            flat = {
+                key: value
+                for key, value in opts.items()
+                if key not in {
+                    "args",
+                    "output_contract",
+                    "model",
+                    "pipeline_options",
+                    "dispatch_thread_id",
+                }
+            }
+            pipeline_options = {**args, **flat}
+        body: dict[str, Any] = {
+            "model": opts.get("model") or member,
+            "messages": messages or [],
+            "pipeline_options": pipeline_options,
+            "output_contract": opts.get("output_contract", "inline"),
+        }
+    else:
+        body = {
+            "args": opts.get("args") or {},
+            "output_contract": opts.get("output_contract", "inline"),
+        }
     thread_id = opts.get("dispatch_thread_id")
     if isinstance(thread_id, str) and thread_id.strip():
         body["dispatch_thread_id"] = thread_id.strip()
@@ -388,7 +473,9 @@ def _capability_async(member_path: str, options: dict[str, Any] | None) -> dict[
     try:
         payload = resp.json()
     except ValueError:
-        payload = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+        payload = {
+            "error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}
+        }
     if not isinstance(payload, dict):
         payload = {"result": payload}
     if resp.status_code >= 400:
@@ -471,6 +558,13 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     url = f"/api/v1/executions/{execution_id}"
     wait_param: float = wait_clamped
     if execution_id.startswith(_CAPABILITY_PREFIX):
+        if _path_has_dotdot(execution_id):
+            return {
+                "error": {
+                    "code": "capability_href_invalid",
+                    "message": "capability result href contains a '..' segment",
+                }
+            }
         url = execution_id
         wait_param = int(wait_clamped)
     try:
@@ -555,7 +649,9 @@ def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
 
     info = resp.json()
     if not isinstance(info, dict):
-        return _validate_error(pipeline_id, "Pipeline API returned invalid metadata payload.")
+        return _validate_error(
+            pipeline_id, "Pipeline API returned invalid metadata payload."
+        )
     _cache_pipeline_timeouts({pipeline_id: info})
     duration = monotonic_now() - t0
     record(
@@ -657,7 +753,10 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
             return _pipeline_run(pipeline_id, messages, options, timeout)
         if op == "async":
             if pipeline_id and "/" in pipeline_id:
-                return _capability_async(pipeline_id, options)
+                invalid = _capability_id_shape_error(pipeline_id)
+                if invalid is not None:
+                    return invalid
+                return _capability_async(pipeline_id, options, messages)
             if not pipeline_id or messages is None:
                 return {
                     "error": {

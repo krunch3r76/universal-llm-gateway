@@ -59,15 +59,35 @@ def test_peel_consumes_render_cdp_inline_skills_xml(
     assert peel_delivery_prefix(block + body).lstrip() == body
 
 
-def test_peel_consumes_format_house_read_first_block_before_briefing() -> None:
-    from agent_bus_store.house_pools import format_house_read_first_block, parse_pools
+def test_peel_consumes_format_house_read_first_block_before_briefing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import hashlib
+
+    from agent_bus_store.house_pools import (
+        ContinuityCard,
+        format_house_read_first_block,
+        parse_pools,
+    )
     from agent_bus_store.test_house_pools import _MANIFEST_BLOCK
 
-    row = parse_pools(f"# card\n\n{_MANIFEST_BLOCK}\n")["fable"]
-    house = format_house_read_first_block(house_id="10223", row=row)
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card_text = f"# card\n\n{_MANIFEST_BLOCK}\n"
+    rel = "notes/system/threads/10223-card.md"
+    row = parse_pools(card_text)["fable"]
+    card = ContinuityCard(
+        status="found",
+        tried=(rel,),
+        relpath=rel,
+        uri=f"cortex://{rel}",
+        text=card_text,
+        sha256=hashlib.sha256(card_text.encode("utf-8")).hexdigest(),
+    )
+    house = format_house_read_first_block(house_id="10223", row=row, card=card)
     briefing = "# Hop on agent-bus:10223: you are the operator seat\n\n## Data\n"
     body = "TYPE: CONTINUITY_HANDOFF\n"
     stacked = f"{house}\n\n{briefing}{body}"
     peeled = peel_delivery_prefix(stacked)
     assert peeled.startswith("# Hop on agent-bus:")
     assert body in peeled
+    assert f"cortex://{rel}" in house

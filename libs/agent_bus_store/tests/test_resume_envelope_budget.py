@@ -79,3 +79,93 @@ def test_envelope_reports_no_degradation_on_normal_pour() -> None:
 
     assert envelope["tape_degraded"] is None
     assert envelope["tape_truncated"] is False
+
+
+def test_consolidate_summary_row_from_card_only_house(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A house whose only card is ``{id}-card.md`` still fills the L3 row."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("**Settled:** card-only house is live\n", encoding="utf-8")
+    tape = {
+        "messages": [],
+        "open_line": {"scope": "last_session"},
+        "truncated": False,
+    }
+    with (
+        patch.object(env_mod, "render_tape_with_harvest", return_value=tape),
+        patch.object(env_mod, "_tip_checkpoint_body", return_value=(12, "")),
+    ):
+        envelope = env_mod.build_resume_envelope("10479", tape_budget_bytes=24000)
+
+    assert envelope["consolidate_summary_row"] == "card-only house is live"
+    assert envelope["summary_row_source"] == "l3_continuity_card"
+    assert envelope["summary_row_as_of_turn"] == 12
+
+
+def test_l3_summary_row_dual_file_reads_continuity_md(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Settled lives on -continuity.md when -card.md is also present."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "9582-card.md").write_text("# live card\n", encoding="utf-8")
+    (threads / "9582-continuity.md").write_text(
+        "**Settled:** fold wrote the archive\n",
+        encoding="utf-8",
+    )
+    row, source = env_mod._read_l3_summary_row("9582")
+    assert row == "fold wrote the archive"
+    assert source == "l3_continuity_card"
+
+
+def test_l3_summary_row_dual_file_prefers_card_md(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Settled on -card.md wins over a later -continuity.md line."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "9582-card.md").write_text(
+        "**Settled:** live card row\n",
+        encoding="utf-8",
+    )
+    (threads / "9582-continuity.md").write_text(
+        "**Settled:** archive row\n",
+        encoding="utf-8",
+    )
+    row, source = env_mod._read_l3_summary_row("9582")
+    assert row == "live card row"
+    assert source == "l3_continuity_card"
+
+
+def test_l3_summary_row_live_only_card_does_not_hide_settled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A Live-only preferred card must not hide Settled on a later file."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "9582-card.md").write_text("**Live:** live only\n", encoding="utf-8")
+    (threads / "9582-continuity.md").write_text(
+        "**Settled:** fold settled line\n",
+        encoding="utf-8",
+    )
+    row, source = env_mod._read_l3_summary_row("9582")
+    assert row == "fold settled line"
+    assert source == "l3_continuity_card"
+
+
+def test_l3_summary_row_reads_continuity_card_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-continuity-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("**Live:** continuity-card name\n", encoding="utf-8")
+    row, source = env_mod._read_l3_summary_row("10479")
+    assert row == "continuity-card name"
+    assert source == "l3_continuity_card"

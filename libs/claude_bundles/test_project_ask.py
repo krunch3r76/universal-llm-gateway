@@ -14,6 +14,7 @@ from claude_bundles import project_ask_abort as abort
 from claude_bundles.chat_reply_wait import HarvestIncompleteError
 from claude_bundles.chat_session_hygiene import _page_score
 from claude_bundles.project_ask import (
+    _archive_body_section,
     archive_harvest,
     finalize_scrape_body,
     project_ask_on_page,
@@ -159,6 +160,68 @@ def test_archive_harvest_same_execution_growth_rewrites(tmp_path: Path) -> None:
         execution_id=execution_id,
     )
     assert "second body" in archive.read_text(encoding="utf-8")
+
+
+def test_archive_harvest_hostile_banner_does_not_corrupt_body(tmp_path: Path) -> None:
+    """Newline plus a body marker, and backticks, stay inside one metadata line."""
+    archive = tmp_path / "harvest.md"
+    body = "REAL BODY"
+    archive_harvest(
+        body=body,
+        url="https://claude.ai/cowork/cse_hostileBanner1",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="opus-4.8",
+        archive_path=str(archive),
+        execution_id="exec" + "h" * 28,
+        error_banner_text="hello\n## Body\n\nFAKE`tick",
+        error_banner_match="m`x\ny",
+    )
+    text = archive.read_text(encoding="utf-8")
+    head, section = text.split("## Body\n\n", 1)
+    assert section.strip() == body
+    assert _archive_body_section(text).strip() == body
+    assert "## Body\n\n" not in head
+    text_line = next(
+        line for line in head.splitlines() if line.startswith("- error_banner_text:")
+    )
+    match_line = next(
+        line for line in head.splitlines() if line.startswith("- error_banner_match:")
+    )
+    assert text_line.count("`") == 2
+    assert match_line.count("`") == 2
+    assert "FAKE'tick" in text_line
+    assert "FAKE`tick" not in text
+    assert "hello ## Body FAKE'tick" in text_line
+    assert "m'x y" in match_line
+
+
+def test_archive_harvest_same_body_rewrite_accepts_banner(tmp_path: Path) -> None:
+    """Same execution and same body still passes the clobber guard."""
+    archive = tmp_path / "harvest.md"
+    execution_id = "exec" + "c" * 28
+    archive_harvest(
+        body="same",
+        url="https://claude.ai/new",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="opus-4.8",
+        archive_path=str(archive),
+        execution_id=execution_id,
+    )
+    archive_harvest(
+        body="same",
+        url="https://claude.ai/new",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="opus-4.8",
+        archive_path=str(archive),
+        execution_id=execution_id,
+        error_banner_text="You've hit your weekly limit",
+    )
+    text = archive.read_text(encoding="utf-8")
+    assert _archive_body_section(text).strip() == "same"
+    assert "You've hit your weekly limit" in text
 
 
 def test_archive_harvest_foreign_execution_refused(tmp_path: Path) -> None:
@@ -315,6 +378,65 @@ async def test_submit_composer_draft_auto_refuses(
     with pytest.raises(RuntimeError, match="cowork dispatch refused"):
         await _submit_composer_draft(AsyncMock(), composer=AsyncMock(), draft_text="hi")
     click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_project_ask_on_page_archives_harvest_banner(tmp_path: Path) -> None:
+    """Non-converse archive writes the same banner fields the converse path does."""
+    from claude_bundles.cowork_output_download import HarvestBody
+
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_bannerArchive"
+    captured: dict = {}
+
+    def _archive(**kwargs):
+        captured.update(kwargs)
+        return "cortex://notes/system/threads/cdp-ask-archive-banner.md"
+
+    with (
+        patch(
+            "claude_bundles.project_ask._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True}),
+        ),
+        patch(
+            "claude_bundles.project_ask.harvest_assistant",
+            new=AsyncMock(return_value={"anchor_matches": 0}),
+        ),
+        patch("claude_bundles.project_ask.send_prompt", new=AsyncMock()),
+        patch(
+            "claude_bundles.project_ask.wait_assistant_reply",
+            new=AsyncMock(
+                return_value={
+                    "body": "Seat answer long enough to archive.",
+                    "url": page.url,
+                    "error_banner_text": "You've hit your weekly limit",
+                    "error_banner_match": "weekly limit",
+                }
+            ),
+        ),
+        patch(
+            "claude_bundles.project_ask.resolve_harvest_body",
+            new=AsyncMock(
+                return_value=HarvestBody(
+                    content="Seat answer long enough to archive.", provenance="chat"
+                )
+            ),
+        ),
+        patch("claude_bundles.project_ask.archive_harvest", side_effect=_archive),
+    ):
+        result = await project_ask_on_page(
+            page,
+            "ask prompt",
+            project_uuid="019f6917-2ab2-772c-a1ec-f88434b08e32",
+            model="opus-5",
+            delete_after=False,
+            archive_path=str(tmp_path / "archive.md"),
+            execution_id="c" * 32,
+        )
+
+    assert result.ok is True
+    assert captured["error_banner_text"] == "You've hit your weekly limit"
+    assert captured["error_banner_match"] == "weekly limit"
 
 
 @pytest.mark.asyncio
@@ -831,4 +953,3 @@ async def test_marked_submit_raises_unverified_when_panel_fails_after_send() -> 
     draft = submit.await_args.kwargs["draft_text"]
     assert "Question. Is the desk memo" in draft
     attest.assert_not_called()
-

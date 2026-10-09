@@ -11,8 +11,8 @@ from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...checkpoint_projection import CheckpointBodyTooLargeError
 from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
 from ...db import close_thread, get_thread, normalize_thread_id
+from ...db.thread_idempotency import committed_first_turn
 from ...db.thread_mint import mint_thread
-from ...db.thread_idempotency import existing_first_turn_for_idempotent_send
 from ...db.turns import SlugExists
 from ...enrollment_guard import EnrollmentTagError
 from ...thread_classification import ThreadClassificationError
@@ -70,6 +70,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
     thread_id: str | None = None
     send_path: str
+    claim_first_turn = False
+    idempotent_replay = False
 
     if has_new_slug:
         if body.after_turn is not None and body.after_turn > 0:
@@ -117,10 +119,10 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             raise
         thread_id = thread_row["id"]
         send_path = "new_thread"
+        idempotent_replay = bool(thread_row.get("idempotent_replay"))
+        claim_first_turn = bool(idempotent_replay or body.idempotency_key)
         if thread_row.get("idempotent_replay"):
-            existing = existing_first_turn_for_idempotent_send(
-                thread_id, idempotent_replay=True
-            )
+            existing = committed_first_turn(thread_id)
             if existing is not None:
                 created_at = existing["created_at"]
                 if isinstance(created_at, str):
@@ -242,6 +244,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             after_turn=effective_after,
             supersedes_turn=storage_supersedes,
             attachments=att_dicts,
+            idempotent_first_turn=claim_first_turn,
         )
     except UnreadTurnsExist as exc:
         detail = exc.to_detail()
@@ -348,4 +351,5 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         marked_read=marked_read,
         sidecar_uri=sidecar.uri,
         sidecar_sha256=sidecar.sha256,
+        idempotent_replay=idempotent_replay,
     )

@@ -119,16 +119,15 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
 
         resume_open = ""
         pools_section = ""
-        card_path = f"notes/system/threads/{thread}-continuity.md"
         try:
             import os
-            from pathlib import Path
 
-            root_env = os.environ.get("CORTEX_FILES_ROOT")
-            if root_env:
-                card_file = Path(root_env) / card_path
-                if card_file.is_file():
-                    card_text = card_file.read_text(encoding="utf-8")
+            from agent_bus_store.house_pools import load_continuity_card
+
+            if os.environ.get("CORTEX_FILES_ROOT"):
+                card = load_continuity_card(thread)
+                card_text = card.text if card.status == "found" else None
+                if card_text:
                     from markdown_sections import read_section
 
                     try:
@@ -161,7 +160,9 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 reason="tape_truncated",
             )
 
-        seat_seed, seed_truncated = clamp_residue(seat_seed_raw) if seat_seed_raw else ("", False)
+        seat_seed, seed_truncated = (
+            clamp_residue(seat_seed_raw) if seat_seed_raw else ("", False)
+        )
         if seed_truncated:
             _emit_degraded(
                 execution_id=execution_id,
@@ -224,7 +225,9 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 thread=thread,
                 surface=surface,
                 from_agent=from_agent,
-                reason="worker_fallback_seed" if seat_seed else "worker_fallback_mechanical",
+                reason="worker_fallback_seed"
+                if seat_seed
+                else "worker_fallback_mechanical",
             )
             return StepOutput(raw=json.dumps(result), json=result)
 
@@ -263,9 +266,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         worker_thread = str(worker_thread_raw)
         dispatch_id = dispatch_resp.get("dispatch_id")
         after_turn = int(
-            dispatch_resp.get("after_turn")
-            or poll_args.get("after_turn")
-            or 0
+            dispatch_resp.get("after_turn") or poll_args.get("after_turn") or 0
         )
         reply_from = str(
             dispatch_resp.get("reply_from_agent")
@@ -325,7 +326,9 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 thread=thread,
                 surface=surface,
                 from_agent=from_agent,
-                reason="worker_fallback_seed" if seat_seed else "worker_fallback_mechanical",
+                reason="worker_fallback_seed"
+                if seat_seed
+                else "worker_fallback_mechanical",
             )
             return StepOutput(raw=json.dumps(result), json=result)
 
@@ -350,7 +353,9 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 thread=thread,
                 surface=surface,
                 from_agent=from_agent,
-                reason="worker_fallback_seed" if seat_seed else "worker_fallback_mechanical",
+                reason="worker_fallback_seed"
+                if seat_seed
+                else "worker_fallback_mechanical",
             )
             return StepOutput(raw=json.dumps(result), json=result)
 

@@ -142,6 +142,7 @@ class ModelManagerApp(App):
         self._digest_tick_loop: DigestTickLoop | None = None
         self._charter_tick_loop: CharterRunnerTickLoop | None = None
         self._stargate_health_restart = None
+        self._mcp_edge_probe = None
         self._armed_record_path = record_path_from_env()
         self._manage_lock_fd: int | None = None
         self._bound_loops_started = False
@@ -280,6 +281,17 @@ class ModelManagerApp(App):
                 severity="warning",
                 timeout=15,
             )
+
+        try:
+            from scripts.model_manager.ui.controller.mcp_edge_probe_loop import (
+                McpEdgeProbeLoop,
+            )
+
+            self._mcp_edge_probe = McpEdgeProbeLoop(workspace_root=self._workspace_root)
+            self._mcp_edge_probe.start()
+        except Exception as e:
+            logger.exception("Failed to start mcp edge probe: %s", e)
+            self._mcp_edge_probe = None
 
     async def _park_for_handover(self) -> None:
         """Armed successor: acquire flock, then bind manage.sock when incumbent exits."""
@@ -423,6 +435,12 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping stargate health restart: %s", e)
             self._stargate_health_restart = None
+        if self._mcp_edge_probe is not None:
+            try:
+                await self._mcp_edge_probe.stop()
+            except Exception as e:
+                logger.exception("Error stopping mcp edge probe: %s", e)
+            self._mcp_edge_probe = None
         if self._api_server is not None:
             try:
                 await self._api_server.stop()

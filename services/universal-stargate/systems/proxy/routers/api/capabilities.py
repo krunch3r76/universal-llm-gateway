@@ -8,15 +8,17 @@ in the satellite vocabulary relays upstream. Anything else is a local member.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import ValidationError
 from transport_utils import make_async_client
+from universal_logging import get_logger
 
 from systems.pipeline.registry.capability_source import build_tree
 
@@ -40,9 +42,28 @@ from .git import _filter_request_headers, _filter_response_headers
 from .pipelines_dispatch import DispatchRequest, _error_response, admit_dispatch
 
 router = APIRouter(tags=["capabilities"])
+logger = get_logger(__name__)
 
 # At least as long as the longest client deadline. triggers.py uses 600s.
 _RELAY_TIMEOUT = 600.0
+_PATH_SPLIT = re.compile(r"[/\\]")
+_RELAY_BUS_MISSING = 0
+_RELAY_BUS_WARNED = False
+
+
+def relay_bus_missing_count() -> int:
+    """How many times this process has observed a relay with no event bus."""
+    return _RELAY_BUS_MISSING
+
+
+def _path_has_dotdot(value: str) -> bool:
+    """True when any slash or backslash segment is ``..`` or ``%2e%2e``."""
+    candidates = (value, unquote(value), unquote(unquote(value)))
+    for candidate in candidates:
+        for segment in _PATH_SPLIT.split(candidate):
+            if segment == ".." or segment.lower() == "%2e%2e":
+                return True
+    return False
 
 
 def _unavailable() -> JSONResponse:
@@ -133,8 +154,17 @@ def _upstream_unavailable(message: str) -> JSONResponse:
 
 
 async def _publish(request: Request, event: Any) -> None:
+    global _RELAY_BUS_MISSING, _RELAY_BUS_WARNED
     bus = getattr(_proxy(request), "event_bus", None)
     if bus is None:
+        if not _RELAY_BUS_WARNED:
+            _RELAY_BUS_WARNED = True
+            _RELAY_BUS_MISSING = 1
+            signal = getattr(event, "signal", None) or type(event).__name__
+            logger.warning(
+                "dropped capability relay signal %s: proxy event_bus is None",
+                signal,
+            )
         return
     await bus.publish_nowait(event)
 
@@ -560,17 +590,21 @@ async def capability_member(
 ) -> Response:
     """Relay a satellite category; otherwise redirect or admit a local member.
 
-    Satellite match stays ahead of readiness. A local member whose category
-    differs from the path is a 308 before the body is read. Anything else
-    falls through to the existing GET or POST handler.
+    Satellite match stays ahead of readiness. A ``..`` member is not relayed.
+    A local member whose category differs from the path is a 308 before the
+    body is read. A category outside the satellite vocabulary and the local
+    pipeline vocabulary is 404 before the body is read, after the not-ready
+    503. Anything else falls through to the existing GET or POST handler.
     """
     categories, _skips = _categories()
     match = next((cat for cat in categories if cat.name == category), None)
     if match is not None:
+        if _path_has_dotdot(member):
+            return _capability_not_found(category, member)
         return await _relay(request, match, member)
     if request.method == "DELETE":
         return _method_not_allowed()
-    if "/" in member:
+    if "/" in member or _path_has_dotdot(member):
         return _capability_not_found(category, member)
     proxy = _proxy(request)
     if not _local_ready(proxy):
@@ -578,6 +612,13 @@ async def capability_member(
     resolved = build_tree(proxy).resolve(member)
     if resolved is not None and resolved.category != category:
         return _canonical_redirect(request, resolved.canonical_url)
+    vocabulary = proxy.pipeline_registry._category_vocabulary
+    if category not in vocabulary:
+        return _error_response(
+            404,
+            "capability_category_not_found",
+            f"Category '{category}' is not in the vocabulary.",
+        )
     if request.method == "POST":
         return await _local_post(request, proxy, member)
     return _local_get(proxy, member)

@@ -261,7 +261,9 @@ def test_mission_skills_to_use_from_card_and_step_order(bus_db) -> None:
     assert preview["standing_rules_first"] is None
 
 
-def test_standing_rules_resolve_assertions(bus_db, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_standing_rules_resolve_assertions(
+    bus_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
     long_claim = "no rice " * 80
 
     def _fake(assertion_ids: list[int]) -> dict:
@@ -428,7 +430,7 @@ def test_supersede_chain_cycle_and_elapsed(monkeypatch: pytest.MonkeyPatch) -> N
     )
     opens: list[_ConnWrap] = []
 
-    def _conn() -> _ConnWrap:
+    def _conn(**_kwargs: object) -> _ConnWrap:
         return _ConnWrap(db, opens)
 
     monkeypatch.setattr("cortex_store.db.cortex_conn", _conn)
@@ -465,10 +467,66 @@ def test_supersede_chain_cycle_and_elapsed(monkeypatch: pytest.MonkeyPatch) -> N
     assert len(opens) == 1
 
 
+def test_dangling_supersede_mid_chain_and_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _assertion_db(
+        [
+            (1, "cited-dangling", 99, "committed", None),
+            (2, "cited-mid", 3, "committed", None),
+            (3, "mid-row", 98, "committed", None),
+            (4, "healthy-cited", 5, "committed", None),
+            (5, "healthy-tip", None, "committed", None),
+        ]
+    )
+    opens: list[_ConnWrap] = []
+    monkeypatch.setattr(
+        "cortex_store.db.cortex_conn",
+        lambda **_kwargs: _ConnWrap(db, opens),
+    )
+    found = lookup_assertions([1, 2, 4])
+    assert found[1]["status"] == "superseded"
+    assert found[1]["current_status"] == "unresolved"
+    assert found[1]["dangling_successor"] == "a:99"
+    assert "current_id" not in found[1]
+    assert found[1]["claim"] == "cited-dangling"
+    assert found[2]["status"] == "superseded"
+    assert found[2]["current_status"] == "unresolved"
+    assert found[2]["dangling_successor"] == "a:98"
+    assert found[2]["current_id"] == "a:3"
+    assert found[2]["claim"] == "cited-mid"
+    assert found[4]["status"] == "superseded"
+    assert found[4]["current_status"] == "current"
+    assert found[4]["current_id"] == "a:5"
+    assert found[4]["claim"] == "healthy-tip"
+    assert "dangling_successor" not in found[4]
+
+    rules = build_standing_rules("## Rules\n- cite a:1 and a:2\n")
+    by_id = {item["id"]: item for item in rules[0]["assertions"]}
+    assert by_id["a:1"]["dangling_successor"] == "a:99"
+    assert by_id["a:1"]["current_status"] == "unresolved"
+    assert "current_id" not in by_id["a:1"]
+    assert by_id["a:2"]["dangling_successor"] == "a:98"
+    assert by_id["a:2"]["current_id"] == "a:3"
+    assert by_id["a:2"]["current_status"] == "unresolved"
+
+
+def test_lookup_missing_db_is_lookup_error_and_creates_nothing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing = tmp_path / "no-such-cortex.db"
+    monkeypatch.setattr("cortex_store.db._CORTEX_DB", missing)
+    found = lookup_assertions([1])
+    assert found[1]["status"] == "lookup_error"
+    assert found[1]["claim"] == ""
+    assert not missing.exists()
+    assert not missing.with_name(missing.name + "-wal").exists()
+
+
 def test_lookup_error_is_not_unresolved(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def _boom() -> sqlite3.Connection:
+    def _boom(**_kwargs: object) -> sqlite3.Connection:
         raise sqlite3.OperationalError("store down")
 
     monkeypatch.setattr("cortex_store.db.cortex_conn", _boom)
@@ -484,9 +542,12 @@ def test_many_ids_keep_rows_under_claim_cap(monkeypatch: pytest.MonkeyPatch) -> 
     opens: list[_ConnWrap] = []
     monkeypatch.setattr(
         "cortex_store.db.cortex_conn",
-        lambda: _ConnWrap(db, opens),
+        lambda **_kwargs: _ConnWrap(db, opens),
     )
-    lines = [f"- rule {n}: " + " ".join(f"a:{n * 5 + k}" for k in range(1, 6)) for n in range(20)]
+    lines = [
+        f"- rule {n}: " + " ".join(f"a:{n * 5 + k}" for k in range(1, 6))
+        for n in range(20)
+    ]
     card = "## Rules\n" + "\n".join(lines) + "\n"
     rules = build_standing_rules(card)
     assert len(rules) == 20

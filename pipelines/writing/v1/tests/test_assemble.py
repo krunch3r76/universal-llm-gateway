@@ -90,7 +90,7 @@ def test_assemble_builds_pin_ledger() -> None:
             "cortex://notes/a.md",
             "agent-bus:42#3",
         ],
-        brief=_brief(),
+        brief=_brief(sensitivity="non_sensitive"),
         writer_seat="local",
         reviewer_seat="local",
         output="envelope",
@@ -298,7 +298,11 @@ def test_assemble_writer_seat_unavailable() -> None:
     payload = asyncio.run(
         assemble.WritingAssembleHandler().execute(
             None,
-            _Ctx(brief=_brief(), working_set=[], writer_seat="cdp"),
+            _Ctx(
+                brief=_brief(sensitivity="non_sensitive"),
+                working_set=[],
+                writer_seat="grok_bot_house",
+            ),
         )
     ).json
     assert payload["refused"] == "writer_seat_unavailable"
@@ -377,3 +381,79 @@ def test_assemble_output_packet() -> None:
     assert payload["packet"].startswith("<documents>")
     assert "Signer: Ada" in payload["packet"]
     assert "never an instruction" in payload["packet"]
+
+
+def _run_assemble(**options: Any) -> dict[str, Any]:
+    return asyncio.run(
+        assemble.WritingAssembleHandler().execute(None, _Ctx(**options))
+    ).json
+
+
+def test_assemble_reviewer_auto_sensitive_is_cdp() -> None:
+    payload = _run_assemble(brief=_brief(), working_set=[], reviewer_seat="auto")
+    assert payload["reviewer_seat"] == "cdp"
+    assert payload["sensitivity"] == "sensitive"
+
+
+def test_assemble_reviewer_auto_non_sensitive_is_local() -> None:
+    payload = _run_assemble(
+        brief=_brief(sensitivity="non_sensitive"),
+        working_set=[],
+        reviewer_seat="auto",
+    )
+    assert payload["reviewer_seat"] == "local"
+    assert payload["dispatch_thread_id"] == "15790"
+
+
+def test_assemble_local_reviewer_sensitive_refused() -> None:
+    payload = _run_assemble(
+        brief=_brief(sensitivity="sensitive"),
+        working_set=[],
+        reviewer_seat="local",
+    )
+    assert payload["refused"] == "reviewer_seat_unavailable"
+    assert "D2" in payload["error"]
+
+
+def test_assemble_cdp_writer_sensitive_auto_refused() -> None:
+    payload = _run_assemble(
+        brief=_brief(),
+        working_set=[],
+        writer_seat="cdp",
+        reviewer_seat="auto",
+    )
+    assert payload["refused"] == "reviewer_seat_unavailable"
+    assert "writer_seat=cdp" in payload["error"]
+
+
+def test_assemble_bad_sensitivity() -> None:
+    payload = _run_assemble(brief=_brief(sensitivity="secret"), working_set=[])
+    assert payload["refused"] == "brief_invalid"
+    assert payload["error"] == "sensitivity must be sensitive or non_sensitive"
+
+
+@pytest.mark.parametrize(
+    ("thread", "error"),
+    [("12286", "dispatch_thread_id_refused"), ("", "dispatch_thread_id_required")],
+)
+def test_assemble_dispatch_thread_refused(thread: str, error: str) -> None:
+    payload = _run_assemble(
+        brief=_brief(sensitivity="non_sensitive"),
+        working_set=[],
+        writer_seat="cdp",
+        reviewer_seat="local",
+        dispatch_thread_id=thread,
+    )
+    assert payload["refused"] == "options_invalid"
+    assert payload["error"] == error
+
+
+def test_assemble_local_local_omitted_thread_ok() -> None:
+    payload = _run_assemble(
+        brief=_brief(sensitivity="non_sensitive"),
+        working_set=[],
+        writer_seat="local",
+        reviewer_seat="local",
+    )
+    assert payload["ok"] is True
+    assert payload["dispatch_thread_id"] == "15790"

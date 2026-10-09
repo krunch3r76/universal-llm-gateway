@@ -335,6 +335,14 @@ class ExecutionPollResponse(BaseModel):
             "Optional for mixed deploys."
         ),
     )
+    grade_trace: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Recording-only evidence. Archive rebuilds put banner text here so a "
+            "poll client can show it. Graders must not read this field when "
+            "choosing ok, stall_stage, or error."
+        ),
+    )
 
 
 class AbortExecutionResponse(BaseModel):

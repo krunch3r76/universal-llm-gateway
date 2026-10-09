@@ -860,9 +860,9 @@ def resolve_prompt_preamble(
         )
 
         card = load_continuity_card(continuity_root_thread_id)
-        if card:
+        if card.status == "found" and card.text:
             try:
-                conductor_row = parse_pools(card)["conductor"]
+                conductor_row = parse_pools(card.text)["conductor"]
                 effective_skills = merge_house_pool_skills(
                     effective_skills,
                     extra=conductor_row.must_load,

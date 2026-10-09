@@ -747,6 +747,8 @@ async def run_execution(
                         ),
                         execution_id=execution_id or None,
                         stargate_execution_id=stargate_execution_id or None,
+                        error_banner_text=poll_banner_fields.get("error_banner_text"),
+                        error_banner_match=poll_banner_fields.get("error_banner_match"),
                     )
                 except HarvestArchiveError as exc:
                     retain_host = True

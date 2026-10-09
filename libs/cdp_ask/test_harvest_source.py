@@ -248,3 +248,21 @@ def test_execution_poll_response_error_banner_fields_optional() -> None:
     dumped = with_banner.model_dump(exclude_none=True)
     assert dumped["error_banner_match"] == "weekly limit"
     assert dumped["error_banner_text"] == "You've hit your weekly limit."
+    assert "grade_trace" not in dumped
+
+
+def test_execution_poll_response_keeps_grade_trace() -> None:
+    """Archive-rebuild grade_trace survives the poll response model."""
+    snap = {
+        "execution_id": _EXEC_ID,
+        "status": "completed",
+        "ok": True,
+        "completion_phase": "terminal",
+        "grade_trace": {
+            "banner_text": "You've hit your weekly limit",
+            "banner_match": "weekly limit",
+        },
+    }
+    dumped = ExecutionPollResponse(**snap).model_dump()
+    assert dumped["grade_trace"]["banner_text"] == "You've hit your weekly limit"
+    assert dumped["grade_trace"]["banner_match"] == "weekly limit"

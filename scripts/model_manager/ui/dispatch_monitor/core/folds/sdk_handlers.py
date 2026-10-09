@@ -49,7 +49,6 @@ def sdk_handler_table(fold: SdkFold) -> dict[str, Any]:
     table[signals.SDK_LEASE_PARK_RESTORE] = lambda record: on_park_restore(fold, record)
     table[signals.SDK_CLOSEOUT_RELOCATED] = fold._on_closeout_relocated
     table[signals.SDK_CLOSEOUT_RECONCILED] = fold._on_closeout_reconciled
-    table[signals.SDK_CLOSEOUT_RELAYED] = fold._on_closeout_relayed
     table[signals.SDK_CLOSEOUT_PARTIAL_WORK_PRODUCTION_SPECIMEN] = (
         lambda record: on_partial_work_specimen(fold, record)
     )

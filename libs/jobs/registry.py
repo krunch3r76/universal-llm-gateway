@@ -1,4 +1,4 @@
-"""The four production JobSpecs. Argv builders return argument lists only.
+"""The three production JobSpecs. Argv builders return argument lists only.
 
 No shell string is assembled here. Runner-owned flags (the watch state
 file) are appended by the runner, not accepted from the create body.
@@ -12,7 +12,7 @@ from datetime import date
 from typing import Literal
 
 from bus_watch.poll import DEFAULT_WAIT_SLICE_S
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jobs.spec import GraduationTarget, JobSpec
 
@@ -22,7 +22,6 @@ _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _LABEL = re.compile(r"^[a-z0-9][a-z0-9 ._-]{0,63}$")
 _AGENT = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 _THREAD = re.compile(r"^[0-9]{1,12}$")
-_ARXIV = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
 
 _TOYS = (
     "refresh-connector",
@@ -45,47 +44,6 @@ _ULG_CODE = (
 
 class _Forbid(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class ArticleFetchArgs(_Forbid):
-    """arXiv id or one https URL, plus force and dry-run. Always download-only.
-
-    The script's ``--subdir`` stays required unless ``--download-only`` is
-    set. This job always passes ``--download-only``, so the create body has
-    no directory field.
-    """
-
-    arxiv: str | None = None
-    url: HttpUrl | None = None
-    force: bool = False
-    dry_run: bool = False
-
-    @model_validator(mode="after")
-    def xor_source(self) -> ArticleFetchArgs:
-        if bool(self.arxiv) == bool(self.url):
-            raise ValueError("exactly one of arxiv or url is required")
-        if self.arxiv is not None and _ARXIV.fullmatch(self.arxiv) is None:
-            raise ValueError("arxiv id is not in the accepted form")
-        if self.url is not None and self.url.scheme != "https":
-            raise ValueError("url scheme must be https")
-        return self
-
-
-class ArticleResult(_Forbid):
-    """Final stdout JSON line from ``ingest-article --download-only``."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    source_path: str
-    sha256: str
-    byte_count: int = Field(alias="bytes")
-    filename: str
-    arxiv_id: str | None = None
-    url: str | None = None
-    title: str | None = None
-    authors: list[str] | str | None = None
-    venue: str | None = None
-    year: int | str | None = None
 
 
 class IdeHopArgs(_Forbid):
@@ -178,21 +136,6 @@ class ClaudeSyncArgs(_Forbid):
         return self
 
 
-def _article_argv(args: BaseModel) -> list[str]:
-    body = args
-    assert isinstance(body, ArticleFetchArgs)
-    argv = ["--download-only"]
-    if body.arxiv:
-        argv.extend(["--arxiv", body.arxiv])
-    if body.url is not None:
-        argv.extend(["--url", str(body.url)])
-    if body.force:
-        argv.append("--force")
-    if body.dry_run:
-        argv.append("--dry-run")
-    return argv
-
-
 def _ide_argv(args: BaseModel) -> list[str]:
     body = args
     assert isinstance(body, IdeHopArgs)
@@ -259,26 +202,9 @@ def _target(kind: Literal["satellite_route", "manage_lifecycle"], owner: str, no
 
 
 def production_specs() -> tuple[JobSpec, ...]:
-    """Return the four inventory jobs. ``load_registry`` enforces the cap."""
+    """Return the three inventory jobs. ``load_registry`` enforces the cap."""
     idle_watch = int(3 * DEFAULT_WAIT_SLICE_S)
     return (
-        JobSpec(
-            name="article-fetch",
-            description="Download one paper without registering or indexing it.",
-            surfaces=frozenset({"code"}),
-            args_model=ArticleFetchArgs,
-            argv=_article_argv,
-            executable="scripts/ingest-article",
-            result_schema=ArticleResult,
-            idle_seconds=120,
-            graduates_to=_target(
-                "satellite_route",
-                "web_fetcher",
-                "Outbound fetch belongs to the web-fetcher satellite; register stays rag upsert_article.",
-            ),
-            sunset=_SUNSET,
-            handle="capability:jobs/article-fetch",
-        ),
         JobSpec(
             name="ide-hop",
             description="Seal a departing IDE tab and keystroke the successor hop.",

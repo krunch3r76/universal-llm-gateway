@@ -143,11 +143,19 @@ def insert_turn(
     supersedes_turn: int | None = None,
     attachments: list[dict[str, Any]] | None = None,
     on_behalf: bool = False,
+    idempotent_first_turn: bool = False,
 ) -> tuple[int, str, int]:
     """Returns (turn_id, created_at, turn_number).
 
     Raises UnreadTurnsExist if after_turn is provided and unread turns
     addressed to from_agent exist after that turn number.
+
+    When ``idempotent_first_turn`` is set, turn 1 is claimed inside this
+    write transaction: a committed row is returned as-is, otherwise the
+    insert uses ``turn_number=1``. ``UNIQUE(thread, turn_number)`` makes a
+    concurrent claimer select the winner instead of appending turn 2. A
+    missing turn 1 (mint succeeded, insert failed) is inserted here — the
+    key is not wedged.
     """
     ts = now()
     with write_connect() as conn:
@@ -199,6 +207,19 @@ def insert_turn(
                     f"supersedes_turn {supersedes_turn} does not exist in thread {thread}"
                 )
 
+        if idempotent_first_turn:
+            existing_turn1 = conn.execute(
+                "SELECT id, created_at, turn_number FROM turns "
+                "WHERE thread = ? AND turn_number = 1 LIMIT 1",
+                (thread,),
+            ).fetchone()
+            if existing_turn1 is not None:
+                return (
+                    int(existing_turn1["id"]),
+                    str(existing_turn1["created_at"]),
+                    int(existing_turn1["turn_number"]),
+                )
+
         max_row = conn.execute(
             "SELECT MAX(turn_number) AS max_tn FROM turns WHERE thread = ?",
             (thread,),
@@ -224,25 +245,37 @@ def insert_turn(
                     provided_after_turn=after_turn,
                 )
 
-        turn_number = latest_turn_number + 1
+        turn_number = 1 if idempotent_first_turn else latest_turn_number + 1
 
-        cur = conn.execute(
-            "INSERT INTO turns "
-            "(thread, turn_number, from_agent, to_agent, subject, body, "
-            "status, supersedes_turn, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                thread,
-                turn_number,
-                from_agent,
-                to_agent,
-                subject,
-                body,
-                status,
-                supersedes_turn,
-                ts,
-            ),
-        )
+        try:
+            cur = conn.execute(
+                "INSERT INTO turns "
+                "(thread, turn_number, from_agent, to_agent, subject, body, "
+                "status, supersedes_turn, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    thread,
+                    turn_number,
+                    from_agent,
+                    to_agent,
+                    subject,
+                    body,
+                    status,
+                    supersedes_turn,
+                    ts,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            if not idempotent_first_turn:
+                raise
+            raced = conn.execute(
+                "SELECT id, created_at, turn_number FROM turns "
+                "WHERE thread = ? AND turn_number = 1 LIMIT 1",
+                (thread,),
+            ).fetchone()
+            if raced is None:
+                raise
+            return int(raced["id"]), str(raced["created_at"]), int(raced["turn_number"])
 
         if supersedes_turn is not None:
             conn.execute(
@@ -317,7 +350,15 @@ def get_turns(
     mark_read_seat: str | None = None,
     include_superseded: bool = False,
     after_turn: int | None = None,
+    mark_read_limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    """List turns, optionally stamping read_at for the caller's seat.
+
+    ``mark_read_limit`` caps how many leading rows (result order) may be
+    marked. The ``after_turn`` route fetches one extra probe row to detect
+    truncation; that probe stays unread when the limit is the page size.
+    Rows past the limit are still returned so the caller can see the probe.
+    """
     # include_superseded default mirrors the HTTP route's Query(False) — the route
     # is the single source of truth for this contract (F5). Superseded turns are
     # excluded from the normal fetch/mark-read path; mark-closed-read passes
@@ -375,9 +416,15 @@ def get_turns(
         read_seat = mark_read_seat if mark_read_seat is not None else to
         if mark_read and read_seat is not None:
             ts = now()
+            # Probe rows past mark_read_limit are returned but not stamped.
+            mark_window = (
+                rows
+                if mark_read_limit is None
+                else rows[: max(mark_read_limit, 0)]
+            )
             unread_ids = [
                 r["id"]
-                for r in rows
+                for r in mark_window
                 if r["read_at"] is None
                 and turn_mark_read_eligible(
                     seat=read_seat, to_agent=str(r.get("to_agent") or "")
@@ -389,10 +436,12 @@ def get_turns(
                     f"UPDATE turns SET read_at = ? WHERE id IN ({placeholders})",
                     [ts, *unread_ids],
                 )
-                for row in rows:
+                for row in mark_window:
                     if row["read_at"] is None:
                         row["read_at"] = ts
-                close_candidates = {r["thread"] for r in rows if r["id"] in unread_ids}
+                close_candidates = {
+                    r["thread"] for r in mark_window if r["id"] in unread_ids
+                }
 
         if compact:
             for row in rows:

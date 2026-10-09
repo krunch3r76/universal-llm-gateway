@@ -866,45 +866,6 @@ def test_implement_source_ref_unresolved_opens_row_and_attention() -> None:
     )
 
 
-def test_closeout_relayed_is_handled_and_stamps_row() -> None:
-    """closeout.relayed must not flood unhandled_signals; stamps closeout_uri + identity."""
-    model = Model()
-    dispatch_id = "exec-relay-closeout"
-    model.apply(
-        Event(
-            signals.SDK_WORKER_DISPATCHED,
-            1_000,
-            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
-        )
-    )
-    model.apply(
-        Event(
-            signals.SDK_CLOSEOUT_RELAYED,
-            2_000,
-            {
-                "dispatch_id": dispatch_id,
-                "execution_id": dispatch_id,
-                "thread_id": "6592",
-                "closeout_status": "complete",
-                "receipt_path": "workspaces://universal-llm-gateway/tmp/reviews/closeouts/abc.md",
-                "asked_by": "cursor-auto",
-                "purpose": "operator-proxy",
-                "story_id": "6563-w3",
-            },
-        )
-    )
-    frame = model.derive(3_000)
-    assert frame.health.unhandled_signals == {}
-    row = _row(frame.sdk, "dispatch_id", dispatch_id)
-    assert row.closeout_uri == (
-        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/abc.md"
-    )
-    assert row.asked_by == "cursor-auto"
-    assert row.purpose == "operator-proxy"
-    assert row.story_id == "6563-w3"
-    assert row.terminal_ms is None
-
-
 def test_lease_released_after_worker_terminal_does_not_raise_attention() -> None:
     """Happy path: terminal then lease.released — no lease-without-terminal flag."""
     model = Model()
@@ -1218,7 +1179,7 @@ def test_admitted_via_first_writer_wins() -> None:
                 "dispatch_id": "auto-nest1",
                 "thread_id": "5867",
                 "execution_id": "exec-auto-nest1",
-                "admitted_via": "cursor-auto",
+                "admitted_via": "stargate",
                 "asked_by": "web-anthropic",
             },
         )
@@ -1236,7 +1197,7 @@ def test_admitted_via_first_writer_wins() -> None:
         )
     )
     row = _row(model.derive(3_000).sdk, "dispatch_id", "auto-nest1")
-    assert row.admitted_via == "cursor-auto"
+    assert row.admitted_via == "stargate"
     assert row.asked_by == "web-anthropic"
     assert row.seat == "cursor-sdk"
 
@@ -1253,7 +1214,7 @@ def test_queued_replay_after_start_does_not_revert_running() -> None:
                 "thread_id": "5867",
                 "execution_id": "exec-auto-nest2",
                 "seat": "cursor-sdk",
-                "admitted_via": "cursor-auto",
+                "admitted_via": "stargate",
                 "asked_by": "cursor",
             },
         )
@@ -1266,7 +1227,7 @@ def test_queued_replay_after_start_does_not_revert_running() -> None:
                 "dispatch_id": "auto-nest2",
                 "thread_id": "5867",
                 "execution_id": "exec-auto-nest2",
-                "admitted_via": "cursor-auto",
+                "admitted_via": "stargate",
                 "asked_by": "web-anthropic",
             },
         )
@@ -1274,7 +1235,7 @@ def test_queued_replay_after_start_does_not_revert_running() -> None:
     row = _row(model.derive(3_000).sdk, "dispatch_id", "auto-nest2")
     assert row.state == "running"
     assert row.started_ms == 1_000
-    assert row.admitted_via == "cursor-auto"
+    assert row.admitted_via == "stargate"
     assert row.asked_by == "cursor"
 
 
@@ -1506,14 +1467,15 @@ def test_mcp_first_then_worker_dispatched_one_row() -> None:
     assert row.caller_via == "mcp"
 
 
-def test_http_fallback_auto_when_cursor_auto() -> None:
+def test_http_fallback_ide_when_admitted_via_has_no_caller_map() -> None:
+    """An admitted_via value with no caller map falls through to ide/http."""
     model = Model()
     exec_id = "exec-http-auto"
     model.apply(
         _worker_dispatched(exec_id, admitted_via="cursor-auto", asked_by="cursor")
     )
     row = _row(model.derive(2_000).sdk, "dispatch_id", exec_id)
-    assert row.caller_from == "auto"
+    assert row.caller_from == "ide"
     assert row.caller_via == "http"
 
 

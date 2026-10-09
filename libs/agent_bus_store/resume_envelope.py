@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-from pathlib import Path
 from typing import Any
 
 from cortex_store.transcript_projection_membership import (
@@ -14,6 +12,7 @@ from cortex_store.transcript_projection_membership import (
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .house_pools import iter_present_continuity_cards
 from .tape_degrade import (
     TAPE_BUDGET_BYTES_DEFAULT,
     TapeBudgetExceeded,
@@ -122,24 +121,23 @@ def _summary_row_from_tip_cp(body: str) -> str | None:
 
 
 def _read_l3_summary_row(thread_id: str) -> tuple[str | None, str | None]:
-    """Best-effort read of consolidate card summary (L3) from cortex files mount."""
-    root = Path(
-        os.environ.get("CORTEX_FILES_ROOT", str(Path.home() / "mcp-data/files"))
-    )
-    card = root / "notes/system/threads" / f"{thread_id}-continuity.md"
-    if not card.is_file():
-        return None, None
-    text = card.read_text(encoding="utf-8", errors="replace")
+    """Best-effort Settled, else Live, else Next, across every present card.
+
+    A ``{id}-card.md`` that carries only Live must not hide Settled on a
+    later ladder file. No summary line falls through to the tip checkpoint.
+    """
+    cards = [card for card in iter_present_continuity_cards(thread_id) if card.text]
     for pattern in (
         r"(?m)^\*\*Settled:\*\*\s*(.+)$",
         r"(?m)^\*\*Live:\*\*\s*(.+)$",
         r"(?m)^\*\*Next:\*\*\s*(.+)$",
     ):
-        match = re.search(pattern, text)
-        if match:
-            line = match.group(1).strip()
-            if line:
-                return line[:600], "l3_continuity_card"
+        for card in cards:
+            match = re.search(pattern, card.text or "")
+            if match:
+                line = match.group(1).strip()
+                if line:
+                    return line[:600], "l3_continuity_card"
     return None, None
 
 

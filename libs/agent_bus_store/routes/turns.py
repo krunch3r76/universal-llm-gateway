@@ -282,8 +282,11 @@ async def list_turns(
     if thread is not None:
         thread = normalize_thread_id(thread)
     fetch_last = last
+    mark_read_limit: int | None = None
     if after_turn is not None and last is not None:
         fetch_last = last + 1
+        if mark_read_flag:
+            mark_read_limit = last
     rows = get_turns(
         thread=thread,
         to=to,
@@ -295,6 +298,7 @@ async def list_turns(
         mark_read_seat=mark_read_seat,
         include_superseded=include_superseded,
         after_turn=after_turn,
+        mark_read_limit=mark_read_limit,
     )
     truncated = False
     next_after_turn: int | None = None

@@ -8,11 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jobs.registry import (
-    ArticleFetchArgs,
     BusReplyWatchArgs,
     ClaudeSyncArgs,
     IdeHopArgs,
-    _article_argv,
     _ide_argv,
     _sync_argv,
     _watch_argv,
@@ -31,22 +29,6 @@ def prod(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _post(prod: TestClient, job: str, args: dict) -> object:
     return prod.post(f"/api/v1/jobs/{job}", headers=HEADERS, json={"args": args})
-
-
-@pytest.mark.offline
-def test_article_fetch_url_scheme(prod: TestClient) -> None:
-    for url in ("file:///tmp/x.pdf", "http://example.com/a.pdf"):
-        response = _post(prod, "article-fetch", {"url": url})
-        assert response.status_code == 422
-        assert response.json()["code"] == "args_invalid"
-
-
-@pytest.mark.offline
-def test_arxiv_url_xor(prod: TestClient) -> None:
-    both = _post(prod, "article-fetch", {"arxiv": "2401.00001", "url": "https://example.com/a.pdf"})
-    neither = _post(prod, "article-fetch", {})
-    assert both.status_code == 422 and both.json()["code"] == "args_invalid"
-    assert neither.status_code == 422 and neither.json()["code"] == "args_invalid"
 
 
 @pytest.mark.offline
@@ -91,11 +73,6 @@ def test_producer_declaration_xor(prod: TestClient) -> None:
 
 @pytest.mark.offline
 def test_production_flags_match_scripts() -> None:
-    article = _article_argv(
-        ArticleFetchArgs.model_validate({"arxiv": "2401.00001", "dry_run": True})
-    )
-    assert "--download-only" in article and "--dry-run" in article
-    assert "--subdir" not in article and "--no-page" not in article
     ide = _ide_argv(
         IdeHopArgs.model_validate(
             {

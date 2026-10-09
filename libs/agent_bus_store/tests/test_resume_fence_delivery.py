@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.db.connection import connect
+from agent_bus_store.house_pools import ContinuityCard
 from agent_bus_store.resume_fence import encode_resume_bundle
 from agent_bus_store.resume_fence_delivery import (
     _IN_FLIGHT,
@@ -33,6 +34,20 @@ _CARD = """
 | --- | --- | --- | --- | --- | --- | --- |
 | orchestrator | cursor | open | ulg-for-llms | tip CP | agent-bus:10303 | posts on 10223 |
 """
+
+
+def _found_card(text: str) -> ContinuityCard:
+    rel = "notes/system/threads/10223-card.md"
+    return ContinuityCard(
+        status="found",
+        tried=(rel,),
+        relpath=rel,
+        uri=f"cortex://{rel}",
+        text=text,
+        sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
+
+
 _ENVELOPE = {
     "scope": "last_session",
     "seal_status": "sealed",
@@ -84,7 +99,7 @@ class _PourPatches:
         self._stack.enter_context(
             patch(
                 "agent_bus_store.resume_fence.load_continuity_card",
-                return_value=_CARD,
+                return_value=_found_card(_CARD),
             )
         )
         self._stack.enter_context(
@@ -96,7 +111,7 @@ class _PourPatches:
         self._stack.enter_context(
             patch(
                 "agent_bus_store.resume_fence_delivery.load_continuity_card",
-                return_value=_CARD,
+                return_value=_found_card(_CARD),
             )
         )
         self._stack.enter_context(
@@ -174,6 +189,61 @@ def test_loop_runs_and_get_serves_while_continue_send_blocked(root_env) -> None:
     asyncio.run(_run())
 
 
+def test_direct_get_omitted_since_epoch_serves_stored_bundle(root_env) -> None:
+    """Omitted since_epoch is None, so GET returns the stored bundle.
+
+    A bare Query() default is a FieldInfo, which is not None and makes
+    float(since_epoch) raise (friction:38946).
+    """
+    root = root_env
+
+    async def _run() -> None:
+        with pour_patches():
+            await deliver_resume_bundle(
+                root, transcript_id="tab-a", source="test", pool=None
+            )
+        row = read_stored_bundle(root, "tab-a")
+        assert row is not None
+        resp = await get_thread_resume_bundle(root, transcript_id="tab-a")
+        assert resp["state"] != "armed_since"
+        assert resp["fence_id"] == row.fence_id
+        assert "bundle" in resp
+        assert (
+            hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
+            == row.sha256
+        )
+
+    asyncio.run(_run())
+
+
+def test_direct_get_omitted_transcript_id_serves_thread_only_bundle(
+    root_env,
+) -> None:
+    """Omitted transcript_id is None, so GET returns the thread-only bundle.
+
+    A bare Query() default is a FieldInfo. pour_key would call .strip() on it
+    (friction:38946 review, agent-bus:15917 archive).
+    """
+    root = root_env
+
+    async def _run() -> None:
+        with pour_patches():
+            await deliver_resume_bundle(
+                root, transcript_id=None, source="test", pool=None
+            )
+        row = read_stored_bundle(root, None)
+        assert row is not None
+        resp = await get_thread_resume_bundle(root)
+        assert resp["state"] != "armed_since"
+        assert resp["fence_id"] == row.fence_id
+        assert (
+            hashlib.sha256(encode_resume_bundle(resp["bundle"])).hexdigest()
+            == row.sha256
+        )
+
+    asyncio.run(_run())
+
+
 def test_overlapping_pours_same_key_one_fence_one_row(root_env) -> None:
     root = root_env
     call_count = {"n": 0}
@@ -192,9 +262,12 @@ def test_overlapping_pours_same_key_one_fence_one_row(root_env) -> None:
 
     async def _run() -> None:
         key = pour_key(root, "tab-b")
-        with pour_patches(), patch(
-            "agent_bus_store.resume_fence_delivery.assemble_resume_fence",
-            side_effect=counting_assemble,
+        with (
+            pour_patches(),
+            patch(
+                "agent_bus_store.resume_fence_delivery.assemble_resume_fence",
+                side_effect=counting_assemble,
+            ),
         ):
             t1 = asyncio.create_task(
                 deliver_resume_bundle(
@@ -271,5 +344,51 @@ def test_overlapping_pours_same_key_one_fence_one_row(root_env) -> None:
                 (root,),
             ).fetchone()[0]
         assert armed_after == armed_before
+
+    asyncio.run(_run())
+
+
+def test_missing_card_pour_stores_null_sha_and_second_pour_adopts(
+    root_env, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A house with no card must store and be adoptable. sha256 is absent."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    root = root_env
+
+    async def _run() -> None:
+        with (
+            patch(
+                "agent_bus_store.resume_fence_pour.build_resume_envelope",
+                return_value=_ENVELOPE,
+            ),
+            patch(
+                "agent_bus_store.resume_fence_pour.resolve_code_version",
+                return_value="abc123",
+            ),
+            patch(
+                "agent_bus_store.resume_fence_delivery.resolve_code_version",
+                return_value="abc123",
+            ),
+        ):
+            first = await deliver_resume_bundle(
+                root, transcript_id="tab-miss", source="test", pool=None
+            )
+            second = await deliver_resume_bundle(
+                root, transcript_id="tab-miss", source="test", pool=None
+            )
+        assert first.get("error") is None
+        assert first["card"]["status"] == "missing"
+        assert "sha256" not in first["card"]
+        assert first["fence"]["fence_id"] == second["fence"]["fence_id"]
+        row = read_stored_bundle(root, "tab-miss")
+        assert row is not None
+        assert row.card_sha256 is None
+        with connect() as conn:
+            stored = conn.execute(
+                "SELECT card_sha256 FROM resume_fence_bundles WHERE fence_id = ?",
+                (first["fence"]["fence_id"],),
+            ).fetchone()
+        assert stored is not None
+        assert stored[0] is None
 
     asyncio.run(_run())

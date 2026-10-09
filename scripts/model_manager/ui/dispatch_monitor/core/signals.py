@@ -89,7 +89,6 @@ SDK_CLOSEOUT_PARTIAL_WORK_PRODUCTION_SPECIMEN = (
     "frontier.sdk.closeout.partial_work.production_specimen"
 )
 SDK_CLOSEOUT_RECONCILED = "frontier.sdk.closeout.reconciled"
-SDK_CLOSEOUT_RELAYED = "frontier.sdk.closeout.relayed"
 SDK_WORKER_DISPATCHED = "frontier.sdk.worker.dispatched"
 SDK_REVIEW_CHILD_SPAWNED = "frontier.sdk.review_child.spawned"
 SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED = "frontier.sdk.implement.source_ref_unresolved"
@@ -153,7 +152,6 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_CLOSEOUT_RELOCATED,
     SDK_CLOSEOUT_PARTIAL_WORK_PRODUCTION_SPECIMEN,
     SDK_CLOSEOUT_RECONCILED,
-    SDK_CLOSEOUT_RELAYED,
     SDK_WORKER_DISPATCHED,
     SDK_WORKER_RESUMED,
     SDK_ADMIT_DUPLICATE_REFUSED,

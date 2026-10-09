@@ -35,9 +35,15 @@ pytestmark = pytest.mark.offline
 
 _STEP_ORDER = [
     "assemble",
+    "draft_dispatch",
+    "draft_wait",
+    "draft_local",
     "draft",
     "provenance_check",
     "independence",
+    "review_dispatch",
+    "review_wait",
+    "review_local",
     "review",
     "revise",
     "provenance_check_final",
@@ -47,10 +53,24 @@ _GO = (
     "assemble.json.get('refused') is None and "
     "options.get('output', 'envelope') != 'packet'"
 )
-_REVIEW = _GO + " and independence.json.get('refused') is None"
+_GO2 = _GO + " and draft.json.get('refused') is None"
+_IND = "independence.json.get('refused') is None"
+_REVIEW = _GO2 + " and " + _IND
+_DISPATCH_W = _GO + " and assemble.json.get('writer_seat') != 'local'"
+_LOCAL_W = (
+    _GO
+    + " and (assemble.json.get('writer_seat') == 'local' or "
+    + "draft_wait.json.get('fallback_to') == 'local')"
+)
+_DISPATCH_R = _REVIEW + " and assemble.json.get('reviewer_seat') == 'cdp'"
+_LOCAL_R = (
+    _REVIEW
+    + " and (assemble.json.get('reviewer_seat') == 'local' or "
+    + "review_wait.json.get('fallback_to') == 'local')"
+)
 _REVISE = (
     _REVIEW
-    + " and (review.json.get('verdict') == 'revise' or "
+    + " and review.json.get('refused') is None and (review.json.get('verdict') == 'revise' or "
     + "len(provenance_check.json.get('violations', [])) > 0)"
 )
 _LOCAL_MODELS = (
@@ -92,9 +112,15 @@ def test_pipeline_shape() -> None:
     assert (spec.model_extra or {}).get("schema_version") == 6
     assert [step.name for step in spec.steps] == _STEP_ORDER
     by_name = {step.name: step for step in spec.steps}
+    assert by_name["draft_dispatch"].condition == _DISPATCH_W
+    assert by_name["draft_wait"].condition == _DISPATCH_W
+    assert by_name["draft_local"].condition == _LOCAL_W
     assert by_name["draft"].condition == _GO
-    assert by_name["provenance_check"].condition == _GO
-    assert by_name["independence"].condition == _GO
+    assert by_name["provenance_check"].condition == _GO2
+    assert by_name["independence"].condition == _GO2
+    assert by_name["review_dispatch"].condition == _DISPATCH_R
+    assert by_name["review_wait"].condition == _DISPATCH_R
+    assert by_name["review_local"].condition == _LOCAL_R
     assert by_name["review"].condition == _REVIEW
     assert by_name["revise"].condition == _REVISE
     assert by_name["provenance_check_final"].condition == _REVISE
@@ -112,6 +138,9 @@ def test_pipeline_shape() -> None:
     assert "unsent" in unsent_binding.binding.field_path
     opts = spec.options.to_context_dict()
     assert opts["writer_seat"] == "local"
+    assert opts["reviewer_seat"] == "auto"
+    assert opts["dispatch_thread_id"] == "15790"
+    assert opts["seat_timeout_s"] == 600
     assert opts["timeout_seconds"] == 1800
     prompts_path = _V1 / "prompts.yaml"
     prompts_text = prompts_path.read_text(encoding="utf-8")
@@ -148,6 +177,9 @@ def test_pipeline_shape() -> None:
         ("writing", "writing_provenance_check_v1"),
         ("writing", "writing_independence_v1"),
         ("writing", "writing_finalize_v1"),
+        ("writing", "writing_seat_dispatch_v1"),
+        ("writing", "writing_seat_wait_v1"),
+        ("writing", "writing_seat_select_v1"),
     }
 
 
@@ -169,6 +201,7 @@ def test_go_review_revise_conditions_on_step_outputs() -> None:
 
     clean = {
         "assemble": step({"refused": None}),
+        "draft": step({"refused": None}),
         "independence": step({"refused": None}),
         "review": step({"verdict": "ship", "findings": []}),
         "provenance_check": step({"violations": []}),
@@ -184,3 +217,111 @@ def test_go_review_revise_conditions_on_step_outputs() -> None:
         "provenance_check": step({"violations": [{"type": "omission"}]}),
     }
     assert evaluator.evaluate(_REVISE, violated, {}) is True
+
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
+    )
+    by_name = {step.name: step for step in PipelineSpec(**raw).steps}
+
+    def runs(condition: str, outputs: dict, options: dict | None = None) -> bool:
+        return evaluator.evaluate(condition, outputs, options or {})
+
+    local = {
+        "assemble": step(
+            {"refused": None, "writer_seat": "local", "reviewer_seat": "local"}
+        ),
+        "draft": step({"refused": None, "draft": "x"}),
+        "independence": step({"refused": None}),
+        "review": step({"verdict": "ship", "findings": []}),
+        "provenance_check": step({"violations": []}),
+    }
+    assert runs(by_name["draft_dispatch"].condition, local) is False
+    assert runs(by_name["draft_wait"].condition, local) is False
+    assert runs(by_name["draft_local"].condition, local) is True
+    assert runs(by_name["review_dispatch"].condition, local) is False
+    assert runs(by_name["review_local"].condition, local) is True
+
+    cdp_ok = {
+        "assemble": step(
+            {"refused": None, "writer_seat": "cdp", "reviewer_seat": "local"}
+        ),
+        "draft_wait": step({"ok": True, "fallback_to": None}),
+        "draft": step({"refused": None}),
+        "independence": step({"refused": None}),
+        "provenance_check": step({"violations": []}),
+        "review": step({"verdict": "ship"}),
+    }
+    assert runs(by_name["draft_local"].condition, cdp_ok) is False
+    assert runs(by_name["draft_dispatch"].condition, cdp_ok) is True
+
+    cdp_timeout = {
+        **cdp_ok,
+        "draft_wait": step({"ok": False, "fallback_to": "local"}),
+    }
+    assert runs(by_name["draft_local"].condition, cdp_timeout) is True
+
+    cdp_review = {
+        "assemble": step(
+            {"refused": None, "writer_seat": "local", "reviewer_seat": "cdp"}
+        ),
+        "draft": step({"refused": None}),
+        "independence": step({"refused": None}),
+    }
+    assert runs(by_name["review_dispatch"].condition, cdp_review) is True
+    assert runs(by_name["review_wait"].condition, cdp_review) is True
+
+    refused_draft = {
+        "assemble": step(
+            {"refused": None, "writer_seat": "local", "reviewer_seat": "local"}
+        ),
+        "draft": step({"refused": "writer_seat_failed"}),
+    }
+    for name in (
+        "provenance_check",
+        "independence",
+        "review_dispatch",
+        "review_local",
+        "review",
+        "revise",
+    ):
+        assert runs(by_name[name].condition, refused_draft) is False
+
+
+def test_refused_review_skips_revise_with_violations() -> None:
+    from systems.pipeline.core.conditions import ConditionEvaluator
+    from systems.pipeline.core.handlers.step_output import StepOutput
+
+    raw = yaml.safe_load(
+        (_V1 / "writer-specialist-v1.yaml").read_text(encoding="utf-8")
+    )
+    by_name = {item.name: item for item in PipelineSpec(**raw).steps}
+    evaluator = ConditionEvaluator()
+
+    def step(data: dict) -> StepOutput:
+        return StepOutput(raw="", json=data)
+
+    refused = {
+        "assemble": step({"refused": None}),
+        "draft": step({"refused": None}),
+        "independence": step({"refused": None}),
+        "review": step(
+            {
+                "refused": "reviewer_seat_failed",
+                "seat_fallback": {"reason": "timeout"},
+                "error": "reviewer_seat_failed",
+            }
+        ),
+        "provenance_check": step({"violations": [{"type": "omission"}]}),
+    }
+    assert evaluator.evaluate(by_name["revise"].condition, refused, {}) is False
+    assert (
+        evaluator.evaluate(by_name["provenance_check_final"].condition, refused, {})
+        is False
+    )
+    assert by_name["finalize"].condition is None
+
+    positive = {
+        **refused,
+        "review": step({"verdict": "revise", "findings": [], "refused": None}),
+    }
+    assert evaluator.evaluate(by_name["revise"].condition, positive, {}) is True

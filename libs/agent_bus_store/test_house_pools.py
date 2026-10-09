@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 import pytest
 
@@ -10,13 +11,13 @@ from agent_bus_store.house_pools import (
     POOL_COLUMNS,
     PoolsParseError,
     apply_fable_house_staging,
-    conductor_pool_admit_refusal,
-    continuity_card_uri,
+    conductor_pool_gate,
     extract_pools_block,
     extract_pools_residue_sha8,
     format_house_read_first_block,
     inject_pools_checkpoint_projection,
     load_continuity_card,
+    parse_pool_rows,
     parse_pools,
     pool_status_is_blocked,
     pool_status_is_open,
@@ -75,6 +76,7 @@ def test_parse_pools_invalid_status_raises() -> None:
     with pytest.raises(PoolsParseError) as exc:
         parse_pools(_card_with_manifest(bad))
     assert exc.value.cell == "status@orchestrator"
+    assert exc.value.kind == "invalid_status"
 
 
 def test_pools_block_sha_and_residue_token() -> None:
@@ -98,11 +100,14 @@ def test_pools_residue_matches_card() -> None:
 def test_pool_status_helpers() -> None:
     assert pool_status_is_open("open")
     assert not pool_status_is_open("serial · 1")
-    assert pool_status_is_blocked("blocked · bridge Timeout TypeError · since 2026-09-08")
+    assert pool_status_is_blocked(
+        "blocked · bridge Timeout TypeError · since 2026-09-08"
+    )
 
 
 def test_inject_pools_checkpoint_projection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     card_path = tmp_path / "notes/system/threads/10223-continuity.md"
@@ -116,7 +121,8 @@ def test_inject_pools_checkpoint_projection(
 
 
 def test_pools_residue_token_aligns_with_checkpoint_anchor(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     """D1 resume: authored ``Pools:`` token matches CP artifact anchor digest."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
@@ -136,41 +142,116 @@ def test_pools_residue_token_aligns_with_checkpoint_anchor(
     assert extract_pools_residue_sha8(residue) == digest[:8]
 
 
-def test_resolver_prefers_card_md_over_archive(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+def _write_card(tmp_path, name: str, text: str):
+    directory = tmp_path / "notes/system/threads"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_resolver_prefers_card_md_over_later_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    directory = tmp_path / "notes/system/threads"
+    _write_card(tmp_path, "10223-continuity.md", "archive")
+    _write_card(tmp_path, "10223-continuity-card.md", "middle")
+    _write_card(tmp_path, "10223-card.md", "live card")
+    card = load_continuity_card("10223")
+    assert card.status == "found"
+    assert card.uri is not None and card.uri.endswith("10223-card.md")
+    assert card.text == "live card"
+    assert card.sha256 == hashlib.sha256(b"live card").hexdigest()
+    assert card.tried == ("notes/system/threads/10223-card.md",)
+
+
+def test_resolver_invalid_utf8_is_found_and_hashed_raw(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    directory = tmp_path / "notes" / "system" / "threads"
     directory.mkdir(parents=True)
-    (directory / "10223-continuity.md").write_text("archive", encoding="utf-8")
-    (directory / "10223-card.md").write_text("live card", encoding="utf-8")
-    assert continuity_card_uri("10223").endswith("10223-card.md")
-    assert load_continuity_card("10223") == "live card"
+    raw = b"live \xff card"
+    (directory / "10223-card.md").write_bytes(raw)
+    card = load_continuity_card("10223")
+    assert card.status == "found"
+    assert card.text == "live \ufffd card"
+    assert card.sha256 == hashlib.sha256(raw).hexdigest()
+
+
+def test_resolver_continuity_card_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _write_card(tmp_path, "10479-continuity-card.md", "middle card")
+    card = load_continuity_card("10479")
+    assert card.status == "found"
+    assert card.relpath == "notes/system/threads/10479-continuity-card.md"
+    assert card.text == "middle card"
+    assert card.tried == (
+        "notes/system/threads/10479-card.md",
+        "notes/system/threads/10479-continuity-card.md",
+    )
 
 
 def test_resolver_falls_back_to_archive(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    directory = tmp_path / "notes/system/threads"
+    _write_card(tmp_path, "10223-continuity.md", "archive")
+    card = load_continuity_card("10223")
+    assert card.status == "found"
+    assert card.uri is not None and card.uri.endswith("10223-continuity.md")
+    assert card.text == "archive"
+
+
+def test_resolver_zero_byte_card_is_found_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A present zero-byte file is found, not missing, with the empty-bytes digest."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    directory = tmp_path / "notes" / "system" / "threads"
     directory.mkdir(parents=True)
-    (directory / "10223-continuity.md").write_text("archive", encoding="utf-8")
-    assert continuity_card_uri("10223").endswith("10223-continuity.md")
-    assert load_continuity_card("10223") == "archive"
+    (directory / "10223-card.md").write_bytes(b"")
+    card = load_continuity_card("10223")
+    assert card.status == "found"
+    assert card.empty is True
+    assert card.text == ""
+    assert card.sha256 == hashlib.sha256(b"").hexdigest()
+    assert card.relpath == "notes/system/threads/10223-card.md"
+    assert card.uri == "cortex://notes/system/threads/10223-card.md"
 
 
-def test_resolver_missing_card_returns_none(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+def test_resolver_missing_card_has_no_uri(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    assert load_continuity_card("10223") is None
-    assert continuity_card_uri("10223").endswith("10223-card.md")
+    card = load_continuity_card("10223")
+    assert card.status == "missing"
+    assert card.uri is None
+    assert card.relpath is None
+    assert card.text is None
+    assert card.sha256 is None
+    assert card.empty is False
+    assert card.tried == (
+        "notes/system/threads/10223-card.md",
+        "notes/system/threads/10223-continuity-card.md",
+        "notes/system/threads/10223-continuity.md",
+    )
 
 
 def test_format_house_read_first_block(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _write_card(tmp_path, "10223-card.md", _card_with_block())
     row = parse_pools(_card_with_block())["fable"]
     block = format_house_read_first_block(house_id="10223", row=row)
     assert block.startswith("## House (read first)")
@@ -178,8 +259,21 @@ def test_format_house_read_first_block(
     assert "proof_reply_from web-anthropic" in block
 
 
+def test_format_house_read_first_block_omits_missing_card(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    row = parse_pools(_card_with_block())["fable"]
+    block = format_house_read_first_block(house_id="10223", row=row)
+    assert "10223-card.md" not in block
+    assert "10223-continuity" not in block
+    assert block.startswith("## House (read first)")
+
+
 def test_apply_fable_house_staging_merges_skills(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     card_path = tmp_path / "notes/system/threads/10223-continuity.md"
@@ -197,7 +291,8 @@ def test_apply_fable_house_staging_merges_skills(
 
 
 def test_apply_fable_house_staging_blocks_when_status_blocked(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     blocked = _MANIFEST_BLOCK.replace(
@@ -212,18 +307,21 @@ def test_apply_fable_house_staging_blocks_when_status_blocked(
         apply_fable_house_staging("body", house_id="10223", skills=None)
 
 
-def test_conductor_pool_admit_refusal_when_open(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+def test_conductor_pool_gate_when_open(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    card_path = tmp_path / "notes/system/threads/10223-continuity.md"
-    card_path.parent.mkdir(parents=True)
-    card_path.write_text(_card_with_block(), encoding="utf-8")
-    assert conductor_pool_admit_refusal("10223") is None
+    _write_card(tmp_path, "10223-continuity.md", _card_with_block())
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "open"
+    assert gate.refusal is None
+    assert gate.pool_status == "open"
 
 
-def test_conductor_pool_admit_refusal_when_blocked(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+def test_conductor_pool_gate_when_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     blocked = _MANIFEST_BLOCK.replace(
@@ -231,28 +329,152 @@ def test_conductor_pool_admit_refusal_when_blocked(
         "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · bridge Timeout TypeError · since 2026-09-08 |",
         1,
     )
-    card_path = tmp_path / "notes/system/threads/10223-continuity.md"
-    card_path.parent.mkdir(parents=True)
-    card_path.write_text(f"# card\n\n{blocked}", encoding="utf-8")
-    reason = conductor_pool_admit_refusal("10223")
-    assert reason is not None
-    assert reason.startswith("blocked")
+    _write_card(tmp_path, "10223-continuity.md", f"# card\n\n{blocked}")
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · bridge Timeout TypeError · since 2026-09-08"
+
+
+def test_conductor_pool_gate_serial_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    serial = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | serial · 1 |",
+        1,
+    )
+    _write_card(tmp_path, "10223-card.md", f"# card\n\n{serial}")
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "serial · 1"
+    assert gate.pool_status == "serial · 1"
+
+
+def test_conductor_pool_gate_card_missing_admits_and_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    with caplog.at_level(logging.INFO, logger="agent_bus_store.house_pools"):
+        gate = conductor_pool_gate("10223")
+    assert gate.basis == "card_missing"
+    assert gate.refusal is None
+    assert any("card_missing" in record.message for record in caplog.records)
+
+
+def test_empty_conductor_status_branches_on_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    empty = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) |  |",
+        1,
+    )
+    card = f"# card\n\n{empty}"
+    _rows, errors = parse_pool_rows(card)
+    assert errors[0].kind == "empty_status"
+    assert errors[0].cell == "status@conductor"
+    _write_card(tmp_path, "10223-card.md", card)
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == ""
+
+
+def test_malformed_blocked_conductor_cell_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    bad = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · x |",
+        1,
+    )
+    card = f"# card\n\n{bad}"
+    with pytest.raises(PoolsParseError) as exc:
+        parse_pools(card)
+    assert exc.value.kind == "malformed_blocked"
+    _write_card(tmp_path, "10223-card.md", card)
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · x"
+
+
+def test_malformed_sibling_does_not_void_blocked_conductor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    mixed = _MANIFEST_BLOCK.replace(
+        "| orchestrator | IDE cursor tab bound to this lane | open |",
+        "| orchestrator | IDE cursor tab bound to this lane | maybe |",
+        1,
+    ).replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · bridge Timeout TypeError · since 2026-09-08 |",
+        1,
+    )
+    card = f"# card\n\n{mixed}"
+    rows, errors = parse_pool_rows(card)
+    assert rows["conductor"].status.startswith("blocked · bridge")
+    assert errors[0].cell == "status@orchestrator"
+    _write_card(tmp_path, "10223-card.md", card)
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · bridge Timeout TypeError · since 2026-09-08"
+
+
+def test_malformed_conductor_row_fails_closed_beside_valid_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    bad = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · x |",
+        1,
+    )
+    _write_card(tmp_path, "10223-card.md", f"# card\n\n{bad}")
+    gate = conductor_pool_gate("10223")
+    assert gate.basis == "blocked"
+    assert gate.refusal == "blocked · x"
+    assert gate.pool_status == "blocked · x"
+
+
+def test_conductor_pool_gate_no_pools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _write_card(tmp_path, "10223-card.md", "# card\n\nno pools table\n")
+    with caplog.at_level(logging.INFO, logger="agent_bus_store.house_pools"):
+        gate = conductor_pool_gate("10223")
+    assert gate.basis == "no_pools"
+    assert gate.refusal is None
+    assert any("no_pools" in record.message for record in caplog.records)
 
 
 def test_resolve_house_thread_id_from_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assert (
-        resolve_house_thread_id(None, context_text="house agent-bus:**10223**")
-        is None
+        resolve_house_thread_id(None, context_text="house agent-bus:**10223**") is None
     )
     card_path = tmp_path / "notes/system/threads/10223-continuity.md"
     card_path.parent.mkdir(parents=True)
     card_path.write_text(_card_with_block(), encoding="utf-8")
-    assert resolve_house_thread_id(
-        None, context_text="house agent-bus:**10223**"
-    ) == "10223"
+    assert (
+        resolve_house_thread_id(None, context_text="house agent-bus:**10223**")
+        == "10223"
+    )
 
 
 def test_pool_columns_constant() -> None:

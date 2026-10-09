@@ -27,7 +27,7 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 | Greater reasoning / independent check | **ACTIVE** width (not top rung) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
 | Live checkout | `cursor/grok-4.7` `contract=freeform` on cursor-sdk | autonomous |
 
-Binder order (reasoning strength): `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`;
+Binder order (reasoning strength): `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks; hop-successor history in decision:maestro-hop-model-fable). `seat_unsure ⇒ consult(independent_binder)`;
 `binder_unsure ⇒ human`. CDP fail ⇒ no wait, no pool retry. `cdp_fail_route`: `nested-grok` (`cursor/grok-4.7` xhigh) or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask. Steps: cdp-operator-proxy 2b.
 
 ## Hard walls

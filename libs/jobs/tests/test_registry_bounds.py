@@ -12,7 +12,7 @@ from jobs.spec import JobSpecInvalidError, RegistryUnboundedError, load_registry
 from jobs.tests.conftest import HEADERS, TOKEN, make_spec
 from scripts.model_manager.ui.api_dispatch import VALID_SERVICES
 
-_NAMES = {"article-fetch", "ide-hop", "bus-reply-watch", "claude-ai-sync"}
+_NAMES = {"ide-hop", "bus-reply-watch", "claude-ai-sync"}
 
 
 @pytest.mark.offline
@@ -50,10 +50,22 @@ def test_sunset_410(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JOBS_STATE_DIR", str(tmp_path))
     app = create_app(today=lambda: date(2027, 4, 2))
     with TestClient(app) as client:
-        response = client.post(
+        gone = client.post(
             "/api/v1/jobs/article-fetch",
             headers=HEADERS,
-            json={"args": {"arxiv": "2401.00001"}},
+            json={"args": {"url": "https://example.com/a.pdf"}},
         )
-    assert response.status_code == 410
-    assert response.json()["code"] == "job_sunset"
+        sunset = client.post(
+            "/api/v1/jobs/ide-hop",
+            headers=HEADERS,
+            json={
+                "args": {
+                    "row": "now",
+                    "transcript_id": "11111111-1111-1111-1111-111111111111",
+                }
+            },
+        )
+    assert gone.status_code == 404
+    assert gone.json()["code"] == "job_not_found"
+    assert sunset.status_code == 410
+    assert sunset.json()["code"] == "job_sunset"

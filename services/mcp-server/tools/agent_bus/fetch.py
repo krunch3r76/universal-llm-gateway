@@ -15,6 +15,60 @@ from ._shared import _FETCH_CONTEXT_CAP, _structured_relay_error, relay
 logger = logging.getLogger(__name__)
 
 
+def _merge_advisories(result: dict[str, Any], advisories: list[str]) -> dict[str, Any]:
+    """Attach mark-read advisories without dropping a relay payload."""
+    if not advisories or not isinstance(result, dict) or "error" in result:
+        return result
+    merged = "; ".join(advisories)
+    prior = result.get("argument_rewrite_advisory")
+    result["argument_rewrite_advisory"] = f"{prior}; {merged}" if prior else merged
+    return result
+
+
+def _omitted_author_advisory(op: str, reader: str) -> str:
+    return (
+        f"{op}: mark_read identity is {reader!r} from "
+        "resolve_dispatch_from_agent() (from_agent omitted)"
+    )
+
+
+def _seat_mismatch_advisory(op: str, to_seat: str, reader: str) -> str:
+    return (
+        f"{op}: mark_read refused — to={to_seat!r} does not match caller seat "
+        f"{reader!r} from resolve_dispatch_from_agent()"
+    )
+
+
+def _resolve_mark_reader(
+    *,
+    op: str,
+    from_agent: str,
+    to_seat: str | None,
+) -> tuple[str | None, list[str], dict[str, Any] | None, bool]:
+    """Resolve who mark_read may stamp.
+
+    Returns ``(seat, advisories, error, apply_mark)``. A ``to`` filter that is
+    not the resolved caller refuses the stamp and names both seats. Omitting
+    ``from_agent`` still marks, and the advisory names the resolved identity.
+    """
+    supplied = bool(from_agent.strip())
+    reader, author_err = resolve_dispatch_from_agent(from_agent)
+    if author_err is not None:
+        return None, [], author_err, False
+    advisories: list[str] = []
+    if not reader:
+        advisories.append(
+            f"{op}: mark_read skipped — reader seat could not be resolved"
+        )
+        return None, advisories, None, False
+    if not supplied:
+        advisories.append(_omitted_author_advisory(op, reader))
+    if to_seat and to_seat != reader:
+        advisories.append(_seat_mismatch_advisory(op, to_seat, reader))
+        return reader, advisories, None, False
+    return reader, advisories, None, True
+
+
 def _fetch_impl(
     *,
     to: str | None,
@@ -172,8 +226,14 @@ def _fetch_unread_dispatch(
     active_since: str | None = None,
     limit: int | None = None,
     all_threads: bool = False,
+    from_agent: str = "",
 ) -> dict[str, Any]:
-    """Fetch unread turns."""
+    """Fetch unread turns.
+
+    Thread-scoped ``mark_read`` stamps the seat from
+    ``resolve_dispatch_from_agent`` (``mark_read_seat``). A missing reader
+    or a ``to`` that is not that seat is an advisory, not a silent no-op.
+    """
     if isinstance(thread, int):
         thread = str(thread)
     effective_to = to if to else None
@@ -188,14 +248,28 @@ def _fetch_unread_dispatch(
             limit=limit,
             all_threads=all_threads,
         )
-    return _fetch_impl(
+    advisories: list[str] = []
+    mark_read_seat: str | None = None
+    apply_mark = mark_read
+    if mark_read:
+        reader, advisories, author_err, apply_mark = _resolve_mark_reader(
+            op="fetch_unread",
+            from_agent=from_agent,
+            to_seat=effective_to,
+        )
+        if author_err is not None:
+            return author_err
+        mark_read_seat = reader if apply_mark else None
+    result = _fetch_impl(
         to=effective_to,
         thread=effective_thread,
         last=None,
         unread=True,
-        mark_read=mark_read,
+        mark_read=apply_mark,
         compact=compact,
+        mark_read_seat=mark_read_seat,
     )
+    return _merge_advisories(result, advisories)
 
 
 def _fetch_dispatch(
@@ -208,8 +282,14 @@ def _fetch_dispatch(
     compact: bool = False,
     all: bool = False,
     after_turn: int | None = None,
+    from_agent: str = "",
 ) -> dict[str, Any]:
-    """Dispatch wrapper for fetch — normalizes empty strings and resolves last/all/unread."""
+    """Dispatch wrapper for fetch — normalizes empty strings and resolves last/all/unread.
+
+    ``mark_read`` stamps ``resolve_dispatch_from_agent``'s seat. When ``to``
+    is a different seat the stamp is refused and the response names both.
+    Omitting ``from_agent`` still stamps, with an advisory naming that seat.
+    """
     if isinstance(thread, int):
         thread = str(thread)
     effective_to = to if to else None
@@ -220,32 +300,27 @@ def _fetch_dispatch(
         effective_last = max(1, min(last, _FETCH_CONTEXT_CAP))
     mark_read_seat: str | None = None
     advisories: list[str] = []
+    apply_mark = False
     if mark_read:
-        reader_agent, author_err = resolve_dispatch_from_agent()
+        reader, advisories, author_err, apply_mark = _resolve_mark_reader(
+            op="fetch",
+            from_agent=from_agent,
+            to_seat=effective_to,
+        )
         if author_err is not None:
             return author_err
-        mark_read_seat = reader_agent or None
-        if not mark_read_seat:
-            advisories.append(
-                "fetch: mark_read skipped — reader seat could not be resolved"
-            )
+        mark_read_seat = reader if apply_mark else None
     result = _fetch_impl(
         to=effective_to,
         thread=effective_thread,
         last=effective_last,
         unread=unread,
-        mark_read=mark_read and bool(mark_read_seat),
+        mark_read=apply_mark,
         compact=compact,
         after_turn=after_turn,
         mark_read_seat=mark_read_seat,
     )
-    if advisories and isinstance(result, dict) and "error" not in result:
-        prior = result.get("argument_rewrite_advisory")
-        merged = "; ".join(advisories)
-        result["argument_rewrite_advisory"] = (
-            f"{prior}; {merged}" if prior else merged
-        )
-    return result
+    return _merge_advisories(result, advisories)
 
 
 def _get_dispatch(
@@ -274,13 +349,23 @@ def _get_dispatch(
             return {"error": "get requires: turn_number (int >= 1 or 'latest')"}
         turn_number = tn
     reader_agent = ""
+    advisories: list[str] = []
+    apply_mark = mark_read
     if mark_read:
-        reader_agent, author_err = resolve_dispatch_from_agent(from_agent)
+        reader_agent_resolved, advisories, author_err, apply_mark = (
+            _resolve_mark_reader(
+                op="get",
+                from_agent=from_agent,
+                to_seat=None,
+            )
+        )
         if author_err is not None:
             return author_err
-    return _get_impl(
+        reader_agent = reader_agent_resolved or ""
+    result = _get_impl(
         thread=thread,
         turn_number=turn_number,
-        mark_read=mark_read,
+        mark_read=apply_mark,
         reader_agent=reader_agent,
     )
+    return _merge_advisories(result, advisories)

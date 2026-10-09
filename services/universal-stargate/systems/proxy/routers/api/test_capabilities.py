@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import httpx
@@ -312,7 +313,8 @@ def test_foreign_location_is_502(tmp_path, monkeypatch: pytest.MonkeyPatch) -> N
         if getattr(event, "signal", "") == "capability.relay.failed"
     ]
     assert any(
-        (getattr(event, "payload", {}) or {}).get("error") == "upstream_location_invalid"
+        (getattr(event, "payload", {}) or {}).get("error")
+        == "upstream_location_invalid"
         for event in failed
     )
 
@@ -338,6 +340,55 @@ def test_delete_non_satellite_is_405(tmp_path, monkeypatch: pytest.MonkeyPatch) 
     denied = client.delete("/api/v1/capabilities/not-a-category/member")
     assert denied.status_code == 405
     assert denied.json()["code"] == "method_not_allowed"
+
+
+def test_satellite_member_dotdot_is_404_without_upstream(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOBS_TOKEN", "dummy-token")
+    called = {"n": 0}
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        called["n"] += 1
+        del request
+        return httpx.Response(200, json={"ok": True})
+
+    client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    for member in ("%2e%2e", "%2E%2E", "bus-reply-watch/%2e%2e/runs"):
+        missing = client.get(f"/api/v1/capabilities/jobs/{member}")
+        assert missing.status_code == 404, missing.text
+        assert missing.json()["code"] == "capability_not_found"
+    assert called["n"] == 0
+
+
+def test_relay_without_event_bus_warns_once(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(capability_routes, "_RELAY_BUS_MISSING", 0)
+    monkeypatch.setattr(capability_routes, "_RELAY_BUS_WARNED", False)
+    monkeypatch.setenv("JOBS_TOKEN", "dummy-token")
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(202, json={"run_id": "r1"})
+
+    client, _bus = _app(tmp_path, _JOBS, monkeypatch, responder)
+    client.app.dependency_overrides[get_proxy] = lambda: SimpleNamespace(
+        pipeline_registry=None,
+        is_pipeline_system_ready=False,
+    )
+    path = "/api/v1/capabilities/jobs/bus-reply-watch"
+    with caplog.at_level(logging.WARNING, logger=capability_routes.logger.name):
+        first = client.post(path, json={"args": {}})
+        second = client.post(path, json={"args": {}})
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    warnings = [
+        record for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "capability.relay.completed" in warnings[0].getMessage()
+    assert capability_routes.relay_bus_missing_count() == 1
 
 
 def test_nested_member_non_satellite_is_404(

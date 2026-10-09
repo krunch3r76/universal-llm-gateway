@@ -130,8 +130,7 @@ all agree, so none of the three can drift silently.
 | `frontier.sdk.worker.lease.park_restore` | `worker` | **VERIFIED** — restore parent state |
 | `frontier.sdk.closeout.relocated` | `worker` | **VERIFIED** — durable closeout URI |
 | `frontier.sdk.closeout.reconciled` | `worker` | **VERIFIED** — FS ground truth suppressed closeout degrade |
-| `frontier.sdk.closeout.relayed` | `worker` | **VERIFIED** — GIW closeout relay |
-| `frontier.sdk.worker.dispatched` | `worker` | **VERIFIED** — dispatch accepted (opens row, GS2 lane A); GIW emits only when `admitted_via=cursor-auto`; stamps `topic` / `nest_under` |
+| `frontier.sdk.worker.dispatched` | `worker` | **VERIFIED** — dispatch accepted (opens row, GS2 lane A); stamps `topic` / `nest_under` |
 | `frontier.sdk.worker.resumed` | `worker` | **VERIFIED** — child resume; `resume_of` aliases onto a live parent (no second LIVE identity) |
 | `frontier.sdk.admit.duplicate_refused` | `worker` | **VERIFIED** — attention item, never a live row |
 | `frontier.sdk.closeout.partial_work.production_specimen` | `worker` | **VERIFIED** — production `partial:work` specimen; identity only, never terminal |

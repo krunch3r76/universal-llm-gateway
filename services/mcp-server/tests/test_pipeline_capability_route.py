@@ -33,9 +33,7 @@ def test_capability_async_posts_member_path() -> None:
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
     with bind_request("default", surface="code"):
         with patch("tools.pipeline.make_sync_client", return_value=client):
-            out = _capability_async(
-                "jobs/bus-reply-watch", {"args": {"thread": "1"}}
-            )
+            out = _capability_async("jobs/bus-reply-watch", {"args": {"thread": "1"}})
     assert out["href"] == "/api/v1/capabilities/jobs/bus-reply-watch/runs/r1"
     client.get.assert_not_called()
     client.post.assert_called_once_with(
@@ -59,10 +57,63 @@ def test_capability_async_passes_error_body(status_code: int, body: dict) -> Non
     resp.headers = {}
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
     with patch("tools.pipeline.make_sync_client", return_value=client):
-        out = _capability_async("jobs/nope" if status_code == 404 else "nope/member", None)
+        out = _capability_async(
+            "jobs/nope" if status_code == 404 else "nope/member", None
+        )
     assert out["code"] == body["code"]
     assert out["status_code"] == status_code
     client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_zero_slash_id_is_not_a_capability_route() -> None:
+    mcp = FastMCP("cap-route-plain")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline.make_sync_client") as http:
+        with patch("tools.pipeline._capability_async") as capability:
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "pipeline",
+                    {"op": "async", "pipeline_id": "jobs"},
+                )
+    body = result.structured_content
+    assert body["error"]["code"] == "missing_required"
+    capability.assert_not_called()
+    http.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pipeline_id", ["a/b/c", "jobs/../x", "jobs/%2e%2e"])
+async def test_malformed_capability_id_rejects_before_http(pipeline_id: str) -> None:
+    mcp = FastMCP("cap-route-bad")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline.make_sync_client") as http:
+        async with Client(mcp) as client:
+            result = await client.call_tool(
+                "pipeline",
+                {"op": "async", "pipeline_id": pipeline_id},
+            )
+    body = result.structured_content
+    assert body["error"]["code"] == "capability_id_invalid"
+    http.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "/api/v1/capabilities/jobs/../x",
+        "/api/v1/capabilities/jobs/%2e%2e/x",
+        "/api/v1/capabilities/jobs/%2E%2E/x",
+        "/api/v1/capabilities/jobs/..\\x",
+    ],
+)
+def test_capability_result_href_dotdot_rejects_before_http(href: str) -> None:
+    with patch("tools.pipeline.make_sync_client") as http:
+        out = _pipeline_result(href, 0.0)
+    assert out["error"]["code"] == "capability_href_invalid"
+    http.assert_not_called()
 
 
 def test_pipeline_result_gets_capability_href_with_int_wait() -> None:
@@ -125,6 +176,216 @@ def test_capability_async_posts_writing_member_path() -> None:
     client.get.assert_not_called()
     client.post.assert_called_once_with(
         "/api/v1/capabilities/writing/writer-specialist-v1",
-        json={"args": {}, "output_contract": "inline"},
+        json={
+            "model": "writer-specialist-v1",
+            "messages": [],
+            "pipeline_options": {},
+            "output_contract": "inline",
+        },
         headers={"X-ULG-Surface": "code"},
     )
+    assert "args" not in client.post.call_args.kwargs["json"]
+
+
+def test_capability_async_flat_options_derive_model() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {"brief": {"signer": "Ada"}},
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body["model"] == "writer-specialist-v1"
+    assert body["pipeline_options"] == {"brief": {"signer": "Ada"}}
+    assert "args" not in body
+
+
+def test_capability_async_passes_messages() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    messages = [{"role": "user", "content": "draft"}]
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async("writing/writer-specialist-v1", {"model": "m"}, messages)
+    body = client.post.call_args.kwargs["json"]
+    assert body["messages"] == messages
+    assert body["model"] == "m"
+
+
+@pytest.mark.asyncio
+async def test_tool_routes_writing_member_to_local_body() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client_http = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    mcp = FastMCP("writing-route")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    messages = [{"role": "user", "content": "hi"}]
+    with patch("tools.pipeline.make_sync_client", return_value=client_http):
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "pipeline",
+                {
+                    "op": "async",
+                    "pipeline_id": "writing/writer-specialist-v1",
+                    "messages": messages,
+                    "options": {"model": "writer-specialist-v1"},
+                },
+            )
+    body = client_http.post.call_args.kwargs["json"]
+    assert body["model"] == "writer-specialist-v1"
+    assert body["messages"] == messages
+    assert "args" not in body
+    assert client_http.post.call_args.args[0] == (
+        "/api/v1/capabilities/writing/writer-specialist-v1"
+    )
+
+
+def test_capability_async_local_carries_args_into_pipeline_options() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    working_set = [{"pin_id": "P1"}]
+    brief = {"signer": "Ada"}
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {
+                "args": {"working_set": working_set, "brief": brief},
+                "model": "writer-specialist-v1",
+            },
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body == {
+        "model": "writer-specialist-v1",
+        "messages": [],
+        "pipeline_options": {"working_set": working_set, "brief": brief},
+        "output_contract": "inline",
+    }
+    assert "args" not in body
+
+
+def test_capability_async_local_args_merge_precedence() -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {
+                "model": "writer-specialist-v1",
+                "args": {"brief": {"from": "args"}, "extra": 1},
+                "pipeline_options": {"brief": {"from": "explicit"}},
+            },
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body["pipeline_options"] == {
+        "brief": {"from": "explicit"},
+        "extra": 1,
+    }
+
+
+def _accepted() -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {}
+    return resp
+
+
+def test_capability_async_relay_strips_dispatch_thread_id() -> None:
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "jobs/bus-reply-watch",
+            {"args": {"thread": "1"}, "dispatch_thread_id": " 15902 "},
+        )
+    client.post.assert_called_once_with(
+        "/api/v1/capabilities/jobs/bus-reply-watch",
+        json={
+            "args": {"thread": "1"},
+            "output_contract": "inline",
+            "dispatch_thread_id": "15902",
+        },
+        headers={},
+    )
+
+
+def test_capability_async_local_model_forwards_dispatch_thread_id() -> None:
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
+    messages = [{"role": "user", "content": "draft"}]
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {"model": "m", "dispatch_thread_id": "15902"},
+            messages,
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body["dispatch_thread_id"] == "15902"
+    assert "dispatch_thread_id" not in body["pipeline_options"]
+    assert body["model"] == "m"
+    assert body["messages"] == messages
+
+
+def test_capability_async_local_pipeline_options_forwards_dispatch_thread_id() -> None:
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {
+                "pipeline_options": {"brief": "x"},
+                "dispatch_thread_id": "15902",
+            },
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body["dispatch_thread_id"] == "15902"
+    assert "dispatch_thread_id" not in body["pipeline_options"]
+
+
+def test_capability_async_local_flat_excludes_dispatch_thread_id() -> None:
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "writing/writer-specialist-v1",
+            {"brief": {"signer": "Ada"}, "dispatch_thread_id": "15902"},
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert body["dispatch_thread_id"] == "15902"
+    assert "dispatch_thread_id" not in body["pipeline_options"]
+    assert body["pipeline_options"]["brief"] == {"signer": "Ada"}
+
+
+def test_capability_async_blank_dispatch_thread_id_omitted() -> None:
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "jobs/bus-reply-watch",
+            {"args": {"thread": "1"}, "dispatch_thread_id": "   "},
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert "dispatch_thread_id" not in body
+    assert body == {"args": {"thread": "1"}, "output_contract": "inline"}
+
+
+def test_capability_async_nonstr_dispatch_thread_id_omitted() -> None:
+    client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
+    with patch("tools.pipeline.make_sync_client", return_value=client):
+        _capability_async(
+            "jobs/bus-reply-watch",
+            {"args": {"thread": "1"}, "dispatch_thread_id": 123},
+        )
+    body = client.post.call_args.kwargs["json"]
+    assert "dispatch_thread_id" not in body
+    assert body == {"args": {"thread": "1"}, "output_contract": "inline"}

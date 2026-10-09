@@ -75,16 +75,11 @@ def test_ingest_composite_binds_result(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("JOBS_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("JOBS_TOKEN", "token")
-    location = "/api/v1/jobs/article-fetch/runs/run-1"
+    monkeypatch.setenv("WEB_FETCHER_URL", "http://web-fetcher")
     responses = [
-        httpx.Response(202, headers={"location": location}, json={"run_id": "run-1"}),
         httpx.Response(
             200,
-            json={
-                "status": "completed",
-                "result": {"source_path": "/papers/a.pdf", "filename": "a.pdf", "sha256": "abc"},
-            },
+            json={"saved_to": "/papers/a.pdf", "size": 3, "url": "https://example.com/a.pdf"},
         ),
     ]
 
@@ -94,9 +89,9 @@ def test_ingest_composite_binds_result(
     monkeypatch.setattr("pipelines.tools.handlers.http.make_async_client", factory)
     doc = _load("ingest_article")
     context = SimpleNamespace(
-        options={"arxiv": "2401.00001"},
+        options={"url": "https://example.com/a.pdf", "save_to": "/papers/a.pdf"},
         http_request=SimpleNamespace(headers={"x-ulg-surface": "code"}),
         get_output=lambda _step: None,
     )
     output = asyncio.run(HttpHandler().execute(_Step(doc["steps"][0]), context))
-    assert output.json["result"]["source_path"] == "/papers/a.pdf"
+    assert output.json["saved_to"] == "/papers/a.pdf"

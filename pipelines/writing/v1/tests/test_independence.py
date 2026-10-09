@@ -31,9 +31,16 @@ independence = importlib.import_module("writing_v1_handlers.independence")
 pytestmark = pytest.mark.offline
 
 
+class _Out:
+    def __init__(self, payload: dict, model_id: str | None = None) -> None:
+        self.json = payload
+        self.model_id = model_id
+
+
 class _Ctx:
-    def __init__(self, **options: object) -> None:
+    def __init__(self, outputs: dict | None = None, **options: object) -> None:
         self.options = options
+        self.outputs = outputs or {}
 
 
 def test_independence_same_family_refused() -> None:
@@ -105,3 +112,52 @@ def test_shipped_models_are_full_independence() -> None:
     assert payload["refused"] is None
     assert payload["writer_model"] == models["writer"]
     assert payload["reviewer_model"] == models["reviewer"]
+
+
+def test_independence_cdp_writer_local_reviewer_full() -> None:
+    qwen = "qwen3-14b-q4-k-m-40960"
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={"draft": _Out({}, model_id="cdp/opus-5.5")},
+                model_ref_overrides={"reviewer": qwen},
+            ),
+        )
+    ).json
+    assert payload["independence"] == "full"
+    assert payload["writer_model"] == "cdp/opus-5.5"
+    assert payload["reviewer_model"] == qwen
+
+
+def test_independence_cdp_reviewer_local_writer_full() -> None:
+    hermes = "hermes-3-llama-3-1-70b-uncensored-q4-k-m-32768-hybrid"
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={"assemble": _Out({"reviewer_seat": "cdp"})},
+                seat_models={"cdp": "cdp/opus-5.5"},
+                model_ref_overrides={"writer": hermes},
+            ),
+        )
+    ).json
+    assert payload["independence"] == "full"
+    assert payload["writer_model"] == hermes
+    assert payload["reviewer_model"] == "cdp/opus-5.5"
+
+
+def test_independence_cdp_writer_and_reviewer_refused() -> None:
+    payload = asyncio.run(
+        independence.WritingIndependenceHandler().execute(
+            None,
+            _Ctx(
+                outputs={
+                    "draft": _Out({}, model_id="cdp/opus-5.5"),
+                    "assemble": _Out({"reviewer_seat": "cdp"}),
+                },
+                seat_models={"cdp": "cdp/opus-5.5"},
+            ),
+        )
+    ).json
+    assert payload["refused"] == "independence_violation"
