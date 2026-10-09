@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -93,19 +92,25 @@ def _options(agent_id: str = "agent-contract-1") -> dict:
 
 
 class _Spy:
-    def __init__(self, *, lookup_raises: bool = False) -> None:
+    def __init__(self, *, prior_http_error: str | None = None) -> None:
         self.events: list[dict] = []
         self.closes = 0
-        self.lookup_raises = lookup_raises
+        self.prior_http_error = prior_http_error
         self.close_sig = inspect.signature(_op_session_close)
         self.entity_sig = inspect.signature(_op_entity_get)
 
     async def dispatch(self, tool: str, args: dict) -> dict:
         if tool == "entity_get":
             self.entity_sig.bind(**args)
-            if self.lookup_raises:
-                raise RuntimeError("lookup down")
-            return {}
+            if self.prior_http_error is not None:
+                return {"error": self.prior_http_error}
+            from fastapi import HTTPException
+
+            try:
+                result = _op_entity_get(**args)
+            except HTTPException as exc:
+                return {"error": exc.detail, "status_code": exc.status_code}
+            return result if isinstance(result, dict) else {"error": "non_object"}
         if tool != "session_close":
             raise AssertionError(tool)
         self.close_sig.bind(**args)
@@ -354,7 +359,7 @@ async def test_9_lookup_raise_same_id(monkeypatch, tmp_path: Path) -> None:
         conn.commit()
     finally:
         conn.close()
-    boom = _Spy(lookup_raises=True)
+    boom = _Spy()
     _patch_event(monkeypatch, boom)
     out = await run_seal(
         _options("agent-lookup"),
@@ -384,20 +389,11 @@ async def test_suppression_unchanged_extend_and_read_error(
     )
     assert len(spy.events) == 2
     before = len(spy.events)
-    import cortex_store.db as cortex_db
-
-    real_conn = cortex_db.cortex_conn
-    state = {"n": 0}
-
-    def _flaky_conn():
-        state["n"] += 1
-        if state["n"] == 1:
-            raise sqlite3.OperationalError("prior read down")
-        return real_conn()
-
-    monkeypatch.setattr(cortex_db, "cortex_conn", _flaky_conn)
+    broken = _Spy(prior_http_error="transport_error: timed out")
+    _patch_event(monkeypatch, broken)
+    broken.events = spy.events
     failed = await run_seal(
-        _options("agent-suppress"), extended, execution_id="e", dispatch=spy.dispatch
+        _options("agent-suppress"), extended, execution_id="e", dispatch=broken.dispatch
     )
     assert len(spy.events) == before
     assert failed["event_suppressed_reason"] == "prior_read_failed"

@@ -56,10 +56,21 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     ctx = validate_session_close(body)
     try:
         return _close_or_reuse(body, ctx)
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as exc:
+        if not _session_id_unique_violation(exc):
+            raise
         # Concurrent first seals both pass the existence read. The unique
         # index rejects the second insert; reuse the committed row.
         return _close_or_reuse(body, ctx)
+
+
+def _session_id_unique_violation(exc: sqlite3.IntegrityError) -> bool:
+    """True only for the partial unique index on session_journals.session_id."""
+    text = str(exc)
+    return (
+        "idx_session_journals_session_id_unique" in text
+        or "session_journals.session_id" in text
+    )
 
 
 def _close_or_reuse(

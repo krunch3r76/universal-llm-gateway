@@ -122,9 +122,10 @@ def transport(monkeypatch: pytest.MonkeyPatch):
         assert tool in _OP_SPECS
         dispatch_sig.bind(tool, args)
         calls.append(tool)
-        if tool != "session_close":
+        if tool not in {"session_close", "entity_get"}:
             return {}
-        close_args.append(dict(args))
+        if tool == "session_close":
+            close_args.append(dict(args))
         result = execute_op(tool, args)
         return result if isinstance(result, dict) else {"error": "non_object_response"}
 

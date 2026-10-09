@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any, override
 
 from continuity_tape.events import stargate_continuity_checkpoint_sealed
@@ -62,34 +61,52 @@ def _opened_at(options: dict[str, Any], envelope: dict[str, Any]) -> str | None:
     return None
 
 
-def _prior_messages_sha(session_id: str) -> tuple[str | None, str | None]:
-    """Prior messages hash from the transcript entity, not the files root.
+def _entity_missing(value: object) -> bool:
+    """True for a cortex 404. The live detail is ``Entity entity not found``."""
+    status_code = None
+    if isinstance(value, dict):
+        status_code = value.get("status_code")
+        value = value.get("error", value)
+    if status_code == 404:
+        return True
+    text = str(value)
+    return "not found" in text.lower() and "ambiguous" not in text.lower()
+
+
+async def _prior_messages_sha(
+    session_id: str, dispatch: Any
+) -> tuple[str | None, str | None]:
+    """Prior messages hash via cortex ``entity_get``, not a SQLite connection.
 
     Returns ``(sha, None)`` when the read succeeds. A missing entity is
     ``(None, None)`` (first seal). ``(None, "prior_read_failed")`` means the
     read failed; the caller must not treat that as a new extension.
     """
     try:
-        import cortex_store.db as cortex_db
-
-        conn = cortex_db.cortex_conn()
+        body = await dispatch(
+            "entity_get",
+            {"entity_id": f"transcript:{session_id}", "intent": "full"},
+        )
+    except Exception as exc:  # noqa: BLE001 — HTTP hop failure is a skipped event
+        if _entity_missing(exc):
+            return None, None
+        return None, "prior_read_failed"
+    if not isinstance(body, dict):
+        return None, "prior_read_failed"
+    if "error" in body:
+        if _entity_missing(body.get("error")):
+            return None, None
+        return None, "prior_read_failed"
+    attrs = body.get("attributes")
+    if isinstance(attrs, str):
         try:
-            row = conn.execute(
-                "SELECT attributes FROM entities WHERE id = ?",
-                (f"transcript:{session_id}",),
-            ).fetchone()
-        finally:
-            conn.close()
-    except (sqlite3.Error, OSError):
-        return None, "prior_read_failed"
-    if row is None or not row["attributes"]:
+            attrs = json.loads(attrs)
+        except json.JSONDecodeError:
+            return None, "prior_read_failed"
+    if attrs is None:
         return None, None
-    try:
-        attrs = json.loads(row["attributes"])
-    except json.JSONDecodeError:
-        return None, "prior_read_failed"
     if not isinstance(attrs, dict):
-        return None, None
+        return None, "prior_read_failed"
     sha = attrs.get("messages_sha256")
     return (str(sha) if isinstance(sha, str) and sha else None), None
 
@@ -121,7 +138,7 @@ async def run_seal(
     structural = _structural(options, envelope_step, opened)
     msg_sha = str(envelope_step.get("messages_sha256") or "")
     preview_id = derive_anchored_session_id(_SEAT, opened, agent_id or None)
-    prior, prior_err = _prior_messages_sha(preview_id)
+    prior, prior_err = await _prior_messages_sha(preview_id, post)
     result = await seal_messages_envelope(
         envelope,
         agent=agent,

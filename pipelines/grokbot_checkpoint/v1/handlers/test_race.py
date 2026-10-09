@@ -51,12 +51,24 @@ def test_concurrent_first_seals_one_row(monkeypatch, tmp_path) -> None:
     async def _one() -> None:
         class _Dispatch:
             async def __call__(self, tool: str, args: dict) -> dict:
+                import inspect
+
+                from cortex_store.dispatch_ops.ops_entities import _op_entity_get
                 from cortex_store.dispatch_ops.ops_session_close import (
                     _op_session_close,
                 )
+                from fastapi import HTTPException
 
+                if tool == "entity_get":
+                    inspect.signature(_op_entity_get).bind(**args)
+                    try:
+                        result = _op_entity_get(**args)
+                    except HTTPException as exc:
+                        return {"error": exc.detail, "status_code": exc.status_code}
+                    return result if isinstance(result, dict) else {"error": "non_object"}
                 if tool != "session_close":
                     raise AssertionError(tool)
+                inspect.signature(_op_session_close).bind(**args)
                 return _op_session_close(**args)
 
         try:
@@ -80,3 +92,54 @@ def test_concurrent_first_seals_one_row(monkeypatch, tmp_path) -> None:
     assert results[0]["session_id"] == results[1]["session_id"]
     assert results[0].get("refused") is None
     assert results[1].get("refused") is None
+
+
+def test_other_integrity_error_is_not_retried(monkeypatch, tmp_path) -> None:
+    """A different UNIQUE violation from the temp DB propagates after one attempt."""
+    import inspect
+    import sqlite3
+
+    import cortex_store.db as cortex_db
+    import cortex_store.routes.session_close as session_close
+    from cortex_store.models import SessionCloseRequest
+
+    _boot(monkeypatch, tmp_path)
+    conn = cortex_db.cortex_conn()
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_test_summary_unique ON session_journals(summary)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    calls = {"n": 0}
+    real = session_close._close_or_reuse
+    sig = inspect.signature(real)
+
+    def _counted(body, ctx):
+        sig.bind(body, ctx)
+        calls["n"] += 1
+        return real(body, ctx)
+
+    monkeypatch.setattr(session_close, "_close_or_reuse", _counted)
+    summary = "Same summary, two session ids."
+    first = SessionCloseRequest(
+        session_id="web-2026-05-27-100400-a16",
+        agent="web",
+        summary=summary,
+        session_summary_md=f"## Session Summary\n\n{summary}\n",
+        transcript_depth="none",
+    )
+    session_close.close_session(first)
+    assert calls["n"] == 1
+    second = SessionCloseRequest(
+        session_id="web-2026-05-27-100401-a17",
+        agent="web",
+        summary=summary,
+        session_summary_md=f"## Session Summary\n\n{summary}\n",
+        transcript_depth="none",
+    )
+    with pytest.raises(sqlite3.IntegrityError) as raised:
+        session_close.close_session(second)
+    assert "session_journals.summary" in str(raised.value)
+    assert calls["n"] == 2
