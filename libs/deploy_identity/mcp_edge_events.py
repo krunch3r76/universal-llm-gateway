@@ -43,10 +43,10 @@ def mcp_edge_probe_failed(
 ) -> Event:
     """Public-vantage ``/health`` did not succeed.
 
-    ``error_class`` names the break (``dns_timeout``, ``tls_eof``,
-    ``no_public_address``, ``bad_status``, and the connect classes). ``ip``
-    is null when DNS never yielded a public address. ``detail`` is a short
-    note with no credentials.
+    ``error_class`` names the break (``timeout``, ``tls_eof``,
+    ``no_public_address``, ``bad_status``, and the connect classes). A DNS
+    timeout is ``timeout`` with ``ip`` null. ``detail`` is a short note
+    with no credentials.
     """
     return Event(
         signal="mcp.edge.probe.failed",

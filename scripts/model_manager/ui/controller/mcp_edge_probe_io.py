@@ -96,12 +96,14 @@ def fetch_health(ip: str, host: str) -> int:
 
     Returns the HTTP status code. TLS EOF and connect resets raise.
     Certificate check uses ``host``, so a hairpin to the public address
-    still validates the public certificate.
+    still validates the public certificate. ``suppress_ragged_eofs`` is
+    off so an EOF after the handshake raises ``SSLEOFError`` (``tls_eof``)
+    instead of coming back from ``recv`` as an empty buffer.
     """
     ctx = ssl.create_default_context()
     raw = socket.create_connection((ip, 443), timeout=_TLS_TIMEOUT_S)
     try:
-        tls = ctx.wrap_socket(raw, server_hostname=host)
+        tls = ctx.wrap_socket(raw, server_hostname=host, suppress_ragged_eofs=False)
     except BaseException:
         raw.close()
         raise

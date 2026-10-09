@@ -194,7 +194,7 @@ def test_fresh_wait_and_short_burst_are_quiet():
     burst = {
         "thread": "99999",
         "n": 20,
-        "first_ms": now - 5 * 60 * 1000,
+        "first_ms": now - 25 * 60 * 1000,
         "last_ms": now - 20 * 60 * 1000,
     }
     assert silent_listeners([healthy, burst], now_ms=now) == []
