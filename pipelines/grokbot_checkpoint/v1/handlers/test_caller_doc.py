@@ -1,0 +1,100 @@
+"""Pin CALLER.md to handler option keys, refusal codes, and admit."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+from .admit import run_admit
+
+pytestmark = pytest.mark.offline
+
+_ROOT = Path(__file__).resolve().parents[1]
+_DOC = _ROOT / "CALLER.md"
+_YAML = _ROOT / "grokbot-checkpoint-v1.yaml"
+_HANDLERS = Path(__file__).resolve().parent
+_UUID = "11111111-1111-4111-8111-111111111111"
+
+
+def _doc() -> str:
+    assert _DOC.is_file(), "CALLER.md missing"
+    return _DOC.read_text(encoding="utf-8")
+
+
+def _fence(text: str, lang: str) -> str:
+    match = re.search(rf"```{lang}\n(.*?)```", text, re.DOTALL)
+    assert match, f"missing ```{lang} fence"
+    return match.group(1)
+
+
+def _handler_sources() -> str:
+    parts = [
+        path.read_text(encoding="utf-8")
+        for path in sorted(_HANDLERS.glob("*.py"))
+        if path.name != "test_caller_doc.py"
+    ]
+    return "\n".join(parts)
+
+
+def test_caller_doc_exists_and_names_pipeline() -> None:
+    text = _doc()
+    assert "grokbot-checkpoint-v1" in text
+    assert "pipeline_options" in text
+    assert "dispatch_thread_id" in text
+
+
+def test_caller_doc_option_keys_exist() -> None:
+    keys = [
+        line.strip()
+        for line in _fence(_doc(), "option-keys").splitlines()
+        if line.strip()
+    ]
+    assert keys, "option-keys fence empty"
+    sources = _handler_sources()
+    missing = [key for key in keys if f'"{key}"' not in sources]
+    assert missing == []
+
+
+def test_caller_doc_codes_exist() -> None:
+    text = _doc()
+    codes = sorted(
+        set(re.findall(r"\b(?:admit|seal|source|card|post)\.[a-z0-9_]+", text))
+    )
+    assert codes, "doc names no refusal codes"
+    sources = _handler_sources()
+    missing = [code for code in codes if f'"{code}"' not in sources]
+    assert missing == []
+
+
+@pytest.mark.asyncio
+async def test_caller_doc_example_admits() -> None:
+    raw = _fence(_doc(), "seal-example")
+    raw = raw.replace("<uuid>", _UUID)
+    options = yaml.safe_load(raw)
+    assert isinstance(options, dict)
+
+    async def get(path, params=None):
+        return {"turns": []}, 200
+
+    ok = await run_admit(options, {}, get=get)
+    assert ok.get("refused") is None
+    refused = await run_admit({k: v for k, v in options.items() if k != "agent_id"}, {}, get=get)
+    assert (refused.get("refused") or {}).get("code") == "admit.agent_id"
+
+
+def test_yaml_description_points_to_caller_doc() -> None:
+    loaded = yaml.safe_load(_YAML.read_text(encoding="utf-8"))
+    description = str(loaded.get("description") or "")
+    assert "CALLER.md" in description
+    assert "pipeline_options" in description
+    assert "dispatch_thread_id" in description
+
+
+def test_caller_doc_paths() -> None:
+    text = _doc()
+    assert "notes/system/seals/<sid>.messages.json" in text
+    assert "tape/pours/<surface>/<transcript_id>.messages.json" in text
+    assert "notes/system/transcripts/" not in text
