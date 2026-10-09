@@ -113,8 +113,6 @@ def _unlanded_tip_agrees_with_branch(declared: str, branch_tip: str) -> bool:
         return True
     if len(declared) >= 7 and tip.startswith(declared):
         return True
-    if len(tip) >= 7 and declared.startswith(tip[:7]):
-        return True
     return False
 
 

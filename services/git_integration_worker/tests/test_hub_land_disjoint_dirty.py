@@ -52,6 +52,35 @@ def _master(repo: Path) -> str:
     return _git(repo, "rev-parse", "refs/heads/master").stdout.strip()
 
 
+def test_hub_land_paths_unknown_when_branch_diff_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-paths-unknown"
+    _commit_on_branch(repo, branch, "lane.md", "lane\n")
+    (repo / "foreign-wip.md").write_text("peer wip\n", encoding="utf-8")
+    import services.git_integration_worker.cursor_sdk_hub_land_scope as scope
+
+    real_git_capture = scope._git_capture
+
+    def _git_capture_stub(hub: Path, *args: str):
+        if args == ("diff", "--name-only", f"master...{branch}"):
+            return subprocess.CompletedProcess(args, 1, "", "fatal: bad ref")
+        return real_git_capture(hub, *args)
+
+    monkeypatch.setattr(scope, "_git_capture", _git_capture_stub)
+    assert hub_land_precondition_reason(repo, branch_name=branch) == (
+        "hub_land_paths_unknown"
+    )
+    before = _master(repo)
+    result = land_lane_branch_onto_hub_master(
+        repo, branch_name=branch, holder_op_id="d-paths-unknown"
+    )
+    assert result.landed is False
+    assert result.refuse_reason == "hub_land_paths_unknown"
+    assert _master(repo) == before
+
+
 def test_disjoint_dirty_hub_logs_paths_at_info(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -64,6 +64,36 @@ def test_silent_land_proceeds_when_unlanded_tip_matches_branch(
     assert ancestor.returncode == 0
 
 
+def test_silent_land_refuses_unlanded_full_sha_same_seven_char_prefix_only(
+    tmp_path: Path,
+) -> None:
+    repo = _init_hub(tmp_path)
+    branch = "cursor-sdk/lane-seven-prefix"
+    assert _git(repo, "checkout", "-b", branch).returncode == 0
+    (repo / "lane.md").write_text("lane\n", encoding="utf-8")
+    assert _git(repo, "add", "lane.md").returncode == 0
+    assert _git(repo, "commit", "-m", "lane").returncode == 0
+    tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    forged = tip[:7] + ("a" * 33)
+    if forged.lower() == tip.lower():
+        forged = tip[:7] + ("b" * 33)
+    assert forged[:7] == tip[:7]
+    assert forged.lower() != tip.lower()
+    assert _git(repo, "checkout", "master").returncode == 0
+    master_before = _git(repo, "rev-parse", "master").stdout.strip()
+    closeout = f"land_disposition: unlanded {forged}\n"
+    landed = maybe_ff_land_silent_lane(
+        repo=repo,
+        branch_name=branch,
+        dispatch_id="d-seven-prefix",
+        packet_text="land: silent\n",
+        closeout_text=closeout,
+        commits_ahead=1,
+    )
+    assert landed is False
+    assert _git(repo, "rev-parse", "master").stdout.strip() == master_before
+
+
 def test_silent_land_refuses_unlanded_tip_mismatch(tmp_path: Path) -> None:
     repo = _init_hub(tmp_path)
     branch = "cursor-sdk/lane-unlanded-mismatch"

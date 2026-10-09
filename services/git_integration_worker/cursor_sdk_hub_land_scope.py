@@ -182,10 +182,10 @@ def _porcelain_dirty_paths(porcelain: str) -> list[str]:
     return paths
 
 
-def _lane_land_path_names(hub: Path, branch: str) -> frozenset[str]:
+def _lane_land_path_names(hub: Path, branch: str) -> frozenset[str] | None:
     proc = _git_capture(hub, "diff", "--name-only", f"master...{branch}")
     if proc.returncode != 0:
-        return frozenset()
+        return None
     return frozenset(line.strip() for line in proc.stdout.splitlines() if line.strip())
 
 
@@ -210,6 +210,12 @@ def _hub_worktree_dirty_refusal(hub: Path, *, branch_name: str) -> str | None:
     """Disjoint-only dirty on hub master, matching manual S1a land discipline."""
     branch = branch_name.strip()
     land_paths = _lane_land_path_names(hub, branch)
+    if land_paths is None:
+        logger.info(
+            "hub land refuse hub_land_paths_unknown branch=%s",
+            branch,
+        )
+        return "hub_land_paths_unknown"
     cached = _git_capture(hub, "diff", "--cached", "--name-only")
     if cached.returncode == 0 and cached.stdout.strip():
         staged = [
