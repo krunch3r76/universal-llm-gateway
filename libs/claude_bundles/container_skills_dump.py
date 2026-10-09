@@ -13,6 +13,7 @@ the Cowork Output download — do not treat the landing CSE as a live stream.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import zipfile
@@ -25,8 +26,20 @@ from claude_bundles.chat_cowork_mode import ensure_chat_compose
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.container_skills_zip import pick_download_label
 from claude_bundles.cowork_output_download import download_cowork_output
+from claude_bundles.liveness_wait import liveness_wait
 from claude_bundles.project_ask import send_prompt
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
+
+_COMPOSER = '[data-testid="chat-input"]'
+_PROBE_S = 2.0
+_LIFE_JS = """() => {
+  const ready = document.readyState || "";
+  const dom = document.documentElement ? document.documentElement.outerHTML.length : 0;
+  let resources = 0;
+  try { resources = performance.getEntriesByType("resource").length; } catch (e) {}
+  return { ready, dom, resources, url: location.href || "" };
+}"""
+_READY_RANK = {"loading": 1, "interactive": 2, "complete": 3}
 
 NEW_CHAT_URL = "https://claude.ai/new"
 DUMP_PROMPT = """You have a server-side skills directory at /mnt/skills with three trees: public, examples, and user.
@@ -37,8 +50,110 @@ After the zip, say USER_SKILL_COUNT=<n> for the number of skill directories unde
 """
 
 
+class _PageLife:
+    """Monotonic navigation signature for one page.
+
+    Tracks the high-water mark of load rank, DOM length, finished resource
+    entries, and distinct URLs. A stuck readyState or an open socket does not
+    advance the tuple, so a wedged document stalls instead of resetting forever.
+    """
+
+    def __init__(self, page: Page) -> None:
+        self.page = page
+        self.max_rank = 0
+        self.max_dom = 0
+        self.max_resources = 0
+        self.seen_urls: set[str] = set()
+
+    async def signature(self) -> tuple[int, int, int, int]:
+        raw = None
+        try:
+            raw = await asyncio.wait_for(self.page.evaluate(_LIFE_JS), timeout=_PROBE_S)
+        except Exception:
+            raw = None
+        if isinstance(raw, dict):
+            rank = _READY_RANK.get(str(raw.get("ready") or ""), 0)
+            self.max_rank = max(self.max_rank, rank)
+            try:
+                dom = int(raw.get("dom") or 0)
+            except (TypeError, ValueError):
+                dom = 0
+            self.max_dom = max(self.max_dom, dom)
+            try:
+                resources = int(raw.get("resources") or 0)
+            except (TypeError, ValueError):
+                resources = 0
+            self.max_resources = max(self.max_resources, resources)
+            url = str(raw.get("url") or "")
+            if url:
+                self.seen_urls.add(url)
+        return (self.max_rank, self.max_dom, self.max_resources, len(self.seen_urls))
+
+
+async def _composer_ready(page: Page) -> bool:
+    try:
+        count = await asyncio.wait_for(
+            page.locator(_COMPOSER).count(),
+            timeout=_PROBE_S,
+        )
+    except Exception:
+        return False
+    return count > 0
+
+
+async def _navigate(page: Page, url: str) -> None:
+    """Open ``url`` under the liveness loop.
+
+    ``page.goto`` uses ``wait_until='commit'`` and ``timeout=0`` so Playwright
+    does not turn a slow commit into a failure. Completion is the chat composer
+    or ``document.readyState === 'complete'``. The inspect loop cancels a goto
+    that is still in flight when the wait ends.
+    """
+    nav = asyncio.create_task(page.goto(url, wait_until="commit", timeout=0))
+    life = _PageLife(page)
+
+    async def _error() -> BaseException | None:
+        if nav.done() and not nav.cancelled():
+            return nav.exception()
+        return None
+
+    async def _complete() -> bool:
+        if await _composer_ready(page):
+            return True
+        if nav.done() and not nav.cancelled() and nav.exception() is None:
+            rank, _dom, _resources, _urls = await life.signature()
+            return rank >= _READY_RANK["complete"]
+        return False
+
+    try:
+        await liveness_wait(
+            progress=life.signature,
+            complete=_complete,
+            error=_error,
+            phase="navigate",
+        )
+    finally:
+        if not nav.done():
+            nav.cancel()
+            try:
+                await nav
+            except asyncio.CancelledError:
+                pass
+
+
 async def _wait_composer(page: Page) -> None:
-    await page.locator('[data-testid="chat-input"]').wait_for(timeout=30_000)
+    """Wait until the chat composer is mounted.
+
+    Uses the same inspect loop as navigation. DOM growth, a new URL, load-state
+    advance, or a finished resource resets the window. A quiet page stalls.
+    There is no ``wait_for(timeout=30_000)`` failure bound.
+    """
+    life = _PageLife(page)
+    await liveness_wait(
+        progress=life.signature,
+        complete=lambda: _composer_ready(page),
+        phase="composer",
+    )
 
 
 async def _reuse_or_open(ctx, chat_url: str) -> Page:
@@ -47,29 +162,21 @@ async def _reuse_or_open(ctx, chat_url: str) -> Page:
             await page.bring_to_front()
             return page
     page = await ctx.new_page()
-    await page.goto(chat_url, wait_until="domcontentloaded")
+    await _navigate(page, chat_url)
     await page.bring_to_front()
     return page
 
 
 async def _fresh_chat(ctx) -> Page:
     page = await ctx.new_page()
-    await page.goto(NEW_CHAT_URL, wait_until="domcontentloaded")
+    await _navigate(page, NEW_CHAT_URL)
     await page.bring_to_front()
     await _wait_composer(page)
     return page
 
 
-async def _click_chat_zip_card(page: Page, out: Path) -> Path:
-    """Click the in-chat skills-zip Download control and save the file.
-
-    The card's visible text is often just ``Download`` while the accessible
-    name is ``Download Claude skills``. A chat-title More options button
-    shares the title words and sits under the transcript, so a coordinate
-    click times out (``subtree intercepts pointer events``). Scope to
-    ``main`` and invoke ``HTMLElement.click`` so the row overlay does not
-    take the hit.
-    """
+async def _zip_button(page: Page):
+    """Return the in-chat skills-zip button, or None when it is not mounted."""
     root = page.locator("main")
     if not await root.count():
         root = page.locator("body")
@@ -93,21 +200,40 @@ async def _click_chat_zip_card(page: Page, out: Path) -> Path:
         if not await btn.count():
             btn = root.get_by_role("button", name="Download", exact=True)
     if not await btn.count():
-        raise RuntimeError(
-            "skills zip download control not found "
-            f"(url={page.url!r} labels={labels[:12]!r})"
-        )
+        return None
+    return btn
+
+
+async def _click_chat_zip_card(page: Page, out: Path, *, timeout_ms: int = 0) -> Path:
+    """Click the in-chat skills-zip Download control and save the file.
+
+    The card's visible text is often just ``Download`` while the accessible
+    name is ``Download Claude skills``. A chat-title More options button
+    shares the title words and sits under the transcript, so a coordinate
+    click times out (``subtree intercepts pointer events``). Scope to
+    ``main`` and invoke ``HTMLElement.click`` so the row overlay does not
+    take the hit.
+    """
+    btn = await _zip_button(page)
+    if btn is None:
+        raise RuntimeError(f"skills zip download control not found (url={page.url!r})")
     out.parent.mkdir(parents=True, exist_ok=True)
-    async with page.expect_download(timeout=60_000) as dl_info:
+    async with page.expect_download(timeout=timeout_ms) as dl_info:
         await btn.first.evaluate("el => el.click()")
     download = await dl_info.value
     await download.save_as(str(out))
     return out
 
 
-async def _save_cowork_zip(page: Page, out: Path) -> Path | None:
-    """Write Cowork Output bytes when they are a zip (``/new`` → CSE)."""
-    result = await download_cowork_output(page, timeout_ms=60_000)
+async def _save_cowork_zip(
+    page: Page, out: Path, *, timeout_ms: int = 0
+) -> Path | None:
+    """Write Cowork Output bytes when they are a zip (``/new`` → CSE).
+
+    ``timeout_ms=0`` disables Playwright's download deadline. The caller runs
+    this under ``liveness_wait``, which stalls only when no progress is visible.
+    """
+    result = await download_cowork_output(page, timeout_ms=timeout_ms)
     if result is None or not result.content_bytes:
         return None
     raw = result.content_bytes
@@ -118,23 +244,130 @@ async def _save_cowork_zip(page: Page, out: Path) -> Path | None:
     return out
 
 
-async def download_skills_zip(page: Page, out: Path) -> Path:
-    """Harvest ``claude-skills.zip`` from the chat card or Cowork Output."""
-    last_err: RuntimeError | None = None
-    for _ in range(6):
+class _ZipHarvest:
+    """One zip download driven by the inspect loop, not a fixed retry count.
+
+    A running attempt is cancelled when the wait stalls. Button-not-found is
+    not an error event: the loop keeps watching for new buttons, a growing DOM,
+    or a growing zip. Any other exception fails immediately as an error.
+    """
+
+    def __init__(self, page: Page, out: Path) -> None:
+        self.page = page
+        self.out = out
+        self.life = _PageLife(page)
+        self.task: asyncio.Task | None = None
+        self.error: BaseException | None = None
+        self.max_file = 0
+        self.max_buttons = 0
+
+    def _file_size(self) -> int:
         try:
-            return await _click_chat_zip_card(page, out)
+            if self.out.is_file():
+                return self.out.stat().st_size
+        except OSError:
+            return self.max_file
+        return 0
+
+    async def _button_count(self) -> int:
+        try:
+            root = self.page.locator("main")
+            if not await root.count():
+                root = self.page.locator("body")
+            return int(await root.get_by_role("button").count())
+        except Exception:
+            return self.max_buttons
+
+    def _capture_task_error(self) -> None:
+        if self.error is not None or self.task is None:
+            return
+        if not self.task.done() or self.task.cancelled():
+            return
+        exc = self.task.exception()
+        if isinstance(exc, (PlaywrightTimeoutError, asyncio.CancelledError)):
+            return
+        if isinstance(exc, RuntimeError) and "not found" in str(exc):
+            return
+        if exc is not None:
+            self.error = exc
+
+    def _kick(self) -> None:
+        self._capture_task_error()
+        if self.error is not None:
+            return
+        if self.task is not None and not self.task.done():
+            return
+        self.task = asyncio.create_task(self._once())
+
+    async def _once(self) -> Path | None:
+        try:
+            return await _click_chat_zip_card(self.page, self.out, timeout_ms=0)
         except RuntimeError as exc:
-            last_err = exc
-        except PlaywrightTimeoutError as exc:
-            last_err = RuntimeError(f"zip card click produced no download: {exc}")
-        saved = await _save_cowork_zip(page, out)
-        if saved is not None:
-            return saved
-        await page.wait_for_timeout(10_000)
-    if last_err is not None:
-        raise last_err
-    raise RuntimeError("skills zip download control not found")
+            if "not found" not in str(exc):
+                raise
+        except PlaywrightTimeoutError:
+            return None
+        return await _save_cowork_zip(self.page, self.out, timeout_ms=0)
+
+    async def signature(self) -> tuple[int, int, int, int, int, int]:
+        self._kick()
+        try:
+            page_sig = await asyncio.wait_for(self.life.signature(), timeout=_PROBE_S)
+        except Exception:
+            page_sig = (
+                self.life.max_rank,
+                self.life.max_dom,
+                self.life.max_resources,
+                len(self.life.seen_urls),
+            )
+        try:
+            buttons = await asyncio.wait_for(self._button_count(), timeout=_PROBE_S)
+        except Exception:
+            buttons = self.max_buttons
+        self.max_buttons = max(self.max_buttons, buttons)
+        self.max_file = max(self.max_file, self._file_size())
+        return (*page_sig, self.max_buttons, self.max_file)
+
+    async def complete(self) -> bool:
+        try:
+            return self.out.is_file() and zipfile.is_zipfile(self.out)
+        except (OSError, zipfile.BadZipFile):
+            return False
+
+    async def error_check(self) -> BaseException | None:
+        self._capture_task_error()
+        return self.error
+
+    async def cancel(self) -> None:
+        task = self.task
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, PlaywrightTimeoutError, RuntimeError):
+            return
+
+
+async def download_skills_zip(page: Page, out: Path) -> Path:
+    """Harvest ``claude-skills.zip`` from the chat card or Cowork Output.
+
+    Replaces the fixed six-by-ten-second retry and the 60s ``expect_download``
+    deadline. Streaming DOM growth, new buttons, or a growing zip resets the
+    inspect window. No progress across one full window stalls. An explicit
+    download exception fails immediately.
+    """
+    harvest = _ZipHarvest(page, out)
+    try:
+        await liveness_wait(
+            progress=harvest.signature,
+            complete=harvest.complete,
+            error=harvest.error_check,
+            phase="download",
+        )
+    finally:
+        await harvest.cancel()
+    return out
 
 
 async def dump_container_skills(
@@ -147,7 +380,11 @@ async def dump_container_skills(
     timeout_s: int = 360,
     chat_compose: bool = False,
 ) -> Path:
-    """Submit (optional) then download ``claude-skills.zip`` from the chat card."""
+    """Submit (optional) then download ``claude-skills.zip`` from the chat card.
+
+    Navigation and zip harvest use the inspect-window loop. The assistant reply
+    wait is unchanged: ``timeout_s`` stays an idle budget.
+    """
     if download_only and not chat_url:
         raise ValueError("download_only requires chat_url")
     if chat_url and "/cowork/cse_" in chat_url and not download_only:
@@ -177,6 +414,12 @@ async def dump_container_skills(
 
 
 def default_dump_path(repo: Path) -> Path:
+    """Resolve the dump zip path for ``repo``.
+
+    ``CLAUDE_AI_SKILLS_DUMP`` overrides the default
+    ``tmp/reviews/claude-skills-latest.zip`` under the checkout. Callers pass
+    the result as ``dump_container_skills(out=...)``.
+    """
     override = os.environ.get("CLAUDE_AI_SKILLS_DUMP", "").strip()
     if override:
         return Path(override).expanduser()
