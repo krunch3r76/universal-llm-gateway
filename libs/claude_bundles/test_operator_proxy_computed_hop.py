@@ -166,9 +166,38 @@ def test_cancel_turn_ref_fallback() -> None:
 
 def test_truncated_flag_when_window_full() -> None:
     turns = [_turn(i, f"STATUS|n{i}") for i in range(1, 201)]
-    turns.append(_turn(201, "REQUEST|investigate|todo:beyond"))
-    _, truncated = fold_lane("15722", turns[:200])
+    _, truncated = fold_lane("15722", turns)
     assert truncated is True
-    leg = project_live_leg(["15722"], lambda _l: turns[:200])
+    leg = project_live_leg(["15722"], lambda _l: turns)
     block = render_live_leg(leg)
     assert "truncated" in block.lower()
+
+
+def test_fold_lane_15722_real_subject_shapes() -> None:
+    """Specimens from lane 15722 dry-run: PICKUP/DONE/PLAN/IMPLEMENT folding."""
+    turns = [
+        _turn(60, "PICKUP|implement|runbook:maestro-sidekick"),
+        _turn(64, "PICKUP|implement|decision:maestro-hop-model-fable"),
+        _turn(65, "DONE|implement|decision:maestro-hop-model-fable"),
+        _turn(102, "PICKUP|decision:forward-only-git"),
+        _turn(103, "PLAN|decision:forward-only-git"),
+        _turn(105, "IMPLEMENT|decision:forward-only-git (ACK received)"),
+        _turn(107, "DONE|decision:forward-only-git (ACK received)"),
+    ]
+    items, truncated = fold_lane("15722", turns)
+    keys = {(item.verb, item.key) for item in items}
+    assert ("PICKUP", "runbook:maestro-sidekick") in keys
+    assert ("PICKUP", "decision:maestro-hop-model-fable") not in keys
+    assert ("PICKUP", "decision:forward-only-git") not in keys
+    assert ("PLAN", "decision:forward-only-git") not in keys
+    assert truncated is False
+
+
+def test_done_closes_pickup_even_when_request_already_closed() -> None:
+    turns = [
+        _turn(1, "REQUEST|implement|todo:x"),
+        _turn(2, "PICKUP|implement|todo:x"),
+        _turn(3, "DONE|implement|todo:x"),
+    ]
+    items, _ = fold_lane("15722", turns)
+    assert items == []

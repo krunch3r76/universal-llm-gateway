@@ -156,13 +156,15 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
                 open_requests.pop(close_key, None)
                 if verb == "LANDED":
                     open_landeds[close_key] = (turn_no, verb, kind, subject)
-        elif verb in _PICKUP_CLOSE and key:
-            open_pickups.pop(key, None)
-            open_landeds.pop(key, None)
+                if verb in _PICKUP_CLOSE:
+                    open_pickups.pop(close_key, None)
+                    open_landeds.pop(close_key, None)
         elif verb == "PICKUP" and key:
             open_pickups[key] = (turn_no, verb, kind, subject)
         elif verb == "PLAN" and key:
             open_plans[key] = (turn_no, verb, kind, subject)
+        elif verb == "IMPLEMENT" and key:
+            open_plans.pop(key, None)
         elif verb in _PLAN_CLOSE and key:
             open_plans.pop(key, None)
 
@@ -180,12 +182,6 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
                 )
             )
     items.sort(key=lambda item: (item.lane, item.turn))
-    if truncated and items:
-        min_turn = min(t.get("turn_number") or t.get("id") or 0 for t in turns)
-        if any(item.turn <= min_turn for item in items):
-            truncated = True
-        else:
-            truncated = False
     return items, truncated
 
 
