@@ -340,6 +340,42 @@ class TeamDispatchGenerateBody(_DispatchCommon):
         return self
 
 
+class TeamDispatchClaimBody(_DispatchCommon):
+    """``team_dispatch`` op ``claim`` binds one house holder to a work_key.
+
+    ``thread`` becomes the GIW ``thread_id``. ``caller_agent`` is the holder;
+    the body has no separate free-text holder field. ``ttl_s`` is optional.
+    """
+
+    op: Literal["claim"]
+    work_key: str
+    thread: str
+    ttl_s: int | None = None
+
+
+class TeamDispatchClaimReleaseBody(_DispatchCommon):
+    """``team_dispatch`` op ``claim_release`` ends the caller's house claim.
+
+    ``outcome`` is completed, failed, or withdrawn. A missing claim is 404
+    and a claim held by someone else is 409.
+    """
+
+    op: Literal["claim_release"]
+    claim_id: str
+    outcome: Literal["completed", "failed", "withdrawn"]
+
+
+class TeamDispatchOccupancyBody(_DispatchCommon):
+    """``team_dispatch`` op ``occupancy`` reads who holds a work_key.
+
+    The GIW projection is occupancy, not progress: no landed or done field.
+    ``work_key`` uses the same D4 grammar as generate admits.
+    """
+
+    op: Literal["occupancy"]
+    work_key: str
+
+
 class TeamDispatchSteerBody(BaseModel):
     """``team_dispatch`` with ``op="steer"`` — thin GIW park/inject relay."""
 
@@ -408,7 +444,12 @@ class TeamDispatchToThreadBody(_DispatchCommon):
 
 # FastAPI resolves the union via the ``op`` discriminator key.
 TeamDispatchBody = Annotated[
-    TeamDispatchGenerateBody | TeamDispatchToThreadBody | TeamDispatchSteerBody,
+    TeamDispatchGenerateBody
+    | TeamDispatchToThreadBody
+    | TeamDispatchSteerBody
+    | TeamDispatchClaimBody
+    | TeamDispatchClaimReleaseBody
+    | TeamDispatchOccupancyBody,
     Field(discriminator="op"),
 ]
 
@@ -598,6 +639,20 @@ def hop_park_release_requested(generation_options: dict[str, Any] | None) -> boo
     return bool(opts.get("hop_park_release"))
 
 
+def claim_id_from_generation_options(
+    generation_options: dict[str, Any] | None,
+) -> str | None:
+    """House claim id carried beside hop_park_release, or None when absent.
+
+    Empty strings are dropped so a blank option does not become an admit field.
+    """
+    raw = (generation_options or {}).get("claim_id")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None
+
+
 @team_router.post("/dispatch", status_code=202, response_model=None)
 async def team_dispatch(
     body: TeamDispatchBody,
@@ -636,6 +691,38 @@ async def team_dispatch(
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    if body.op in ("claim", "claim_release", "occupancy"):
+        from .cursor_sdk_claim_dispatch import relay_house_claim
+
+        holder = (getattr(body, "caller_agent", None) or "").strip()
+        if body.op in ("claim", "claim_release") and not holder:
+            return JSONResponse(
+                status_code=422,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="caller_agent",
+                    reason="caller_agent is required to bind the claim holder",
+                    status_code=422,
+                    code="holder_agent_required",
+                ).to_dict(),
+            )
+        ok, detail = await relay_house_claim(
+            request_id=request_id,
+            op=body.op,
+            holder_agent=holder,
+            work_key=getattr(body, "work_key", None),
+            thread_id=getattr(body, "thread", None),
+            claim_id=getattr(body, "claim_id", None),
+            outcome=getattr(body, "outcome", None),
+            ttl_s=getattr(body, "ttl_s", None),
+        )
+        if not ok:
+            status_code = int(
+                detail.get("status_code") or detail.get("http_status") or 502
+            )
+            return JSONResponse(status_code=status_code, content=detail)
+        response.status_code = int(detail.get("status_code") or 200)
+        return detail
     if body.op == "steer":
         if body.steer == "park_for_restart":
             ok, detail = await steer_park_for_restart(
