@@ -358,3 +358,42 @@ def test_assemble_missing_card_omits_uri_and_read_via(
     assert len(sources) == 1
     assert sources[0]["uri"] == "agent-bus:10223#1"
     assert sources[0]["sha256"] is None
+
+
+def test_resume_route_accepts_grok_surface_and_rejects_unknown(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1: schema surfaces pour; an unknown surface is still 422."""
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    monkeypatch.setenv("AGENT_BUS_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    init_db()
+    create_thread(thread_id="16101", slug="ck3", tags=["role:root"])
+    create_turn(
+        thread_id="16101",
+        from_agent="grok-bot-hm1",
+        to_agent="cursor",
+        subject="CHECKPOINT",
+        body="Window: transcript_id=d556c84f-a1b2-c3d4-e5f6-7890abcdef12 turns@cp=1\n",
+        status="open",
+    )
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+    with TestClient(app) as client:
+        poured = client.post(
+            "/threads/16101/resume-fence",
+            json={"surface": "grok", "source": "mcp"},
+        )
+        assert poured.status_code < 300, poured.text
+        body = poured.json()
+        assert body["pre_pour_harvest"]["surface"] == "grok"
+        assert body["fence"]["root_thread"] == "16101"
+        unknown = client.post(
+            "/threads/16101/resume-fence",
+            json={"surface": "not-a-surface"},
+        )
+        assert unknown.status_code == 422

@@ -102,3 +102,48 @@ async def test_card_records_event_suppression(fs) -> None:
     assert out["refused"] is None
     assert "event_suppressed:prior_read_failed" in out["row"]
     assert "attribution:grok-bot-hm1" in out["row"]
+
+
+@pytest.mark.asyncio
+async def test_card_row_cites_seal_not_staging(fs) -> None:
+    """F3b: durable row cites the seal path; staging: trips the audit token."""
+    from cortex_store.dispatch_ops._detectors.provenance_staging import (
+        _STAGING_TOKEN_RE,
+    )
+
+    fs.files["notes/card.md"] = _CARD.encode()
+    options = {
+        "card_uri": "notes/card.md",
+        "expected_card_sha256": file_sha256(_CARD.encode()),
+        "n": 1,
+        "mode": "seal",
+        "trigger": "hop",
+        "bus_identity": "grok-bot-hm1",
+    }
+    env = {
+        "snapshot_uri": "ephemeral/harvests/grok/h-abcdefghi.raw.messages.json",
+        "sha256": "snapsha",
+        "messages_sha256": "msgsha",
+        "provenance": "raw",
+        "producer": "grok-dom-harvest",
+    }
+    out = await run_card(
+        options,
+        {},
+        env,
+        fs,
+        execution_id="e4",
+        seal={"session_id": "sess-f3b", "refused": None},
+    )
+    row = out["row"]
+    assert "staging:" not in row
+    assert "notes/system/seals/sess-f3b.messages.json" in row
+    assert _STAGING_TOKEN_RE.search(row) is None
+    assert out.get("snapshot_uri") == env["snapshot_uri"]
+    old = (
+        "notes/system/seals/sess-f3b.messages.json · "
+        "staging:ephemeral/harvests/grok/h-abcdefghi.raw.messages.json@snapsha"
+    )
+    assert "staging:" in old
+    assert _STAGING_TOKEN_RE.search(row) is None
+    assert _STAGING_TOKEN_RE.search("dropbox/harvests/grok/x")
