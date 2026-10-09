@@ -175,6 +175,193 @@ def gc1_acting_maestro_fact_set() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def drift_d7d8_mode() -> Literal["log-only", "off"]:
+    """Observability-only drift checks (never block send)."""
+    raw = os.environ.get("AGENT_BUS_DRIFT_D7D8", "log-only").strip().lower()
+    return "off" if raw == "off" else "log-only"
+
+
+_d7_control_total = 0
+_d7_bypass_count = 0
+_d8_misreply_count = 0
+
+
+def _reset_drift_counters_for_tests() -> None:
+    """Test isolation — not for production use."""
+    global _d7_control_total, _d7_bypass_count, _d8_misreply_count
+    _d7_control_total = 0
+    _d7_bypass_count = 0
+    _d8_misreply_count = 0
+
+
+def route_control_drift_summary() -> dict[str, float | int]:
+    """In-process D7/D8 counters for observability and tests."""
+    rate = (
+        float(_d7_bypass_count) / float(_d7_control_total)
+        if _d7_control_total
+        else 0.0
+    )
+    return {
+        "d7_control_total": _d7_control_total,
+        "d7_bypass_count": _d7_bypass_count,
+        "d7_bypass_rate": rate,
+        "d8_misreply_count": _d8_misreply_count,
+    }
+
+
+def would_envelope_reject_on_enforce(
+    *,
+    from_agent: str,
+    subject: str,
+    body: str,
+    tags: list[str] | None,
+) -> bool:
+    """True when ENVELOPE_ENFORCE=on would reject this house control turn."""
+    if not requires_route_control_envelope(tags=tags, subject=subject, body=body):
+        return False
+    envelope, _missing = parse_route_control_envelope(
+        from_agent=from_agent,
+        subject=subject,
+        body=body,
+    )
+    return envelope is None
+
+
+def would_ruling_gate_refuse_if_on(
+    *,
+    from_agent: str,
+    subject: str,
+    body: str,
+    tags: list[str] | None,
+) -> bool:
+    """True when RULING_GATE=on would refuse this house control turn."""
+    if not is_house_thread(tags):
+        return False
+
+    envelope, _missing = parse_route_control_envelope(
+        from_agent=from_agent,
+        subject=subject,
+        body=body,
+    )
+    kind = envelope.kind.upper() if envelope else (_subject_head_kind(subject) or "")
+    if not kind:
+        return False
+
+    if kind in _LIFECYCLE_KINDS:
+        return from_agent != _GC1
+
+    if kind not in _RULING_KINDS or from_agent != _GC1:
+        return False
+
+    authority = (
+        envelope.authority if envelope else _line_value(body, "authority") or ""
+    ).lower()
+    return not (gc1_acting_maestro_fact_set() and authority == "operator")
+
+
+def observe_drift_d7_bypass(
+    *,
+    thread_id: str,
+    from_agent: str,
+    subject: str,
+    body: str,
+    tags: list[str] | None,
+) -> None:
+    """LOG-ONLY: count bypassed enforce/gate for house control turns that posted."""
+    global _d7_control_total, _d7_bypass_count
+    if drift_d7d8_mode() == "off":
+        return
+    if not requires_route_control_envelope(tags=tags, subject=subject, body=body):
+        return
+
+    _d7_control_total += 1
+    bypass = False
+    reasons: list[str] = []
+    if (
+        envelope_enforce_mode() == "off"
+        and would_envelope_reject_on_enforce(
+            from_agent=from_agent,
+            subject=subject,
+            body=body,
+            tags=tags,
+        )
+    ):
+        bypass = True
+        reasons.append("envelope_enforce_off")
+    if (
+        ruling_gate_mode() == "bypass"
+        and would_ruling_gate_refuse_if_on(
+            from_agent=from_agent,
+            subject=subject,
+            body=body,
+            tags=tags,
+        )
+    ):
+        bypass = True
+        reasons.append("ruling_gate_bypass")
+
+    if bypass:
+        _d7_bypass_count += 1
+
+    summary = route_control_drift_summary()
+    _emit(
+        "agent_bus.route_control.drift_d7_observed",
+        thread=thread_id,
+        bypass=bypass,
+        bypass_reasons=reasons,
+        **summary,
+    )
+    if bypass:
+        _emit(
+            "agent_bus.route_control.drift_d7_bypass",
+            thread=thread_id,
+            bypass_reasons=reasons,
+            **summary,
+        )
+
+
+def observe_drift_d8_reply_path(
+    *,
+    thread_id: str,
+    from_agent: str,
+    to_agent: str,
+    tags: list[str] | None,
+    prior_turn: dict[str, Any] | None,
+) -> None:
+    """LOG-ONLY: house reply whose to differs from the requesting control turn's from."""
+    global _d8_misreply_count
+    if drift_d7d8_mode() == "off":
+        return
+    if not prior_turn or not is_house_thread(tags):
+        return
+
+    prior_from = str(prior_turn.get("from_agent") or "")
+    prior_to = str(prior_turn.get("to_agent") or "")
+    prior_subject = str(prior_turn.get("subject") or "")
+    prior_body = str(prior_turn.get("body") or "")
+    if not requires_route_control_envelope(
+        tags=tags,
+        subject=prior_subject,
+        body=prior_body,
+    ):
+        return
+    if prior_to != from_agent:
+        return
+    if to_agent == prior_from:
+        return
+
+    _d8_misreply_count += 1
+    _emit(
+        "agent_bus.route_control.drift_d8_reply_path",
+        thread=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        expected_to=prior_from,
+        prior_turn_number=prior_turn.get("turn_number"),
+        **route_control_drift_summary(),
+    )
+
+
 def _emit(signal: str, **payload: Any) -> None:
     from agent_bus_store.events.publisher import emit
 
@@ -305,9 +492,11 @@ def assert_house_route_control(
     *,
     thread_id: str,
     from_agent: str,
+    to_agent: str,
     subject: str,
     body: str,
     tags: list[str] | None,
+    prior_turn: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Envelope validation then ruling gate (send-path entry)."""
     advisory = validate_route_control_envelope(
@@ -324,6 +513,20 @@ def assert_house_route_control(
         body=body,
         tags=tags,
     )
+    observe_drift_d8_reply_path(
+        thread_id=thread_id,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        tags=tags,
+        prior_turn=prior_turn,
+    )
+    observe_drift_d7_bypass(
+        thread_id=thread_id,
+        from_agent=from_agent,
+        subject=subject,
+        body=body,
+        tags=tags,
+    )
     return advisory
 
 
@@ -331,12 +534,18 @@ __all__ = [
     "RouteControlEnvelope",
     "apply_ruling_gate",
     "assert_house_route_control",
+    "drift_d7d8_mode",
     "envelope_enforce_mode",
     "gc1_acting_maestro_fact_set",
     "is_house_thread",
     "load_route_control_json_schema",
+    "observe_drift_d7_bypass",
+    "observe_drift_d8_reply_path",
     "parse_route_control_envelope",
     "requires_route_control_envelope",
+    "route_control_drift_summary",
     "ruling_gate_mode",
     "validate_route_control_envelope",
+    "would_envelope_reject_on_enforce",
+    "would_ruling_gate_refuse_if_on",
 ]
