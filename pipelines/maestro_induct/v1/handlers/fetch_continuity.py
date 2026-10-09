@@ -20,7 +20,14 @@ class MaestroInductFetchContinuityHandler(BaseHandler):
         if resolve.get("invalid_root"):
             return StepOutput(raw="", json={"skipped": True})
         root = str(resolve.get("root"))
-        uri = f"cortex://notes/system/threads/{root}-continuity.md"
+        from agent_bus_store.house_pools import load_continuity_card
+
+        card = load_continuity_card(root)
+        uri = (
+            card.uri
+            if card.status == "found" and card.uri
+            else f"cortex://notes/system/threads/{root}-continuity.md"
+        )
         res = _clients.read_cortex_file(uri)
         if isinstance(res, dict):
             return StepOutput(raw="", json=res)

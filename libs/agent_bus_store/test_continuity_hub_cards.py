@@ -7,6 +7,7 @@ import pytest
 from agent_bus_store.continuity_hub_cards import (
     PRIORITY_HUB_CARDS,
     entity_create_payload,
+    hub_card_uri,
     render_priority_card,
 )
 
@@ -38,3 +39,13 @@ def test_entity_create_payload_matches_card():
     assert payload["id"] == "document:9740-continuity"
     assert payload["content_hash"] == "sha256:abc"
     assert "PERPS_TRADER_FIRE" in PRIORITY_HUB_CARDS["9740"]["objective"]
+
+
+def test_hub_card_uri_uses_card_md_only_house(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = tmp_path / "notes/system/threads/10479-card.md"
+    card.parent.mkdir(parents=True)
+    card.write_text("# live\n", encoding="utf-8")
+    assert hub_card_uri("10479") == "cortex://notes/system/threads/10479-card.md"

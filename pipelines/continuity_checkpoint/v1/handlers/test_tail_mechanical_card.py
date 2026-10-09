@@ -51,7 +51,9 @@ def _run_conductor_fold_with_card(
     return out, card
 
 
-def test_b2_1_card_settled_live_next_with_options_residue(cortex_files_root: Path) -> None:
+def test_b2_1_card_settled_live_next_with_options_residue(
+    cortex_files_root: Path,
+) -> None:
     """B2-1 — options.residue supplied still writes fold-derived Settled/Live/Next."""
     out, card = _run_conductor_fold_with_card(
         cortex_files_root,
@@ -104,3 +106,22 @@ def test_b2_3_resume_open_and_fold_summary_both_intact(cortex_files_root: Path) 
     assert "**Settled:** G1" in text
     assert "**Live:** G2" in text
     assert "**Next:** G3" in text
+
+
+def test_fold_summary_writes_card_md_only_house(cortex_files_root: Path) -> None:
+    """A house whose only card is ``{id}-card.md`` receives the fold row."""
+    thread = "10479"
+    card = cortex_files_root / "notes/system/threads" / f"{thread}-card.md"
+    card.parent.mkdir(parents=True, exist_ok=True)
+    card.write_text("# live card\n", encoding="utf-8")
+    written, uri, reason = apply_fold_summary_to_card(
+        thread=thread,
+        settled="G1",
+        live="G2",
+        next_row="G3",
+    )
+    assert written is True
+    assert reason == "ok"
+    assert uri.endswith("10479-card.md")
+    assert "**Settled:** G1" in card.read_text(encoding="utf-8")
+    assert not (card.parent / f"{thread}-continuity.md").exists()

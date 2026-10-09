@@ -142,6 +142,23 @@ def test_l3_summary_row_dual_file_prefers_card_md(
     assert source == "l3_continuity_card"
 
 
+def test_l3_summary_row_live_only_card_does_not_hide_settled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A Live-only preferred card must not hide Settled on a later file."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "9582-card.md").write_text("**Live:** live only\n", encoding="utf-8")
+    (threads / "9582-continuity.md").write_text(
+        "**Settled:** fold settled line\n",
+        encoding="utf-8",
+    )
+    row, source = env_mod._read_l3_summary_row("9582")
+    assert row == "fold settled line"
+    assert source == "l3_continuity_card"
+
+
 def test_l3_summary_row_reads_continuity_card_name(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

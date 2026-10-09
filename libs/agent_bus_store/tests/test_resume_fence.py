@@ -78,6 +78,33 @@ def root_thread(tmp_path, monkeypatch: pytest.MonkeyPatch):
     yield "10223"
 
 
+def test_rearm_refreshes_stale_cached_card_uri(
+    root_thread, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A cached armed read set drops a guessed card URI for the resolved one."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    threads = tmp_path / "notes/system/threads"
+    threads.mkdir(parents=True)
+    (threads / "10223-continuity.md").write_text("# archive\n", encoding="utf-8")
+    first = arm_resume_fence("10223", transcript_id="tab-stale", source="hook_prompt")
+    assert any(
+        uri.endswith("10223-continuity.md")
+        for uri in first["read_set"]["readable"]["cortex_uris"]
+    )
+    (threads / "10223-card.md").write_text("# live\n", encoding="utf-8")
+    second = arm_resume_fence("10223", transcript_id="tab-stale", source="hook_prompt")
+    uris = second["read_set"]["readable"]["cortex_uris"]
+    assert "cortex://notes/system/threads/10223-card.md" in uris
+    assert "cortex://notes/system/threads/10223-continuity.md" not in uris
+    fs_allow = next(
+        row
+        for row in second["read_set"]["readable"]["mcp_allow"]
+        if row["tool"] == "fs"
+    )
+    assert "cortex://notes/system/threads/10223-card.md" in fs_allow["paths"]
+    assert "cortex://notes/system/threads/10223-continuity.md" not in fs_allow["paths"]
+
+
 def test_arm_resume_fence_journals_armed_only(root_thread) -> None:
     with (
         patch(

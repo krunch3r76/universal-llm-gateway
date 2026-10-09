@@ -121,21 +121,19 @@ def _summary_row_from_tip_cp(body: str) -> str | None:
 
 
 def _read_l3_summary_row(thread_id: str) -> tuple[str | None, str | None]:
-    """Best-effort Settled/Live/Next line from the first card that carries one.
+    """Best-effort Settled, else Live, else Next, across every present card.
 
-    The fold writer patches only ``{id}-continuity.md``. When ``{id}-card.md``
-    is also present and has no summary lines, the row comes from the later
-    file. No summary line falls through to the tip checkpoint.
+    A ``{id}-card.md`` that carries only Live must not hide Settled on a
+    later ladder file. No summary line falls through to the tip checkpoint.
     """
-    for card in iter_present_continuity_cards(thread_id):
-        if not card.text:
-            continue
-        for pattern in (
-            r"(?m)^\*\*Settled:\*\*\s*(.+)$",
-            r"(?m)^\*\*Live:\*\*\s*(.+)$",
-            r"(?m)^\*\*Next:\*\*\s*(.+)$",
-        ):
-            match = re.search(pattern, card.text)
+    cards = [card for card in iter_present_continuity_cards(thread_id) if card.text]
+    for pattern in (
+        r"(?m)^\*\*Settled:\*\*\s*(.+)$",
+        r"(?m)^\*\*Live:\*\*\s*(.+)$",
+        r"(?m)^\*\*Next:\*\*\s*(.+)$",
+    ):
+        for card in cards:
+            match = re.search(pattern, card.text or "")
             if match:
                 line = match.group(1).strip()
                 if line:

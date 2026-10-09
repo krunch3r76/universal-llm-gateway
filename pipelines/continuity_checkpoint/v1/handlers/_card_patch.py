@@ -115,19 +115,44 @@ def validate_worker_payload(data: dict[str, Any]) -> tuple[bool, str]:
     return True, "ok"
 
 
-def card_path(thread: str) -> Path | None:
+def _files_root() -> Path | None:
     root_env = os.environ.get("CORTEX_FILES_ROOT")
     if not root_env:
         try:
             from cortex_store.dispatch_ops._shared import _FILES_ROOT
 
-            files_root = _FILES_ROOT
+            return _FILES_ROOT
         except Exception:  # noqa: BLE001
             return None
-    else:
-        files_root = Path(root_env)
+    return Path(root_env)
+
+
+def resolved_card(thread: str) -> tuple[Path | None, str]:
+    """Present card from ``house_pools``, else the legacy ``{id}-continuity.md`` target.
+
+    A miss keeps that filename. It does not invent another one.
+    """
+    legacy_uri = f"cortex://notes/system/threads/{thread}-continuity.md"
+    files_root = _files_root()
+    if files_root is None:
+        return None, legacy_uri
+    from agent_bus_store.house_pools import load_continuity_card
+
+    card = load_continuity_card(thread)
+    if card.status == "found" and card.relpath and card.uri:
+        resolved = files_root / card.relpath
+        if resolved.is_file():
+            return resolved, card.uri
     path = files_root / "notes" / "system" / "threads" / f"{thread}-continuity.md"
-    return path if path.parent.is_dir() or path.is_file() else None
+    if path.parent.is_dir() or path.is_file():
+        return path, legacy_uri
+    return None, legacy_uri
+
+
+def card_path(thread: str) -> Path | None:
+    """Path of the house card, or the legacy create target when none exists."""
+    path, _uri = resolved_card(thread)
+    return path
 
 
 def _format_opportunity_row(row: Any) -> str:
@@ -149,8 +174,7 @@ def apply_card_patch(
     opportunities_rows: list[Any],
 ) -> tuple[bool, str, str]:
     """Patch ## Resume open and append opportunities rows. Returns applied, uri, reason."""
-    card_uri = f"cortex://notes/system/threads/{thread}-continuity.md"
-    path = card_path(thread)
+    path, card_uri = resolved_card(thread)
     if path is None or not path.is_file():
         return False, card_uri, "files_root_unreachable"
     text = path.read_text(encoding="utf-8")
@@ -168,11 +192,19 @@ def apply_card_patch(
                 existing = read_section(opp_text, "Opportunities").strip()
             except Exception:  # noqa: BLE001
                 existing = ""
-            rows = [text for r in opportunities_rows if (text := _format_opportunity_row(r))]
+            rows = [
+                text for r in opportunities_rows if (text := _format_opportunity_row(r))
+            ]
             if rows:
-                block = existing + ("\n" if existing else "") + "\n".join(f"- {r}" for r in rows)
+                block = (
+                    existing
+                    + ("\n" if existing else "")
+                    + "\n".join(f"- {r}" for r in rows)
+                )
                 try:
-                    opp_updated, _ = replace_section(opp_text, "Opportunities", block + "\n")
+                    opp_updated, _ = replace_section(
+                        opp_text, "Opportunities", block + "\n"
+                    )
                     opp_path.write_text(opp_updated, encoding="utf-8")
                 except Exception:  # noqa: BLE001
                     pass
@@ -214,17 +246,12 @@ def apply_fold_summary_to_card(
     live: str,
     next_row: str,
 ) -> tuple[bool, str, str]:
-    """Patch **Settled/Live/Next** lines on the continuity card from a fold."""
-    card_uri = f"cortex://notes/system/threads/{thread}-continuity.md"
-    path = card_path(thread)
+    """Patch **Settled/Live/Next** on the card ``house_pools`` resolves."""
+    path, card_uri = resolved_card(thread)
     if path is None or not path.is_file():
         return False, card_uri, "files_root_unreachable"
     text = path.read_text(encoding="utf-8")
-    block = (
-        f"**Settled:** {settled}\n"
-        f"**Live:** {live}\n"
-        f"**Next:** {next_row}\n"
-    )
+    block = f"**Settled:** {settled}\n**Live:** {live}\n**Next:** {next_row}\n"
     if _SETTLED_RE.search(text):
         text = _SETTLED_RE.sub(f"**Settled:** {settled}", text, count=1)
         text = _LIVE_RE.sub(f"**Live:** {live}", text, count=1)
@@ -240,9 +267,9 @@ __all__ = [
     "apply_card_patch",
     "apply_fold_summary_to_card",
     "card_path",
+    "resolved_card",
     "clamp_residue",
     "derive_settled_live_next",
     "parse_worker_json",
     "validate_worker_payload",
 ]
-

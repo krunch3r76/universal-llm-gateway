@@ -13,7 +13,12 @@ from typing import Any
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL
 from .continuity_card_scratchboards import extract_scratchboard_uris
 from .db.connection import connect, write_connect
-from .house_pools import ContinuityCard, load_continuity_card, parse_pools
+from .house_pools import (
+    ContinuityCard,
+    _continuity_card_candidate_relpaths,
+    load_continuity_card,
+    parse_pools,
+)
 from .resume_fence_emit import fence_writes_then_emit
 from .resume_fence_mission import (
     build_mission_block,
@@ -273,6 +278,46 @@ def _format_pool_row(row: Any) -> str:
     )
 
 
+def _reresolve_card_uris(
+    read_set: dict[str, Any],
+    *,
+    thread_id: str,
+    card: ContinuityCard,
+) -> dict[str, Any]:
+    """Drop ladder card URIs in a cached read set and insert the current one.
+
+    An armed fence can keep a guessed ``{id}-continuity.md`` URI for its
+    lifetime. Serving re-resolves that entry from ``house_pools``.
+    """
+    ladder = {
+        f"cortex://{rel}" for rel in _continuity_card_candidate_relpaths(thread_id)
+    }
+    resolved = card.uri if card.status == "found" else None
+
+    def _rewrite(values: list[Any]) -> list[Any]:
+        kept = [item for item in values if item not in ladder]
+        if resolved and resolved not in kept:
+            kept.append(resolved)
+        return kept
+
+    readable = read_set.get("readable")
+    if not isinstance(readable, dict):
+        return read_set
+    uris = readable.get("cortex_uris")
+    if isinstance(uris, list):
+        readable["cortex_uris"] = _rewrite(uris)
+    allow = readable.get("mcp_allow")
+    if isinstance(allow, list):
+        for row in allow:
+            if (
+                isinstance(row, dict)
+                and row.get("tool") == "fs"
+                and isinstance(row.get("paths"), list)
+            ):
+                row["paths"] = _rewrite(row["paths"])
+    return read_set
+
+
 def _load_resume_context(
     thread_id: str,
     *,
@@ -367,7 +412,7 @@ def _arm_resume_fence_in_txn(
             opened_at = folded.last_event_at or opened_at
             cached = read_set_from_journal(fence_id)
             if cached is not None:
-                read_set = cached
+                read_set = _reresolve_card_uris(cached, thread_id=thread_id, card=card)
 
     card_text = card.text if card.status == "found" else None
     open_line_match = _OPEN_LINE_RE.search(card_text or "")

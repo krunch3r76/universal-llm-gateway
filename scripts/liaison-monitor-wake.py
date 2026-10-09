@@ -39,6 +39,11 @@ _SAFECARD_MINUTES = 60
 
 
 def _card_uri(root_id: str) -> str:
+    from agent_bus_store.house_pools import load_continuity_card
+
+    card = load_continuity_card(root_id)
+    if card.status == "found" and card.uri:
+        return card.uri
     return f"cortex://notes/system/threads/{root_id}-continuity.md"
 
 
@@ -274,7 +279,9 @@ def main() -> int:
     args = parser.parse_args()
     closed, lane = root_lane_closed(args.root)
     if closed:
-        print(json.dumps({"ok": True, "skipped": True, "stopped": True, "reason": lane}))
+        print(
+            json.dumps({"ok": True, "skipped": True, "stopped": True, "reason": lane})
+        )
         return 0
     if args.cmd == "hop":
         if not args.transcript_id:
@@ -289,7 +296,11 @@ def main() -> int:
         while True:
             time.sleep(max(args.interval_minutes, 0.1) * 60)
             if house_fully_played():
-                print(json.dumps({"ok": True, "stopped": True, "reason": "house_fully_played"}))
+                print(
+                    json.dumps(
+                        {"ok": True, "stopped": True, "reason": "house_fully_played"}
+                    )
+                )
                 return 0
             force = (time.time() - last_force) >= safeguard_s
             result = wake_once(args.root, args.gui_host, force=force)

@@ -69,6 +69,12 @@ def hub_entity_id(root_thread: str) -> str:
 
 
 def hub_card_uri(root_thread: str) -> str:
+    """URI of the present house card, else the legacy ``{id}-continuity.md`` name."""
+    from agent_bus_store.house_pools import load_continuity_card
+
+    card = load_continuity_card(root_thread)
+    if card.status == "found" and card.uri:
+        return card.uri
     return f"cortex://notes/system/threads/{root_thread}-continuity.md"
 
 
