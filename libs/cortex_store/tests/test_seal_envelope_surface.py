@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from continuity_tape.messages import (
     ContinuityMessagesEnvelope,
     EnvelopeMeta,
@@ -9,7 +10,7 @@ from continuity_tape.messages import (
 )
 from cortex_store.verbatim_succession import build_seal_envelope_meta
 
-pytestmark = __import__("pytest").mark.offline
+pytestmark = pytest.mark.offline
 
 _SEALED_AT = "2026-10-09T18:00:00+00:00"
 _SESSION_ID = "grok-bot-test-sid"
