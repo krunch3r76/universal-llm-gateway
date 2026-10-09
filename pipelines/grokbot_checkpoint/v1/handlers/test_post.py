@@ -10,8 +10,8 @@ from agent_bus_store.checkpoint_projection import (
     extract_authored_resume_footer,
 )
 
-from ._test_call_post import call_post
 from . import post as post_mod
+from ._test_call_post import call_post
 from .post import compose_checkpoint_body
 
 pytestmark = pytest.mark.offline
