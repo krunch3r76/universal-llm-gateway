@@ -14,7 +14,9 @@ class _Router:
     def __init__(self) -> None:
         self.rows: list[tuple[str, str]] = []
 
-    def register_domain_handler_class(self, domain: str, step_type: str, cls: type) -> None:
+    def register_domain_handler_class(
+        self, domain: str, step_type: str, cls: type
+    ) -> None:
         assert cls.step_type == step_type
         self.rows.append((domain, step_type))
 
@@ -31,9 +33,7 @@ def test_register_handlers_covers_steps() -> None:
 
 @pytest.mark.asyncio
 async def test_path_escape_and_replay(fs) -> None:
-    bad = await run_admit(
-        {"mode": "seal", "house": "h", "n": 1, "raw_ref": "../x"}, {}
-    )
+    bad = await run_admit({"mode": "seal", "house": "h", "n": 1, "raw_ref": "../x"}, {})
     assert bad["refused"]["code"] == "admit.path_escape"
     card = (
         "## Checkpoint log\n\n| n | when | trigger | expected | envelope | pipeline |\n"
@@ -42,7 +42,13 @@ async def test_path_escape_and_replay(fs) -> None:
     fs.files["notes/card.md"] = card.encode()
 
     async def get(path, params=None):
-        return {"turns": [{"subject": "FACT|house-cp|h|2", "superseded": False}]}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {
+                "turns": [{"subject": "FACT|house-cp|h|2", "superseded": False}]
+            }, 200
+        return {"turns": []}, 200
 
     replay = await run_admit(
         {
@@ -64,3 +70,68 @@ async def test_path_escape_and_replay(fs) -> None:
 async def test_seal_mode_requires_agent_id() -> None:
     out = await run_admit({"mode": "seal", "house": "h", "n": 1}, {})
     assert out["refused"]["code"] == "admit.agent_id"
+
+
+@pytest.mark.asyncio
+async def test_seal_uuid_with_root_thread() -> None:
+    bad = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "root_thread": "15902",
+            "agent_id": "NOT-A-UUID",
+        },
+        {},
+    )
+    assert (bad.get("refused") or {}).get("code") == "admit.agent_id_not_uuid"
+    upper = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "root_thread": "15902",
+            "agent_id": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+        },
+        {},
+    )
+    assert (upper.get("refused") or {}).get("code") == "admit.agent_id_not_uuid"
+    ok = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "agent_id": "not-a-uuid",
+        },
+        {},
+    )
+    assert ok.get("refused") is None
+
+
+@pytest.mark.asyncio
+async def test_seal_uuid_canonical() -> None:
+    agent = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    out = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "root_thread": "15902",
+            "agent_id": agent,
+        },
+        {},
+    )
+    assert out.get("refused") is None
+    assert out.get("agent_id") == agent
+    padded = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "root_thread": "15902",
+            "agent_id": f"  {agent}  ",
+        },
+        {},
+    )
+    assert padded.get("refused") is None
+    assert padded["agent_id"] == agent

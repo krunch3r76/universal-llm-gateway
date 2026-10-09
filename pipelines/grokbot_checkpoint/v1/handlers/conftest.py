@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+
+FIXTURE_TRANSCRIPT_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+
+def restamp_transcript_id(blob: bytes, transcript_id: str) -> bytes:
+    """Return pour bytes with meta.transcript_id replaced (messages unchanged)."""
+    import json
+
+    payload = json.loads(blob)
+    payload["meta"]["transcript_id"] = transcript_id
+    return json.dumps(payload).encode()
 
 
 class MemFs:
@@ -45,3 +57,14 @@ class MemFs:
 @pytest.fixture
 def fs() -> MemFs:
     return MemFs()
+
+
+@pytest.fixture(autouse=True)
+def _no_checkpoint_events(monkeypatch):
+    from . import post as post_mod
+    from . import seal as seal_mod
+
+    posted, sealed = MagicMock(name="posted_spy"), MagicMock(name="sealed_spy")
+    monkeypatch.setattr(post_mod, "stargate_continuity_checkpoint_posted", posted)
+    monkeypatch.setattr(seal_mod, "stargate_continuity_checkpoint_sealed", sealed)
+    yield {"posted": posted, "sealed": sealed}

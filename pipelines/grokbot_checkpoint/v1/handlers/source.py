@@ -50,6 +50,7 @@ async def _load_slot(
         "coverage": envelope.meta.coverage,
         "messages_sha256": envelope.meta.messages_sha256,
         "surface": envelope.meta.surface,
+        "transcript_id": envelope.meta.transcript_id,
         "turn_count": envelope.meta.turn_count,
         "sha256": digest,
         "ref": ref,
@@ -96,7 +97,11 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
     raw_ref = str(options.get("raw_ref") or "")
     if transcribed_ref:
         slots.append(
-            ("transcribed", transcribed_ref, str(options.get("transcribed_sha256") or ""))
+            (
+                "transcribed",
+                transcribed_ref,
+                str(options.get("transcribed_sha256") or ""),
+            )
         )
     if raw_ref:
         slots.append(("raw", raw_ref, str(options.get("raw_sha256") or "")))
@@ -107,7 +112,9 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
     try:
         loaded_slots = []
         for slot, ref, expected in slots:
-            loaded_slots.append((slot, ref, expected, await _load_slot(fs, ref, expected, slot)))
+            loaded_slots.append(
+                (slot, ref, expected, await _load_slot(fs, ref, expected, slot))
+            )
     except FsClientMissingError as exc:
         return refuse(exc.code, str(exc))
     for slot, ref, expected, (body, err) in loaded_slots:
@@ -116,6 +123,17 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
             continue
         assert body is not None
         loaded[slot] = body
+    root_thread = str(options.get("root_thread") or "").strip()
+    agent_id = str(options.get("agent_id") or "").strip()
+    if root_thread and agent_id:
+        for slot_name in ("transcribed", "raw"):
+            body = loaded.get(slot_name)
+            if body is not None and body.get("transcript_id") != agent_id:
+                return refuse(
+                    "admit.transcript_id_mismatch",
+                    f"{slot_name} pour meta.transcript_id "
+                    f"{body.get('transcript_id')!r} != agent_id {agent_id!r}",
+                )
     selected: dict[str, Any] | None = None
     alternate = None
     fallback = None
@@ -129,7 +147,7 @@ async def run_source(options: dict[str, Any], fs: Any) -> dict[str, Any]:
                 "messages_sha256": raw["messages_sha256"],
             }
         elif first_refusal and any(slot == "raw" for slot, _ref, _sha in slots):
-            selected["alternate_refused"] = (first_refusal.get("refused") or {})
+            selected["alternate_refused"] = first_refusal.get("refused") or {}
     elif "raw" in loaded and any(slot == "transcribed" for slot, _ref, _sha in slots):
         selected = loaded["raw"]
         fallback = {

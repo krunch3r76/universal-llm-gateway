@@ -26,10 +26,20 @@ async def test_outcomes() -> None:
     now, sleep = _clock()
 
     async def silent(path, params=None):
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {"turns": []}, 200
         return {"turns": []}, 200
 
     pending = await run_await_verify(
-        {"n": 1, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 3},
+        {
+            "n": 1,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 3,
+        },
         {"turn": 1},
         get=silent,
         sleep=sleep,
@@ -40,14 +50,24 @@ async def test_outcomes() -> None:
     now, sleep = _clock()
 
     async def insync(path, params=None):
-        return {
-            "turns": [
-                {"from": "verifier", "body": "IN-SYNC|house|1", "turn_number": 8}
-            ]
-        }, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {
+                "turns": [
+                    {"from": "verifier", "body": "IN-SYNC|house|1", "turn_number": 8}
+                ]
+            }, 200
+        return {"turns": []}, 200
 
     synced = await run_await_verify(
-        {"n": 1, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 30},
+        {
+            "n": 1,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 30,
+        },
         {"turn": 1},
         get=insync,
         sleep=sleep,
@@ -56,12 +76,24 @@ async def test_outcomes() -> None:
     assert synced["state"] == "in_sync"
 
     async def drift(path, params=None):
-        return {
-            "turns": [{"from": "verifier", "body": "DRIFT|house|1", "turn_number": 9}]
-        }, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {
+                "turns": [
+                    {"from": "verifier", "body": "DRIFT|house|1", "turn_number": 9}
+                ]
+            }, 200
+        return {"turns": []}, 200
 
     drifted = await run_await_verify(
-        {"n": 1, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 30},
+        {
+            "n": 1,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 30,
+        },
         {"turn": 1},
         get=drift,
         sleep=sleep,
@@ -79,14 +111,24 @@ async def test_transport_backoff() -> None:
         calls["n"] += 1
         if calls["n"] < 3:
             raise ConnectionError("restart")
-        return {
-            "turns": [
-                {"from": "verifier", "body": "IN-SYNC|house|2", "turn_number": 3}
-            ]
-        }, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {
+                "turns": [
+                    {"from": "verifier", "body": "IN-SYNC|house|2", "turn_number": 3}
+                ]
+            }, 200
+        return {"turns": []}, 200
 
     out = await run_await_verify(
-        {"n": 2, "house": "house", "verify_lane": "v", "verifier": "verifier", "wait_verify_seconds": 60},
+        {
+            "n": 2,
+            "house": "house",
+            "verify_lane": "v",
+            "verifier": "verifier",
+            "wait_verify_seconds": 60,
+        },
         {"turn": 1},
         get=flaky,
         sleep=sleep,

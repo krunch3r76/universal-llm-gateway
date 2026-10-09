@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
 
 import pytest
@@ -22,8 +23,17 @@ from systems.pipeline.registry.core import PipelineRegistry
 
 from . import register_handlers
 from ._clients import file_sha256
+from .conftest import FIXTURE_TRANSCRIPT_ID, restamp_transcript_id
 
 pytestmark = pytest.mark.offline
+
+_AGENT_HAPPY = str(uuid.UUID(int=0x16045011))
+_AGENT_TRONLY = str(uuid.UUID(int=0x16045012))
+_AGENT_RAWONLY = str(uuid.UUID(int=0x16045013))
+_AGENT_BAD = str(uuid.UUID(int=0x16045014))
+_AGENT_IDEM = str(uuid.UUID(int=0x16045015))
+_AGENT_CRASH = str(uuid.UUID(int=0x16045016))
+_AGENT_OLD = str(uuid.UUID(int=0x16045017))
 
 _PIPE = Path(__file__).resolve().parents[1] / "grokbot-checkpoint-v1.yaml"
 _CATS = Path(__file__).resolve().parents[3] / "categories.yaml"
@@ -49,10 +59,11 @@ def _load_registry(tmp: Path) -> PipelineRegistry:
     return registry
 
 
-def _raw_bytes() -> bytes:
+def _raw_bytes(transcript_id: str = FIXTURE_TRANSCRIPT_ID) -> bytes:
     env = json.loads((_FIXTURES / "grok_transcribed_pour.json").read_text())
     env["meta"]["provenance"] = "raw"
     env["meta"]["source_sha256"] = "ab" * 32
+    env["meta"]["transcript_id"] = transcript_id
     return json.dumps(env).encode()
 
 
@@ -135,7 +146,14 @@ def transport(monkeypatch: pytest.MonkeyPatch):
 
     async def get(path: str, params=None):
         get_sig.bind(path, params=params)
-        return {"turns": list(turns)}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
+            n = max((int(t.get("turn_number") or 0) for t in turns), default=0)
+            return {"turn_number": n}, 200
+        if path == "/turns":
+            return {"turns": list(turns)}, 200
+        return {}, 404
 
     async def send(**kwargs):
         send_sig.bind(**kwargs)
@@ -149,7 +167,10 @@ def transport(monkeypatch: pytest.MonkeyPatch):
                 "from": kwargs.get("from_agent"),
             }
         )
-        return {"turn_number": len(turns)}, 200
+        return {
+            "send_path": "continue",
+            "turn": {"turn_number": len(turns)},
+        }, 200
 
     from . import admit, await_verify, fact, post, seal
 
@@ -183,7 +204,9 @@ async def _run(registry: PipelineRegistry, options: dict, root: Path) -> dict:
     )
     await DAGExecutor(nodes, ctx).execute()
     out = {name: item.json for name, item in ctx.outputs.items()}
-    out["_files"] = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    out["_files"] = sorted(
+        p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
+    )
     return out
 
 
@@ -211,14 +234,17 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     card = _CARD.encode()
     (tmp_path / "notes").mkdir()
     (tmp_path / "notes" / "card.md").write_bytes(card)
-    raw = _raw_bytes()
-    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    raw = _raw_bytes(_AGENT_HAPPY)
+    transcribed = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_HAPPY,
+    )
     (tmp_path / "notes" / "raw.json").write_bytes(raw)
     (tmp_path / "notes" / "tr.json").write_bytes(transcribed)
     base = {
         "house": "h",
         "n": 1,
-        "agent_id": "agent-12345678",
+        "agent_id": _AGENT_HAPPY,
         "bus_identity": "grok-bot",
         "root_thread": "10",
         "verify_lane": "11",
@@ -251,7 +277,10 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     assert "verify_resume" not in happy["result"]["completed_steps"]
     snap_rel = base["snapshot_uri"]
     snap_bytes = (tmp_path / snap_rel).read_bytes()
-    assert b'"provenance": "transcribed"' in snap_bytes or b'"provenance":"transcribed"' in snap_bytes
+    assert (
+        b'"provenance": "transcribed"' in snap_bytes
+        or b'"provenance":"transcribed"' in snap_bytes
+    )
     from cortex_store.models import SessionCloseRequest
     from cortex_store.routes.session_close_validate import (
         _resolve_transcript_messages_envelope,
@@ -275,16 +304,19 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
         )
     )
     assert resolved.meta.provenance == "transcribed"
-    assert _validate_session_close_args(
-        session_id=sent["session_id"],
-        agent=sent["agent"],
-        transcript_jsonl_path=None,
-        session_summary_md=sent["session_summary_md"],
-        summary=sent["summary"],
-        transcript_messages=sent["transcript_messages"],
-        transcript_depth=sent["transcript_depth"],
-        emit_rejected=False,
-    ) is None
+    assert (
+        _validate_session_close_args(
+            session_id=sent["session_id"],
+            agent=sent["agent"],
+            transcript_jsonl_path=None,
+            session_summary_md=sent["session_summary_md"],
+            summary=sent["summary"],
+            transcript_messages=sent["transcript_messages"],
+            transcript_depth=sent["transcript_depth"],
+            emit_rejected=False,
+        )
+        is None
+    )
     assert sent["agent"] == "grok-bot"
     assert sent["transcript_messages"]["messages"]
     from agent_seat.session_id import SESSION_ID_RE
@@ -294,18 +326,23 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
 
     tr_card = _CARD.encode()
     (tmp_path / "notes" / "tronly.md").write_bytes(tr_card)
+    tr_tronly = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_TRONLY,
+    )
+    (tmp_path / "notes" / "tr-tronly.json").write_bytes(tr_tronly)
     tr_only = await _run(
         registry,
         {
             **base,
             "mode": "seal",
             "house": "tronly",
-            "agent_id": "grok-tronly",
+            "agent_id": _AGENT_TRONLY,
             "card_uri": "notes/tronly.md",
             "expected_card_sha256": file_sha256(tr_card),
             "snapshot_uri": "notes/system/transcripts/grok/tronly.transcribed.messages.json",
-            "transcribed_ref": "notes/tr.json",
-            "transcribed_sha256": file_sha256(transcribed),
+            "transcribed_ref": "notes/tr-tronly.json",
+            "transcribed_sha256": file_sha256(tr_tronly),
         },
         tmp_path,
     )
@@ -316,22 +353,26 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
 
     raw_card = _CARD.encode()
     (tmp_path / "notes" / "rawonly.md").write_bytes(raw_card)
+    raw_rawonly = _raw_bytes(_AGENT_RAWONLY)
+    (tmp_path / "notes" / "raw-rawonly.json").write_bytes(raw_rawonly)
     raw_only = await _run(
         registry,
         {
             **base,
             "mode": "seal",
             "house": "rawonly",
-            "agent_id": "grok-rawonly",
+            "agent_id": _AGENT_RAWONLY,
             "card_uri": "notes/rawonly.md",
             "expected_card_sha256": file_sha256(raw_card),
             "snapshot_uri": "notes/system/transcripts/grok/rawonly.raw.messages.json",
-            "raw_ref": "notes/raw.json",
-            "raw_sha256": file_sha256(raw),
+            "raw_ref": "notes/raw-rawonly.json",
+            "raw_sha256": file_sha256(raw_rawonly),
         },
         tmp_path,
     )
-    raw_snap = (tmp_path / "notes/system/transcripts/grok/rawonly.raw.messages.json").read_bytes()
+    raw_snap = (
+        tmp_path / "notes/system/transcripts/grok/rawonly.raw.messages.json"
+    ).read_bytes()
     assert b'"provenance": "raw"' in raw_snap or b'"provenance":"raw"' in raw_snap
     assert "provenance:raw" in (tmp_path / "notes" / "rawonly.md").read_text()
     assert raw_only["source"].get("provenance") == "raw"
@@ -341,7 +382,7 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
 
     calls_before = len(transport["calls"])
     posts_before = len(transport["posts"])
-    bad = json.loads(raw)
+    bad = json.loads(_raw_bytes(_AGENT_BAD))
     bad["meta"]["capture"] = {
         "kind": "jsonl",
         "ref": "cortex://notes/cap.bin",
@@ -360,7 +401,7 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
             **base,
             "mode": "seal",
             "house": "bad",
-            "agent_id": "grok-bad",
+            "agent_id": _AGENT_BAD,
             "raw_ref": "notes/bad.json",
             "raw_sha256": file_sha256(blob),
             "card_uri": "notes/bad.md",
@@ -373,8 +414,12 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     assert mismatch["seal"].get("_skipped") is True
     assert len(transport["calls"]) == calls_before
     assert len(transport["posts"]) == posts_before
-    assert file_sha256((tmp_path / "notes" / "bad.md").read_bytes()) == file_sha256(bad_card)
-    assert not (tmp_path / "notes/system/transcripts/grok/bad.raw.messages.json").exists()
+    assert file_sha256((tmp_path / "notes" / "bad.md").read_bytes()) == file_sha256(
+        bad_card
+    )
+    assert not (
+        tmp_path / "notes/system/transcripts/grok/bad.raw.messages.json"
+    ).exists()
 
     refused = await _run(
         registry,
@@ -386,10 +431,7 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     assert len(transport["calls"]) == calls_before
 
     (tmp_path / "notes" / "card.md").write_bytes(
-        (
-            _CARD
-            + "| 1 | t | hop | sha | cell | pipeline e |\n"
-        ).encode()
+        (_CARD + "| 1 | t | hop | sha | cell | pipeline e |\n").encode()
     )
     transport["turns"].append(
         {"subject": "FACT|house-cp|h|1", "superseded": False, "body": "x", "from": "a"}
@@ -399,7 +441,9 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
         {
             **base,
             "mode": "seal",
-            "expected_card_sha256": file_sha256((tmp_path / "notes" / "card.md").read_bytes()),
+            "expected_card_sha256": file_sha256(
+                (tmp_path / "notes" / "card.md").read_bytes()
+            ),
             "raw_ref": "notes/raw.json",
             "raw_sha256": file_sha256(raw),
         },
@@ -427,12 +471,15 @@ async def test_dag_happy_and_refusals(tmp_path: Path, monkeypatch, transport) ->
     assert light["seal"].get("_skipped") is True
 
 
-def _seal_options(tmp_path: Path, *, house: str, agent_id: str, n: int, raw: bytes) -> dict:
+def _seal_options(
+    tmp_path: Path, *, house: str, agent_id: str, n: int, raw: bytes
+) -> dict:
     card = _CARD.encode()
     card_name = f"notes/{house}-card.md"
     (tmp_path / "notes").mkdir(exist_ok=True)
     (tmp_path / card_name).write_bytes(card)
     raw_name = f"notes/{house}-raw.json"
+    raw = restamp_transcript_id(raw, agent_id)
     (tmp_path / raw_name).write_bytes(raw)
     return {
         "house": house,
@@ -480,7 +527,7 @@ async def test_rerun_is_idempotent_until_snapshot_grows(
     boot_cortex(monkeypatch, tmp_path)
     registry = _load_registry(tmp_path / "reg")
     raw = _raw_bytes()
-    agent_id = "agent-hm1idem"
+    agent_id = _AGENT_IDEM
     options = _seal_options(tmp_path, house="idem", agent_id=agent_id, n=1, raw=raw)
     first = await _run(registry, options, tmp_path)
     assert first["seal"].get("refused") is None
@@ -529,13 +576,15 @@ async def test_rerun_is_idempotent_until_snapshot_grows(
 
 
 @pytest.mark.asyncio
-async def test_crash_before_session_close_reseals(tmp_path: Path, monkeypatch, transport) -> None:
+async def test_crash_before_session_close_reseals(
+    tmp_path: Path, monkeypatch, transport
+) -> None:
     from . import seal as seal_mod
 
     boot_cortex(monkeypatch, tmp_path)
     registry = _load_registry(tmp_path / "reg")
     raw = _raw_bytes()
-    agent_id = "agent-hm1crash"
+    agent_id = _AGENT_CRASH
     options = _seal_options(tmp_path, house="crash", agent_id=agent_id, n=1, raw=raw)
 
     async def die(tool: str, args: dict) -> dict:
@@ -559,11 +608,13 @@ async def test_crash_before_session_close_reseals(tmp_path: Path, monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_legacy_threads_path_refused(tmp_path: Path, monkeypatch, transport) -> None:
+async def test_legacy_threads_path_refused(
+    tmp_path: Path, monkeypatch, transport
+) -> None:
     boot_cortex(monkeypatch, tmp_path)
     registry = _load_registry(tmp_path / "reg")
     raw = _raw_bytes()
-    agent_id = "agent-hm1old"
+    agent_id = _AGENT_OLD
     options = _seal_options(tmp_path, house="oldp", agent_id=agent_id, n=1, raw=raw)
     options["snapshot_uri"] = "notes/system/threads/oldp.messages.json"
     card_before = (tmp_path / options["card_uri"]).read_bytes()

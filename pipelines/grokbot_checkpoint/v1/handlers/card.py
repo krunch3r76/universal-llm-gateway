@@ -6,12 +6,38 @@ from datetime import datetime
 from typing import Any, override
 from zoneinfo import ZoneInfo
 
+from agent_bus_store.house_pools import _continuity_card_candidate_relpaths
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
 
 _PT = ZoneInfo("America/Los_Angeles")
+
+
+def card_binding_warnings(options: dict[str, Any]) -> list[dict[str, str]]:
+    root_thread = str(options.get("root_thread") or "").strip()
+    if not root_thread:
+        return []
+    card_uri = str(options.get("card_uri") or "")
+    rel = card_uri.removeprefix("cortex://")
+    root = root_thread.removeprefix("agent-bus:")
+    ladder = list(_continuity_card_candidate_relpaths(root))
+    if rel == ladder[0]:
+        return []
+    if rel in ladder[1:]:
+        return [
+            {
+                "code": "card.nonconforming",
+                "message": (f"{rel} resolves on resume but is not {root}-card.md"),
+            }
+        ]
+    return [
+        {
+            "code": "card.resume_unbound",
+            "message": f"{rel} is not on the resume card ladder for {root}",
+        }
+    ]
 
 
 def _log_section(body: str) -> str:
@@ -78,6 +104,7 @@ async def run_card(
         body = raw.decode("utf-8")
     live = file_sha256(raw)
     n = int(options["n"])
+    warnings = card_binding_warnings(options)
     if live != expected:
         if _last_row_n(body) == n:
             return {
@@ -86,6 +113,7 @@ async def run_card(
                 "uri": uri,
                 "prior_sha256": live,
                 "written_sha256": live,
+                "warnings": warnings,
             }
         return refuse("card.sha_mismatch", f"live {live} != expected {expected}")
     mode = str(options.get("mode") or "")
@@ -140,6 +168,7 @@ async def run_card(
         "prior_sha256": expected,
         "written_sha256": written["sha256"],
         "row": row,
+        "warnings": warnings,
     }
 
 

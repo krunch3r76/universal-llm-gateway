@@ -19,10 +19,7 @@ def _fact_body(
     card_uri = str(card.get("uri") or options.get("card_uri") or "")
     card_sha = str(card.get("written_sha256") or "")
     if envelope_step.get("snapshot_uri"):
-        snap = (
-            f"{envelope_step.get('snapshot_uri')}@"
-            f"{envelope_step.get('sha256')}"
-        )
+        snap = f"{envelope_step.get('snapshot_uri')}@{envelope_step.get('sha256')}"
         prov = str(envelope_step.get("provenance") or "")
     else:
         snap = "none"
@@ -40,6 +37,16 @@ def _fact_body(
         f"provenance {prov} capture {pointer} "
         f"producer {envelope_step.get('producer') or 'none'}"
     )
+
+
+def _turn_from_send(payload: Any) -> int | None:
+    """POST /threads/send nests the number under ``turn`` (TurnSendCreated)."""
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("turn_number")
+    if raw is None and isinstance(payload.get("turn"), dict):
+        raw = payload["turn"].get("turn_number")
+    return int(raw) if raw else None
 
 
 async def run_fact(
@@ -60,7 +67,7 @@ async def run_fact(
     send = send or bus_send
     subject = fact_subject(options)
     lane = str(options.get("verify_lane") or "")
-    listing, status = await get(f"/threads/{lane}/turns")
+    listing, status = await get("/turns", params={"thread": lane})
     turns = listing.get("turns") if isinstance(listing, dict) else []
     body = _fact_body(options, card, envelope_step)
     if status < 400 and isinstance(turns, list):
@@ -91,7 +98,7 @@ async def run_fact(
         "refused": None,
         "skipped": False,
         "subject": subject,
-        "turn": payload.get("turn_number") if isinstance(payload, dict) else None,
+        "turn": _turn_from_send(payload),
         "body": body,
     }
 

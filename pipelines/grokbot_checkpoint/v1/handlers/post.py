@@ -5,12 +5,25 @@ from __future__ import annotations
 from typing import Any, override
 
 from agent_bus_store.checkpoint_projection import CANONICAL_RESUME_FOOTER
+from continuity_tape.events_checkpoint import stargate_continuity_checkpoint_posted
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import bus_get, bus_send, refuse, step_output_json
 
 _MARKER = "house-cp:"
+
+
+def _format_mission(*, mission: str | None, house: str, n: int) -> str:
+    if isinstance(mission, str) and mission.strip():
+        text = " ".join(mission.splitlines()).strip()
+    else:
+        text = f"resume grok house {house} from checkpoint {n}"
+    if text.startswith("Mission:"):
+        text = text[len("Mission:") :].strip()
+    if len(text) > 200:
+        text = text[:200]
+    return f"Mission: {text}"
 
 
 def compose_checkpoint_body(
@@ -28,8 +41,10 @@ def compose_checkpoint_body(
     house: str,
     n: int,
     capture: str = "none",
+    mission: str | None = None,
 ) -> str:
     hop = " · channel=hop" if channel == "hop" else ""
+    mission_line = _format_mission(mission=mission, house=house, n=n)
     lines = [
         "## Residue",
         residue.strip(),
@@ -37,7 +52,7 @@ def compose_checkpoint_body(
         "",
         "## Anchor",
         (
-            f"Window: agent_id={agent_id} · turns@cp={turn_count} · "
+            f"Window: transcript_id={agent_id} · turns@cp={turn_count} · "
             f"coverage={coverage}{hop}"
         ),
         (
@@ -45,6 +60,8 @@ def compose_checkpoint_body(
             f"codec:messages-v1 · surface:{surface} · provenance:{provenance} · "
             f"producer:{producer} · capture:{capture}"
         ),
+        "",
+        mission_line,
         "",
         CANONICAL_RESUME_FOOTER,
     ]
@@ -66,6 +83,13 @@ def _duplicate(turns: list[dict[str, Any]], house: str, n: int) -> bool:
     return any(token in str(t.get("body") or "") for t in turns)
 
 
+def _bus_turn_from_payload(payload: dict[str, Any]) -> int:
+    turn_raw = payload.get("turn_number")
+    if turn_raw is None and isinstance(payload.get("turn"), dict):
+        turn_raw = payload["turn"].get("turn_number")
+    return int(turn_raw or 0)
+
+
 async def run_post(
     options: dict[str, Any],
     seal: dict[str, Any],
@@ -73,6 +97,7 @@ async def run_post(
     *,
     get: Any = None,
     send: Any = None,
+    execution_id: str = "",
 ) -> dict[str, Any]:
     if (
         seal.get("_skipped")
@@ -87,13 +112,13 @@ async def run_post(
     thread = str(options.get("root_thread") or "")
     house = str(options["house"])
     n = int(options["n"])
-    listing, status = await get(f"/threads/{thread}/turns")
+    listing, status = await get("/turns", params={"thread": thread})
     turns = listing.get("turns") if isinstance(listing, dict) else None
     if status < 400 and isinstance(turns, list) and _duplicate(turns, house, n):
         return {"refused": None, "duplicate": True, "body": None, "turn": None}
     body = compose_checkpoint_body(
         residue=str(options.get("residue") or ""),
-        agent_id=str(options.get("agent_id") or ""),
+        agent_id=str(options.get("agent_id") or "").strip(),
         turn_count=int(envelope_step.get("turn_count") or 0),
         coverage=str(envelope_step.get("coverage") or ""),
         channel=str(options.get("channel") or "cp"),
@@ -105,27 +130,55 @@ async def run_post(
         house=house,
         n=n,
         capture=_capture_token(envelope_step),
+        mission=options.get("mission")
+        if isinstance(options.get("mission"), str)
+        else None,
     )
-    payload, send_status = await send(
+    tip, tip_status = await get(
+        "/turns/by-number",
+        params={"thread": thread, "turn_number": "latest"},
+    )
+    after_turn = (
+        int(tip.get("turn_number") or 0)
+        if tip_status < 400 and isinstance(tip, dict)
+        else 0
+    )
+    send_kwargs = dict(
         thread=thread,
         from_agent=str(options.get("bus_identity") or ""),
         to_agent=str(options.get("verifier") or ""),
         subject="CHECKPOINT",
         body=body,
-        after_turn=None,
+        after_turn=after_turn,
     )
+    payload, send_status = await send(**send_kwargs)
+    if send_status == 409:
+        detail = payload.get("detail") or payload
+        if isinstance(detail, dict):
+            latest = int(detail.get("latest_turn_number") or after_turn)
+            send_kwargs["after_turn"] = latest
+            payload, send_status = await send(**send_kwargs)
     if send_status >= 400:
         return {
             "refused": {
                 "code": "post.bus",
-                "message": str(payload),
+                "message": f"http_{send_status}: {payload}",
             }
         }
+    bus_turn = _bus_turn_from_payload(payload if isinstance(payload, dict) else {})
+    if bus_turn > 0:
+        stargate_continuity_checkpoint_posted(
+            execution_id=execution_id,
+            thread=thread,
+            surface=str(envelope_step.get("surface") or "grok"),
+            from_agent=str(options.get("bus_identity") or ""),
+            bus_turn=bus_turn,
+        )
     return {
         "refused": None,
         "duplicate": False,
         "body": body,
-        "turn": payload.get("turn_number") if isinstance(payload, dict) else None,
+        "turn": bus_turn or None,
     }
 
 
@@ -140,5 +193,6 @@ class GrokbotCheckpointPostHandler(BaseHandler):
             options,
             step_output_json(outputs, "seal"),
             step_output_json(outputs, "envelope"),
+            execution_id=str(getattr(context, "execution_id", "") or ""),
         )
         return StepOutput(raw="", json=payload)

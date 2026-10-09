@@ -70,13 +70,17 @@ def _prefix_holds(old: list[Any], new: list[Any]) -> bool:
 async def run_envelope(
     options: dict[str, Any], source: dict[str, Any], fs: Any
 ) -> dict[str, Any]:
-    if source.get("_skipped") or source.get("refused") or not source.get("messages_sha256"):
+    if (
+        source.get("_skipped")
+        or source.get("refused")
+        or not source.get("messages_sha256")
+    ):
         return refuse("envelope.upstream_skipped", "source did not yield a pour")
     uri = str(
         options.get("snapshot_uri")
         or staging_uri(
             str(options.get("house") or ""),
-            str(options.get("agent_id") or ""),
+            str(options.get("agent_id") or "").strip(),
             str(source.get("provenance") or "raw"),
         )
     )
@@ -155,11 +159,11 @@ async def run_envelope(
         "provenance": source.get("provenance"),
         "producer": source.get("producer"),
         "coverage": source.get("coverage"),
-            "turn_count": source.get("turn_count"),
-            "surface": source.get("surface"),
-            "capture": source.get("capture"),
-            "envelope": envelope,
-        }
+        "turn_count": source.get("turn_count"),
+        "surface": source.get("surface"),
+        "capture": source.get("capture"),
+        "envelope": envelope,
+    }
 
 
 class GrokbotCheckpointEnvelopeHandler(BaseHandler):

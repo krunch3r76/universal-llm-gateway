@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,17 +14,24 @@ from continuity_tape.messages import CaptureRef, envelope_wire_dict
 from systems.pipeline.core.conditions import evaluate_condition
 
 from ._clients import file_sha256
+from ._test_call_post import call_post
 from .admit import run_admit
 from .await_verify import run_await_verify
 from .card import run_card
+from .conftest import restamp_transcript_id
 from .envelope import run_envelope
 from .fact import run_fact
-from .post import run_post
 from .seal import run_seal
 from .source import run_source
 from .test_contract import _boot, _patch_event, _Spy
 
 pytestmark = pytest.mark.offline
+
+_AGENT_DEFAULT = str(uuid.UUID(int=0x16045001))
+_AGENT_BY_PROV = {
+    "raw": str(uuid.UUID(int=0x16045002)),
+    "transcribed": str(uuid.UUID(int=0x16045003)),
+}
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _YAML = Path(__file__).resolve().parents[1] / "grokbot-checkpoint-v1.yaml"
@@ -40,9 +48,9 @@ def _jsonl() -> bytes:
     return (_FIXTURES / "cursor_window.jsonl").read_bytes()
 
 
-def _stamp_raw() -> bytes:
+def _stamp_raw(transcript_id: str = _AGENT_DEFAULT) -> bytes:
     raw = _jsonl()
-    env = extract_turns_from_jsonl_bytes(raw, transcript_id="cursor-window")
+    env = extract_turns_from_jsonl_bytes(raw, transcript_id=transcript_id)
     env.meta.provenance = "raw"
     env.meta.coverage = "full"
     env.meta.capture = CaptureRef(
@@ -70,14 +78,24 @@ class Bus:
         self.posts = 0
 
     async def get(self, path: str, params=None):
-        return {"turns": list(self.turns)}, 200
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns/by-number":
+            n = max((int(t.get("turn_number") or 0) for t in self.turns), default=0)
+            return {"turn_number": n}, 200
+        if path == "/turns":
+            return {"turns": list(self.turns)}, 200
+        return {}, 404
 
     async def send(self, **kwargs):
         self.posts += 1
         turn = {"turn_number": len(self.turns) + 1, "superseded": False, **kwargs}
         turn["from"] = kwargs.get("from_agent")
         self.turns.append(turn)
-        return {"turn_number": turn["turn_number"]}, 200
+        return {
+            "send_path": "continue",
+            "turn": {"turn_number": turn["turn_number"]},
+        }, 200
 
 
 def _options(fs, pour: bytes, *, house: str = "house", slot: str = "raw") -> dict:
@@ -92,7 +110,7 @@ def _options(fs, pour: bytes, *, house: str = "house", slot: str = "raw") -> dic
         "mode": "seal",
         "house": house,
         "n": 1,
-        "agent_id": "agent-12345678",
+        "agent_id": _AGENT_DEFAULT,
         "bus_identity": "grok-bot",
         "root_thread": "10",
         "verify_lane": "11",
@@ -113,7 +131,9 @@ def _out(payload: dict) -> SimpleNamespace:
     return SimpleNamespace(json=payload, raw="", text="", model_id=None, error=None)
 
 
-async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispatch=None):
+async def _seal_graph(
+    fs, options, bus, *, stop_after: str | None = None, dispatch=None
+):
     """Run steps in YAML order; skip when the YAML condition is false."""
     spec = yaml.safe_load(_YAML.read_text())
     outputs: dict = {}
@@ -144,7 +164,7 @@ async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispat
                 seal=outputs.get("seal", _out({})).json,
             )
         if name == "post":
-            return await run_post(
+            return await call_post(
                 options,
                 outputs["seal"].json,
                 outputs["envelope"].json,
@@ -192,12 +212,15 @@ def patch_seal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_raw_and_transcribed(fs, patch_seal) -> None:
-    raw = _stamp_raw()
-    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    raw = _stamp_raw(_AGENT_BY_PROV["raw"])
+    transcribed = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_BY_PROV["transcribed"],
+    )
     for blob, prov in ((raw, "raw"), (transcribed, "transcribed")):
         bus = Bus()
         options = _options(fs, blob, house=prov, slot=prov)
-        options["agent_id"] = f"agent-{prov}"
+        options["agent_id"] = _AGENT_BY_PROV[prov]
         out = await _seal_graph(
             fs,
             options,
@@ -216,7 +239,10 @@ async def test_raw_and_transcribed(fs, patch_seal) -> None:
 @pytest.mark.asyncio
 async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
     raw = _stamp_raw()
-    transcribed = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    transcribed = restamp_transcript_id(
+        (_FIXTURES / "grok_transcribed_pour.json").read_bytes(),
+        _AGENT_DEFAULT,
+    )
     bus = Bus()
     options = _options(fs, raw, house="both", slot="raw")
     t_uri = "notes/both-transcribed.json"
@@ -234,9 +260,7 @@ async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
     tampered = json.dumps(payload).encode()
     options2 = _options(fs, tampered, house="badcap", slot="raw")
     refused_bus = Bus()
-    refused = await _seal_graph(
-        fs, options2, refused_bus, dispatch=patch_seal.dispatch
-    )
+    refused = await _seal_graph(fs, options2, refused_bus, dispatch=patch_seal.dispatch)
     assert refused["refused"]["code"] == "capture.sha_mismatch"
     assert refused["seal_calls"] == 0
     assert refused_bus.posts == 0
@@ -246,7 +270,7 @@ async def test_both_slots_and_capture_mismatch(fs, patch_seal) -> None:
 @pytest.mark.asyncio
 async def test_dom_harvest_graph(fs, patch_seal) -> None:
     raw = _jsonl()
-    env = extract_turns_from_jsonl_bytes(raw, transcript_id="cursor-window")
+    env = extract_turns_from_jsonl_bytes(raw, transcript_id=_AGENT_DEFAULT)
     env.meta.provenance = "raw"
     env.meta.coverage = "full"
     env.meta.capture = CaptureRef(
@@ -302,9 +326,7 @@ async def test_stale_card_then_fresh(fs, patch_seal) -> None:
     bus = Bus()
     options = _options(fs, _stamp_raw())
     options["expected_card_sha256"] = "ab" * 32
-    out = await _seal_graph(
-        fs, options, bus, dispatch=patch_seal.dispatch
-    )
+    out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
     assert out["card"]["refused"]["code"] == "card.sha_mismatch"
     assert options["card_uri"] not in fs.writes
     live = file_sha256(await fs.read(options["card_uri"]))
@@ -335,7 +357,12 @@ async def test_light_mode_no_pour(fs) -> None:
         "bus_identity": "bot",
         "verifier": "verifier",
     }
+
     async def get(path, params=None):
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "11":
+            return {"turns": []}, 200
         return {"turns": []}, 200
 
     admitted = await run_admit(options, {}, fs=fs, get=get)
@@ -361,6 +388,10 @@ async def test_pending_is_graph_tail(fs) -> None:
         now_box["t"] += seconds
 
     async def silent(path, params=None):
+        if path.startswith("/threads/") and path.endswith("/turns"):
+            return {"detail": "Not Found"}, 404
+        if path == "/turns" and params and params.get("thread") == "v":
+            return {"turns": []}, 200
         return {"turns": []}, 200
 
     out = await run_await_verify(
@@ -371,3 +402,15 @@ async def test_pending_is_graph_tail(fs) -> None:
         now=now,
     )
     assert out["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_transcript_id_mismatch_refuses_before_seal(fs, patch_seal) -> None:
+    fixture_bytes = (_FIXTURES / "grok_transcribed_pour.json").read_bytes()
+    bus = Bus()
+    options = _options(fs, fixture_bytes, house="tidm", slot="transcribed")
+    out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
+    assert (out.get("refused") or {}).get("code") == "admit.transcript_id_mismatch"
+    assert out["seal_calls"] == 0
+    assert bus.posts == 0
+    assert options["card_uri"] not in fs.writes
