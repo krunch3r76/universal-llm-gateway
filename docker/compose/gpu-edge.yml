@@ -47,6 +47,9 @@ services:
       # the host tree (rsync on remotes) and restarting the container — no docker build.
       - ../../libs:/app/libs:ro
       - ../../services:/app/services:ro
+      # Stargate lifespan loads pipelines from /app (closeout_memo retry sweep).
+      # services/ is already the live tree; the image copy of pipelines/ is not.
+      - ../../pipelines:/app/pipelines:ro
       - ../../sitecustomize.py:/app/sitecustomize.py:ro
       - ../../docker/runtime/golem-start.sh:/app/golem-start.sh:ro
       - ../../config:/app/config:ro
