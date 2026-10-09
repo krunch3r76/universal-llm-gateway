@@ -181,9 +181,16 @@ async def _seal_graph(fs, options, bus, *, stop_after: str | None = None, dispat
 
 
 @pytest.fixture
-def patch_seal(monkeypatch: pytest.MonkeyPatch):
+def patch_seal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import cortex_store.db as cortex_db
+    from cortex_store._test_db_bootstrap import materialize_head_schema_template
+
     from . import seal as seal_mod
 
+    db_path = tmp_path / "cortex.db"
+    materialize_head_schema_template(db_path)
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", db_path)
+    cortex_db.run_migrations(cortex_db.cortex_conn())
     monkeypatch.setattr(seal_mod, "stargate_continuity_checkpoint_sealed", lambda **k: None)
     monkeypatch.setattr(
         "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
