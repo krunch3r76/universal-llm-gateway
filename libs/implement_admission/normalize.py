@@ -444,6 +444,8 @@ _ACCEPTANCE_PHRASE = re.compile(r"\bacceptance criteria\b", re.IGNORECASE)
 _FILE_PATH_SUFFIXES = (".py", ".md", ".yaml", ".yml", ".json", ".toml", ".mdc")
 _MAX_FILE_PATH_LEN = 200
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_GIT_REF_PREFIX_RE = re.compile(r"^(?:origin|refs|upstream)/", re.IGNORECASE)
+_FILES_DIRECTIVE_KEYS = ("files_expected", "expected_files")
 
 
 def _packet_has_acceptance(text: str) -> bool:
@@ -463,6 +465,8 @@ def _looks_like_file_path(path: str) -> bool:
     # URI-scheme tokens (cortex://, workspaces://, https://, …) are durable-share
     # references, not repo-relative paths — reject before slash/suffix heuristics.
     if "://" in candidate:
+        return False
+    if _GIT_REF_PREFIX_RE.match(candidate):
         return False
     # Whitespace/overlength reject non-path captures (e.g. multi-line code-fence
     # bodies the inline-backtick scan over-captures). Without this, slash-bearing
@@ -486,6 +490,77 @@ def _strip_fenced_blocks(text: str) -> str:
     return _FENCE_RE.sub(" ", text)
 
 
+def _frontmatter_region(text: str) -> str | None:
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    return text[3:end]
+
+
+def _split_comma_file_list(raw: str) -> list[str]:
+    parts = [p.strip().strip("`\"'") for p in raw.split(",")]
+    return [p for p in parts if p]
+
+
+def _directive_block_list(text: str, key: str) -> list[str] | None:
+    header = re.search(rf"^[ \t]*{re.escape(key)}:[ \t]*$", text, flags=re.MULTILINE)
+    if header is None:
+        return None
+    items: list[str] = []
+    for line in text[header.end() :].splitlines():
+        if not line.strip():
+            continue
+        item = re.match(r"^[ \t]+-[ \t]*(.+)$", line)
+        if item is None:
+            break
+        items.append(item.group(1).strip().strip("`\"'"))
+    return items
+
+
+def _directive_inline_comma(text: str, key: str) -> list[str] | None:
+    match = re.search(
+        rf"^[ \t]*{re.escape(key)}:[ \t]*(.+?)\s*$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return None
+    raw = match.group(1).strip()
+    if not raw:
+        return None
+    return _split_comma_file_list(raw)
+
+
+def _files_expected_directive(text: str) -> list[str] | None:
+    """Authoritative ``expected_files`` / ``files_expected`` outside block frontmatter."""
+    region = _frontmatter_region(text)
+    if region is not None:
+        for key in _FILES_DIRECTIVE_KEYS:
+            inline = _directive_inline_comma(region, key)
+            if inline is not None:
+                return inline
+    for key in _FILES_DIRECTIVE_KEYS:
+        block = _directive_block_list(text, key)
+        if block is not None:
+            return block
+    for key in _FILES_DIRECTIVE_KEYS:
+        inline = _directive_inline_comma(text, key)
+        if inline is not None:
+            return inline
+    return None
+
+
+def _filter_repo_paths(paths: list[str]) -> list[str]:
+    out: list[str] = []
+    for raw in paths:
+        candidate = raw.strip()
+        if candidate and _looks_like_file_path(candidate):
+            out.append(candidate)
+    return _dedupe_preserve(out)
+
+
 def _files_from_packet(text: str) -> list[str]:
     # An explicit front-matter `files_expected:` list is authoritative (friction
     # a:31774) — it is the documented way to declare scope, and skipping the
@@ -494,6 +569,10 @@ def _files_from_packet(text: str) -> list[str]:
     frontmatter_files = frontmatter_list_value(text, "files_expected")
     if frontmatter_files is not None:
         return _dedupe_preserve([f for f in frontmatter_files if f])
+
+    directive_files = _files_expected_directive(text)
+    if directive_files is not None:
+        return _filter_repo_paths(directive_files)
 
     scope_text = _extract_block(text, "scope") or ""
     seen: set[str] = set()

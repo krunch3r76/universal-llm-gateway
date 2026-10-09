@@ -187,3 +187,40 @@ Primary artifacts: `libs/implement_admission/normalize.py`.
 </scope>
 """
     assert _files_from_packet(packet) == ["libs/implement_admission/normalize.py"]
+
+
+def test_files_from_packet_inline_expected_files_not_origin_master(
+) -> None:
+    """Friction 39056 — inline expected_files wins; git refs in constraints do not scrape."""
+    three = [
+        "services/git_integration_worker/jobs/foo.py",
+        "services/git_integration_worker/jobs/bar.py",
+        "libs/implement_admission/normalize.py",
+    ]
+    packet = f"""
+expected_files: {", ".join(three)}
+
+Constraints:
+7. forward_only: never reset onto `origin/master`; no `git push --force`.
+"""
+    assert _files_from_packet(packet) == three
+    assert "origin/master" not in _files_from_packet(packet)
+
+
+def test_files_from_packet_unfenced_block_expected_files() -> None:
+    packet = """
+expected_files:
+  - libs/a.py
+  - libs/b.py
+<task_guidance>
+acceptance criteria
+1. ship
+</task_guidance>
+"""
+    assert _files_from_packet(packet) == ["libs/a.py", "libs/b.py"]
+
+
+def test_looks_like_file_path_rejects_git_ref_tokens() -> None:
+    assert not _looks_like_file_path("origin/master")
+    assert not _looks_like_file_path("refs/heads/master")
+    assert not _looks_like_file_path("upstream/main")
