@@ -58,6 +58,7 @@ def finalize_closeout_receipt(
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None,
     read_only: bool | None = None,
     packet_text: str | None = None,
+    land_text: str | None = None,
 ) -> CloseoutDelivery:
     """Write sidecar suffix + structured receipt; settle the lane branch if owed.
 
@@ -87,6 +88,7 @@ def finalize_closeout_receipt(
             head_sha=capture_head_sha,
             files=[*repo_change_set.created, *repo_change_set.modified],
             packet_text=packet_text,
+            land_text=land_text,
         )
     usage_section = render_usage_sidecar_section(
         usage=outcome.usage,

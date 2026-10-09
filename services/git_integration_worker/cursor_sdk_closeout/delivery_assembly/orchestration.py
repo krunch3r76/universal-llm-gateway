@@ -42,6 +42,7 @@ def _assemble_closeout_delivery(
     work_item_ref: str | None,
     baseline: dict[str, Any] | None,
     packet_text: str | None,
+    land_text: str | None = None,
     files_expected: list[str] | None = None,
     cortex_artifact_paths: list[str],
     gate_d_created_rels: tuple[str, ...],
@@ -183,6 +184,7 @@ def _assemble_closeout_delivery(
         gate_d_created_rels=gate_d_created_rels,
         files_outside_repo=all_outside_repo,
         packet_text=packet_text,
+        land_text=land_text,
         closeout_text=text,
     )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
@@ -257,6 +259,7 @@ def _assemble_closeout_delivery(
         finalize_oversize=finalize_oversize,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
         packet_text=packet_text,
+        land_text=land_text,
     )
 
 
@@ -271,6 +274,7 @@ async def _assemble_closeout_delivery_async(
     work_item_ref: str | None,
     baseline: dict[str, Any] | None,
     packet_text: str | None,
+    land_text: str | None = None,
     files_expected: list[str] | None = None,
     cortex_artifact_paths: list[str],
     gate_d_created_rels: tuple[str, ...],
@@ -294,6 +298,7 @@ async def _assemble_closeout_delivery_async(
         work_item_ref=work_item_ref,
         baseline=baseline,
         packet_text=packet_text,
+        land_text=land_text,
         files_expected=files_expected,
         cortex_artifact_paths=cortex_artifact_paths,
         gate_d_created_rels=gate_d_created_rels,

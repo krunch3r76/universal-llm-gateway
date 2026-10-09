@@ -40,6 +40,7 @@ def settle_lane_and_dispatch_fields(
     gate_d_created_rels: tuple[str, ...],
     files_outside_repo: tuple[str, ...] = (),
     packet_text: str | None = None,
+    land_text: str | None = None,
     closeout_text: str | None = None,
 ) -> tuple[
     str | None,
@@ -181,6 +182,7 @@ def settle_lane_and_dispatch_fields(
                 branch_name=record.branch_name,
                 dispatch_id=dispatch_id,
                 packet_text=packet_text,
+                land_text=land_text,
                 closeout_text=closeout_text,
                 commits_ahead=state.commits_ahead,
             )

@@ -2190,6 +2190,7 @@ async def _deliver_sdk_closeout(
     work_item_ref: str | None,
     controller: WorkAdmissionController,
     packet_text: str = "",
+    land_text: str | None = None,
     deliverables_expected: bool = False,
     residual_expected_paths: tuple[str, ...] = (),
     extra_deviations: tuple[str, ...] = (),
@@ -2224,6 +2225,7 @@ async def _deliver_sdk_closeout(
         work_item_ref=work_item_ref,
         baseline=baseline,
         packet_text=packet_text or None,
+        land_text=land_text,
         deliverables_expected=deliverables_expected,
         residual_expected_paths=residual_expected_paths,
         execution_id=req.execution_id,
@@ -3372,8 +3374,14 @@ async def _finalize_success(
     controller: WorkAdmissionController,
     worktree_isolated: bool = False,
 ) -> None:
-    packet_text = _read_packet_text(req, source_repo)
-    instruction_text = packet_text if req.packet_path else (req.message or "")
+    read_packet = _read_packet_text(req, source_repo)
+    if req.packet_path:
+        packet_text = read_packet
+        land_text = read_packet
+    else:
+        packet_text = ""
+        land_text = req.message or ""
+    instruction_text = packet_text if req.packet_path else land_text
     inferred_contract = (
         infer_contract_from_text(packet_text)
         if (not req.handoff_contract and not req.message and packet_text)
@@ -3515,6 +3523,7 @@ async def _finalize_success(
         work_item_ref=work_item_ref,
         controller=controller,
         packet_text=packet_text,
+        land_text=land_text,
         deliverables_expected=compute_deliverables_expected(
             contract=contract,
             instruction_text=instruction_text,
