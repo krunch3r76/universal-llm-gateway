@@ -8,6 +8,7 @@ from continuity_tape.messages import (
     EnvelopeMeta,
     seal_messages_sha256,
 )
+
 from cortex_store.verbatim_succession import build_seal_envelope_meta
 
 pytestmark = pytest.mark.offline
