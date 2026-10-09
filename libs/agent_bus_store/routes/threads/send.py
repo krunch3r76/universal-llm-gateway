@@ -11,7 +11,13 @@ from openapi_mcp.binding import x_mcp
 
 from ...body_auto_spill import build_turn_created, prepare_body_for_insert
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
-from ...db import SlugExists, create_turn, get_thread, normalize_thread_id
+from ...db import (
+    SlugExists,
+    create_turn,
+    get_latest_turn,
+    get_thread,
+    normalize_thread_id,
+)
 from ...db.turns import UnreadTurnsExist
 from ...enrollment_guard import EnrollmentTagError
 from ...resume_fence_citation import check_send_citation_gate, release_on_clean_send
@@ -221,6 +227,29 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=seat_refusal,
         )
+    from ...house_route_control import assert_house_route_control
+
+    try:
+        prior_turn = await asyncio.to_thread(get_latest_turn, thread_id)
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "get_latest_turn failed: thread=%s",
+            thread_id,
+            exc_info=True,
+        )
+        prior_turn = None
+    await asyncio.to_thread(
+        assert_house_route_control,
+        thread_id=thread_id,
+        from_agent=body.from_agent,
+        to_agent=body.to,
+        subject=body.subject,
+        body=body.body,
+        tags=thread_tags,
+        prior_turn=prior_turn,
+    )
     storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
         _resolve_send_supersedes,
         thread_id=thread_id,
