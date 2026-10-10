@@ -1,0 +1,19 @@
+# maestro-landed-live — slice 1 dry run only (a1–a5, a7–a8).
+# Source pins: config/maestro/serving-map.yaml (plan v2 §0).
+schema_version: 6
+id: maestro-landed-live
+version: "1.0"
+type: maestro_landed_live
+category: maestro_landed_live
+description: >
+  Deterministic restart-plan dry run after a land sha. No sync_restart,
+  wait_healthy, cancel_restart_intent, or agent_bus posts in slice 1.
+output: dry_run
+
+options:
+  timeout_seconds: 120
+  mode: dry_run
+
+steps:
+  - name: dry_run
+    type: maestro_landed_live_dry_run_v1

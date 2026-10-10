@@ -1,0 +1,22 @@
+version: 1
+source_pins:
+  runbook_maestro_loop:
+    uri: cortex://notes/runbooks/maestro-loop.md
+    read_sha256: 63ec4acbad3e49363605d3fe9c23bf3c5f606c59e7dfb845d7c09364a14d485f
+  runbook_maestro_sidekick:
+    uri: cortex://notes/runbooks/maestro-sidekick.md
+    read_sha256: 54a371cd990095e5670f843fe4130dbe80a9f44820d994703bd693b283576c0a
+  parity_grok_bot_ulg_cursor:
+    uri: cortex://notes/system/operational/grok-bot-ulg-cursor-parity.md
+    read_sha256: 46aa57a1e7e4f36df1847a30e15f2575d42b26b29373a2a7ddf4f33b47cd9b61
+  maestro_journal:
+    uri: cortex://notes/system/maestro/journal.md
+    read_sha256: 22cae91c35932faae3b7dbf926f1e27c907b9cee253ded1156b702de9ea55783
+rows:
+  - prefix: libs/agent_bus_store/
+    services:
+      - agent_bus
+      - mcp
+    cite: >-
+      journal 152 (agent_bus host serves the lib; mcp only calls it) and journal
+      153 (both restarted for that prefix; fleet_liveness descendant-of-observed on both)
