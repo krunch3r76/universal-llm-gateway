@@ -37,6 +37,8 @@ categories:
     description: gate1_audit
   grokbot_checkpoint:
     description: grokbot_checkpoint
+  maestro_landed_live:
+    description: maestro_landed_live
   jobs:
     description: Host-bound operator jobs (bounded registry; operator-only)
   writing:
