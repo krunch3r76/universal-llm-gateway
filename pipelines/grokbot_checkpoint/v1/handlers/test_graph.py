@@ -462,7 +462,9 @@ async def test_graph_bound_handoff_reaches_seal_and_post(
 
 
 @pytest.mark.asyncio
-async def test_graph_stale_handoff_posts_nothing(fs, patch_seal, tmp_path: Path) -> None:
+async def test_graph_stale_handoff_posts_nothing(
+    fs, patch_seal, tmp_path: Path
+) -> None:
     pour = _stamp_raw()
     bus = Bus()
     options = _options(fs, pour, house="handoff-stale")
