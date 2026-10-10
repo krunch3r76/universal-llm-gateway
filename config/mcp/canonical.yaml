@@ -3517,7 +3517,7 @@ tools:
     tool: continuity_checkpoint
     substrate_qualified: user-vortex__continuity_checkpoint
   fol_descriptor: "Async relay to POST /api/v1/continuity/checkpoint (continuity-checkpoint-v1 pipeline).
-    Required: thread, surface. Lean cursor: pre_consolidate=false explicitly. Tip author after
+    Required: thread, surface. Optional handoff letter, stamped at seal. Lean cursor: pre_consolidate=false explicitly. Tip author after
     mechanical post: team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7,
     contract=freeform, dispatch_thread_id=…, lane=B) — not seat=cursor (handoff); model-only without
     lane= → 422 lane_required. Skill checkpoint-discipline § Pipeline step 2.\n"
@@ -3548,6 +3548,9 @@ tools:
       channel:
         type: string
         description: checkpoint window channel — continuity (default) or hop
+      handoff:
+        type: object
+        description: "Seat-authored handoff letter (author, mission, where_we_left_off, state, next_acts, load_bearing, …); pipeline stamps binding at seal. ≤16 KiB."
     required:
     - thread
     - surface

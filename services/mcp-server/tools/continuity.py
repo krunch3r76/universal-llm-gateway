@@ -362,6 +362,13 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                         "message": "op=checkpoint requires thread and surface",
                     }
                 }
+            if handoff is not None and not isinstance(handoff, dict):
+                return {
+                    "error": {
+                        "code": "invalid_handoff",
+                        "message": "handoff must be an object",
+                    }
+                }
             if surface == "cursor" and transcript_id:
                 from bus_watch.ide_hop_retire import stop_tab_background
 

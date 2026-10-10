@@ -197,9 +197,9 @@ async def test_seal_claude_ai_happy_path_tail() -> None:
     assert _norm(close_args) == (
         golden_dir / "claude_ai_close_args_076effa0.json"
     ).read_text(encoding="utf-8")
-    assert _norm(payload) == (
-        golden_dir / "claude_ai_payload_076effa0.json"
-    ).read_text(encoding="utf-8")
+    assert _norm(payload) == (golden_dir / "claude_ai_payload_076effa0.json").read_text(
+        encoding="utf-8"
+    )
     assert set(close_args) == {
         "session_id",
         "agent",
@@ -591,7 +591,9 @@ async def test_seal_claude_ai_real_op_succession(
     )
     conn = cortex_db.cortex_conn()
     try:
-        count = conn.execute("SELECT COUNT(*) AS n FROM session_journals").fetchone()["n"]
+        count = conn.execute("SELECT COUNT(*) AS n FROM session_journals").fetchone()[
+            "n"
+        ]
     finally:
         conn.close()
     assert count == 1

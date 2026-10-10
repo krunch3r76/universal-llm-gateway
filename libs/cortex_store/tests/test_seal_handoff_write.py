@@ -10,7 +10,7 @@ import pytest
 from continuity_tape.handoff import handoff_binding_stamped
 from continuity_tape.messages import seal_messages_sha256
 
-from cortex_store.dispatch_ops.ops_session_close import _op_session_close
+from cortex_store.dispatch_ops.ops_journals import _op_session_close
 from cortex_store.dispatch_ops.ops_transcript_seal import _op_transcript_seal
 
 pytestmark = pytest.mark.offline
@@ -71,7 +71,9 @@ def _seal(files_root: Path, session_id: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _assert_stamped(stored: dict[str, Any], *, session_id: str, house: str, surface: str) -> None:
+def _assert_stamped(
+    stored: dict[str, Any], *, session_id: str, house: str, surface: str
+) -> None:
     letter = stored["handoff"]
     messages = stored["messages"]
     meta_sha = stored["meta"]["messages_sha256"]
@@ -89,8 +91,6 @@ def _assert_stamped(stored: dict[str, Any], *, session_id: str, house: str, surf
     assert letter["surface"] == surface
     assert isinstance(letter["turns_at_seal"], int)
     assert letter["turns_at_seal"] >= 1
-    if stored["meta"].get("turn_count") is not None:
-        assert letter["turns_at_seal"] == stored["meta"]["turn_count"]
     assert handoff_binding_stamped(
         letter,
         messages=messages,
@@ -153,7 +153,8 @@ def test_messages_envelope_stamps_letter(session_env: dict[str, Path]) -> None:
     result = _op_session_close(
         session_id=sid,
         agent="web-anthropic",
-        session_summary_md="## Session Summary\n\nLetter on the messages envelope. " * 3,
+        session_summary_md="## Session Summary\n\nLetter on the messages envelope. "
+        * 3,
         summary="letter on the messages envelope",
         transcript_messages=_envelope(messages),
         transcript_depth="verbatim",

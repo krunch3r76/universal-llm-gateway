@@ -488,6 +488,10 @@ def _op_session_close(
     closed_by: str | None = None,
     succession_seal_authority: bool = False,
     conversation_uuid: str | None = None,
+    handoff: dict[str, Any] | None = None,
+    stamp_thread: str | None = None,
+    stamp_surface: str | None = None,
+    stamp_transcript_id: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Atomic session close (server-side transcript derivation).
@@ -677,6 +681,10 @@ def _op_session_close(
         ("source_ref_derivation", source_ref_derivation),
         ("closed_by", closed_by),
         ("conversation_uuid", conversation_uuid),
+        ("handoff", handoff if isinstance(handoff, dict) else None),
+        ("stamp_thread", stamp_thread),
+        ("stamp_surface", stamp_surface),
+        ("stamp_transcript_id", stamp_transcript_id),
     ]:
         if val is not None:
             body[key] = val
