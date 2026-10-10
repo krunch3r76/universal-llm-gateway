@@ -11,7 +11,10 @@ from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.house_pools import ContinuityCard
 from agent_bus_store.resume_fence import assemble_resume_fence
 from agent_bus_store.resume_fence_letter import load_tip_letter
-from agent_bus_store.resume_fence_mission import build_mission_block, mission_marker_preview
+from agent_bus_store.resume_fence_mission import (
+    build_mission_block,
+    mission_marker_preview,
+)
 from continuity_tape.handoff import handoff_sha12, stamp_handoff
 
 pytestmark = pytest.mark.offline
