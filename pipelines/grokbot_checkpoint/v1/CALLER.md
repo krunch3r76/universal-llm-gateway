@@ -62,9 +62,9 @@ Canonical pour: `tape/pours/<surface>/<transcript_id>.messages.json`. Authority 
 
 `handoff` is optional and only admitted in `mode: seal` (`admit.handoff_mode` otherwise). It is a successor packet. The pipeline stores the object verbatim; it does not fill fields. Omit it and the cycle is unchanged (`checks.handoff` `missing`, Harvest `handoff:none`).
 
-Identity: `author` (bus identity), `house`, and `house_cp` (`house-cp:<house>:<n>`). Mission: one line, no newline. `state` is a short string. `in_flight` is optional. `next_acts` is a non-empty list of the first acts the successor takes. `rulings` are standing rules with the time in PT. `files` are URIs and shas only, never transcript text. `load_bearing` is the facts a successor cannot infer from the transcript, or an empty list with a non-empty `load_bearing_reason`. `later` is optional, a string or a list. Unknown keys are kept. The JSON must be at most 16 KiB (`admit.handoff_too_large`). A missing or invalid required field refuses `admit.handoff_invalid` and names that field.
+Identity: `author` (bus identity) and `house_cp` (`house-cp:<house>:<n>`). The house is on `house_cp`, not a separate identity field. Mission: one line, no newline. `state` is a short string. `next_acts` is a non-empty list of the first acts the successor takes. `in_flight`, `rulings`, and `files` are author guidance and are not checked. `load_bearing` is the facts a successor cannot infer from the transcript, or an empty list with a non-empty `load_bearing_reason`. `later` is optional, a string or a list. Unknown keys are kept. The JSON must be at most 16 KiB (`admit.handoff_too_large`). A missing or invalid required field refuses `admit.handoff_invalid` and names that field.
 
-Take `messages_sha256` from the pour you are about to seal (`meta.messages_sha256`) and `as_of_message_index` from `len(messages)` (1-based count of messages in that pour). Any new message after you wrote the letter makes it stale: `post` refuses `post.handoff_stale` and posts nothing. Rewrite the letter against the new pour. The transcript wins on facts. The letter wins on intent.
+Take `messages_sha256` from the pour you are about to seal (`meta.messages_sha256`) and `as_of_message_index` from `len(messages)` (1-based count of messages in that pour). A stale letter refuses `post.handoff_stale` at the envelope step, before any snapshot, seal, card row, CHECKPOINT, or FACT. Re-run with a corrected letter for the same n. The transcript wins on facts. The letter wins on intent.
 
 ```handoff-example
 {
@@ -95,7 +95,7 @@ Preconditions: admit passed (`mode` `light|seal|verify_resume`, `house`, `n` int
 
 ### Post (card + CHECKPOINT + FACT)
 
-Preconditions: seal object `session_id` and card `written_sha256`; `root_thread` set for the CHECKPOINT post. Light mode skips post and still writes the card and FACT. Postconditions: result `cp_turn` (seal), `fact_turn`, card `written_sha256`. Side effects: card file; CHECKPOINT on `root_thread`; FACT `FACT|house-cp|<house>|<n>` on `verify_lane`. Warnings: `card.resume_unbound` / `card.nonconforming` (fix the card binding; they do not refuse). Refusals: `card.sha_mismatch` (refresh `expected_card_sha256`), `post.upstream_skipped`, `post.bus`, `post.handoff_stale` (letter does not bind this pour — rewrite it; nothing is posted). Fallback: no FACT if the card was not written.
+Preconditions: seal object `session_id` and card `written_sha256`; `root_thread` set for the CHECKPOINT post. Light mode skips post and still writes the card and FACT. Postconditions: result `cp_turn` (seal), `fact_turn`, card `written_sha256`. Side effects: card file; CHECKPOINT on `root_thread`; FACT `FACT|house-cp|<house>|<n>` on `verify_lane`. Warnings: `card.resume_unbound` / `card.nonconforming` (fix the card binding; they do not refuse). Refusals: `card.sha_mismatch` (refresh `expected_card_sha256`), `post.upstream_skipped`, `post.bus`, `post.handoff_stale` (stale letter, refused at the envelope step before any snapshot, seal, card row, CHECKPOINT, or FACT — re-run with a corrected letter for the same n). Fallback: no FACT if the card was not written.
 
 ### Verify
 
