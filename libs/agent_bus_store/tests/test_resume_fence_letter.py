@@ -413,7 +413,9 @@ def test_real_sid_shapes_still_load(letter_root) -> None:
             now="2026-10-09T18:00:00+00:00",
         )
         _write_seal(letter_root, sid, messages=[{}], handoff=handoff, session_id=sid)
-        out = load_tip_letter(_tip_harvest(sid=sid, letter_sha12=handoff_sha12(handoff)))
+        out = load_tip_letter(
+            _tip_harvest(sid=sid, letter_sha12=handoff_sha12(handoff))
+        )
         assert out["binding"] == "bound", sid
         assert out["body"] == handoff
 
