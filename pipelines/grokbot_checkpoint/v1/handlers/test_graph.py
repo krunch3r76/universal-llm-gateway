@@ -414,3 +414,55 @@ async def test_transcript_id_mismatch_refuses_before_seal(fs, patch_seal) -> Non
     assert out["seal_calls"] == 0
     assert bus.posts == 0
     assert options["card_uri"] not in fs.writes
+
+
+def _graph_letter(pour: bytes, *, house: str, n: int = 1) -> dict:
+    env = json.loads(pour)
+    messages = env["messages"]
+    from continuity_tape.messages import seal_messages_sha256
+
+    return {
+        "house_cp": f"house-cp:{house}:{n}",
+        "messages_sha256": seal_messages_sha256(messages),
+        "as_of_message_index": len(messages),
+        "author": "grok-bot",
+        "mission": "resume the house",
+        "state": "open",
+        "next_acts": ["read the card"],
+        "load_bearing": ["intent is not in the transcript"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_graph_bound_handoff_reaches_seal_and_post(fs, patch_seal, tmp_path: Path) -> None:
+    pour = _stamp_raw()
+    bus = Bus()
+    options = _options(fs, pour, house="handoff-bound")
+    letter = _graph_letter(pour, house="handoff-bound")
+    options["handoff"] = letter
+    out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
+    assert out["envelope"]["handoff_binding"] == "bound"
+    assert out["post"]["refused"] is None
+    raw = json.dumps(letter, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    sha12 = __import__("hashlib").sha256(raw.encode()).hexdigest()[:12]
+    assert f"handoff:{sha12}" in out["post"]["body"]
+    seal_path = (
+        tmp_path / "notes" / "system" / "seals" / f"{out['seal']['session_id']}.messages.json"
+    )
+    stored = json.loads(seal_path.read_text(encoding="utf-8"))
+    assert stored["handoff"] == letter
+    assert any(t.get("subject") == "CHECKPOINT" for t in bus.turns)
+
+
+@pytest.mark.asyncio
+async def test_graph_stale_handoff_posts_nothing(fs, patch_seal) -> None:
+    pour = _stamp_raw()
+    bus = Bus()
+    options = _options(fs, pour, house="handoff-stale")
+    letter = _graph_letter(pour, house="handoff-stale")
+    letter["messages_sha256"] = "0" * 64
+    options["handoff"] = letter
+    out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
+    assert out["post"]["refused"]["code"] == "post.handoff_stale"
+    assert "messages_sha256" in str(out["post"]["refused"])
+    assert not any(t.get("subject") == "CHECKPOINT" for t in bus.turns)
