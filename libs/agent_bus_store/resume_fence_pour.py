@@ -16,6 +16,7 @@ from typing import Any
 from deploy_identity.code_version import resolve_code_version
 
 from .resume_envelope import build_resume_envelope
+from .resume_fence_letter import load_tip_letter
 from .resume_fence_mission import build_mission_block, cap_standing_rule_claims
 from .resume_fence_store import (
     _armed_source,
@@ -119,9 +120,11 @@ def assemble_resume_fence_in_txn(
     open_line = open_line_match.group(1).strip() if open_line_match else None
     verbal = envelope.get("tape_verbal") or []
     tape_bytes = len(json.dumps(verbal, ensure_ascii=False).encode("utf-8"))
+    tip_body = str(tip["body"] or "")
+    letter = load_tip_letter(tip_body)
     mission = build_mission_block(
         thread_id=thread_id,
-        tip_body=str(tip["body"]),
+        tip_body=tip_body,
         tip_turn=int(tip["turn_number"]),
         supersedes_turn=tip.get("supersedes_turn"),
         card_text=card_text,
@@ -130,6 +133,7 @@ def assemble_resume_fence_in_txn(
         open_line=open_line,
         fence_id=fence_id,
         thread_slug=_thread_slug(thread_id),
+        letter=letter,
     )
     mission["standing_rules"] = cap_standing_rule_claims(
         mission.get("standing_rules") or []
@@ -147,6 +151,7 @@ def assemble_resume_fence_in_txn(
         },
         "mission": mission,
         "skills_to_use": mission.get("skills_to_use") or [],
+        "letter": letter,
         "fence_carriage": {
             "fence_id": fence_id,
             "transcript_id": transcript_id,
@@ -248,6 +253,8 @@ def assemble_resume_fence_in_txn(
         poured_payload["adoption_ambiguous"] = ambiguous
     if pre_pour_harvest is not None:
         poured_payload["pre_pour_harvest"] = pre_pour_harvest
+    poured_payload["letter_binding"] = letter.get("binding")
+    poured_payload["letter_sha12"] = letter.get("sha12")
 
     poured_payload["bundle_sha256"] = resume_bundle_sha256(bundle)
     append_fence_event(

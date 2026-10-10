@@ -210,7 +210,14 @@ def test_stamped_letter_bound_in_bundle(root_thread, tmp_path) -> None:
 
 def test_stale_when_messages_grew(root_thread, tmp_path) -> None:
     handoff = _bound_stamped(message_count=1)
-    _write_seal(tmp_path, _SID, messages=[{}, {}], handoff=handoff)
+    grown_sha = "cd" * 32
+    _write_seal(
+        tmp_path,
+        _SID,
+        messages=[{}, {}],
+        handoff=handoff,
+        messages_sha256=grown_sha,
+    )
     tip = _tip_harvest()
     bundle = _assemble(root_thread, tip)
     assert bundle["letter"]["binding"] == "stale"

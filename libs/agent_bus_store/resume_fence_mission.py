@@ -37,6 +37,14 @@ _STANDING_RULES_STEP = (
     "Load mission.standing_rules (verbatim rows and resolved claims) "
     "before any other action"
 )
+_LETTER_BOUND_STEP = (
+    "read bundle.letter.body first — it is the predecessor's letter; "
+    "tip and tape confirm facts"
+)
+_LETTER_STALE_STEP = (
+    "read bundle.letter.body as intent dated as_of_message_index "
+    "({messages_behind} messages behind the seal); tip and tape for later facts"
+)
 
 
 def _sketchboard_in_tip(tip_body: str) -> str | None:
@@ -142,6 +150,46 @@ def _bus_tail_turns(
     return list(reversed(refs))
 
 
+def _letter_handoff_steps(letter: dict[str, Any] | None) -> list[str]:
+    if not letter or not isinstance(letter, dict):
+        return []
+    extra: list[str] = []
+    binding = letter.get("binding")
+    if binding == "bound":
+        extra.append(_LETTER_BOUND_STEP)
+    elif binding == "stale" and letter.get("body") is not None:
+        behind = letter.get("messages_behind")
+        if isinstance(behind, int):
+            extra.append(_LETTER_STALE_STEP.format(messages_behind=behind))
+        else:
+            extra.append(
+                "read bundle.letter.body as intent dated as_of_message_index "
+                "(unknown messages behind the seal); tip and tape for later facts"
+            )
+    lag = letter.get("lag_turns")
+    if isinstance(lag, int) and lag > 2:
+        extra.append(
+            f"letter was written {lag} turns before the seal; check the tape tail"
+        )
+    return extra
+
+
+def _mission_letter_preview(letter: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not letter or not isinstance(letter, dict):
+        return None
+    body = letter.get("body") if isinstance(letter.get("body"), dict) else None
+    acts = body.get("next_acts") if body else None
+    next_act = acts[0] if isinstance(acts, list) and acts else None
+    return {
+        "binding": letter.get("binding"),
+        "mission": body.get("mission") if body else None,
+        "where_we_left_off": body.get("where_we_left_off") if body else None,
+        "next_act": next_act,
+        "lag_turns": letter.get("lag_turns"),
+        "messages_behind": letter.get("messages_behind"),
+    }
+
+
 def build_mission_block(
     *,
     thread_id: str,
@@ -154,6 +202,7 @@ def build_mission_block(
     open_line: str | None,
     fence_id: str,
     thread_slug: str | None = None,
+    letter: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Hoist orientation fields + clone handoff into ``mission`` (FIX-18)."""
     residue = extract_authored_residue(tip_body or "")
@@ -189,6 +238,11 @@ def build_mission_block(
         steps.append(f"rename_chat → `{thread_id} {thread_slug}`")
     if tip_sketchboard:
         steps.append(f"read sketchboard {tip_sketchboard}")
+    letter_steps = _letter_handoff_steps(letter)
+    if letter_steps:
+        insert_at = 1 if standing_rules else 0
+        for offset, step in enumerate(letter_steps):
+            steps.insert(insert_at + offset, step)
     steps.extend(
         [
             "fold bus_tail INFO turns",
@@ -246,6 +300,9 @@ def build_mission_block(
             "steps": steps,
         },
     }
+    preview = _mission_letter_preview(letter)
+    if preview is not None:
+        mission["letter"] = preview
     return mission
 
 
@@ -253,6 +310,7 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
     """Lightweight mission slice for hook marker cache (FIX-17)."""
     handoff = mission.get("handoff") if isinstance(mission.get("handoff"), dict) else {}
     rules = mission.get("standing_rules")
+    letter = mission.get("letter") if isinstance(mission.get("letter"), dict) else {}
     return {
         "highlight": mission.get("highlight"),
         "summary_row": mission.get("summary_row"),
@@ -263,6 +321,7 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
         "skills_to_use": mission.get("skills_to_use") or [],
         "standing_rules_count": len(rules) if isinstance(rules, list) else 0,
         "standing_rules_first": rules[0] if isinstance(rules, list) and rules else None,
+        "letter_binding": letter.get("binding"),
     }
 
 
