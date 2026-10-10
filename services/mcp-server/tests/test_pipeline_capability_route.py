@@ -104,8 +104,11 @@ async def test_zero_slash_id_is_not_a_capability_route() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["async", "run"])
 @pytest.mark.parametrize("pipeline_id", ["a/b/c", "jobs/../x", "jobs/%2e%2e"])
-async def test_malformed_capability_id_rejects_before_http(pipeline_id: str) -> None:
+async def test_malformed_capability_id_rejects_before_http(
+    op: str, pipeline_id: str
+) -> None:
     mcp = FastMCP("cap-route-bad")
     with patch("tools.pipeline._refresh_pipeline_timeouts"):
         register_pipeline_tools(mcp)
@@ -113,7 +116,7 @@ async def test_malformed_capability_id_rejects_before_http(pipeline_id: str) -> 
         async with Client(mcp) as client:
             result = await client.call_tool(
                 "pipeline",
-                {"op": "async", "pipeline_id": pipeline_id},
+                {"op": op, "pipeline_id": pipeline_id},
             )
     body = result.structured_content
     assert body["error"]["code"] == "capability_id_invalid"
@@ -411,7 +414,9 @@ def test_capability_async_nonstr_dispatch_thread_id_omitted() -> None:
     assert body == {"args": {"thread": "1"}, "output_contract": "inline"}
 
 
-def test_capability_async_writer_flat_dispatch_thread_id_reaches_pipeline_options() -> None:
+def test_capability_async_writer_flat_dispatch_thread_id_reaches_pipeline_options() -> (
+    None
+):
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
     with patch("tools.pipeline.make_sync_client", return_value=client):
         _capability_async(
@@ -436,7 +441,9 @@ def test_capability_async_writer_flat_dispatch_thread_id_reaches_pipeline_option
     assert body["dispatch_thread_id"] == "15800"
 
 
-def test_capability_async_local_blank_dispatch_thread_id_stays_in_pipeline_options() -> None:
+def test_capability_async_local_blank_dispatch_thread_id_stays_in_pipeline_options() -> (
+    None
+):
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
     with patch("tools.pipeline.make_sync_client", return_value=client):
         _capability_async(
@@ -449,7 +456,9 @@ def test_capability_async_local_blank_dispatch_thread_id_stays_in_pipeline_optio
     assert body["pipeline_options"]["brief"] == {"topic": "x"}
 
 
-def test_capability_async_local_nonstr_dispatch_thread_id_stays_in_pipeline_options() -> None:
+def test_capability_async_local_nonstr_dispatch_thread_id_stays_in_pipeline_options() -> (
+    None
+):
     client = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=_accepted()))
     with patch("tools.pipeline.make_sync_client", return_value=client):
         _capability_async(
@@ -460,3 +469,121 @@ def test_capability_async_local_nonstr_dispatch_thread_id_stays_in_pipeline_opti
     assert "dispatch_thread_id" not in body
     assert body["pipeline_options"]["dispatch_thread_id"] == 123
     assert body["pipeline_options"]["brief"] == {"topic": "x"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pipeline_id",
+    ["capability:jobs/install-ecosystem-plugin", "jobs/install-ecosystem-plugin"],
+)
+async def test_tool_run_posts_jobs_install_capability(pipeline_id: str) -> None:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.json.return_value = {"run_id": "r1"}
+    resp.headers = {
+        "location": "/api/v1/capabilities/jobs/install-ecosystem-plugin/runs/r1"
+    }
+    client_http = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    mcp = FastMCP("cap-run-install")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with bind_request("default", surface="code"):
+        with patch("tools.pipeline.make_sync_client", return_value=client_http):
+            with patch("tools.pipeline._pipeline_run") as pipeline_run:
+                async with Client(mcp) as client:
+                    result = await client.call_tool(
+                        "pipeline",
+                        {
+                            "op": "run",
+                            "pipeline_id": pipeline_id,
+                            "options": {"args": {"local_only": True}},
+                        },
+                    )
+    body = result.structured_content
+    assert body["href"] == (
+        "/api/v1/capabilities/jobs/install-ecosystem-plugin/runs/r1"
+    )
+    pipeline_run.assert_not_called()
+    client_http.post.assert_called_once_with(
+        "/api/v1/capabilities/jobs/install-ecosystem-plugin",
+        json={"args": {"local_only": True}, "output_contract": "inline"},
+        headers={"X-ULG-Surface": "code"},
+    )
+    assert client_http.post.call_args.args[0] != "/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [
+        (403, {"code": "surface_undeclared", "message": "surface not bound"}),
+        (422, {"code": "unknown_category", "message": "no such category"}),
+    ],
+)
+async def test_tool_run_passes_capability_error_body(
+    status_code: int, body: dict
+) -> None:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = body
+    resp.headers = {}
+    client_http = _sync_ctx(get=MagicMock(), post=MagicMock(return_value=resp))
+    mcp = FastMCP("cap-run-errors")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with bind_request("default", surface="code"):
+        with patch("tools.pipeline.make_sync_client", return_value=client_http):
+            async with Client(mcp) as client:
+                result = await client.call_tool(
+                    "pipeline",
+                    {
+                        "op": "run",
+                        "pipeline_id": "jobs/install-ecosystem-plugin",
+                        "options": {"args": {}},
+                    },
+                )
+    out = result.structured_content
+    assert out["code"] == body["code"]
+    assert out["status_code"] == status_code
+    client_http.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_run_zero_slash_id_requires_messages() -> None:
+    mcp = FastMCP("cap-run-plain")
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline.make_sync_client") as http:
+        with patch("tools.pipeline._capability_async") as capability:
+            with patch("tools.pipeline._pipeline_run") as pipeline_run:
+                async with Client(mcp) as client:
+                    result = await client.call_tool(
+                        "pipeline",
+                        {"op": "run", "pipeline_id": "jobs"},
+                    )
+    body = result.structured_content
+    assert body["error"]["code"] == "missing_required"
+    capability.assert_not_called()
+    pipeline_run.assert_not_called()
+    http.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_run_zero_slash_id_uses_pipeline_run() -> None:
+    mcp = FastMCP("cap-run-chat")
+    messages = [{"role": "user", "content": "hi"}]
+    with patch("tools.pipeline._refresh_pipeline_timeouts"):
+        register_pipeline_tools(mcp)
+    with patch("tools.pipeline._capability_async") as capability:
+        with patch(
+            "tools.pipeline._pipeline_run", return_value={"content": "ok"}
+        ) as pipeline_run:
+            async with Client(mcp) as client:
+                await client.call_tool(
+                    "pipeline",
+                    {"op": "run", "pipeline_id": "jobs", "messages": messages},
+                )
+    capability.assert_not_called()
+    pipeline_run.assert_called_once()
+    assert pipeline_run.call_args.args[0] == "jobs"
+    assert pipeline_run.call_args.args[1] == messages

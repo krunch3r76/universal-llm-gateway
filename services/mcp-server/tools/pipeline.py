@@ -366,6 +366,18 @@ def _path_has_dotdot(value: str) -> bool:
     return False
 
 
+_CAPABILITY_VOCAB_PREFIX = "capability:"
+
+
+def _strip_capability_vocab_prefix(pipeline_id: str | None) -> str | None:
+    """Drop one leading ``capability:`` jobs-vocabulary prefix when present."""
+    if not pipeline_id:
+        return pipeline_id
+    if pipeline_id.startswith(_CAPABILITY_VOCAB_PREFIX):
+        return pipeline_id[len(_CAPABILITY_VOCAB_PREFIX) :]
+    return pipeline_id
+
+
 def _capability_id_shape_error(pipeline_id: str) -> dict[str, Any] | None:
     """Reject anything other than exactly ``<category>/<member>`` with no ``..``."""
     category, separator, member = pipeline_id.partition("/")
@@ -404,7 +416,8 @@ def _capability_async(
     """
     opts = options or {}
     flat = any(
-        key not in {
+        key
+        not in {
             "args",
             "output_contract",
             "model",
@@ -429,7 +442,8 @@ def _capability_async(
             flat = {
                 key: value
                 for key, value in opts.items()
-                if key not in {
+                if key
+                not in {
                     "args",
                     "output_contract",
                     "model",
@@ -741,6 +755,12 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         ``observability(operation="pipeline-trace", params={"execution_id": "..."})``.
         """
         if op == "run":
+            cap_id = _strip_capability_vocab_prefix(pipeline_id)
+            if cap_id and "/" in cap_id:
+                invalid = _capability_id_shape_error(cap_id)
+                if invalid is not None:
+                    return invalid
+                return _capability_async(cap_id, options, None)
             if not pipeline_id or messages is None:
                 return {
                     "error": {
@@ -748,13 +768,15 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                         "message": "op=run requires pipeline_id and messages",
                     }
                 }
-            return _pipeline_run(pipeline_id, messages, options, timeout)
+            run_id = cap_id if cap_id is not None else pipeline_id
+            return _pipeline_run(run_id, messages, options, timeout)
         if op == "async":
-            if pipeline_id and "/" in pipeline_id:
-                invalid = _capability_id_shape_error(pipeline_id)
+            cap_id = _strip_capability_vocab_prefix(pipeline_id)
+            if cap_id and "/" in cap_id:
+                invalid = _capability_id_shape_error(cap_id)
                 if invalid is not None:
                     return invalid
-                return _capability_async(pipeline_id, options, messages)
+                return _capability_async(cap_id, options, messages)
             if not pipeline_id or messages is None:
                 return {
                     "error": {
