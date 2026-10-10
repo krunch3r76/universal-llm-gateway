@@ -16,6 +16,7 @@ _REFUSED_ACTIONS = frozenset(
         "sync_restart",
         "wait_healthy",
         "cancel_restart_intent",
+        "recycle_giw",
     }
 )
 
@@ -29,18 +30,11 @@ def refuse_manage_call(method: str, params: dict[str, Any] | None = None) -> str
     if params.get("force") is True and service == "git_integration_worker":
         return "refused force on git_integration_worker"
 
-    if method == "recycle_giw" and params.get("force") is not True:
-        return None
-
     if method == "manage":
         if action in _REFUSED_ACTIONS:
             return f"refused manage action {action!r}"
         if action.startswith("charter_"):
             return f"refused manage action {action!r}"
-        if action == "recycle_giw":
-            if params.get("force") is True:
-                return "refused recycle_giw with force"
-            return None
         if action == "wait_for_boundary":
             return "refused wait_for_boundary"
         if action not in ALLOWED_MANAGE_METHODS and action:
@@ -49,8 +43,6 @@ def refuse_manage_call(method: str, params: dict[str, Any] | None = None) -> str
 
     if method in _REFUSED_ACTIONS or method.startswith("charter_"):
         return f"refused method {method!r}"
-    if method == "recycle_giw" and params.get("force") is True:
-        return "refused recycle_giw with force"
     if method == "agent_bus":
         return "refused agent_bus send"
     if method not in ALLOWED_MANAGE_METHODS:

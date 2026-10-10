@@ -17,6 +17,13 @@ from maestro_landed.serving_map import load_serving_map
 from maestro_landed.source_pins import verify_source_pins
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def _pin_verifier_always_ok(
+    _pins: dict[str, Any], *, files_root: Path | None = None
+) -> tuple[bool, dict[str, str]]:
+    del files_root
+    return True, {}
 LAND_4ACC8E10 = "4acc8e10"
 
 
@@ -72,7 +79,7 @@ def test_ac1_replay_4acc8e10_superset_agent_bus_mcp_empty_propagation() -> None:
         serving_map=load_serving_map(),
         manage=manage,
         propagation=[],
-        source_pins_ok=True,
+        pin_verifier=_pin_verifier_always_ok,
     )
     assert result.status == "OK"
     assert set(result.restart_set) >= {"agent_bus", "mcp"}
@@ -89,7 +96,7 @@ def test_ac2_porcelain_m_on_touched_stops_empty_restart_set() -> None:
         porcelain_raw=porcelain,
         serving_map=load_serving_map(),
         manage=manage,
-        source_pins_ok=True,
+        pin_verifier=_pin_verifier_always_ok,
     )
     assert result.status == "STOP"
     assert result.restart_set == []
@@ -106,7 +113,7 @@ def test_ac3_trace_allowlist_only_readonly_manage() -> None:
         porcelain_raw="",
         serving_map=load_serving_map(),
         manage=manage,
-        source_pins_ok=True,
+        pin_verifier=_pin_verifier_always_ok,
     )
     assert trace_allowed(manage.trace)
     methods = {t["method"] for t in manage.trace}
@@ -171,7 +178,7 @@ def test_ac6_live_pins_match_when_cortex_root_available() -> None:
         ),
         ("wait_for_boundary", {}, True),
         ("recycle_giw", {"force": True}, True),
-        ("recycle_giw", {}, False),
+        ("recycle_giw", {}, True),
         ("rebuild", {}, True),
         ("stop", {}, True),
         ("charter_reload", {}, True),
@@ -196,17 +203,55 @@ def test_falsifier_map_row_empty_cite_rejected() -> None:
 
 
 @pytest.mark.offline
-def test_falsifier_stale_runbook_sha_in_fixture_refuses() -> None:
+def test_falsifier_stale_runbook_sha_in_fixture_refuses(tmp_path: Path) -> None:
+    serving_map = load_serving_map()
+    root = tmp_path / "files"
+    for spec in serving_map.source_pins.values():
+        rel = str(spec["uri"]).removeprefix("cortex://")
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("drifted content\n", encoding="utf-8")
     manage = FakeManage()
     result = compute_dry_run(
         land_sha=LAND_4ACC8E10,
         touched_paths=["libs/agent_bus_store/a.py"],
         porcelain_raw="",
-        serving_map=load_serving_map(),
+        serving_map=serving_map,
         manage=manage,
-        source_pins_ok=False,
+        files_root=root,
     )
     assert result.refuse_reason == "source_pin_sha_drift"
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_handler_pipeline_option_source_pins_ok_does_not_bypass_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """source_pins_ok in pipeline_options must not skip verify_source_pins (AC6)."""
+    from types import SimpleNamespace
+
+    from pipelines.maestro_landed_live.v1.handlers.dry_run import (
+        MaestroLandedLiveDryRunHandler,
+    )
+
+    monkeypatch.setattr(
+        "maestro_landed.restart_plan.verify_source_pins",
+        lambda _pins, *, files_root=None: (False, {"pin": "drift"}),
+    )
+    handler = MaestroLandedLiveDryRunHandler()
+    context = SimpleNamespace(
+        options={
+            "mode": "dry_run",
+            "land_sha": LAND_4ACC8E10,
+            "touched_paths": ["libs/agent_bus_store/a.py"],
+            "source_pins_ok": True,
+        }
+    )
+    out = await handler.execute(step=None, context=context)
+    assert out.json is not None
+    assert out.json.get("status") == "REFUSE"
+    assert out.json.get("refuse_reason") == "source_pin_sha_drift"
 
 
 @pytest.mark.offline

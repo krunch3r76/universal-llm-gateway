@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from maestro_landed.disposition import draft_disposition
@@ -57,12 +59,11 @@ def compute_dry_run(
     serving_map: ServingMap,
     manage: ManageClient,
     propagation: list[Any] | None = None,
-    source_pins_ok: bool | None = None,
-    files_root: Any = None,
+    files_root: Path | None = None,
+    pin_verifier: Callable[..., tuple[bool, dict[str, str]]] | None = None,
 ) -> DryRunResult:
-    pins_ok = source_pins_ok
-    if pins_ok is None:
-        pins_ok, _details = verify_source_pins(serving_map.source_pins, files_root=files_root)
+    verify_fn = pin_verifier or verify_source_pins
+    pins_ok, _details = verify_fn(serving_map.source_pins, files_root=files_root)
     if not pins_ok:
         return DryRunResult(
             ok=False,

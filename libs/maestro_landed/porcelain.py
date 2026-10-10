@@ -1,4 +1,4 @@
-"""Porcelain gate: first-column M/D on a touched path stops the restart set."""
+"""Porcelain gate: either status column M/D on a touched path stops the restart set."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ def porcelain_blocks(
     porcelain_raw: str,
     touched_paths: list[str],
 ) -> list[str]:
-    """Paths with first-column M or D in porcelain that intersect touched_paths."""
+    """Paths with M or D in either porcelain status column that intersect touched_paths."""
     touched = {p.replace("\\", "/") for p in touched_paths}
     blocked: list[str] = []
     for line in porcelain_raw.splitlines():

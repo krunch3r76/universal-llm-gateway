@@ -60,7 +60,6 @@ class MaestroLandedLiveDryRunHandler(BaseHandler):
             serving_map=serving_map,
             manage=manage,
             propagation=propagation if isinstance(propagation, list) else None,
-            source_pins_ok=opts.get("source_pins_ok"),
         )
         payload = result.to_json()
         payload["DISPOSITION"] = result.disposition_draft
