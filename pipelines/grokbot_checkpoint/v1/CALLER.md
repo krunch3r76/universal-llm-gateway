@@ -34,6 +34,7 @@ snapshot_sha256
 wait_verify_seconds
 successor
 fact_turn
+handoff
 ```
 
 ```seal-example
@@ -57,6 +58,31 @@ Window `transcript_id` = pour `meta.transcript_id` = journal `conversation_uuid`
 
 Canonical pour: `tape/pours/<surface>/<transcript_id>.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`.
 
+## Writing the handoff letter
+
+`handoff` is optional and only admitted in `mode: seal` (`admit.handoff_mode` otherwise). It is a successor packet. The pipeline stores the object verbatim; it does not fill fields. Omit it and the cycle is unchanged (`checks.handoff` `missing`, Harvest `handoff:none`).
+
+Identity: `author` (bus identity), `house`, and `house_cp` (`house-cp:<house>:<n>`). Mission: one line, no newline. `state` is a short string. `in_flight` is optional. `next_acts` is a non-empty list of the first acts the successor takes. `rulings` are standing rules with the time in PT. `files` are URIs and shas only, never transcript text. `load_bearing` is the facts a successor cannot infer from the transcript, or an empty list with a non-empty `load_bearing_reason`. `later` is optional, a string or a list. Unknown keys are kept. The JSON must be at most 16 KiB (`admit.handoff_too_large`). A missing or invalid required field refuses `admit.handoff_invalid` and names that field.
+
+Take `messages_sha256` from the pour you are about to seal (`meta.messages_sha256`) and `as_of_message_index` from `len(messages)` (1-based count of messages in that pour). Any new message after you wrote the letter makes it stale: `post` refuses `post.handoff_stale` and posts nothing. Rewrite the letter against the new pour. The transcript wins on facts. The letter wins on intent.
+
+```handoff-example
+{
+  "house_cp": "house-cp:hm1:4",
+  "messages_sha256": "<sha256>",
+  "as_of_message_index": 12,
+  "author": "grok-bot-hm1",
+  "mission": "resume hm1 from checkpoint 4",
+  "state": "open",
+  "in_flight": ["seal the pour"],
+  "next_acts": ["read the card", "post the FACT if it is missing"],
+  "rulings": ["standing: one checkpoint per house (2026-10-09 22:00 PT)"],
+  "files": ["cortex://notes/checkpoints/hm1.md@<sha256>"],
+  "load_bearing": ["successor should hop only after IN-SYNC"],
+  "later": "widen the card if a second house appears"
+}
+```
+
 ## Stages
 
 ### Harvest (source)
@@ -65,11 +91,11 @@ Preconditions: seal mode; pour file present; sha matches. Call is the pipeline a
 
 ### Seal
 
-Preconditions: admit passed (`mode` `light|seal|verify_resume`, `house`, `n` int ≥ 1, seal `agent_id`; with `root_thread`, `agent_id` canonical lowercase uuid). Start is ISO-8601 with `Z` or an offset (`opened_at` or `house_opened_at` if the pour has no meta/message time). Precedence: `meta.opened_at` › `meta.started_at` › first message timestamp › options. Postconditions: seal object `session_id` set; result `refused` null. Side effects: cortex seal entity; authority tape write. Refusals: `admit.agent_id`, `admit.agent_id_not_uuid`, `admit.mode`, `admit.house`, `admit.n`, `admit.path_escape`, `admit.residue`, `admit.dispatch_thread_missing`, `seal.missing_start`, `seal.start_unparseable`, `seal.envelope_missing`, `seal.upstream_skipped`, `seal.path_rejected`, `seal.transport`. Fallback: refused seal ⇒ fail closed, no post (F7).
+Preconditions: admit passed (`mode` `light|seal|verify_resume`, `house`, `n` int ≥ 1, seal `agent_id`; with `root_thread`, `agent_id` canonical lowercase uuid). Start is ISO-8601 with `Z` or an offset (`opened_at` or `house_opened_at` if the pour has no meta/message time). Precedence: `meta.opened_at` › `meta.started_at` › first message timestamp › options. Postconditions: seal object `session_id` set; result `refused` null. Side effects: cortex seal entity; authority tape write. Refusals: `admit.agent_id`, `admit.agent_id_not_uuid`, `admit.mode`, `admit.house`, `admit.n`, `admit.path_escape`, `admit.residue`, `admit.dispatch_thread_missing`, `admit.handoff_invalid`, `admit.handoff_too_large`, `admit.handoff_mode`, `seal.missing_start`, `seal.start_unparseable`, `seal.envelope_missing`, `seal.upstream_skipped`, `seal.path_rejected`, `seal.transport`. Fallback: refused seal ⇒ fail closed, no post (F7).
 
 ### Post (card + CHECKPOINT + FACT)
 
-Preconditions: seal object `session_id` and card `written_sha256`; `root_thread` set for the CHECKPOINT post. Light mode skips post and still writes the card and FACT. Postconditions: result `cp_turn` (seal), `fact_turn`, card `written_sha256`. Side effects: card file; CHECKPOINT on `root_thread`; FACT `FACT|house-cp|<house>|<n>` on `verify_lane`. Warnings: `card.resume_unbound` / `card.nonconforming` (fix the card binding; they do not refuse). Refusals: `card.sha_mismatch` (refresh `expected_card_sha256`), `post.upstream_skipped`, `post.bus`. Fallback: no FACT if the card was not written.
+Preconditions: seal object `session_id` and card `written_sha256`; `root_thread` set for the CHECKPOINT post. Light mode skips post and still writes the card and FACT. Postconditions: result `cp_turn` (seal), `fact_turn`, card `written_sha256`. Side effects: card file; CHECKPOINT on `root_thread`; FACT `FACT|house-cp|<house>|<n>` on `verify_lane`. Warnings: `card.resume_unbound` / `card.nonconforming` (fix the card binding; they do not refuse). Refusals: `card.sha_mismatch` (refresh `expected_card_sha256`), `post.upstream_skipped`, `post.bus`, `post.handoff_stale` (letter does not bind this pour — rewrite it; nothing is posted). Fallback: no FACT if the card was not written.
 
 ### Verify
 
@@ -92,4 +118,4 @@ Cite `runbook:operator-grok-bot-liaison` (hop / successor spawn). Packet source 
 
 ## Result fields
 
-MCP `pipeline(op=result)` `content` is JSON for the full result object. Read `cp_turn`, `fact_turn`, card `written_sha256`, `envelope.snapshot_uri` @ `envelope.sha256`, seal `session_id`, `warnings[]`, `verify.state`, `refused`, and `verify_resume.checks` when verify_resume ran. `refused` non-null means stop at that code.
+MCP `pipeline(op=result)` `content` is JSON for the full result object. Read `cp_turn`, `fact_turn`, card `written_sha256`, `envelope.snapshot_uri` @ `envelope.sha256`, seal `session_id`, `warnings[]`, `verify.state`, `refused`, and `verify_resume.checks` when verify_resume ran. `envelope.handoff_binding` is `bound`, `stale`, or `missing`. `checks.handoff` reports the same binding against the authority document (the seal file, or the staging snapshot when authority is `staging_fallback`). `stale` also sets `checks.handoff_reasons`. `missing` adds warning `verify_resume.handoff_missing`. Neither stale nor missing flips another check or refuses. `refused` non-null means stop at that code.
