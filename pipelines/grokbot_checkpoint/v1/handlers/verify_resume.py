@@ -11,6 +11,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import bus_get, file_sha256, fs_of, step_output_json
+from ._handoff import handoff_binding
 
 
 def _harvest_sha(body: str) -> str | None:
@@ -36,7 +37,7 @@ def _select_checkpoint(
     *,
     house: str,
     n: object,
-    warnings: list[str],
+    warnings: list[Any],
 ) -> tuple[str, str | None]:
     checkpoints = [t for t in turns if t.get("subject") == "CHECKPOINT"]
     if house and n is not None and str(n) != "":
@@ -74,7 +75,7 @@ async def run_verify_resume(
     get = get or bus_get
     seal_step = seal_step or {}
     checks: dict[str, Any] = {}
-    warnings: list[str] = []
+    warnings: list[Any] = []
     session_id, sid_code = _bound_session_id(options, seal_step)
     if sid_code:
         return {
@@ -115,10 +116,13 @@ async def run_verify_resume(
     turns_known = False
     messages: Any = None
     meta_messages_sha = ""
+    parsed: dict[str, Any] = {}
     if doc_raw:
         try:
             parsed = json.loads(doc_raw.decode("utf-8"))
         except json.JSONDecodeError:
+            parsed = {}
+        if not isinstance(parsed, dict):
             parsed = {}
         meta = parsed.get("meta") if isinstance(parsed, dict) else {}
         if isinstance(meta, dict):
@@ -200,6 +204,27 @@ async def run_verify_resume(
         checks["window_turns"] = "unknown"
         warnings.append("window_turns: turn_count absent")
     checks["receipt"] = receipt
+    letter = parsed.get("handoff") if isinstance(parsed, dict) else None
+    if letter is not None and not isinstance(letter, dict):
+        letter = None
+    n_bind = n_opt if isinstance(n_opt, int) else 0
+    binding, reasons = handoff_binding(
+        letter,
+        messages=messages if isinstance(messages, list) else [],
+        messages_sha256=meta_messages_sha,
+        house=house,
+        n=n_bind,
+    )
+    checks["handoff"] = binding
+    if binding == "stale":
+        checks["handoff_reasons"] = reasons
+    if binding == "missing":
+        warnings.append(
+            {
+                "code": "verify_resume.handoff_missing",
+                "message": "authority document has no handoff letter",
+            }
+        )
     payload: dict[str, Any] = {
         "refused": None,
         "checks": checks,

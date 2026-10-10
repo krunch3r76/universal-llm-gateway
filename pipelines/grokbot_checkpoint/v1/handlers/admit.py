@@ -9,6 +9,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import bus_get, fs_of, refuse, rel_path_ok, step_output_json
+from ._handoff import validate_handoff
 from .card import _last_row_n
 
 _MODES = frozenset({"light", "seal", "verify_resume"})
@@ -74,6 +75,12 @@ async def run_admit(
     residue = options.get("residue")
     if isinstance(residue, str) and len(residue) > 800:
         return refuse("admit.residue", "residue exceeds 800 chars")
+    if "handoff" in options and options.get("handoff") is not None:
+        if mode != "seal":
+            return refuse("admit.handoff_mode", "handoff is only admitted in seal mode")
+        defect = validate_handoff(options.get("handoff"))
+        if defect is not None:
+            return refuse(defect[0], defect[1])
     prior = step_output_json(outputs, "prior")
     if prior.get("replayed"):
         return prior

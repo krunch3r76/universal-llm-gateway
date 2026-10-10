@@ -10,6 +10,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
+from ._handoff import handoff_binding
 
 
 def slug_house(house: str) -> str:
@@ -61,6 +62,67 @@ def _same_pour_identity(old_meta: dict[str, Any], source: dict[str, Any]) -> boo
     return old_ref == new_ref
 
 
+def _letter_on(
+    envelope: dict[str, Any], options: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Copy the caller's letter onto the envelope. The pipeline fills nothing."""
+    out = dict(envelope)
+    letter = options.get("handoff")
+    if letter is None:
+        out.pop("handoff", None)
+        return out, None
+    out["handoff"] = letter
+    return out, letter if isinstance(letter, dict) else None
+
+
+def _binding_fields(
+    letter: dict[str, Any] | None,
+    envelope: dict[str, Any],
+    source: dict[str, Any],
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    messages = envelope.get("messages")
+    n = options.get("n")
+    status, reasons = handoff_binding(
+        letter,
+        messages=messages if isinstance(messages, list) else [],
+        messages_sha256=str(source.get("messages_sha256") or ""),
+        house=str(options.get("house") or ""),
+        n=n if isinstance(n, int) else 0,
+    )
+    fields: dict[str, Any] = {"handoff_binding": status}
+    if status == "stale":
+        fields["handoff_reasons"] = reasons
+    return fields
+
+
+def _snapshot(
+    *,
+    uri: str,
+    sha256: str,
+    messages_sha: str,
+    action: str,
+    source: dict[str, Any],
+    envelope: dict[str, Any],
+    binding: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "refused": None,
+        "snapshot_uri": uri,
+        "sha256": sha256,
+        "messages_sha256": messages_sha,
+        "action": action,
+        "provenance": source.get("provenance"),
+        "producer": source.get("producer"),
+        "coverage": source.get("coverage"),
+        "turn_count": source.get("turn_count"),
+        "surface": source.get("surface"),
+        "capture": source.get("capture"),
+        "envelope": envelope,
+        **binding,
+    }
+
+
 def _prefix_holds(old: list[Any], new: list[Any]) -> bool:
     from cortex_store.verbatim_succession import prefix_holds
 
@@ -91,9 +153,11 @@ async def run_envelope(
             "fs.roots_disagree",
             "cortex_files_root() and cortex _FILES_ROOT differ",
         )
-    envelope = source.get("envelope")
-    if not isinstance(envelope, dict):
+    source_envelope = source.get("envelope")
+    if not isinstance(source_envelope, dict):
         return refuse("envelope.missing", "source produced no envelope")
+    envelope, letter = _letter_on(source_envelope, options)
+    binding = _binding_fields(letter, envelope, source, options)
     raw = json.dumps(envelope, ensure_ascii=False, sort_keys=True).encode("utf-8")
     existing = await fs.read(uri)
     messages_sha = str(source.get("messages_sha256") or "")
@@ -101,20 +165,15 @@ async def run_envelope(
         written = await fs.write(uri, raw, if_absent=True)
         if not written.get("ok"):
             return refuse("envelope.conflict", "if_absent lost the race")
-        return {
-            "refused": None,
-            "snapshot_uri": uri,
-            "sha256": written["sha256"],
-            "messages_sha256": messages_sha,
-            "action": "write",
-            "provenance": source.get("provenance"),
-            "producer": source.get("producer"),
-            "coverage": source.get("coverage"),
-            "turn_count": source.get("turn_count"),
-            "surface": source.get("surface"),
-            "capture": source.get("capture"),
-            "envelope": envelope,
-        }
+        return _snapshot(
+            uri=uri,
+            sha256=written["sha256"],
+            messages_sha=messages_sha,
+            action="write",
+            source=source,
+            envelope=envelope,
+            binding=binding,
+        )
     try:
         old = json.loads(existing.decode("utf-8"))
     except json.JSONDecodeError:
@@ -127,20 +186,28 @@ async def run_envelope(
             "snapshot messages match but provenance, producer, or capture differ",
         )
     if old_sha == messages_sha and _same_pour_identity(old_meta, source):
-        return {
-            "refused": None,
-            "snapshot_uri": uri,
-            "sha256": file_sha256(existing),
-            "messages_sha256": messages_sha,
-            "action": "skip",
-            "provenance": source.get("provenance"),
-            "producer": source.get("producer"),
-            "coverage": source.get("coverage"),
-            "turn_count": source.get("turn_count"),
-            "surface": source.get("surface"),
-            "capture": source.get("capture"),
-            "envelope": envelope,
-        }
+        if old.get("handoff") != envelope.get("handoff"):
+            written = await fs.write(uri, raw, expected_sha256=file_sha256(existing))
+            if not written.get("ok"):
+                return refuse("envelope.not_prefix", "guarded overwrite lost the race")
+            return _snapshot(
+                uri=uri,
+                sha256=written["sha256"],
+                messages_sha=messages_sha,
+                action="overwrite",
+                source=source,
+                envelope=envelope,
+                binding=binding,
+            )
+        return _snapshot(
+            uri=uri,
+            sha256=file_sha256(existing),
+            messages_sha=messages_sha,
+            action="skip",
+            source=source,
+            envelope=envelope,
+            binding=binding,
+        )
     old_msgs = old.get("messages") if isinstance(old, dict) else None
     new_msgs = envelope.get("messages")
     if not isinstance(old_msgs, list) or not isinstance(new_msgs, list):
@@ -150,20 +217,15 @@ async def run_envelope(
     written = await fs.write(uri, raw, expected_sha256=file_sha256(existing))
     if not written.get("ok"):
         return refuse("envelope.not_prefix", "guarded overwrite lost the race")
-    return {
-        "refused": None,
-        "snapshot_uri": uri,
-        "sha256": written["sha256"],
-        "messages_sha256": messages_sha,
-        "action": "overwrite",
-        "provenance": source.get("provenance"),
-        "producer": source.get("producer"),
-        "coverage": source.get("coverage"),
-        "turn_count": source.get("turn_count"),
-        "surface": source.get("surface"),
-        "capture": source.get("capture"),
-        "envelope": envelope,
-    }
+    return _snapshot(
+        uri=uri,
+        sha256=written["sha256"],
+        messages_sha=messages_sha,
+        action="overwrite",
+        source=source,
+        envelope=envelope,
+        binding=binding,
+    )
 
 
 class GrokbotCheckpointEnvelopeHandler(BaseHandler):

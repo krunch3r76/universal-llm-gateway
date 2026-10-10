@@ -72,6 +72,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             else None,
             "alternate": source.get("alternate"),
             "fallback": source.get("fallback"),
+            "handoff_binding": envelope.get("handoff_binding"),
         },
         "seal": {
             "session_id": seal.get("session_id"),

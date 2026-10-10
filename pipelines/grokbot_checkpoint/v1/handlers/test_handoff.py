@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 from continuity_tape.messages import seal_messages_sha256
 
+from .admit import run_admit
 from .envelope import run_envelope
 from .post import run_post
 from .verify_resume import run_verify_resume
-from .admit import run_admit
 
 pytestmark = pytest.mark.offline
 
@@ -334,8 +334,8 @@ async def test_admit_too_large_and_light_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_seal_file_keeps_handoff(monkeypatch, tmp_path: Path, fs) -> None:
-    from .test_contract import _boot, _Spy, _patch_event
     from .seal import run_seal
+    from .test_contract import _boot, _patch_event, _Spy
 
     _boot(monkeypatch, tmp_path)
     spy = _Spy()
@@ -379,6 +379,8 @@ async def test_seal_file_keeps_handoff(monkeypatch, tmp_path: Path, fs) -> None:
         dispatch=spy.dispatch,
     )
     assert out["refused"] is None
-    seal_path = tmp_path / "notes" / "system" / "seals" / f"{out['session_id']}.messages.json"
+    seal_path = (
+        tmp_path / "notes" / "system" / "seals" / f"{out['session_id']}.messages.json"
+    )
     stored = json.loads(seal_path.read_text(encoding="utf-8"))
     assert stored["handoff"] == letter

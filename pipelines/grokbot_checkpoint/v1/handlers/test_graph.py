@@ -434,7 +434,9 @@ def _graph_letter(pour: bytes, *, house: str, n: int = 1) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_graph_bound_handoff_reaches_seal_and_post(fs, patch_seal, tmp_path: Path) -> None:
+async def test_graph_bound_handoff_reaches_seal_and_post(
+    fs, patch_seal, tmp_path: Path
+) -> None:
     pour = _stamp_raw()
     bus = Bus()
     options = _options(fs, pour, house="handoff-bound")
@@ -447,7 +449,11 @@ async def test_graph_bound_handoff_reaches_seal_and_post(fs, patch_seal, tmp_pat
     sha12 = __import__("hashlib").sha256(raw.encode()).hexdigest()[:12]
     assert f"handoff:{sha12}" in out["post"]["body"]
     seal_path = (
-        tmp_path / "notes" / "system" / "seals" / f"{out['seal']['session_id']}.messages.json"
+        tmp_path
+        / "notes"
+        / "system"
+        / "seals"
+        / f"{out['seal']['session_id']}.messages.json"
     )
     stored = json.loads(seal_path.read_text(encoding="utf-8"))
     assert stored["handoff"] == letter

@@ -10,6 +10,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import bus_get, bus_send, refuse, step_output_json
+from ._handoff import handoff_sha12
 
 _MARKER = "house-cp:"
 
@@ -42,6 +43,7 @@ def compose_checkpoint_body(
     n: int,
     capture: str = "none",
     mission: str | None = None,
+    handoff: str = "none",
 ) -> str:
     hop = " · channel=hop" if channel == "hop" else ""
     mission_line = _format_mission(mission=mission, house=house, n=n)
@@ -58,7 +60,7 @@ def compose_checkpoint_body(
         (
             f"Harvest: transcript:{session_id} · messages_sha256:{messages_sha256} · "
             f"codec:messages-v1 · surface:{surface} · provenance:{provenance} · "
-            f"producer:{producer} · capture:{capture}"
+            f"producer:{producer} · capture:{capture} · handoff:{handoff}"
         ),
         "",
         mission_line,
@@ -107,6 +109,10 @@ async def run_post(
         or not envelope_step.get("snapshot_uri")
     ):
         return refuse("post.upstream_skipped", "seal or envelope missing")
+    if envelope_step.get("handoff_binding") == "stale":
+        reasons = envelope_step.get("handoff_reasons") or []
+        joined = ",".join(str(item) for item in reasons)
+        return refuse("post.handoff_stale", joined or "handoff")
     get = get or bus_get
     send = send or bus_send
     thread = str(options.get("root_thread") or "")
@@ -133,6 +139,11 @@ async def run_post(
         mission=options.get("mission")
         if isinstance(options.get("mission"), str)
         else None,
+        handoff=handoff_sha12(
+            (envelope_step.get("envelope") or {}).get("handoff")
+            if isinstance(envelope_step.get("envelope"), dict)
+            else None
+        ),
     )
     tip, tip_status = await get(
         "/turns/by-number",
