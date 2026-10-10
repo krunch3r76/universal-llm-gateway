@@ -51,7 +51,7 @@ async def run_admit(
     if not house:
         return refuse("admit.house", "house required")
     n = options.get("n")
-    if not isinstance(n, int) or n < 1:
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
         return refuse("admit.n", "n must be an int >= 1")
     for path in _paths(options):
         if not rel_path_ok(path):

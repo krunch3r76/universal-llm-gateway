@@ -204,27 +204,30 @@ async def run_verify_resume(
         checks["window_turns"] = "unknown"
         warnings.append("window_turns: turn_count absent")
     checks["receipt"] = receipt
-    letter = parsed.get("handoff") if isinstance(parsed, dict) else None
-    if letter is not None and not isinstance(letter, dict):
-        letter = None
-    n_bind = n_opt if isinstance(n_opt, int) else 0
-    binding, reasons = handoff_binding(
-        letter,
-        messages=messages if isinstance(messages, list) else [],
-        messages_sha256=meta_messages_sha,
-        house=house,
-        n=n_bind,
-    )
-    checks["handoff"] = binding
-    if binding == "stale":
-        checks["handoff_reasons"] = reasons
-    if binding == "missing":
-        warnings.append(
-            {
-                "code": "verify_resume.handoff_missing",
-                "message": "authority document has no handoff letter",
-            }
+    raw_letter = parsed.get("handoff") if isinstance(parsed, dict) else None
+    if "handoff" in parsed and not isinstance(raw_letter, dict):
+        checks["handoff"] = "stale"
+        checks["handoff_reasons"] = ["shape"]
+    else:
+        letter = raw_letter if isinstance(raw_letter, dict) else None
+        n_bind = n_opt if isinstance(n_opt, int) else 0
+        binding, reasons = handoff_binding(
+            letter,
+            messages=messages if isinstance(messages, list) else [],
+            messages_sha256=meta_messages_sha,
+            house=house,
+            n=n_bind,
         )
+        checks["handoff"] = binding
+        if binding == "stale":
+            checks["handoff_reasons"] = reasons
+        if binding == "missing":
+            warnings.append(
+                {
+                    "code": "verify_resume.handoff_missing",
+                    "message": "authority document has no handoff letter",
+                }
+            )
     payload: dict[str, Any] = {
         "refused": None,
         "checks": checks,

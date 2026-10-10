@@ -158,6 +158,11 @@ async def run_envelope(
         return refuse("envelope.missing", "source produced no envelope")
     envelope, letter = _letter_on(source_envelope, options)
     binding = _binding_fields(letter, envelope, source, options)
+    if binding.get("handoff_binding") == "stale":
+        reasons = binding.get("handoff_reasons") or []
+        joined = ",".join(str(item) for item in reasons)
+        # Raised here so a stale letter writes no snapshot, seal, card, or bus row.
+        return refuse("post.handoff_stale", joined or "handoff")
     raw = json.dumps(envelope, ensure_ascii=False, sort_keys=True).encode("utf-8")
     existing = await fs.read(uri)
     messages_sha = str(source.get("messages_sha256") or "")
