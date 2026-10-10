@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -15,7 +16,7 @@ from agent_bus_store.resume_fence_mission import (
     build_mission_block,
     mission_marker_preview,
 )
-from continuity_tape.handoff import handoff_sha12, stamp_handoff
+from continuity_tape.handoff import HANDOFF_MAX_BYTES, handoff_sha12, stamp_handoff
 
 pytestmark = pytest.mark.offline
 
@@ -352,6 +353,91 @@ def test_poured_payload_letter_fields(root_thread, tmp_path) -> None:
     payload = json.loads(str(row["payload_json"]))
     assert payload["letter_binding"] == "bound"
     assert payload["letter_sha12"] == sha12
+
+
+@pytest.fixture()
+def letter_root(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    return tmp_path
+
+
+def test_bad_sid_path_traversal_never_reads(letter_root, tmp_path) -> None:
+    evil_sid = ".." + "/" + ".." + "/" + "planted"
+    planted = letter_root / "planted.messages.json"
+    planted.write_text(
+        json.dumps(
+            {
+                "messages": [{}],
+                "meta": {"messages_sha256": _SHA, "session_id": evil_sid},
+                "handoff": _bound_stamped(message_count=1),
+            }
+        ),
+        encoding="utf-8",
+    )
+    read_calls: list[Path] = []
+    original_read_text = Path.read_text
+
+    def tracking_read_text(self, *args, **kwargs):
+        read_calls.append(self)
+        return original_read_text(self, *args, **kwargs)
+
+    with patch.object(Path, "read_text", tracking_read_text):
+        out = load_tip_letter(_tip_harvest(sid=evil_sid))
+    assert out["binding"] == "missing"
+    assert out["reasons"] == ["bad_sid"]
+    assert read_calls == []
+
+
+def test_bad_sid_with_slash_rejected(letter_root) -> None:
+    sid = "a" + "/" + "b"
+    out = load_tip_letter(_tip_harvest(sid=sid))
+    assert out["binding"] == "missing"
+    assert out["reasons"] == ["bad_sid"]
+
+
+def test_real_sid_shapes_still_load(letter_root) -> None:
+    for sid in (
+        "cursor-2026-10-09-064200-f58",
+        "grok-bot-2026-10-08-230200-056",
+    ):
+        author = _stamped_author()
+        handoff = stamp_handoff(
+            author,
+            session_id=sid,
+            messages_sha256=_SHA,
+            message_count=1,
+            thread="15902",
+            transcript_id="tid",
+            surface="cursor",
+            turn_count=3,
+            now="2026-10-09T18:00:00+00:00",
+        )
+        _write_seal(letter_root, sid, messages=[{}], handoff=handoff, session_id=sid)
+        out = load_tip_letter(_tip_harvest(sid=sid, letter_sha12=handoff_sha12(handoff)))
+        assert out["binding"] == "bound", sid
+        assert out["body"] == handoff
+
+
+def test_handoff_exceeding_size_cap_strips_body_keeps_binding(letter_root) -> None:
+    pad = "x" * (HANDOFF_MAX_BYTES + 64)
+    author = _stamped_author(mission=pad)
+    handoff = stamp_handoff(
+        author,
+        session_id=_SID,
+        messages_sha256=_SHA,
+        message_count=1,
+        thread="15902",
+        transcript_id="tid",
+        surface="cursor",
+        turn_count=3,
+        now="2026-10-09T18:00:00+00:00",
+    )
+    _write_seal(letter_root, _SID, messages=[{}], handoff=handoff)
+    sha12 = handoff_sha12(handoff)
+    out = load_tip_letter(_tip_harvest(letter_sha12=sha12))
+    assert out["body"] is None
+    assert "too_large" in out["reasons"]
+    assert out["binding"] == "bound"
 
 
 def test_build_mission_letter_after_standing_rules() -> None:
