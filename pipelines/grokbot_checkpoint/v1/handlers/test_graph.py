@@ -21,6 +21,7 @@ from .card import run_card
 from .conftest import restamp_transcript_id
 from .envelope import run_envelope
 from .fact import run_fact
+from .result import assemble
 from .seal import run_seal
 from .source import run_source
 from .test_contract import _boot, _patch_event, _Spy
@@ -461,14 +462,55 @@ async def test_graph_bound_handoff_reaches_seal_and_post(
 
 
 @pytest.mark.asyncio
-async def test_graph_stale_handoff_posts_nothing(fs, patch_seal) -> None:
+async def test_graph_stale_handoff_posts_nothing(fs, patch_seal, tmp_path: Path) -> None:
     pour = _stamp_raw()
     bus = Bus()
     options = _options(fs, pour, house="handoff-stale")
+    assert options["verify_lane"]
     letter = _graph_letter(pour, house="handoff-stale")
     letter["messages_sha256"] = "0" * 64
     options["handoff"] = letter
+    writes_before = list(fs.writes)
     out = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
-    assert out["post"]["refused"]["code"] == "post.handoff_stale"
-    assert "messages_sha256" in str(out["post"]["refused"])
-    assert not any(t.get("subject") == "CHECKPOINT" for t in bus.turns)
+    result = assemble(options, out)
+    assert result["refused"]["code"] == "post.handoff_stale"
+    assert options["snapshot_uri"] not in fs.files
+    assert fs.writes == writes_before
+    seals = list((tmp_path / "notes" / "system" / "seals").glob("*.messages.json"))
+    assert seals == []
+    assert options["card_uri"] not in fs.writes
+    assert bus.posts == 0
+    assert bus.turns == []
+
+    corrected = _graph_letter(pour, house="handoff-stale")
+    options["handoff"] = corrected
+    done = await _seal_graph(fs, options, bus, dispatch=patch_seal.dispatch)
+    assert any(t.get("subject") == "CHECKPOINT" for t in bus.turns)
+    assert any(str(t.get("subject") or "").startswith("FACT|") for t in bus.turns)
+    seal_path = (
+        tmp_path
+        / "notes"
+        / "system"
+        / "seals"
+        / f"{done['seal']['session_id']}.messages.json"
+    )
+    stored = json.loads(seal_path.read_text(encoding="utf-8"))
+    assert stored["handoff"] == corrected
+    from .verify_resume import run_verify_resume
+
+    verified = await run_verify_resume(
+        {
+            "house": "handoff-stale",
+            "n": 1,
+            "session_id": done["seal"]["session_id"],
+            "card_uri": options["card_uri"],
+            "expected_card_sha256": options["expected_card_sha256"],
+            "snapshot_uri": options["snapshot_uri"],
+            "snapshot_sha256": done["envelope"]["sha256"],
+            "verify_lane": options["verify_lane"],
+            "root_thread": options["root_thread"],
+        },
+        fs,
+        get=bus.get,
+    )
+    assert verified["checks"]["handoff"] == "bound"

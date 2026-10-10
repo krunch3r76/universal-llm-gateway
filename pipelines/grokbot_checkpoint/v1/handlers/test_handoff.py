@@ -148,8 +148,9 @@ async def test_stale_letter_refuses_post_before_bus(fs) -> None:
         house_cp="house-cp:h:1",
     )
     out = await run_envelope(_options(handoff=other), _source(_MSGS), fs)
-    assert out["handoff_binding"] == "stale"
-    assert "messages_sha256" in out["handoff_reasons"]
+    assert out["refused"]["code"] == "post.handoff_stale"
+    assert "messages_sha256" in str(out["refused"])
+    assert await fs.read(_URI) is None
 
     called = {"n": 0}
 
@@ -170,7 +171,11 @@ async def test_stale_letter_refuses_post_before_bus(fs) -> None:
             "verifier": "verifier",
         },
         {"session_id": "sess"},
-        out,
+        {
+            "snapshot_uri": _URI,
+            "handoff_binding": "stale",
+            "handoff_reasons": ["messages_sha256"],
+        },
         get=get,
         send=send,
     )
@@ -186,8 +191,9 @@ async def test_stale_letter_refuses_post_before_bus(fs) -> None:
         _source(_MSGS),
         fs,
     )
-    assert out_index["handoff_binding"] == "stale"
-    assert "as_of_message_index" in out_index["handoff_reasons"]
+    assert out_index["refused"]["code"] == "post.handoff_stale"
+    assert "as_of_message_index" in str(out_index["refused"])
+    assert await fs.read(_URI + ".b") is None
 
 
 @pytest.mark.asyncio
@@ -243,6 +249,37 @@ async def test_missing_letter_completes_with_warning(fs) -> None:
     )
     assert verified["refused"] is None
     assert "handoff_reasons" not in verified["checks"]
+
+
+@pytest.mark.asyncio
+async def test_verify_resume_nondict_handoff_is_shape(fs) -> None:
+    uri = "notes/shape-snap.json"
+    digest = "ab" * 32
+    doc = {
+        "messages": [{"role": "user", "content": "x"}],
+        "meta": {"messages_sha256": digest, "provenance": "raw"},
+        "handoff": ["not-a-letter"],
+    }
+    raw = json.dumps(doc).encode()
+    fs.files[uri] = raw
+
+    async def get(path, params=None):
+        return {"turns": []}, 200
+
+    verified = await run_verify_resume(
+        {
+            "house": "h",
+            "n": 1,
+            "card_uri": "missing-card",
+            "expected_card_sha256": "0",
+            "snapshot_uri": uri,
+            "snapshot_sha256": __import__("hashlib").sha256(raw).hexdigest(),
+        },
+        fs,
+        get=get,
+    )
+    assert verified["checks"]["handoff"] == "stale"
+    assert verified["checks"]["handoff_reasons"] == ["shape"]
 
 
 @pytest.mark.asyncio

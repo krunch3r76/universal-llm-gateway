@@ -67,6 +67,15 @@ async def test_path_escape_and_replay(fs) -> None:
 
 
 @pytest.mark.asyncio
+async def test_bool_n_refuses() -> None:
+    out = await run_admit(
+        {"mode": "seal", "house": "h", "n": True, "agent_id": "agent"},
+        {},
+    )
+    assert out["refused"]["code"] == "admit.n"
+
+
+@pytest.mark.asyncio
 async def test_seal_mode_requires_agent_id() -> None:
     out = await run_admit({"mode": "seal", "house": "h", "n": 1}, {})
     assert out["refused"]["code"] == "admit.agent_id"
