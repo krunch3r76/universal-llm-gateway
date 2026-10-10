@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from continuity_tape.handoff import (
@@ -26,6 +27,7 @@ _LETTER_SHA12_RE = re.compile(
     re.IGNORECASE,
 )
 _HOUSE_CP_PARTS_RE = re.compile(r"^house-cp:(.+):([1-9][0-9]*)$")
+_VALID_SID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 def _missing(reason: str, **fields: Any) -> dict[str, Any]:
@@ -62,8 +64,26 @@ def _parse_tip_sha12(tip_body: str) -> str | None:
     return token
 
 
-def _seal_path(sid: str):
-    return cortex_files_root() / f"notes/system/seals/{sid}.messages.json"
+def _seals_root() -> Path:
+    return (cortex_files_root() / "notes/system/seals").resolve()
+
+
+def _sid_allowed(sid: str) -> bool:
+    if ".." in sid:
+        return False
+    return _VALID_SID_RE.fullmatch(sid) is not None
+
+
+def _seal_path(sid: str) -> Path | None:
+    if not _sid_allowed(sid):
+        return None
+    root = _seals_root()
+    path = (root / f"{sid}.messages.json").resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
 
 
 def _seal_uri(sid: str) -> str:
@@ -90,6 +110,8 @@ def load_tip_letter(tip_body: str) -> dict[str, Any]:
 
     seal_uri = _seal_uri(sid)
     path = _seal_path(sid)
+    if path is None:
+        return _missing("bad_sid", session_id=sid, seal_uri=seal_uri)
     try:
         if not path.is_file():
             return _missing("no_file", session_id=sid, seal_uri=seal_uri)
