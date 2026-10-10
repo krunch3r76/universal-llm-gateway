@@ -102,6 +102,18 @@ def test_yaml_description_points_to_caller_doc() -> None:
     assert "dispatch_thread_id" in description
 
 
+def test_caller_doc_letter_guidance() -> None:
+    text = _doc()
+    assert "handoff_binding_source" in text
+    assert "pipeline" in text
+    assert "state should be one string" in text or "state` should be one string" in text
+    assert "notes/system/tape/pours/grok/<agent>.messages.json" in text
+    assert "ReadTranscript" in text
+    assert "expected_card_sha256" in text
+    assert "card.legacy_name" in text
+    assert "n=1" in text or "`n=1`" in text
+
+
 def test_caller_doc_paths() -> None:
     text = _doc()
     assert "notes/system/seals/<sid>.messages.json" in text

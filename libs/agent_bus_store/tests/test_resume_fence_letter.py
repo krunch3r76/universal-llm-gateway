@@ -206,7 +206,10 @@ def test_stamped_letter_bound_in_bundle(root_thread, tmp_path) -> None:
     assert list(bundle).index("letter") < list(bundle).index("tip_checkpoint")
     letter_m = bundle["mission"]["letter"]
     assert letter_m["mission"] == "ship the letter"
-    steps = bundle["mission"]["handoff"]["steps"]
+    handoff = bundle["mission"]["handoff"]
+    assert "out_of_scope" not in handoff
+    assert "protocol_defaults" in handoff
+    steps = handoff["protocol_defaults"]["steps"]
     assert any("predecessor's letter" in step for step in steps)
     preview = mission_marker_preview(bundle["mission"])
     assert preview["letter_binding"] == "bound"
@@ -307,7 +310,7 @@ def test_lag_turn_steps(root_thread, tmp_path) -> None:
     _write_seal(tmp_path, _SID, messages=[{}], handoff=handoff)
     tip = _tip_harvest(letter_sha12=handoff_sha12(handoff))
     bundle = _assemble(root_thread, tip)
-    steps = bundle["mission"]["handoff"]["steps"]
+    steps = bundle["mission"]["handoff"]["protocol_defaults"]["steps"]
     assert any("letter was written 5 turns" in step for step in steps)
 
     low_lag = {
@@ -330,7 +333,8 @@ def test_lag_turn_steps(root_thread, tmp_path) -> None:
         letter=low_lag,
     )
     assert not any(
-        "letter was written" in step for step in mission_low["handoff"]["steps"]
+        "letter was written" in step
+        for step in mission_low["handoff"]["protocol_defaults"]["steps"]
     )
 
 
@@ -462,6 +466,6 @@ def test_build_mission_letter_after_standing_rules() -> None:
         fence_id="rf-x",
         letter=letter,
     )
-    steps = mission["handoff"]["steps"]
+    steps = mission["handoff"]["protocol_defaults"]["steps"]
     assert steps[0].startswith("Load mission.standing_rules")
     assert "predecessor's letter" in steps[1]

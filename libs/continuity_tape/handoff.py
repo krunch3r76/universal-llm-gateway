@@ -70,6 +70,59 @@ def _str_or_str_list(value: object) -> bool:
     return False
 
 
+def _flat(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " | ".join(f"{k}: {_flat(v)}" for k, v in value.items())
+    if isinstance(value, list):
+        return " | ".join(_flat(item) for item in value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+_STRING_FIELDS = ("author", "mission", "state", "where_we_left_off")
+_LIST_FIELDS = ("next_acts", "load_bearing")
+
+
+def normalize_handoff(letter: object) -> tuple[dict[str, Any], list[str]]:
+    """Return a normalised copy and the field names that changed.
+
+    Pure: ``letter`` is not mutated. A second call on the result reports no
+    fields. String fields flatten dicts and lists. ``mission`` newlines become
+    spaces only when the incoming value was not a string. List fields wrap a
+    bare string and stringify non-string items. An empty list stays empty.
+    """
+    if not isinstance(letter, dict):
+        return {}, []
+    out = dict(letter)
+    fields: list[str] = []
+    for key in _STRING_FIELDS:
+        if key not in out or isinstance(out[key], str):
+            continue
+        text = _flat(out[key])
+        if key == "mission":
+            text = text.replace("\r", " ").replace("\n", " ")
+        out[key] = text
+        fields.append(key)
+    for key in _OPTIONAL_STR_OR_LIST:
+        if key not in out or not isinstance(out[key], dict):
+            continue
+        out[key] = _flat(out[key])
+        fields.append(key)
+    for key in _LIST_FIELDS:
+        if key not in out:
+            continue
+        value = out[key]
+        if isinstance(value, str):
+            out[key] = [value]
+            fields.append(key)
+            continue
+        if isinstance(value, list) and any(not isinstance(item, str) for item in value):
+            out[key] = [_flat(item) for item in value]
+            fields.append(key)
+    return out, fields
+
+
 def _author_fields(letter: dict[str, Any], code: str) -> tuple[str, str] | None:
     author = letter.get("author")
     if not isinstance(author, str) or not author.strip():
@@ -133,15 +186,20 @@ def validate_handoff(
             if key in letter:
                 return invalid, key
         return _author_fields(letter, invalid)
-    house_cp = letter.get("house_cp")
-    if not isinstance(house_cp, str) or not _HOUSE_CP.fullmatch(house_cp):
-        return invalid, "house_cp"
-    digest = letter.get("messages_sha256")
-    if not isinstance(digest, str) or not _SHA64.fullmatch(digest):
-        return invalid, "messages_sha256"
-    index = letter.get("as_of_message_index")
-    if isinstance(index, bool) or not isinstance(index, int) or index < 1:
-        return invalid, "as_of_message_index"
+    # Binding keys are optional at admit. Present keys keep today's shape check.
+    # The envelope step stamps any key the author left out.
+    if "house_cp" in letter:
+        house_cp = letter.get("house_cp")
+        if not isinstance(house_cp, str) or not _HOUSE_CP.fullmatch(house_cp):
+            return invalid, "house_cp"
+    if "messages_sha256" in letter:
+        digest = letter.get("messages_sha256")
+        if not isinstance(digest, str) or not _SHA64.fullmatch(digest):
+            return invalid, "messages_sha256"
+    if "as_of_message_index" in letter:
+        index = letter.get("as_of_message_index")
+        if isinstance(index, bool) or not isinstance(index, int) or index < 1:
+            return invalid, "as_of_message_index"
     author = letter.get("author")
     if not isinstance(author, str) or not author.strip():
         return invalid, "author"
@@ -176,6 +234,36 @@ def validate_handoff(
     if "later" in letter and not isinstance(later, (str, list)):
         return invalid, "later"
     return None
+
+
+def fill_grok_binding(
+    letter: dict[str, Any],
+    *,
+    messages: list[Any],
+    messages_sha256: str,
+    house: str,
+    n: int,
+) -> tuple[dict[str, Any], str]:
+    """Fill absent grok binding keys from the pour. Does not mutate ``letter``.
+
+    Returns the letter to store and ``handoff_binding_source`` (``pipeline`` when
+    any key was filled, otherwise ``author``). Author-supplied keys are copied
+    unchanged, including values that will later fail the binding check.
+    """
+    filled = dict(letter)
+    filled_any = False
+    if "house_cp" not in filled:
+        filled["house_cp"] = f"house-cp:{house}:{n}"
+        filled_any = True
+    if "messages_sha256" not in filled:
+        filled["messages_sha256"] = (
+            bare_messages_sha(messages_sha256) or messages_sha256
+        )
+        filled_any = True
+    if "as_of_message_index" not in filled:
+        filled["as_of_message_index"] = len(messages)
+        filled_any = True
+    return filled, "pipeline" if filled_any else "author"
 
 
 def handoff_binding(

@@ -190,6 +190,33 @@ def _mission_letter_preview(letter: dict[str, Any] | None) -> dict[str, Any] | N
     }
 
 
+_PROTOCOL_NOTE = (
+    "Generic resume protocol defaults; not arc constraints. "
+    "The letter (bundle.letter.body) governs scope, constraints and next acts."
+)
+
+
+def _mission_handoff(
+    thread_id: str, steps: list[str], letter: dict[str, Any] | None
+) -> dict[str, Any]:
+    protocol = {
+        "role": "orchestrator_successor",
+        "todo": "todo:continuity-resume-fence",
+        "question": (
+            f"Reconstitute orchestrator dialogue + bus WIP on agent-bus:{thread_id} "
+            "from this bundle — not a byte-identical tab clone."
+        ),
+        "out_of_scope": [
+            "parallel WIP outside this root's scoreboard",
+            "new implement until oriented",
+        ],
+        "steps": steps,
+    }
+    if isinstance(letter, dict) and letter.get("binding") == "bound":
+        return {"protocol_defaults": protocol, "note": _PROTOCOL_NOTE}
+    return protocol
+
+
 def build_mission_block(
     *,
     thread_id: str,
@@ -286,19 +313,7 @@ def build_mission_block(
             "release": "pour_terminal",
             "fence_path": ["armed", "poured", "released"],
         },
-        "handoff": {
-            "role": "orchestrator_successor",
-            "todo": "todo:continuity-resume-fence",
-            "question": (
-                f"Reconstitute orchestrator dialogue + bus WIP on agent-bus:{thread_id} "
-                "from this bundle — not a byte-identical tab clone."
-            ),
-            "out_of_scope": [
-                "parallel WIP outside this root's scoreboard",
-                "new implement until oriented",
-            ],
-            "steps": steps,
-        },
+        "handoff": _mission_handoff(thread_id, steps, letter),
     }
     preview = _mission_letter_preview(letter)
     if preview is not None:
@@ -309,6 +324,9 @@ def build_mission_block(
 def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
     """Lightweight mission slice for hook marker cache (FIX-17)."""
     handoff = mission.get("handoff") if isinstance(mission.get("handoff"), dict) else {}
+    defaults = handoff.get("protocol_defaults")
+    if isinstance(defaults, dict):
+        handoff = defaults
     rules = mission.get("standing_rules")
     letter = mission.get("letter") if isinstance(mission.get("letter"), dict) else {}
     return {

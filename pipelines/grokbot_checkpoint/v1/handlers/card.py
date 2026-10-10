@@ -23,19 +23,31 @@ def card_binding_warnings(options: dict[str, Any]) -> list[dict[str, str]]:
     rel = card_uri.removeprefix("cortex://")
     root = root_thread.removeprefix("agent-bus:")
     ladder = list(_continuity_card_candidate_relpaths(root))
-    if rel == ladder[0]:
+    if rel == ladder[0] or rel in ladder[1:]:
         return []
-    if rel in ladder[1:]:
-        return [
-            {
-                "code": "card.nonconforming",
-                "message": (f"{rel} resolves on resume but is not {root}-card.md"),
-            }
-        ]
     return [
         {
             "code": "card.resume_unbound",
             "message": f"{rel} is not on the resume card ladder for {root}",
+        }
+    ]
+
+
+def card_binding_notices(options: dict[str, Any]) -> list[dict[str, str]]:
+    """Info when the card is on the resume ladder but is not the canonical name."""
+    root_thread = str(options.get("root_thread") or "").strip()
+    if not root_thread:
+        return []
+    card_uri = str(options.get("card_uri") or "")
+    rel = card_uri.removeprefix("cortex://")
+    root = root_thread.removeprefix("agent-bus:")
+    ladder = list(_continuity_card_candidate_relpaths(root))
+    if not ladder or rel == ladder[0] or rel not in ladder[1:]:
+        return []
+    return [
+        {
+            "code": "card.legacy_name",
+            "message": f"{rel} resolves on resume but is not {root}-card.md",
         }
     ]
 
@@ -60,6 +72,20 @@ def _last_row_n(body: str) -> int | None:
     if not cells or not cells[0].isdigit():
         return None
     return int(cells[0])
+
+
+_LOG_HEADER = (
+    "\n## Checkpoint log\n\n"
+    "| n | when | trigger | prior card sha | seal | by |\n"
+    "|---|------|---------|----------------|------|----|\n"
+)
+
+
+def _with_log_header(body: str, n: int) -> str:
+    """Append the log header on the first checkpoint when the section is absent."""
+    if "## Checkpoint log" in body or n != 1:
+        return body
+    return body.rstrip("\n") + "\n" + _LOG_HEADER
 
 
 def _log_header_ok(body: str, n: int) -> bool:
@@ -93,18 +119,18 @@ async def run_card(
     if not rel_path_ok(uri):
         return refuse("admit.path_escape", f"refused path {uri}")
     expected = str(options.get("expected_card_sha256") or "")
+    raw = await fs.read(uri)
+    if raw is None:
+        return refuse("card.missing", f"{uri} absent")
+    live = file_sha256(raw)
     supplied = options.get("card_body")
     if isinstance(supplied, str) and supplied:
         body = supplied
-        raw = body.encode("utf-8")
     else:
-        raw = await fs.read(uri)
-        if raw is None:
-            return refuse("card.missing", f"{uri} absent")
         body = raw.decode("utf-8")
-    live = file_sha256(raw)
     n = int(options["n"])
     warnings = card_binding_warnings(options)
+    notices = card_binding_notices(options)
     if live != expected:
         if _last_row_n(body) == n:
             return {
@@ -114,9 +140,11 @@ async def run_card(
                 "prior_sha256": live,
                 "written_sha256": live,
                 "warnings": warnings,
+                "notices": notices,
             }
         return refuse("card.sha_mismatch", f"live {live} != expected {expected}")
     mode = str(options.get("mode") or "")
+    body = _with_log_header(body, n)
     if not _log_header_ok(body, n):
         return refuse("card.body_invalid", "checkpoint log last row is not cp n-1")
     when = datetime.now(_PT).strftime("%Y-%m-%d %H:%M %Z")
@@ -156,7 +184,7 @@ async def run_card(
     )
     updated = body.rstrip() + "\n" + row + "\n"
     data = updated.encode("utf-8")
-    written = await fs.write(uri, data, expected_sha256=expected)
+    written = await fs.write(uri, data, expected_sha256=live)
     if not written.get("ok"):
         return refuse("card.conflict", "409 card write")
     result = {
@@ -167,6 +195,7 @@ async def run_card(
         "written_sha256": written["sha256"],
         "row": row,
         "warnings": warnings,
+        "notices": notices,
     }
     if mode != "light":
         result["snapshot_uri"] = str(envelope_step.get("snapshot_uri") or "")

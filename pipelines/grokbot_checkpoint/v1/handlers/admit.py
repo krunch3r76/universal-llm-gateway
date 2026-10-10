@@ -9,7 +9,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import bus_get, fs_of, refuse, rel_path_ok, step_output_json
-from ._handoff import validate_handoff
+from ._handoff import normalize_handoff, validate_handoff
 from .card import _last_row_n
 
 _MODES = frozenset({"light", "seal", "verify_resume"})
@@ -75,10 +75,19 @@ async def run_admit(
     residue = options.get("residue")
     if isinstance(residue, str) and len(residue) > 800:
         return refuse("admit.residue", "residue exceeds 800 chars")
+    normalized_fields: list[str] = []
     if "handoff" in options and options.get("handoff") is not None:
         if mode != "seal":
             return refuse("admit.handoff_mode", "handoff is only admitted in seal mode")
-        defect = validate_handoff(options.get("handoff"))
+        raw_letter = options.get("handoff")
+        normalized, normalized_fields = (
+            normalize_handoff(raw_letter)
+            if isinstance(raw_letter, dict)
+            else (raw_letter, [])
+        )
+        if isinstance(raw_letter, dict):
+            options["handoff"] = normalized
+        defect = validate_handoff(normalized)
         if defect is not None:
             return refuse(defect[0], defect[1])
     prior = step_output_json(outputs, "prior")
@@ -100,6 +109,11 @@ async def run_admit(
             fact_exists = any(
                 t.get("subject") == subject and not t.get("superseded") for t in turns
             )
+    advisory = (
+        {"handoff.normalized": normalized_fields}
+        if "handoff" in options and options.get("handoff") is not None
+        else {}
+    )
     if last_n == n and fact_exists:
         return {
             "refused": None,
@@ -109,6 +123,7 @@ async def run_admit(
             "mode": mode,
             "agent_id": agent_id,
             "completed_steps": ["admit"],
+            **advisory,
         }
     return {
         "refused": None,
@@ -117,6 +132,7 @@ async def run_admit(
         "n": n,
         "mode": mode,
         "agent_id": agent_id,
+        **advisory,
     }
 
 

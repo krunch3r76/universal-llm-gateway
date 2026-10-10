@@ -152,3 +152,120 @@ async def test_card_row_cites_seal_not_staging(fs) -> None:
     assert "staging:" in old
     assert _STAGING_TOKEN_RE.search(row) is None
     assert _STAGING_TOKEN_RE.search("dropbox/harvests/grok/x")
+
+
+_V2 = "# house v2\n\nstanding rules live here.\n"
+
+
+@pytest.mark.asyncio
+async def test_n1_without_log_appends_header(fs) -> None:
+    fs.files["notes/card.md"] = _V2.encode()
+    expected = file_sha256(_V2.encode())
+    out = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": expected,
+            "n": 1,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-log",
+    )
+    assert out["refused"] is None
+    body = (await fs.read("notes/card.md")).decode()
+    assert "\n\n## Checkpoint log\n\n" in body
+    assert "| n | when | trigger | prior card sha | seal | by |" in body
+    assert "| 1 |" in body
+    stale = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": expected,
+            "n": 1,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-log-2",
+    )
+    assert stale.get("replayed") is True
+    assert (await fs.read("notes/card.md")).decode().count("| 1 |") == 1
+    guarded = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": "ab" * 32,
+            "n": 2,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-log-3",
+    )
+    assert guarded["refused"]["code"] == "card.sha_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_n2_without_log_refuses(fs) -> None:
+    fs.files["notes/card.md"] = _V2.encode()
+    out = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": file_sha256(_V2.encode()),
+            "n": 2,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-n2",
+    )
+    assert out["refused"]["code"] == "card.body_invalid"
+
+
+@pytest.mark.asyncio
+async def test_card_body_guard_uses_live_sha(fs) -> None:
+    live = _V2
+    supplied = "# supplied\n\nother body\n"
+    fs.files["notes/card.md"] = live.encode()
+    live_sha = file_sha256(live.encode())
+    out = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": live_sha,
+            "card_body": supplied,
+            "n": 1,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-body",
+    )
+    assert out["refused"] is None
+    written = (await fs.read("notes/card.md")).decode()
+    assert written.startswith("# supplied")
+    assert "## Checkpoint log" in written
+    fs.files["notes/other.md"] = live.encode()
+    wrong = await run_card(
+        {
+            "card_uri": "notes/other.md",
+            "expected_card_sha256": file_sha256(supplied.encode()),
+            "card_body": supplied,
+            "n": 1,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-body-mismatch",
+    )
+    assert wrong["refused"]["code"] == "card.sha_mismatch"

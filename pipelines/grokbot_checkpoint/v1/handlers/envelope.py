@@ -10,7 +10,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
-from ._handoff import handoff_binding
+from ._handoff import fill_grok_binding, handoff_binding, normalize_handoff
 
 
 def slug_house(house: str) -> str:
@@ -63,16 +63,30 @@ def _same_pour_identity(old_meta: dict[str, Any], source: dict[str, Any]) -> boo
 
 
 def _letter_on(
-    envelope: dict[str, Any], options: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Copy the caller's letter onto the envelope. The pipeline fills nothing."""
+    envelope: dict[str, Any],
+    options: dict[str, Any],
+    *,
+    messages_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None, str | None, list[str]]:
+    """Copy the letter onto the envelope, stamping absent binding keys."""
     out = dict(envelope)
     letter = options.get("handoff")
     if letter is None:
         out.pop("handoff", None)
-        return out, None
-    out["handoff"] = letter
-    return out, letter if isinstance(letter, dict) else None
+        return out, None, None, []
+    if not isinstance(letter, dict):
+        return out, None, None, []
+    letter, normalized_fields = normalize_handoff(letter)
+    messages = out.get("messages")
+    filled, source = fill_grok_binding(
+        letter,
+        messages=messages if isinstance(messages, list) else [],
+        messages_sha256=messages_sha256,
+        house=str(options.get("house") or ""),
+        n=options.get("n") if isinstance(options.get("n"), int) else 0,
+    )
+    out["handoff"] = filled
+    return out, filled, source, normalized_fields
 
 
 def _binding_fields(
@@ -80,6 +94,9 @@ def _binding_fields(
     envelope: dict[str, Any],
     source: dict[str, Any],
     options: dict[str, Any],
+    *,
+    binding_source: str | None,
+    normalized_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     messages = envelope.get("messages")
     n = options.get("n")
@@ -91,6 +108,10 @@ def _binding_fields(
         n=n if isinstance(n, int) else 0,
     )
     fields: dict[str, Any] = {"handoff_binding": status}
+    if binding_source is not None:
+        fields["handoff_binding_source"] = binding_source
+    if normalized_fields:
+        fields["handoff.normalized"] = normalized_fields
     if status == "stale":
         fields["handoff_reasons"] = reasons
     return fields
@@ -161,8 +182,19 @@ async def run_envelope(
         # A non-dict letter is stale shape, same refusal as a mismatched letter,
         # and writes no snapshot.
         return refuse("post.handoff_stale", "shape")
-    envelope, letter = _letter_on(source_envelope, options)
-    binding = _binding_fields(letter, envelope, source, options)
+    envelope, letter, binding_source, normalized_fields = _letter_on(
+        source_envelope,
+        options,
+        messages_sha256=str(source.get("messages_sha256") or ""),
+    )
+    binding = _binding_fields(
+        letter,
+        envelope,
+        source,
+        options,
+        binding_source=binding_source,
+        normalized_fields=normalized_fields,
+    )
     if binding.get("handoff_binding") == "stale":
         reasons = binding.get("handoff_reasons") or []
         joined = ",".join(str(item) for item in reasons)

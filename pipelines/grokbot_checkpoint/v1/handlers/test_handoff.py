@@ -356,7 +356,7 @@ async def test_admit_invalid_field(mutate: str) -> None:
     elif mutate == "mission":
         letter["mission"] = "two\nlines"
     elif mutate == "state":
-        letter["state"] = 1
+        del letter["state"]
     elif mutate == "next_acts":
         letter["next_acts"] = []
     else:
@@ -440,3 +440,96 @@ async def test_seal_file_keeps_handoff(monkeypatch, tmp_path: Path, fs) -> None:
     )
     stored = json.loads(seal_path.read_text(encoding="utf-8"))
     assert stored["handoff"] == letter
+
+
+def _author_only(**overrides: object) -> dict:
+    letter = {
+        "author": "grok-bot-hm1",
+        "mission": "resume the house",
+        "state": "open",
+        "next_acts": ["read the card"],
+        "load_bearing": ["intent is not in the transcript"],
+    }
+    letter.update(overrides)
+    return letter
+
+
+@pytest.mark.asyncio
+async def test_absent_binding_keys_are_stamped(fs) -> None:
+    letter = _author_only()
+    out = await run_envelope(_options(handoff=letter), _source(_MSGS), fs)
+    assert out["handoff_binding"] == "bound"
+    assert out["handoff_binding_source"] == "pipeline"
+    digest = seal_messages_sha256(_MSGS)
+    stored = json.loads((await fs.read(_URI)).decode())
+    assert stored["handoff"]["house_cp"] == "house-cp:h:1"
+    assert stored["handoff"]["messages_sha256"] == digest
+    assert stored["handoff"]["as_of_message_index"] == len(_MSGS)
+    assert "handoff_binding_source" not in stored["handoff"]
+    from .result import assemble
+
+    top = assemble(
+        _options(handoff=letter),
+        {"envelope": {"json": out}, "admit": {"json": {"replayed": False}}},
+    )
+    assert top["envelope"]["handoff_binding_source"] == "pipeline"
+
+
+@pytest.mark.asyncio
+async def test_wrong_index_still_stale(fs) -> None:
+    letter = _letter(_MSGS, as_of_message_index=99)
+    out = await run_envelope(_options(handoff=letter), _source(_MSGS), fs)
+    assert out["refused"]["code"] == "post.handoff_stale"
+    assert "as_of_message_index" in str(out["refused"])
+    assert await fs.read(_URI) is None
+
+
+@pytest.mark.asyncio
+async def test_author_keys_keep_author_source(fs) -> None:
+    letter = _letter(_MSGS)
+    out = await run_envelope(_options(handoff=letter), _source(_MSGS), fs)
+    assert out["handoff_binding"] == "bound"
+    assert out["handoff_binding_source"] == "author"
+    stored = json.loads((await fs.read(_URI)).decode())
+    assert stored["handoff"] == letter
+
+
+@pytest.mark.asyncio
+async def test_partial_binding_keys_fill_the_rest(fs) -> None:
+    letter = _author_only(house_cp="house-cp:h:1")
+    out = await run_envelope(_options(handoff=letter), _source(_MSGS), fs)
+    assert out["handoff_binding"] == "bound"
+    assert out["handoff_binding_source"] == "pipeline"
+    stored = json.loads((await fs.read(_URI)).decode())
+    assert stored["handoff"]["house_cp"] == "house-cp:h:1"
+    assert stored["handoff"]["messages_sha256"] == seal_messages_sha256(_MSGS)
+    assert stored["handoff"]["as_of_message_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dict_state_normalises_and_seals(fs) -> None:
+    from continuity_tape.handoff import handoff_sha12, normalize_handoff
+
+    raw = _author_only(
+        state={"landed": "the pour", "tax_numbers": "pending"},
+        next_acts="read the card",
+    )
+    before = json.loads(json.dumps(raw))
+    out = await run_envelope(_options(handoff=raw), _source(_MSGS), fs)
+    assert raw == before
+    assert out["handoff_binding"] == "bound"
+    assert out["handoff.normalized"] == ["state", "next_acts"]
+    stored = json.loads((await fs.read(_URI)).decode())
+    assert stored["handoff"]["state"] == "landed: the pour | tax_numbers: pending"
+    assert stored["handoff"]["next_acts"] == ["read the card"]
+    normalized, _fields = normalize_handoff(raw)
+    normalized["house_cp"] = stored["handoff"]["house_cp"]
+    normalized["messages_sha256"] = stored["handoff"]["messages_sha256"]
+    normalized["as_of_message_index"] = stored["handoff"]["as_of_message_index"]
+    assert handoff_sha12(stored["handoff"]) == handoff_sha12(normalized)
+
+
+@pytest.mark.asyncio
+async def test_admit_allows_absent_binding_keys() -> None:
+    ok = await run_admit(_admit(handoff=_author_only()), {})
+    assert ok["refused"] is None

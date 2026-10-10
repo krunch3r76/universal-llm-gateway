@@ -60,11 +60,15 @@ Canonical pour: `tape/pours/<surface>/<transcript_id>.messages.json`. Authority 
 
 ## Writing the handoff letter
 
-`handoff` is optional and only admitted in `mode: seal` (`admit.handoff_mode` otherwise). It is a successor packet. The pipeline stores the object verbatim; it does not fill fields. Omit it and the cycle is unchanged (`checks.handoff` `missing`, Harvest `handoff:none`).
+`handoff` is optional and only admitted in `mode: seal` (`admit.handoff_mode` otherwise). It is a successor packet. Omit it and the cycle is unchanged (`checks.handoff` `missing`, Harvest `handoff:none`).
 
-Identity: `author` (bus identity) and `house_cp` (`house-cp:<house>:<n>`). The house is on `house_cp`, not a separate identity field. Mission: one line, no newline. `state` is a short string. `next_acts` is a non-empty list of the first acts the successor takes. `in_flight`, `rulings`, and `files` are author guidance and are not checked. `load_bearing` is the facts a successor cannot infer from the transcript, or an empty list with a non-empty `load_bearing_reason`. `later` is optional, a string or a list. Unknown keys are kept. The JSON must be at most 16 KiB (`admit.handoff_too_large`). A missing or invalid required field refuses `admit.handoff_invalid` and names that field.
+`house_cp`, `messages_sha256`, and `as_of_message_index` are optional. When any is absent the envelope step stamps it (`house-cp:<house>:<n>`, the pour's bare hex64, `len(messages)`) and the result field `handoff_binding_source` is `pipeline`. Author-supplied keys are kept; a wrong index, sha, or `house_cp` still refuses `post.handoff_stale`. The sha12 and the canonical bytes are over the normalised letter (after that stamp).
 
-Take `messages_sha256` from the pour you are about to seal (`meta.messages_sha256`) and `as_of_message_index` from `len(messages)` (1-based count of messages in that pour). A stale letter refuses `post.handoff_stale` at the envelope step, before any snapshot, seal, card row, CHECKPOINT, or FACT. Re-run with a corrected letter for the same n. The transcript wins on facts. The letter wins on intent.
+`state` should be one string. The pipeline normalises objects (dict or list) into a single string; the sha is over the normalised form. Mission stays one line: a string mission that contains a newline still refuses. `next_acts` is a non-empty list of the first acts the successor takes. `in_flight`, `rulings`, and `files` are author guidance and are not checked. `load_bearing` MUST carry the standing rules a successor cannot infer: dispatch lane/model conventions, land gate, scope and off-limits, send/outbound rules, and operator-gated items. An empty list still needs a non-empty `load_bearing_reason`. `later` is optional, a string or a list. Unknown keys are kept. The JSON must be at most 16 KiB (`admit.handoff_too_large`). A missing or invalid required field refuses `admit.handoff_invalid` and names that field.
+
+The harvest needs a Grok Bot seat (`ReadTranscript`; executors and subagents cannot page). `raw_ref` must be `notes/system/tape/pours/grok/<agent>.messages.json` (with the `notes/system/` prefix). `verify_resume` needs `expected_card_sha256`. A Cursor-era card with no checkpoint log gets that header on `n=1` in the same sha-guarded write; `n` greater than 1 without a log still refuses `card.body_invalid`.
+
+A stale letter refuses `post.handoff_stale` at the envelope step, before any snapshot, seal, card row, CHECKPOINT, or FACT. Re-run with a corrected letter for the same n. The transcript wins on facts. The letter wins on intent.
 
 ```handoff-example
 {
@@ -95,7 +99,7 @@ Preconditions: admit passed (`mode` `light|seal|verify_resume`, `house`, `n` int
 
 ### Post (card + CHECKPOINT + FACT)
 
-Preconditions: seal object `session_id` and card `written_sha256`; `root_thread` set for the CHECKPOINT post. Light mode skips post and still writes the card and FACT. Postconditions: result `cp_turn` (seal), `fact_turn`, card `written_sha256`. Side effects: card file; CHECKPOINT on `root_thread`; FACT `FACT|house-cp|<house>|<n>` on `verify_lane`. Warnings: `card.resume_unbound` / `card.nonconforming` (fix the card binding; they do not refuse). Refusals: `card.sha_mismatch` (refresh `expected_card_sha256`), `post.upstream_skipped`, `post.bus`, `post.handoff_stale` (stale letter, refused at the envelope step before any snapshot, seal, card row, CHECKPOINT, or FACT — re-run with a corrected letter for the same n). Fallback: no FACT if the card was not written.
+Preconditions: seal object `session_id` and card `written_sha256`; `root_thread` set for the CHECKPOINT post. Light mode skips post and still writes the card and FACT. Postconditions: result `cp_turn` (seal), `fact_turn`, card `written_sha256`. Side effects: card file; CHECKPOINT on `root_thread`; FACT `FACT|house-cp|<house>|<n>` on `verify_lane`. Warnings: `card.resume_unbound` (off the resume ladder; it does not refuse). A ladder card that is not `{root}-card.md` is a notice `card.legacy_name`, not a warning. Refusals: `card.sha_mismatch` (refresh `expected_card_sha256`), `post.upstream_skipped`, `post.bus`, `post.handoff_stale` (stale letter, refused at the envelope step before any snapshot, seal, card row, CHECKPOINT, or FACT — re-run with a corrected letter for the same n). Fallback: no FACT if the card was not written.
 
 ### Verify
 

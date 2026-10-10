@@ -104,6 +104,45 @@ def test_build_mission_block_includes_residue_and_window(bus_db) -> None:
     assert any("house_unread" in step for step in mission["handoff"]["steps"])
 
 
+def test_bound_letter_nests_protocol_defaults(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain tip",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-bound",
+        letter={"binding": "bound", "body": {"mission": "the letter"}},
+    )
+    handoff = mission["handoff"]
+    assert "out_of_scope" not in handoff
+    assert handoff["protocol_defaults"]["out_of_scope"] == [
+        "parallel WIP outside this root's scoreboard",
+        "new implement until oriented",
+    ]
+    assert "not arc constraints" in handoff["note"]
+    stale = build_mission_block(
+        thread_id="10223",
+        tip_body="plain tip",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-stale",
+        letter={"binding": "stale", "body": {"mission": "old"}},
+    )
+    assert stale["handoff"]["out_of_scope"] == [
+        "parallel WIP outside this root's scoreboard",
+        "new implement until oriented",
+    ]
+    assert "protocol_defaults" not in stale["handoff"]
+
+
 def test_handoff_steps_thread_slug_and_out_of_scope(bus_db) -> None:
     mission = build_mission_block(
         thread_id="10223",

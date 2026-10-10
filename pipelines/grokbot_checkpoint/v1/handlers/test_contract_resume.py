@@ -397,7 +397,8 @@ async def test_card_binding_warnings() -> None:
         execution_id="e-nonconf",
         seal=seal,
     )
-    assert nonconf["warnings"][0]["code"] == "card.nonconforming"
+    assert nonconf.get("warnings") == []
+    assert nonconf["notices"][0]["code"] == "card.legacy_name"
 
     fs_ub = MemFs()
     fs_ub.files["notes/houses/orion/card.md"] = card.encode()

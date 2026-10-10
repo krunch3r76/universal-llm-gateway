@@ -10,6 +10,7 @@ from continuity_tape.handoff import (
     handoff_binding_stamped,
     handoff_lag_turns,
     handoff_sha12,
+    normalize_handoff,
     place_handoff,
     stamp_handoff,
     validate_handoff,
@@ -268,6 +269,30 @@ def test_place_handoff_stamp_carry_none() -> None:
         == "none"
     )
     assert "handoff" not in dumped4
+
+
+def test_normalize_handoff_shapes() -> None:
+    original = {
+        "state": {"landed": "seal", "tax_numbers": {"a": 1}},
+        "next_acts": "read the card",
+        "mission": {"goal": "ship\nit"},
+        "load_bearing": [{"rule": "lane B"}],
+        "author": "grok",
+    }
+    snapshot = dict(original)
+    normalized, fields = normalize_handoff(original)
+    assert original == snapshot
+    assert normalized["state"] == "landed: seal | tax_numbers: a: 1"
+    assert normalized["next_acts"] == ["read the card"]
+    assert normalized["mission"] == "goal: ship it"
+    assert "\n" not in normalized["mission"]
+    assert normalized["load_bearing"] == ["rule: lane B"]
+    assert fields == ["mission", "state", "next_acts", "load_bearing"]
+    again, again_fields = normalize_handoff(normalized)
+    assert again == normalized
+    assert again_fields == []
+    assert handoff_sha12(normalized) == handoff_sha12(again)
+    assert validate_handoff({"mission": "still\nraw"}, profile="stamped") is not None
 
 
 def test_grok_binding_unchanged() -> None:

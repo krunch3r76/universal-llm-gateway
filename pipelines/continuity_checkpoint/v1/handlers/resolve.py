@@ -51,9 +51,12 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
         execution_id = str(context.execution_id or "")
 
         handoff = options.get("handoff")
+        normalized_fields: list[str] = []
         if handoff is not None:
-            from continuity_tape.handoff import validate_handoff
+            from continuity_tape.handoff import normalize_handoff, validate_handoff
 
+            if isinstance(handoff, dict):
+                handoff, normalized_fields = normalize_handoff(handoff)
             defect = validate_handoff(handoff, profile="stamped")
             if defect is not None:
                 return _refused(defect[0], defect[1])
@@ -98,6 +101,8 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
             }
             if isinstance(handoff, dict):
                 payload["handoff"] = handoff
+            if normalized_fields:
+                payload["handoff.normalized"] = normalized_fields
             return StepOutput(raw=json.dumps(payload), json=payload)
 
         if surface != "cursor":
@@ -118,6 +123,8 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
             }
             if isinstance(handoff, dict):
                 payload["handoff"] = handoff
+            if normalized_fields:
+                payload["handoff.normalized"] = normalized_fields
             return StepOutput(raw=json.dumps(payload), json=payload)
 
         # a:33211 — discover dominant_write / leftover explicit_cp is how a
@@ -152,4 +159,6 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
         }
         if isinstance(handoff, dict):
             payload["handoff"] = handoff
+        if normalized_fields:
+            payload["handoff.normalized"] = normalized_fields
         return StepOutput(raw=json.dumps(payload), json=payload)

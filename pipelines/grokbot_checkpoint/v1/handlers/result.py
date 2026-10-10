@@ -48,6 +48,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         else None
     )
     warnings = list(card.get("warnings") or [])
+    notices = list(card.get("notices") or [])
     return {
         "house": options.get("house"),
         "n": options.get("n"),
@@ -73,6 +74,10 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
             "alternate": source.get("alternate"),
             "fallback": source.get("fallback"),
             "handoff_binding": envelope.get("handoff_binding"),
+            "handoff_binding_source": envelope.get("handoff_binding_source"),
+            "handoff.normalized": envelope.get("handoff.normalized")
+            or admit.get("handoff.normalized")
+            or [],
         },
         "seal": {
             "session_id": seal.get("session_id"),
@@ -89,6 +94,7 @@ def assemble(options: dict[str, Any], outputs: dict[str, Any]) -> dict[str, Any]
         "verify_resume": verify_resume,
         "proposals": seal.get("proposals") or [],
         "warnings": warnings,
+        "notices": notices,
     }
 
 
