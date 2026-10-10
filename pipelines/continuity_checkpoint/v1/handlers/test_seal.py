@@ -69,3 +69,41 @@ async def test_seal_not_lane_window_refused() -> None:
     ):
         out = await handler.execute(_Step(), _Ctx())
     assert out.json["refused"]["code"] == "transcript_seal.not_lane_window"
+
+
+_LETTER = {"author": "cursor", "mission": "prove the letter"}
+
+
+@pytest.mark.asyncio
+async def test_seal_passes_letter_unchanged() -> None:
+    handler = ContinuityCheckpointSealHandler()
+    ctx = _Ctx()
+    ctx.options = {**ctx.options, "handoff": dict(_LETTER)}
+    dispatch = AsyncMock(
+        return_value={
+            "session_id": "cursor-2026-test",
+            "turn_count": 1,
+            "messages_sha256": "ab" * 32,
+            "letter_status": "stamped",
+        }
+    )
+    with patch("handlers.seal.cortex_dispatch", new=dispatch):
+        await handler.execute(_Step(), ctx)
+    payload = dispatch.await_args.args[1]
+    assert payload["handoff"] == _LETTER
+
+
+@pytest.mark.asyncio
+async def test_seal_omits_letter_when_absent() -> None:
+    handler = ContinuityCheckpointSealHandler()
+    dispatch = AsyncMock(
+        return_value={
+            "session_id": "cursor-2026-test",
+            "turn_count": 1,
+            "messages_sha256": "ab" * 32,
+            "letter_status": "none",
+        }
+    )
+    with patch("handlers.seal.cortex_dispatch", new=dispatch):
+        await handler.execute(_Step(), _Ctx())
+    assert "handoff" not in dispatch.await_args.args[1]

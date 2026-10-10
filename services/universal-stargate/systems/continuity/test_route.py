@@ -208,6 +208,89 @@ async def test_checkpoint_posts_canonical_capability_url() -> None:
 
 
 @pytest.mark.asyncio
+async def test_checkpoint_handoff_lands_in_pipeline_options() -> None:
+    from systems.continuity.models import CheckpointRequest
+
+    route_mod = _import_route_module(with_dispatch=True)
+    posted: dict[str, object] = {}
+    letter = {"author": "cursor", "mission": "prove the letter"}
+
+    @asynccontextmanager
+    async def _capture(*_args, **_kwargs):
+        client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.json.return_value = {
+            "execution_id": "exec-handoff",
+            "started_at": "2026-10-09T00:00:00Z",
+        }
+
+        async def _post(url, json=None):
+            posted["body"] = json
+            return mock_resp
+
+        client.post = _post
+        yield client
+
+    body = CheckpointRequest(
+        thread="10223",
+        surface="cursor",
+        from_agent="cursor",
+        handoff=letter,
+    )
+    with (
+        patch.object(route_mod, "make_async_client", _capture),
+        patch("agent_bus_store.db.get_thread_turn_count", return_value=1),
+    ):
+        resp = await route_mod.continuity_checkpoint(
+            body, current_user={"agent": "cursor"}
+        )
+    assert resp.status_code == 202
+    options = posted["body"]["pipeline_options"]
+    assert options["handoff"] == letter
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_omits_handoff_when_absent() -> None:
+    from systems.continuity.models import CheckpointRequest
+
+    route_mod = _import_route_module(with_dispatch=True)
+    posted: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def _capture(*_args, **_kwargs):
+        client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.json.return_value = {
+            "execution_id": "exec-no-handoff",
+            "started_at": "2026-10-09T00:00:00Z",
+        }
+
+        async def _post(url, json=None):
+            posted["body"] = json
+            return mock_resp
+
+        client.post = _post
+        yield client
+
+    body = CheckpointRequest(
+        thread="10223",
+        surface="cursor",
+        from_agent="cursor",
+    )
+    with (
+        patch.object(route_mod, "make_async_client", _capture),
+        patch("agent_bus_store.db.get_thread_turn_count", return_value=1),
+    ):
+        resp = await route_mod.continuity_checkpoint(
+            body, current_user={"agent": "cursor"}
+        )
+    assert resp.status_code == 202
+    assert "handoff" not in posted["body"]["pipeline_options"]
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_rejects_unknown_channel() -> None:
     from systems.continuity.models import CheckpointRequest
 

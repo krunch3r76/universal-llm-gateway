@@ -386,6 +386,59 @@ def test_checkpoint_cursor_explicit_pre_consolidate_true(continuity_fn) -> None:
     assert posted["body"]["pre_consolidate"] is True
 
 
+def _checkpoint_client(posted: dict[str, Any]):
+    class _Resp:
+        status_code = 202
+
+        @staticmethod
+        def json():
+            return {"execution_id": "exec-cp-h", "status": "running"}
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, json=None):
+            posted["body"] = json
+            return _Resp()
+
+    return _Client()
+
+
+def test_checkpoint_forwards_handoff_dict(continuity_fn) -> None:
+    posted: dict[str, Any] = {}
+    letter = {"author": "cursor", "mission": "prove the letter"}
+    with patch(
+        "tools._continuity_relays.make_sync_client",
+        return_value=_checkpoint_client(posted),
+    ):
+        result = continuity_fn(
+            op="checkpoint",
+            thread="10223",
+            surface="cursor",
+            from_agent="cursor",
+            handoff=letter,
+        )
+    assert result["execution_id"] == "exec-cp-h"
+    assert posted["body"]["handoff"] == letter
+
+
+def test_checkpoint_refuses_non_dict_handoff(continuity_fn) -> None:
+    with patch("tools._continuity_relays.make_sync_client") as mock_client:
+        result = continuity_fn(
+            op="checkpoint",
+            thread="10223",
+            surface="cursor",
+            from_agent="cursor",
+            handoff='{"author": "cursor"}',
+        )
+    assert result["error"]["code"] == "invalid_handoff"
+    mock_client.assert_not_called()
+
+
 def test_status_watermark_ignores_unseeded_rows() -> None:
     assertions = [
         {

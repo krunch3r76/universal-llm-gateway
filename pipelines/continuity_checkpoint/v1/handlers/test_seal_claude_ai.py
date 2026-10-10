@@ -84,6 +84,56 @@ async def test_seal_claude_ai_messages_only_harvest() -> None:
     assert close_args["transcript_messages"]["messages"] == harvest_messages
 
 
+_LETTER = {"author": "web-anthropic", "mission": "prove the letter"}
+
+
+@pytest.mark.asyncio
+async def test_seal_claude_ai_passes_letter_unchanged() -> None:
+    harvest = AsyncMock(
+        return_value={
+            "outcome": "harvested",
+            "content_provenance": "cse-dom",
+            "messages": [
+                {"role": "user", "content": "hi", "turn_index": 1},
+            ],
+            "truncated": False,
+            "cursor": 1,
+        }
+    )
+    dispatch = AsyncMock(
+        return_value={
+            "session_id": "web-anthropic-2026-09-10-120000-abc",
+            "journal_row_id": 7,
+            "turn_count": 1,
+            "letter_status": "stamped",
+        }
+    )
+    with (
+        patch(
+            "cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid",
+            return_value=None,
+        ),
+        patch(
+            "handlers.seal_claude_ai._lookup_session_id_for_transcript",
+            return_value=None,
+        ),
+        patch(
+            "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
+            return_value=None,
+        ),
+    ):
+        await seal_claude_ai(
+            thread="10479",
+            chat_url=_CSE_URL,
+            transcript_id=_CSE_ID,
+            from_agent="cursor",
+            harvest_fn=harvest,
+            cortex_dispatch_fn=dispatch,
+            handoff=dict(_LETTER),
+        )
+    assert dispatch.await_args.args[1]["handoff"] == _LETTER
+
+
 @pytest.mark.asyncio
 async def test_seal_claude_ai_happy_path_tail() -> None:
     harvest = AsyncMock(
