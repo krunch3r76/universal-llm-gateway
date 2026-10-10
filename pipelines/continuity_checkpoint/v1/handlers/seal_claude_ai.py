@@ -75,6 +75,22 @@ def _mint_session_id() -> str:
     return derive_session_id_from_timestamp(_AGENT, datetime.now(UTC).isoformat())
 
 
+def _sha_and_letter(close: dict[str, Any], *, supplied: bool) -> dict[str, Any]:
+    from continuity_tape.handoff import bare_messages_sha
+
+    from .seal import _letter_payload
+
+    status_close = dict(close)
+    if close.get("already_closed") and supplied and not close.get("letter_status"):
+        status_close["letter_status"] = "dropped_already_closed"
+        status_close["already_closed"] = True
+    return {
+        "messages_sha256": bare_messages_sha(close.get("messages_sha256")),
+        "composed_sha256": close.get("composed_sha256") or close.get("content_hash"),
+        **_letter_payload(status_close, supplied=supplied),
+    }
+
+
 async def seal_claude_ai(
     *,
     thread: str,
@@ -83,6 +99,8 @@ async def seal_claude_ai(
     from_agent: str,
     harvest_fn: Callable[..., Awaitable[dict[str, Any]]],
     cortex_dispatch_fn: Callable[..., Awaitable[dict[str, Any]]],
+    handoff: dict[str, Any] | None = None,
+    surface: str = "claude_ai",
 ) -> dict[str, Any]:
     """Harvest CSE chat, seal messages-v1 via session_close, map cursor seal shape."""
     _ = from_agent  # reserved for future provenance stamps
@@ -128,11 +146,20 @@ async def seal_claude_ai(
         messages_sha256, verbatim_codec = _lookup_journal_seal_meta(
             human_closed.session_id
         )
+        from continuity_tape.handoff import bare_messages_sha
+
         return {
             "session_id": human_closed.session_id,
             "transcript_id": transcript_id,
             "turn_count": turn_count,
-            "messages_sha256": messages_sha256,
+            "messages_sha256": bare_messages_sha(messages_sha256),
+            "composed_sha256": messages_sha256
+            if isinstance(messages_sha256, str)
+            and messages_sha256.startswith("sha256:")
+            else None,
+            "letter_status": (
+                "dropped_already_closed" if isinstance(handoff, dict) else "none"
+            ),
             "verbatim_codec": verbatim_codec,
             "already_closed": True,
             "refused": None,
@@ -167,6 +194,10 @@ async def seal_claude_ai(
         session_id=session_id,
         assistant_label="Assistant",
         attach_conversation_uuid=False,
+        handoff=handoff,
+        stamp_thread=thread,
+        stamp_surface=surface,
+        stamp_transcript_id=transcript_id,
     )
     close = sealed.close or {}
     if sealed.refused and sealed.close is None:
@@ -182,8 +213,7 @@ async def seal_claude_ai(
             "session_id": session_id,
             "transcript_id": transcript_id,
             "turn_count": turn_count,
-            "messages_sha256": close.get("content_hash")
-            or close.get("messages_sha256"),
+            **_sha_and_letter(close, supplied=isinstance(handoff, dict)),
             "verbatim_codec": "messages-v1",
             "already_closed": True,
             "refused": None,
@@ -215,7 +245,7 @@ async def seal_claude_ai(
         "transcript_id": transcript_id,
         "transcript_entity_id": close.get("transcript_entity_id"),
         "turn_count": int(close.get("turn_count") or len(messages)),
-        "messages_sha256": close.get("content_hash") or close.get("messages_sha256"),
+        **_sha_and_letter(close, supplied=isinstance(handoff, dict)),
         "verbatim_codec": "messages-v1",
         "already_closed": False,
         "refused": None,

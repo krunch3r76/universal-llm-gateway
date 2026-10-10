@@ -39,6 +39,13 @@ def _handler_sources() -> str:
     return "\n".join(parts)
 
 
+def test_caller_doc_stale_refusal_nulls_binding_field() -> None:
+    text = _doc()
+    assert "post.handoff_stale" in text
+    assert "envelope payload is only `refused`" in text
+    assert "that result field is null" in text
+
+
 def test_caller_doc_exists_and_names_pipeline() -> None:
     text = _doc()
     assert "grokbot-checkpoint-v1" in text

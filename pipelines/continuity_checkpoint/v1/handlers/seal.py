@@ -7,6 +7,7 @@ import logging
 from typing import Any, override
 
 from continuity_tape.events import stargate_continuity_checkpoint_sealed
+from continuity_tape.handoff import bare_messages_sha
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -48,6 +49,23 @@ def _count_turns_from_journal(session_id: str) -> int | None:
     return count_canonical_turn_headings(prior_verbatim)
 
 
+def _letter_payload(seal: dict[str, Any], *, supplied: bool) -> dict[str, Any]:
+    status = seal.get("letter_status")
+    if not status:
+        status = (
+            "dropped_already_closed"
+            if supplied and seal.get("already_closed")
+            else "none"
+        )
+    fields: dict[str, Any] = {"letter_status": status}
+    if status in {"stamped", "carried"}:
+        fields["handoff_sha12"] = seal.get("handoff_sha12")
+        fields["handoff_mission"] = seal.get("handoff_mission")
+        fields["handoff_next_act"] = seal.get("handoff_next_act")
+        fields["handoff_lag_turns"] = seal.get("handoff_lag_turns")
+    return fields
+
+
 class ContinuityCheckpointSealHandler(BaseHandler):
     """Invoke cortex transcript_seal and map success/refusal shapes."""
 
@@ -77,6 +95,7 @@ class ContinuityCheckpointSealHandler(BaseHandler):
                     }
                 }
                 return StepOutput(raw=json.dumps(payload), json=payload)
+            handoff = resolve_json.get("handoff", options.get("handoff"))
             payload = await seal_claude_ai(
                 thread=thread,
                 chat_url=str(chat_url),
@@ -84,6 +103,8 @@ class ContinuityCheckpointSealHandler(BaseHandler):
                 from_agent=from_agent,
                 harvest_fn=cdp_ask_harvest,
                 cortex_dispatch_fn=cortex_dispatch,
+                handoff=handoff if isinstance(handoff, dict) else None,
+                surface=surface,
             )
             if payload.get("refused") is None:
                 stargate_continuity_checkpoint_sealed(
@@ -115,9 +136,14 @@ class ContinuityCheckpointSealHandler(BaseHandler):
             "thread": thread,
             "jsonl_path": jsonl_path,
             "binding": "explicit_cp",
+            "surface": surface,
         }
         if transcript_id:
             seal_args["explicit_transcript_ids"] = [str(transcript_id)]
+            seal_args["transcript_id"] = str(transcript_id)
+        handoff = resolve_json.get("handoff", options.get("handoff"))
+        if isinstance(handoff, dict):
+            seal_args["handoff"] = handoff
 
         seal = await cortex_dispatch("transcript_seal", seal_args)
         code = str(seal.get("code") or seal.get("reason") or "")
@@ -133,7 +159,10 @@ class ContinuityCheckpointSealHandler(BaseHandler):
                 "turn_count": int(turn_count or 0),
                 "already_closed": True,
                 "refused": None,
-                "messages_sha256": seal.get("content_hash"),
+                "messages_sha256": bare_messages_sha(seal.get("messages_sha256")),
+                "composed_sha256": seal.get("composed_sha256")
+                or seal.get("content_hash"),
+                **_letter_payload(seal, supplied=isinstance(handoff, dict)),
             }
         elif code in {"transcript_seal.not_lane_window", "transcript_seal.hollow"}:
             payload = {
@@ -159,8 +188,11 @@ class ContinuityCheckpointSealHandler(BaseHandler):
                 "transcript_id": transcript_id or seal.get("conversation_uuid"),
                 "transcript_entity_id": seal.get("transcript_entity_id"),
                 "turn_count": int(seal.get("turn_count") or 0),
-                "messages_sha256": seal.get("content_hash"),
+                "messages_sha256": bare_messages_sha(seal.get("messages_sha256")),
+                "composed_sha256": seal.get("composed_sha256")
+                or seal.get("content_hash"),
                 "verbatim_codec": str(seal.get("verbatim_codec") or "messages-v1"),
+                **_letter_payload(seal, supplied=isinstance(handoff, dict)),
                 "already_closed": False,
                 "refused": None,
             }

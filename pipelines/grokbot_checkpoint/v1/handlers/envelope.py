@@ -156,6 +156,11 @@ async def run_envelope(
     source_envelope = source.get("envelope")
     if not isinstance(source_envelope, dict):
         return refuse("envelope.missing", "source produced no envelope")
+    raw_letter = options.get("handoff")
+    if raw_letter is not None and not isinstance(raw_letter, dict):
+        # A non-dict letter is stale shape, same refusal as a mismatched letter,
+        # and writes no snapshot.
+        return refuse("post.handoff_stale", "shape")
     envelope, letter = _letter_on(source_envelope, options)
     binding = _binding_fields(letter, envelope, source, options)
     if binding.get("handoff_binding") == "stale":

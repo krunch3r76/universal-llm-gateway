@@ -39,6 +39,43 @@ def _agent_label_from_session_id(session_id: str) -> str:
     return agent_slug_from_session_id(session_id)
 
 
+def _messages_sha_on_disk(session_id: str) -> str | None:
+    """Bare messages sha from the seal file. A prefixed content hash is absent."""
+    import json
+
+    from continuity_tape.handoff import bare_messages_sha
+
+    from ._shared import _FILES_ROOT
+
+    path = _FILES_ROOT / "notes" / "system" / "seals" / f"{session_id}.messages.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    if not isinstance(meta, dict):
+        return None
+    return bare_messages_sha(meta.get("messages_sha256"))
+
+
+def _letter_fields(response: Any, *, supplied: bool) -> dict[str, Any]:
+    if getattr(response, "already_closed", False):
+        status = "dropped_already_closed" if supplied else "none"
+        return {"letter_status": status}
+    status = getattr(response, "letter_status", None) or (
+        "none" if not supplied else None
+    )
+    return {
+        "letter_status": status or "none",
+        "handoff_sha12": getattr(response, "handoff_sha12", None),
+        "handoff_mission": getattr(response, "handoff_mission", None),
+        "handoff_next_act": getattr(response, "handoff_next_act", None),
+        "handoff_lag_turns": getattr(response, "handoff_lag_turns", None),
+    }
+
+
 def _op_transcript_seal(
     thread: str | None = None,
     thread_id: str | None = None,
@@ -47,20 +84,35 @@ def _op_transcript_seal(
     session_id: str | None = None,
     binding: str | None = None,
     explicit_transcript_ids: list[str] | None = None,
+    handoff: dict[str, Any] | None = None,
+    transcript_id: str | None = None,
+    surface: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Seal an idle window via session_close with ``closed_by=succession``."""
     tid = thread or thread_id
     jpath = jsonl_path or transcript_jsonl_path
     if not tid:
-        return {"error": "thread is required", "reason": "missing_arg", "code": "transcript_seal.missing_thread"}
+        return {
+            "error": "thread is required",
+            "reason": "missing_arg",
+            "code": "transcript_seal.missing_thread",
+        }
     if not jpath:
-        return {"error": "jsonl_path is required", "reason": "missing_arg", "code": "transcript_seal.missing_jsonl"}
+        return {
+            "error": "jsonl_path is required",
+            "reason": "missing_arg",
+            "code": "transcript_seal.missing_jsonl",
+        }
 
     try:
         resolved = resolve_jsonl_path(jpath)
     except TranscriptPathError as exc:
-        return {"error": str(exc), "reason": "jsonl_invalid", "code": "transcript_seal.live"}
+        return {
+            "error": str(exc),
+            "reason": "jsonl_invalid",
+            "code": "transcript_seal.live",
+        }
 
     uuid = conversation_uuid_from_jsonl_path(resolved)
     explicit = _resolve_explicit_uuids(str(tid), explicit_transcript_ids)
@@ -185,6 +237,12 @@ def _op_transcript_seal(
                     "turn_count": prior_turns,
                     "live_turn_count": new_turns,
                     "divergence": "verbatim_diverged",
+                    "messages_sha256": _messages_sha_on_disk(derived),
+                    "letter_status": (
+                        "dropped_already_closed"
+                        if isinstance(handoff, dict)
+                        else "none"
+                    ),
                 }
         if new_turns <= prior_turns:
             return {
@@ -193,6 +251,10 @@ def _op_transcript_seal(
                 "code": "transcript_seal.already_closed",
                 "session_id": derived,
                 "turn_count": prior_turns,
+                "messages_sha256": _messages_sha_on_disk(derived),
+                "letter_status": (
+                    "dropped_already_closed" if isinstance(handoff, dict) else "none"
+                ),
             }
     now = datetime.now(tz=UTC).isoformat()
     entity_ids: list[str] = []
@@ -209,6 +271,10 @@ def _op_transcript_seal(
         closed_by="succession",
         assistant_label="Assistant",
         succession_seal_authority=True,
+        handoff=handoff if isinstance(handoff, dict) else None,
+        stamp_thread=str(tid),
+        stamp_surface=surface or "cursor",
+        stamp_transcript_id=transcript_id or uuid,
     )
     try:
         response = close_session(body)
@@ -218,9 +284,21 @@ def _op_transcript_seal(
         if isinstance(exc, HTTPException):
             detail = exc.detail
             if isinstance(detail, dict):
-                code = detail.get("reason") or detail.get("code") or "transcript_seal.refused"
-                return {"error": detail.get("error") or str(detail), "reason": code, "code": code}
-            return {"error": str(detail), "reason": "refused", "code": "transcript_seal.refused"}
+                code = (
+                    detail.get("reason")
+                    or detail.get("code")
+                    or "transcript_seal.refused"
+                )
+                return {
+                    "error": detail.get("error") or str(detail),
+                    "reason": code,
+                    "code": code,
+                }
+            return {
+                "error": str(detail),
+                "reason": "refused",
+                "code": "transcript_seal.refused",
+            }
         raise
 
     _stamp_succession_fields(
@@ -236,16 +314,21 @@ def _op_transcript_seal(
         conversation_uuid=uuid,
         turn_count=response.turn_count,
     )
+    from continuity_tape.handoff import bare_messages_sha
+
     return {
         "session_id": derived,
         "journal_row_id": response.journal_row_id,
         "transcript_entity_id": response.transcript_entity_id,
         "content_hash": response.content_hash,
+        "composed_sha256": response.content_hash,
+        "messages_sha256": bare_messages_sha(response.messages_sha256),
         "turn_count": response.turn_count,
         "conversation_uuid": uuid,
         "closed_by": "succession",
         "sealed_by": agent,
         "sealed_on": now,
+        **_letter_fields(response, supplied=isinstance(handoff, dict)),
     }
 
 

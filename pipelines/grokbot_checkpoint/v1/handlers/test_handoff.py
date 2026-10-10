@@ -12,7 +12,7 @@ from continuity_tape.messages import seal_messages_sha256
 from .admit import run_admit
 from .envelope import run_envelope
 from .post import run_post
-from .verify_resume import run_verify_resume
+from .verify_resume import _harvest_sha, run_verify_resume
 
 pytestmark = pytest.mark.offline
 
@@ -33,6 +33,17 @@ def _letter(messages: list[dict], **overrides: object) -> dict:
     }
     letter.update(overrides)
     return letter
+
+
+def test_harvest_sha_parses_bare_hex_on_cursor_tip() -> None:
+    digest = "ab" * 32
+    body = (
+        f"Harvest: transcript:sid · messages_sha256:{digest} · "
+        "codec:messages-v1 · surface:cursor"
+    )
+    assert _harvest_sha(body) == digest
+    prefixed = "Harvest: transcript:sid · messages_sha256:sha256:" + digest
+    assert _harvest_sha(prefixed) != digest
 
 
 def _sha12(letter: dict) -> str:
@@ -134,6 +145,14 @@ async def test_bound_letter_is_stored_and_cited(fs) -> None:
         get=bus_get,
     )
     assert verified["checks"]["handoff"] == "bound"
+
+
+@pytest.mark.asyncio
+async def test_non_dict_letter_is_stale_shape(fs) -> None:
+    out = await run_envelope(_options(handoff="x"), _source(_MSGS), fs)
+    assert out["refused"]["code"] == "post.handoff_stale"
+    assert "shape" in str(out["refused"])
+    assert await fs.read(_URI) is None
 
 
 @pytest.mark.asyncio

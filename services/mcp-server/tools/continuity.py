@@ -288,6 +288,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         pool: str | None = None,
         fence_id: str | None = None,
         channel: str | None = None,
+        handoff: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Continuity checkpoint (lean) and resume/tape/consolidate relays.
 
@@ -378,6 +379,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 ),
                 tools=tools or "none",
                 channel=channel,
+                handoff=handoff,
             )
 
         if op == "tape_read":

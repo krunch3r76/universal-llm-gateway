@@ -89,6 +89,7 @@ def _continuity_checkpoint(
     pre_consolidate: bool = True,
     tools: str = "none",
     channel: str | None = None,
+    handoff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """POST Stargate ``/api/v1/continuity/checkpoint`` (async pipeline relay)."""
     from continuity_tape.events import mcp_continuity_checkpoint_requested
@@ -112,6 +113,8 @@ def _continuity_checkpoint(
         body["residue"] = residue
     if channel is not None:
         body["channel"] = channel
+    if handoff is not None:
+        body["handoff"] = handoff
     stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)
     try:
         with make_sync_client(stargate_url, timeout=_CHECKPOINT_TIMEOUT) as client:

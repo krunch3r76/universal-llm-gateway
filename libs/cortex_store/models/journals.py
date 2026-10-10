@@ -162,6 +162,12 @@ class SessionCloseRequest(BaseModel):
     closed_by: str | None = None
     succession_seal_authority: bool = False
     conversation_uuid: str | None = None
+    # Seat-written checkpoint letter. The pipeline stamps binding fields at
+    # the seal write. Absent means no letter on this close.
+    handoff: dict[str, Any] | None = None
+    stamp_thread: str | None = None
+    stamp_surface: str | None = None
+    stamp_transcript_id: str | None = None
 
 
 class SessionCloseResponse(BaseModel):
@@ -215,6 +221,11 @@ class SessionCloseResponse(BaseModel):
     debrief_body: str | None = None
     messages_sha256: str | None = None
     verbatim_codec: str | None = None
+    letter_status: str | None = None
+    handoff_sha12: str | None = None
+    handoff_mission: str | None = None
+    handoff_next_act: str | None = None
+    handoff_lag_turns: int | None = None
     messages_path: str | None = None
 
 

@@ -136,6 +136,45 @@ async def test_transcript_id_found_in_satellite_project(tmp_path, monkeypatch) -
     assert out.json["transcript_id"] == tid
 
 
+def _letter() -> dict:
+    return {
+        "author": "cursor",
+        "mission": "ship the letter",
+        "where_we_left_off": "seal write",
+        "state": "open",
+        "next_acts": ["stamp"],
+        "load_bearing": ["tip"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_invalid_letter_refuses_before_locate() -> None:
+    ctx = _Ctx()
+    letter = _letter()
+    del letter["where_we_left_off"]
+    ctx.options = {**ctx.options, "handoff": letter}
+    handler = ContinuityCheckpointResolveHandler()
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["refused"]["code"] == "checkpoint.handoff_invalid"
+    assert out.json["refused"]["message"] == "where_we_left_off"
+
+
+@pytest.mark.asyncio
+async def test_owned_key_and_oversize_refuse() -> None:
+    ctx = _Ctx()
+    owned = _letter()
+    owned["messages_sha256"] = "ab" * 32
+    handler = ContinuityCheckpointResolveHandler()
+    ctx.options = {**_Ctx.options, "handoff": owned}
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["refused"]["message"] == "messages_sha256"
+    huge = _letter()
+    huge["where_we_left_off"] = "x" * 20000
+    ctx.options = {**_Ctx.options, "handoff": huge}
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["refused"]["code"] == "checkpoint.handoff_too_large"
+
+
 def test_duplicate_transcript_id_across_projects_is_ambiguous(tmp_path) -> None:
     from cortex_store.transcript_assembly import locate_cursor_transcript_jsonl
 

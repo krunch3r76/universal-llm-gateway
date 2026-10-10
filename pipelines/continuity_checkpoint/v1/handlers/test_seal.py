@@ -39,15 +39,20 @@ async def test_seal_success_shape() -> None:
                 "session_id": "cursor-2026-test",
                 "journal_row_id": 99,
                 "turn_count": 12,
-                "content_hash": "abc123",
+                "content_hash": "sha256:" + "ab" * 32,
+                "composed_sha256": "sha256:" + "ab" * 32,
+                "messages_sha256": "cd" * 32,
                 "conversation_uuid": "uuid-1",
+                "letter_status": "none",
             }
         ),
     ):
         out = await handler.execute(_Step(), _Ctx())
     assert out.json["turn_count"] == 12
     assert out.json["refused"] is None
-    assert out.json["messages_sha256"] == "abc123"
+    assert out.json["messages_sha256"] == "cd" * 32
+    assert out.json["composed_sha256"] == "sha256:" + "ab" * 32
+    assert "sha256:" not in out.json["messages_sha256"]
 
 
 @pytest.mark.asyncio

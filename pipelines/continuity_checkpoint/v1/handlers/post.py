@@ -65,9 +65,7 @@ def _carry_forward_residue(*, prior_body: str, prior_turn: int) -> str | None:
     block = _extract_residue_block(prior_body)
     if not block:
         return None
-    marker = (
-        f"(carried forward from turn {prior_turn} — pipeline produced no residue)"
-    )
+    marker = f"(carried forward from turn {prior_turn} — pipeline produced no residue)"
     return f"{block.rstrip()}\n{marker}"
 
 
@@ -91,7 +89,9 @@ def _compose_body(
     lines = ["## Residue (authored — cap ~800 chars)", residue.strip(), "", "## Anchor"]
     if refused:
         lines.append(f"Harvest: refused({refused.get('code', 'unknown')})")
-        lines.extend(["", "Mission: checkpoint refused; this notice is not a resume tip."])
+        lines.extend(
+            ["", "Mission: checkpoint refused; this notice is not a resume tip."]
+        )
         return "\n".join(lines)
     transcript_id = seal.get("transcript_id") or ""
     turn_count = seal.get("turn_count") or 0
@@ -109,8 +109,7 @@ def _compose_body(
         harvest_surface = "claude_ai"
     else:
         lines.append(
-            f"Window: transcript_id={transcript_id} · "
-            f"turns@cp={turn_count}{hop_suffix}"
+            f"Window: transcript_id={transcript_id} · turns@cp={turn_count}{hop_suffix}"
         )
         harvest_surface = "cursor"
     codec = str(seal.get("verbatim_codec") or "messages-v1")
@@ -118,6 +117,11 @@ def _compose_body(
         f"Harvest: transcript:{session_id} · messages_sha256:{sha_token} · "
         f"codec:{codec} · surface:{harvest_surface}"
     )
+    letter_status = seal.get("letter_status")
+    if letter_status in {"stamped", "carried"} and seal.get("handoff_sha12"):
+        lines.append(f"Letter: handoff:{seal.get('handoff_sha12')}")
+    else:
+        lines.append("Letter: handoff:none")
     mission_line = (
         mission.strip() or "Mission: resume continuity house from this CHECKPOINT."
     )
@@ -161,6 +165,10 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 }
             }
         caller_residue = str(options.get("residue") or "").strip()
+        letter_status = str(seal.get("letter_status") or "none")
+        letter_ready = letter_status in {"stamped", "carried"} and bool(
+            seal.get("handoff_mission")
+        )
 
         if not pre:
             # Skipped pre_consolidate must not look dispatched (a:33299).
@@ -191,6 +199,13 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         elif caller_residue:
             residue, residue_clamped = clamp_residue(caller_residue)
             residue_source = "caller"
+        elif letter_ready:
+            mission = str(seal.get("handoff_mission") or "")
+            next_act = str(seal.get("handoff_next_act") or "")
+            residue, residue_clamped = clamp_residue(
+                f"Mission: {mission}\nNext: {next_act}"
+            )
+            residue_source = "letter"
         elif pre_source is None:
             carried = _carry_forward_residue(
                 prior_body=prior_body, prior_turn=after_turn
@@ -319,5 +334,12 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "card_written": tail.get("card_written"),
             },
             "tail_mechanical": tail,
+            "letter": {
+                "status": letter_status,
+                "sha12": seal.get("handoff_sha12"),
+                "lag_turns": seal.get("handoff_lag_turns"),
+            },
         }
+        if letter_status == "dropped_already_closed":
+            result["warnings"] = ["checkpoint.letter_dropped_already_closed"]
         return StepOutput(raw=json.dumps(result, default=str), json=result)

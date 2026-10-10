@@ -33,6 +33,7 @@ class CheckpointRequest(BaseModel):
     tools: Tools = "none"
     pipeline_options: dict[str, Any] | None = None
     channel: str | None = None
+    handoff: dict[str, Any] | None = None
 
 
 class CheckpointAccepted(BaseModel):

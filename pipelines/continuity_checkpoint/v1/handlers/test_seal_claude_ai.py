@@ -310,7 +310,9 @@ async def test_seal_claude_ai_already_journaled_returns_seal_fingerprint() -> No
         )
     assert payload["refused"] is None
     assert payload["already_closed"] is True
-    assert payload["messages_sha256"] == "sha256:abc123"
+    assert payload["messages_sha256"] is None
+    assert payload["composed_sha256"] == "sha256:abc123"
+    assert payload["letter_status"] == "none"
     assert payload["verbatim_codec"] == "messages-v1"
     assert "coverage" not in payload
     dispatch.assert_not_called()
@@ -398,7 +400,8 @@ async def test_seal_claude_ai_session_close_already_closed_omits_coverage() -> N
         )
     assert payload["refused"] is None
     assert payload["already_closed"] is True
-    assert payload["messages_sha256"] == "sha256:deadbeef"
+    assert payload["messages_sha256"] is None
+    assert payload["composed_sha256"] == "sha256:deadbeef"
     assert payload["verbatim_codec"] == "messages-v1"
     assert "coverage" not in payload
 

@@ -60,6 +60,10 @@ async def seal_messages_envelope(
     assistant_label: str | None = None,
     attach_conversation_uuid: bool = False,
     transcript_messages_path: str | None = None,
+    handoff: dict[str, Any] | None = None,
+    stamp_thread: str | None = None,
+    stamp_surface: str | None = None,
+    stamp_transcript_id: str | None = None,
 ) -> SealResult:
     """Close one messages envelope.
 
@@ -78,9 +82,7 @@ async def seal_messages_envelope(
     if not session_id:
         if not opened_at:
             return _refuse("seal.missing_start", "conversation start is absent")
-        session_id = derive_anchored_session_id(
-            seat_slug, opened_at, conversation_uuid
-        )
+        session_id = derive_anchored_session_id(seat_slug, opened_at, conversation_uuid)
     close_args: dict[str, Any] = {
         "session_id": session_id,
         "agent": agent,
@@ -94,6 +96,11 @@ async def seal_messages_envelope(
     }
     if assistant_label is not None:
         close_args["assistant_label"] = assistant_label
+    if isinstance(handoff, dict):
+        close_args["handoff"] = handoff
+        close_args["stamp_thread"] = stamp_thread or thread
+        close_args["stamp_surface"] = stamp_surface
+        close_args["stamp_transcript_id"] = stamp_transcript_id or conversation_uuid
     if attach_conversation_uuid and conversation_uuid:
         close_args["conversation_uuid"] = conversation_uuid
     close = await cortex_dispatch_fn("session_close", close_args)
@@ -114,7 +121,9 @@ async def seal_messages_envelope(
     # FastAPI ``{"detail": ...}`` and other bodies with no journal id are not
     # a successful close. Treating them as success stored journal_row_id None.
     if close.get("journal_row_id") is None and not close.get("already_closed"):
-        return _refuse("seal.transport", "session_close returned no journal row", session_id)
+        return _refuse(
+            "seal.transport", "session_close returned no journal row", session_id
+        )
     return SealResult(
         close_args=close_args,
         close=close,

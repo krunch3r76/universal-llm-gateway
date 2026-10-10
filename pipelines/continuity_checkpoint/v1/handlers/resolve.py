@@ -50,6 +50,14 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
         from_agent = str(options.get("from_agent") or "continuity")
         execution_id = str(context.execution_id or "")
 
+        handoff = options.get("handoff")
+        if handoff is not None:
+            from continuity_tape.handoff import validate_handoff
+
+            defect = validate_handoff(handoff, profile="stamped")
+            if defect is not None:
+                return _refused(defect[0], defect[1])
+
         stargate_continuity_checkpoint_admitted(
             execution_id=execution_id,
             thread=thread,
@@ -88,6 +96,8 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
                 "chat_url": str(chat_url),
                 "transcript_id": transcript_id,
             }
+            if isinstance(handoff, dict):
+                payload["handoff"] = handoff
             return StepOutput(raw=json.dumps(payload), json=payload)
 
         if surface != "cursor":
@@ -106,6 +116,8 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
                 "jsonl_path": str(jsonl_path),
                 "transcript_id": transcript_id,
             }
+            if isinstance(handoff, dict):
+                payload["handoff"] = handoff
             return StepOutput(raw=json.dumps(payload), json=payload)
 
         # a:33211 — discover dominant_write / leftover explicit_cp is how a
@@ -138,4 +150,6 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
             "jsonl_path": rel,
             "transcript_id": str(transcript_id),
         }
+        if isinstance(handoff, dict):
+            payload["handoff"] = handoff
         return StepOutput(raw=json.dumps(payload), json=payload)

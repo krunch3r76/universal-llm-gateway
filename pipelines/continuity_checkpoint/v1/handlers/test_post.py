@@ -31,7 +31,10 @@ def test_c2_carry_forward_residue_from_prior_tip() -> None:
 
 
 def test_c2_no_prior_residue_returns_none() -> None:
-    assert _carry_forward_residue(prior_body="## Anchor\nno residue\n", prior_turn=1) is None
+    assert (
+        _carry_forward_residue(prior_body="## Anchor\nno residue\n", prior_turn=1)
+        is None
+    )
 
 
 def test_compose_body_refused_seal_omits_window() -> None:
@@ -304,7 +307,10 @@ async def test_b3_2_mechanical_stub_when_no_prior_residue() -> None:
         patch(
             "handlers.post.bus_get",
             new=AsyncMock(
-                return_value=({"turn_number": 1, "body": "## Anchor\nno residue\n"}, 200),
+                return_value=(
+                    {"turn_number": 1, "body": "## Anchor\nno residue\n"},
+                    200,
+                ),
             ),
         ),
         patch("handlers.post.bus_send", new=send),
@@ -312,8 +318,7 @@ async def test_b3_2_mechanical_stub_when_no_prior_residue() -> None:
         out = await handler.execute(_Step(), ctx)
     body = send.await_args.kwargs["body"]
     assert (
-        "TYPE: CHECKPOINT · pipeline · seal refused or pre_consolidate skipped."
-        in body
+        "TYPE: CHECKPOINT · pipeline · seal refused or pre_consolidate skipped." in body
     )
     assert out.json["pre_consolidate"]["executor"] == "skipped"
     assert out.json["pre_consolidate"]["supersedes_tip"] is False
@@ -555,3 +560,117 @@ async def test_charter_pin_without_fold_does_not_append_g_rows() -> None:
     body = send.await_args.kwargs["body"]
     assert pin in body
     assert "| G1 |" not in body
+
+
+def test_compose_body_letter_line() -> None:
+    body = _compose_body(
+        residue="WIP",
+        seal={
+            "transcript_id": "uuid-1",
+            "turn_count": 5,
+            "session_id": "cursor-test",
+            "messages_sha256": "ab" * 32,
+            "refused": None,
+            "letter_status": "stamped",
+            "handoff_sha12": "abcdef123456",
+        },
+        mission="ship",
+    )
+    assert "Letter: handoff:abcdef123456" in body
+    none = _compose_body(
+        residue="WIP",
+        seal={
+            "transcript_id": "uuid-1",
+            "turn_count": 5,
+            "session_id": "cursor-test",
+            "messages_sha256": "ab" * 32,
+            "refused": None,
+        },
+        mission="ship",
+    )
+    assert "Letter: handoff:none" in none
+    refused = _compose_body(
+        residue="WIP",
+        seal={"refused": {"code": "transcript_seal.hollow"}},
+        mission="ship",
+    )
+    assert "Letter:" not in refused
+
+
+@pytest.mark.asyncio
+async def test_post_letter_seeds_residue_and_result() -> None:
+    ctx = _Ctx()
+    ctx.outputs = {
+        "seal": {
+            "json": {
+                "transcript_id": "uuid-1",
+                "turn_count": 3,
+                "session_id": "cursor-test",
+                "messages_sha256": "abc",
+                "refused": None,
+                "letter_status": "stamped",
+                "handoff_sha12": "abcdef123456",
+                "handoff_mission": "ship the letter",
+                "handoff_next_act": "stamp the file",
+                "handoff_lag_turns": 2,
+            }
+        },
+        "pre_consolidate": {"json": {"executor": "skipped", "mission": "fallback"}},
+    }
+    ctx.options = {"thread": "10223", "surface": "cursor", "from_agent": "continuity"}
+    send = AsyncMock(return_value=({"turn_number": 4}, 201))
+    handler = ContinuityCheckpointPostHandler()
+    with (
+        patch(
+            "handlers.post.bus_get",
+            new=AsyncMock(return_value=({"turn_number": 3, "body": ""}, 200)),
+        ),
+        patch("handlers.post.bus_send", new=send),
+    ):
+        out = await handler.execute(_Step(), ctx)
+    body = send.await_args.kwargs["body"]
+    assert "Letter: handoff:abcdef123456" in body
+    assert "Mission: ship the letter" in body
+    assert "Next: stamp the file" in body
+    assert out.json["pre_consolidate"]["residue_source"] == "letter"
+    assert out.json["letter"]["status"] == "stamped"
+    assert out.json["letter"]["sha12"] == "abcdef123456"
+    assert out.json["letter"]["lag_turns"] == 2
+
+
+@pytest.mark.asyncio
+async def test_post_dropped_letter_warns() -> None:
+    ctx = _Ctx()
+    ctx.outputs = {
+        "seal": {
+            "json": {
+                "transcript_id": "uuid-1",
+                "turn_count": 3,
+                "session_id": "cursor-test",
+                "messages_sha256": "abc",
+                "refused": None,
+                "letter_status": "dropped_already_closed",
+            }
+        },
+        "pre_consolidate": {
+            "json": {
+                "residue": "kept",
+                "mission": "kept",
+                "residue_source": "mechanical",
+                "executor": "cursor-sdk",
+            }
+        },
+    }
+    ctx.options = {"thread": "10223", "surface": "cursor", "from_agent": "continuity"}
+    send = AsyncMock(return_value=({"turn_number": 4}, 201))
+    handler = ContinuityCheckpointPostHandler()
+    with (
+        patch(
+            "handlers.post.bus_get",
+            new=AsyncMock(return_value=({"turn_number": 3, "body": ""}, 200)),
+        ),
+        patch("handlers.post.bus_send", new=send),
+    ):
+        out = await handler.execute(_Step(), ctx)
+    assert out.json["warnings"] == ["checkpoint.letter_dropped_already_closed"]
+    assert out.json["pre_consolidate"]["residue_source"] == "mechanical"

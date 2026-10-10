@@ -65,7 +65,11 @@ def _enforce_messages_v1_prefix_extend(
     mode: str,
 ) -> None:
     """PREFIX-EXTEND gate for messages-v1 seal succession (R5)."""
-    if prior_codec != "messages-v1" or prior_seal_path is None or not prior_seal_path.is_file():
+    if (
+        prior_codec != "messages-v1"
+        or prior_seal_path is None
+        or not prior_seal_path.is_file()
+    ):
         return
     prior_envelope = load_sealed_envelope_from_path(prior_seal_path)
     if prefix_holds("messages-v1", prior_envelope.messages, new_messages):
@@ -83,6 +87,17 @@ def _enforce_messages_v1_prefix_extend(
         ),
     )
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
+
+
+def _prior_handoff(snapshot: str | None) -> dict | None:
+    if not snapshot:
+        return None
+    try:
+        parsed = json.loads(snapshot)
+    except json.JSONDecodeError:
+        return None
+    letter = parsed.get("handoff") if isinstance(parsed, dict) else None
+    return letter if isinstance(letter, dict) else None
 
 
 def _dominant_lane_from_entity_ids(entity_ids: list[str] | None) -> str | None:
@@ -223,9 +238,7 @@ def try_idempotent_session_close(
             )
     # Genuinely re-closing an already-closed session: echo the prior close
     # and retry debrief with stored journal fields (idempotent debrief retry).
-    stored_domains = (
-        json.loads(existing["domains"]) if existing["domains"] else None
-    )
+    stored_domains = json.loads(existing["domains"]) if existing["domains"] else None
     stored_decisions = (
         json.loads(existing["decisions"]) if existing["decisions"] else None
     )
@@ -390,12 +403,19 @@ def persist_session_close(
     prior_source_snapshot: bytes | None = None
     source_abs_path: Path | None = None
     prior_codec: str | None = None
+    letter_status: str | None = None
+    seal_letter_sha12: str | None = None
+    seal_letter_mission: str | None = None
+    seal_letter_next: str | None = None
+    seal_letter_lag: int | None = None
     if ctx.transcript_path is not None:
         assert ctx.composed_md is not None
         abs_path = _FILES_ROOT / ctx.transcript_path
         if ctx.envelope is not None and ctx.messages_path is not None:
             seal_abs_path = _FILES_ROOT / ctx.messages_path
-            if reuse_journal_row_id is not None and (structural_fill or succession_extend):
+            if reuse_journal_row_id is not None and (
+                structural_fill or succession_extend
+            ):
                 _pc_conn = cortex_conn()
                 try:
                     _prow = _pc_conn.execute(
@@ -404,9 +424,13 @@ def persist_session_close(
                     ).fetchone()
                 finally:
                     _pc_conn.close()
-                prior_rel = str(_prow["file_path"]) if _prow and _prow["file_path"] else None
+                prior_rel = (
+                    str(_prow["file_path"]) if _prow and _prow["file_path"] else None
+                )
                 prior_codec_for_seal = (
-                    str(_prow["verbatim_codec"]) if _prow and _prow["verbatim_codec"] else None
+                    str(_prow["verbatim_codec"])
+                    if _prow and _prow["verbatim_codec"]
+                    else None
                 )
                 prior_seal_path = (
                     _FILES_ROOT / transcript_messages_path(prior_rel)
@@ -427,13 +451,56 @@ def persist_session_close(
                 tools="marker",
                 sealed_at=ctx.now,
             )
-            seal_payload = json.dumps(
-                sealed_envelope.model_dump(mode="json", by_alias=True),
-                ensure_ascii=False,
-                indent=2,
-            ) + "\n"
             if (structural_fill or succession_extend) and seal_abs_path.is_file():
                 prior_seal_snapshot = seal_abs_path.read_text(encoding="utf-8")
+            prior_handoff = _prior_handoff(prior_seal_snapshot)
+            sealed_dump = sealed_envelope.model_dump(mode="json", by_alias=True)
+            from continuity_tape.handoff import (
+                handoff_lag_turns,
+                handoff_sha12,
+                place_handoff,
+            )
+
+            letter_status = place_handoff(
+                sealed_dump,
+                letter=body.handoff,
+                prior=prior_handoff,
+                extend=bool(succession_extend or structural_fill),
+                stamp={
+                    "session_id": body.session_id,
+                    "messages_sha256": sealed_envelope.meta.messages_sha256 or "",
+                    "message_count": len(sealed_envelope.messages),
+                    "thread": body.stamp_thread or "",
+                    "transcript_id": body.stamp_transcript_id
+                    or sealed_envelope.meta.transcript_id
+                    or "",
+                    "surface": body.stamp_surface or sealed_envelope.meta.surface,
+                    "turn_count": ctx.turn_count,
+                    "now": ctx.now,
+                }
+                if isinstance(body.handoff, dict)
+                else None,
+            )
+            placed = sealed_dump.get("handoff") if letter_status != "none" else None
+            seal_letter_sha12 = (
+                handoff_sha12(placed) if isinstance(placed, dict) else None
+            )
+            seal_letter_mission = (
+                placed.get("mission") if isinstance(placed, dict) else None
+            )
+            acts = placed.get("next_acts") if isinstance(placed, dict) else None
+            seal_letter_next = acts[0] if isinstance(acts, list) and acts else None
+            seal_letter_lag = (
+                handoff_lag_turns(placed) if isinstance(placed, dict) else None
+            )
+            seal_payload = (
+                json.dumps(
+                    sealed_dump,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            )
             if ctx.source_jsonl_bytes is not None and ctx.envelope is not None:
                 source_rel = transcript_source_path(ctx.transcript_path or "")
                 source_abs_path = _FILES_ROOT / source_rel
@@ -519,9 +586,7 @@ def persist_session_close(
                     detail=conflict,
                 )
         try:
-            durable_write_text(
-                abs_path, ctx.composed_md, retain_store_root=_FILES_ROOT
-            )
+            durable_write_text(abs_path, ctx.composed_md, retain_store_root=_FILES_ROOT)
         except OSError as exc:
             logger.error(
                 "session_close: failed to write transcript to %s: %s", abs_path, exc
@@ -891,6 +956,15 @@ def persist_session_close(
         byte_count=byte_count,
         messages_sha256=ctx.messages_sha256,
         verbatim_codec=ctx.verbatim_codec,
+        letter_status=letter_status,
+        handoff_sha12=seal_letter_sha12,
+        handoff_mission=seal_letter_mission
+        if isinstance(seal_letter_mission, str)
+        else None,
+        handoff_next_act=seal_letter_next
+        if isinstance(seal_letter_next, str)
+        else None,
+        handoff_lag_turns=seal_letter_lag,
         messages_path=ctx.messages_path,
         audit_warnings=audit_warnings,
         handoff_surface_preview=build_handoff_surface_preview(
