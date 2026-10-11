@@ -10,7 +10,13 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._clients import file_sha256, fs_of, refuse, rel_path_ok, step_output_json
-from ._handoff import fill_grok_binding, handoff_binding, normalize_handoff
+from ._handoff import (
+    HANDOFF_MAX_BYTES,
+    fill_grok_binding,
+    handoff_binding,
+    handoff_json_size,
+    normalize_handoff,
+)
 
 
 def slug_house(house: str) -> str:
@@ -187,6 +193,11 @@ async def run_envelope(
         options,
         messages_sha256=str(source.get("messages_sha256") or ""),
     )
+    if letter is not None and handoff_json_size(letter) > HANDOFF_MAX_BYTES:
+        return refuse(
+            "admit.handoff_too_large",
+            "handoff exceeds 16 KiB after binding fill",
+        )
     binding = _binding_fields(
         letter,
         envelope,

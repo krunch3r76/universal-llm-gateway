@@ -283,22 +283,22 @@ def test_blank_next_acts_refused_grok_and_stamped(next_acts: object) -> None:
 
 
 def test_next_acts_bare_string_passes() -> None:
-    assert validate_handoff(_grok(next_acts="do x")) is None
     normalized, fields = normalize_handoff(_grok(next_acts="do x"))
     assert normalized["next_acts"] == ["do x"]
     assert "next_acts" in fields
+    assert validate_handoff(normalized) is None
 
 
 def test_load_bearing_blank_str_needs_reason() -> None:
-    code, field = validate_handoff(_grok(load_bearing="")) or ("", "")
-    assert code == "admit.handoff_invalid"
-    assert field == "load_bearing"
     normalized, _ = normalize_handoff(_grok(load_bearing=""))
     assert normalized["load_bearing"] == []
-    ok = validate_handoff(
+    code, field = validate_handoff(normalized) or ("", "")
+    assert code == "admit.handoff_invalid"
+    assert field == "load_bearing"
+    ok_letter, _ = normalize_handoff(
         _grok(load_bearing="", load_bearing_reason="transcript has the facts")
     )
-    assert ok is None
+    assert validate_handoff(ok_letter) is None
 
 
 def test_normalize_handoff_shapes() -> None:

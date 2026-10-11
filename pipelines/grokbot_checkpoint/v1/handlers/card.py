@@ -132,7 +132,7 @@ async def run_card(
     warnings = card_binding_warnings(options)
     notices = card_binding_notices(options)
     if live != expected:
-        if _last_row_n(body) == n:
+        if _last_row_n(raw.decode("utf-8")) == n:
             return {
                 "refused": None,
                 "replayed": True,

@@ -330,4 +330,4 @@ async def test_replay_short_circuit_uses_live_card(fs) -> None:
         execution_id="e-replay-supplied",
     )
     assert replay_with_body.get("replayed") is True
-    assert file_sha256((await fs.read("notes/card.md"))) == live_sha
+    assert file_sha256(await fs.read("notes/card.md")) == live_sha

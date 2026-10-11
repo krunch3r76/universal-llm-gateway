@@ -84,6 +84,14 @@ _STRING_FIELDS = ("author", "mission", "state", "where_we_left_off")
 _LIST_FIELDS = ("next_acts", "load_bearing")
 
 
+def _list_field_has_content(items: object) -> bool:
+    if not isinstance(items, list) or not items:
+        return False
+    if any(not isinstance(item, str) for item in items):
+        return False
+    return any(item.strip() for item in items)
+
+
 def normalize_handoff(letter: object) -> tuple[dict[str, Any], list[str]]:
     """Return a normalised copy and the field names that changed.
 
@@ -114,7 +122,7 @@ def normalize_handoff(letter: object) -> tuple[dict[str, Any], list[str]]:
             continue
         value = out[key]
         if isinstance(value, str):
-            out[key] = [value]
+            out[key] = [value] if value.strip() else []
             fields.append(key)
             continue
         if isinstance(value, list) and any(not isinstance(item, str) for item in value):
@@ -141,12 +149,7 @@ def _author_fields(letter: dict[str, Any], code: str) -> tuple[str, str] | None:
     state = letter.get("state")
     if not isinstance(state, str):
         return code, "state"
-    acts = letter.get("next_acts")
-    if (
-        not isinstance(acts, list)
-        or not acts
-        or any(not isinstance(item, str) for item in acts)
-    ):
+    if not _list_field_has_content(letter.get("next_acts")):
         return code, "next_acts"
     bearing = letter.get("load_bearing")
     if not isinstance(bearing, list) or any(
@@ -214,12 +217,7 @@ def validate_handoff(
     state = letter.get("state")
     if not isinstance(state, str):
         return invalid, "state"
-    acts = letter.get("next_acts")
-    if (
-        not isinstance(acts, list)
-        or not acts
-        or any(not isinstance(item, str) for item in acts)
-    ):
+    if not _list_field_has_content(letter.get("next_acts")):
         return invalid, "next_acts"
     bearing = letter.get("load_bearing")
     if not isinstance(bearing, list) or any(
