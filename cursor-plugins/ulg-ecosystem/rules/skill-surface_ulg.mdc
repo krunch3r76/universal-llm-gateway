@@ -21,9 +21,7 @@ A new or edited command is unfinished until this turn quotes `cmp` MATCH for tha
 `PLUGIN_INSTALL_DESTS.txt`. Commit does not install. Do not wait for the operator
 to say "install the commands."
 
-| Bad | Good |
-|---|---|
-| Commit the command file and stop | Install, quote MATCH for that command, then commit |
+Bad: commit the command file and stop. Good: install, quote MATCH for that command, then commit.
 
 Census slugs live in the plugin tree only — never re-add under `{repo}/.cursor/skills` or `.claude/skills`.
 Runbook: Use the `claude-ai-bundle-sync` skill · doctrine `decision:claude-ai-skill-upload-automation` ·

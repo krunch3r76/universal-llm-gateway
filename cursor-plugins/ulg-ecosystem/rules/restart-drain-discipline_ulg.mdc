@@ -11,29 +11,19 @@ Cowork tab, or "this IDE session" is never a reason to skip, park, or route the 
 `edit(served_path ∨ env_loaded_by_process) ∧ running(process) ⇒ recycle(process)` same turn; `bind_mount ⇏ live`.
 That recycle is **not** a work-complete claim.
 
-```
-∀ service ≠ git_integration_worker:  busy defers ⇒ re-fire force=true, announce
-service = git_integration_worker:    arm drain (status=deferred, restart_intent_id) — never force, never kill
-  live cursor-sdk dispatch ⇒ park, not wait: manage(sync_restart|restart|stop, park_live=true) —
-  GIW cancels the bridge run (row terminal cancelled + park_*), drain converges, GIW auto-resumes
-  the row as a resume_of child after restart (inherited execution_id/thread). recycle_giw is
-  park-first at idle; force only on CANCEL_FAILED / NEST_CHAIN / STATE_ROOT_MISSING.
-```
-
-Discriminator: interruption destroy-set. Attach handles reconnect (`mcp`, `cdp_ask`, `stargate`,
-`gateway`, …); only GIW holds an in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach,
-not the CSE (`chat_url`) or the IDE chat.
+∀ service ≠ `git_integration_worker`: busy defers ⇒ re-fire `force=true`, announce.
+`git_integration_worker`: arm drain (`status=deferred`, `restart_intent_id`) — never force, never kill. Live cursor-sdk dispatch ⇒ park, not wait (`park_live=true`). `recycle_giw` is park-first at idle; force only on CANCEL_FAILED / NEST_CHAIN / STATE_ROOT_MISSING.
+detail: skill `git-posture` § Restart drain — relocated table.
 
 ## Forbidden / Required
 
-| Forbidden | Required |
-|---|---|
-| `pkill` / `kill` / `docker stop` for lifecycle | `manage(action="sync_restart"|"restart"|"stop")` — drain-gated chokepoint |
-| Poll `wait_healthy` in-window while holding the write lease (never converges) | Arm, **exit**, probe on a later turn; IDE waits in background |
-| Claim `live` from a commit, an import, or `status=deferred` | Process start after served-file **and** env mtime, or a live probe of the changed surface |
-| Report exact `live@<sha>` when served dirt was loaded | Report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart |
-| Hold graph stamps / todo close for `live@sha` | Close once ACs met and ordinary `live` proven (or `liveness n/a`) |
-| Recycle-as-finished while session paths uncommitted | Commit session paths, **then** recycle; quote both payloads |
+`pkill` / `kill` / `docker stop` for lifecycle is forbidden — use `manage(action="sync_restart"|"restart"|"stop")`.
+Do not poll `wait_healthy` in-window while holding the write lease — arm, **exit**, probe later.
+Do not claim `live` from a commit, an import, or `status=deferred` — process start after served-file **and** env mtime, or a live probe.
+Do not report exact `live@<sha>` when served dirt was loaded — report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart.
+Do not hold graph stamps / todo close for `live@sha` — close once ACs met and ordinary `live` proven (or `liveness n/a`).
+Do not recycle-as-finished while session paths are uncommitted — commit session paths, **then** recycle; quote both payloads.
+detail: skill `git-posture` § Restart drain — relocated table.
 
 ## Go-live = work-complete finishing (last)
 
@@ -55,8 +45,5 @@ Exceptional mid-arc verify (bind-mount / `docker cp`): mark exceptional and comm
 contract. The seat commits session paths without asking. Checkpoint commit and `/session-end`
 are not work-complete.
 
-Stamp after recycle+proof when the stamp cites that commit. Proof: services ·
-`live|live@sha|not_live|drain_pending` · commit SHA · `restart_intent_id` or process start UTC ·
-path probe. Satellites: same via their deploy script.
-Restart-after-land is the default, and the gateway GPU pre-check (`/run/nvidia-persistenced/socket` present before any gateway stop/restart) applies — a missing or uncheckable socket withholds the gateway stop (not a busy-skip) — both per `runbook:restart-drain` (Kaywan 2026-10-08).
-`runbook:restart-drain` · `decision:go-live-proof-loop` · `git-posture`.
+Restart-after-land is the default. Gateway GPU pre-check withholds a gateway stop when the socket is missing or uncheckable (not a busy-skip).
+detail: skill `git-posture` § Restart drain — relocated table. `runbook:restart-drain`.

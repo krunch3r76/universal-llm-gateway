@@ -550,6 +550,40 @@ Default: land → path-explicit commit of session paths → recycle serving proc
 `work_complete` ∉ L(x) without quoted commit + recycle payloads.
 "Only commit when requested" = no opportunistic or unrelated commits; not a veto of this section.
 
+## Shared checkout — relocated tables
+
+Moved from `shared-checkout-worktree_ulg.mdc`.
+
+| Forbidden | Required |
+|---|---|
+| `git checkout` / `switch` onto a side branch on the shared tree | `git worktree add [-b <branch>] <path> <start>`; work there |
+| Stash to free the shared tip | Leave peer dirt; worktree isolates |
+| `git push` / `gh pr create` / ask to open a PR | Local `@sha` + diffstat; land when told |
+
+| Bad | Good |
+|---|---|
+| Switch shared tip to `fix/…`, amend, switch back | Worktree from `master`; merge back |
+| Push / PR because a brief said "submit for review" | Local branch + diff; wait for land |
+
+`checkout-kernel_ulg` · `local-maintainer-no-remote_ulg` · specimen a:37149.
+
+## Restart drain — relocated table
+
+Moved from `restart-drain-discipline_ulg.mdc`. The rule keeps the invariant and the forbidden acts; this table is the paired required column.
+
+| Forbidden | Required |
+|---|---|
+| `pkill` / `kill` / `docker stop` for lifecycle | `manage(action="sync_restart"|"restart"|"stop")` — drain-gated chokepoint |
+| Poll `wait_healthy` in-window while holding the write lease (never converges) | Arm, **exit**, probe on a later turn; IDE waits in background |
+| Claim `live` from a commit, an import, or `status=deferred` | Process start after served-file **and** env mtime, or a live probe of the changed surface |
+| Report exact `live@<sha>` when served dirt was loaded | Report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart |
+| Hold graph stamps / todo close for `live@sha` | Close once ACs met and ordinary `live` proven (or `liveness n/a`) |
+| Recycle-as-finished while session paths uncommitted | Commit session paths, **then** recycle; quote both payloads |
+
+GIW park detail (from `restart-drain-discipline_ulg.mdc`): `manage(sync_restart|restart|stop, park_live=true)` cancels the bridge run (row terminal cancelled + park_*), the drain converges, and GIW auto-resumes the row as a `resume_of` child after restart (inherited execution_id/thread). Discriminator: interruption destroy-set. Attach handles reconnect (`mcp`, `cdp_ask`, `stargate`, `gateway`, …); only GIW holds an in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach, not the CSE (`chat_url`) or the IDE chat.
+
+Stamp after recycle+proof when the stamp cites that commit. Proof fields: services · `live|live@sha|not_live|drain_pending` · commit SHA · `restart_intent_id` or process start UTC · path probe. Satellites: same via their deploy script. Gateway GPU pre-check: `/run/nvidia-persistenced/socket` present before any gateway stop/restart; a missing or uncheckable socket withholds the gateway stop (not a busy-skip). Both per `runbook:restart-drain` (Kaywan 2026-10-08). `decision:go-live-proof-loop`.
+
 ## Related skills
 
 - `architecture-invariants` — `[universal:git-posture]` one-liner in handoff Block 2

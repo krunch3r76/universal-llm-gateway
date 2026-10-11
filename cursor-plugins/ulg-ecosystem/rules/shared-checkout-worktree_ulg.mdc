@@ -18,11 +18,8 @@ worktrees; attended seats owe the same. "Submit for review" ⇒ local branch +
 
 ## Forbidden / Required
 
-| Forbidden | Required |
-|---|---|
-| `git checkout` / `switch` onto a side branch on the shared tree | `git worktree add [-b <branch>] <path> <start>`; work there |
-| Stash to free the shared tip | Leave peer dirt; worktree isolates |
-| `git push` / `gh pr create` / ask to open a PR | Local `@sha` + diffstat; land when told |
+`¬ git checkout/switch` a side branch on the shared tree — `git worktree add` and work there. `¬ stash` to free the tip. `¬ push` / `¬ pr` unless the operator names it — local `@sha` + diffstat; land when told.
+detail: skill `git-posture` § Shared checkout — relocated tables.
 
 ## Detents
 
@@ -40,9 +37,5 @@ No-PR removes the remote step, not the worktree.
 
 ## Anti-patterns
 
-| Bad | Good |
-|---|---|
-| Switch shared tip to `fix/…`, amend, switch back | Worktree from `master`; merge back |
-| Push / PR because a brief said "submit for review" | Local branch + diff; wait for land |
-
-`checkout-kernel_ulg` · `git-posture` · `local-maintainer-no-remote_ulg` · specimen a:37149.
+`¬` switch the shared tip to a side branch, amend, and switch back. `¬` push or open a PR because a brief said "submit for review."
+detail: skill `git-posture` § Shared checkout — relocated tables.

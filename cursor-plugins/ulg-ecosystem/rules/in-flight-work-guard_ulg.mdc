@@ -19,16 +19,9 @@ worktrees do not lift the guard on the same paths.
 
 ## Forbidden / Permitted
 
-| Forbidden | Permitted |
-|---|---|
-| Edit paths the dispatch owns; "head start while SDK runs" | Poll `agent_bus.wait` / read thread / harvest closeout; edits **outside** the overlap |
-| Cancel queued cursor-sdk "as cleanup"; tear down a converse lane / live CSE | Author the packet **before** firing; lead verify **after** terminal closeout |
-| Infer "no active CDP" from empty `active_work` while the private request lane runs | Read the private request thread — transport idle ≠ bus idle |
-| Hop / re-stream / refuse PARK to "keep the tab alive" | PARK; tab ⟂ session (`decision:cse-tab-decoupled-from-session`) |
-
-Closing an agent-bus thread ≠ aborting substrate work. Abort of a transport handle ≢ abort of the
-operator-proxy arc (commission lives on the private request lane). Dead `execution_id` is not reopenable —
-continuity is the request thread; `cse_session(op=followup)` may reattach.
-
-Doctrine: arc 6328 (wrong abort) · friction 6486/6488 (parallel writer) · `cursor_sdk_conductor_conflict.py`.
-Detail: `conductor` · `cdp-operator-proxy` § Interrupt / supersede · `claude-ai-cdp-navigation` · `git-posture`.
+Do not edit paths the dispatch owns or "head start while SDK runs" — poll `agent_bus.wait`, read the thread, harvest the closeout; edits stay **outside** the overlap.
+Do not cancel queued cursor-sdk "as cleanup" or tear down a converse lane / live CSE — author the packet **before** firing; lead verify **after** terminal closeout.
+Do not infer "no active CDP" from empty `active_work` while the private request lane runs — read that thread; transport idle ≠ bus idle.
+Do not hop, re-stream, or refuse PARK to "keep the tab alive" — PARK; tab ⟂ session.
+Closing an agent-bus thread ≠ aborting substrate work. Abort of a transport handle ≢ abort of the operator-proxy arc (commission lives on the private request lane). Dead `execution_id` is not reopenable — continuity is the request thread; `cse_session(op=followup)` may reattach.
+detail: skill `conductor` § In-flight guard — relocated table.
