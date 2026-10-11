@@ -57,6 +57,7 @@ def test_opus_low_suggests_effort(captured_rejects: list[dict[str, Any]]) -> Non
     assert err.status_code == 422
     assert err.code == "reasoning_effort_not_supported"
     assert err.field == "reasoning_effort"
+    assert "call-shape error, not model availability" in err.reason
     assert "model_knobs" in err.reason
     assert err.details is not None
     assert err.details["suggested_model_knobs"] == {"effort": "low"}

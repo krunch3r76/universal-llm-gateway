@@ -28,9 +28,7 @@ async def test_wake_lane_requires_role_root() -> None:
         return {"tags": ["role:worker"]}
 
     with pytest.raises(FrontierEndpointError) as caught:
-        await validate_wake_lane(
-            "12286", request_id="req-2", fetch_thread=_fetch
-        )
+        await validate_wake_lane("12286", request_id="req-2", fetch_thread=_fetch)
     assert caught.value.code == "wake_lane_invalid"
 
 
@@ -51,6 +49,20 @@ async def test_wake_lane_bus_failure_is_unavailable_not_invalid() -> None:
         await validate_wake_lane("12286", request_id="req-4", fetch_thread=_fetch)
     assert caught.value.status_code == 503
     assert caught.value.code == "wake_lane_unavailable"
+    assert "call-shape error, not model availability" in caught.value.reason
+
+
+@pytest.mark.asyncio
+async def test_wake_lane_read_timeout_is_call_shape_not_model_down() -> None:
+    async def _fetch(thread_id: str) -> dict:
+        raise WakeLaneUnreachableError("ReadTimeout")
+
+    with pytest.raises(FrontierEndpointError) as caught:
+        await validate_wake_lane("14106", request_id="req-5", fetch_thread=_fetch)
+    assert caught.value.code == "wake_lane_unavailable"
+    assert "ReadTimeout" in caught.value.reason
+    assert "call-shape error, not model availability" in caught.value.reason
+    assert "Omit wake_lane" in caught.value.reason
 
 
 def test_hop_admit_does_not_reprobe_wake_lane() -> None:

@@ -293,7 +293,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
     async def team_dispatch(
         op: Literal[
-            "generate", "to_thread", "handoff", "steer", "claim", "claim_release", "occupancy"
+            "generate",
+            "to_thread",
+            "handoff",
+            "steer",
+            "claim",
+            "claim_release",
+            "occupancy",
         ],
         role: str | None = None,
         seat: str | None = None,
@@ -421,9 +427,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             str | None,
             Field(
                 description=(
-                    "Opt-in operator continuity root (numeric thread id with "
-                    "tag role:root). A worker closeout pastes a pointer memo "
-                    "on that lane. Distinct from parent_thread seat-cap admission."
+                    "Numeric role:root thread. On seat=cursor-sdk generate, omit "
+                    "it: the admit path probes the thread synchronously, and "
+                    "wake_lane_unavailable / ReadTimeout is a call-shape error, "
+                    "not model availability. Closeout wake is "
+                    "runbook:bus-consult-watcher. Shape: consult-routing "
+                    "§ Cursor-sdk generate shape. Distinct from parent_thread."
                 ),
             ),
         ] = None,
@@ -564,7 +573,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-        **generate:** `wake_lane` is an opt-in numeric `role:root` thread; a worker closeout pastes a pointer memo there. `contract`∈{GENERATE_JOBS}. **Code review** is this call: `op=generate`, `model=cdp/opus-5.5`, `contract=code-review`, `dispatch_thread_id`, one of `prompt`|`packet_path`|`sidecar_ref`, `reasoning_effort=high`; omit `purpose` and `role`. After-ship review is the same call with `contract=delivery-review`. `purpose=ask` is only the CDP submit tag when `purpose` is omitted; `purpose=review` and `role=reviewer` → 422 `job_unknown`. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=freeform` and plan-mode read-only admits. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** On `seat=cursor-sdk`, omit `wake_lane` and do not pass `reasoning_effort`. `wake_lane_unavailable` / ReadTimeout and `reasoning_effort_not_supported` are call-shape errors, not model outages. Shape: consult-routing § Cursor-sdk generate shape. `wake_lane` remains a numeric `role:root` thread for other seats; a worker closeout pastes a pointer memo there. `contract`∈{GENERATE_JOBS}. **Code review** is this call: `op=generate`, `model=cdp/opus-5.5`, `contract=code-review`, `dispatch_thread_id`, one of `prompt`|`packet_path`|`sidecar_ref`, `reasoning_effort=high`; omit `purpose` and `role`. After-ship review is the same call with `contract=delivery-review`. `purpose=ask` is only the CDP submit tag when `purpose` is omitted; `purpose=review` and `role=reviewer` → 422 `job_unknown`. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=freeform` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=freeform` and plan-mode read-only admits. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=freeform`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
         **to_thread:** `contract`∈{TO_THREAD_JOBS}. `thread` required.
 
@@ -1073,9 +1082,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if top_claim:
                 opts = dict(generation_options) if generation_options else {}
                 existing = opts.get("claim_id")
-                if not (
-                    isinstance(existing, str) and str(existing).strip()
-                ):
+                if not (isinstance(existing, str) and str(existing).strip()):
                     opts["claim_id"] = top_claim
                     relay_generation_options = opts
         for key, val in (

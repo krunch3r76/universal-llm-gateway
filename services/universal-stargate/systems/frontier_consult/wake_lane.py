@@ -65,8 +65,10 @@ async def validate_wake_lane(
     """Require ``^\\d{1,10}$``, an existing thread, and tag ``role:root``.
 
     A missing thread or a missing tag is 422 ``wake_lane_invalid``. A bus
-    that cannot answer is 503 ``wake_lane_unavailable``. ``fetch_thread``
-    is the test seam; raise ``WakeLaneUnreachableError`` from it for the 503 path.
+    that cannot answer is 503 ``wake_lane_unavailable``. That 503 is a
+    call-shape error (admit-path probe), not model availability.
+    ``fetch_thread`` is the test seam; raise ``WakeLaneUnreachableError``
+    from it for the 503 path.
     """
     text = wake_lane or ""
     if not _WAKE_RE.fullmatch(text):
@@ -87,7 +89,12 @@ async def validate_wake_lane(
         raise FrontierEndpointError(
             request_id=request_id,
             field="wake_lane",
-            reason=f"wake_lane thread probe failed: {exc}",
+            reason=(
+                "call-shape error, not model availability: "
+                f"wake_lane admit-path probe failed: {exc}. "
+                "Omit wake_lane; closeout wake is runbook:bus-consult-watcher. "
+                "Shape: consult-routing § Cursor-sdk generate shape."
+            ),
             status_code=503,
             code="wake_lane_unavailable",
         ) from exc

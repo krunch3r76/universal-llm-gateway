@@ -121,7 +121,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | 2 | Frame | Follow up into the live G1 CSE when that CSE ran on ACTIVE.model; fresh `team_dispatch` of ACTIVE only when no live G1 CSE exists · **inherit arch floor** · `conductor_profile=fable-scarce` stays on ACTIVE (does not change ACTIVE's model or effort). | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 
 | 3 | Densify | `cursor/grok-4.7` @ `effort=high`, `fast=true` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
-| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `contract=delivery-review`. `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
+| 4 | Check | Default **skip** (G3→G5). A check that cannot wait is `cdp/opus-5.5` `contract=delivery-review`. Standing check is not `cursor/claude-fable-5{,-1}`; operator-named availability wins (`consult-routing` § Cursor-sdk generate shape). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
 | 6 | Pre-land review | `cdp/opus-5` `contract=code-review` on lane branch diff | `[judgment]` | R1 sidecar |
 | 7 | Verify + ship | inline + land | `[inline]` | ACs, docstrings, close, L1 |

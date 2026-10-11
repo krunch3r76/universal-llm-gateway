@@ -66,8 +66,10 @@ def reject_nonempty_reasoning_effort(
         request_id=request_id,
         field="reasoning_effort",
         reason=(
+            "call-shape error, not model availability: "
             "reasoning_effort is not supported on seat=cursor-sdk; "
-            f"use model_knobs instead ({remedy})"
+            f"use model_knobs instead ({remedy}). "
+            "Shape: consult-routing § Cursor-sdk generate shape."
         ),
         status_code=422,
         code="reasoning_effort_not_supported",

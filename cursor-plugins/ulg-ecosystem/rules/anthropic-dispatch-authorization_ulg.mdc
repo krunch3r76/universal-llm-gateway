@@ -1,5 +1,5 @@
 ---
-description: Anthropic-family dispatch substrate — before any anthropic/* model=, Opus/Fable consult, or team_dispatch that would hit Stargate Anthropic API. anthropic/* prohibited by default; cursor/* OK except Fable; CDP preferred when corpus can be cortex-packaged.
+description: Anthropic-family dispatch substrate — before any anthropic/* model=, Opus/Fable consult, or team_dispatch that would hit Stargate Anthropic API. anthropic/* prohibited by default; operator-named cursor/claude-* follows consult-routing § Cursor-sdk generate shape; CDP preferred when corpus can be cortex-packaged.
 alwaysApply: false
 rule_category: workflow
 apply_tier: description
@@ -25,11 +25,11 @@ trigger_match_terms:
 | Path | Default |
 |---|---|
 | `model=anthropic/*` on `team_dispatch` / Stargate Anthropic Messages API | **PROHIBITED** |
-| `model=cursor/*` on `seat=cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. ¬ `cursor/claude-*` |
+| `model=cursor/*` on `seat=cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. `cursor/claude-*` only when the operator names it available (`consult-routing` § Cursor-sdk generate shape). |
 | Anthropic-family consult (Opus / Sonnet / web-anthropic product) | **web-anthropic-cdp preferred** — **prefer** cortex-packaged hot paths (`cortex://`) for fewer tool calls; `workspaces://` is readable (name it when exploration is encouraged); ¬ GitHub connector browse |
 | Codebase must be navigable on the executor | **`cursor/grok-4.7`** (cursor-sdk) |
 
-**Fable:** CDP / web-anthropic product picker only — ¬ `anthropic/claude-fable-*` API and ¬ `cursor/*` Fable as standing default.
+**Fable:** standing consult is the CDP / web-anthropic product picker — ¬ `anthropic/claude-fable-*` API. Operator-named `cursor/claude-fable-5{,-1}` follows `consult-routing` § Cursor-sdk generate shape.
 
 ## Anti-patterns
 

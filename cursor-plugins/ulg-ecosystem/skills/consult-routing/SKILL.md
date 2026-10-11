@@ -79,23 +79,32 @@ Standing: verifier ≠ producer; independent check ≠ author; Other Models /
 `cursor/claude-fable-5{,-1}` are not substitutes. Slash commands cite this table —
 they are not SOT.
 
-### Fable 5.1 SDK outage (a:32393 — open until recovery probe passes)
+### Cursor-sdk generate shape (a:39071)
 
-**Verdict (a:32403):** upstream Cursor serving defect on `claude-fable-5-1` over the
-**SDK/agent surface**, knob-independent — hollow ~5s / 0 tools at `medium`, `xhigh`,
-and `max` after 2026-09-05 ~14:33Z. Wire and detection gaps are closed; do **not**
-denylist `xhigh` on the card.
+One shape for `team_dispatch` `op=generate` `seat=cursor-sdk`. Other surfaces cite this section.
 
-| Need | Route while outage open | Do not |
-|---|---|---|
-| Judgment / width | `cdp/fable-5.1` (Cowork transport) | Rebind to another Fable SDK rung |
-| Bind / sketch on SDK | `cursor/grok-4.7` `{high}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
-| Mechanical | `cursor/composer-2.5` | Third retry at a different Fable effort |
+Operator-named availability wins. When Kaywan names a `cursor/claude-*` model available, pass that model. Standing blocked, outage, or cost text does not refuse it.
 
-**Recovery probe:** one trivial Fable SDK run — body non-empty and duration >15s ⇒
-stand down this row. Empty ~5s ⇒ still broken; route off model, not knob.
+Effort is only `model_knobs={"effort": "<value>"}` with `<value>` in {low, medium, high, xhigh}. Do not pass `reasoning_effort`. `reasoning_effort_not_supported` is a call-shape error, not a model outage.
 
-SoT: `cortex://notes/system/specs/a32393-narrow-fix-bind.md` (verdict, routing, upstream report template)
+Omit `wake_lane` on the admit path. Closeout wake is the watcher tail (`runbook:bus-consult-watcher`). `wake_lane_unavailable` / `ReadTimeout` is a call-shape error from the synchronous thread probe, not model availability.
+
+```python
+team_dispatch(
+    op="generate",
+    seat="cursor-sdk",
+    model="<operator-named>",
+    contract="freeform",
+    lane="B",
+    model_knobs={"effort": "high"},
+    work_key="<d4>",
+    dispatch_thread_id="<thread>",
+)
+```
+
+### Fable SDK hollow record (a:32393 — subordinate to the shape above)
+
+The recovery probe in a:32403 (one trivial Fable SDK run, non-empty body, duration >15s) has no recorded pass. The 2026-09-05 hollows stay history (a:32403; `cortex://notes/system/specs/a32393-narrow-fix-bind.md`). That record does not refuse a model Kaywan has named. A hollow ~5s empty turn is not fixed by swapping the effort knob; do not third-retry that run.
 
 ## Dispatch targets (code surface only)
 
@@ -294,8 +303,8 @@ guidance that table has no room for — the two are read together.
 | `cdp/opus-5.5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
 | A second-pool cursor model as the next binder | After `cdp/opus-5.5`, the checkout seat is `cursor/grok-4.7` |
-| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` for judgment/`none`/`implement` because Fable is wanted | Blocked. `workflows.check_review.model` is `cursor/grok-4.7`. `cdp/fable` only when Kaywan asks. |
-| Rebind Sketch to Fable max/high on cursor-sdk after xhigh hollow | Falsified (a:32403): `medium` and `max` hollow too — rebind **off the Fable SDK surface** |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted, with no operator availability statement | Standing default stays off that pin. Operator-named availability wins (§ Cursor-sdk generate shape). `cdp/fable` only when Kaywan asks. |
+| Rebind a hollow ~5s Fable SDK turn by swapping the effort knob | History a:32403. Operator-named availability still wins (§ Cursor-sdk generate shape). |
 | A bare second-pool slug on a code-lane bind | `seat=cursor-sdk` + `model=cursor/grok-4.7` |
 
 Rationale for the independence axis (weight class vs family, self-review definition): `decision:gate-independence-not-human-ness`.
@@ -305,13 +314,13 @@ Rationale for the independence axis (weight class vs family, self-review definit
 | Path | Default |
 |---|---|
 | `anthropic/*` on `team_dispatch` | **PROHIBITED** |
-| `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. ¬ `cursor/claude-*` |
+| `cursor/*` on `cursor-sdk` | In use: `cursor/grok-4.7`, `cursor/composer-2.5`. `cursor/claude-*` only when operator-named (§ Cursor-sdk generate shape). |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
 | IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy, contract=freeform)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/grok-4.7` |
 
 
-Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.1` / picker — ¬ `cursor/*` Fable).
+Rule: `anthropic-dispatch-authorization_ulg.mdc`. Standing Fable consult is CDP (`cdp/fable-5.1` / picker). Operator-named `cursor/claude-fable-5{,-1}` follows § Cursor-sdk generate shape.
 
 ## xAI coding-substrate
 
