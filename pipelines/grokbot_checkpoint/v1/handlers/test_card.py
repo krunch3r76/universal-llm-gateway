@@ -269,3 +269,65 @@ async def test_card_body_guard_uses_live_sha(fs) -> None:
         execution_id="e-body-mismatch",
     )
     assert wrong["refused"]["code"] == "card.sha_mismatch"
+
+
+def _card_with_row(n: int) -> str:
+    body = _CARD
+    for i in range(1, n + 1):
+        body += f"| {i} | t | hop | sha | cell | pipeline e{i} |\n"
+    return body
+
+
+@pytest.mark.asyncio
+async def test_replay_short_circuit_uses_live_card(fs) -> None:
+    live_body = _card_with_row(1)
+    fs.files["notes/card.md"] = live_body.encode()
+    live_sha = file_sha256(live_body.encode())
+    supplied = _card_with_row(2)
+    stale = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": "f" * 64,
+            "card_body": supplied,
+            "n": 2,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-replay-live",
+    )
+    assert stale["refused"]["code"] == "card.sha_mismatch"
+    assert fs.writes == []
+    assert (await fs.read("notes/card.md")).decode() == live_body
+    replay_no_body = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": "f" * 64,
+            "n": 1,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-replay-true",
+    )
+    assert replay_no_body.get("replayed") is True
+    replay_with_body = await run_card(
+        {
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": "f" * 64,
+            "card_body": live_body,
+            "n": 1,
+            "mode": "light",
+            "trigger": "hop",
+        },
+        {},
+        {},
+        fs,
+        execution_id="e-replay-supplied",
+    )
+    assert replay_with_body.get("replayed") is True
+    assert file_sha256((await fs.read("notes/card.md"))) == live_sha

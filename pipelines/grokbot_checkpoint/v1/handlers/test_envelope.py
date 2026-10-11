@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 
 import pytest
+from continuity_tape.handoff import (
+    HANDOFF_MAX_BYTES,
+    fill_grok_binding,
+    handoff_json_size,
+    normalize_handoff,
+)
 from continuity_tape.messages import seal_messages_sha256
 
 from .envelope import run_envelope
@@ -56,3 +62,65 @@ async def test_write_skip_prefix_and_refuse(fs) -> None:
     assert refused["refused"]["code"] == "envelope.not_prefix"
     assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") == saved
     json.loads(saved)
+
+
+def _author_only(**overrides: object) -> dict:
+    letter = {
+        "author": "grok-bot-hm1",
+        "mission": "resume the house",
+        "state": "open",
+        "next_acts": ["read the card"],
+        "load_bearing": ["intent is not in the transcript"],
+    }
+    letter.update(overrides)
+    return letter
+
+
+def _letter_over_cap_after_fill(messages: list[dict]) -> dict:
+    digest = seal_messages_sha256(messages)
+    for pad in range(1, HANDOFF_MAX_BYTES):
+        letter = _author_only(mission="m" * pad)
+        normalized, _ = normalize_handoff(letter)
+        if handoff_json_size(normalized) >= HANDOFF_MAX_BYTES:
+            break
+        filled, _ = fill_grok_binding(
+            normalized,
+            messages=messages,
+            messages_sha256=digest,
+            house="h",
+            n=1,
+        )
+        if handoff_json_size(normalized) < HANDOFF_MAX_BYTES < handoff_json_size(filled):
+            return letter
+    raise AssertionError("could not build near-cap letter")
+
+
+@pytest.mark.asyncio
+async def test_handoff_refused_when_over_cap_after_binding_fill(fs) -> None:
+    messages = [{"role": "user", "content": "hello", "turn_index": 1}]
+    options = {
+        "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
+        "house": "h",
+        "agent_id": "abcdefghi",
+        "n": 1,
+        "handoff": _letter_over_cap_after_fill(messages),
+    }
+    out = await run_envelope(options, _source(messages), fs)
+    assert out["refused"]["code"] == "admit.handoff_too_large"
+    assert "after binding fill" in out["refused"]["message"]
+    assert await fs.read(options["snapshot_uri"]) is None
+
+
+@pytest.mark.asyncio
+async def test_handoff_under_cap_after_fill_still_writes(fs) -> None:
+    messages = [{"role": "user", "content": "hello", "turn_index": 1}]
+    options = {
+        "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
+        "house": "h",
+        "agent_id": "abcdefghi",
+        "n": 1,
+        "handoff": _author_only(),
+    }
+    out = await run_envelope(options, _source(messages), fs)
+    assert out.get("refused") is None
+    assert out["action"] == "write"

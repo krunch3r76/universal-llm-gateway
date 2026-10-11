@@ -144,3 +144,26 @@ async def test_seal_uuid_canonical() -> None:
     )
     assert padded.get("refused") is None
     assert padded["agent_id"] == agent
+
+
+@pytest.mark.asyncio
+async def test_admit_refuses_blank_next_acts() -> None:
+    letter = {
+        "author": "grok-bot-hm1",
+        "mission": "resume the house",
+        "state": "open",
+        "next_acts": "",
+        "load_bearing": ["intent is not in the transcript"],
+    }
+    out = await run_admit(
+        {
+            "mode": "seal",
+            "house": "h",
+            "n": 1,
+            "agent_id": "11111111-1111-4111-8111-111111111111",
+            "handoff": letter,
+        },
+        {},
+    )
+    assert out["refused"]["code"] == "admit.handoff_invalid"
+    assert out["refused"]["message"] == "next_acts"
