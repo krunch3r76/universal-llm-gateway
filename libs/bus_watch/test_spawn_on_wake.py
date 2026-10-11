@@ -1559,3 +1559,168 @@ def test_tick_spawn_does_not_latch_fired_on_http_error(monkeypatch) -> None:  # 
     )
     assert "a:35997" not in (state.get("row_class_fired") or {})
     assert out["fire"]["status_code"] == 500
+
+
+_IDLE_CHECKPOINT_TURN = {
+    "turn_number": 100,
+    "from": "cursor",
+    "subject": "CHECKPOINT 11667",
+    "body": (
+        "Residue: hop_qualifies reason=no_autonomous_followup\n"
+        "Next-pickup: STAY. policy.ready=false holds the mill.\n"
+    ),
+    "created_at": "2026-10-09T20:07:00Z",
+}
+
+
+def _digest_idle_checkpoint_guard(
+    *,
+    recent_turns: list[dict],
+    lane_turns: int = 5,
+    checkpoint_due: bool = True,
+    idle_guard: bool = True,
+) -> dict:
+    lanes = [
+        {"id": "10496", "turns": lane_turns, "status": "active", "lifecycle": "admitted"}
+    ]
+    root = {
+        "id": "11667",
+        "turn_count": 100,
+        "status": "active",
+        "recent_turns": recent_turns,
+    }
+    policy = {
+        "ready": True,
+        "max_hops_per_night": 8,
+        "max_dispatches_per_night": 12,
+        "spawn_grace_seconds": 900,
+        "max_hop_minutes": 60,
+        "wake_on_attention_only": True,
+        "gear": "3-wake-on-attention",
+        "budget_max_age_s": 300,
+        "successor_model": "cursor/grok-4.7",
+        "successor_model_source": "override",
+    }
+    if idle_guard:
+        policy["idle_checkpoint_guard"] = True
+    else:
+        policy["idle_checkpoint_guard"] = False
+    return {
+        "root": root,
+        "lanes": lanes,
+        "attention": [],
+        "checkpoint_due": checkpoint_due,
+        "budget": {"checkpoint_due": checkpoint_due},
+        "policy": policy,
+    }
+
+
+def _state_churn_after_idle_cp(digest: dict) -> dict:
+    """Grace elapsed, fingerprint moved by child-lane turns, checkpoint_due unlatched."""
+    lanes_stale = [{**digest["lanes"][0], "turns": 2}]
+    return {
+        "last_spawn_fingerprint": spawn_fingerprint(digest["root"], lanes_stale),
+        "last_spawn_at": 0.0,
+        "last_cp_tick": 99,
+    }
+
+
+def test_idle_checkpoint_holds_without_new_request() -> None:
+    """F1: idle CHECKPOINT + lane churn + checkpoint_due must not spawn."""
+    digest = _digest_idle_checkpoint_guard(recent_turns=[_IDLE_CHECKPOINT_TURN])
+    state = _state_churn_after_idle_cp(digest)
+    ev = evaluate_spawn_predicate(
+        digest, state, lock={"holder": None}, now=time.time()
+    )
+    assert ev["clauses"]["idle_checkpoint_clear"] is False
+    assert ev["clauses"]["fingerprint_changed"] is True
+    assert ev["clauses"]["spawn_signal"] is True
+    assert ev["spawn"] is False
+
+
+def test_request_after_idle_checkpoint_spawns() -> None:
+    """F2: operator REQUEST after idle CHECKPOINT clears the hold."""
+    request = {
+        "turn_number": 101,
+        "from": "grok-bot-gc1",
+        "subject": "REQUEST resume 11667",
+        "body": "real work item",
+        "created_at": "2026-10-09T20:10:00Z",
+    }
+    digest = _digest_idle_checkpoint_guard(
+        recent_turns=[_IDLE_CHECKPOINT_TURN, request]
+    )
+    state = _state_churn_after_idle_cp(digest)
+    ev = evaluate_spawn_predicate(
+        digest, state, lock={"holder": None}, now=time.time()
+    )
+    assert ev["clauses"]["idle_checkpoint_clear"] is True
+    assert ev["spawn"] is True
+
+
+def test_request_from_liaison_ticker_still_holds() -> None:
+    ticker_request = {
+        "turn_number": 101,
+        "from": "liaison-ticker",
+        "subject": "REQUEST liaison progress",
+        "body": "",
+        "created_at": "2026-10-09T20:10:00Z",
+    }
+    digest = _digest_idle_checkpoint_guard(
+        recent_turns=[_IDLE_CHECKPOINT_TURN, ticker_request]
+    )
+    state = _state_churn_after_idle_cp(digest)
+    ev = evaluate_spawn_predicate(
+        digest, state, lock={"holder": None}, now=time.time()
+    )
+    assert ev["clauses"]["idle_checkpoint_clear"] is False
+    assert ev["spawn"] is False
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "AMEND scope for lane 16225",
+        "UNPARK todo:foo",
+        "RULING bind fork A",
+    ],
+)
+def test_amend_unpark_ruling_clear_idle_hold(subject: str) -> None:
+    turn = {
+        "turn_number": 101,
+        "from": "web-anthropic",
+        "subject": subject,
+        "body": "",
+        "created_at": "2026-10-09T20:10:00Z",
+    }
+    digest = _digest_idle_checkpoint_guard(
+        recent_turns=[_IDLE_CHECKPOINT_TURN, turn]
+    )
+    state = _state_churn_after_idle_cp(digest)
+    ev = evaluate_spawn_predicate(
+        digest, state, lock={"holder": None}, now=time.time()
+    )
+    assert ev["clauses"]["idle_checkpoint_clear"] is True
+
+
+def test_idle_checkpoint_missing_recent_turns_fail_open() -> None:
+    digest = _digest_idle_checkpoint_guard(recent_turns=[_IDLE_CHECKPOINT_TURN])
+    del digest["root"]["recent_turns"]
+    state = _state_churn_after_idle_cp(digest)
+    ev = evaluate_spawn_predicate(
+        digest, state, lock={"holder": None}, now=time.time()
+    )
+    assert ev["clauses"]["idle_checkpoint_clear"] is True
+    assert ev["spawn"] is True
+
+
+def test_idle_checkpoint_guard_kill_switch() -> None:
+    digest = _digest_idle_checkpoint_guard(
+        recent_turns=[_IDLE_CHECKPOINT_TURN], idle_guard=False
+    )
+    state = _state_churn_after_idle_cp(digest)
+    ev = evaluate_spawn_predicate(
+        digest, state, lock={"holder": None}, now=time.time()
+    )
+    assert ev["clauses"]["idle_checkpoint_clear"] is True
+    assert ev["spawn"] is True
