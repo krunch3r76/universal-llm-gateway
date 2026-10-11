@@ -451,6 +451,7 @@ def build_mission_block(
     fence_id: str,
     thread_slug: str | None = None,
     letter: dict[str, Any] | None = None,
+    rulings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Hoist orientation fields + clone handoff into ``mission`` (FIX-18)."""
     residue = extract_authored_residue(tip_body or "")
@@ -486,8 +487,12 @@ def build_mission_block(
         steps.append(f"rename_chat → `{thread_id} {thread_slug}`")
     if tip_sketchboard:
         steps.append(f"read sketchboard {tip_sketchboard}")
-    rulings_block: dict[str, Any] | None = None
-    if isinstance(letter, dict) and letter.get("binding") == "bound":
+    rulings_block: dict[str, Any] | None = rulings
+    if (
+        rulings_block is None
+        and isinstance(letter, dict)
+        and letter.get("binding") == "bound"
+    ):
         rulings_block = build_rulings_block(
             thread_id,
             tip_turn=tip_turn,

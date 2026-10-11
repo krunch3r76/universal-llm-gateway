@@ -748,6 +748,49 @@ def test_malformed_ruling_and_caps(bus_db) -> None:
     assert len(mission["letter"]["load_bearing"][0]) == 240
 
 
+def test_rulings_cap_excludes_oldest_of_seven(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_bus_store.resume_fence_mission import build_rulings_block
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    monkeypatch.setenv("AGENT_BUS_EVENTS_ENABLED", "false")
+    init_db()
+    create_thread(thread_id="cap-rulings", slug="continuity", tags=["role:root"])
+    tip_turn = 1
+    create_turn(
+        thread_id="cap-rulings",
+        from_agent="cursor",
+        to_agent="cursor",
+        subject="CHECKPOINT",
+        body="tip",
+        status="open",
+    )
+    for idx in range(7):
+        create_turn(
+            thread_id="cap-rulings",
+            from_agent="cursor",
+            to_agent="house",
+            subject=f"RULING|cap-{idx}",
+            body=_RULING_OK,
+            status="open",
+        )
+    block = build_rulings_block(
+        "cap-rulings",
+        tip_turn=tip_turn,
+        tip_created_at=None,
+        letter=_bound_letter(),
+    )
+    assert block["count"] == 6
+    assert block["truncated"] is True
+    turns = [item["turn"] for item in block["items"]]
+    assert turns == sorted(turns)
+    assert len(turns) == 6
+    oldest_after_tip = tip_turn + 1
+    assert oldest_after_tip not in turns
+    assert min(turns) == oldest_after_tip + 1
+
+
 def test_stale_letter_skips_rulings_and_keeps_raw_tail(bus_db) -> None:
     mission = build_mission_block(
         thread_id="10223",
