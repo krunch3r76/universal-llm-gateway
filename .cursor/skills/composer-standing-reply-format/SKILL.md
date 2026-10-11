@@ -69,10 +69,11 @@ Surfaces card (below) may follow when ≥2 live surfaces; it does **not** replac
 | Picture without explicit `In one line:` | Missing scan sentence (todo:checkpoint-resume-one-liner) |
 | Object omitted, or the hop named as the object | Resume cannot say what this window is carrying |
 | No "Where we left off" quote, and no spoken gap when the pour is empty | The person cannot tell whether the seat read the recent turns |
+| Resume without Rules I'm holding | The operator cannot see which load-bearing rules the seat is holding |
 | Been restates Already | The last exchange already covered that beat |
 | House word with no gloss (house, fence, pour, seal) | The word is doing work the reader cannot see |
 
-`checkpoint_or_orchestration_resume ∧ slot-1-omits-(aim ∨ where_we_left_off ∨ object ∨ in_one_line)` ⇒ format miss.
+`checkpoint_or_orchestration_resume ∧ slot-1-omits-(aim ∨ where_we_left_off ∨ rules_held ∨ object ∨ in_one_line)` ⇒ format miss.
 
 Composes with operator-posture: `¬` dump scoreboard rows **≠** omit the aim. Inventory dump remains a miss; opening on the hop is the other miss.
 

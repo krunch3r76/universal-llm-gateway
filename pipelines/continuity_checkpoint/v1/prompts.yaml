@@ -48,10 +48,13 @@ prompts:
       last reply from the tape, a sentence or two each, in those words. If the
       tape is unsealed or the budget dropped it, write this sentence instead
       of omitting the beat: "the last few turns aren't sealed yet, so I'm
-      going from the checkpoint." Then what already landed and why the house
-      stayed open. Then the object (one noun phrase for what this window is
-      carrying) and the order of moves. Are → Going follow; Going is the
-      current move only. Do not write Been; Where we left off is that beat.
+      going from the checkpoint." Then `Rules I'm holding:` one or two lines —
+      load-bearing constraints from the seat seed, the tip residue, or the
+      card's standing rules; never skip this beat. Then what already landed
+      and why the house stayed open. Then the object (one noun phrase for
+      what this window is carrying) and the order of moves. Are → Going
+      follow; Going is the current move only. Do not write Been; Where we
+      left off is that beat.
       Then a single line starting exactly `In one line:` (resume fence parses
       this prefix) — the aim again, outcome and constraint together, not the
       hop. Carry settled rows by reference; write new state without "formerly"
