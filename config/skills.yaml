@@ -355,8 +355,11 @@ skills:
   life-to-code-request-lane:
     surface_class: shared_sync
     mcp_surface_required: life
-  liaison:
-    # House-liaison seat (IDE tab or headless cursor-sdk successor).
+  ide-continuity:
+    # IDE house seat on a continuity root (tab or headless cursor-sdk successor).
+    # Transitional alias liaison until M3 gives that slug to the house-kind skill.
+    aliases:
+      - liaison
     # cursor_only: IDE/plugin census; satellites discover the body via
     # ulg-ecosystem. Landed 310b1d74 without a catalog row, which failed
     # SOT parity and blocked every CDP generate (liaison hop 2, 2026-09-11).

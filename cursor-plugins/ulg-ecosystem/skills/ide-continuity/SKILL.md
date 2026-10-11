@@ -1,5 +1,5 @@
 ---
-name: liaison
+name: ide-continuity
 description: House liaison on a continuity root. A played todo admits one conductor. Load on /liaison, resume of a liaison root, close the house, or run the house while away.
 ---
 # Liaison — the seat that runs the house

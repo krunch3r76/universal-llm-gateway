@@ -51,4 +51,4 @@ tab. The finish-watcher's shell completion is the harvest turn.
 **Anti-pattern:** Minting `CreateGoal` so the Goals panel is non-empty — Cursor then injects unthrottled
 continuation wakes. Primary house wake is the watcher tail's shell completion, not a pattern notify (friction 37400).
 
-Playbook: Use the `liaison` skill § Wakes · command `.cursor/commands/liaison.md` Hop section.
+Playbook: Use the `ide-continuity` skill § Wakes · command `.cursor/commands/liaison.md` Hop section.

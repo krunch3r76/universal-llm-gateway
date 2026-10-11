@@ -16,7 +16,7 @@ claude-ai-cdp-navigation
 cowork-paste-resolve
 paste-resolve-cse-followup
 conductor
-liaison
+ide-continuity
 liaison-cursor
 maestro-sidekick
 completion-provenance-discipline

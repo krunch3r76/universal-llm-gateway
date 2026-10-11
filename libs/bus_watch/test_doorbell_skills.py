@@ -84,7 +84,7 @@ def test_dispatch_skills_only_on_cdp_cse_life_surfaces() -> None:
 def test_liaison_protocol_echo_marker_in_skill_body() -> None:
     repo = Path(__file__).resolve().parents[2]
     body = (
-        repo / "cursor-plugins/ulg-ecosystem/skills/liaison/SKILL.md"
+        repo / "cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md"
     ).read_text(encoding="utf-8")
     assert LIAISON_PROTOCOL_ECHO in body
     assert LIAISON_PROTOCOL_LOADER == "stage_cdp_prompt_with_skills"
@@ -116,5 +116,5 @@ def test_cdp_staging_inlines_liaison_protocol_echo(
     )
     text = on_disk.read_text(encoding="utf-8")
     assert LIAISON_PROTOCOL_ECHO in text
-    assert '<skill slug="liaison"' in text
+    assert '<skill slug="ide-continuity"' in text
     assert staged.prompt_uri.endswith("exec-liaison-protocol/prompt.md")
