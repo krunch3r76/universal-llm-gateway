@@ -17,6 +17,7 @@ from deploy_identity.code_version import resolve_code_version
 
 from .resume_envelope import build_resume_envelope
 from .resume_fence_letter import load_tip_letter
+from .resume_fence_memos import build_memos_to_check
 from .resume_fence_mission import (
     build_mission_block,
     build_rulings_block,
@@ -134,6 +135,17 @@ def assemble_resume_fence_in_txn(
             tip_created_at=tip.get("created_at"),
             letter=letter,
         )
+    tip_sender = conn.execute(
+        "SELECT from_agent FROM turns WHERE id = ?",
+        (tip["id"],),
+    ).fetchone()
+    memos_block = build_memos_to_check(
+        thread_id,
+        tip_turn=int(tip["turn_number"]),
+        tip_from_agent=str(tip_sender["from_agent"]) if tip_sender else None,
+        supersedes_turn=tip.get("supersedes_turn"),
+        conn=conn,
+    )
     mission = build_mission_block(
         thread_id=thread_id,
         tip_body=tip_body,
@@ -147,6 +159,7 @@ def assemble_resume_fence_in_txn(
         thread_slug=_thread_slug(thread_id),
         letter=letter,
         rulings=rulings_block,
+        memos=memos_block,
     )
     mission["standing_rules"] = cap_standing_rule_claims(
         mission.get("standing_rules") or []
@@ -232,17 +245,19 @@ def assemble_resume_fence_in_txn(
     if pre_pour_harvest is not None:
         bundle["pre_pour_harvest"] = pre_pour_harvest
 
-    if (
+    ordered: dict[str, Any] = {}
+    include_rulings = (
         isinstance(letter, dict)
         and letter.get("binding") == "bound"
         and rulings_block is not None
-    ):
-        ordered: dict[str, Any] = {}
-        for key, value in bundle.items():
-            ordered[key] = value
-            if key == "letter":
+    )
+    for key, value in bundle.items():
+        ordered[key] = value
+        if key == "letter":
+            if include_rulings:
                 ordered["rulings"] = rulings_block
-        bundle = ordered
+            ordered["memos_to_check"] = memos_block
+    bundle = ordered
 
     bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
     mission_bytes = len(json.dumps(mission, ensure_ascii=False))
@@ -282,6 +297,7 @@ def assemble_resume_fence_in_txn(
     poured_payload["letter_sha12"] = letter.get("sha12")
     if rulings_block is not None:
         poured_payload["rulings_count"] = rulings_block["count"]
+    poured_payload["memos_to_check_shown"] = memos_block["counts"]["shown"]
 
     poured_payload["bundle_sha256"] = resume_bundle_sha256(bundle)
     append_fence_event(

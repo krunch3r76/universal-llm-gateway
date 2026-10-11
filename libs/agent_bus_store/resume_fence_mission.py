@@ -21,6 +21,7 @@ from .house_route_control import (
     parse_route_control_envelope,
 )
 from .recipients import MEMO_NOTE_SUBJECT_RE
+from .resume_fence_memos import build_memos_to_check
 from .tape_verbal import (
     TAPE_LEFT_OFF_GAP,
     TAPE_LEFT_OFF_LETTER,
@@ -452,6 +453,7 @@ def build_mission_block(
     thread_slug: str | None = None,
     letter: dict[str, Any] | None = None,
     rulings: dict[str, Any] | None = None,
+    memos: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Hoist orientation fields + clone handoff into ``mission`` (FIX-18)."""
     residue = extract_authored_residue(tip_body or "")
@@ -503,10 +505,33 @@ def build_mission_block(
     letter_steps = _letter_handoff_steps(
         letter, tip_turn=tip_turn, rulings_count=rulings_count
     )
+    insert_at = 1 if standing_rules else 0
     if letter_steps:
-        insert_at = 1 if standing_rules else 0
         for offset, step in enumerate(letter_steps):
             steps.insert(insert_at + offset, step)
+    if memos is None:
+        with connect() as conn:
+            tip_row = conn.execute(
+                "SELECT from_agent FROM turns WHERE thread = ? AND turn_number = ?",
+                (thread_id, tip_turn),
+            ).fetchone()
+        memos = build_memos_to_check(
+            thread_id,
+            tip_turn=tip_turn,
+            tip_from_agent=str(tip_row["from_agent"]) if tip_row else None,
+            supersedes_turn=supersedes_turn,
+        )
+    memo_counts = memos.get("counts") if isinstance(memos.get("counts"), dict) else {}
+    memo_shown = int(memo_counts.get("shown") or 0)
+    if memo_shown > 0:
+        prev_cp = (memos.get("window") or {}).get("previous_checkpoint_turn")
+        steps.insert(
+            insert_at + len(letter_steps),
+            "check bundle.memos_to_check first: "
+            f"{memo_shown} unread memo(s) to {memos.get('seat')} since checkpoint "
+            f"#{prev_cp}; read each (get the full turn when body_truncated); "
+            "act or say why not; then run memos_to_check.mark_read",
+        )
     steps.extend(
         [
             "fold bus_tail INFO turns",
@@ -547,6 +572,16 @@ def build_mission_block(
             after_turn=supersedes_num,
         ),
         "house_unread": house_unread_turns(thread_id),
+        "memos_to_check": {
+            "shown": memo_shown,
+            "memos": int(memo_counts.get("memos") or 0),
+            "truncated": int(memo_counts.get("truncated") or 0),
+            "refs": [
+                item["ref"]
+                for item in (memos.get("items") or [])
+                if isinstance(item, dict) and item.get("ref")
+            ],
+        },
         "window_anchor": window,
         "lifecycle": {
             "clone_mode": "B" if window else "A",
@@ -595,6 +630,7 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
         "rulings_after_letter_count": len(mission["rulings_after_letter"])
         if isinstance(mission.get("rulings_after_letter"), list)
         else None,
+        "memos_to_check_shown": (mission.get("memos_to_check") or {}).get("shown"),
     }
 
 

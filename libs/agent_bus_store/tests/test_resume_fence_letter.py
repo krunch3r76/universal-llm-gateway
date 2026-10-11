@@ -340,7 +340,7 @@ def test_no_handoff_key_pours_with_letter_missing(root_thread, tmp_path) -> None
         "stance",
         "provenance",
     }
-    assert set(bundle.keys()) == base_keys | {"letter"}
+    assert set(bundle.keys()) == base_keys | {"letter", "memos_to_check"}
 
 
 def test_missing_seal_paths(root_thread, tmp_path) -> None:
