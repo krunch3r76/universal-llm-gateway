@@ -124,6 +124,68 @@ def _under_hop_cap(hops: int, policy: dict[str, Any]) -> bool:
     return cap <= 0 or hops < cap
 
 
+_LIAISON_TICKER = "liaison-ticker"
+_PENDING_WORK_PREFIXES = ("REQUEST", "AMEND", "UNPARK", "RULING")
+
+
+def _checkpoint_turn_idle(turn: dict[str, Any]) -> bool:
+    """True when CHECKPOINT residue says the house should stay quiet."""
+    subject = str(turn.get("subject") or "")
+    if "CHECKPOINT" not in subject.upper():
+        return False
+    blob = f"{subject}\n{turn.get('body') or ''}".casefold()
+    if "no_autonomous_followup" in blob:
+        return True
+    if "ready=false" in blob.replace(" ", ""):
+        return True
+    for line in str(turn.get("body") or "").splitlines():
+        compact = line.strip().casefold()
+        if compact == "stay" or compact.startswith("stay."):
+            return True
+    return False
+
+
+def _pending_work_after_checkpoint(turn: dict[str, Any]) -> bool:
+    """REQUEST/AMEND/UNPARK/RULING from a non-ticker seat (15722#117 Q2)."""
+    from_agent = str(turn.get("from") or "").strip()
+    if from_agent == _LIAISON_TICKER:
+        return False
+    subject = str(turn.get("subject") or "").strip().upper()
+    return any(subject.startswith(prefix) for prefix in _PENDING_WORK_PREFIXES)
+
+
+def idle_checkpoint_clear(digest: dict[str, Any], policy: dict[str, Any]) -> bool:
+    """False when the latest idle CHECKPOINT holds and no qualifying work arrived."""
+    if policy.get("idle_checkpoint_guard") is False:
+        return True
+    root = digest.get("root") or {}
+    recent = root.get("recent_turns")
+    if not isinstance(recent, list) or not recent:
+        return True
+    try:
+        checkpoints = [
+            t
+            for t in recent
+            if isinstance(t, dict) and "CHECKPOINT" in str(t.get("subject") or "").upper()
+        ]
+        if not checkpoints:
+            return True
+        latest_cp = max(checkpoints, key=lambda t: int(t.get("turn_number") or 0))
+        if not _checkpoint_turn_idle(latest_cp):
+            return True
+        cp_n = int(latest_cp.get("turn_number") or 0)
+        for turn in recent:
+            if not isinstance(turn, dict):
+                continue
+            if int(turn.get("turn_number") or 0) <= cp_n:
+                continue
+            if _pending_work_after_checkpoint(turn):
+                return True
+        return False
+    except (TypeError, ValueError):
+        return True
+
+
 def _hops_tonight(lock: dict[str, Any], night_id: str) -> int:
     """Count hops for *this* night only.
 
@@ -267,6 +329,9 @@ def evaluate_spawn_predicate(
             spawn_signal_sources.append("review_apply")
         clauses["spawn_signal"] = True
         clauses["fingerprint_changed"] = True
+        clauses["idle_checkpoint_clear"] = True
+    else:
+        clauses["idle_checkpoint_clear"] = idle_checkpoint_clear(digest, policy)
     spawn = all(clauses.values())
     result: dict[str, Any] = {
         "spawn": spawn,
