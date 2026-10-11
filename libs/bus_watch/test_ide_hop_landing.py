@@ -50,7 +50,7 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     )
     assert "Hop only when autonomous follow-up remains" in message
     assert "STAY" in message
-    assert "LOAD the liaison skill (do not skim)" in message
+    assert "LOAD the ide-continuity skill (do not skim)" in message
     assert "LOAD liaison-cursor" in message
     assert "team_dispatch(seat=cursor-sdk, job=implement, lane=B)" in message
     assert "repo-write goals → cursor-auto" not in message
@@ -114,7 +114,7 @@ def _land_line(root: str, tip: int) -> str:
     """Minimal JSONL first line (text field) for offline fixtures."""
     return (
         f'{{"role":"user","text":"resume {root}\\n'
-        f'Liaison IDE hop (attended register) tip_cp={tip}. LOAD the liaison skill."}}'
+        f'Liaison IDE hop (attended register) tip_cp={tip}. LOAD the ide-continuity skill."}}'
     )
 
 
@@ -122,7 +122,7 @@ def _wrapped_land_line(root: str, tip: int, *, now_extra: str = "") -> str:
     """Hub shape: message.content[].text with timestamp + user_query wrapper."""
     body = (
         f"resume {root}\n"
-        f"Liaison IDE hop (attended register) tip_cp={tip}. LOAD the liaison skill.\n"
+        f"Liaison IDE hop (attended register) tip_cp={tip}. LOAD the ide-continuity skill.\n"
         f"NOW: test{now_extra}\n"
     )
     text = (
@@ -236,7 +236,7 @@ def test_quoted_full_hop_in_review_does_not_match() -> None:
         "CDP review of hop:\n"
         "```\n"
         "resume 15420\n"
-        "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill.\n"
+        "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill.\n"
         "```\n"
     )
     payload = {
@@ -257,7 +257,7 @@ def test_quoted_full_hop_in_review_does_not_match() -> None:
 
 def test_case_d_exact_land_hits_despite_old_mtime(tmp_path: Path) -> None:
     """Exact (root, tip) lands without mtime; tipless find keeps since_epoch."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     fired = time.time()
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), fired - 120)
@@ -292,7 +292,7 @@ def test_case_d_exact_land_hits_despite_old_mtime(tmp_path: Path) -> None:
 
 
 def test_find_rejects_wrong_root_even_when_tip_matches(tmp_path: Path) -> None:
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     _write_transcript(
         tmp_path, "wrong-root", _land_line("15441", 17), time.time()
     )
@@ -305,7 +305,7 @@ def test_find_rejects_wrong_root_even_when_tip_matches(tmp_path: Path) -> None:
 
 def test_find_excludes_departing_transcript(tmp_path: Path) -> None:
     """15456#4 F2 — departing tab must not win pre_existing / find."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
     successor = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, departing, _wrapped_land_line("15420", 17), time.time())
@@ -331,7 +331,7 @@ def test_find_excludes_departing_transcript(tmp_path: Path) -> None:
 
 def test_fire_ide_hop_pre_existing_skips_keystroke(tmp_path: Path) -> None:
     """15456 ask 2 — exact land already present ⇒ ok via pre_existing, no Ctrl+N."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
@@ -357,7 +357,7 @@ def test_fire_ide_hop_pre_existing_skips_keystroke(tmp_path: Path) -> None:
 
 def test_fire_ide_hop_departing_not_pre_existing(tmp_path: Path) -> None:
     """15456#4 F2 — departing tab alone must not skip keystroke as pre_existing."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     departing = "aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee"
     _write_transcript(
@@ -401,7 +401,7 @@ def test_fire_ide_hop_find_transcript_recovery_ok_not_operator_page(
     tmp_path: Path,
 ) -> None:
     """a:38362 — wait miss while exact land present ⇒ ok via find; ¬ glass-launch ask."""
-    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=17. LOAD the ide-continuity skill."
     message = f"resume 15420\n\n{marker}\nNOW: test\n"
     tid = "d195e491-1405-4536-8af2-2496b7b785b5"
     _write_transcript(tmp_path, tid, _wrapped_land_line("15420", 17), time.time() - 90)
@@ -551,7 +551,7 @@ def test_live_watcher_labels_skips_dead_predicate_unmet(tmp_path: Path) -> None:
 
 def test_tipless_land_requires_resume_root_not_marker_alone() -> None:
     """a:38439 — shared Liaison template must not match a foreign root."""
-    marker = "Liaison IDE hop (attended register). LOAD the liaison skill (do not skim)."
+    marker = "Liaison IDE hop (attended register). LOAD the ide-continuity skill (do not skim)."
     foreign = (
         '{"role":"user","text":"resume 12286\\n'
         f'{marker}\\nNOW: old"}}'
@@ -572,7 +572,7 @@ def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
     tmp_path: Path,
 ) -> None:
     """find_transcript without tip must not revive Sep-era foreign hops."""
-    marker = "Liaison IDE hop (attended register). LOAD the liaison skill (do not skim)."
+    marker = "Liaison IDE hop (attended register). LOAD the ide-continuity skill (do not skim)."
     fired = time.time()
     foreign = (
         f'{{"role":"user","text":"resume 12286\\n{marker}\\nNOW: old"}}'
@@ -605,7 +605,7 @@ def test_find_transcript_tipless_with_since_epoch_skips_old_foreign(
 
 def test_wait_lands_when_jsonl_appears_after_30s(tmp_path: Path, monkeypatch) -> None:
     """AC1 — JSONL born well after the old 30s window still lands (a:38474)."""
-    marker = "Liaison IDE hop (attended register) tip_cp=75. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=75. LOAD the ide-continuity skill."
     tid = "6d365a29-dddf-4036-a6e0-2c8b5a7ea8df"
     fired = time.time()
     polls = {"n": 0}
@@ -637,7 +637,7 @@ def test_wait_lands_when_jsonl_appears_after_30s(tmp_path: Path, monkeypatch) ->
 
 def test_wait_fence_first_lands_before_jsonl(tmp_path: Path) -> None:
     """Fence armed row proves land without any JSONL on disk."""
-    marker = "Liaison IDE hop (attended register) tip_cp=33. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=33. LOAD the ide-continuity skill."
     tid = "0b84aeac-7a9e-480a-8291-ae032c0513b4"
     fired = time.time()
 
@@ -668,7 +668,7 @@ def test_wait_fence_first_lands_before_jsonl(tmp_path: Path) -> None:
 
 
 def test_wait_fence_excludes_departing_transcript(tmp_path: Path) -> None:
-    marker = "Liaison IDE hop (attended register) tip_cp=1. LOAD the liaison skill."
+    marker = "Liaison IDE hop (attended register) tip_cp=1. LOAD the ide-continuity skill."
     departing = "70d485fe-b09d-435c-8c50-d5dde2d9f9c4"
     fired = time.time()
 

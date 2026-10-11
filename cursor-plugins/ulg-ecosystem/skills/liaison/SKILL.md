@@ -1,10 +1,10 @@
 ---
-name: maestro-sidekick
+name: liaison
 description: "Per-REQUEST grok-bot liaison under a Maestro Sidekick: carry one REQUEST end to end, route each leg, report to the owning Sidekick, never post on its lane."
 ---
 # Maestro Sidekick — grok-bot liaison
 
-Seat: per-REQUEST successor `msk<N>-<work_key>`; MCP only, no checkout shell. Listener, lanes, spawn: `runbook:maestro-sidekick`. IDE house seat on a continuity root ⇒ `liaison`, not this.
+Seat: per-REQUEST successor `msk<N>-<work_key>`; MCP only, no checkout shell. Listener, lanes, spawn: `runbook:maestro-sidekick`. IDE house seat on a continuity root ⇒ `ide-continuity`, not this.
 
 ## Trigger
 

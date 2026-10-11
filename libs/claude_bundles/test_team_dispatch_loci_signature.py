@@ -24,6 +24,7 @@ _CSE_SESSION = _REPO / "services/mcp-server/tools/cse_session.py"
 _LOCI_REL = (
     "services/mcp-server/tools/frontier.py",
     "cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md",
+    "cursor-plugins/ulg-ecosystem/skills/liaison/SKILL.md",
     "cursor-plugins/ulg-ecosystem/skills/liaison-cursor/SKILL.md",
     "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md",
     "cursor-plugins/ulg-ecosystem/skills/consult-routing/routing-detail-annex.md",

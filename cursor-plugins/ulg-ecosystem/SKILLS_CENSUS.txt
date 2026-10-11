@@ -18,7 +18,7 @@ paste-resolve-cse-followup
 conductor
 ide-continuity
 liaison-cursor
-maestro-sidekick
+liaison
 completion-provenance-discipline
 consult-posture
 consult-routing

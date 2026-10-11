@@ -21,17 +21,17 @@ from bus_watch.doorbell_skills import (
 
 @pytest.mark.offline
 def test_doorbell_skills_preflight_ide_and_cdp() -> None:
-    assert doorbell_skills("ide") == ("liaison", "reasoning-posture")
+    assert doorbell_skills("ide") == ("ide-continuity", "reasoning-posture")
     assert doorbell_skills("cdp") == ("reasoning-posture",)
     assert doorbell_skills("life") == ("reasoning-posture",)
-    assert primary_liaison_slug("ide") == "liaison"
-    assert primary_liaison_slug("life") == "liaison"
+    assert primary_liaison_slug("ide") == "ide-continuity"
+    assert primary_liaison_slug("life") == "ide-continuity"
 
 
 @pytest.mark.offline
 def test_preflight_drops_cursor_only_on_non_cursor_surfaces() -> None:
     """AC3 — ``cursor_only`` slugs are shed from Use-lines on life/CDP surfaces."""
-    assert doorbell_skills("ide") == ("liaison", "reasoning-posture")
+    assert doorbell_skills("ide") == ("ide-continuity", "reasoning-posture")
     assert doorbell_skills("life") == ("reasoning-posture",)
     assert doorbell_skills("cdp") == ("reasoning-posture",)
 
@@ -47,14 +47,14 @@ def test_seat_dispatch_surface_maps_life_seats() -> None:
 def test_navigator_doorbell_skills_from_policy_override() -> None:
     policy = {
         "navigator_skills": [
-            "liaison",
+            "ide-continuity",
             "reasoning-posture",
             "architecture-invariants",
             "ulg-architecture",
         ],
     }
     assert navigator_doorbell_skills_from_policy(policy) == (
-        "liaison",
+        "ide-continuity",
         "reasoning-posture",
         "architecture-invariants",
         "ulg-architecture",
@@ -73,9 +73,9 @@ def test_seat_dispatch_surface_maps_cdp_cse_seats() -> None:
 
 @pytest.mark.offline
 def test_dispatch_skills_only_on_cdp_cse_life_surfaces() -> None:
-    assert dispatch_skills_for_surface("cdp") == ["liaison", "reasoning-posture"]
-    assert dispatch_skills_for_surface("cse") == ["liaison", "reasoning-posture"]
-    assert dispatch_skills_for_surface("life") == ["liaison", "reasoning-posture"]
+    assert dispatch_skills_for_surface("cdp") == ["ide-continuity", "reasoning-posture"]
+    assert dispatch_skills_for_surface("cse") == ["ide-continuity", "reasoning-posture"]
+    assert dispatch_skills_for_surface("life") == ["ide-continuity", "reasoning-posture"]
     assert dispatch_skills_for_surface("ide") == []
     assert dispatch_skills_for_surface("cursor-sdk") == []
 

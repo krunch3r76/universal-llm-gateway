@@ -177,7 +177,7 @@ def test_fire_navigator_doorbell_and_body_carry_skill_activation(
     assert result["body"]["seat"] == "cursor-sdk"
     assert result["body"].get("model") != "cdp/opus-5-high"
     assert not str(result["body"].get("model") or "").startswith("cdp/")
-    assert "Use the liaison skill." in doorbell
+    assert "Use the ide-continuity skill." in doorbell
     assert "Use the reasoning-posture skill." in doorbell
     assert "skills" not in result["body"]
 
@@ -299,7 +299,7 @@ def test_fire_navigator_body_carries_surface_derived_skills(
     assert result["body"]["seat"] == "cursor-sdk"
     assert "skills" not in result["body"]
     doorbell = result["evaluation"]["doorbell"]
-    assert "Use the liaison skill." in doorbell
+    assert "Use the ide-continuity skill." in doorbell
     assert "Use the reasoning-posture skill." in doorbell
 
 

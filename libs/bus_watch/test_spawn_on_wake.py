@@ -280,7 +280,7 @@ def test_dispatch_body_message_not_packet() -> None:
         "tip CHECKPOINT #",
         "spawn_signal=",
         "contract: none",
-        "LOAD the liaison skill",
+        "LOAD the ide-continuity skill",
         "hop only if hop_qualifies",
         "STAY",
         "runbook:bus-consult-watcher",
@@ -345,7 +345,7 @@ def test_successor_message_is_doorbell_shaped() -> None:
         "echo:",
     ):
         assert sum(1 for ln in text.splitlines() if ln.startswith(prefix)) == 1
-    assert text.count("Use the liaison skill.") == 1
+    assert text.count("Use the ide-continuity skill.") == 1
 
 
 def test_successor_message_ring_and_extra_addresses() -> None:
