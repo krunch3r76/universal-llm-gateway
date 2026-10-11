@@ -355,8 +355,8 @@ skills:
   life-to-code-request-lane:
     surface_class: shared_sync
     mcp_surface_required: life
-  liaison:
-    # House-liaison seat (IDE tab or headless cursor-sdk successor).
+  ide-continuity:
+    # IDE house seat on a continuity root (tab or headless cursor-sdk successor).
     # cursor_only: IDE/plugin census; satellites discover the body via
     # ulg-ecosystem. Landed 310b1d74 without a catalog row, which failed
     # SOT parity and blocked every CDP generate (liaison hop 2, 2026-09-11).
@@ -364,12 +364,15 @@ skills:
     mcp_surface_required: code
   liaison-cursor:
     # Attended IDE dispatch register. Life has no team_dispatch; it stays on
-    # cursor_request. Hop paste loads this slug beside liaison.
+    # cursor_request. Hop paste loads this slug beside ide-continuity.
     surface_class: cursor_only
     mcp_surface_required: code
-  maestro-sidekick:
+  liaison:
     # Per-REQUEST grok-bot liaison under a Maestro Sidekick (15609#48).
-    # Trigger-disjoint from liaison (IDE house seat). cursor_only via census.
+    # Trigger-disjoint from ide-continuity (IDE house seat). cursor_only via census.
+    aliases:
+      - maestro-sidekick
+      - operator-liaison
     surface_class: cursor_only
     mcp_surface_required: code
   markdown-navigation:

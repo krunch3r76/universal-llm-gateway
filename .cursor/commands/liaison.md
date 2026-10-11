@@ -2,7 +2,7 @@
 
 Seat this tab as the house liaison on continuity root `<root>` and arm the tick loop.
 
-1. **Load** `Use the liaison skill` (`cursor-plugins/ulg-ecosystem/skills/liaison/SKILL.md`) and `checkpoint-discipline`.
+1. **Load** `Use the ide-continuity skill` (`cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md`) and `checkpoint-discipline`.
 2. **Orient** — `agent_bus_read(thread_get, thread=<root>)` → read the tip CHECKPOINT (latest turn with
    `TYPE: CHECKPOINT`), open its scoreboard URI via `fs(sandbox="cortex", op="read")`. Do not read the thread
    linearly. If the operator wrote `resume <root>` first, the fence already poured — skip.

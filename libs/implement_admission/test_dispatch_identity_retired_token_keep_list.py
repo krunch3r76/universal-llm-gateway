@@ -23,7 +23,7 @@ _KEEP_LIST = frozenset(
         "services/git_integration_worker/cursor_auto/cse_wake_delivery.py",
         "services/git_integration_worker/routes/cursor_sdk.py",
         "services/universal-stargate/systems/frontier_consult/review_child_spawn_hook.py",
-        "cursor-plugins/ulg-ecosystem/skills/liaison/SKILL.md",
+        "cursor-plugins/ulg-ecosystem/skills/ide-continuity/SKILL.md",
         "libs/bus_watch/cse_followup.py",
         "libs/web_chat_relay/claude_leg.py",
         "libs/reasoning_posture_contracts.py",

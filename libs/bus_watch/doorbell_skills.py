@@ -17,18 +17,18 @@ LIAISON_PROTOCOL_ECHO: Final = "decision:conductor-attended-vs-unattended-routin
 LIAISON_PROTOCOL_LOADER: Final = "stage_cdp_prompt_with_skills"
 
 _SURFACE_USE_SKILLS: Final[dict[str, tuple[str, ...]]] = {
-    "ide": ("liaison", "reasoning-posture"),
-    "cursor-sdk": ("liaison", "reasoning-posture"),
-    "cdp": ("liaison", "reasoning-posture"),
-    "cse": ("liaison", "reasoning-posture"),
-    "life": ("liaison", "reasoning-posture"),
+    "ide": ("ide-continuity", "reasoning-posture"),
+    "cursor-sdk": ("ide-continuity", "reasoning-posture"),
+    "cdp": ("ide-continuity", "reasoning-posture"),
+    "cse": ("ide-continuity", "reasoning-posture"),
+    "life": ("ide-continuity", "reasoning-posture"),
 }
 
 # Surfaces that seal ``cursor_only`` bodies (prepend or address), not Customize Use-lines.
 DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = frozenset({"cdp", "cse", "life"})
 _DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = DISPATCH_SKILLS_SURFACES
 
-# Only these surfaces may emit ``Use the liaison skill`` (cursor_only self-fetch).
+# Only these surfaces may emit ``Use the ide-continuity skill`` (cursor_only self-fetch).
 _CURSOR_USE_SURFACES: Final[frozenset[str]] = frozenset({"ide", "cursor-sdk"})
 
 
@@ -120,7 +120,7 @@ def dispatch_skills_for_surface(surface: str) -> list[str]:
 
 def liaison_protocol_sot_uri() -> str:
     """Resolvable SOT URI for the house liaison protocol (life doorbell address path)."""
-    return load_skill_catalog(validate_sot=False).source_uri_for("liaison")
+    return load_skill_catalog(validate_sot=False).source_uri_for("ide-continuity")
 
 
 def navigator_skills_from_policy(

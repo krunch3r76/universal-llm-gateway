@@ -145,7 +145,7 @@ def test_default_render_contains_required_fragments() -> None:
     assert "agent_bus_read(fetch, thread=10479, last=10, compact=true)" in text
     assert "agent-bus:10532 (echo)" in text
     assert 'subject="ORIENTED 10479"' in text
-    assert "Use the liaison skill." in text
+    assert "Use the ide-continuity skill." in text
     assert "Use the reasoning-posture skill." in text
     assert "scheduled task liaison-wake-10479" not in text
     assert "fired_by unset" in text
@@ -176,7 +176,7 @@ def test_web_anthropic_doorbell_carries_resolvable_liaison_not_use_line() -> Non
         seat="web-anthropic",
         include_commission=True,
     )
-    assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
+    assert not re.search(r"^Use the ide-continuity skill\.$", text, re.MULTILINE)
     assert render_address(liaison_protocol_sot_uri()) in text
     assert "Use the reasoning-posture skill." in text
 
@@ -277,7 +277,7 @@ def test_seating_render_sheds_placeholders_not_addresses() -> None:
     )
     assert len(text.encode("utf-8")) <= 1024
     assert "section=Loop" in text
-    assert "Use the liaison skill." in text
+    assert "Use the ide-continuity skill." in text
     assert "Use the reasoning-posture skill." in text
     assert "digest: <DIGEST subject>" in text
     assert "chat: <url>" in text
@@ -389,9 +389,9 @@ def test_live_10479_web_anthropic_render_byte_length() -> None:
     """AC4 — 11655 regression pin corrected: life render is not the old 1019 B IDE paste."""
     text = _live_10479_render()
     encoded_len = len(text.encode("utf-8"))
-    assert encoded_len == 1108
+    assert encoded_len == 1115
     assert encoded_len != 1019
-    assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
+    assert not re.search(r"^Use the ide-continuity skill\.$", text, re.MULTILINE)
 
 
 @pytest.mark.offline
@@ -516,7 +516,7 @@ _SUCCESSOR_WAKE_GOLDEN = (
     "row=Settled · Live · Next; gear: 3-wake-on-attention; spawn_signal=checkpoint_due.\n"
     'addresses: dispatch(tool="continuity", arguments=\'{"op":"resume","thread":"10479"}\'); '
     "agent_bus_read(thread_get, thread=10479); agent-bus:10479 (echo)\n"
-    "Use the liaison skill. LOAD the liaison skill body; do not skim.\n"
+    "Use the ide-continuity skill. LOAD the ide-continuity skill body; do not skim.\n"
     "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).\n"
     "ARM house finish pollers as house-10479-<dispatch_id> (both --label "
     "occurrences); <dispatch_id> is the auto id you mint at dispatch.\n"
@@ -557,7 +557,7 @@ def test_successor_wake_fitting_input_byte_identical() -> None:
     first = _default_successor_render()
     second = _default_successor_render()
     assert first == second
-    assert len(first.encode("utf-8")) == 1497
+    assert len(first.encode("utf-8")) == 1511
 
 
 @pytest.mark.offline
@@ -622,16 +622,16 @@ def test_successor_wake_cdp_10479_inlines_liaison_body_without_use_line() -> Non
     """AC4 — rendered CDP successor wake seals liaison SOT; no Customize Use-line."""
     rendered = render_successor_wake("10479", **_10479_CDP_SUCCESSOR_KW)
     assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in rendered
-    assert "Use the liaison skill" not in rendered
-    assert '<skill slug="liaison"' in rendered
+    assert "Use the ide-continuity skill" not in rendered
+    assert '<skill slug="ide-continuity"' in rendered
     assert "<skills_inline>" in rendered
 
 
 @pytest.mark.offline
 def test_successor_wake_cdp_omits_use_the_liaison_line() -> None:
     text = render_successor_wake("10479", **_10479_CDP_SUCCESSOR_KW)
-    assert "Use the liaison skill" not in text
-    assert "LOAD the liaison skill body" not in text
+    assert "Use the ide-continuity skill" not in text
+    assert "LOAD the ide-continuity skill body" not in text
 
 
 @pytest.mark.offline
@@ -655,6 +655,6 @@ def test_successor_wake_load_bearing_fields_survive_maximal_shedding() -> None:
     assert "tip turn #99" in text
     assert "tip CHECKPOINT #88" in text
     assert "gear: 3-wake-on-attention" in text
-    assert "Use the liaison skill." in text
+    assert "Use the ide-continuity skill." in text
     assert "runbook:bus-consult-watcher" in text
     assert "seat cursor-sdk" in text

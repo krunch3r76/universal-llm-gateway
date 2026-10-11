@@ -8,7 +8,7 @@ description: "Attended Cursor IDE house liaison with team_dispatch and the check
 `seat = attended Cursor IDE ∧ holds(team_dispatch) ∧ holds(checkout) ⇒ this`.
 Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. Do not load this there.
 
-`liaison` owns harvest, fold, checkpoint, hop, and land. This skill owns **who is admitted**. A played todo admits one conductor.
+`ide-continuity` owns harvest, fold, checkpoint, hop, and land. This skill owns **who is admitted**. A played todo admits one conductor.
 
 ## Dispatch
 
