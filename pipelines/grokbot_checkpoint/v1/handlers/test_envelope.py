@@ -44,23 +44,36 @@ def _source(messages: list[dict]) -> dict:
 
 @pytest.mark.asyncio
 async def test_write_skip_prefix_and_refuse(fs) -> None:
-    options = {"snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json", "house": "h", "agent_id": "abcdefghi"}
+    options = {
+        "snapshot_uri": "notes/system/transcripts/grok/h-abcdefghi.raw.messages.json",
+        "house": "h",
+        "agent_id": "abcdefghi",
+    }
     base = [{"role": "user", "content": "hello", "turn_index": 1}]
     first = await run_envelope(options, _source(base), fs)
     assert first["action"] == "write"
     old = await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
     skip = await run_envelope(options, _source(base), fs)
     assert skip["action"] == "skip"
-    assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") == old
+    assert (
+        await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
+        == old
+    )
     extended = base + [{"role": "assistant", "content": "yo", "turn_index": 1}]
     over = await run_envelope(options, _source(extended), fs)
     assert over["action"] == "overwrite"
-    assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") != old
+    assert (
+        await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
+        != old
+    )
     saved = await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
     other = [{"role": "user", "content": "different", "turn_index": 1}]
     refused = await run_envelope(options, _source(other), fs)
     assert refused["refused"]["code"] == "envelope.not_prefix"
-    assert await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json") == saved
+    assert (
+        await fs.read("notes/system/transcripts/grok/h-abcdefghi.raw.messages.json")
+        == saved
+    )
     json.loads(saved)
 
 
@@ -90,7 +103,11 @@ def _letter_over_cap_after_fill(messages: list[dict]) -> dict:
             house="h",
             n=1,
         )
-        if handoff_json_size(normalized) < HANDOFF_MAX_BYTES < handoff_json_size(filled):
+        if (
+            handoff_json_size(normalized)
+            < HANDOFF_MAX_BYTES
+            < handoff_json_size(filled)
+        ):
             return letter
     raise AssertionError("could not build near-cap letter")
 
