@@ -325,6 +325,35 @@ def test_normalize_handoff_shapes() -> None:
     assert validate_handoff({"mission": "still\nraw"}, profile="stamped") is not None
 
 
+_GROK_SHA_WITHOUT_SUPERSEDED = "86099abb1dfd"
+
+
+def test_rulings_superseded_optional_and_sha_stable() -> None:
+    assert handoff_sha12(_grok()) == _GROK_SHA_WITHOUT_SUPERSEDED
+    listed = _grok(rulings_superseded=["rulings[6]: agent-bus:14106#226"])
+    assert validate_handoff(listed) is None
+    assert (
+        validate_handoff(
+            _stamped(rulings_superseded=["rulings[0]: ref"]), profile="stamped"
+        )
+        is None
+    )
+    stamped_sha = handoff_sha12(_stamped())
+    assert handoff_sha12(_stamped(rulings_superseded=["x"])) != stamped_sha
+    normalized, fields = normalize_handoff(_grok(rulings_superseded={"note": "bus"}))
+    assert "rulings_superseded" in fields
+    assert normalized["rulings_superseded"] == "note: bus"
+    for profile in ("grok", "stamped"):
+        code, field = validate_handoff(
+            _grok(rulings_superseded=1)
+            if profile == "grok"
+            else _stamped(rulings_superseded=1),
+            profile=profile,
+        ) or ("", "")
+        assert field == "rulings_superseded"
+        assert code.endswith("handoff_invalid")
+
+
 def test_grok_binding_unchanged() -> None:
     letter = _grok()
     assert handoff_binding(

@@ -17,7 +17,11 @@ from deploy_identity.code_version import resolve_code_version
 
 from .resume_envelope import build_resume_envelope
 from .resume_fence_letter import load_tip_letter
-from .resume_fence_mission import build_mission_block, cap_standing_rule_claims
+from .resume_fence_mission import (
+    build_mission_block,
+    build_rulings_block,
+    cap_standing_rule_claims,
+)
 from .resume_fence_store import (
     _armed_source,
     adoption_ambiguous_count,
@@ -219,6 +223,21 @@ def assemble_resume_fence_in_txn(
     if pre_pour_harvest is not None:
         bundle["pre_pour_harvest"] = pre_pour_harvest
 
+    rulings = None
+    if letter.get("binding") == "bound":
+        rulings = build_rulings_block(
+            thread_id,
+            tip_turn=int(tip["turn_number"]),
+            tip_created_at=tip.get("created_at"),
+            letter=letter,
+        )
+        ordered: dict[str, Any] = {}
+        for key, value in bundle.items():
+            ordered[key] = value
+            if key == "letter":
+                ordered["rulings"] = rulings
+        bundle = ordered
+
     bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
     mission_bytes = len(json.dumps(mission, ensure_ascii=False))
     readable = bundle["read_set"]["readable"]
@@ -255,6 +274,8 @@ def assemble_resume_fence_in_txn(
         poured_payload["pre_pour_harvest"] = pre_pour_harvest
     poured_payload["letter_binding"] = letter.get("binding")
     poured_payload["letter_sha12"] = letter.get("sha12")
+    if rulings is not None:
+        poured_payload["rulings_count"] = rulings["count"]
 
     poured_payload["bundle_sha256"] = resume_bundle_sha256(bundle)
     append_fence_event(

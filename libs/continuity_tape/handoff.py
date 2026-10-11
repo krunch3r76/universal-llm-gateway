@@ -31,6 +31,7 @@ _OPTIONAL_STR_OR_LIST = (
     "files",
     "later",
     "do_not_trust",
+    "rulings_superseded",
 )
 
 
@@ -231,6 +232,9 @@ def validate_handoff(
     later = letter.get("later", None)
     if "later" in letter and not isinstance(later, (str, list)):
         return invalid, "later"
+    superseded = letter.get("rulings_superseded")
+    if "rulings_superseded" in letter and not _str_or_str_list(superseded):
+        return invalid, "rulings_superseded"
     return None
 
 

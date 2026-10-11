@@ -203,7 +203,9 @@ def test_stamped_letter_bound_in_bundle(root_thread, tmp_path) -> None:
     bundle = _assemble(root_thread, tip)
     assert bundle["letter"]["binding"] == "bound"
     assert bundle["letter"]["body"] == handoff
-    assert list(bundle).index("letter") < list(bundle).index("tip_checkpoint")
+    keys = list(bundle)
+    assert keys.index("letter") < keys.index("rulings") < keys.index("tip_checkpoint")
+    assert bundle["rulings"]["count"] == 0
     letter_m = bundle["mission"]["letter"]
     assert letter_m["mission"] == "ship the letter"
     handoff = bundle["mission"]["handoff"]
@@ -240,6 +242,7 @@ def test_no_handoff_key_pours_with_letter_missing(root_thread, tmp_path) -> None
     tip = _tip_harvest()
     bundle = _assemble(root_thread, tip)
     assert bundle["letter"]["binding"] == "missing"
+    assert "rulings" not in bundle
     assert bundle["letter"]["reasons"] == ["no_letter"]
     base_keys = {
         "bundle_version",

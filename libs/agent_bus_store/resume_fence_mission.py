@@ -14,7 +14,19 @@ from cortex_store.transcript_projection_membership import extract_cp_object
 from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, extract_authored_residue
 from .continuity_card_scratchboards import extract_card_rule_rows, extract_card_skills
 from .db.connection import connect
+from .house_route_control import (
+    _line_value,
+    _subject_head_kind,
+    _subject_work_key,
+    parse_route_control_envelope,
+)
 from .recipients import MEMO_NOTE_SUBJECT_RE
+from .tape_verbal import (
+    TAPE_LEFT_OFF_GAP,
+    TAPE_LEFT_OFF_LETTER,
+    is_notice_row,
+    tape_tail,
+)
 
 _SKETCHBOARD_SUFFIX = "-resume-fence-sketchboard.md"
 _INFO_SUBJECT_RE = re.compile(r"\bINFO\b", re.IGNORECASE)
@@ -41,6 +53,24 @@ _LETTER_BOUND_STEP = (
     "read bundle.letter.body first — it is the predecessor's letter; "
     "tip and tape confirm facts"
 )
+_ORIENTATION_STEP = (
+    "orientation: aim, Where we left off, Rules I'm holding, already, object, "
+    "Are/Going, In one line; receipts after"
+)
+_RULES_HELD_STEP = (
+    "Rules I'm holding: say mission.rules_held.rows in brief (source {source}); "
+    "never skip when the letter is bound"
+)
+_RULINGS_STEP = (
+    "read bundle.rulings.items (turn > {tip}) — each is newer than the letter "
+    "and overrides the letter ruling it names"
+)
+_RULINGS_QUERY_LIMIT = 24
+_RULINGS_ITEM_CAP = 6
+_RULING_BODY_CHARS = 1200
+_LOAD_BEARING_ROWS = 12
+_LOAD_BEARING_CHARS = 240
+_SUPERSEDES_RULING_RE = re.compile(r"rulings\[(\d+)\]")
 _LETTER_STALE_STEP = (
     "read bundle.letter.body as intent dated as_of_message_index "
     "({messages_behind} messages behind the seal); tip and tape for later facts"
@@ -150,13 +180,20 @@ def _bus_tail_turns(
     return list(reversed(refs))
 
 
-def _letter_handoff_steps(letter: dict[str, Any] | None) -> list[str]:
+def _letter_handoff_steps(
+    letter: dict[str, Any] | None,
+    *,
+    tip_turn: int,
+    rulings_count: int,
+) -> list[str]:
     if not letter or not isinstance(letter, dict):
         return []
     extra: list[str] = []
     binding = letter.get("binding")
     if binding == "bound":
         extra.append(_LETTER_BOUND_STEP)
+        if rulings_count > 0:
+            extra.append(_RULINGS_STEP.format(tip=tip_turn))
     elif binding == "stale" and letter.get("body") is not None:
         behind = letter.get("messages_behind")
         if isinstance(behind, int):
@@ -180,14 +217,198 @@ def _mission_letter_preview(letter: dict[str, Any] | None) -> dict[str, Any] | N
     body = letter.get("body") if isinstance(letter.get("body"), dict) else None
     acts = body.get("next_acts") if body else None
     next_act = acts[0] if isinstance(acts, list) and acts else None
-    return {
+    bearing_rows, bearing_truncated = _capped_load_bearing(body)
+    preview: dict[str, Any] = {
         "binding": letter.get("binding"),
         "mission": body.get("mission") if body else None,
         "where_we_left_off": body.get("where_we_left_off") if body else None,
         "next_act": next_act,
         "lag_turns": letter.get("lag_turns"),
         "messages_behind": letter.get("messages_behind"),
+        "load_bearing": bearing_rows,
+        "load_bearing_truncated": bearing_truncated,
     }
+    if body and "rulings_superseded" in body:
+        preview["rulings_superseded"] = body.get("rulings_superseded")
+    return preview
+
+
+def _capped_load_bearing(
+    body: dict[str, Any] | None,
+) -> tuple[list[str], bool]:
+    raw = body.get("load_bearing") if body else None
+    if not isinstance(raw, list):
+        return [], False
+    texts = [item for item in raw if isinstance(item, str)]
+    truncated = len(texts) > _LOAD_BEARING_ROWS
+    capped: list[str] = []
+    for item in texts[:_LOAD_BEARING_ROWS]:
+        if len(item) > _LOAD_BEARING_CHARS:
+            capped.append(item[:_LOAD_BEARING_CHARS])
+            truncated = True
+        else:
+            capped.append(item)
+    return capped, truncated
+
+
+def _rules_held(
+    letter: dict[str, Any] | None,
+    standing_rules: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Single field the seat reads for "Rules I'm holding"."""
+    body = None
+    binding = None
+    if isinstance(letter, dict):
+        binding = letter.get("binding")
+        if isinstance(letter.get("body"), dict):
+            body = letter["body"]
+    use_letter = binding == "bound" or (binding == "stale" and body is not None)
+    if use_letter and body is not None:
+        raw = body.get("load_bearing")
+        rows = (
+            [item for item in raw if isinstance(item, str)]
+            if isinstance(raw, list)
+            else []
+        )
+        return {"source": "letter.load_bearing", "rows": rows, "truncated": False}
+    texts = [
+        str(row.get("text") or "")
+        for row in standing_rules
+        if isinstance(row, dict) and str(row.get("text") or "")
+    ]
+    if texts:
+        return {"source": "card.standing_rules", "rows": texts, "truncated": False}
+    return {"source": "none", "rows": [], "truncated": False}
+
+
+def _supersedes_letter_index(body: str, rulings: object) -> int | None:
+    raw = _line_value(body, "supersedes")
+    if not raw:
+        return None
+    match = _SUPERSEDES_RULING_RE.search(raw)
+    if match is None:
+        return None
+    index = int(match.group(1))
+    if isinstance(rulings, list) and index < len(rulings):
+        return index
+    return None
+
+
+def build_rulings_block(
+    thread_id: str,
+    *,
+    tip_turn: int,
+    tip_created_at: str | None,
+    letter: dict[str, Any],
+) -> dict[str, Any]:
+    """RULING turns on the root strictly after the tip that cites the letter.
+
+    Connect failures propagate, same as ``house_unread_turns``. Selection is
+    the transaction snapshot: a concurrent post is in or out by turn number.
+    """
+    body = letter.get("body") if isinstance(letter.get("body"), dict) else None
+    stamped = body.get("stamped_at") if body else None
+    letter_as_of = stamped if isinstance(stamped, str) and stamped else tip_created_at
+    letter_rulings = body.get("rulings") if body else None
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT turn_number, from_agent, to_agent, subject, body, created_at
+            FROM turns
+            WHERE thread = ? AND turn_number > ? AND status != 'superseded'
+            ORDER BY turn_number DESC
+            LIMIT ?
+            """,
+            (thread_id, int(tip_turn), _RULINGS_QUERY_LIMIT),
+        ).fetchall()
+    matched: list[dict[str, Any]] = []
+    for row in rows:
+        subject = str(row["subject"] or "")
+        if _subject_head_kind(subject) != "RULING":
+            continue
+        turn_body = str(row["body"] or "")
+        parsed, _missing = parse_route_control_envelope(
+            from_agent=str(row["from_agent"] or ""),
+            subject=subject,
+            body=turn_body,
+        )
+        if parsed is None:
+            authority = None
+            work_key = _subject_work_key(subject)
+            read_shas = None
+            envelope = "malformed"
+        else:
+            authority = parsed.authority
+            work_key = parsed.work_key
+            read_shas = parsed.read_shas
+            envelope = "ok"
+        turn = int(row["turn_number"])
+        matched.append(
+            {
+                "turn": turn,
+                "ref": f"agent-bus:{thread_id}#{turn}",
+                "from": str(row["from_agent"] or ""),
+                "to": str(row["to_agent"] or ""),
+                "subject": subject,
+                "work_key": work_key,
+                "authority": authority,
+                "read_shas": read_shas,
+                "envelope": envelope,
+                "created_at": row["created_at"],
+                "newer_than_letter": True,
+                "supersedes_letter_ruling": _supersedes_letter_index(
+                    turn_body, letter_rulings
+                ),
+                "body": turn_body[:_RULING_BODY_CHARS],
+            }
+        )
+    truncated = len(matched) > _RULINGS_ITEM_CAP
+    items = list(reversed(matched[:_RULINGS_ITEM_CAP]))
+    return {
+        "as_of_turn": int(tip_turn),
+        "letter_as_of": letter_as_of,
+        "count": len(items),
+        "truncated": truncated,
+        "items": items,
+    }
+
+
+def _notice_rows_dropped(verbal: list[Any]) -> int:
+    dropped = 0
+    for message in verbal:
+        if not isinstance(message, dict):
+            continue
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        if is_notice_row(str(message.get("role") or ""), content):
+            dropped += 1
+    return dropped
+
+
+def _bound_tape_tail(
+    letter: dict[str, Any],
+    envelope: dict[str, Any],
+) -> tuple[list[dict[str, str]], str | None, str, int]:
+    """Recompute the tail only when the letter is bound and verbal rows exist."""
+    verbal = envelope.get("tape_verbal")
+    gap = envelope.get("tape_left_off_gap")
+    tail = envelope.get("tape_tail") or []
+    if not isinstance(tail, list):
+        tail = []
+    if not isinstance(letter, dict) or letter.get("binding") != "bound":
+        return tail, gap, ("gap" if gap else "tape"), 0
+    if not isinstance(verbal, list):
+        return tail, gap, "gap", 0
+    tail = tape_tail(verbal, exclude_notices=True)
+    dropped = _notice_rows_dropped(verbal)
+    if tail:
+        return tail, gap, "tape_filtered", dropped
+    body = letter.get("body") if isinstance(letter.get("body"), dict) else None
+    where = body.get("where_we_left_off") if body else None
+    if isinstance(where, str) and where.strip():
+        return [], TAPE_LEFT_OFF_LETTER, "letter", dropped
+    return [], TAPE_LEFT_OFF_GAP, "gap", dropped
 
 
 _PROTOCOL_NOTE = (
@@ -265,7 +486,18 @@ def build_mission_block(
         steps.append(f"rename_chat → `{thread_id} {thread_slug}`")
     if tip_sketchboard:
         steps.append(f"read sketchboard {tip_sketchboard}")
-    letter_steps = _letter_handoff_steps(letter)
+    rulings_block: dict[str, Any] | None = None
+    if isinstance(letter, dict) and letter.get("binding") == "bound":
+        rulings_block = build_rulings_block(
+            thread_id,
+            tip_turn=tip_turn,
+            tip_created_at=None,
+            letter=letter,
+        )
+    rulings_count = int(rulings_block["count"]) if rulings_block else 0
+    letter_steps = _letter_handoff_steps(
+        letter, tip_turn=tip_turn, rulings_count=rulings_count
+    )
     if letter_steps:
         insert_at = 1 if standing_rules else 0
         for offset, step in enumerate(letter_steps):
@@ -277,20 +509,23 @@ def build_mission_block(
                 "read mission.house_unread; get() omitted ¬CHECKPOINT "
                 "bodies; empty list ⇒ fetch_unread(thread=T, compact=true) once"
             ),
-            (
-                "orientation: aim, Where we left off, already, object, "
-                "Are/Going, In one line; receipts after"
+            _RULES_HELD_STEP.format(
+                source=_rules_held(letter, standing_rules)["source"]
             ),
+            _ORIENTATION_STEP,
         ]
     )
 
+    tail, gap, tail_source, notices_dropped = _bound_tape_tail(letter or {}, envelope)
     mission: dict[str, Any] = {
         "highlight": envelope.get("checkpoint_highlight"),
         "object": envelope.get("checkpoint_object")
         if "checkpoint_object" in envelope
         else extract_cp_object(tip_body or ""),
-        "tape_tail": envelope.get("tape_tail") or [],
-        "tape_left_off_gap": envelope.get("tape_left_off_gap"),
+        "tape_tail": tail,
+        "tape_tail_source": tail_source,
+        "tape_tail_notices_dropped": notices_dropped,
+        "tape_left_off_gap": gap,
         "open_line": open_line,
         "summary_row": envelope.get("consolidate_summary_row"),
         "summary_row_source": envelope.get("summary_row_source"),
@@ -314,9 +549,20 @@ def build_mission_block(
             "fence_path": ["armed", "poured", "released"],
         },
         "handoff": _mission_handoff(thread_id, steps, letter),
+        "rules_held": _rules_held(letter, standing_rules),
     }
+    if rulings_block is not None:
+        mission["rulings_after_letter"] = [
+            item["ref"] for item in rulings_block["items"]
+        ]
     preview = _mission_letter_preview(letter)
     if preview is not None:
+        if rulings_block is not None:
+            preview["rulings_superseded_by_bus"] = [
+                item["supersedes_letter_ruling"]
+                for item in rulings_block["items"]
+                if isinstance(item.get("supersedes_letter_ruling"), int)
+            ]
         mission["letter"] = preview
     return mission
 
@@ -340,6 +586,10 @@ def mission_marker_preview(mission: dict[str, Any]) -> dict[str, Any]:
         "standing_rules_count": len(rules) if isinstance(rules, list) else 0,
         "standing_rules_first": rules[0] if isinstance(rules, list) and rules else None,
         "letter_binding": letter.get("binding"),
+        "rules_held_source": (mission.get("rules_held") or {}).get("source"),
+        "rulings_after_letter_count": len(mission["rulings_after_letter"])
+        if isinstance(mission.get("rulings_after_letter"), list)
+        else None,
     }
 
 
@@ -656,6 +906,7 @@ def _extract_resume_open(card_text: str | None) -> str | None:
 
 __all__ = [
     "build_mission_block",
+    "build_rulings_block",
     "build_standing_rules",
     "cap_standing_rule_claims",
     "house_unread_turns",
