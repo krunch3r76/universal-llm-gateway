@@ -28,7 +28,7 @@ _SURFACE_USE_SKILLS: Final[dict[str, tuple[str, ...]]] = {
 DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = frozenset({"cdp", "cse", "life"})
 _DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = DISPATCH_SKILLS_SURFACES
 
-# Only these surfaces may emit ``Use the liaison skill`` (cursor_only self-fetch).
+# Only these surfaces may emit ``Use the ide-continuity skill`` (cursor_only self-fetch).
 _CURSOR_USE_SURFACES: Final[frozenset[str]] = frozenset({"ide", "cursor-sdk"})
 
 
