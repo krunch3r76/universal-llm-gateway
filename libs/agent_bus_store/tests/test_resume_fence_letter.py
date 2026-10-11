@@ -18,6 +18,7 @@ from agent_bus_store.resume_fence_mission import (
     mission_marker_preview,
 )
 from continuity_tape.handoff import HANDOFF_MAX_BYTES, handoff_sha12, stamp_handoff
+from continuity_tape.messages import seal_messages_sha256
 
 pytestmark = pytest.mark.offline
 
@@ -551,3 +552,107 @@ def test_build_mission_letter_after_standing_rules() -> None:
     steps = mission["handoff"]["protocol_defaults"]["steps"]
     assert steps[0].startswith("Load mission.standing_rules")
     assert "predecessor's letter" in steps[1]
+
+
+def _cursor_tail_seal(tmp_path) -> tuple[dict, str]:
+    prefix = [{"role": "assistant", "content": f"turn {i}"} for i in range(73)]
+    prefix.append({"role": "user", "content": "checkpoint"})
+    messages = prefix + [
+        {"role": "assistant", "content": "checkpoint report"},
+        {"role": "assistant", "content": "sealed"},
+    ]
+    author = _stamped_author(as_of_turn=243)
+    handoff = stamp_handoff(
+        author,
+        session_id=_SID,
+        messages_sha256=seal_messages_sha256(prefix),
+        message_count=len(prefix),
+        thread="14106",
+        transcript_id="tid",
+        surface="cursor",
+        turn_count=37,
+        now="2026-10-10T20:42:00Z",
+    )
+    _write_seal(
+        tmp_path,
+        _SID,
+        messages=messages,
+        handoff=handoff,
+        messages_sha256=seal_messages_sha256(messages),
+    )
+    return handoff, handoff_sha12(handoff)
+
+
+def test_load_tip_letter_cursor_checkpoint_tail(root_thread, tmp_path) -> None:
+    _handoff, sha12 = _cursor_tail_seal(tmp_path)
+    letter = load_tip_letter(_tip_harvest(letter_sha12=sha12))
+    assert letter["binding"] == "bound"
+    assert letter["reasons"] == ["bound_checkpoint_tail"]
+    assert letter["lag_turns"] is None
+    assert letter["lag_turns_basis"] is None
+    mission = build_mission_block(
+        thread_id=root_thread,
+        tip_body=_tip_harvest(letter_sha12=sha12),
+        tip_turn=1,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={
+            "tape_verbal": [
+                {
+                    "role": "user",
+                    "content": "[GROK_BOT_HIDDEN_PROMPT] boot",
+                },
+                {"role": "user", "content": "what is the box number"},
+            ],
+            "tape_tail": [{"role": "user", "content": "raw"}],
+        },
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-tail",
+        letter=letter,
+    )
+    assert mission["tape_tail_source"] == "tape_filtered"
+    assert mission["tape_tail_notices_dropped"] > 0
+
+
+def test_assemble_rulings_after_checkpoint_tail(root_thread, tmp_path) -> None:
+    handoff, sha12 = _cursor_tail_seal(tmp_path)
+    tip = _tip_harvest(letter_sha12=sha12)
+    create_turn(
+        thread_id=root_thread,
+        from_agent="cursor",
+        to_agent="cursor",
+        subject="CHECKPOINT",
+        body=tip,
+        status="open",
+    )
+    create_turn(
+        thread_id=root_thread,
+        from_agent="cursor",
+        to_agent="house",
+        subject="RULING|after-tip",
+        body="TYPE: ROUTE/CONTROL\nkind: RULING\nwork_key: slug\n",
+        status="open",
+    )
+    card = ContinuityCard(status="missing", tried=())
+    with (
+        patch(
+            "agent_bus_store.resume_fence_pour.build_resume_envelope",
+            return_value=_envelope_stub(),
+        ),
+        patch(
+            "agent_bus_store.resume_fence.load_continuity_card",
+            return_value=card,
+        ),
+        patch(
+            "agent_bus_store.resume_fence_pour.resolve_code_version",
+            return_value="abc123",
+        ),
+    ):
+        bundle = assemble_resume_fence(
+            root_thread, transcript_id="tab-x", source="test"
+        )
+    assert bundle["letter"]["binding"] == "bound"
+    assert bundle["letter"]["reasons"] == ["bound_checkpoint_tail"]
+    assert bundle["rulings"]["count"] == 1
+    assert handoff["as_of_turn"] == 243

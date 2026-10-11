@@ -7,6 +7,9 @@ import json
 import re
 from typing import Any
 
+from continuity_tape.messages import seal_messages_sha256
+from continuity_tape.notice import is_notice_row
+
 HANDOFF_MAX_BYTES = 16 * 1024
 
 _SHA64 = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -268,6 +271,57 @@ def fill_grok_binding(
     return filled, "pipeline" if filled_any else "author"
 
 
+_TAIL_REASONS = frozenset({"messages_sha256", "as_of_message_index"})
+
+
+def checkpoint_tail_bound(
+    letter: object,
+    messages: list[Any],
+    messages_sha256: str,
+) -> bool:
+    """True when the letter's view is an exact prefix plus a short non-instruction tail.
+
+    ``messages_sha256`` is the seal digest of the full message list. The proof
+    compares ``seal_messages_sha256(messages[:as_of])`` to the letter digest
+    (``bare_messages_sha``), the same ``codec:messages-v1`` hash used at stamp.
+    """
+    if not isinstance(letter, dict) or not isinstance(messages_sha256, str):
+        return False
+    index = letter.get("as_of_message_index")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return False
+    behind = len(messages) - index
+    if behind < 1 or behind > 2:
+        return False
+    letter_sha = bare_messages_sha(letter.get("messages_sha256"))
+    if letter_sha is None:
+        return False
+    if seal_messages_sha256(messages[:index]) != letter_sha:
+        return False
+    for row in messages[index:]:
+        if not isinstance(row, dict):
+            continue
+        role = str(row.get("role") or "")
+        if role == "user" and not is_notice_row(role, str(row.get("content") or "")):
+            return False
+    return True
+
+
+def _apply_checkpoint_tail(
+    reasons: list[str],
+    letter: object,
+    messages: list[Any],
+    messages_sha256: str,
+) -> tuple[str, list[str]]:
+    if not reasons:
+        return "bound", []
+    if set(reasons) <= _TAIL_REASONS and checkpoint_tail_bound(
+        letter, messages, messages_sha256
+    ):
+        return "bound", ["bound_checkpoint_tail"]
+    return "stale", reasons
+
+
 def handoff_binding(
     letter: dict[str, Any] | None,
     *,
@@ -286,9 +340,7 @@ def handoff_binding(
         reasons.append("as_of_message_index")
     if letter.get("house_cp") != f"house-cp:{house}:{n}":
         reasons.append("house_cp")
-    if reasons:
-        return "stale", reasons
-    return "bound", []
+    return _apply_checkpoint_tail(reasons, letter, messages, messages_sha256)
 
 
 def _iso_z(now: str) -> str:
@@ -344,13 +396,15 @@ def handoff_binding_stamped(
         reasons.append("as_of_message_index")
     if letter.get("session_id") != session_id:
         reasons.append("session_id")
-    if reasons:
-        return "stale", reasons
-    return "bound", []
+    return _apply_checkpoint_tail(reasons, letter, messages, messages_sha256)
 
 
 def handoff_lag_turns(letter: object) -> int | None:
-    """``turns_at_seal - as_of_turn`` when both are ints. Bool is not an int here."""
+    """``turns_at_seal - as_of_turn`` when both are ints in one space.
+
+    Bool is not an int here. ``as_of_turn`` outside ``0..turns_at_seal``
+    (a different counter) is ``None``.
+    """
     if not isinstance(letter, dict):
         return None
     seal_turns = letter.get("turns_at_seal")
@@ -358,7 +412,8 @@ def handoff_lag_turns(letter: object) -> int | None:
     if isinstance(seal_turns, bool) or isinstance(as_of, bool):
         return None
     if isinstance(seal_turns, int) and isinstance(as_of, int):
-        return seal_turns - as_of
+        if 0 <= as_of <= seal_turns:
+            return seal_turns - as_of
     return None
 
 

@@ -38,6 +38,7 @@ def _missing(reason: str, **fields: Any) -> dict[str, Any]:
         "session_id": fields.get("session_id"),
         "seal_uri": fields.get("seal_uri"),
         "lag_turns": None,
+        "lag_turns_basis": None,
         "messages_behind": None,
         "body": None,
     }
@@ -135,6 +136,7 @@ def load_tip_letter(tip_body: str) -> dict[str, Any]:
             "session_id": sid,
             "seal_uri": seal_uri,
             "lag_turns": None,
+            "lag_turns_basis": None,
             "messages_behind": None,
             "body": None,
         }
@@ -183,13 +185,15 @@ def load_tip_letter(tip_body: str) -> dict[str, Any]:
         if "too_large" not in reasons:
             reasons.append("too_large")
 
+    lag_turns = handoff_lag_turns(handoff)
     return {
         "binding": binding,
         "reasons": reasons,
         "sha12": sha12,
         "session_id": sid,
         "seal_uri": seal_uri,
-        "lag_turns": handoff_lag_turns(handoff),
+        "lag_turns": lag_turns,
+        "lag_turns_basis": "transcript_turns" if isinstance(lag_turns, int) else None,
         "messages_behind": _messages_behind(messages, handoff),
         "body": body,
     }

@@ -11,6 +11,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from continuity_tape.messages import CORE_KEYS
+from continuity_tape.notice import (
+    NOTICE_PREFIXES,
+    is_notice_row,
+    unwrap_operator_utterance,
+)
 
 # Spoken when the pour cannot quote the last exchange (seal still open, or the
 # budget dropped the verbal rows). Copied into operator-posture; do not reword
@@ -24,23 +29,10 @@ TAPE_LEFT_OFF_LETTER = (
     "nothing after the letter but relays; where we left off is letter.where_we_left_off"
 )
 _SENTENCE_END = re.compile(r"[.!?…](?:\s|$)")
-_USER_QUERY = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL)
-# Grok composer wrap on the operator's words. Specimen 14106.
-_GROK_TURN_WRAP = re.compile(r"^\[t\d+u\]\s*(?:\[Sent from machine [^\]]+\]\s*)?")
 # The operator says this to make the seat save. It is not where the work stopped.
 _CHECKPOINT_UTTERANCE = re.compile(r"^/?checkpoint(?:\s+\S+)?\.?$", re.IGNORECASE)
-# Applied after ``<user_query>`` unwrap. Grok prefixes are the 14106 specimen.
-# Cursor ``<system_notification>`` / ``<system_reminder>`` and claude.ai
-# ``TYPE:`` relays were not confirmed against a pour and are not in this tuple.
-_NOTICE_PREFIXES = (
-    "[GROK_BOT_HIDDEN_PROMPT",
-    "[SAND_HIDDEN_PROMPT",
-    "[agent]",
-    "[A background task",
-    "[event",
-    "<agent_profile_update>",
-    "<instructions_update>",
-)
+# Same tuple as ``continuity_tape.notice.NOTICE_PREFIXES`` (one definition).
+_NOTICE_PREFIXES = NOTICE_PREFIXES
 
 
 def project_role_content(message: Mapping[str, Any]) -> dict[str, str]:
@@ -85,23 +77,7 @@ def _operator_utterance(content: str) -> str:
     A leading grok turn tag ``[tNu]`` and a following
     ``[Sent from machine <id>]`` marker are composer chrome, not the utterance.
     """
-    match = _USER_QUERY.search(content)
-    text = match.group(1) if match else content
-    text = _GROK_TURN_WRAP.sub("", text.lstrip(), count=1)
-    return " ".join(text.split())
-
-
-def is_notice_row(role: str, content: str) -> bool:
-    """True when a user row is harness chrome rather than an utterance.
-
-    Assistant rows are never notices. The predicate runs after the
-    ``<user_query>`` unwrap, so a ``<timestamp>`` wrapper does not hide a
-    hidden-prompt row.
-    """
-    if role != "user":
-        return False
-    text = _operator_utterance(content)
-    return any(text.startswith(prefix) for prefix in _NOTICE_PREFIXES)
+    return unwrap_operator_utterance(content)
 
 
 def _is_checkpoint_command(content: str) -> bool:

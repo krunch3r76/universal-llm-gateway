@@ -15,6 +15,7 @@ from continuity_tape.handoff import (
     stamp_handoff,
     validate_handoff,
 )
+from continuity_tape.messages import seal_messages_sha256
 
 pytestmark = pytest.mark.offline
 
@@ -352,6 +353,203 @@ def test_rulings_superseded_optional_and_sha_stable() -> None:
         ) or ("", "")
         assert field == "rulings_superseded"
         assert code.endswith("handoff_invalid")
+
+
+def _prefix_and_tail(
+    trailing: list[dict],
+    *,
+    prefix_len: int = 74,
+) -> tuple[list[dict], list[dict]]:
+    prefix = [
+        {"role": "assistant", "content": f"turn {i}"} for i in range(prefix_len - 1)
+    ]
+    prefix.append({"role": "user", "content": "checkpoint"})
+    return prefix, prefix + trailing
+
+
+def _stamped_at_prefix(
+    prefix: list[dict],
+    messages: list[dict],
+    *,
+    session_id: str = "cursor-1",
+    as_of_turn: int = 243,
+    turns_at_seal: int = 37,
+) -> dict:
+    return stamp_handoff(
+        _stamped(as_of_turn=as_of_turn),
+        session_id=session_id,
+        messages_sha256=seal_messages_sha256(prefix),
+        message_count=len(prefix),
+        thread="14106",
+        transcript_id="tid",
+        surface="cursor",
+        turn_count=turns_at_seal,
+        now="2026-10-10T20:42:00Z",
+    )
+
+
+def test_cursor_checkpoint_tail_binds_14106() -> None:
+    prefix, messages = _prefix_and_tail(
+        [
+            {"role": "assistant", "content": "checkpoint report"},
+            {"role": "assistant", "content": "sealed"},
+        ]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    full = seal_messages_sha256(messages)
+    assert letter["messages_sha256"] == seal_messages_sha256(prefix)
+    assert handoff_binding_stamped(
+        letter, messages=messages, messages_sha256=full, session_id="cursor-1"
+    ) == ("bound", ["bound_checkpoint_tail"])
+    assert handoff_sha12(letter) != "none"
+
+
+def test_checkpoint_tail_trailing_user_instruction_stale() -> None:
+    prefix, messages = _prefix_and_tail(
+        [
+            {"role": "assistant", "content": "report"},
+            {"role": "user", "content": "ship the feature"},
+        ]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="cursor-1",
+    )
+    assert status == "stale"
+    assert "messages_sha256" in reasons
+    assert "as_of_message_index" in reasons
+
+
+def test_checkpoint_tail_wrapped_user_instruction_stale() -> None:
+    prefix, messages = _prefix_and_tail(
+        [
+            {
+                "role": "user",
+                "content": "<user_query>\nship the feature\n</user_query>",
+            }
+        ]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="cursor-1",
+    )
+    assert status == "stale"
+    assert reasons == ["messages_sha256", "as_of_message_index"]
+
+
+def test_checkpoint_tail_three_trailing_stale() -> None:
+    prefix, messages = _prefix_and_tail(
+        [{"role": "assistant", "content": f"r{i}"} for i in range(3)]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="cursor-1",
+    )
+    assert status == "stale"
+    assert "as_of_message_index" in reasons
+
+
+def test_checkpoint_tail_zero_trailing_sha_mismatch_stale() -> None:
+    prefix, _messages = _prefix_and_tail([])
+    letter = _stamped_at_prefix(prefix, prefix)
+    letter["messages_sha256"] = "ff" * 32
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=prefix,
+        messages_sha256=seal_messages_sha256(prefix),
+        session_id="cursor-1",
+    )
+    assert status == "stale"
+    assert reasons == ["messages_sha256"]
+
+
+def test_checkpoint_tail_edited_prefix_stale() -> None:
+    prefix, messages = _prefix_and_tail([{"role": "assistant", "content": "report"}])
+    letter = _stamped_at_prefix(prefix, messages)
+    edited = [dict(row) for row in messages]
+    edited[0] = {"role": "assistant", "content": "rewritten"}
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=edited,
+        messages_sha256=seal_messages_sha256(edited),
+        session_id="cursor-1",
+    )
+    assert status == "stale"
+    assert "messages_sha256" in reasons
+
+
+def test_checkpoint_tail_session_mismatch_lists_session_id() -> None:
+    prefix, messages = _prefix_and_tail([{"role": "assistant", "content": "report"}])
+    letter = _stamped_at_prefix(prefix, messages)
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="other-session",
+    )
+    assert status == "stale"
+    assert "session_id" in reasons
+
+
+def test_checkpoint_tail_notice_user_row_binds() -> None:
+    prefix, messages = _prefix_and_tail(
+        [
+            {
+                "role": "user",
+                "content": "[GROK_BOT_HIDDEN_PROMPT] boot the house",
+            }
+        ]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    assert handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="cursor-1",
+    ) == ("bound", ["bound_checkpoint_tail"])
+
+
+def test_grok_checkpoint_tail_binds_and_house_mismatch_stays_stale() -> None:
+    prefix, messages = _prefix_and_tail(
+        [
+            {"role": "assistant", "content": "report"},
+            {"role": "assistant", "content": "done"},
+        ]
+    )
+    letter = {
+        "house_cp": "house-cp:h:3",
+        "messages_sha256": seal_messages_sha256(prefix),
+        "as_of_message_index": len(prefix),
+        "author": "grok-bot-hm1",
+        "mission": "resume the house",
+        "state": "open",
+        "next_acts": ["read the card"],
+        "load_bearing": ["intent is not in the transcript"],
+    }
+    full = seal_messages_sha256(messages)
+    assert handoff_binding(
+        letter, messages=messages, messages_sha256=full, house="h", n=3
+    ) == ("bound", ["bound_checkpoint_tail"])
+    status, reasons = handoff_binding(
+        letter, messages=messages, messages_sha256=full, house="other", n=3
+    )
+    assert status == "stale"
+    assert "house_cp" in reasons
+
+
+def test_lag_turns_same_space_only() -> None:
+    assert handoff_lag_turns({"turns_at_seal": 37, "as_of_turn": 243}) is None
+    assert handoff_lag_turns({"turns_at_seal": 37, "as_of_turn": 30}) == 7
+    assert handoff_lag_turns({"turns_at_seal": 37, "as_of_turn": -1}) is None
 
 
 def test_grok_binding_unchanged() -> None:

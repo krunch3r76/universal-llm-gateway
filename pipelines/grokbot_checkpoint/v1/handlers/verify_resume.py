@@ -219,7 +219,7 @@ async def run_verify_resume(
             n=n_bind,
         )
         checks["handoff"] = binding
-        if binding == "stale":
+        if reasons:
             checks["handoff_reasons"] = reasons
         if binding == "missing":
             warnings.append(

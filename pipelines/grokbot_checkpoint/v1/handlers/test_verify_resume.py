@@ -708,6 +708,69 @@ async def test_window_turns_unknown_without_turn_count(fs) -> None:
 
 
 @pytest.mark.asyncio
+async def test_verify_resume_bound_checkpoint_tail(fs) -> None:
+    from continuity_tape.messages import seal_messages_sha256
+
+    prefix = [{"role": "user", "content": "checkpoint"}]
+    messages = prefix + [
+        {"role": "assistant", "content": "report"},
+        {"role": "assistant", "content": "done"},
+    ]
+    full = seal_messages_sha256(messages)
+    doc = {
+        "messages": messages,
+        "meta": {
+            "messages_sha256": full,
+            "provenance": "raw",
+            "session_id": "s",
+        },
+        "handoff": {
+            "house_cp": "house-cp:h:1",
+            "messages_sha256": seal_messages_sha256(prefix),
+            "as_of_message_index": 1,
+            "author": "grok-bot-hm1",
+            "mission": "resume",
+            "state": "open",
+            "next_acts": ["read"],
+            "load_bearing": ["the prefix"],
+        },
+    }
+    raw = json.dumps(doc).encode()
+    fs.files["notes/system/seals/s.messages.json"] = raw
+    card = b"card"
+    fs.files["notes/card.md"] = card
+    body = (
+        "house-cp marker house-cp:h:1\n"
+        f"Harvest: transcript:s · messages_sha256:{full} · codec:messages-v1 · "
+        "surface:grok · provenance:raw\n"
+    )
+
+    async def get(path, params=None):
+        if params and params.get("thread") == "v":
+            return {
+                "turns": [{"subject": "CHECKPOINT", "body": body, "turn_number": 2}]
+            }, 200
+        return {"turns": []}, 200
+
+    out = await run_verify_resume(
+        {
+            "house": "h",
+            "n": 1,
+            "session_id": "s",
+            "card_uri": "notes/card.md",
+            "expected_card_sha256": file_sha256(card),
+            "snapshot_uri": "notes/snap.json",
+            "snapshot_sha256": "0",
+            "verify_lane": "v",
+        },
+        fs,
+        get=get,
+    )
+    assert out["checks"]["handoff"] == "bound"
+    assert out["checks"]["handoff_reasons"] == ["bound_checkpoint_tail"]
+
+
+@pytest.mark.asyncio
 async def test_session_id_prefers_seal_step(fs) -> None:
     """m1: seal step session_id wins; options is the fallback; mismatch is named."""
     from ._clients import file_sha256 as sha
