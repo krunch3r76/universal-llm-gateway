@@ -388,6 +388,135 @@ def _stamped_at_prefix(
     )
 
 
+def _authoring_turn_prefix_and_tail(
+    tail: list[dict],
+    *,
+    prefix_len: int = 74,
+    last_prefix_turn: int = 37,
+) -> tuple[list[dict], list[dict]]:
+    prefix: list[dict] = [
+        {"role": "assistant", "content": f"turn {i}", "turn_index": (i // 2) + 1}
+        for i in range(prefix_len - 1)
+    ]
+    prefix.append(
+        {"role": "assistant", "content": "prior turn", "turn_index": last_prefix_turn}
+    )
+    return prefix, prefix + tail
+
+
+def test_checkpoint_tail_authoring_turn_binds_14106_real() -> None:
+    prefix, messages = _authoring_turn_prefix_and_tail(
+        [
+            {
+                "role": "user",
+                "content": "Checkpoint house 14106 now, seal the thread.",
+                "turn_index": 38,
+            },
+            {
+                "role": "assistant",
+                "content": "checkpoint report body",
+                "turn_index": 38,
+            },
+        ]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    full = seal_messages_sha256(messages)
+    assert letter["as_of_message_index"] == 74
+    assert seal_messages_sha256(prefix) == letter["messages_sha256"]
+    assert handoff_binding_stamped(
+        letter, messages=messages, messages_sha256=full, session_id="cursor-1"
+    ) == ("bound", ["bound_checkpoint_tail"])
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [
+            {"role": "user", "content": "a", "turn_index": 38},
+            {"role": "user", "content": "b", "turn_index": 38},
+        ],
+        [
+            {"role": "assistant", "content": "a", "turn_index": 38},
+            {"role": "user", "content": "b", "turn_index": 38},
+        ],
+        [
+            {"role": "user", "content": "a", "turn_index": 39},
+            {"role": "assistant", "content": "b", "turn_index": 39},
+        ],
+        [
+            {"role": "user", "content": "a", "turn_index": 38},
+            {"role": "assistant", "content": "b", "turn_index": 39},
+        ],
+        [
+            {"role": "user", "content": "ship the feature"},
+            {"role": "assistant", "content": "ok", "turn_index": 38},
+        ],
+    ],
+    ids=[
+        "two_user_rows",
+        "user_not_first",
+        "turn_gap_after_prefix",
+        "mixed_turns_in_tail",
+        "missing_turn_index_on_user",
+    ],
+)
+def test_checkpoint_tail_authoring_turn_negatives_stale(tail: list[dict]) -> None:
+    prefix, messages = _authoring_turn_prefix_and_tail(tail)
+    letter = _stamped_at_prefix(prefix, messages)
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="cursor-1",
+    )
+    assert status == "stale"
+    assert "messages_sha256" in reasons
+    assert "as_of_message_index" in reasons
+
+
+def test_checkpoint_tail_authoring_turn_session_mismatch_lists_session_id() -> None:
+    prefix, messages = _authoring_turn_prefix_and_tail(
+        [
+            {"role": "user", "content": "Checkpoint now", "turn_index": 38},
+            {"role": "assistant", "content": "report", "turn_index": 38},
+        ]
+    )
+    letter = _stamped_at_prefix(prefix, messages)
+    status, reasons = handoff_binding_stamped(
+        letter,
+        messages=messages,
+        messages_sha256=seal_messages_sha256(messages),
+        session_id="other-session",
+    )
+    assert status == "stale"
+    assert "session_id" in reasons
+
+
+def test_grok_checkpoint_tail_authoring_turn_binds() -> None:
+    prefix, messages = _authoring_turn_prefix_and_tail(
+        [
+            {"role": "user", "content": "Checkpoint house", "turn_index": 38},
+            {"role": "assistant", "content": "report", "turn_index": 38},
+        ],
+        prefix_len=10,
+        last_prefix_turn=37,
+    )
+    letter = {
+        "house_cp": "house-cp:h:3",
+        "messages_sha256": seal_messages_sha256(prefix),
+        "as_of_message_index": len(prefix),
+        "author": "grok-bot-hm1",
+        "mission": "resume the house",
+        "state": "open",
+        "next_acts": ["read the card"],
+        "load_bearing": ["intent is not in the transcript"],
+    }
+    full = seal_messages_sha256(messages)
+    assert handoff_binding(
+        letter, messages=messages, messages_sha256=full, house="h", n=3
+    ) == ("bound", ["bound_checkpoint_tail"])
+
+
 def test_cursor_checkpoint_tail_binds_14106() -> None:
     prefix, messages = _prefix_and_tail(
         [

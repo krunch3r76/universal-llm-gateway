@@ -583,8 +583,59 @@ def _cursor_tail_seal(tmp_path) -> tuple[dict, str]:
     return handoff, handoff_sha12(handoff)
 
 
+def _cursor_authoring_turn_seal(tmp_path) -> tuple[dict, str]:
+    prefix = [
+        {"role": "assistant", "content": f"turn {i}", "turn_index": (i // 2) + 1}
+        for i in range(73)
+    ]
+    prefix.append({"role": "assistant", "content": "prior turn", "turn_index": 37})
+    messages = prefix + [
+        {
+            "role": "user",
+            "content": "Checkpoint house 14106 now, seal the thread.",
+            "turn_index": 38,
+        },
+        {
+            "role": "assistant",
+            "content": "checkpoint report body",
+            "turn_index": 38,
+        },
+    ]
+    author = _stamped_author(as_of_turn=243)
+    handoff = stamp_handoff(
+        author,
+        session_id=_SID,
+        messages_sha256=seal_messages_sha256(prefix),
+        message_count=len(prefix),
+        thread="14106",
+        transcript_id="tid",
+        surface="cursor",
+        turn_count=37,
+        now="2026-10-10T20:42:00Z",
+    )
+    _write_seal(
+        tmp_path,
+        _SID,
+        messages=messages,
+        handoff=handoff,
+        messages_sha256=seal_messages_sha256(messages),
+    )
+    return handoff, handoff_sha12(handoff)
+
+
 def test_load_tip_letter_cursor_checkpoint_tail(root_thread, tmp_path) -> None:
     _handoff, sha12 = _cursor_tail_seal(tmp_path)
+    letter = load_tip_letter(_tip_harvest(letter_sha12=sha12))
+    assert letter["binding"] == "bound"
+    assert letter["reasons"] == ["bound_checkpoint_tail"]
+    assert letter["lag_turns"] is None
+    assert letter["lag_turns_basis"] is None
+
+
+def test_load_tip_letter_cursor_authoring_turn_checkpoint_tail(
+    root_thread, tmp_path
+) -> None:
+    _handoff, sha12 = _cursor_authoring_turn_seal(tmp_path)
     letter = load_tip_letter(_tip_harvest(letter_sha12=sha12))
     assert letter["binding"] == "bound"
     assert letter["reasons"] == ["bound_checkpoint_tail"]

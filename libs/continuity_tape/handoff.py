@@ -274,6 +274,41 @@ def fill_grok_binding(
 _TAIL_REASONS = frozenset({"messages_sha256", "as_of_message_index"})
 
 
+def _tail_is_authoring_turn(messages: list[Any], index: int) -> bool:
+    """Tail is the in-flight checkpoint turn stamped before harvest."""
+    tail = messages[index:]
+    if not tail:
+        return False
+    turn: int | None = None
+    user_rows = 0
+    for offset, row in enumerate(tail):
+        if not isinstance(row, dict):
+            return False
+        turn_index = row.get("turn_index")
+        if isinstance(turn_index, bool) or not isinstance(turn_index, int):
+            return False
+        if turn is None:
+            turn = turn_index
+        elif turn_index != turn:
+            return False
+        role = str(row.get("role") or "")
+        if role == "user":
+            user_rows += 1
+            if offset != 0:
+                return False
+    if turn is None or user_rows > 1:
+        return False
+    if index < 1:
+        return False
+    prev = messages[index - 1]
+    if not isinstance(prev, dict):
+        return False
+    prev_turn = prev.get("turn_index")
+    if isinstance(prev_turn, bool) or not isinstance(prev_turn, int):
+        return False
+    return prev_turn == turn - 1
+
+
 def checkpoint_tail_bound(
     letter: object,
     messages: list[Any],
@@ -284,6 +319,10 @@ def checkpoint_tail_bound(
     ``messages_sha256`` is the seal digest of the full message list. The proof
     compares ``seal_messages_sha256(messages[:as_of])`` to the letter digest
     (``bare_messages_sha``), the same ``codec:messages-v1`` hash used at stamp.
+
+    The stamp runs inside the seat's checkpoint turn, so that turn's user message
+    was read when the letter was written; any later user turn has a higher
+    ``turn_index`` or a second user row in the tail and stays stale.
     """
     if not isinstance(letter, dict) or not isinstance(messages_sha256, str):
         return False
@@ -298,13 +337,16 @@ def checkpoint_tail_bound(
         return False
     if seal_messages_sha256(messages[:index]) != letter_sha:
         return False
-    for row in messages[index:]:
+    tail = messages[index:]
+    for row in tail:
         if not isinstance(row, dict):
             continue
         role = str(row.get("role") or "")
         if role == "user" and not is_notice_row(role, str(row.get("content") or "")):
-            return False
-    return True
+            break
+    else:
+        return True
+    return _tail_is_authoring_turn(messages, index)
 
 
 def _apply_checkpoint_tail(
