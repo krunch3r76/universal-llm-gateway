@@ -30,7 +30,7 @@ never sit in `AwaitShell` / multi-minute polling. Exception: a CDP harvest that 
 same turn (`dispatch-kernel_ulg` § Admit turn; `runbook:bus-consult-watcher`). ¬ sleep loops / “in flight” prose
 without bg `tail`.
 
-Applies to every Cursor-surface model; below Opus these stays are explicit obligations. Shell-cap residual: `decision:` on the shell-timeout-cap. Out of scope: `provenance-discipline.mdc`.
+Applies to every Cursor-surface model; below Opus these are explicit obligations. Shell-cap residual: `decision:` on the shell-timeout-cap. Out of scope: `provenance-discipline.mdc`.
 
 **P5 — Finishing order (last).** Default: land → path-explicit commit of session paths → recycle serving
 processes. Recycle-from-dirty-tree is exceptional, not the ordinary-live default. "Only commit when
