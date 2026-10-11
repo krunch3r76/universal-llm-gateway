@@ -20,15 +20,12 @@ spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ serv
 
 ## Ladder + binder order
 
-| Need | Path | Autonomy |
-|---|---|---|
-| Mechanical implement | `team_dispatch(..., lane="B", contract=implement, model=cursor/composer-2.5)`. Omit `model=` resolves `cursor/grok-4.7`. Throwaway worktree for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
-| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh; conductor → `cursor/grok-4.7` high. Omitted knobs follow the card. `OPEN FORK:` only | autonomous |
-| Greater reasoning / independent check | **ACTIVE** width (not top rung) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
-| Live checkout | `cursor/grok-4.7` `contract=freeform` on cursor-sdk | autonomous |
-
-Binder order (reasoning strength): `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks; hop-successor history in decision:maestro-hop-model-fable). `seat_unsure ⇒ consult(independent_binder)`;
-`binder_unsure ⇒ human`. CDP fail ⇒ no wait, no pool retry. `cdp_fail_route`: `nested-grok` (`cursor/grok-4.7` xhigh) or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask. Steps: cdp-operator-proxy 2b.
+Mechanical implement: `team_dispatch` `lane="B"` `contract=implement` `model=cursor/composer-2.5` (omit `model=` ⇒ `cursor/grok-4.7`); throwaway worktree for every top-level generate including read-only and plan; `lane="A"` only on scope refusal or an explicit shared-master request. Autonomous.
+Investigate / conductor: investigate `cursor/grok-4.7` xhigh; conductor `cursor/grok-4.7` high; omitted knobs follow the card; `OPEN FORK:` only. Autonomous.
+Independent check: **ACTIVE** width · **`cdp/opus-5.5`** — announce `CDP: <trigger> — <why>`, proceed. Autonomous on trigger.
+Live checkout: `cursor/grok-4.7` `contract=freeform` on cursor-sdk. Autonomous.
+Binder order: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` (no `cdp/fable` unless Kaywan asks). `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human`. CDP fail ⇒ no wait, no pool retry. `cdp_fail_route`: `nested-grok` (`cursor/grok-4.7` xhigh) or `operator` (worker + `parent_thread` → web-anthropic). ¬ Cowork Ask.
+detail: skill `consult-routing` § Dispatch kernel — relocated prose.
 
 ## Hard walls
 
@@ -55,6 +52,5 @@ Partial cite ⇒ that section only. Skills/rules say *when*; runbook owns *how*.
 
 B legs spawn T0 conductor; materializer refuses non-todo `source_ref`. CHECKPOINT = reconstitution index only.
 `seat=cursor-sdk` closeout is a silent SOP; true operator-only ⇒ `status:needs-attended` + one recommended answer.
-Mutating Task prompts ⇒ inject kernel (`task-subagent-parity_ulg`). Native IDE Task (¬ `team_dispatch`) ⇒ `/reasoning-posture` + Use-line unless closed procedure (`native-subagent-reasoning-posture_ulg`). Ladder detail: Use the `consult-routing` skill.
-Doctrine: `decision:operator-request-front-door` · `decision:gate-independence-not-human-ness` ·
-`decision:cursor-non-primary-model-operator-gate` · `anthropic-dispatch-authorization_ws.mdc`.
+Mutating Task prompts ⇒ inject kernel (`task-subagent-parity_ulg`). Native IDE Task (¬ `team_dispatch`) ⇒ `/reasoning-posture` + Use-line unless closed procedure (`native-subagent-reasoning-posture_ulg`).
+detail: skill `consult-routing` § Dispatch kernel — relocated prose.

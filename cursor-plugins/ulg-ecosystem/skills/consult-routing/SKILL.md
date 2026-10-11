@@ -268,7 +268,17 @@ re-trigger. Hard server admit stays nested-CDP / operator_packet only.
 
 ## Dispatch kernel — relocated prose
 
-Moved from `dispatch-kernel_ulg.mdc` (phase-2 B5) — read with the rule's ladder + hard-walls tables.
+Moved from `dispatch-kernel_ulg.mdc` — read with the rule. The rule keeps the imperatives; this section holds the ladder table, autonomy column, and doctrine list.
+
+| Need | Path | Autonomy |
+|---|---|---|
+| Mechanical implement | `team_dispatch(..., lane="B", contract=implement, model=cursor/composer-2.5)`. Omit `model=` resolves `cursor/grok-4.7`. Throwaway worktree for every top-level generate, including read-only and plan. `lane="A"` only on scope refusal or an explicit shared-master request | autonomous |
+| Investigate residual · conductor drive | investigate → `cursor/grok-4.7` xhigh; conductor → `cursor/grok-4.7` high. Omitted knobs follow the card. `OPEN FORK:` only | autonomous |
+| Greater reasoning / independent check | **ACTIVE** width (not top rung) · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, proceed | autonomous on trigger |
+| Live checkout | `cursor/grok-4.7` `contract=freeform` on cursor-sdk | autonomous |
+
+Hop-successor history: `decision:maestro-hop-model-fable`. CDP fail steps: `cdp-operator-proxy` 2b.
+Doctrine: `decision:operator-request-front-door` · `decision:gate-independence-not-human-ness` · `decision:cursor-non-primary-model-operator-gate` · `anthropic-dispatch-authorization_ws.mdc`.
 
 **CDP trigger (any):** architecture-suitability live · ≥2 co-primary hypotheses unranked · invariant-touching /
 cross-agent bind · recurrence ≥2 · external check needed. **Anti-trigger:** mechanical · single-subsystem · loci known.
