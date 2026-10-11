@@ -45,7 +45,7 @@ agent_id: <uuid>
 root_thread: <root-thread>
 card_uri: notes/checkpoints/<house>.md
 verify_lane: <verify-lane>
-transcribed_ref: tape/pours/<surface>/<transcript_id>.messages.json
+transcribed_ref: notes/system/tape/pours/<surface>/<transcript_id>.messages.json
 transcribed_sha256: <sha256>
 bus_identity: <bus-identity>
 verifier: <verifier>
@@ -56,7 +56,7 @@ opened_at: "2026-01-01T00:00:00Z"
 
 Window `transcript_id` = pour `meta.transcript_id` = journal `conversation_uuid`, uuid-shaped, and equal to `agent_id` for grok. Mint a uuid5 when the platform native id is not a uuid. Mismatch refuses `admit.transcript_id_mismatch`.
 
-Canonical pour: `tape/pours/<surface>/<transcript_id>.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`.
+Canonical pour: `notes/system/tape/pours/<surface>/<transcript_id>.messages.json`. Authority tape: `notes/system/seals/<sid>.messages.json`.
 
 ## Writing the handoff letter
 
