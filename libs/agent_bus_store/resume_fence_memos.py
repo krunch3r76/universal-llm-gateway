@@ -21,7 +21,12 @@ _SHOWN_CAP = 12
 _BODY_CHARS = 600
 _NOTE = (
     "Resume does not mark these read. After you have acted on or explicitly "
-    "deferred each memo, run each mark_read entry."
+    "deferred each memo, run each mark_read entry as given."
+)
+_TRUNCATION_NOTE = (
+    " Some memos were not shown (counts.truncated); the next resume lists the "
+    "older ones, or read them now with agent_bus fetch_unread(thread=<thread>, "
+    "to=<seat>)."
 )
 _NO_SEAT_NOTE = "no seat mailbox"
 
@@ -111,9 +116,10 @@ def _fetch_root(
         ORDER BY turn_number DESC
         LIMIT ?
         """,
-        (thread_id, prev_turn, limit),
+        (thread_id, prev_turn, limit + 1),
     ).fetchall()
-    return list(rows), len(rows) >= limit
+    truncated = len(rows) > limit
+    return list(rows[:limit]), truncated
 
 
 def _fetch_children(
@@ -162,15 +168,16 @@ def _fetch_children(
         return [], False
     if prev_turn != 0:
         created_col = "created_at" if _threads_have_parent(conn) else "t.created_at"
-        sql += f" AND {created_col} > ?"
+        sql += f" AND {created_col} >= ?"
         params.append(prev_at or "")
     order = "created_at DESC, turn_number DESC"
     if not _threads_have_parent(conn):
         order = "t.created_at DESC, t.turn_number DESC"
     sql += f" ORDER BY {order} LIMIT ?"
-    params.append(limit)
+    params.append(limit + 1)
     rows = conn.execute(sql, params).fetchall()
-    return list(rows), len(rows) >= limit
+    truncated = len(rows) > limit
+    return list(rows[:limit]), truncated
 
 
 def _item(row: sqlite3.Row) -> dict[str, Any]:
@@ -239,6 +246,7 @@ def build_memos_to_check(
         counts["scan_truncated"] = int(root_hit or child_hit)
         memos: list[dict[str, Any]] = []
         addressed_turn: dict[str, int] = {}
+        memo_count_by_thread: dict[str, int] = {}
         for row in scanned:
             kind = classify_unread_turn(
                 from_agent=str(row["from_agent"] or ""),
@@ -261,27 +269,54 @@ def build_memos_to_check(
             else:
                 counts["memos"] += 1
                 memos.append(_item(row))
+                memo_count_by_thread[thread] = memo_count_by_thread.get(thread, 0) + 1
         memos.sort(key=lambda item: (str(item["created_at"] or ""), int(item["turn"])))
         shown = memos[-_SHOWN_CAP:]
         counts["shown"] = len(shown)
         counts["truncated"] = counts["memos"] - counts["shown"]
-        mark_read = [
-            {
-                "tool": "agent_bus",
-                "op": "mark_read",
-                "thread": thread,
-                "agent": seat,
-                "through_turn": through,
-            }
-            for thread, through in sorted(addressed_turn.items())
-        ]
+        shown_by_thread: dict[str, list[int]] = {}
+        for item in shown:
+            shown_by_thread.setdefault(str(item["thread"]), []).append(
+                int(item["turn"])
+            )
+        mark_read: list[dict[str, Any]] = []
+        any_partial = False
+        for thread in sorted(set(addressed_turn) | set(shown_by_thread)):
+            shown_turns = sorted(shown_by_thread.get(thread, []))
+            if not shown_turns:
+                continue
+            unshown_memos = memo_count_by_thread.get(thread, 0) - len(shown_turns)
+            if unshown_memos > 0:
+                any_partial = True
+                mark_read.append(
+                    {
+                        "tool": "agent_bus",
+                        "op": "mark_read",
+                        "thread": thread,
+                        "agent": seat,
+                        "turn_numbers": shown_turns,
+                        "partial": True,
+                        "unshown_memos": unshown_memos,
+                    }
+                )
+            else:
+                mark_read.append(
+                    {
+                        "tool": "agent_bus",
+                        "op": "mark_read",
+                        "thread": thread,
+                        "agent": seat,
+                        "through_turn": addressed_turn[thread],
+                    }
+                )
+        note = _NOTE + (_TRUNCATION_NOTE if any_partial else "")
         return {
             "seat": seat,
             "counts": counts,
             "items": shown,
             "window": window,
             "mark_read": mark_read,
-            "note": _NOTE,
+            "note": note,
         }
 
     if conn is not None:

@@ -6,8 +6,10 @@ import hashlib
 from unittest.mock import patch
 
 import pytest
+from agent_bus_store import resume_fence_memos
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.db.connection import connect, write_connect
+from agent_bus_store.db.turns import bulk_mark_read_state
 from agent_bus_store.house_pools import ContinuityCard
 from agent_bus_store.resume_fence import assemble_resume_fence
 from agent_bus_store.resume_fence_memos import build_memos_to_check
@@ -247,6 +249,220 @@ def test_cap_keeps_newest_twelve_memos_not_notices(bus_db) -> None:
         f"MEMO {i:02d}" for i in range(8, 20)
     ]
     assert all("wake" not in item["subject"] for item in block["items"])
+    root = next(row for row in block["mark_read"] if row["thread"] == _ROOT)
+    shown_turns = sorted(int(item["turn"]) for item in block["items"])
+    assert root["turn_numbers"] == shown_turns
+    assert root.get("partial") is True
+    assert root["unshown_memos"] == 8
+    assert "through_turn" not in root
+
+
+def test_partial_mark_read_leaves_unshown_unread(bus_db) -> None:
+    create_thread(thread_id=_ROOT, slug="house", tags=["role:root"])
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="p")
+    memo_turns: list[int] = []
+    for i in range(20):
+        _turn(
+            _ROOT,
+            sender="grok-bot-hm1",
+            to="cursor",
+            subject=f"MEMO {i:02d}",
+            body=f"memo-{i}",
+        )
+        with connect() as conn:
+            memo_turns.append(
+                int(
+                    conn.execute(
+                        "SELECT turn_number FROM turns WHERE thread = ? ORDER BY id DESC LIMIT 1",
+                        (_ROOT,),
+                    ).fetchone()["turn_number"]
+                )
+            )
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="t")
+    with connect() as conn:
+        tip_turn = int(
+            conn.execute(
+                "SELECT MAX(turn_number) AS n FROM turns WHERE thread = ?",
+                (_ROOT,),
+            ).fetchone()["n"]
+        )
+    block = build_memos_to_check(
+        _ROOT,
+        tip_turn=tip_turn,
+        tip_from_agent="cursor",
+        supersedes_turn=None,
+    )
+    entry = next(row for row in block["mark_read"] if row["thread"] == _ROOT)
+    shown_turns = {int(item["turn"]) for item in block["items"]}
+    unshown_turns = set(memo_turns) - shown_turns
+    bulk_mark_read_state(
+        thread=_ROOT,
+        turn_numbers=entry["turn_numbers"],
+        agent="cursor",
+    )
+    with connect() as conn:
+        for turn in shown_turns:
+            row = conn.execute(
+                "SELECT read_at FROM turns WHERE thread = ? AND turn_number = ?",
+                (_ROOT, turn),
+            ).fetchone()
+            assert row["read_at"] is not None
+        for turn in unshown_turns:
+            row = conn.execute(
+                "SELECT read_at FROM turns WHERE thread = ? AND turn_number = ?",
+                (_ROOT, turn),
+            ).fetchone()
+            assert row["read_at"] is None
+
+
+def test_child_lane_partial_mark_read_when_truncated(bus_db) -> None:
+    create_thread(thread_id=_ROOT, slug="house", tags=["role:root"])
+    create_thread(thread_id="14107", slug="child")
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO thread_lane_associations "
+            "(thread_id, parent_thread_id, lane_role) VALUES (?, ?, ?)",
+            ("14107", _ROOT, "dispatch"),
+        )
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="p")
+    for i in range(15):
+        _turn(
+            "14107",
+            sender="grok-bot-hm1",
+            to="cursor",
+            subject=f"MEMO child {i:02d}",
+            body=f"child-{i}",
+        )
+    tip_id = _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="t")
+    with connect() as conn:
+        tip_turn = int(
+            conn.execute(
+                "SELECT turn_number FROM turns WHERE id = ?", (tip_id,)
+            ).fetchone()["turn_number"]
+        )
+    block = build_memos_to_check(
+        _ROOT,
+        tip_turn=tip_turn,
+        tip_from_agent="cursor",
+        supersedes_turn=None,
+    )
+    child = next(row for row in block["mark_read"] if row["thread"] == "14107")
+    assert child.get("partial") is True
+    assert "through_turn" not in child
+    assert len(child["turn_numbers"]) == 12
+    assert child["unshown_memos"] == 3
+
+
+def test_child_lane_same_second_as_prev_checkpoint(bus_db) -> None:
+    create_thread(thread_id=_ROOT, slug="house", tags=["role:root"])
+    create_thread(thread_id="14107", slug="child")
+    with write_connect() as conn:
+        conn.execute(
+            "INSERT INTO thread_lane_associations "
+            "(thread_id, parent_thread_id, lane_role) VALUES (?, ?, ?)",
+            ("14107", _ROOT, "dispatch"),
+        )
+    prev_id = _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="p")
+    with connect() as conn:
+        prev_at = conn.execute(
+            "SELECT created_at FROM turns WHERE id = ?", (prev_id,)
+        ).fetchone()["created_at"]
+    child_id = _turn(
+        "14107",
+        sender="grok-bot-hm1",
+        to="cursor",
+        subject="MEMO: child same second",
+        body="lane",
+    )
+    with write_connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at = ? WHERE id = ?",
+            (prev_at, child_id),
+        )
+    tip_id = _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="t")
+    with connect() as conn:
+        tip_turn = int(
+            conn.execute(
+                "SELECT turn_number FROM turns WHERE id = ?", (tip_id,)
+            ).fetchone()["turn_number"]
+        )
+    block = build_memos_to_check(
+        _ROOT,
+        tip_turn=tip_turn,
+        tip_from_agent="cursor",
+        supersedes_turn=int(prev_id),
+    )
+    assert [item["ref"] for item in block["items"]] == ["agent-bus:14107#1"]
+
+
+def test_scan_truncated_exactly_at_limit(
+    bus_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patched_limit = 10
+    monkeypatch.setattr(
+        resume_fence_memos,
+        "_SCAN_LIMIT",
+        patched_limit,
+    )
+    create_thread(thread_id=_ROOT, slug="house", tags=["role:root"])
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="p")
+    for i in range(patched_limit):
+        _turn(
+            _ROOT,
+            sender="grok-bot-hm1",
+            to="cursor",
+            subject=f"MEMO {i:03d}",
+            body=f"m-{i}",
+        )
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="t")
+    with connect() as conn:
+        tip_turn = int(
+            conn.execute(
+                "SELECT MAX(turn_number) AS n FROM turns WHERE thread = ?",
+                (_ROOT,),
+            ).fetchone()["n"]
+        )
+    block = build_memos_to_check(
+        _ROOT,
+        tip_turn=tip_turn,
+        tip_from_agent="cursor",
+        supersedes_turn=None,
+    )
+    assert block["counts"]["scan_truncated"] == 0
+
+
+def test_scan_truncated_one_over_limit(bus_db, monkeypatch: pytest.MonkeyPatch) -> None:
+    patched_limit = 10
+    monkeypatch.setattr(
+        resume_fence_memos,
+        "_SCAN_LIMIT",
+        patched_limit,
+    )
+    create_thread(thread_id=_ROOT, slug="house", tags=["role:root"])
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="p")
+    for i in range(patched_limit + 1):
+        _turn(
+            _ROOT,
+            sender="grok-bot-hm1",
+            to="cursor",
+            subject=f"MEMO {i:03d}",
+            body=f"m-{i}",
+        )
+    _turn(_ROOT, sender="cursor", to="cursor", subject="CHECKPOINT", body="t")
+    with connect() as conn:
+        tip_turn = int(
+            conn.execute(
+                "SELECT MAX(turn_number) AS n FROM turns WHERE thread = ?",
+                (_ROOT,),
+            ).fetchone()["n"]
+        )
+    block = build_memos_to_check(
+        _ROOT,
+        tip_turn=tip_turn,
+        tip_from_agent="cursor",
+        supersedes_turn=None,
+    )
+    assert block["counts"]["scan_truncated"] == 1
 
 
 def test_previous_checkpoint_fallback(bus_db) -> None:
