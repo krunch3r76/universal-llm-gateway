@@ -595,3 +595,283 @@ def test_many_ids_keep_rows_under_claim_cap(monkeypatch: pytest.MonkeyPatch) -> 
     assert total <= _CLAIMS_BUDGET_CHARS
     assert len(opens) == 1
     assert sum(1 for wrap in opens for sql in wrap.statements if " IN " in sql) >= 1
+
+
+_RULING_OK = """TYPE: ROUTE/CONTROL
+authority: operator
+kind: RULING
+work_key: 14106-supervision
+read_shas: handoff:8c581eecc02e (letter at tip)
+supersedes: rulings[6]
+"""
+
+_RULING_BAD = """TYPE: ROUTE/CONTROL
+kind: RULING
+work_key: slug
+"""
+
+
+def _bound_letter(**body_extra: object) -> dict:
+    body = {
+        "mission": "the letter",
+        "where_we_left_off": "the operator asked for the box number",
+        "load_bearing": ["hold the fence"],
+        "rulings": [f"r{i}" for i in range(7)],
+        "rulings_superseded": ["rulings[6]: later"],
+    }
+    body.update(body_extra)
+    return {"binding": "bound", "body": body}
+
+
+def test_rulings_after_bound_letter(bus_db) -> None:
+    create_turn(
+        thread_id="10223",
+        from_agent="cursor",
+        to_agent="house",
+        subject="RULING|before",
+        body=_RULING_OK,
+        status="open",
+    )
+    create_turn(
+        thread_id="10223",
+        from_agent="grok-bot-hm1",
+        to_agent="cursor",
+        subject="RULING|14106-supervision",
+        body=_RULING_OK,
+        status="open",
+    )
+    create_turn(
+        thread_id="10223",
+        from_agent="cursor",
+        to_agent="house",
+        subject="RULING|gone",
+        body=_RULING_OK,
+        status="superseded",
+    )
+    create_turn(
+        thread_id="10223",
+        from_agent="cursor",
+        to_agent="house",
+        subject="RULING|bad",
+        body=_RULING_BAD,
+        status="open",
+    )
+    verbal = [
+        {
+            "role": "user",
+            "content": "[t6u] [Sent from machine abc] what is your message box number here?",
+        },
+        {"role": "user", "content": "[agent] harness"},
+    ]
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain tip",
+        tip_turn=3,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={
+            "tape_verbal": verbal,
+            "tape_tail": [{"role": "user", "content": "raw"}],
+        },
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-ruling",
+        letter=_bound_letter(),
+    )
+    assert mission["rulings_after_letter"] == [
+        "agent-bus:10223#4",
+        "agent-bus:10223#6",
+    ]
+    assert "agent-bus:10223#3" not in mission["rulings_after_letter"]
+    assert mission["letter"]["rulings_superseded_by_bus"] == [6]
+    assert mission["letter"]["rulings_superseded"] == ["rulings[6]: later"]
+    assert mission["letter"]["load_bearing"] == ["hold the fence"]
+    assert mission["rules_held"]["source"] == "letter.load_bearing"
+    assert (
+        mission["tape_tail"][-1]["content"] == "what is your message box number here?"
+    )
+    assert mission["tape_tail_source"] == "tape_filtered"
+    assert mission["tape_tail_notices_dropped"] == 1
+    steps = mission["handoff"]["protocol_defaults"]["steps"]
+    rules_at = next(
+        i for i, step in enumerate(steps) if step.startswith("Rules I'm holding")
+    )
+    orient_at = next(
+        i for i, step in enumerate(steps) if step.startswith("orientation:")
+    )
+    assert rules_at == orient_at - 1
+    assert "Where we left off" in steps[orient_at]
+    assert "Rules I'm holding" in steps[orient_at]
+    assert any("bundle.rulings.items" in step for step in steps)
+    preview = mission_marker_preview(mission)
+    assert preview["rules_held_source"] == "letter.load_bearing"
+    assert preview["rulings_after_letter_count"] == 2
+
+
+def test_malformed_ruling_and_caps(bus_db) -> None:
+    create_turn(
+        thread_id="10223",
+        from_agent="",
+        to_agent="cursor",
+        subject="RULING|bad",
+        body=_RULING_BAD,
+        status="open",
+    )
+    from agent_bus_store.resume_fence_mission import build_rulings_block
+
+    block = build_rulings_block(
+        "10223",
+        tip_turn=2,
+        tip_created_at="2026-10-10T16:32:45Z",
+        letter=_bound_letter(),
+    )
+    assert block["letter_as_of"] == "2026-10-10T16:32:45Z"
+    bad = block["items"][-1]
+    assert bad["envelope"] == "malformed"
+    assert bad["authority"] is None
+    assert bad["newer_than_letter"] is True
+    long_rows = ["x" * 300 for _ in range(13)]
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-cap",
+        letter=_bound_letter(load_bearing=long_rows),
+    )
+    assert len(mission["letter"]["load_bearing"]) == 12
+    assert mission["letter"]["load_bearing_truncated"] is True
+    assert len(mission["letter"]["load_bearing"][0]) == 240
+
+
+def test_rulings_cap_excludes_oldest_of_seven(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_bus_store.resume_fence_mission import build_rulings_block
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    monkeypatch.setenv("AGENT_BUS_EVENTS_ENABLED", "false")
+    init_db()
+    create_thread(thread_id="cap-rulings", slug="continuity", tags=["role:root"])
+    tip_turn = 1
+    create_turn(
+        thread_id="cap-rulings",
+        from_agent="cursor",
+        to_agent="cursor",
+        subject="CHECKPOINT",
+        body="tip",
+        status="open",
+    )
+    for idx in range(7):
+        create_turn(
+            thread_id="cap-rulings",
+            from_agent="cursor",
+            to_agent="house",
+            subject=f"RULING|cap-{idx}",
+            body=_RULING_OK,
+            status="open",
+        )
+    block = build_rulings_block(
+        "cap-rulings",
+        tip_turn=tip_turn,
+        tip_created_at=None,
+        letter=_bound_letter(),
+    )
+    assert block["count"] == 6
+    assert block["truncated"] is True
+    turns = [item["turn"] for item in block["items"]]
+    assert turns == sorted(turns)
+    assert len(turns) == 6
+    oldest_after_tip = tip_turn + 1
+    assert oldest_after_tip not in turns
+    assert min(turns) == oldest_after_tip + 1
+
+
+def test_stale_letter_skips_rulings_and_keeps_raw_tail(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text="## Rules\n- card rule\n",
+        envelope={"tape_tail": [{"role": "user", "content": "kept"}]},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-stale-tail",
+        letter={
+            "binding": "stale",
+            "body": {"mission": "old", "load_bearing": ["from letter"]},
+        },
+    )
+    assert "rulings_after_letter" not in mission
+    assert mission["tape_tail"] == [{"role": "user", "content": "kept"}]
+    assert mission["tape_tail_source"] == "tape"
+    assert mission["rules_held"]["source"] == "letter.load_bearing"
+    none = build_mission_block(
+        thread_id="10223",
+        tip_body="plain",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-none",
+        letter=None,
+    )
+    assert none["rules_held"] == {"source": "none", "rows": [], "truncated": False}
+    card = build_mission_block(
+        thread_id="10223",
+        tip_body="plain",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text="## Rules\n- card rule\n",
+        envelope={"tape_left_off_gap": "gap sentence"},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-card",
+        letter=None,
+    )
+    assert card["rules_held"]["source"] == "card.standing_rules"
+    assert card["rules_held"]["rows"] == ["- card rule"]
+    assert card["tape_tail_source"] == "gap"
+
+
+def test_arm_path_empty_envelope_does_not_refilter(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-arm",
+        letter=_bound_letter(),
+    )
+    assert mission["tape_tail"] == []
+    assert mission["tape_tail_source"] == "gap"
+    assert mission["tape_tail_notices_dropped"] == 0
+
+
+def test_all_notices_fall_back_to_letter(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={"tape_verbal": [{"role": "user", "content": "[agent] only"}]},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-letter-tail",
+        letter=_bound_letter(),
+    )
+    assert mission["tape_tail"] == []
+    assert mission["tape_tail_source"] == "letter"
+    assert "letter.where_we_left_off" in mission["tape_left_off_gap"]

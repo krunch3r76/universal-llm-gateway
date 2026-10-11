@@ -14,6 +14,7 @@ from agent_bus_store.resume_fence import assemble_resume_fence
 from agent_bus_store.resume_fence_letter import load_tip_letter
 from agent_bus_store.resume_fence_mission import (
     build_mission_block,
+    build_rulings_block,
     mission_marker_preview,
 )
 from continuity_tape.handoff import HANDOFF_MAX_BYTES, handoff_sha12, stamp_handoff
@@ -203,7 +204,9 @@ def test_stamped_letter_bound_in_bundle(root_thread, tmp_path) -> None:
     bundle = _assemble(root_thread, tip)
     assert bundle["letter"]["binding"] == "bound"
     assert bundle["letter"]["body"] == handoff
-    assert list(bundle).index("letter") < list(bundle).index("tip_checkpoint")
+    keys = list(bundle)
+    assert keys.index("letter") < keys.index("rulings") < keys.index("tip_checkpoint")
+    assert bundle["rulings"]["count"] == 0
     letter_m = bundle["mission"]["letter"]
     assert letter_m["mission"] == "ship the letter"
     handoff = bundle["mission"]["handoff"]
@@ -213,6 +216,84 @@ def test_stamped_letter_bound_in_bundle(root_thread, tmp_path) -> None:
     assert any("predecessor's letter" in step for step in steps)
     preview = mission_marker_preview(bundle["mission"])
     assert preview["letter_binding"] == "bound"
+
+
+_RULING_MIN = """TYPE: ROUTE/CONTROL
+authority: operator
+kind: RULING
+work_key: assemble-once
+"""
+
+
+def test_assemble_queries_rulings_once(root_thread, tmp_path) -> None:
+    handoff = _bound_stamped(message_count=1)
+    _write_seal(tmp_path, _SID, messages=[{}], handoff=handoff)
+    sha12 = handoff_sha12(handoff)
+    tip_body = _tip_harvest(letter_sha12=sha12)
+    create_turn(
+        thread_id=root_thread,
+        from_agent="cursor",
+        to_agent="cursor",
+        subject="CHECKPOINT",
+        body=tip_body,
+        status="open",
+    )
+    create_turn(
+        thread_id=root_thread,
+        from_agent="cursor",
+        to_agent="house",
+        subject="RULING|after-a",
+        body=_RULING_MIN,
+        status="open",
+    )
+    create_turn(
+        thread_id=root_thread,
+        from_agent="cursor",
+        to_agent="house",
+        subject="RULING|after-b",
+        body=_RULING_MIN,
+        status="open",
+    )
+    calls = {"n": 0}
+    real = build_rulings_block
+
+    def counted(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    card = ContinuityCard(
+        status="found",
+        tried=("notes/system/threads/x-card.md",),
+        relpath="notes/system/threads/x-card.md",
+        uri="cortex://notes/system/threads/x-card.md",
+        text="## Open\nresume\n",
+        sha256=hashlib.sha256(b"card").hexdigest(),
+    )
+    with (
+        patch(
+            "agent_bus_store.resume_fence_pour.build_rulings_block",
+            side_effect=counted,
+        ),
+        patch(
+            "agent_bus_store.resume_fence_pour.build_resume_envelope",
+            return_value=_envelope_stub(),
+        ),
+        patch(
+            "agent_bus_store.resume_fence.load_continuity_card",
+            return_value=card,
+        ),
+        patch(
+            "agent_bus_store.resume_fence_pour.resolve_code_version",
+            return_value="abc123",
+        ),
+    ):
+        bundle = assemble_resume_fence(
+            root_thread, transcript_id="tab-x", source="test"
+        )
+    assert bundle["mission"]["rulings_after_letter"] == [
+        item["ref"] for item in bundle["rulings"]["items"]
+    ]
+    assert calls["n"] == 1
 
 
 def test_stale_when_messages_grew(root_thread, tmp_path) -> None:
@@ -240,6 +321,7 @@ def test_no_handoff_key_pours_with_letter_missing(root_thread, tmp_path) -> None
     tip = _tip_harvest()
     bundle = _assemble(root_thread, tip)
     assert bundle["letter"]["binding"] == "missing"
+    assert "rulings" not in bundle
     assert bundle["letter"]["reasons"] == ["no_letter"]
     base_keys = {
         "bundle_version",

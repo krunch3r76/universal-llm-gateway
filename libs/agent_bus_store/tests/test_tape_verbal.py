@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from agent_bus_store.tape_harvest import render_tape_with_harvest
 from agent_bus_store.tape_degrade import degrade_overflow_messages
+from agent_bus_store.tape_harvest import render_tape_with_harvest
 from agent_bus_store.tape_render import (
     _filter_messages_to_cells,
     _last_session_cells,
@@ -16,6 +16,7 @@ from agent_bus_store.tape_verbal import (
     CORE_KEYS,
     project_role_content,
     project_role_content_list,
+    tape_tail,
 )
 from continuity_tape.messages import strip_extras
 
@@ -78,11 +79,31 @@ def test_index_role_rows_omitted_from_verbal_tape() -> None:
 
 def test_last_session_scope_keeps_only_last_cp_interval() -> None:
     cells = [
-        {"cp_ordinal": 1, "transcript_id": "a", "turn_lo": 0, "turn_hi": 5, "bus_turn_id": 10},
-        {"cp_ordinal": 2, "transcript_id": "a", "turn_lo": 5, "turn_hi": 12, "bus_turn_id": 20},
-        {"cp_ordinal": 3, "transcript_id": "a", "turn_lo": 12, "turn_hi": 18, "bus_turn_id": None},
+        {
+            "cp_ordinal": 1,
+            "transcript_id": "a",
+            "turn_lo": 0,
+            "turn_hi": 5,
+            "bus_turn_id": 10,
+        },
+        {
+            "cp_ordinal": 2,
+            "transcript_id": "a",
+            "turn_lo": 5,
+            "turn_hi": 12,
+            "bus_turn_id": 20,
+        },
+        {
+            "cp_ordinal": 3,
+            "transcript_id": "a",
+            "turn_lo": 12,
+            "turn_hi": 18,
+            "bus_turn_id": None,
+        },
     ]
-    scoped, _skipped, _foreign, _unresolved = _last_session_cells(cells, thread_id="10479")
+    scoped, _skipped, _foreign, _unresolved = _last_session_cells(
+        cells, thread_id="10479"
+    )
     assert [c["cp_ordinal"] for c in scoped] == [2, 3]
     messages = [
         {"transcript_id": "a", "turn_index": 4, "role": "user", "content": "old"},
@@ -150,7 +171,10 @@ def test_degrade_overflow_puts_rows_in_index_not_messages() -> None:
     assert "role" not in index_rows[0]
 
 
-@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, 389))
+@patch(
+    "agent_bus_store.resume_envelope._resume_summary_row",
+    return_value=(None, None, 389),
+)
 @patch(
     "agent_bus_store.resume_envelope._tip_checkpoint_body",
     return_value=(389, "Highlight: portable highlight"),
@@ -199,7 +223,10 @@ def test_resume_envelope_seal_pending_strips_unsealed_open_tail(
     assert env["tape_verbal"] == [{"role": "user", "content": "sealed cell"}]
 
 
-@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, 389))
+@patch(
+    "agent_bus_store.resume_envelope._resume_summary_row",
+    return_value=(None, None, 389),
+)
 @patch(
     "agent_bus_store.resume_envelope._tip_checkpoint_body",
     return_value=(389, "Highlight: portable highlight"),
@@ -224,3 +251,77 @@ def test_strip_extras_matches_core_keys() -> None:
     assert strip_extras([_MECHANICAL]) == [
         {"role": "user", "content": "Resume from the last window."}
     ]
+
+
+_MACHINE = "[Sent from machine 11111111-1111-1111-1111-111111111111]"
+_SPECIMEN = [
+    {"role": "user", "content": f"[t5u] {_MACHINE} Read the last turn from cursor"},
+    {
+        "role": "user",
+        "content": f"[t6u] {_MACHINE} what is your message box number here?",
+    },
+    {
+        "role": "user",
+        "content": "[agent] A non-urgent message from House Migration 1 Harness update",
+    },
+    {
+        "role": "user",
+        "content": (
+            "<timestamp>2026-10-10T16:28:00Z</timestamp><user_query>"
+            "[GROK_BOT_HIDDEN_PROMPT][agent] House Migration 1: "
+            "we're checkpointing you now"
+            "</user_query>"
+        ),
+    },
+]
+
+
+def test_tape_tail_specimen_drops_notices_and_strips_turn_tag() -> None:
+    filtered = tape_tail(_SPECIMEN, exclude_notices=True)
+    assert [row["content"] for row in filtered] == [
+        "Read the last turn from cursor",
+        "what is your message box number here?",
+    ]
+    raw = tape_tail(_SPECIMEN)
+    assert raw[0]["content"].startswith("[agent]")
+    assert "GROK_BOT_HIDDEN_PROMPT" in raw[1]["content"]
+
+
+def test_timestamp_wrapped_hidden_prompt_is_a_notice() -> None:
+    verbal = [
+        {
+            "role": "user",
+            "content": "<timestamp>t</timestamp><user_query>[GROK_BOT_HIDDEN_PROMPT] x</user_query>",
+        }
+    ]
+    assert tape_tail(verbal, exclude_notices=True) == []
+
+
+def test_bare_agent_row_dropped_assistant_kept() -> None:
+    verbal = [
+        {"role": "user", "content": "[agent] harness ping"},
+        {"role": "assistant", "content": "[agent] quoted back"},
+    ]
+    assert tape_tail(verbal, exclude_notices=True) == [
+        {"role": "assistant", "content": "[agent] quoted back"}
+    ]
+
+
+def test_mixed_cursor_row_keeps_user_query() -> None:
+    verbal = [
+        {
+            "role": "user",
+            "content": "<system_notification>tick</system_notification><user_query>implement the fix</user_query>",
+        }
+    ]
+    assert tape_tail(verbal, exclude_notices=True) == [
+        {"role": "user", "content": "implement the fix"}
+    ]
+
+
+def test_all_notice_pour_is_empty() -> None:
+    verbal = [
+        {"role": "user", "content": "[A background task finished]"},
+        {"role": "user", "content": "<instructions_update>new</instructions_update>"},
+    ]
+    assert tape_tail(verbal, exclude_notices=True) == []
