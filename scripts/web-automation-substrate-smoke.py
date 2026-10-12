@@ -69,6 +69,16 @@ def _read_gateway_mcp_yaml() -> dict[str, Any]:
         return {}
 
 
+def _seat_code_mcp_url(url: str) -> str:
+    """Point a code-seat caller at /mcp/code/. Bare /mcp does not answer."""
+    trimmed = url.rstrip("/")
+    if trimmed.endswith("/mcp/life") or trimmed.endswith("/mcp/code"):
+        return trimmed + "/"
+    if trimmed.endswith("/mcp"):
+        return trimmed + "/code/"
+    return trimmed + "/mcp/code/"
+
+
 def resolve_env() -> tuple[str, str, dict[str, str]]:
     """Return (token, url, provenance). Raises SystemExit on missing config."""
     cfg = _read_gateway_mcp_yaml()
@@ -102,10 +112,9 @@ def resolve_env() -> tuple[str, str, dict[str, str]]:
         if url:
             url_source = "yaml:mcp_server_url"
     if not url:
-        url = "https://mcp.k-1.me/mcp"
+        url = "https://mcp.k-1.me/mcp/code/"
         url_source = "default"
-    if not url.rstrip("/").endswith("/mcp"):
-        url = f"{url.rstrip('/')}/mcp"
+    url = _seat_code_mcp_url(url)
     if not token:
         _fail(
             "WEB_AUTH_CONFIG",

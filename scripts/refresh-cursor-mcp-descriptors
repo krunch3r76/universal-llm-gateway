@@ -19,7 +19,9 @@
 
 set -euo pipefail
 
-MCP_URL="${MCP_URL:-https://mcp.k-1.me/mcp}"
+# Bare /mcp is absent after the dual-endpoint cutover. Trailing slash
+# avoids the 307 from /mcp/code onto /mcp/code/.
+MCP_URL="${MCP_URL:-https://mcp.k-1.me/mcp/code/}"
 MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
 CURSOR_PROJECTS="$HOME/.cursor/projects"
 
