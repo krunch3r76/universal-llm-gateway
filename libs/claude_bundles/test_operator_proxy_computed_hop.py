@@ -11,6 +11,7 @@ from claude_bundles.operator_proxy_live_leg import (
     fetch_turns_to_closure,
     fold_lane,
     house_lanes,
+    project_live_leg,
 )
 from claude_bundles.operator_proxy_mission import ensure_operator_proxy_mission_prompt
 
@@ -315,21 +316,42 @@ def test_slice2_15785_plan_retired_after_confirm_close() -> None:
     assert items == []
 
 
-def test_slice2_15838_friction_plans_and_request_pickup_dedupe() -> None:
-    turns = [
+def _turns_15838_chronological() -> list[dict[str, Any]]:
+    return [
+        _turn(2, "REQUEST|freeform|todo:capabilities-house"),
+        _turn(3, "PICKUP|todo:capabilities-house"),
         _turn(20, "PLAN|friction:39025"),
         _turn(25, "PLAN|friction:39025"),
         _turn(27, "PLAN|friction:39025"),
         _turn(29, "ACK|friction:39025"),
-        _turn(31, "ACCEPT|DONE + CLOSE|house SK5 retired"),
-        _turn(2, "REQUEST|freeform|todo:capabilities-house"),
-        _turn(3, "PICKUP|todo:capabilities-house"),
+        _turn(31, "ACCEPT|DONE #30 friction:39025-c; HANDOFF to SK2; CLOSE|house SK5 retired"),
+    ]
+
+
+def test_slice2_15838_chronological_house_close_clears_earlier_open() -> None:
+    """R1: house close at #31 retires open items from earlier turns (#2/#3), not a regression."""
+    items, _ = fold_lane("15838", _turns_15838_chronological())
+    assert items == []
+
+
+def test_slice2_15838_shuffled_order_matches_chronological() -> None:
+    canonical = _turns_15838_chronological()
+    shuffled = list(reversed(canonical))
+    items_sorted, _ = fold_lane("15838", canonical)
+    items_shuffled, _ = fold_lane("15838", shuffled)
+    assert items_shuffled == items_sorted
+
+
+def test_slice2_house_close_then_request_survives() -> None:
+    turns = [
+        _turn(10, "PLAN|todo:old"),
+        _turn(11, "ACCEPT|DONE + CLOSE|house SK5 retired"),
+        _turn(12, "REQUEST|freeform|todo:reopened"),
     ]
     items, _ = fold_lane("15838", turns)
-    keys = [(item.verb, item.key) for item in items]
-    assert ("PLAN", "friction:39025") not in keys
-    assert ("REQUEST", "todo:capabilities-house") not in keys
-    assert ("PICKUP", "todo:capabilities-house") in keys
+    assert len(items) == 1
+    assert items[0].verb == "REQUEST"
+    assert items[0].key == "todo:reopened"
 
 
 def test_slice2_15857_closed_subject_clears_requests() -> None:
@@ -360,6 +382,44 @@ def test_slice2_open_item_kept_on_other_lane() -> None:
     assert stale_items == []
     assert len(open_items) == 1
     assert open_items[0].key == "todo:still-open"
+
+
+def test_work_keys_in_subject_do_not_truncate_at_plus() -> None:
+    turns = [
+        _turn(1, "PLAN|todo:compound+a"),
+        _turn(2, "ACK| note todo:compound+a acknowledged"),
+    ]
+    items, _ = fold_lane("15741", turns)
+    assert items == []
+
+
+def test_project_live_leg_lane_status_fetch_exception_turn_only_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R3(iv): fetch_lane_status exception → lane_status None → fold still runs."""
+    from claude_bundles import operator_proxy_live_leg as live_leg_mod
+    from claude_bundles.operator_proxy_bus_fetch import fetch_turns_for_lane
+
+    turns = [_turn(5, "REQUEST|freeform|todo:status-down")]
+
+    def fake_closure(
+        lane: str,
+        *,
+        page_fetch: object | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        del page_fetch
+        assert lane == "15857"
+        return turns, False
+
+    def boom(_lane: str) -> str:
+        raise RuntimeError("simulated status fetch failure")
+
+    monkeypatch.setattr(live_leg_mod, "fetch_turns_to_closure", fake_closure)
+    monkeypatch.setattr(live_leg_mod, "fetch_lane_status", boom)
+    leg = project_live_leg(["15857"], fetch_turns_for_lane)
+    assert leg.errors == {}
+    assert len(leg.items) == 1
+    assert leg.items[0].key == "todo:status-down"
 
 
 def test_slice2_request_and_pickup_same_key_one_pickup_line() -> None:

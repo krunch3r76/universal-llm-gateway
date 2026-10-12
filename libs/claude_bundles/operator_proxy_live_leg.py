@@ -54,8 +54,7 @@ _PLAN_CLOSE = frozenset({"ACK", "PARK", "CANCEL"})
 _ITEM_RETIRE_VERBS = frozenset(
     {"ACK", "PARK", "ACCEPT", "CANCEL", "WITHDRAW", "DONE", "FAILED"}
 )
-_WORK_KEY_IN_SUBJECT_RE = re.compile(r"[a-z_]+:[^\s|+]+")
-_LANE_HOUSE_CLOSE_RE = re.compile(r"(?:^|\s)(?:CLOSE\||CLOSED\|)")
+_WORK_KEY_IN_SUBJECT_RE = re.compile(r"[a-z_]+:[^\s|]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +133,7 @@ def _subject_retires_lane_house(subject: str) -> bool:
     text = (subject or "").strip()
     if text.startswith(("CLOSE|", "CLOSED|")):
         return True
-    return _LANE_HOUSE_CLOSE_RE.search(text) is not None
+    return "CLOSE|house" in text or "CLOSED|house" in text
 
 
 def _retire_work_keys(
@@ -295,7 +294,11 @@ def fold_lane(
     open_plans: dict[str, tuple[int, str, str, str]] = {}
     request_start_turn: dict[str, int] = {}
 
-    for turn in turns:
+    ordered_turns = sorted(
+        turns,
+        key=lambda t: int(t.get("turn_number") or t.get("id") or 0),
+    )
+    for turn in ordered_turns:
         turn_no = int(turn.get("turn_number") or turn.get("id") or 0)
         subject = str(turn.get("subject") or "")
         verb, kind, key = _parse_subject(subject)
