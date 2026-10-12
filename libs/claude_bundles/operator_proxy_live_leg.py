@@ -51,6 +51,11 @@ GOVERNING_RULE: dict[str, str] = {
 _REQUEST_CLOSE = frozenset({"DONE", "FAILED", "CANCEL", "WITHDRAW"})
 _PICKUP_CLOSE = frozenset({"DONE", "FAILED"})
 _PLAN_CLOSE = frozenset({"ACK", "PARK", "CANCEL"})
+_ITEM_RETIRE_VERBS = frozenset(
+    {"ACK", "PARK", "ACCEPT", "CANCEL", "WITHDRAW", "DONE", "FAILED"}
+)
+_WORK_KEY_IN_SUBJECT_RE = re.compile(r"[a-z_]+:[^\s|+]+")
+_LANE_HOUSE_CLOSE_RE = re.compile(r"(?:^|\s)(?:CLOSE\||CLOSED\|)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +126,30 @@ def _scheme_work_key(work_key: str) -> bool:
     return any(work_key.startswith(prefix) for prefix in _SCHEME_WORK_KEY_PREFIXES)
 
 
+def _work_keys_in_subject(subject: str) -> list[str]:
+    return _WORK_KEY_IN_SUBJECT_RE.findall(subject or "")
+
+
+def _subject_retires_lane_house(subject: str) -> bool:
+    text = (subject or "").strip()
+    if text.startswith(("CLOSE|", "CLOSED|")):
+        return True
+    return _LANE_HOUSE_CLOSE_RE.search(text) is not None
+
+
+def _retire_work_keys(
+    keys: list[str],
+    *,
+    open_requests: dict[str, tuple[int, str, str, str]],
+    open_pickups: dict[str, tuple[int, str, str, str]],
+    open_plans: dict[str, tuple[int, str, str, str]],
+) -> None:
+    for work_key in keys:
+        open_requests.pop(work_key, None)
+        open_pickups.pop(work_key, None)
+        open_plans.pop(work_key, None)
+
+
 def _cancel_targets_key(
     subject: str,
     open_requests: dict[str, int],
@@ -145,6 +174,21 @@ def _cancel_targets_key(
 def _auth_headers() -> dict[str, str]:
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
     return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def fetch_lane_status(lane: str) -> str | None:
+    """Return agent-bus thread status for *lane*, or None when unavailable."""
+    with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=_BUS_TIMEOUT_S) as client:
+        resp = client.get(f"/threads/{lane}", headers=_auth_headers())
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+    thread = payload.get("thread") if isinstance(payload, dict) else None
+    if isinstance(thread, dict):
+        status = thread.get("status")
+        return str(status) if status is not None else None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    return str(status) if status is not None else None
 
 
 def fetch_turns_page(
@@ -236,8 +280,16 @@ def _wrap_fetch_turns(
     return fetch_turns
 
 
-def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
+def fold_lane(
+    lane: str,
+    turns: list[dict],
+    *,
+    lane_status: str | None = None,
+) -> tuple[list[OpenItem], bool]:
     """Fold *turns* into open items for one house lane."""
+    if (lane_status or "").strip().lower() == "closed":
+        return [], False
+
     open_requests: dict[str, tuple[int, str, str, str]] = {}
     open_pickups: dict[str, tuple[int, str, str, str]] = {}
     open_plans: dict[str, tuple[int, str, str, str]] = {}
@@ -248,6 +300,13 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
         subject = str(turn.get("subject") or "")
         verb, kind, key = _parse_subject(subject)
         if not verb:
+            continue
+
+        if _subject_retires_lane_house(subject):
+            open_requests.clear()
+            open_pickups.clear()
+            open_plans.clear()
+            request_start_turn.clear()
             continue
 
         if verb == "REQUEST" and key:
@@ -269,6 +328,20 @@ def fold_lane(lane: str, turns: list[dict]) -> tuple[list[OpenItem], bool]:
             open_plans.pop(key, None)
         elif verb in _PLAN_CLOSE and key:
             open_plans.pop(key, None)
+
+        if verb in _ITEM_RETIRE_VERBS:
+            retire_keys = [key] if key else _work_keys_in_subject(subject)
+            _retire_work_keys(
+                retire_keys,
+                open_requests=open_requests,
+                open_pickups=open_pickups,
+                open_plans=open_plans,
+            )
+
+    pickup_keys = set(open_pickups)
+    for work_key in list(open_requests):
+        if work_key in pickup_keys:
+            open_requests.pop(work_key, None)
 
     items: list[OpenItem] = []
     for store in (open_requests, open_pickups, open_plans):
@@ -305,7 +378,13 @@ def project_live_leg(
         except Exception as exc:  # noqa: BLE001 — render degraded line per lane
             leg.errors[lane] = str(exc)
             continue
-        items, _ = fold_lane(lane, turns)
+        lane_status: str | None = None
+        if resolve is _production_fetch_turns:
+            try:
+                lane_status = fetch_lane_status(lane)
+            except Exception:  # noqa: BLE001 — degrade to turn-only retirement
+                lane_status = None
+        items, _ = fold_lane(lane, turns, lane_status=lane_status)
         leg.items.extend(items)
     leg.items.sort(key=lambda item: (item.lane, item.turn))
     leg.truncated = False
@@ -352,6 +431,7 @@ __all__ = [
     "LiveLeg",
     "OpenItem",
     "POINTERS_BLOCK",
+    "fetch_lane_status",
     "fetch_turns_page",
     "fetch_turns_to_closure",
     "fold_lane",

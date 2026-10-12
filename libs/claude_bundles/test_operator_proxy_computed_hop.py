@@ -143,7 +143,7 @@ def test_amendment_3_landed_does_not_mint_open_item() -> None:
     ]
     items, _ = fold_lane("12286", turns)
     verbs = {item.verb for item in items if item.key == "todo:restart-me"}
-    assert verbs == {"REQUEST", "PICKUP"}
+    assert verbs == {"PICKUP"}
     assert "LANDED" not in GOVERNING_RULE
 
 
@@ -295,3 +295,79 @@ def test_done_closes_pickup_even_when_request_already_closed() -> None:
     ]
     items, _ = fold_lane("15722", turns)
     assert items == []
+
+
+def test_slice2_15741_plan_retired_after_accept_close() -> None:
+    turns = [
+        _turn(53, "PLAN|todo:house-state-primitive"),
+        _turn(58, "ACCEPT|DONE + CLOSE|house SK3 retired"),
+    ]
+    items, _ = fold_lane("15741", turns)
+    assert items == []
+
+
+def test_slice2_15785_plan_retired_after_confirm_close() -> None:
+    turns = [
+        _turn(51, "PLAN|todo:fleet-roles-mvp"),
+        _turn(65, "CONFIRM + CLOSE|house SK4 retired"),
+    ]
+    items, _ = fold_lane("15785", turns)
+    assert items == []
+
+
+def test_slice2_15838_friction_plans_and_request_pickup_dedupe() -> None:
+    turns = [
+        _turn(20, "PLAN|friction:39025"),
+        _turn(25, "PLAN|friction:39025"),
+        _turn(27, "PLAN|friction:39025"),
+        _turn(29, "ACK|friction:39025"),
+        _turn(31, "ACCEPT|DONE + CLOSE|house SK5 retired"),
+        _turn(2, "REQUEST|freeform|todo:capabilities-house"),
+        _turn(3, "PICKUP|todo:capabilities-house"),
+    ]
+    items, _ = fold_lane("15838", turns)
+    keys = [(item.verb, item.key) for item in items]
+    assert ("PLAN", "friction:39025") not in keys
+    assert ("REQUEST", "todo:capabilities-house") not in keys
+    assert ("PICKUP", "todo:capabilities-house") in keys
+
+
+def test_slice2_15857_closed_subject_clears_requests() -> None:
+    turns = [
+        _turn(2, "REQUEST|implement|todo:capabilities-house-a"),
+        _turn(3, "PICKUP|todo:capabilities-house-a"),
+        _turn(6, "REQUEST|freeform|todo:capabilities-house-b"),
+        _turn(7, "PICKUP|todo:capabilities-house-b"),
+        _turn(36, "CLOSED|hr-ml3"),
+    ]
+    items, _ = fold_lane("15857", turns)
+    assert items == []
+
+
+def test_slice2_lane_status_closed_clears_without_turns() -> None:
+    items, _ = fold_lane("15857", [], lane_status="closed")
+    assert items == []
+
+
+def test_slice2_open_item_kept_on_other_lane() -> None:
+    stale = [
+        _turn(53, "PLAN|todo:house-state-primitive"),
+        _turn(58, "ACCEPT|DONE + CLOSE|house SK3 retired"),
+    ]
+    open_lane = [_turn(10, "REQUEST|investigate|todo:still-open")]
+    stale_items, _ = fold_lane("15741", stale)
+    open_items, _ = fold_lane("15722", open_lane)
+    assert stale_items == []
+    assert len(open_items) == 1
+    assert open_items[0].key == "todo:still-open"
+
+
+def test_slice2_request_and_pickup_same_key_one_pickup_line() -> None:
+    turns = [
+        _turn(2, "REQUEST|freeform|todo:capabilities-house"),
+        _turn(3, "PICKUP|todo:capabilities-house"),
+    ]
+    items, _ = fold_lane("15838", turns)
+    assert len(items) == 1
+    assert items[0].verb == "PICKUP"
+    assert items[0].key == "todo:capabilities-house"
