@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from agent_bus_store.author_attestation import attest
-
 from request_profile import current_request_metadata
 
 # Canonical bus addresses when the caller omits from=/from_agent on a dual mount.

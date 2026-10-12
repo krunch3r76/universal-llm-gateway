@@ -7,7 +7,10 @@ from typing import Any
 
 from mcp_events import record
 
-from .._agent_bus_author import resolve_dispatch_from_agent, turn_author_attestation_fields
+from .._agent_bus_author import (
+    resolve_dispatch_from_agent,
+    turn_author_attestation_fields,
+)
 from .._agent_bus_post_guard import structured_route_guard
 from ._shared import (
     _format_agent_bus_error,

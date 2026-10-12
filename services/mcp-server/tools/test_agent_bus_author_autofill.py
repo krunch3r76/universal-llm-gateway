@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from request_profile import bind_request
+
 from tools import agent_bus as agent_bus_module
 from tools._agent_bus_author import (
     default_from_for_surface,
